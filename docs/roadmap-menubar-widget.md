@@ -12,13 +12,36 @@
 > §2 is tagged MEASURED or INFERRED. The ones tagged INFERRED are the ones a
 > future session should measure rather than inherit.
 
+### Revision note — SECOND PASS, against v3.33.0
+
+The first pass designed for **one developer, one machine, one agent**. The brief
+then widened to two scenarios the maintainer actually runs: **several harnesses
+on one machine** (opencode and Claude Code against the same Curator), and
+**several machines** syncing through one private repo. Re-deriving the design
+against those two scenarios changed six things and left the rest standing.
+
+| | Changed, and why |
+|---|---|
+| **§1.2a is new** | Two facts about the store were measured this pass and both break a first-pass conclusion. **The state path has no harness segment**, so two harnesses on one machine write the *same* file and silently overwrite each other. And **`ageSeconds` is derived from filesystem mtime**, which git resets on checkout — so on a second machine, every handoff that arrives over sync reads as *"just now"* (MEASURED, §2.9). The first pass's *"Live = an agent is working right now"* glyph would have been wrong on every pull. |
+| **§1.3 replaced** | The use cases are now **ranked** rather than enumerated, and the layout is **flat by recency**, not grouped by project. This reverses the first pass's grouping decision; the reasoning is in §1.3. |
+| **§1.5 re-derived** | The budget bar and the recency pips survive. The recency pips now read the **true save time**, not the mtime. Two new refusals are added — a sync *progress* bar, and any encoding that makes save FREQUENCY look like productivity. The event strip is demoted to per-scope and per-source. |
+| **§1.7 reversed, in part** | The first pass refused a reader in the widget. This pass **ships a popup**, because the maintainer asked for one and because there is a version of it that is safe: the widget renders **the journal** (a structured, sanitised, bounded array), and never renders `current.md`. The tier-to-surface mapping is in §1.7. |
+| **§1.10 refined** | The `backgroundMode` field and the `window` default both survive with a stronger argument. What is added is *where the user finds out it exists* — and a note that the **dismissal of that offer** is exactly the consent shape `ui.*` was built for, even though the mode itself is not. |
+| **§2.9 is new** | A measured cost model for the **multi-machine** signal, which the first pass did not price at all because it is the one signal that is not local. Conclusion: it is fetched **on panel open only**, never on a timer, so it costs zero when nobody is looking. |
+
+Everything else in the first pass — the observer constraint, the `fs.watch`
+measurements, the resource baseline, the Dock/quit analysis, and the prior-art
+research — is **unchanged and still load-bearing**. Where this pass disagrees it
+says so in the section itself.
+
 ---
 
 ## 0. The one-paragraph version
 
 The Curator's memory layer is written by **agents, over MCP, while the user is
-doing something else entirely**. Today the only way to see that happening is to
-open the app and navigate to the Agent memory view. A menubar presence turns an
+doing something else entirely** — and increasingly by **more than one agent, in
+more than one harness, on more than one machine**. Today the only way to see any
+of that happening is to open the app and navigate to the Agent memory view. A menubar presence turns an
 invisible background process into an observable one, and — because the MCP server
 and the memory layer are useful with the window closed — it also makes "closing
 the window" stop meaning "stopping the product". The widget is an **observer**:
@@ -30,25 +53,43 @@ the app is read-only over working state by design, and it must stay that way.
 
 ### 1.1 The audience, stated narrowly on purpose
 
-**A developer with a coding agent running right now in another window, who wants
-to keep half an eye on what that agent is recording without breaking their own
-flow.**
+**An AI practitioner or developer with one or more coding agents running right
+now in other windows, who wants to keep half an eye on what those agents are
+recording without breaking their own flow.**
 
-That is the whole design target. "Migrate and keep context between different
-harnesses" is the job the memory layer exists to do; the widget is the
-instrument panel for it. Every proposal below is justified against that one
-scenario, and the test applied throughout is: *does this help that person, in
-that moment, without making them stop what they are doing?* If it does not, it is
-Dock-icon work — it belongs in the full app's Agent memory view, not in the
-menubar.
+That is the whole design target. "Bridge between sessions, between harnesses,
+between LLMs" is the job the memory layer exists to do; the widget is the
+instrument panel for it. Every proposal below is justified against that target,
+and the test applied throughout is: *does this help that person, in that moment,
+without making them stop what they are doing?* If it does not, it is Dock-icon
+work — it belongs in the full app's Agent memory view, not in the menubar.
 
-Two things follow from taking the audience seriously:
+**The two concrete shapes it has to serve**, which the first pass did not:
+
+**Scenario A — one machine, several harnesses.** opencode and Claude Code
+running side by side on the same computer, both talking to the same Curator over
+MCP. The question is *which of them is working, and on what*. §1.2a shows this is
+not merely a labelling problem: **the store cannot tell two harnesses on one
+machine apart at all**, so they can silently overwrite each other, and the widget
+is the only surface positioned to notice.
+
+**Scenario B — several machines.** Two or three computers, each with its own
+harness, each writing into its own local Curator, all syncing through one private
+GitHub repo. Working state is per-machine by design, so the widget is how you
+notice that **another machine has been working** — and, before you start, that
+there is work on the remote you have not pulled yet.
+
+Three things follow from taking the audience seriously:
 
 - **This person already knows what a scope is.** The widget does not need to
   teach the model. It needs to report state densely and get out of the way.
 - **This person is not looking at it most of the time.** The panel is closed
   during almost the entire life of the process. That is a design constraint and
-  a cost constraint, and §2.6 treats it as one.
+  a cost constraint, and §2.6 and §2.9 treat it as one.
+- **Scenario B's headline signal is not local**, and that is the one genuinely
+  new cost in this design. Everything else the widget wants is on this machine's
+  disk and free to watch. "Has another machine pushed?" is a network question,
+  and §2.9 prices it and then makes it cost nothing when the panel is shut.
 
 ### 1.2 The binding constraint: this is an OBSERVER
 
@@ -74,99 +115,302 @@ writing down before anyone is tempted:
 The widget reads. Everything it offers that is not a read is a *navigation* —
 open the app, open a file in the user's editor, open the log — never a mutation.
 
-### 1.3 What the widget shows — decided, not enumerated
+### 1.2a Two measured facts about the store that change the design
 
-Three candidates were on the table. The decision is **scopes are the content,
-the brief is a one-line fact, and the log is a link**.
+Both were established this pass, against the real code and against real git.
+Both invalidate a first-pass conclusion. Neither is a bug the widget can fix —
+they are properties the widget has to **report honestly** rather than paper over.
 
-#### Scopes — the core, and the only thing that gets real space
+#### (a) The state path has no harness segment — so two harnesses collide
 
-The panel's body is a list of recent **(project, scope, machine)** rows, newest
-write first. `GET /api/memory` already returns exactly this, in one request, with
-every field the row needs:
+The handoff is written to `state/<scope>/<machine>/current.md`, and
+`machine` is `<hostname-slug>-<install-id>`. Both halves are per **installation**,
+not per process. Two MCP servers spawned by two different harnesses on one
+computer resolve to the **same** `<machine>` folder.
 
-| Field from `GET /api/memory` | What the row does with it |
-|---|---|
-| `project` | Row group heading |
-| `newestScope` | The primary label |
-| `newestMachine` | Shown **only when it is not this machine** (see below) |
-| `ageSeconds` / `lastWriteAt` | The recency encoding — §1.5 |
-| `headline` | The one-line summary the agent wrote; this is the payload |
-| `distinctScopeCount` / `savedCopies` | "3 scopes · 5 saved copies" secondary line |
-| `hasBrief` / `briefUpdatedAt` | The brief's one line — see below |
-| `unlistedEntries` / `unlistedReason` | A warning row when non-zero — never swallowed |
-| `scopesTruncated` | "showing N of M" — a cap must never read as a measurement |
+So in Scenario A, if both agents are told *"carry on with this project"* and
+neither names a scope — and the default scope is `main` — **they write the same
+`current.md`, and a save overwrites.** The second one wins. Nothing warns anyone:
+from the store's point of view an overwrite is the correct behaviour, and it is
+the behaviour the whole "state supersedes" design is built on.
 
-**How many rows.** Cap the panel at **8 project rows**, newest-write-first, with
-a "Open Agent memory…" item beneath that reaches all of them. Eight is not
-arbitrary: it is roughly what fits above the fold of a menubar panel at a
-comfortable row height without the panel becoming a window, and the audience is
-watching *one* agent — the rows below the eighth are, by construction, not the
-thing they are watching. `MAX_PROJECTS` is 200 server-side; the panel must show
-the truncation, not hide it.
+Three consequences, in order of importance:
 
-**Machine.** Show it only when `newestMachine` differs from this host. On a
-single-machine setup the column is noise; the moment it appears it is the most
-interesting thing on the row, because it means *the other machine just wrote
-this*. The read already carries `machineIsThisMachine` on the scoped route;
-the index route does not, so the widget compares `newestMachine` against the
-same `machineId()` the store derives (see §4).
+1. **The remedy is scopes, and it is a discipline rather than a mechanism.** Two
+   harnesses on two different scopes never collide. Two harnesses on `main` always
+   do. Nothing enforces this and nothing should — but something should be able to
+   **show** it.
+2. **The journal survives the collision.** `journal.jsonl` is append-only and
+   carries `harness` on every line, so the *trail* of both harnesses is intact
+   even when the *handoff* is not. That is what makes the condition detectable at
+   all.
+3. **Detecting it is free.** `listWorkingScopes` already reads a 16 KB journal
+   tail per pair to recover the headline, then keeps `last.headline` and throws
+   the rest of the line away. **`harness` is in that same parsed object.** Two
+   consecutive entries with different `harness` values, close together in time,
+   in one (scope, machine) folder, is the collision — and it costs **zero
+   additional I/O** to see.
 
-**When there are none.** This matters more than it looks: it is the first thing
-every new user sees. The empty state is **not** an error and must not read like
-one. `GET /api/memory` deliberately returns a row for every domain including
-those with nothing saved, precisely so this state is expressible. The panel
-should say something like *"No agent memory yet — a coding agent writes here
-through the my-curator MCP"* with a link to the setup docs, and nothing else.
-The failure to avoid is a blank panel that looks broken.
+**Two things sharpen this rather than soften it.**
 
-#### The standing brief — one line, and the honest reason
+*The capture skill actively encourages the collision.* `skills/curator-continuity`
+tells an agent to **"reuse an existing scope whenever the work continues"** and
+to open a new one only for *"genuinely parallel work"*. That is the right rule for
+continuity across sessions, and it is exactly the rule that puts two
+simultaneously-running harnesses into one folder. Nothing in the skill mentions
+harnesses at all.
+
+*The one existing guard does not cover this case.* `would-replace-larger-state`
+refuses a save whose rendered body is under `REPLACE_RATIO` (5%) of a stored
+handoff bigger than `MIN_PROTECTED_BODY_BYTES` (1 KB). It protects against a thin
+save flattening a substantial one — which is a real and different hazard. **Two
+full handoffs from two working harnesses are both substantial, so neither is
+refused, and the second simply wins.**
+
+> A caller *can* pass an explicit `machine` argument, which is taken verbatim, so
+> a harness could in principle separate itself by writing `machine: "opencode"`.
+> That is a workaround, not a design: it makes the segment mean two different
+> things (which computer / which program) and would break cross-machine reads,
+> which pick the newest *machine*. Recorded so nobody proposes it as the fix.
+
+#### (b) `ageSeconds` is filesystem mtime, and git resets it — MEASURED
+
+`listWorkingScopes` derives `lastWriteAt` and `ageSeconds` from `st.mtime`, and
+`readWorkingState` derives `current.savedAt` the same way. **git sets a file's
+mtime to the moment it wrote the file locally**, not to the moment the content
+was authored.
+
+Measured against real git in an isolated scratch repo (§2.9): a `current.md`
+whose content was authored years earlier arrives on a second machine, through
+both a clone and an incremental `pull -X theirs`, with **mtime equal to the
+moment of the pull**. The journal line's own `at` field still carries the true
+authoring time.
+
+| Fact | Where it lives | What it means |
+|---|---|---|
+| `lastWriteAt` / `ageSeconds` | `st.mtime` | When this file last **changed on this disk** — which for synced state means *when it arrived* |
+| `at` | the journal line | When an agent actually **saved** it |
+
+**This breaks the first pass's headline encoding.** §1.5 proposed *"Live (< 2 min)
+= an agent is working in this scope right now"*, keyed on `ageSeconds`. In
+Scenario B, a single `git pull` would make **every incoming scope** read as Live,
+and the tray glyph would announce an agent at work on a machine that has been
+asleep for a day. The strongest signal in the design would be wrong precisely in
+the scenario it was extended to serve.
+
+**The fix is additive and small, and it helps the shipped app too.** Add
+`writtenAt` (from the journal line's `at`) and `harness` to each pair row in
+`listWorkingScopes`. Both come from an object the function already parses;
+neither costs a read. Leave `lastWriteAt` and `ageSeconds` alone — they are not
+wrong, they answer a different question, and two live consumers plus a pinned
+MCP contract depend on them. Then the two facts stay separable:
+
+- **written** *3 hr ago* — the agent's clock
+- **arrived** *just now* — this machine's clock
+
+`writtenAt` must be **nullable**, because the journal append is best-effort and a
+hand-edited line may have no usable `at`. When it is missing the consumer falls
+back to `lastWriteAt` **and says which one it used** — the same fact-versus-its-
+absence rule this module already enforces everywhere else.
+
+> **This is a pre-existing honesty gap in the shipped Agent memory view**, not
+> only a widget concern: that view renders `formatAge(ageSeconds)` from the same
+> mtime, so on a multi-machine setup it already reports a freshly-pulled handoff
+> as brand new. Worth fixing on its own merits, independently of this feature.
+
+### 1.3 The use cases, ranked — and the layout that falls out of them
+
+The first pass enumerated three candidates and decided among them. This pass
+**ranks** them, because the brief is right that a widget showing five things
+nobody acts on is worse than one showing two things they do.
+
+The ranking metric is deliberate: **(how often the question gets asked) × (how
+often the answer changes what the person does)**. A question that is asked
+constantly but almost never changes anything still earns space, because it is
+what the person is *looking at*; a question asked once a day that changes an
+action every time it is true earns more.
+
+#### The ranking
+
+| # | The question | Asked | Changes an action | Tier |
+|---|---|---|---|---|
+| 1 | **Is an agent writing right now — and what did it just record?** | Every glance, ~20×/hr | Sometimes (~1 in 10 — "it has gone quiet, go look") | **A** |
+| 2 | **Which harness / which machine wrote that?** | Every glance, in Scenario A and B | Rarely on its own — but it is what makes 1, 4 and 5 legible | **A** |
+| 3 | **Is there work on the remote I have not pulled?** | Once per session start, Scenario B | **Almost always when true** — you pull before you start | **A** |
+| 4 | **Is the scope I am about to resume actually stale?** | Once per resume | **Almost always when true** — you re-derive rather than trust it | **B** |
+| 5 | **Are two harnesses writing the same scope?** | Rarely true | **Always when true** — silent overwrite, §1.2a | **B** |
+| 6 | **Is a save failing, degraded, or about to be trimmed?** | Rarely true | **Always when true** — everything downstream is then wrong | **B** |
+| 7 | Is there local work I have not pushed? | Once per session end | Sometimes | **C** |
+| 8 | How old is the standing brief? | Weeks | Rarely | **C** |
+| 9 | Has the app logged errors? | Rarely | Sometimes | **C** |
+
+**Tier A gets the body of the panel. Tier B gets a line each, and only when it
+has something to say. Tier C gets a link.** Nothing in Tier C is rendered as
+content.
+
+**The punchline of the ranking is a single small change.** #2 and #4 both need
+the two fields §1.2a identified — `harness` and `writtenAt` — and #5 needs
+nothing beyond those two plus the journal line already being parsed. So **three
+of the top six use cases are unlocked by adding two fields that cost no
+additional I/O**, to a function that already parses them and throws them away.
+That is the highest-value change in this document and it is about four lines.
+
+#### What each tier is, concretely
+
+**#1 — presence and headline.** The pip (§1.5) plus the headline the agent wrote.
+This is the payload. It is also the thing that makes the widget feel alive rather
+than administrative, and it is already fully available.
+
+**#2 — provenance, in ONE slot with two meanings.** This is the layout decision
+that answers the brief's question about multi-machine directly:
+
+> **On a row written by this machine, show the HARNESS. On a row written by
+> another machine, show the MACHINE.**
+
+One slot, and in each context it holds the interesting fact. On a local row the
+machine is constant and therefore noise; the moment a row is remote, the machine
+is the single most interesting thing on it — it means *the other computer did
+this* — and the harness over there is somebody else's business.
+
+Machine folder names are `<hostname-slug>-<install-id>` and are far too long for
+a 300 px panel, so the widget shows the **host part only**, and appends a short
+disambiguator **only when two visible rows share a host part** (which is exactly
+the hostname-split condition `docs/working-state.md` describes). Never the raw
+folder name; that is a Finder / app-view detail.
+
+**#3 — unpulled remote state.** One footer line, and only when non-zero:
+*"2 handoffs waiting on GitHub"*. This is the only signal in the design that is
+not on local disk; §2.9 prices it and concludes it is fetched **on panel open
+only, never on a timer**, so it costs nothing while the panel is shut. The
+consequence, stated rather than hidden: **the tray glyph cannot carry this bit.**
+The glyph is a local instrument.
+
+**#4 — staleness, and it is a different number from #1.** After §1.2a(b), a row
+carries *written* age and, when they differ meaningfully, *arrived* age. A row
+reading `written 3 hr ago · arrived just now` is the Scenario B signal in one
+line, and it is the line the brief asked what it would look like.
+
+**#5 — the collision warning.** A Tier B line that appears only when true:
+*"⚠ two harnesses are writing `<project> · main`"*. It is a warning, not a
+metric; it names the scope and it says nothing else, because the remedy (give
+them separate scopes) is the user's to apply and the widget has no business
+proposing it in six words.
+
+**#6 — save health.** Three distinct conditions, all currently invisible outside
+a careful read of the app view:
+
+| Condition | Where the fact lives | Line |
+|---|---|---|
+| Handoff approaching the 48 KB cap | `bytes` on the pair row (already there) | The budget rule, §1.5 |
+| The journal append failed | `journalWritten` on the save result — **not on any read** | Not currently reachable; see §5 |
+| Collision guard disarmed | `installIdAvailable` — on the scope read, not the index | One line when false |
+
+Only the first is reachable today at index level. The other two are named here so
+they are not mistaken for shipped facts.
+
+#### The standing brief — one line, and the honest reason (unchanged)
 
 `state/project.md` is tier 1: hand-authored, returned on every read, and
 deliberately unwritable by any tool. **A menubar dropdown is the wrong surface
-for it**, and I want to argue that rather than assert it:
+for it**, and the argument is worth stating rather than asserting:
 
 - It is up to 32 KB (`MAX_BRIEF_BYTES`) of prose and firm decisions. That is a
   document, not a status line.
 - It changes on the order of *weeks*. The audience is watching something that
-  changes on the order of *minutes*. Putting a rarely-changing document in a
-  surface designed for a fast-changing one wastes the space that the
-  fast-changing thing needs.
+  changes on the order of *minutes*.
 - Its whole value to a resuming agent is that it is read **in full, at the start
   of a session**. Skimming three lines of it in a menubar serves nobody.
 
-So the brief gets **one line per project row**: *"Standing brief · updated 6
-days ago"*, or *"No standing brief"* when `hasBrief` is false. That is the
-honest version of its value here — **it exists, and it is this old** — and it is
-genuinely useful, because a stale or missing brief is exactly the thing that
-makes a resumed session go wrong, and the person watching an agent work is the
-person who can fix it. Clicking the line opens the full app on that project.
+So the brief is **Tier C**: it appears nowhere in the body. If it earns anything
+at all it is a single line under the project in the scope popup — *"Standing
+brief · updated 6 days ago"* — because a stale or missing brief is exactly what
+makes a resumed session go wrong. Clicking it opens the app.
 
-#### Logs — a link, not a tail
+#### Logs — a link, not a tail (unchanged)
 
 `~/Library/Logs/The Curator/curator.log`, bounded at 5 MB with single-generation
 rotation. **Do not tail it in the panel.** The decisive fact is not the width —
-it is the volume:
+it is the volume: `src/brain/logger.js` records startup facts, provider and
+model, update outcomes and caught errors, and **per-request logging was
+deliberately excluded** (v3.29.0). So on a healthy machine this log emits a
+handful of lines a day, most of them at launch. A tail would show the same three
+startup lines for hours and then, on the one day something breaks, a truncated
+stack trace at 300 px wide.
 
-`src/brain/logger.js` records startup facts, provider and model, update outcomes
-and caught errors. **Per-request logging was deliberately excluded** (v3.29.0's
-row says so explicitly: an access line per GET turns a support file into noise
-within a day). So on a healthy machine this log emits **a handful of lines a
-day**, most of them at launch. A tail of it in a menubar panel would show the
-same three startup lines for hours and then, on the one day something breaks,
-show a truncated stack trace at 300 px wide.
+What earns the space is **one item — "Open Log…" — plus a state indicator that
+only appears when it has something to say**: *"Open Log — 2 errors today"*. That
+count does not exist yet: `getLogFileStats()` returns `{path, bytes, mtimeMs}`,
+the file and not its contents. An error count needs a process-lifetime counter in
+`logError()` — three lines, no new state on disk. Said plainly rather than
+implied to be available.
 
-What earns the space instead is **one item — "Open Log…" — plus a state
-indicator that only appears when it has something to say**: if the app has
-written an `error`-level line since launch, the item reads *"Open Log — 2 errors
-today"*. That is the shape of log line that earns menubar space: not the content,
-but the *count of things that went wrong*, which is a real, bounded, glanceable
-fact.
+#### The layout
 
-**One honest gap:** that count does not exist yet. `getLogFileStats()` returns
-`{path, bytes, mtimeMs}` — the file, not its contents. An error count needs a
-process-lifetime counter incremented in `logError()`, which is three lines and
-no new state on disk. Say so rather than implying the data is already there.
+Flat, newest write first, **not grouped by project** — and this reverses the
+first pass, which proposed project grouping.
+
+```
+┌───────────────────────────────────────────────┐
+│  Agent memory                    updated 14:32│   panel, absolute stamp
+├───────────────────────────────────────────────┤
+│  ●  curator · main         claude-code · 2 min│   ← this machine: harness
+│     wired the tray bounds                     │
+│                                               │
+│  ◐  curator · widget-research  opencode · 18 m│   ← two harnesses, two scopes
+│     re-derived the visualisation section      │
+│                                               │
+│  ○  notes · main            studio · 3 hr ago │   ← other machine: machine
+│     arrived just now                          │
+│     rewrote the fetch serialiser              │
+├───────────────────────────────────────────────┤
+│  ↓  2 handoffs waiting on GitHub              │   Tier B — only when true
+│  ⚠  two harnesses writing curator · main      │   Tier B — only when true
+├───────────────────────────────────────────────┤
+│  Open Agent memory…                           │
+│  Open The Curator                             │
+│  Settings…                                    │
+│  Quit The Curator                             │
+└───────────────────────────────────────────────┘
+```
+
+**Flat by recency rather than grouped by project — the argument.** The audience is
+watching *an agent*, and an agent works in one scope at a time. "What has just
+happened" is a recency question, and grouping answers a different one ("what is
+the state of my projects") that the app's Agent memory view already answers
+better, with room for it. Grouping also spends vertical space on headings in the
+one surface that has none. The project name survives as a dim prefix on each row,
+so nothing is lost but the ordering.
+
+**The cost of flat, stated:** one busy project can monopolise all eight rows. That
+is accepted rather than mitigated — a per-project quota inside an eight-row list
+is the kind of cleverness that produces two behaviours and one bug, and the
+overflow item ("Open Agent memory…") reaches everything.
+
+**Eight rows.** Roughly what fits above the fold of a menubar panel at a
+comfortable row height without the panel becoming a window. `MAX_PROJECTS` is 200
+server-side and `MAX_INDEX_ENTRIES` is 60 per project; the panel must **show** the
+truncation rather than hide it — a cap must never read as a measurement, which is
+this project's own recorded rule.
+
+**Where the rows come from.** `GET /api/memory` returns **one row per project**
+(the newest pair only), so a flat list of the eight most recent *pairs across all
+projects* is not obtainable from it without a route change. It is obtainable
+directly: the Electron main process already imports `src/server.js` into its own
+Node realm, so it can call `listWorkingScopes` itself, with no HTTP hop and no new
+route. Same store function the app and the MCP use — a different projection of it,
+not a second inventory. The projection belongs in a pure, Electron-free
+`desktop/lib/tray-model.js` so the offline suite can execute it (§4).
+
+#### When there are none
+
+This matters more than it looks: it is the first thing every new user sees. The
+empty state is **not** an error and must not read like one. The panel should say
+*"No agent memory yet — a coding agent writes here through the my-curator MCP"*,
+with a link to the setup docs, and nothing else. The failure to avoid is a blank
+panel that looks broken.
+
+It is also the reason the widget is **off by default** (§1.10): on a fresh
+install this is the only thing it can ever show.
 
 ### 1.4 NSMenu versus a rendered popover — argued, then decided
 
@@ -220,9 +464,20 @@ rather than a single call — and §3's research moved one input (the HIG says
 3. **So ship the list first and the panel second.** Phase 1 is a `Tray` +
    `Menu`: it delivers the background-running property, the presence signal, the
    scope list with relative ages, and the click-through — which is the whole of
-   §1.1's scenario. Phase 2 replaces the menu with a popover and adds the two
-   encodings. Phase 1 costs no renderer; Phase 2's cost is then paid against a
-   feature people are already using, which is the right order to spend it in.
+   §1.1's Scenario A and most of Scenario B. Phase 2 replaces the menu with a
+   popover and adds the two encodings. Phase 1 costs no renderer; Phase 2's cost
+   is then paid against a feature people are already using, which is the right
+   order to spend it in.
+
+> **SECOND-PASS NOTE — the decision survives, and two inputs moved.** The scope
+> **popup** the maintainer asked for (§1.7) is a Phase 2 thing and cannot be built
+> in an `NSMenu`, which makes Phase 2 less optional than the first pass implied —
+> it is now the phase that satisfies an explicit request rather than a nice-to-have
+> pair of bars. And §3.7 found two shipping precedents for drawing events in a
+> status surface, so the "nobody does this" caution against a rendered panel is
+> weaker than it was. Neither changes the **order**: Phase 1 still delivers
+> everything except the popup, at no renderer cost, and it is what should ship
+> first.
 
 **If the popover is built, three non-negotiables** (all of them cost items in
 §2.6):
@@ -233,44 +488,55 @@ rather than a single call — and §3's research moved one input (the HIG says
 - **Nothing animates and nothing polls while it is closed.** The data it renders
   is pushed to it (§1.6), so a closed panel has nothing to do.
 
-### 1.5 Visual encodings — what is honest, and what is refused
+### 1.5 Visual encodings — re-derived for two harnesses and three machines
+
+The brief asks whether, with several harnesses and several machines in play,
+there is now **a genuinely continuous quantity worth drawing**. Re-derived from
+scratch rather than inherited, the answer is **no — but the shape of the discrete
+data changed, and that matters more.**
 
 Our data is not a system monitor's data, and this is the central design problem.
 A CPU meter has a continuous, bounded numeric series; that is what makes a
 sparkline and a percentage bar truthful. A scope save is a **discrete event with
-a timestamp, a byte count, a harness, a model and a headline**. There is no rate,
-no percentage of anything, and **no completion** — a save is not partway to
-being finished, it is done or it has not happened.
+a timestamp, a byte count, a harness, a model and a headline**. Adding a second
+harness and a third machine does not make it continuous. It makes it a **marked
+point process with a source label** — several interleaved streams of instants,
+which is a different thing from a signal sampled over time, and it is drawn
+differently.
+
+What *did* change: **there is now more than one source**, and the interleaving of
+sources is itself information (§1.2a(a)). That is the only genuinely new visual
+opportunity in this pass, and §1.5's event strip is redesigned around it.
 
 This project has a recorded rule that a fact and its absence must never collapse
 into the same value (v3.15.0). Borrowed chrome that implies precision we do not
 have is that same defect rendered in pixels.
 
-#### ACCEPTED — budget fill, and it is a genuine bounded percentage
+#### ACCEPTED — budget fill, unchanged, and it is a genuine bounded percentage
 
-`MAX_STATE_BYTES = 48 KB` is a real, hard cap. An over-budget save is
-**trimmed and disclosed in `notes`**, never refused — so approaching the cap is a
-real condition with a real consequence the user can act on (split the scope). The
-journal records `bytes` on **every** line.
+`MAX_STATE_BYTES = 48 KB` is a real, hard cap. An over-budget save is **trimmed
+and disclosed in `notes`**, never refused — so approaching the cap is a real
+condition with a real consequence the user can act on (split the scope).
 
-`bytes / 48 KB` is therefore an honest percentage bar: bounded, meaningful at
-both ends, and it surfaces truncation behaviour that already exists and is
-currently invisible unless you read the notes. **This is the one percentage bar
-the design should have**, and it is worth having precisely because it is the one
-number in the whole store that behaves like the reference app's numbers.
+`bytes / 48 KB` is therefore an honest percentage bar: bounded, meaningful at both
+ends, and it surfaces truncation behaviour that already exists and is currently
+invisible unless you read the notes. **This is the one percentage bar the design
+should have**, and it is worth having precisely because it is the one number in
+the whole store that behaves like the reference app's numbers. `bytes` is already
+on every pair row, so it costs nothing.
 
 Render it small — a 3 px rule under the headline — and colour it only past a
 threshold (say 80%), so it is invisible until it means something.
 
-#### ACCEPTED — recency, encoded as buckets, not as a linear bar
+#### ACCEPTED, WITH A CORRECTION — recency buckets, keyed on the TRUE save time
 
 Recency is the strongest candidate for the "progress bar" the maintainer asked
 for, and it needs care, because **it is unbounded**. A scope can be four seconds
 old or eight months old. A linear bar needs a maximum, and any maximum is
 invented — which makes the bar's *fullness* a fiction.
 
-The honest encoding is **discrete states with a log-ish scale**, shown as a dot
-or a short filled pip, plus the exact relative time in text:
+The honest encoding is **discrete states on a log-ish scale**, shown as a pip,
+plus the exact relative time in text:
 
 | State | Age | Reading |
 |---|---|---|
@@ -280,57 +546,84 @@ or a short filled pip, plus the exact relative time in text:
 | Cool | < 7 d | This week |
 | Cold | ≥ 7 d | Dormant |
 
-Five states, because the audience's real question is a five-way one and not a
-continuous one: *is it moving now / did it just move / is this today's work /
-is this last week's / is this abandoned?* The text beside it (`4 min ago`)
-carries the precision; the pip carries the glance. `formatAge` is **already
-exported** from `src/public/next/views/memory.js:730` and must be shared rather
-than reimplemented — two functions rendering "4 min ago" is the smallest possible
-version of the two-surfaces-drift problem §1.7 is about.
+**The correction from §1.2a(b): the age driving this must be `writtenAt`, not
+`ageSeconds`.** Keyed on mtime, a single `git pull` turns every incoming scope
+Live, and the widget announces an agent at work on a machine that has been asleep
+since yesterday. That is the design's strongest signal being wrong exactly in the
+scenario it was extended to serve. When `writtenAt` is missing the pip falls back
+to mtime **and the row says so** — *"changed 4 min ago"* rather than *"written 4
+min ago"* — rather than presenting a weaker fact in a stronger fact's clothing.
 
-#### ACCEPTED, WITH A CONSTRAINT — a save-event strip, not a sparkline
+**Arrival is a second, separate line, not a second pip.** When a row's content was
+written elsewhere and landed here recently, the row carries a plain sentence:
+*"arrived just now"*. It is a different question from *how old is this work*, and
+the two must not be collapsed into one number — which is precisely what the
+mtime-only design did.
 
-`journal.jsonl` is genuinely a time series: one append-only line per save
+`formatAge` is **already exported** from `src/public/next/views/memory.js:730` and
+must be shared rather than reimplemented — two functions rendering "4 min ago" is
+the smallest possible version of the two-surfaces-drift problem §1.7 is about.
+
+#### ACCEPTED, DEMOTED — a per-source event strip, in the scope popup only
+
+`journal.jsonl` is genuinely a point process: one append-only line per save
 carrying `{ at, scope, machine, harness, model, headline, bytes, rejections }`.
-Plotting saves over time would show a coding session's rhythm — dense bursts
-while an agent works, flat while nothing runs. For someone watching an agent
-work, *"has it written anything in the last ten minutes"* is a real question and
-this answers it at a glance.
+For a person watching an agent work, *"has it written anything in the last ten
+minutes"* is a real question, and *"are two harnesses taking turns in this one
+scope"* is a real and currently invisible one.
 
-**But it must not be a filled area sparkline.** A filled curve interpolates
-between samples and implies a continuous quantity exists *between* the points.
-Saves have no value between them — there is no "amount of memory" at 14:32 that
-is halfway between the 14:30 save and the 14:35 save. Drawing one would be
-exactly the borrowed-chrome defect.
+**The honest form is a rug plot with one lane per source** — a horizontal track
+covering a fixed window (say the last 60 minutes), one tick per save, positioned
+by time, with a lane per `harness` (Scenario A) or per `machine` (Scenario B):
 
-**And it has no precedent — which is a caution, not a veto.** §3.3 searched
-specifically for discrete-event menubar apps and found **none** using any
-time-series graphic; every one converges on a status glyph plus a relative
-timestamp. Sparklines appear only in continuous-metric apps. So this proposal is
-genuinely novel, and novel-in-a-menubar is usually novel-for-a-reason. It should
-be the **last** thing built and the first thing cut.
+```
+   claude-code  │   ▏  ▏▏      ▏          ▏▏  │
+   opencode     │ ▏      ▏  ▏      ▏▏         │
+                └─ 60 min ago ──────── now ───┘
+```
 
-The honest form is a **rug plot / event strip**: a horizontal track covering a
-fixed window (last 60 minutes), one tick per save, positioned by time. It reads
-instantly as *"three saves in the last hour, the last one just now"* and it
-claims nothing it cannot support. Optionally, tick *height* encodes `bytes` —
-which is a real per-event quantity — but that is a Phase 3 refinement and the
+That reads instantly as *"both of them have been writing this scope"*, which is
+the §1.2a(a) collision, and it claims nothing it cannot support. Optionally tick
+*height* encodes `bytes`, a real per-event quantity — a Phase 3 refinement; the
 plain strip is already useful.
 
-The constraint: it needs journal data, which the index route does not return.
-See §5 question 2 — this is the one place the feature wants an endpoint that
-does not exist.
+**Three constraints, and the third is new:**
+
+1. **It must never be a filled area sparkline.** A filled curve interpolates
+   between samples and implies a continuous quantity exists *between* the points.
+   There is no "amount of memory" at 14:32 halfway between the 14:30 and 14:35
+   saves. Drawing one is exactly the borrowed-chrome defect.
+2. **AMENDED BY §3.7 — it DOES have precedent, and the precedent says bucket
+   it.** The first pass found none; a deeper search found **StreakBar** (a
+   contribution grid rendered inside the status item) and **VitalsBar** (one bar
+   per check, per source, in the pane). Both, and every other example found,
+   **bucket into a uniform grid first** — one cell per day, one bar per poll.
+   Nobody plots events at irregular real timestamps, and uniform bucketing is what
+   makes those strips readable at 16 px. So the strip above becomes **twelve
+   five-minute cells across the last hour, one lane per source**, with **every
+   cell drawn and empty ones at low opacity** — StreakBar's own encoding, and the
+   fact-versus-absence rule arrived at independently. Still the last thing built
+   and the first thing cut.
+3. **It belongs in the scope popup, not the top-level panel** — this is the
+   demotion. A merged strip across every scope answers nothing: ticks from three
+   unrelated workstreams next to each other form a pattern that means nothing.
+   Split by source *within one scope*, it means something specific. So it is a
+   per-scope instrument, it needs the popup (§1.7) to exist first, and it needs
+   journal data the index does not carry — which the popup fetches anyway.
 
 #### REFUSED — and the reasons, so nobody re-adds them
 
 | Refused | Why |
 |---|---|
 | **A percentage-complete bar for a save** | There is no completion. A save is atomic (`writeFileAtomic` = tmp + rename). A bar would render a fiction. |
-| **A filled sparkline of save events** | Implies interpolation between discrete events. See above. |
-| **A live CPU/memory/throughput meter of The Curator itself** | It borrows the reference app's *subject*, not just its chrome. Nobody installed a second brain to watch its RSS, and it would be the one part of the panel that must poll continuously — the single most expensive thing we could add, bought for the least value. |
+| **A filled sparkline of save events** | Implies interpolation between discrete events. |
+| **A save-rate or saves-per-hour figure drawn as a magnitude** — NEW | Save frequency is a property of **the skill's capture cadence**, not of work done. An agent instructed to save early and often produces more ticks than one that saves twice; drawing that bigger says *more progress* when it means *different instructions*. Any encoding where "more saves" reads as "better" is refused. The strip above escapes this only because it encodes **presence and interleaving**, not amount. |
+| **A sync progress bar** — NEW | "How far from being in sync" has no honest denominator: being one commit behind can be one file or four hundred. `behindFiles` and `behindCommits` are two counts, and they should be shown as counts. See §1.9a for where a sync *control* would live. |
+| **A live CPU/memory/throughput meter of The Curator itself** | It borrows the reference app's *subject*, not just its chrome. Nobody installed a second brain to watch its RSS, and it would be the one part of the panel that must poll continuously — the most expensive thing we could add, bought for the least value. |
 | **A "context window used" gauge** | The Curator does not know the agent's context window. Inferring it from handoff size would be a fabricated number on a surface whose whole job is telling the truth about state. |
 | **A tail of `curator.log`** | Volume is a few lines a day (§1.3). Replaced by an error *count*. |
-| **A count-up "time since last save" that ticks every second** | It would be the only thing in the design forcing a timer while the panel is open, for a number nobody reads to the second. Recompute on open and on push. |
+| **A count-up "time since last save" ticking every SECOND** | Forces a timer while the panel is open for a number nobody reads to the second. **Amended by §3.9:** a **60-second** re-render *while the panel is open only* is accepted — syncthingStatus ships exactly that, it is the documented remedy for the Codex stale-snapshot bug, and it costs nothing when closed. Per-second remains refused. |
+| **Rendering `current.md`** — NEW | §1.7. The widget renders the journal; the app renders the handoff. |
 
 #### ACCEPTED — a last-updated stamp on the panel itself
 
@@ -339,36 +632,39 @@ bug filed **precisely** for showing event data with no freshness marker, and the
 proposed remedy is *"showing a 'last updated at HH:MM' timestamp"*.
 
 So the panel carries one **absolute** `HH:MM` stamp in its footer, distinct from
-the rows' **relative** ages. The two answer different questions — *how old is
-this event* versus *how old is this reading* — and conflating them is how a
-widget comes to display a confidently stale list. It also costs one line and
-makes a silently-dead watch (§1.6) visible rather than invisible, which is the
-failure mode the fallback poll exists for.
+the rows' **relative** ages. The two answer different questions — *how old is this
+event* versus *how old is this reading* — and conflating them is how a widget
+comes to display a confidently stale list. It also costs one line and makes a
+silently-dead watch (§1.6) visible rather than invisible.
 
 #### The menubar glyph itself
 
-The icon is the presence signal — *"The Curator is running"* — and it should
-carry **at most one bit** beyond that. The candidate bit is **live**: an agent
-has written in the last two minutes. A subtle filled/hollow state on a template
-image is enough, and template images are the only thing guaranteed to look right
-against light, dark, and tinted menu bars (Electron's own tray guidance — §3.2).
+The icon is the presence signal — *"The Curator is running"* — and it should carry
+**at most one bit** beyond that.
 
-**§3.3 offers a better candidate bit, and it is worth considering seriously.**
-`gitnews-menubar` distinguishes *unread* from **"unseen — probably just
-arrived"** — novelty relative to when you last looked. For our audience that may
-be the stronger signal: "live" goes false two minutes after an agent stops, while
-"unseen" stays true until the user actually looks, which is the question they are
-really asking. It costs a little more state (a last-opened timestamp, per
-install, not per scope). Open question — §5.5.
+**The glyph is a LOCAL instrument, and that is now an explicit rule.** §2.9 puts
+the remote check on panel-open only, so the glyph cannot carry "another machine
+has pushed". Trying to would require a background network timer for one bit of
+tray state — the single worst cost-to-value trade in this document.
 
-Also worth recording from §3.3: **CCMenu collapses many pipelines into one glyph
-by priority** — running first, broken second. Our equivalent priority order would
-be *live > unseen > idle*, and it is worth stealing, because the alternative
-(a glyph that reflects only the newest scope) is wrong the moment there are two.
+The candidate bit is **live**: an agent has written on *this machine* in the last
+two minutes. §3.3 offers a better candidate — `gitnews-menubar` distinguishes
+*unread* from **"unseen — probably just arrived"**, novelty relative to when you
+last looked. For our audience that may be stronger: "live" goes false two minutes
+after an agent stops, while "unseen" stays true until the user actually looks,
+which is the question they are really asking. It costs a little state (a
+last-opened timestamp, per install, not per scope). Open question — §5.5.
 
-Explicitly **no badge count** and **no animation**. A count of what? Saves since
-you last looked is a "read state" the app would have to store per-user, and an
-animated glyph in a menu bar is the thing people uninstall apps over.
+**CCMenu's priority-collapse rule is the one to steal** for reducing many scopes
+to one glyph: our order would be *live > unseen > idle*, because a glyph that
+reflects only the newest scope is wrong the moment there are two — and in
+Scenario A there are always two.
+
+A subtle filled/hollow state on a **template image** is enough; template images
+are the only thing guaranteed to look right against light, dark and tinted menu
+bars (Electron's own tray guidance — §3.2). Explicitly **no badge count** and
+**no animation**: a count of what, and an animated glyph in a menu bar is the
+thing people uninstall apps over.
 
 ### 1.6 How it stays current — filesystem watch, and this is measured
 
@@ -424,38 +720,100 @@ staleness at the exact moment the user is looking.
 stay alive; a main process that watches is a main process that was going to be
 alive anyway.
 
-### 1.7 Clicking through to read — one surface, not two
+### 1.7 Click a scope, see it — REVERSED IN PART, and here is the safe version
 
-A handoff's `now_state` runs to several thousand characters; `MAX_STATE_BYTES` is
-48 KB. **That does not fit in a menubar panel under any design**, so the design
-must decide where reading happens.
+The maintainer asked for this specifically: *click a scope to see it, without
+having to open the whole app*. The first pass refused, on the grounds that a
+handoff runs to 13–16 KB in real use (48 KB cap) and that a second reader of the
+same document is how two surfaces drift.
 
-**Decision: clicking a row opens the full app on the Agent memory view, scoped to
-that project and scope.** The widget does not grow its own reader.
+**Both halves of that reasoning are correct, and the conclusion was still too
+broad.** Re-derived, there is a version of the popup that gives him what he asked
+for and cannot drift, and the distinction is *what gets rendered*.
 
-The trade-off, named honestly:
+#### The rule: the widget renders the JOURNAL. The app renders the HANDOFF.
 
-- **Cost of this choice:** one extra click and a window appears — a heavier
-  gesture than the reference apps' self-contained panels. For a user who only
-  wants to *read the last headline*, the panel already showed it, so the click
-  is only paid by someone who wants the full document; that is the right person
-  to charge.
-- **Cost of the alternative:** a second surface rendering the same content. This
-  project has a specific, repeated finding that two surfaces rendering one thing
-  drift — v3.26.0's five modal implementations that had each privately copied a
-  scrim value and then diverged; the `--scrim` token that was undefined and so
-  taught four stylesheets to inline a literal. A second working-state reader
-  would have its own sanitiser call sites, its own truncation handling, its own
-  `unlistedEntries` disclosure — every one of which is a place the two can
-  disagree about the same file. The Agent memory view already handles all of it,
-  including the fold-state and revalidation behaviour that took two releases to
-  get right.
+That maps cleanly onto the store's own three tiers, and it is the structural idea
+of this section:
 
-There is a real second option worth recording: **"Reveal in Finder" / open
-`current.md` in the user's editor**. It is one line of code (`shell.openPath`),
-it costs no new surface, and for this specific audience — developers — it may
-genuinely be the preferred read. Offer it as a secondary item on the row
-(⌥-click, or a submenu), not as the primary action.
+| Tier | What it is | Shape | Surface | Why |
+|---|---|---|---|---|
+| **3 — `journal.jsonl`** | One line per save: `{at, harness, model, headline, rejections}` | A **structured, sanitised, bounded array** | **The widget** | Already parsed by the store; no rendering decisions to make; naturally glanceable |
+| **2 — `current.md`** | The handoff, up to 48 KB of headed markdown | A **document** | The app's Agent memory view | Needs section parsing, markdown rendering, fold state, truncation and duplicate-heading disclosure — every one of which is a place two surfaces can disagree |
+| **1 — `project.md`** | The standing brief, up to 32 KB, changes weekly | A **document**, hand-authored | The user's editor / Obsidian | It is meant to be read in full at session start, and it is the one tier no tool writes |
+
+**Why the journal is safe and `current.md` is not.** `readWorkingState` returns
+the journal as an array of already-sanitised, already-capped fields —
+`neutraliseProtocol` has run, `MAX_HEADLINE_CHARS` has been applied, the entry
+count is bounded. There is nothing left to decide: the widget prints strings. It
+returns `current.md` as **raw markdown text** in `current.text`; anything useful a
+widget could do with it requires parsing `STATE_SECTIONS` headings and rendering
+markdown, which is a second implementation of both, and the app's version took two
+releases to get right (fold state, revalidation, `duplicateHeadings`,
+`sanitisedOnRead`, `truncated`).
+
+> **One correction to the first pass while agreeing with its conclusion:** it
+> argued the second reader would need "its own sanitiser call sites". It would
+> not — sanitisation runs on **read**, in the store, for both surfaces. The real
+> drift surface is **parsing and rendering**, which is narrower and, for the
+> journal, zero. That narrowing is what makes the popup shippable.
+
+#### What the popup contains
+
+```
+┌──────────────────────────────────────────────┐
+│  curator · widget-research                   │
+│  opencode · claude-opus-5 · written 18 min   │
+│  ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁░░░░  22 KB of 48 KB       │  budget rule (§1.5)
+├──────────────────────────────────────────────┤
+│  18 min   opencode    re-derived the visual… │
+│  41 min   opencode    measured git mtime on… │
+│   2 hr    claude-code ranked the use cases   │
+│   3 hr    claude-code read the store and ro… │
+├──────────────────────────────────────────────┤
+│  Machines with this scope:  this Mac, studio │
+├──────────────────────────────────────────────┤
+│  Open in The Curator            Reveal file… │
+└──────────────────────────────────────────────┘
+```
+
+Everything above the last row comes from **one existing call** —
+`GET /api/memory/:project?scope=…&journalLimit=8` — with no new endpoint and no
+new parameter. That refutes the first pass's open question 2 for this case: the
+*popup* needs nothing new; only the cross-scope event strip would.
+
+**The hard constraint, written so it survives a future feature request:**
+
+> The popup may render **journal entries, counts, ages, machine names and the
+> budget bar**. It may **not** render `current.md`, in whole or in part. The first
+> time it needs a heading, a bullet list or a code block, it has become a second
+> reader and must stop and hand off to the app instead.
+
+#### What he loses, said plainly
+
+The popup shows **what has happened**, not **where things stand**. `now_state` —
+the prose section that carries most of the meaning of a handoff — is not in it and
+never will be. Someone who reads only the popup is reading the shallowest tier,
+and a person resuming a scope still has to open the app or the file. The popup
+answers *should I look at this?*; the app answers *what is in it?*
+
+That is the honest trade, and it is the right one: the alternative — a menubar
+panel that renders 16 KB of prose — is not a menubar panel.
+
+#### The secondary action, and it may be the primary one for this audience
+
+**"Reveal file…"** (`shell.openPath` / `shell.showItemInFolder`) is one line of
+code, costs no new surface, and for developers may genuinely be the preferred
+read — the handoff is plain markdown and their editor is already open. It is
+offered alongside "Open in The Curator". Which of the two should be the *row's*
+default click is §5.3 and is a taste question the maintainer should settle.
+
+#### Phase 1 has no popup at all
+
+In Phase 1 (a native `Menu`, §1.4) a row's click simply opens the app on that
+scope — the first pass's answer, and correct for a surface that cannot draw a
+card. The popup arrives with Phase 2, which is when there is something to draw it
+in. So the sequencing is unchanged; only the Phase 2 content is.
 
 ### 1.8 The Dock icon, and how the window comes back
 
@@ -561,6 +919,37 @@ write is in flight.** The guard becomes *more* load-bearing, not less. And
 `desktop/README.md` records that the `ask` branches "have only ever been
 exercised as pure functions" — this feature is the reason to fix that.
 
+### 1.9a Where a sync control would live — a note for the automatic-sync work
+
+**Not designed here.** Automatic sync is being researched in parallel and this
+section exists only so that work has a place to land and three hazards it must
+not walk into.
+
+**Where it goes.** The panel footer, as **one item beside the "N waiting on
+GitHub" line** — not in the row list, and never as a per-row control. Sync is a
+whole-repo operation; a Sync button on a scope row would imply a per-scope
+transfer that does not exist.
+
+**Three constraints the widget imposes on whatever that control turns out to be:**
+
+1. **Never a bar or a percentage.** §1.5 refuses a sync progress bar: being one
+   commit behind can be one file or four hundred, so there is no honest
+   denominator. `behindFiles` and `behindCommits` are two counts and belong on
+   screen as counts.
+2. **It must respect `hasActiveWrites()`.** Every mutating sync route is already
+   wrapped in `guardConcurrent`; a tray control that bypasses that is a second
+   entry point to a guarded operation. It should be **disabled with a reason
+   shown**, not hidden — a control that vanishes reads as a bug.
+3. **Any background `git fetch` must go through `gitFetch()`.** This is the
+   sharpest one. `src/brain/sync.js` records a measured incident: two fetch sites
+   writing `refs/remotes/origin/main` concurrently is a compare-and-swap race, and
+   **the loser was the user's own pull — it aborted before merging in 11 of 12
+   runs against real git.** `gitFetch()` now serialises every fetch this process
+   issues. A widget that adds a *third* fetch site on its own timer re-creates
+   that race unless it goes through the same function. §2.9's conclusion — fetch
+   on panel open only, never on a timer — reduces the exposure but does not remove
+   the rule.
+
 ### 1.10 Migration, and the user who wants none of this
 
 **Default is off. That is the migration.**
@@ -587,6 +976,48 @@ same file, already read and written freely. So: **a top-level
 does not require a second field. Absent or unrecognised resolves to `'window'` —
 the same fail-safe asymmetry `paths.js` uses for install-mode detection and
 `releaseChannel` uses for its channel.
+
+**Confirmed this pass, and the argument is now stronger than caution.** The
+first pass argued `window` as the default because it changes nothing for an
+existing user. The stronger reason is about the *new* user: **the widget's value
+is proportional to how much agent traffic you have, and a fresh install has
+none.** Turning it on by default gives every new user a permanently-empty menu bar
+icon whose only content is the empty state (§1.3) — the worst possible first
+impression of the feature, and one that teaches them the icon is not worth
+clicking. Apple's HIG says the same thing from the other direction: *"Let people —
+not your app — decide whether to put your menu bar extra in the menu bar"* (§3.6).
+
+**So: default off, for new and existing installs alike.** No two-defaults-keyed-on-
+`installOrigin` cleverness (first pass, §5.1) — one code path.
+
+**But "discovered in Settings" is too passive, and this is the refinement.** The
+moment the feature becomes worth having is the moment a project first accumulates
+real agent traffic. So: **a single dismissible line in the Agent memory view**,
+shown once a project crosses a small threshold (say two saves across at least one
+scope), reading roughly *"Watch this from the menu bar — Turn on · Not now"*. Not
+a modal, not a launch prompt, not a badge. It appears where the user is already
+looking at exactly the thing the widget shows.
+
+**And that dismissal IS an `ui.*` field, even though the mode is not.** The first
+pass established that `UI_STATE_SPEC` cannot hold `backgroundMode`, because every
+field in it is `monotonic` / `writeOnce` / a one-way `clearable` dismissal and a
+background-mode toggle flips both ways. Correct — and the *offer's dismissal* is
+the opposite: a one-way "I have been asked, do not ask again", which is precisely
+the shape that table exists for. Two fields, two mechanisms, each in the right
+place:
+
+| Field | Home | Shape |
+|---|---|---|
+| `backgroundMode: 'window' \| 'tray' \| 'tray-only'` | top level of `.curator-config.json`, beside `sharedBrainEnabled` | free two-way |
+| `ui.menubarOfferSeen` | `UI_STATE_SPEC` | one-way dismissal |
+
+**Naming, because the user's question is not the config key's question.** The
+field is about the app's *background mode*; the setting the user is looking for is
+*"do I get a menu bar icon"*. The Settings control should be labelled and ordered
+around the menubar question — **Off / On / On, and hide the Dock icon** — with the
+Dock consequences spelled out under the third option (§1.8). The three-value enum
+is right and should not become two booleans: it makes the illegal fourth
+combination (no tray, no Dock) unrepresentable.
 
 **One ordering constraint that will bite if missed:** the main process needs this
 value **before it creates the tray or the window**, and the renderer does not
@@ -902,6 +1333,93 @@ property for free, because the main process already holds the current snapshot.
 
 ---
 
+### 2.9 The multi-machine signal — measured, and then priced to zero
+
+Added this pass. The first pass's cost model covered only **local** signals, and
+Scenario B's headline question is not local.
+
+#### (a) git resets mtime — MEASURED
+
+Run in an isolated scratch repo, outside the maintainer's tree, with global and
+system git config neutralised. A `current.md` whose content was authored years
+earlier, backdated on the authoring machine, then pushed:
+
+| Step | `current.md` mtime |
+|---|---|
+| On the authoring machine | `2020-01-01T00:00:00` |
+| On a second machine, after `git clone` | **the moment of the clone** |
+| On the second machine, after an incremental `git pull --no-rebase -X theirs` | **the moment of the pull** |
+| The journal line's own `at` field, throughout | `2020-01-01T00:00:00.000Z` |
+
+**MEASURED.** This is ordinary, documented git behaviour — git writes files, and
+the filesystem stamps them when written — but it is load-bearing here and was
+asserted rather than measured in no document before this one. It is the basis of
+§1.2a(b) and of §1.5's correction to the recency pips.
+
+A useful side effect: because a pull writes files under the domains folder, **the
+recursive `fs.watch` fires on a pull exactly as it fires on a local save.** So the
+widget notices another machine's work *arriving* for free, with no polling and no
+network — which is half of Scenario B answered at zero cost. What it cannot see
+without the network is work that is on the remote and **not yet pulled**.
+
+#### (b) The unpulled-state signal, and why it is fetched on open only
+
+"Is there state on GitHub I have not pulled" resolves to `getRemoteStatus()` in
+`src/brain/sync.js`, which is **a real `git fetch`** — network, 30 s timeout,
+5-minute TTL cache, keyed on the repo URL. It is the only thing in this design
+that is not a local disk read.
+
+**The decision: the widget never puts this on a timer. It fetches on panel open,
+and nowhere else.**
+
+The argument is not cost alone — it is that **the question is only actionable at
+the moment the panel is open.** "Has another machine pushed?" changes what you do
+at the start of a session, which is exactly when you look. A background fetch
+every ten minutes buys a badge that is correct slightly sooner, in exchange for a
+network call forever, behind a closed panel, on battery and possibly on a metered
+connection. The TTL cache means an open-triggered fetch is usually served from
+memory anyway.
+
+This also inherits §3.3's evidence-backed remedy — the Codex menubar bug's first
+proposed fix was *"fetch on every open"* — so refresh-on-open is doing two jobs.
+
+| | Cost when the panel is CLOSED |
+|---|---|
+| Recursive `fs.watch` (catches local saves **and** arriving pulls) | **0.0044% of a core** — MEASURED, first pass |
+| 5-minute fallback poll | **0.02% of a core** — MEASURED, first pass |
+| Unpulled-remote check | **0** — not scheduled |
+| **Total** | **~0.025% of a core, no additional memory, no network** |
+
+**Two consequences, stated rather than discovered later:**
+
+1. **The tray glyph cannot carry the remote bit** (§1.5). It is a local
+   instrument. Anyone who later wants "another machine has pushed" reflected in
+   the bar is asking for a background network timer, and should be sent back to
+   this section.
+2. **The first panel open of a session may be slightly slow** — up to the fetch's
+   30 s timeout on a bad network. The panel must render the local rows
+   immediately and fill the remote line in when it arrives, never block on it.
+   A failed check renders as **unknown**, never as a reassuring zero — which is
+   already `getRemoteStatus()`'s own contract (`behindFiles: null` on failure).
+
+#### (c) An honest limit in the data — the preview is capped at 20 paths
+
+`countIncoming()` returns `{commits, files, preview}` where **`preview` is
+`list.slice(0, 20)`** of `git diff --name-only`. So the *count* of incoming files
+is exact, but the widget's ability to say specifically *"and some of them are
+handoffs"* depends on a `state/` path appearing in a 20-item alphabetical sample.
+
+Within one domain the ordering happens to favour us — `conversations/` <
+`state/` < `wiki/` — but across several domains, one busy domain's wiki pages can
+fill the sample before another domain's state files are reached.
+
+**So the footer line must be phrased to what is actually known.** *"2 handoffs
+waiting on GitHub"* is only sayable when a `state/` path is visibly in the
+preview; otherwise the honest line is *"14 files waiting on GitHub"*. Saying
+"handoffs" on the strength of a truncated sample would be a confident claim
+resting on a cap — the exact defect this project's own rule about caps and
+measurements names.
+
 ## 3. What other menubar apps actually do (research)
 
 > Claims are tagged **VERIFIED** (the source was fetched during this pass) or
@@ -961,11 +1479,15 @@ rediscover.
 
 ### 3.3 Discrete-event menubar apps — the category that matters
 
-**The headline result: I found no app, anywhere, that uses a sparkline for
-discrete events.** Sparklines appear only in continuous-metric apps (Stats'
-chart widgets; iStat Menus' 10-minute-to-28-day history graphs — VERIFIED,
-bjango.com version history). Every discrete-event app converges on the same
-vocabulary:
+**The first pass's headline result was: no app anywhere uses a sparkline for
+discrete events, and none draws discrete events at all.** The first half stands.
+**The second half is WRONG and is corrected in §3.7** — a second, deeper search
+this pass found two shipping open-source precedents for drawing discrete events
+in a status surface. Read §3.7 before quoting the paragraph below.
+
+Sparklines proper appear only in continuous-metric apps (Stats' chart widgets;
+iStat Menus' 10-minute-to-28-day history graphs — VERIFIED, bjango.com version
+history). Among the *text-row* discrete-event apps, the vocabulary does converge:
 
 | App | Bar glyph | Dropdown row | Tag |
 |---|---|---|---|
@@ -1064,124 +1586,481 @@ is the HIG-conformant version of this feature, and Phase 2 is the deliberate,
 argued departure from it once the two honest encodings (§1.5) justify the cost.
 "Let people decide" is also already satisfied: the feature is opt-in (§1.10).
 
+### 3.7 SECOND-PASS CORRECTION — discrete-event strips DO have precedent
+
+The first pass concluded no menubar app draws discrete events. A deeper search
+this pass found two, both open source, and the correction matters because one of
+them changes §1.5's proposed shape.
+
+**StreakBar** (`github.com/menubar-apps/StreakBar`, Swift/SwiftUI/AppKit, also on
+the Mac App Store) — **VERIFIED, source read.** It renders a GitHub-contribution
+grid *inside the status item*:
+
+| Finding | Why it matters here |
+|---|---|
+| `NSHostingView` added as a subview of `statusItem.button`, `variableLength`, **width computed from the data** (`daysBefore * 3 + 20`, or `(daysBefore + 1) * 17 + 20`) | Same escape hatch as Stats' custom `NSView`, and it confirms an event strip *in the bar itself* is a real shipped thing, not a thought experiment |
+| Day mode is literally a rug plot: `HStack(spacing: 1)` of 16×16 rounded cells | The strip shape is viable at menu-bar size |
+| **Empty is drawn, not omitted**: `.opacity(level == .NONE && emptyDayTransparency ? 0.2 : 1)` | *Nothing happened* is visibly distinct from *no data* — this project's own fact-versus-absence rule, arrived at independently |
+| **Tooltips deliberately suppressed in the bar** (`.help(isFullSize ? tooltip : "")`), enabled in the 400×600 popover, using **the same view at 3× cell size** | One implementation, two sizes — the opposite of the two-surfaces-drift problem |
+| `"Updated 4m ago"` overlay in the popover only | The Codex-issue remedy again, independently arrived at |
+| Refresh timer 3600 s; `@Environment(\.accessibilityReduceMotion)` gates transitions | Restraint at both ends |
+
+**VitalsBar** (vitalsbar.org, native AppKit + SwiftUI) — **VERIFIED from the
+vendor page, verbatim**: *"Each system carries a compact uptime sparkline (one bar
+per check, tinted by health)"*, with the menu bar itself showing only the **single
+worst state** across all services. So: **worst-case glyph in the bar, one
+event-strip per source in the pane.**
+
+**That is structurally identical to what §1.5 arrived at independently** — one
+collapsed glyph, per-source strips one level down — which is reassuring, and it is
+the strongest single argument for the demotion §1.5 makes.
+
+**And here is the part that changes the design.** Every precedent found —
+StreakBar, VitalsBar, the contribution-graph apps — **buckets into a uniform grid
+first**: one cell per day, one bar per check. Nobody plots events at their
+irregular real timestamps. That is exactly what §1.5's rug plot proposed, and it
+is the one genuinely novel bit left — *and uniform bucketing is what makes those
+strips readable at 16 px.*
+
+> **§1.5's event strip is therefore amended: bucket it.** Twelve five-minute cells
+> across the last hour, one lane per source, cell shaded by whether that source
+> saved in that bucket — **and every cell drawn, empty ones at low opacity**, per
+> StreakBar. That is legible at menubar scale, it has precedent, and it still says
+> only what is true: *this source wrote, in this five minutes*. A cell's shade may
+> encode *how many* saves landed in the bucket; it must never encode *how good*
+> they were (§1.5's refusals).
+
+**One Electron-specific cost, VERIFIED:** Electron's `Tray` accepts only a
+`NativeImage`, so a StreakBar-style strip *in the bar* means rendering a PNG
+ourselves on every change — losing `variableLength` auto-sizing and hover
+entirely. That prices §5.5's third option honestly: possible, and more expensive
+than it looks.
+
+### 3.8 Multi-source rows — a verified row spec worth adopting
+
+**CCMenu 2 — VERIFIED, `MenuItemViewModel.swift` read directly.** The rendered row
+is `<icon>  connectfour — 2 hours ago, build.151`: per-source icon, name, em dash,
+comma-joined details, relative time via `Date.RelativeFormatStyle(presentation:
+.named)`.
+
+Three details worth stealing, and one worth arguing with:
+
+- **The per-source timestamp is OFF by default** (`showBuildTimesInMenu = false`).
+  A shipping app in our category decided recency is opt-in. Recorded because it is
+  a genuine argument for restraint — though our case differs: CCMenu's rows are
+  *present-tense build status*, where "is it red" dominates; ours are *past-tense
+  save events*, where recency is the whole content. **We keep it on.**
+- **It never silently truncates.** When rows are hidden it appends a *disabled*
+  row: `"(3 pipelines hidden)"`. That is §1.3's cap rule, shipped.
+- **The glyph is a priority chain**, then optionally a **count** of failures — not
+  a per-source anything. Confirms §1.5's collapse rule.
+- The row's click action is `openWebPage(pipeline:)` — **a status row's primary
+  action is "take me to the underlying thing"**, which is §1.7's question exactly.
+
+**Gitify — VERIFIED, source read.** Multiple accounts render as collapsible
+account headers with a count badge; **no per-account "last checked" line anywhere**.
+Also: it imports `Menubar` from **`electron-menubar`**, so §3.2's unresolved fork
+question has an answer in the form of one real production consumer.
+
+### 3.9 Peer presence in sync clients — thin precedent, and one useful shape
+
+This was searched specifically for Scenario B. **The result is thinner than
+expected and it points somewhere useful.**
+
+- **Tailscale — VERIFIED.** The popover lists This Device / My Devices / Shared
+  Devices with **online/offline only, no timestamps**. A request for last-seen in
+  `tailscale status` (issue 16584) was **closed, not implemented**. And issue 8034
+  (open since 2023, macOS): when every peer is offline, hovering "Network Devices"
+  produces **no flyout and no message at all** — the user cannot tell *nothing to
+  show* from *broken*. That is precisely the empty-state failure §1.3 guards
+  against, unfixed in a shipping product.
+- **Syncthing core — VERIFIED.** `"Last seen"` is a real per-device string in the
+  web GUI. It is a full-app concept, not a menubar one.
+- **Resilio Sync — VERIFIED (help docs).** The **tray menu itself** shows a
+  **"Date synced"** value on a synced folder, and summarises peers as *"X of Y
+  peers"*. A History panel (30 days / 20 K events) lives in the full app. This is
+  the closest real precedent for last-activity *in the menu*.
+- **syncthingStatus** (`Xpycode/syncthingStatus`, Swift/SwiftUI, `NSPopover`) —
+  **VERIFIED, source read**, and it is the closest structural match to §1.3's
+  layout that exists. Device rows are **present-tense state only, no last-seen**.
+  Recency lives instead in a **separate "Recent Sync Activity" feed**:
+  `[icon] folderName ………… 3m ago` with a secondary description line beneath,
+  `events.prefix(5)` then a **`"Show All (23)"`** toggle, and an explicit
+  `"No sync activity yet"` empty state.
+
+**The conclusion for Scenario B, and it is a real finding.** Every sync client
+surfaces peers as a **device list in present tense**, and the ones that surface
+recency at all do it as a **separate activity feed**. So the instinct to build a
+"machines" section into the panel is the shape the field tried and mostly
+abandoned; **the flat, newest-first activity feed §1.3 proposes is the shape that
+actually works**, and syncthingStatus is a working implementation of it, down to
+the `prefix(5)` + overflow item and the named empty state.
+
+**One amendment to §1.5's refusals from the same source.** syncthingStatus
+recomputes its relative times on a **60-second** timer *while the popover is
+open*, so the feed does not go stale under the reader's eyes. §1.5 refuses a
+**per-second** count-up, and that refusal stands. A **60-second re-render while
+open only** is a different thing, has precedent, is the documented remedy for the
+Codex stale-snapshot bug, and costs nothing when closed. **Accepted.**
+
+### 3.10 Discoverability is the real risk — THREE silent ways the icon disappears
+
+This is the most important finding of the second pass's research, and it
+strengthens §1.10's default rather than changing any layout.
+
+1. **The notch** — first pass, §3.4: items past it *"simply vanish… no
+   notification to the user, no overflow section."*
+2. **Ice** (`jordanbaird/Ice`, the open-source menu bar manager) — **VERIFIED.** A
+   newly-appearing status item lands in whichever section its x-position happens to
+   fall into, and it **can land in Always-Hidden**, a section that is deliberately
+   *not* revealed on hover and needs a modifier-click or hotkey. Open issue 6
+   ("change the location where new menu bar icons come up") asks for new icons to
+   go to Visible; still open. Ice's newest **stable** release is `0.11.12` from
+   October 2024 — Tahoe fixes exist only in dev pre-releases — and issue 946
+   reports macOS 26.5 pushing hidden items into always-hidden with the drag-back
+   not persisting. **This is strictly worse than the notch**, because Always-Hidden
+   is intentionally unrevealed.
+3. **macOS 26's "Allow in the Menu Bar" control** — **VERIFIED** on the Apple
+   Developer Forums, and the API answer is a flat no. Apple DTS, verbatim: *"The
+   answer to your direct question: Does macOS provide a way for me to determine
+   the 'Allow in the menu bar' state for my application? is 'No.'"* The suggested
+   substitute is `NSStatusItem.removalAllowed` plus KVO on removal — **which
+   Electron's `Tray` does not expose**, so even that partial signal is out of reach
+   for us. Whether a new app's toggle defaults on or off **could not be verified**.
+
+**Two design consequences, both cheap:**
+
+- **Never let the tray be the only route to anything** — already satisfied (§1.8:
+  "Open The Curator" and "Quit" are always in the menu, and `window` mode is the
+  default). Reinforced: the *Settings toggle itself* must say plainly that the icon
+  may not appear, and where to look (Menu Bar settings, or a menu bar manager),
+  rather than treating an absent icon as a bug report.
+- **A fourth, unrelated failure mode, VERIFIED and directly actionable for
+  Electron:** an Apple DTS thread (794920) documents apps whose status item did not
+  appear *and which did not appear in the "Allow in the Menu Bar" list at all*,
+  because the status item was owned by a **second bare executable inside
+  `Contents/MacOS/`** rather than the main one. Apple's guidance is to own the
+  status item from the **main** executable. For us: **create the `Tray` in the
+  Electron main process**, never delegate it to a helper — which is what §4 already
+  proposes, now with a reason.
+
+### 3.11 Electron tray specifics, second pass
+
+| Finding | Tag |
+|---|---|
+| `tray.setTitle(title[, options])` is **current** and macOS-only; `options.fontType` accepts `'monospaced'` / `'monospacedDigit'`, and the title **supports ANSI colours** | VERIFIED — `electron/electron@main` `docs/api/tray.md` |
+| `monospacedDigit` is the fix for a count or relative time **jittering the menu bar width** as it changes | VERIFIED (from the same doc's purpose) |
+| A blank `setTitle('')` once crashed (electron#12343, Electron 2.0). Ancient and presumably fixed, but it argues for testing the empty-count case rather than assuming it | VERIFIED as a historical issue |
+| **No** Electron issue exists about macOS 26, the notch, Ice or Bartender. Electron's `Tray` **is** an `NSStatusItem`, so it inherits all of §3.10 exactly as a native app does, with no API on either side to detect it | VERIFIED NEGATIVE (open-issue list read) + stated interpretation |
+| Electron **PR 48738** (Oct 2025) proposes **layered tray icons** — `new Tray({ layers: [template, redDot] })` — motivated by template images being unable to carry colour, and by one `Tray` rendering onto a light and a dark menu bar simultaneously on multi-display Macs. **Merge status not confirmed.** If it lands, it is the clean way to do "template glyph + coloured activity dot" | VERIFIED as an open PR |
+| **`LSUIElement` vs `setActivationPolicy` — the community disagrees with §1.8, and it is worth recording.** Reports converge on setting `LSUIElement` in `Info.plist` rather than relying on the runtime call, because runtime-only makes the Dock icon **flash visibly for about a second at launch**, and because switching `.accessory → .regular` at runtime is reported buggy — the app menu does not populate until you tab away and back, and windows get hidden as a side effect | **RECALLED / community consensus, not primary-sourced** |
+| StreakBar calls `NSApp.setActivationPolicy(.accessory)` as the first line of `applicationDidFinishLaunching` — the runtime API in a real shipping app | VERIFIED — source read |
+| `menubar` / `electron-menubar` expose exactly one knob here, `showDockIcon` (default `false`), and neither README mentions `LSUIElement`, `setActivationPolicy`, the notch or macOS 26 | VERIFIED |
+
+**The `LSUIElement` tension, resolved for now rather than settled.** §1.8 chose
+`setActivationPolicy('accessory')` on documentary grounds, and the documentation
+is still correct. But the reported bug is in **exactly the direction `tray-only`
+needs** — `accessory → regular` when the user opens the window from the tray —
+which is the moment the whole hedge in §1.8 depends on. That is one more reason to
+**ship `window` and `tray` first and hold `tray-only` back** (§5.6), and to test
+the transition on a real build before promising it.
+
+---
+
 ---
 
 ## 4. Implementation plan — files that would change
 
-**Phase 1 — background running + tray + menu. No renderer added.**
+**Phase 0 — the four-line change that unlocks half the design.** Independent of
+everything else, and worth doing on its own merits because it fixes a live honesty
+gap in the shipped Agent memory view (§1.2a(b)).
 
 | File | Change |
 |---|---|
-| `desktop/main.js` | Create `Tray`; build the menu; wire "Open The Curator" to the **existing** `revealWindow()`; wire Quit to `app.quit()` (never `app.exit()`); read `backgroundMode` before creating anything |
-| `desktop/lib/tray-menu.js` **(new)** | **Pure**, Electron-free: turn a `GET /api/memory` payload into a menu template + glyph state. Same shape as `quit-decision.js` — the offline suite can then **execute** it |
-| `desktop/lib/state-watch.js` **(new)** | **Pure-ish**: debounce, dot-prefix filtering, `/state/` path filter, fallback-poll scheduling. Injectable clock and watcher so it is testable offline |
+| `src/brain/working-state.js` | In `listWorkingScopes`, keep two fields the function already parses and currently discards: **`harness`** and **`writtenAt`** (the journal line's `at`). Purely additive — `lastWriteAt` / `ageSeconds` are untouched, so the MCP contract and both existing consumers are unaffected |
+| `src/public/next/views/memory.js` | Prefer `writtenAt` where present; say *"changed"* rather than *"written"* on the mtime fallback |
+| `docs/working-state.md`, `docs/api-reference.md` | Name the two facts apart: **written** (the agent's clock) versus **arrived / changed** (this disk's clock) |
+| `scripts/test-working-state.js` | Assert both fields, and assert the null fallback names itself |
+
+**Phase 1 — background running + tray + native menu. No renderer added.**
+
+| File | Change |
+|---|---|
+| `desktop/main.js` | Create the `Tray` **in the main process, never a helper** (§3.10); build the menu; wire "Open The Curator" to the **existing** `revealWindow()`; wire Quit to `app.quit()` (never `app.exit()`); read `backgroundMode` before creating anything |
+| `desktop/lib/tray-model.js` **(new)** | **Pure**, Electron-free: `listWorkingScopes` output across projects → the flat, recency-ordered row model of §1.3, including the harness-vs-machine slot rule, the truncation row, and the collision detection of §1.2a(a). Same shape as `quit-decision.js`, so the offline suite can **execute** it |
+| `desktop/lib/tray-menu.js` **(new)** | Pure: row model → menu template + glyph state (the `live > unseen > idle` priority collapse, §1.5) |
+| `desktop/lib/state-watch.js` **(new)** | **Pure-ish**: debounce (~150 ms), dot-prefix filtering, `/state/` path filter, fallback-poll scheduling. Injectable clock and watcher so it is testable offline |
 | `desktop/lib/dock-mode.js` **(new)** | Pure: resolve `'window' \| 'tray' \| 'tray-only'` from config, with the fail-safe default |
-| `desktop/electron-builder.yml` | `LSUIElement` is **not** set statically — the mode is runtime, via `app.setActivationPolicy('accessory' \| 'regular')` (§3.2: the documented API; `dock.hide()` carries a 1-second no-op window and a launch-activation race). See §5, question 9 |
-| `src/brain/config.js` | Read/write top-level `backgroundMode` (**not** `ui.*` — see §1.10) |
+| `desktop/electron-builder.yml` | `LSUIElement` **not** set statically for now — the mode is runtime. **But see §3.11**: the community reports the runtime `accessory → regular` transition is buggy in exactly the direction `tray-only` needs, so this line is provisional and must be tested on a real build |
+| `src/brain/config.js` | Read/write top-level `backgroundMode` (**not** `ui.*` — §1.10) |
 | `src/routes/config.js` | Expose it on the config GET/POST |
-| `src/public/next/views/settings.js` | The three-way control, plus copy explaining what `tray-only` removes |
+| `src/public/next/views/settings.js` | The three-way control, labelled around the **menubar** question (§1.10), plus copy that anticipates the icon **not appearing** (§3.10) |
+| `src/public/next/views/memory.js` | The one-line, once-only in-context offer, gated on `ui.menubarOfferSeen` (§1.10) |
+| `src/brain/config.js` (`UI_STATE_SPEC`) | Add `menubarOfferSeen` as a one-way dismissal — the mechanism's correct use, unlike the mode |
 | `src/public/next/app.js` | **Recommendation 1**: gate the two shell `setInterval`s on `document.hidden` |
-| `scripts/test-desktop-packaging.js` | Assert tray Quit routes through `before-quit`; assert `backgroundThrottling`; source-scan the `main.js` call sites |
-| `scripts/test-tray-menu.js` **(new)** | Execute `tray-menu.js` and `state-watch.js` against fixtures — the parts that can be proven offline |
+| `scripts/test-desktop-packaging.js` | Assert tray Quit routes through `before-quit`; assert `backgroundThrottling`; source-scan the `main.js` call sites; assert the `Tray` is constructed in the main process |
+| `scripts/test-tray-model.js` **(new)** | Execute `tray-model.js`, `tray-menu.js` and `state-watch.js` against fixtures — including a fixture where a pulled file's mtime is newer than its `writtenAt`, which is §1.2a(b)'s regression |
 | `docs/mac-app.md`, `docs/user-guide.md`, `docs/working-state.md` | Document the mode; §6 of `working-state.md` currently says the in-app view is the only surface |
 
-**Phase 2 — popover panel + the two honest encodings.**
+**Phase 2 — popover panel, the scope popup, and the two honest encodings.**
 
 | File | Change |
 |---|---|
-| `desktop/main.js` | Frameless `BrowserWindow`, positioned from `tray.getBounds()`; `blur` to close; destroy on close |
+| `desktop/main.js` | Frameless `BrowserWindow`, positioned from `tray.getBounds()`; `blur` to close; **destroy** on close |
 | `desktop/lib/panel-position.js` **(new)** | Pure: tray bounds + display work area → window bounds. Multi-display and notch edge cases; testable offline |
-| `src/public/panel/**` **(new)** | The panel page. **Reuses `next/tokens/`** — it must not become a second design system |
-| `src/routes/memory.js` | **Possibly** a journal-summary endpoint for the event strip — see §5, question 2 |
+| `src/public/panel/**` **(new)** | The panel page. **Reuses `next/tokens/`** — it must not become a second design system. Renders the journal, **never `current.md`** (§1.7) |
+| — | The scope popup needs **no new endpoint**: `GET /api/memory/:project?scope=&journalLimit=8` already returns exactly the array it renders (§1.7) |
+
+**Phase 3 — the bucketed event strip** (§1.5 as amended by §3.7), per scope, per
+source, inside the popup. The only part that might want a journal endpoint the
+index does not carry — see §5.2.
 
 **Explicitly NOT changed:** `desktop/lib/quit-decision.js` (the decision is
-correct; only its call context changes), `src/brain/working-state.js` (the
-widget reads, never writes), and anything under `src/public/app.js` (`/old`).
+correct; only its call context changes), the **write** side of
+`src/brain/working-state.js` (the widget reads, never writes), `src/routes/memory.js`
+(no write endpoint, ever), and anything under `src/public/app.js` (`/old`).
 
 ---
 
 ## 5. Open questions for the maintainer
 
-1. **Which mode should the Settings control default to for a *new* install?**
-   §1.10 argues `window` for everyone, so an update changes nothing. But a
-   first-time installer has no habits to protect, and `tray` is arguably the
-   better introduction to what this product is. Two defaults, keyed on
-   `installOrigin` (which v3.28.0 already records), is possible — and is also
-   exactly the kind of cleverness that produces two code paths and one bug.
+**Six of the first pass's nine are now answered.** They are kept, struck through
+in prose, with the answer beside them, so nobody re-opens a closed one.
 
-2. **Is the save-event strip (§1.5) worth an endpoint?** It is the one
-   visualisation that needs data `GET /api/memory` does not return. The options
-   are a new `GET /api/memory/:project/journal?since=`, widening the index route
-   (which must stay cheap — a badge polls it), or dropping the strip. I lean
-   toward a **separate** endpoint so the index route's cost profile is untouched.
+1. **ANSWERED — which mode should a *new* install default to?** `window` (off),
+   the same as an existing install. One code path, no `installOrigin` cleverness.
+   The added reason (§1.10) is that a fresh install has **no agent traffic**, so an
+   on-by-default widget's only content is its empty state. Discovery moves to a
+   one-line, once-only offer **inside the Agent memory view**, shown when a project
+   first accumulates real traffic.
 
-3. **Should the row's primary click open the app, or open `current.md` in the
-   user's editor?** §1.7 picks the app and offers the editor as secondary. For
-   this audience specifically, the reverse may be right.
+2. **STILL OPEN, and narrowed — does the event strip need an endpoint?** The
+   **scope popup** needs none: `GET /api/memory/:project?scope=&journalLimit=8`
+   already returns the journal array it renders. Only the **cross-scope** strip
+   would, and that is Phase 3. Options unchanged: a separate
+   `GET /api/memory/:project/journal?since=`, widening the index route (which must
+   stay cheap — a badge polls it), or dropping the strip. Still leaning to a
+   separate endpoint.
 
-4. **How many rows, and grouped by project or flat by recency?** §1.3 proposes 8
-   rows grouped by project. A flat "8 most recent saves across everything" list
-   is the better match for *"what has the agent just done"* and the worse match
-   for *"what is the state of my projects"*.
+3. **ANSWERED, with a taste question left over — app or editor on click?** In
+   Phase 1 (native menu) a row click **opens the app on that scope**. In Phase 2
+   the row opens the **popup**, which carries both *"Open in The Curator"* and
+   *"Reveal file…"*. §3.9's precedent (syncthingStatus) puts Reveal **on the row**,
+   and §3.8's (CCMenu) makes the row's primary action *"take me to the underlying
+   thing"*. Which of the two is the row's default is the maintainer's call and
+   costs nothing to change.
 
-5. **What does the tray glyph carry — nothing, one bit, or a rendered image?**
-   Three options, in ascending cost: a completely static icon (defensible — it
-   never draws the eye, which for a background app is a feature); one bit, either
-   *live* or gitnews-style *unseen* (§1.5 leans to this, and CCMenu's
-   priority-collapse rule tells us how to reduce many scopes to one glyph); or a
-   **base64-rendered image** via `tray.setImage()`, which §3.5 establishes is
-   possible and which could put a save-event strip in the *bar itself*, no
-   popover required. The third is the closest thing to the maintainer's
-   screenshot that Phase 1 can reach, and it is also the easiest to overdo.
+4. **ANSWERED — how many rows, grouped or flat?** **Eight, flat by recency, not
+   grouped by project** — reversing the first pass. §1.3 argues it; §3.9 found a
+   working implementation of exactly that shape (`prefix(5)` + "Show All (23)"),
+   and found that the device-list shape the first pass leaned toward is the one
+   the field mostly abandoned.
 
-6. **Is `tray-only` worth shipping?** It is the mode the "real estate" complaint
-   most directly asks for, and the mode with the most ways to strand a user.
-   Shipping only `window` and `tray` initially is a defensible first cut.
+5. **STILL OPEN — what does the glyph carry?** Now with better information.
+   *Static* is defensible. *One bit* is the lean, and the choice is between **live**
+   (an agent wrote in the last two minutes) and gitnews-style **unseen** (novelty
+   since you last looked); §1.5 leans to unseen, CCMenu's priority-collapse tells
+   us how to reduce many scopes to one. The *rendered image* option is now priced:
+   §3.7 shows StreakBar does exactly this natively, and §3.11 shows Electron's
+   `Tray` takes only a `NativeImage`, so we would render a PNG ourselves on every
+   change and lose `variableLength` and hover. **New input:** Electron PR 48738
+   (layered tray icons) would make "template glyph + coloured dot" clean if it
+   lands — worth checking before building anything custom.
 
-7. **Recommendation 2 (the GPU process) is unmeasured and potentially the
-   largest win in this document.** Should it be pulled out of this roadmap and
-   done as its own small measured change, independent of the widget?
+6. **LEANING NO, FOR NOW — is `tray-only` worth shipping?** §3.11 adds a reason to
+   hold it: the runtime `accessory → regular` transition, which is exactly what
+   `tray-only` depends on when the user opens the window from the tray, is
+   **reported buggy** (RECALLED, not primary-sourced — worth 20 minutes on a real
+   build before deciding). Shipping `window` and `tray` only is the safer first
+   cut, and it costs the user nothing they have today.
 
-8. **`menubar@9.5.3` or `electron-menubar@10.2.1` — or neither?** §3.2 found both
-   packages active with overlapping maintainers, the fork claiming to be the
-   successor and the original explicitly supporting Electron 43. Adopting either
-   buys tray-bounds positioning, blur-to-hide, and the `dock.hide()` race
-   workaround — perhaps 200 lines we would otherwise write and get wrong. Against
-   that: this repo has **zero devDependencies at the root** and has refused
-   dependencies four times on that principle, and it would be a runtime dependency
-   of `desktop/`, which currently has none either. Phase 1 (menu only) needs none
-   of it, so the decision can be deferred to Phase 2 — but the two candidates
-   should be re-checked then, not assumed.
+7. **STILL OPEN, and still the best isolated win — the GPU process.** 85 MB
+   resident, 583 MB peak, for a static UI. Unmeasured. Should be pulled out of this
+   roadmap and done as its own small measured change, independent of the widget.
 
-9. **`setActivationPolicy('accessory')` or `LSUIElement` in `extendInfo`?** §3.2
-   establishes the runtime API is the documented one and that Electron never
-   mentions `LSUIElement`. But a static `LSUIElement` never bounces the Dock at
-   launch, whereas the runtime call can briefly show the icon — which is why the
-   `menubar` library ships a 2000 ms re-hide. The runtime API is required anyway
-   for a three-way switchable mode; the question is whether `tray-only` users
-   would be better served by a relaunch into a statically-configured state.
+8. **PARTLY ANSWERED — `menubar@9.5.3` or `electron-menubar@10.2.1`?** §3.8 found
+   **Gitify imports `Menubar` from `electron-menubar`**, so the fork has at least
+   one real production consumer. Phase 1 (native menu) still needs neither, so the
+   decision stays deferred to Phase 2 — but note the repo has **zero root
+   devDependencies** and `desktop/` has no runtime dependencies either, and both
+   libraries mostly buy ~200 lines of positioning, blur-to-hide and the
+   `dock.hide()` race workaround.
+
+9. **STILL OPEN, and now contested — `setActivationPolicy` or `LSUIElement`?**
+   §1.8 chose the runtime API on documentary grounds and the documentation has not
+   changed. §3.11 records community reports pointing the other way (a ~1 s Dock
+   flash at launch; a buggy `accessory → regular` transition). The runtime API is
+   required anyway for a switchable mode. **Recommendation: do not decide from
+   documents — build both once and look**, and until then treat question 6 as
+   answered "not yet".
+
+10. **NEW — should the collision warning (§1.2a(a), §1.3 #5) ship in Phase 1?** It
+    is the highest-consequence thing the widget can say and it costs no I/O. The
+    argument against is that a warning about a condition the user has never hit,
+    on a surface they just enabled, is noise — and this project has a recorded rule
+    that a warning which fires when it should not is worse than no warning. It fires
+    only when two different `harness` values appear consecutively in one folder
+    inside a short window; the threshold has never been tuned against real data,
+    because there is no real data yet.
+
+11. **NEW — is a first-run fallback needed for an invisible icon?** §3.10 found
+    **three independent ways** the icon disappears silently (the notch, Ice's
+    Always-Hidden section, the macOS 26 Menu Bar toggle), **no API to detect any of
+    them**, and Electron does not even expose `NSStatusItem.removalAllowed`. The
+    cheap answer is copy: the Settings toggle says the icon may not appear and
+    where to look. The expensive answer is a confirmation the app cannot honestly
+    give. Recommendation: copy only.
 
 ---
 
-## 6. Sequencing — and I agree with it
+## 6. Sequencing — updated for v3.33.0
 
-**This is scoped for a release after v3.31.0, and that is the right call.**
+**The first pass scoped this for "a release after v3.31.0", and that release has
+shipped**, along with v3.32.0 and v3.33.0. The reasoning behind the deferral is
+still the reasoning that should govern it:
 
-v3.31.0 exists to make the download-install-run path work without crashing.
-This feature changes the app's **process lifetime model**: the app stops being
+This feature changes the app's **process lifetime model**. The app stops being
 something you open and close and becomes something that is always there. That
-touches the quit guard, the Dock, the window lifecycle, and — if the popover is
-built — adds a second renderer. Every one of those is a way to make "it launches
-and works" false, which is precisely the property v3.31.0 exists to establish.
+touches the quit guard, the Dock, the window lifecycle, and — from Phase 2 — adds
+a second renderer. `desktop/README.md` is blunt that the busy-quit `ask` branches
+have **never run against a real write**, and making the app long-lived makes those
+branches *more* likely to fire, not less.
 
-`desktop/README.md` is also blunt that the busy-quit `ask` branches have **never
-run against a real write**. Making the app long-lived makes those branches
-*more* likely to fire. Landing both changes in one release means the first real
-exercise of an untested path happens inside a release whose goal is stability.
+**What changed in this pass is that the work now splits cleanly into four phases
+with very different risk profiles**, and only two of them touch the lifetime model
+at all:
 
-**One dissent, and it is small.** Recommendations 1 and 2 in §2.7 are not part of
-this feature. Gating two `setInterval`s on `document.hidden` is a few lines with
-an existing three-times-proven pattern, and measuring the GPU process costs one
-launch. Both improve the app that ships in v3.31.0 and neither touches the
-lifecycle. If anything from this document lands early, it should be those — and
-they should be argued on their own merits, not carried in on this feature's back.
+| Phase | Touches process lifetime? | Adds a renderer? | Risk |
+|---|---|---|---|
+| **0** — two fields on the store's index row | No | No | ~None. Additive, and it fixes a live bug in a shipped view |
+| **1** — tray + native menu, `window` default | **Yes** | No | The real risk sits here: Dock, quit guard, window lifecycle |
+| **2** — popover panel + scope popup | No further | **Yes** | Memory and a second surface; contained |
+| **3** — bucketed event strip | No | No | Cosmetic; first thing to cut |
+
+**Phase 0 should not wait for any of this.** It is four lines in
+`listWorkingScopes`, it is purely additive, and it corrects a defect that is live
+today in the Agent memory view on any multi-machine setup (§1.2a(b)). It should be
+argued and shipped on its own merits, not carried in on this feature's back.
+
+**The same still applies to the first pass's two recommendations**: gating the two
+shell `setInterval`s on `document.hidden` (§2.7 rec 1) is a few lines with an
+existing three-times-proven pattern, and measuring the GPU process (rec 2) costs
+one launch. Both improve the app whether or not the widget is ever built.
+
+---
+
+## 7. RECOMMENDATION — in plain language
+
+*Written to be read aloud. No jargon, no file names.*
+
+### What this is
+
+A small icon in the top menu bar of your Mac that shows what your AI agents have
+been writing into The Curator, without you having to open the app.
+
+### Build these three things, in this order
+
+**First — fix a wrong number that is already on screen.**
+Right now, when your second computer downloads work from your first computer, The
+Curator shows it as *"just now"* — because it is reading the moment the file
+landed on the disk, not the moment the agent actually wrote it. So a handoff from
+yesterday morning looks like it happened this second. This is a small fix, it is
+about four lines, and it needs doing whether or not the widget is ever built. It
+also happens to unlock half of what the widget wants to say.
+
+**Second — the menu bar icon, with a plain list.**
+Click the icon, see the eight most recent things your agents have saved, newest
+first. Each one says which workstream it was, who wrote it, how long ago, and the
+one-line summary the agent itself wrote. Underneath: *Open The Curator*, and
+*Quit*. That is the whole of it. No graphics yet. This version already does
+everything you asked for except the pop-up card, and it is by far the cheapest
+thing to build.
+
+**Third — the pop-up card, when you click a workstream.**
+You asked to click a scope and see it rather than opening the whole app, and you
+should have that. It shows the last few things that happened in that workstream —
+each with the time, which tool wrote it, and the summary — plus a small bar
+showing how full that handoff is getting, and a button to open the real thing in
+the app or in your editor.
+
+### What I would draw, and what I refuse
+
+**I would draw two things, and only two.**
+
+- **A small bar showing how full a handoff is.** There is a real ceiling — 48 KB
+  — and when you pass it The Curator quietly trims your handoff. That is worth
+  seeing before it happens, and it is the one number in the whole system that
+  behaves like the numbers on a system monitor. It stays invisible until it is
+  worth noticing.
+- **A coloured dot for how recent each entry is** — working right now, this
+  session, today, this week, dormant. Five steps, not a sliding bar, because
+  "how old" has no maximum and a bar that is "half full" would be inventing one.
+
+**Later, and only if you want it: a little activity strip** showing which tool
+wrote in which five-minute slot over the last hour, one row per tool. That is the
+closest honest thing to the system-monitor look you pointed at, and it is the one
+place where having two tools running at once genuinely makes a picture worth
+drawing. It is also the first thing I would cut.
+
+**I refuse four things, and the reason is the same in every case: they would look
+precise while telling you nothing true.**
+
+- **A progress bar for a save.** A save is not partly done. It has happened or it
+  has not. A bar would be theatre.
+- **A wavy line graph of saves over time.** A line between two points says
+  something existed in between. Between two saves, nothing exists.
+- **Anything where "more saves" looks like "more progress".** How often an agent
+  saves is a setting, not an achievement. Drawing it bigger would flatter the
+  wrong thing.
+- **A CPU or memory meter for The Curator itself.** It is the only part that
+  would have to run constantly, it would cost the most, and nobody installed a
+  second brain to watch it breathe.
+
+### The setting, and the default
+
+There is a single setting: **Off / On / On, and hide the Dock icon.**
+
+**It should be Off by default, for everybody**, and the reason is not caution. On
+a brand-new install there is no agent memory yet, so an on-by-default icon's only
+possible content is *"nothing here yet"* — the worst possible first impression,
+and it teaches people the icon is not worth clicking. Instead, the app offers it
+**once**, quietly, in the Agent memory screen, at the moment a project has
+actually accumulated some work. One line, with *Turn on* and *Not now*. If you say
+not now, it never asks again.
+
+**One warning to put in the setting's own text.** There are three separate ways a
+new menu bar icon can silently fail to appear on a modern Mac — it can be pushed
+off the edge behind the notch, a menu bar organiser can file it into a hidden
+section, and macOS now has a permission for menu bar items. **Apple provides no
+way for an app to find out which of these happened.** So the setting should say
+plainly that the icon may not show up and where to look, rather than leaving
+someone to conclude the feature is broken.
+
+### The one thing I found that you will want to know about
+
+**Two agent tools running on the same computer cannot be told apart by The
+Curator.** If opencode and Claude Code are both working on the same project and
+the same workstream, they write to the same file, and each one overwrites the
+other. Nothing warns you. The permanent record of *what happened* survives — that
+is a separate, append-only log — but the *current handoff* only ever holds
+whichever tool saved last.
+
+The fix is on your side, not in the code: **give each tool its own workstream
+name**, and they never collide. What the widget can do — for free, because the
+information is already being read and thrown away — is **notice when it is
+happening and say so in one line**. That is the single most valuable thing in this
+whole design, and it costs almost nothing.
+
+### What you will not get
+
+The pop-up card shows **what has happened**, not **where things stand**. The long
+"here is the state of play" section of a handoff runs to fifteen thousand
+characters or so, and there is no honest way to put that in a menu bar. Anyone
+who reads only the pop-up is reading the shallow version. The card is there to
+answer *is this worth looking at?* — the app answers *what is in it?*
+
+And one thing the icon itself can never tell you: **whether your other computer
+has pushed something you have not downloaded yet.** That question needs the
+network, and putting it on a timer would mean The Curator quietly phoning GitHub
+forever behind a closed menu. So it is checked **at the moment you open the menu**
+and shown as a line inside it — never in the icon.
