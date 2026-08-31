@@ -76,8 +76,14 @@ is idempotent).
 
 The same operation via curl:
 
+> **`$CURATOR` is the app's own address.** A browser install serves it at
+> `http://localhost:3333`, so `export CURATOR=http://localhost:3333` and the commands
+> below work as written. **The packaged Mac app picks a free port at every launch**, so
+> there is no fixed number to hardcode — read the address from the app window, or use the
+> UI, which is what these `curl` forms document rather than replace.
+
 ```bash
-curl -X POST http://localhost:3333/api/sharedbrain/<connection_id>/revoke \
+curl -X POST $CURATOR/api/sharedbrain/<connection_id>/revoke \
   -H 'Content-Type: application/json' \
   -d '{
     "admin_token": "<your-admin-token>",
@@ -281,7 +287,7 @@ Lost the token? Since v3.0.5 it's one click: **Shared Brain** rail view → conn
 Via the API:
 
 ```bash
-curl -X POST http://localhost:3333/api/sharedbrain/generate-invite \
+curl -X POST $CURATOR/api/sharedbrain/generate-invite \
   -H 'Content-Type: application/json' \
   -d '{
     "repo": "<owner>/<name>",

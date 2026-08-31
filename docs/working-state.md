@@ -164,6 +164,30 @@ count and confirms, offers a non-destructive merge instead, and joins an existin
 repository rather than creating a second one over the same folder. See
 [sync.md](sync.md).
 
+**Read the table above as a shape, not as a list of four things.** The rule underneath it
+is: *path uniqueness prevents two writers from colliding inside one file; it does nothing
+about an operation that replaces the file wholesale.* Anything in that second class —
+a `checkout`, a `reset --hard`, a restore from a backup, a second repository writing the
+same paths from a different history — reaches this store regardless of how the path is
+shaped, because there is nothing to collide with. The guards for that class are in the
+sync layer and are enumerable; the layout is not one of them.
+
+So, concretely, and this is what the guarantee obliges you to do rather than what it
+does for you:
+
+- **Connecting sync on a machine that already has state on it is the risky moment**, not
+  the daily pull. That is the one operation whose normal ending is a checkout of the
+  remote over your folder. Prefer **Merge — keep both**, and read the count if you are
+  offered one.
+- **Pointing a second install at a folder the first one already syncs is safe now** —
+  it joins the existing history — **but only via the app.** Wiring up a second sync
+  repository by hand over the same folder puts you back in the last row of that table,
+  where nothing protects you.
+- **Recovering is a `reflog` question, not a `log` question.** A `log` that finds
+  nothing is not evidence of loss in a repository that has been hard-reset. The commit
+  that carried the destroyed handoffs in August 2026 was still on disk the whole time —
+  merely unreachable — and `git reflog` plus `git fsck --lost-found` are what find it.
+
 **Nothing in this section should be read as "working state is safe from sync".** It is
 safe from the specific merge hazard it was designed against. Anything that rewrites the
 work tree wholesale still reaches it, and the reason it hurts more here than in the wiki
@@ -307,7 +331,7 @@ find the name.
 | | |
 |---|---|
 | Filenames | `.curator-install-id`, `.curator-machine-id` |
-| Location | `getUserDataDir()` — which in a repo install is the **app checkout root**, not a hidden support folder (in a future packaged build, `~/Library/Application Support/The Curator`). Outside `domains/`, which is the point: they must never sync |
+| Location | `getUserDataDir()` — which in a repo install is the **app checkout root**, not a hidden support folder, and in the packaged Mac app is `~/Library/Application Support/The Curator`. Outside `domains/` either way, which is the point: they must never sync |
 | Permissions | `0600`, set at the write itself. Note they are **not** in `getCredentialFiles()`, so the startup `chmod` sweep does not re-assert it |
 | Git | Both are in `.gitignore`. This matters more than it looks in repo mode, where they land inside the app repo — `.curator-machine-id` is the worse of the two to leak, because it is a whole path segment rather than half of one |
 | Validated on read | Yes, every time. A machine id must satisfy `isSafeSegment`; an install id must match `/^[0-9a-f]{4,16}$/`. Without that check a hand-edited `../../evil` would become a path segment. A value that fails is ignored and then overwritten, so a corrupt file self-repairs rather than wedging |

@@ -1,21 +1,85 @@
 # Mac App — The Curator
 
-The Curator includes a macOS app wrapper that lives in your Dock. Double-click to launch — no Terminal needed.
+There are **two** Mac shapes, both current, and this page covers both.
 
-> **What this page describes is what ships today: an AppleScript wrapper around a
-> normal checkout**, built on your own machine by the installer. It is not a
-> downloadable, signed application, and **there is no `.dmg` to download.**
+| | **The packaged app** (`.dmg`) | **The Dock launcher** (built by `install.sh`) |
+|---|---|---|
+| What you get | A real macOS application you download and drag to Applications | A compiled AppleScript applet in `~/the-curator/` that starts a Node server and opens your browser |
+| Needs Node.js? | **No** — it carries its own runtime | Yes; the installer puts it there for you |
+| Where the interface appears | Its own window | A browser tab at `http://localhost:3333` |
+| How it updates | **In the app** — Settings → General → *Check for updates* → **Download and install** ([§ Updating](#updating-the-packaged-app)) | Settings → General → *Check for updates*, which runs `git` against the checkout |
+| Install mode reported by System Check | *Packaged app* | *Source install (git checkout)* |
+
+Which one you have is not a guess: **Settings → General → Run system check**, the
+**Install mode** row.
+
+**In one line, and it is the same line for both:** what you launch is a *shell*
+around the same server, and neither shell owns your knowledge. That lives in a
+`domains/` folder as plain markdown, which is why swapping one shell for the
+other — or replacing, reinstalling or deleting either — costs you nothing.
+
+The difference between the two is only where the server runs. The Dock launcher
+starts `node src/server.js` as a detached background process and opens your
+browser at a fixed `localhost:3333`. The packaged app *imports* the same
+`src/server.js` into its own process — one program, no child process, and a fresh
+free port chosen each launch, so it can never collide with a checkout you are
+already running on 3333.
+
+> The decisions behind the packaged app — with the reasoning, the evidence, and
+> whether code exists for each — are in
+> [desktop-app-decisions.md](desktop-app-decisions.md). What the shell *is*
+> internally is [architecture.md § The macOS desktop shell](architecture.md#the-macos-desktop-shell-desktop).
+
+---
+
+## Getting the packaged app
+
+Download the `.dmg` from the
+[**Releases page**](https://github.com/talirezun/the-curator/releases) — the newest
+release at the top, and the build whose filename carries **`arm64`** (Apple Silicon)
+or **`x64`** (Intel). About 140 MB, because the app carries its own runtime. Open it
+and drag **The Curator** onto **Applications**.
+
+**This is a first install only.** Once the app is on your machine it updates
+itself — you should not need the Releases page again. See
+[§ Updating](#updating-the-packaged-app).
+
+> **First launch is blocked by Gatekeeper, and you allow it once.** The app is
+> **ad-hoc signed**: the bundle's contents are sealed so macOS can tell the app has
+> not been tampered with, but there is no Apple developer identity behind that seal
+> and it is not notarized, so macOS cannot tell you *who* built it. Apple Developer
+> enrolment is in progress.
 >
-> A properly packaged Mac app is being worked on. Nothing on this page describes
-> it, and nothing here is deprecated by it — the decisions taken so far, and
-> exactly which of them have code behind them, are recorded in
-> [desktop-app-decisions.md](desktop-app-decisions.md). If you want to know what
-> will change for *you*, that is
-> [§ Migration](desktop-app-decisions.md#4-migration-for-existing-users).
+> 1. Open **Applications** and double-click **The Curator**. macOS blocks it —
+>    dismiss the dialog.
+> 2. **System Settings → Privacy & Security**, scroll to **Security**, click
+>    **Open Anyway**. Confirm, and enter your password if asked.
+> 3. Open the app again. The exception is remembered.
+>
+> Don't leave a long gap between steps 1 and 2 — the button only appears for a
+> while after a blocked launch. Control-click → **Open** no longer works on macOS
+> Sequoia (15) and later; System Settings is the route.
+>
+> **Honest limit:** nobody has yet launched a quarantined copy of a current build
+> to see which dialog macOS shows. The steps above are what the app's signature
+> state *should* produce, inferred from `syspolicy_check` rather than observed.
+>
+> **If macOS says the app *"is damaged and can't be opened"*** and offers **no**
+> Open Anyway button, you have an old build. Releases up to and including
+> `v3.30.0` shipped with a **broken** signature — a header declaring sealed
+> resources the bundle did not actually have — which is a different and worse
+> Gatekeeper class than "unidentified developer", and the only escape is
+> `xattr -dr com.apple.quarantine "/Applications/The Curator.app"` in Terminal.
+> The fix is to download a build from `v3.31.0` or later; that class is gone.
 
-**In one line:** the thing in your Dock is a small launcher. Your knowledge lives
-in the `domains/` folder as plain markdown, completely independent of it — which
-is why replacing the launcher later costs you nothing.
+---
+
+## The Dock launcher (`install.sh`)
+
+Everything from here to [§ Updating](#updating-the-packaged-app) describes the
+**AppleScript Dock launcher** the one-command installer builds. It is not
+deprecated and it is not going away — it is the same server, and on Windows and
+Linux the browser install is the only option.
 
 ---
 
@@ -62,62 +126,146 @@ You click **Check for updates** in the **Settings** view (reached from the left 
 
 ---
 
-## Updates in the packaged app
+## Updating the packaged app
+
+**The app updates itself.** You do not go back to the Releases page — that is a
+first install only.
 
 A checkout replaces its own files (`git fetch` + `git reset --hard` + `npm install`
 + a restart). **A packaged app cannot**, and does not pretend to: it is read-only,
 has no `.git` and no `node_modules` to install into, and re-running
-`scripts/build-app.sh` would destroy a real code signature. The capability record
-in `src/brain/install-mode.js` says so by name — `canSelfUpdateViaGit: false` —
-and `POST /api/config/update` refuses with a `501`.
+`scripts/build-app.sh` would destroy a code signature. The capability record in
+`src/brain/install-mode.js` says so by name — `canSelfUpdateViaGit: false` — and the
+git route refuses with a `501`. So the app takes the other route: it downloads a
+new copy of itself, checks it, and swaps it in.
 
-So **Settings → Software update** does something different there, and the section
-says which before you click anything:
+### What the flow looks like
 
-1. **Check for updates** calls `GET /api/config/update-check`, which — because the
-   install's `updateStyle` is `download-installer` — reads GitHub's public release
-   list instead of a git branch. One unauthenticated `GET`, no credentials, no
-   personal data, an 8-second timeout.
-2. It selects **the newest release that actually carries an installer** and
-   compares that version with the one you are running.
-3. If yours is older you get **Update available**, the release name, and a link
-   that opens the download page in your own browser. You download the disk image
-   and run it; it replaces the app in `/Applications`. Nothing is downloaded or
-   installed for you.
-4. If yours is current, or newer than anything published, or nothing installable
-   has been published at all, or the check could not reach GitHub — you get four
-   **different** messages. "You're up to date" and "we couldn't check" never share
-   wording.
+```mermaid
+flowchart TD
+    A["Settings → General<br/>Check for updates"] --> B{"Newer release<br/>carrying an installer?"}
+    B -->|no| C["Up to date — or one of three<br/>other messages, each different"]
+    B -->|yes| D["Update available<br/>v3.32.0 → v3.33.0"]
+    D --> E["Download and install<br/>(a confirm dialog first)"]
+    E --> F["Finding · Downloading · Checking<br/>· Preparing · Installing"]
+    F --> G["Update ready to install<br/>NOTHING REPLACED YET"]
+    G --> H["Restart and finish"]
+    H --> I["The app restarts into the new version<br/>and this page reloads itself"]
+    D -.->|"you can still do it by hand"| J["Open the download page"]
+    F -.->|"anything fails"| K["A named reason.<br/>The copy you are running still works."]
+```
 
-**Automatic download and install are deliberately not built.** `electron-updater`
-needs a signed, notarized app and a paid Apple Developer enrolment; until those
-exist, an updater that silently swaps an unsigned binary is worse than a link.
+1. **Check for updates** reads GitHub's public release list — one unauthenticated
+   `GET`, no credentials, no personal data, an 8-second timeout. It selects **the
+   newest release that actually carries an installer** and compares that version
+   with the one you are running.
+2. If yours is older you get **Update available** with both version numbers and
+   the release name, a **Download and install** button, and — still — a link to
+   open the download page if you would rather do it by hand.
+3. **Download and install** asks you to confirm first. It deliberately does **not**
+   quote a download size: nobody knows it until the server has asked, and the real
+   figure appears on the progress line the moment it is measured.
+4. Five named steps run, on a progress ring: **Finding · Downloading · Checking ·
+   Preparing · Installing**. While downloading you see real byte counts
+   (`58.2 MB of 137 MB · 43%`). If the total size is not known the app says so
+   rather than showing a bar sitting at 0%.
+5. **The download does not stop if you navigate away.** Switch to Chat, or reload
+   the page entirely, and the update keeps going — the stream is a view of the job,
+   not the job. It also means **there is no cancel**.
+6. At **Update ready to install** the new version has been downloaded and checked
+   and **nothing has been replaced**. One button, **Restart and finish**, does the
+   swap. It takes a few seconds.
+7. The app restarts into the new version and the page reloads itself. **There is
+   no Gatekeeper warning to click through** — see below.
+
+**Starting a new ingest while the update runs is refused** with a clear message
+rather than being allowed to race the restart — both the single ingest and the
+batch queue check the update flag. In the other direction, if a write is already
+in flight when you press **Restart and finish**, the app keeps the update parked
+at *ready to install* instead of truncating your work; finish it when the write is
+done.
+
+*(Sync is deliberately not gated on the download — it is short and is not a paid
+write. The gate that matters is on the swap, and that one covers everything.)*
+
+### No security warning on an update, and why
+
+A `.dmg` your **browser** downloads is stamped with `com.apple.quarantine`, which
+is what produces the Privacy & Security detour on a first install. A `.dmg` **the
+app itself** fetched is not — measured, with the browser download kept as the
+control. So an in-app update opens straight into the new version with no dialog and
+no App Translocation.
+
+### What is checked, and what cannot be
+
+| Checked | How |
+|---|---|
+| The file arrived complete | Byte length against the size GitHub publishes for the asset |
+| The file is the file GitHub published | **sha256 against the `digest` GitHub publishes on the asset** |
+| The app inside it is the version claimed | `CFBundleShortVersionString` read out of the staged bundle |
+| The bundle is internally intact | `codesign --verify --deep --strict` |
+
+**What none of that proves is that Apple vouches for the bytes.** `codesign
+--verify` on an ad-hoc-signed bundle is an *integrity* check, not an authenticity
+one. Authenticity rests entirely on the published digest and on TLS to GitHub,
+which is why the digest check is not optional and why the download host is
+restricted to `github.com` and `objects.githubusercontent.com`. Nothing in the app
+claims Apple checked anything.
+
+### If it fails
+
+Every failure names a reason in plain language and says what was **not** changed;
+the copy you are running keeps working. The swap itself is two renames of
+neighbouring folders on the same disk, so a half-replaced application is not a
+state that can exist: either the old app is complete or the new one is. Lose power
+in the two-syscall window between them and both complete copies are sitting side by
+side under known names, with the recovery written into
+`~/Library/Logs/The Curator/update-install.log`.
+
+> **What has not been proven.** No automated run has ever replaced a real
+> installed application. The test suite swaps a real ad-hoc-signed *fixture*
+> bundle in a temporary folder — it genuinely replaces it, and the result genuinely
+> still passes `codesign` — but the 140 MB round trip to GitHub against a live
+> release has not been exercised end to end, and **the update screens have never
+> been rendered in a browser**. Treat the first real update as the first real test.
+
+> **Rosetta:** an arm64 build installed under x64 emulation stays on x64. The app
+> updates like for like and will not silently migrate you to another architecture
+> behind a progress bar.
+
+**`/old` has no in-app update path.** The frozen previous interface still posts to
+the git updater, which a packaged app refuses. Use the current interface.
 
 ### Why a pre-release can be offered
 
 GitHub's `/releases/latest` means *newest release that is neither a draft nor a
-pre-release*. Measured against this repository on 2026-08-31:
+pre-release*. Measured against this repository on 2026-08-31, when the flow was
+built:
 
 | Query | Answer | Carries an installer? |
 |---|---|---|
 | `/releases/latest` | `v3.9.0` | **No** — zero assets |
-| `/releases` | 5 releases; exactly one has a `.dmg` | `v3.30.0`, flagged **pre-release** |
+| `/releases` | 5 releases; exactly one had a `.dmg` | `v3.30.0`, flagged **pre-release** |
 
 Excluding pre-releases would therefore have told every packaged user they were
 *ahead of the published version*, permanently, and — if it had ever offered
 anything — pointed them at a page with nothing to download. The rule is instead
-**newest release with an installer**, and the pre-release status is shown in the
-status box rather than hidden. Today the only way to have the Mac app at all is an
-unsigned preview build, so hiding that would be the dishonest half of the trade.
-When signed stable builds start shipping they become the newest installable
-release with no code change.
+**newest release with an installer**, chosen by version number rather than by
+publication order, and the pre-release status is shown in the status box rather
+than hidden. Today the only way to have the Mac app at all is an ad-hoc-signed
+preview build, so hiding that would be the dishonest half of the trade. When
+signed stable builds start shipping they become the newest installable release
+with no code change.
+
+*(The counts in that table are a snapshot of the day, not a live figure. The rule
+is what matters and the rule has not changed.)*
 
 ### Going back to an earlier version
 
-There is no in-app rollback, and the panel behind the ⓘ next to *Software update*
-does not claim one. Going back means installing an older build the same way you
-installed this one — and **only releases that carry a download can be
-reinstalled**. Check
+**Updating is in-app; going back is not.** There is no in-app rollback, and the
+panel behind the ⓘ next to *Software update* does not claim one. Going back means
+installing an older build the way you installed the first one — and **only
+releases that carry a download can be reinstalled**. Check
 [the releases page](https://github.com/talirezun/the-curator/releases) to see which
 ones do before relying on it. Your knowledge base, API keys and sync settings are
 stored outside the app and are untouched by installing, reinstalling or deleting
@@ -163,18 +311,18 @@ The build script also runs automatically during updates (via the **Settings** vi
 
 ---
 
-## What changes when the packaged app arrives
+## Moving from the Dock launcher to the packaged app
 
-**Not yet — none of this exists today.** It is here so the answer to "will I lose
-my wiki?" is written down rather than guessed at. The reasoning behind each row
-is in [desktop-app-decisions.md](desktop-app-decisions.md).
+Both are supported and you can keep both. If you want to move, this is what it
+costs. The reasoning behind each row is in
+[desktop-app-decisions.md](desktop-app-decisions.md).
 
-| | Today (this page) | Packaged app (planned) |
+| | The Dock launcher | The packaged app |
 |---|---|---|
-| **What you install** | The installer clones the repo and builds a `.app` **on your machine** | A signed application you download |
-| **Where your knowledge lives** | Inside the checkout, at `~/the-curator/domains/` | Anywhere you point it — the app cannot write inside itself |
-| **Updates** | Settings → Check for updates runs `git` against the checkout | Settings → Check for updates reads GitHub's **release list** and, if a newer downloadable build exists, opens its page — **you** run the installer. The git route still refuses with a `501`. See [§ Updates in the packaged app](#updates-in-the-packaged-app) |
-| **Rebuilding the `.app`** | `bash scripts/build-app.sh`, as above | Never — the ad-hoc `codesign` above would destroy a real signature |
+| **What you install** | The installer clones the repo and builds a `.app` **on your machine** | An application you download and drag to Applications |
+| **Where your knowledge lives by default** | Inside the checkout, at `~/the-curator/domains/` | `~/Library/Application Support/The Curator/domains` — but you point it wherever you like |
+| **Updates** | Settings → Check for updates runs `git` against the checkout | Settings → Check for updates downloads, verifies and installs a new copy of the app — see [§ Updating](#updating-the-packaged-app). The git route refuses with a `501` |
+| **Rebuilding the `.app`** | `bash scripts/build-app.sh`, as below | Never — that ad-hoc `codesign` would destroy the bundle's own signature |
 | **Your files** | Plain markdown in `domains/` | **Identical.** Same files, same folder, same Obsidian vault |
 
 **What you would have to redo, and what you would not:**
@@ -185,16 +333,38 @@ is in [desktop-app-decisions.md](desktop-app-decisions.md).
 | Chat history and working state | Reconnect Personal Sync, if you use it |
 | Your Obsidian vault and graph settings | Re-run the MCP wizard, if you use it |
 
-The one thing that must work is that **your existing wiki appears**, and that
-needs no new code at all — the wiki is plain markdown, and Settings → Knowledge
-base folder already points the app at any folder you choose. **Credentials are
-deliberately not migrated**; that decision, and why re-typing a key beats writing
-a one-shot importer for three secret files, is
+The one thing that must work is that **your existing wiki appears**. There is no
+importer and no conversion: the wiki is plain markdown, and pointing the app at
+the folder *is* the migration. The Domains view's sidebar carries a **Use existing
+folder** button for exactly this, on every state of that screen.
+
+> ⚠️ **Pick the folder that CONTAINS your domains, not a domain itself.** If your
+> wiki is at `~/the-curator/domains/articles/`, the folder to pick is
+> `…/domains` — the one holding a subfolder per domain. Pick `articles` and you
+> get an empty list, because there are no domains *inside* it. The full trap, and
+> why the app cannot tell you which mistake you made, is in
+> [user-guide.md § Knowledge base folder](user-guide.md#knowledge-base-folder).
+
+**Credentials are deliberately not migrated**; that decision, and why re-typing a
+key beats writing a one-shot importer for three secret files, is
 [D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
+
+> **Running both at once over one folder** is possible and is not guarded
+> against. See [§ Two installs, one knowledge folder](user-guide.md#two-installs-one-knowledge-folder)
+> — including the part people get caught by, which is that **closing the browser
+> tab does not stop the browser install's server**.
 
 ---
 
 ## Troubleshooting
+
+> **Most of this section is about the Dock launcher**, because that is the shape with
+> a `node` path and a fixed port to go wrong. The packaged app's own troubleshooting
+> is in [user-guide.md § 18 → Mac app](user-guide.md#mac-app). It writes to the same
+> `curator.log`, plus one file of its own:
+> `~/Library/Logs/The Curator/update-install.log`, which records what the update
+> helper did during a bundle swap. There is no `/tmp/the-curator.log` there —
+> that file is the AppleScript launcher's stdout capture and nothing else writes it.
 
 **"The Curator could not start" dialog appears**
 

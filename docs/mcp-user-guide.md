@@ -120,9 +120,12 @@ could invent would contain *only* the my-curator entry — pasting it would dele
 server you have configured. Fix the syntax error in that file first, then reopen the wizard. The
 entry-only **Copy snippet** in step 2 is unaffected and remains safe to paste by hand.
 
-**What the self-test actually checks** (v3.6.1+): it launches `mcp/server.js` with **the same
-`--domains-path` the snippet tells Claude Desktop to use**, so a wrong Knowledge Base Location can
-no longer produce a green pass. It reports two things separately — whether the bridge speaks MCP
+**What the self-test actually checks** (v3.6.1+): it spawns **exactly the command the snippet
+prescribes** — in a source install, `mcp/server.js` with the same `--domains-path`; in the packaged
+app, the launcher script with no arguments — so a wrong Knowledge Base Location can no longer
+produce a green pass. Note what that deliberately does *not* do: it never reads the command Claude
+Desktop has actually saved, and always computes a fresh one, so a bridge failure can never be
+misattributed to a stale config file. It reports two things separately — whether the bridge speaks MCP
 (that is what pass/fail means), and what happened when it asked for your domains. A brand-new
 install with no domains yet passes, and says so, rather than being reported as broken. It never
 reads or validates `claude_desktop_config.json` — see Troubleshooting below.
@@ -574,11 +577,19 @@ Composing every answer from raw source text instead of the compiled wiki would q
 
 ## Things to know
 
-**If you move your domains folder, MCP stops working.** The config file has an absolute path baked in. When you change the Knowledge Base Location in **Settings → Knowledge base** (or move the Curator install), come back to **Settings → MCP bridge**, click **Regenerate**, paste the new snippet, and restart Claude Desktop. The wizard detects staleness and shows a warning banner when it happens.
+**Whether moving your domains folder breaks MCP depends on which install you have**, because the two write structurally different Claude Desktop entries — not merely different paths. **Settings → General → Run system check**, the **Install mode** row, tells you which you are on.
+
+| | **Source install** (git checkout) | **The packaged Mac app** |
+|---|---|---|
+| The entry Claude Desktop gets | your Node binary, `mcp/server.js`, **and `--domains-path <your folder>`** | a small launcher script the app writes for itself, with **no arguments at all** |
+| Move the knowledge folder | **The entry goes stale.** Come back to **Settings → MCP bridge**, click **Regenerate**, paste the new snippet, restart Claude Desktop. The wizard detects it and shows a banner | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
+| Move the app itself | Rebuild the Dock launcher (`bash scripts/build-app.sh`) | The launcher script is **regenerated at every app launch**, so it repairs itself — with one honest gap: between moving the app and next opening it, the script still names the old location for one session. Launching The Curator once fixes it |
+
+The flag was dropped in the app deliberately. It is a **snapshot** taken when the config was written, and it outranks your live Settings choice — so under the app it would silently point the bridge at a folder you had already moved on from. The source install keeps it, equally deliberately: removing it there would mark every existing user's config stale overnight.
 
 **The MCP and the app now agree on `DOMAINS_PATH` vs Settings.** If you've set a `DOMAINS_PATH` environment variable (the developer-oriented `.env` fallback described in [user-guide.md](user-guide.md)) *and* a different Knowledge Base Location in Settings, the Settings value wins — in both the app and in Claude Desktop, identically. That particular disagreement can no longer happen.
 
-The one way they can still drift apart is the one described just above: the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time you ran the wizard. If you change the Knowledge Base Location in Settings afterward without regenerating that snippet, Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → My Curator → **Regenerate** → paste the new snippet → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
+The one way they can still drift apart is the one described just above, **and it applies to a source install only** — the packaged app's entry carries no folder path, so there is nothing to go stale. In a source install, the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time you ran the wizard. If you change the Knowledge Base Location in Settings afterward without regenerating that snippet, Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → My Curator → **Regenerate** → paste the new snippet → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
 
 **The Curator server does not need to be running.** Claude Desktop spawns `mcp/server.js` as a child process on demand. It's a separate, read-only path into the same markdown files.
 
@@ -601,7 +612,8 @@ A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotf
 | Symptom | Most likely cause | Fix |
 |---|---|---|
 | Claude Desktop shows no `my-curator` tools | Snippet pasted incorrectly, or Claude Desktop not restarted | Double-check the "After" preview in the wizard, then ⌘Q and reopen Claude Desktop |
-| "Stale config" banner in Settings | Knowledge Base Location changed since you last generated the snippet | Click **Regenerate**, paste the new snippet, restart Claude Desktop |
+| "Stale config" banner in Settings | **Source install:** Knowledge Base Location changed since you last generated the snippet. **Packaged app:** a folder change cannot cause this — the entry holds no folder path — so look for a moved app or a hand-edited config instead | Click **Regenerate**, paste the new snippet, restart Claude Desktop. In the app, launching it once also rewrites its own launcher script |
+| "Needs re-connect" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Re-run the wizard to refresh what is saved on disk |
 | Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then **Regenerate** the snippet and re-paste it. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
 | Tools show but return "no domains" | You haven't created any domains yet | Open the Curator, create a domain, ingest a source |
 | Claude finds a page in search but gets "Invalid slug" when it tries to open it | The slug contains a character the MCP refused. Before v3.9.1 that was any dot (`claude-sonnet-3.5`) | Update to v3.9.1 or later. If it persists, the slug likely has an accented character or a space — rename the file to plain lowercase-and-hyphens, or open the page in the Curator app instead |

@@ -413,7 +413,7 @@ flowchart LR
     B[POST /api/update] --> B1{hasActiveWrites&lpar;&rpar;?}
     B1 -- Yes --> B2[409 Conflict]
     B1 -- No --> B3[beginUpdate&lpar;&rpar;]
-    B3 --> B4[git reset + npm install]
+    B3 --> B4[repo: git reset + npm install<br/>app: download + verify + swap]
     B4 --> B5[endUpdate in finally]
 
     C[POST /api/sync/*] --> C1{hasActiveWrites&lpar;&rpar;?}

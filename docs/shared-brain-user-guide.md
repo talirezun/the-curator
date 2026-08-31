@@ -26,7 +26,7 @@ Before any of these, you need a working Curator install on your computer (Mac/Wi
 
 Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New installs don't see it until you enable it.
 
-1. Open The Curator in your browser (http://localhost:3333).
+1. Open The Curator — a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window.
 2. Click **Shared Brain** in the left rail.
 3. Click **"Enable Shared Brain (beta)"**.
 

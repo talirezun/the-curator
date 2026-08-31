@@ -185,9 +185,24 @@ refuses rather than creating that situation. Disconnect sync in the other instal
 first, or point this one at a different folder.
 
 **If you are already in that state** — you connected both before v3.32.0 — the
-Sync view shows a banner saying so. The fix is two clicks: **Disconnect**, then
-**Connect** again with the same repository. The reconnect joins the existing
-history, and nothing in your folder is touched.
+Sync view shows a banner headed *"Two sync histories over one folder"*. The fix is
+two clicks: **Disconnect**, then **Connect** again with the same repository. The
+reconnect joins the existing history, and nothing in your folder is touched. It is
+deliberately not done for you: silently switching a working install onto a
+different repository would orphan its commits, which is the same class of
+unrequested decision that caused the data loss in the first place.
+
+> ⚠️ **Sync is now safe to share; *writing* is not.** Joining one history stops the
+> two installs building conflicting versions of your wiki. It does **not**
+> coordinate them while they run — two servers writing one folder at the same
+> moment is not a case either of them guards against. **Run one at a time.**
+>
+> **And the part people get caught by: closing the browser tab does not stop the
+> browser install's server.** It keeps running in the background at near-zero CPU
+> — that is deliberate, and it is why clicking the Dock icon reopens instantly —
+> so closing the tab and then opening the Mac app leaves **both** running. To
+> actually stop it: right-click its Dock icon → **Quit**, or `Ctrl + C` in the
+> terminal you started it from.
 
 ---
 

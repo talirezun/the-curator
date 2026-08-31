@@ -1,20 +1,38 @@
 # The native Mac app — decision record
 
-> **STATUS: THERE IS STILL NO DOWNLOADABLE MAC APP.**
+> **STATUS: THE MAC APP IS DOWNLOADABLE, INSTALLABLE, AND UPDATES ITSELF.**
 >
-> Since `v3.30.0` the repository does contain a `desktop/` directory, an Electron
-> shell, an `electron-builder` config and a tag-gated DMG workflow. It was built
-> and launched **once, by hand, on one machine** (macOS 15, arm64, 2026-08-31).
-> There is still **no signing, no notarization and no auto-update**, nothing
-> publishes an artifact to GitHub Releases, and the x64 DMG has never been
-> executed. Every decision below is recorded so it is not re-litigated or quietly
-> reversed; the **Status** column on each says whether the code for it exists yet.
+> `.dmg` builds are published on the [Releases page](https://github.com/talirezun/the-curator/releases)
+> for arm64 and x64. Since `v3.31.0` the bundle is **ad-hoc signed** and carries a
+> correct version identity; since `v3.33.0` it **downloads, verifies and installs
+> its own updates**. The maintainer installed `v3.31.0` from GitHub as an ordinary
+> user would and reported the install itself as working.
+>
+> **What is still not true**, because the gap between "shipped" and "proven" is
+> where this project's expensive failures live:
+>
+> - **Not notarized, and carrying no Apple developer identity.** Enrolment is in
+>   progress. A first launch still needs the Privacy & Security exception, and
+>   **nobody has launched a quarantined copy of a current build to see which
+>   dialog macOS actually shows** — that is inferred from `syspolicy_check`.
+> - **The x64 DMG has never been executed.** There is no Intel Mac.
+> - **No automated run has ever replaced a real installed application.** The
+>   macOS suite swaps a real ad-hoc-signed *fixture* bundle in a temp dir, with
+>   the relaunch stubbed. The 140 MB GitHub round trip is unproven.
+> - **Neither the update UI nor the v3.32.0 sync UI has ever been rendered in a
+>   browser.** Agents were barred from launching anything after seven macOS crash
+>   dialogs reached the maintainer's desktop in one session.
+>
+> Every decision below is recorded so it is not re-litigated or quietly reversed;
+> the **Status** column on each says whether the code for it exists yet.
 >
 > For what the shell *is* and how it is built, see
 > [architecture.md § The macOS desktop shell](architecture.md#the-macos-desktop-shell-desktop).
+> For what a *user* does, see [mac-app.md](mac-app.md).
 >
-> The way to install The Curator today is the [browser install](../README.md#quick-start).
-> That is not a legacy path and it is not going away — see [D3](#d3--the-browser-install-is-not-a-legacy-path).
+> The [browser install](../README.md#quick-start) is equally supported, is the only
+> option on Windows and Linux, and is not going away — see
+> [D3](#d3--the-browser-install-is-not-a-legacy-path).
 
 This file exists because of one instruction from the project owner:
 
@@ -66,7 +84,7 @@ licenses a doc elsewhere to describe a planned thing in the present tense.
 | [D3](#d3--the-browser-install-is-not-a-legacy-path) | The browser install is not a legacy path | `SHIPPED` |
 | [D4](#d4--branch-on-capability-never-on-install-form) | Branch on capability, never on install form | `SHIPPED` |
 | [D5](#d5--asar-false-for-the-first-dmg) | `asar: false` for the first DMG | `SHIPPED` |
-| [D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo) | The DMG goes to GitHub Releases, never into the repo | `DECIDED` |
+| [D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo) | The DMG goes to GitHub Releases, never into the repo | `PARTIAL` |
 | [D7](#d7--the-dmg-workflow-gates-on-a-tag-push-never-on-main) | The DMG workflow gates on a tag push, never on `main` | `SHIPPED` |
 | [D8](#d8--release-through-a-gate-branch--ci--fast-forward--tag) | Release through a gate: branch → CI → fast-forward → tag | `SHIPPED` |
 | [D9](#d9--rollback-is-forward-only) | Rollback is forward-only | `SHIPPED` |
@@ -76,6 +94,7 @@ licenses a doc elsewhere to describe a planned thing in the present tense.
 | [D13](#d13--the-existing-users-path-is-three-steps-that-already-exist) | The existing user's path is three steps that already exist | `SHIPPED` |
 | [D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch) | The MCP launcher shim is generated at every app launch | `PARTIAL` |
 | [D15](#d15----domains-path-is-dropped-in-bundle-mode) | `--domains-path` is dropped in bundle mode | `SHIPPED` |
+| [D16](#d16--the-app-updates-itself-and-electron-updater-cannot-be-the-mechanism) | The app updates itself — `electron-updater` cannot be the mechanism | `SHIPPED` |
 
 ---
 
@@ -276,22 +295,44 @@ deliberately (see the `git-hygiene` skill and `CONTRIBUTING.md § Git hooks`).
 A Developer ID certificate and its password belong in repository **Secrets**,
 which are withheld from fork pull requests by GitHub itself.
 
-**Status.** `DECIDED`. No signing configuration exists, and nothing publishes an
-artifact.
+**Status.** `PARTIAL`. Artifacts now exist and reach the Releases page; the
+**upload is still a human step**, and that is the honest gap.
 
-> **Measured, because the obvious summary of this is wrong.** GitHub Releases for
-> this repository are **not** empty — `gh release list` returns four
-> (`v2.1.0`, `v3.0.0-beta.1`, `v3.8.0`, `v3.9.0`), and `git ls-remote --tags`
-> shows 42 tags, from `v2.1.0` through `v3.24.2` and then `v3.29.0`. What is true is narrower and is the part that
-> matters: those are **hand-made, source-only** releases carrying no binary, the
-> newest is many versions behind the running one, and **no workflow creates or
-> uploads to a Release.** So the mechanism is available and unused, not absent.
+> **What is automated and what is not, stated separately, because they are
+> routinely collapsed.** `.github/workflows/desktop-dmg.yml` triggers on a `v*`
+> tag and **builds** both DMGs, then `actions/upload-artifact@v4` attaches them
+> to the **workflow run**. Nothing in that workflow calls `gh release create` or
+> `softprops/action-gh-release`; **no workflow creates or uploads to a Release.**
+> The `.dmg` files on the Releases page were downloaded from the run and uploaded
+> by hand — which is exactly how `v3.30.0`'s assets came to be named for a version
+> the bundle inside them did not carry ([the version-identity fix](#d1--one-codebase-one-release-two-shells)).
+>
+> Tags are no longer the gap they were: `git tag` now returns **46**, and the
+> newest four (`v3.30.0` … `v3.33.0`) were created by `scripts/release.js`. The
+> historical hole between `v3.10.0` and `v3.29.0` remains and is why
+> [D9](#d9--rollback-is-forward-only) still says a user cannot check out an
+> arbitrary previous version.
 
-> **Note on what "signing" means in the tree today.** `scripts/build-app.sh` and
-> `install.sh` both end in `codesign --force --deep --sign -` — the `-` is the
-> **ad-hoc** identity, not a Developer ID. That command would *destroy* a real
-> Developer ID signature, which is exactly why `canRebuildAppleScriptApp` is
-> `false` on the bundle arm ([D4](#d4--branch-on-capability-never-on-install-form)).
+> **Note on what "signing" means in the tree today, because there are now two
+> different ad-hoc signatures and only one of them is deliberate.**
+>
+> - **The Electron bundle is ad-hoc signed on purpose**, by
+>   `desktop/lib/adhoc-sign.mjs` running from the `afterPack` hook.
+>   `mac.identity: null` makes electron-builder skip signing entirely — which by
+>   itself leaves the *broken*-signature state, not an unsigned one — and the hook
+>   then produces a real, verifying ad-hoc signature. It **refuses the build**
+>   rather than proceeding if any real signing credential is present in the
+>   environment, if `identity` is absent (electron-builder would auto-discover a
+>   keychain identity), if the result is still Electron's `linker-signed` stub, if
+>   `Sealed Resources` is missing, if a `TeamIdentifier` or `Authority` appears —
+>   or if the `runtime` flag is set, because a hardened ad-hoc signature passes
+>   every static check and then **fails to load its own framework at launch**.
+> - **`scripts/build-app.sh` and `install.sh` also end in `codesign --force
+>   --deep --sign -`**, on the AppleScript applet. That command would *destroy* a
+>   real Developer ID signature, which is why `canRebuildAppleScriptApp` is
+>   `false` on the bundle arm ([D4](#d4--branch-on-capability-never-on-install-form)).
+>   It must be retired before any Developer ID build ships; nothing enforces that
+>   in the script today.
 
 ---
 
@@ -324,7 +365,7 @@ like one.
 push only — no `branches:`, no bare `push:`, no `workflow_dispatch`, and its
 token is read-only. It **publishes nothing**: the DMG is kept as a build artifact
 (`actions/upload-artifact`), which is why [D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo)
-remains `DECIDED`.
+is `PARTIAL` — attaching it to a Release is still a human step.
 
 > **The tag history is not continuous, and a trigger would need to know that.**
 > Measured on origin: **42 tags**, running from `v2.1.0` to `v3.24.2`, then a
@@ -336,7 +377,98 @@ remains `DECIDED`.
 > *(An earlier draft of this file said tags "run to `v3.9.2` and then stop" at
 > three separate places. That was false — it was written from a worktree whose
 > view was stale, and the orchestrator's first correction of it was wrong too,
-> in the other direction. The number above is measured, not remembered.)*
+> in the other direction. The number above is measured, not remembered. As of
+> `v3.33.0` the count is **46**: the tag step now runs on every release.)*
+
+---
+
+### D16 — The app updates itself, and `electron-updater` cannot be the mechanism
+
+**Decision.** The Mac app **downloads, verifies and installs its own updates**,
+using code in `desktop/lib/` rather than `electron-updater`. It resolves the
+newest release carrying an installer, downloads the `.dmg`, verifies it, stages
+the new bundle beside the running one, and swaps them with two renames.
+
+**Why not the standard updater.** `electron-updater`'s `MacUpdater` drives
+**Squirrel.Mac**, which validates every download against the **running** app's
+*designated requirement*. Measured on the installed app rather than reasoned from
+config:
+
+```
+$ codesign -d -r- "/Applications/The Curator.app"
+designated => cdhash H"ff0e7bb5…"
+Signature=adhoc
+TeamIdentifier=not set
+```
+
+An ad-hoc signature has no certificate and no team, so `codesign` builds that
+requirement out of the only thing available: **the code-directory hash of that
+exact build**. Every genuine update has a different cdhash by definition, so the
+check fails **100% of the time, deterministically** — and it lives inside
+Electron's own binary, so no `electron-builder` setting reaches it.
+
+**This is structural, not a to-do item.** It is not "we have not configured it
+yet"; it is "no configuration exists that would make it work while the app is
+ad-hoc signed". Two further blockers each suffice on their own: Squirrel installs
+from a **ZIP** while releases publish `.dmg`, and `electron-updater` reads
+`latest-mac.yml`, which `electron-builder` emits only when `publish` is set and
+ours is `publish: null`.
+
+**When Apple enrolment lands, this reverses.** A Developer ID signature gives a
+designated requirement based on the certificate and team rather than a build
+hash, at which point Squirrel's check passes across versions and the standard
+updater becomes the right answer. Treat `desktop/lib/update-*.js` as the thing
+that exists *because* the app is ad-hoc signed.
+
+**How the swap is safe.** Two renames of siblings on the same device — the device
+is compared with `stat -f %d` **first**, so `mv` cannot silently degrade into a
+400 MB copy. Power lost before the first leaves the old app complete; after the
+second leaves the new app complete; and in the two-syscall window between them
+both complete bundles sit beside each other under known names, **neither
+half-written**, because both were verified before the app quit and `rename` moves
+no bytes. That window is the price of the property that **a half-replaced bundle
+is impossible**, which was the stated hard requirement.
+
+**What is verified, and what honestly is not.** Byte length against the published
+size; **sha256 against the `digest` GitHub publishes on the asset**; then the
+staged bundle's `CFBundleShortVersionString` and `codesign --verify --deep
+--strict`. What that cannot establish is that **Apple vouches for the bytes** —
+`codesign --verify` on an ad-hoc bundle is an *integrity* check, not an
+authenticity one. Authenticity rests entirely on the digest and on TLS to GitHub,
+which is why the digest check is not optional, why the download host is
+allow-listed to `github.com` / `objects.githubusercontent.com`, and why no UI copy
+implies Apple checked anything.
+
+**One measured benefit that is easy to miss.** A `.dmg` a browser downloads
+carries `com.apple.quarantine`; the same `.dmg` fetched by the app's own `fetch()`
+does not. So an in-app update removes both the Privacy & Security detour **and**
+App Translocation. Both arms are in the macOS suite, the browser-download arm as
+the control.
+
+**Evidence.** `desktop/lib/update-plan.js` (pure decisions — and it deliberately
+contains **no version comparator**, because two answers to *what is the newest
+version* is how they drift; resolution is delegated to `src/routes/config.js`),
+`desktop/lib/update-release.js`, `desktop/lib/update-engine.js`. Exposed to the
+server as the `prepareUpdate` / `installUpdate` hooks in
+`src/brain/desktop-host.js`. `installUpdate` takes an **opaque token and never a
+path** — its caller is a renderer, and a hook accepting `{stagedPath, targetPath}`
+would be a *replace-any-directory-with-any-other* primitive reachable from a page.
+
+**Status.** `SHIPPED`, with the limits named rather than implied:
+
+- **No automated run has ever replaced a real installed application.** The macOS
+  suite swaps a real ad-hoc-signed *fixture* bundle in a temp dir with the
+  relaunch stubbed — it does really replace it, and the result does really still
+  pass `codesign`. What is unproven is the 140 MB GitHub round trip, the real
+  width of the two-syscall window, and `main.js`'s wiring (Electron is not an
+  offline dependency).
+- **The update UI has never been rendered in a browser.**
+- **`signal` is plumbed but never fired.** There is no cancel, documented as
+  deliberately quiescent rather than shipped as a half-wired control.
+- **Rosetta is not accommodated on purpose.** An arm64 install running under x64
+  stays on x64; a silent architecture migration behind a progress bar is not
+  something to do without an explicit offer.
+- **`/old` has no in-app path at all** and still posts to the git updater.
 
 ---
 
@@ -547,8 +679,35 @@ Both routes ship today and are used by the browser app's **Settings → Knowledg
 base folder**. They are documented in
 [api-reference.md](api-reference.md#post-apiconfigdomains-path).
 
-**Status.** `SHIPPED` (the mechanism). What is `DECIDED` is only that the Mac
-app will use it rather than inventing an importer.
+**Status.** `SHIPPED`, and the affordance now exists as well as the mechanism.
+v3.31.0 found the gap: a fresh bundle install correctly creates an *empty*
+domains folder, so someone with years of wikis elsewhere opened a working app
+and concluded they were gone — while Getting started step 2 told them to
+*create* a domain. The backend needed **no new code**; the route was simply
+unreachable from the screen they were standing on.
+
+> **The sidebar entry is the load-bearing half and the empty card is not.** With
+> the route only on the empty-state card, the likeliest wrong click — an existing
+> user pressing **New domain** — creates one junk domain, makes the list
+> non-empty, and **destroys the empty card along with the only path to their real
+> wiki**, leaving them worse off with no error to search for. So **Use existing
+> folder** is on the Domains sidebar in every state of that view, as well as on
+> the card.
+>
+> **And the failure is honest rather than diagnostic, by necessity.** Measured: a
+> non-Curator folder, a folder picked **one level too deep**, and an unmounted
+> drive all return `[]` and are **indistinguishable**. So the UI names what it
+> *looked for* and where it looked, rather than guessing which happened, and
+> offers an undo. That undo restores `domainsPath` **only** — a `defaultDomain`
+> set from the old folder is left pointing at a slug that may not exist.
+>
+> The switch takes effect **in the same process** — no restart, no reload —
+> confirmed live by repopulating a six-domain folder with `pageReloaded: false`.
+
+**Still open, one hop upstream:** four other views (`chat.js`, `memory.js` twice,
+`ingest.js`, `sync.js`) still give **create-only** advice on their empty states.
+They are not dead ends — they funnel to Domains, which now carries both routes —
+but they are the same wrong advice one screen earlier.
 
 ---
 
@@ -559,7 +718,7 @@ of which is an existing, shipping surface:
 
 | Step | Where | Already exists? |
 |---|---|---|
-| 1. **Choose your knowledge folder** | Settings → Knowledge base folder | ✅ `POST /api/config/pick-folder` |
+| 1. **Choose your knowledge folder** — pick the folder that **contains** your domains, not a domain | Domains → **Use existing folder** (sidebar or empty card), or Settings → Knowledge base | ✅ `POST /api/config/pick-folder` |
 | 2. **Paste your API key** | Settings → API keys | ✅ `POST /api/config/api-keys` |
 | 3. **Run the MCP wizard** | Settings → My Curator MCP | ✅ the three-step wizard |
 
@@ -655,7 +814,10 @@ both processes resolve through the same stored setting.
 
 **Evidence.** `getDomainsDir()` in `src/brain/config.js` (the ladder above is
 that function, in order); `buildCuratorEntry()` in `src/routes/mcp.js`, which
-today **always** emits `args: [MCP_SERVER_PATH, '--domains-path', domainsDir]`.
+carries the fork. *(An earlier draft of this line said that function "today
+**always** emits `args: [MCP_SERVER_PATH, '--domains-path', domainsDir]`". That
+was written before the branch landed and has been false since; the Status below
+is the accurate statement.)*
 
 **Status.** `SHIPPED`. `buildCuratorEntry()` in `src/routes/mcp.js` branches on `getCapabilities().mcpLaunchStyle` and the `launcher-script` arm omits `--domains-path` entirely. The repo arm is unchanged, deliberately — changing it would mark every existing user's config stale overnight.
 
@@ -674,12 +836,14 @@ Recorded so nobody mistakes silence for a decision.
 
 | Question | State |
 |---|---|
-| **How the app updates itself** | Open. `canSelfUpdateViaGit: false` means the repo updater refuses on the bundle arm with a `501`. `scripts/release.js` creates tags now so `electron-updater` has something to depend on later, but **nothing consumes them** and no updater is chosen. |
+| **How the app updates itself** | **Decided and built** ([D16](#d16--the-app-updates-itself-and-electron-updater-cannot-be-the-mechanism)). `electron-updater` was **ruled out on a structural ground, not a configuration one**, and the app now downloads, verifies against GitHub's published sha256, stages and swaps itself. Still open: nothing has ever replaced a real installed application in an automated run, and the update screens have never been rendered in a browser. |
 | **What "restart" means in the app** | **Decided and built.** `src/brain/restart.js`'s `planRestart()` forks on `restartStyle`, and `desktop/main.js` registers a `relaunch` hook through `src/brain/desktop-host.js`. The bundle arm **refuses with a 501** when no hook is registered rather than falling back to the spawn, which under Electron would open a second window instead of a server. The earlier `webRequest` interception in `main.js` was **removed**, not kept as belt-and-braces: it cancelled the request before Express, so the workaround would always have beaten the fix. |
 | **Quit-while-writing** | **Built.** `desktop/main.js`'s `before-quit` handler consumes `GET /api/write-status` via `lib/write-status.js` and `lib/quit-decision.js`; `safeToQuit: null` is kept as its own case and returns `ask`. Still open: **the `ask` branches have never run against a real write** — only the `quit` branch was exercised end to end, and the rest only as pure functions. Nothing in *repo* mode consumes the route, which is correct: a browser install has no quit to intercept. |
 | **Windows and Linux shells** | Not planned. Those platforms use the browser install ([D3](#d3--the-browser-install-is-not-a-legacy-path)). |
-| **Notarization and Gatekeeper** | Open. `hardenedRuntime: true`, `build/entitlements.mac.plist` and four `NS*UsageDescription` strings are **written and entirely inert** — entitlements apply at codesign time and `mac.identity: null` forces an explicitly unsigned build. There is no Apple Developer enrolment, no certificate and no `afterSign` hook. Without notarization a downloaded DMG shows Gatekeeper's "unidentified developer" dialog. Whether `choose folder` needs the apple-events entitlement is **inferred, not measured**, and granted defensively. |
-| **Where user data lives in the bundle** | The *mechanism* is decided and built (`paths.js` resolves a user-data directory outside `APP_ROOT`, and the detection is a **positive test for "bundle"** so an unrecognised layout keeps data where it is). The exact directory the shell will present has not been exercised by a real bundle. |
+| **Notarization** | Open. There is no Apple Developer enrolment, no certificate and no `afterSign` hook, so a downloaded DMG still needs the Privacy & Security exception. **Signing itself is no longer open** — the bundle is deliberately ad-hoc signed ([D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo)). `hardenedRuntime: true` and `build/entitlements.mac.plist` are present and **inert**, because electron-builder skips signing and the ad-hoc step omits `--options runtime` — the ad-hoc signer *refuses the build* if that flag ever appears, having measured that a hardened ad-hoc bundle passes `codesign --verify --deep --strict` and then still fails to load its own framework. Hardened runtime must return when Developer ID signing lands, because notarization requires it; this is a temporary inversion recorded as one. Whether `choose folder` needs the apple-events entitlement is **inferred, not measured**, and granted defensively. |
+| **Which macOS dialog an unsigned-but-sealed build actually produces** | Open, and it is a real gap rather than a formality. `syspolicy_check` reports exactly one remaining fatal finding (notarization), so **Open Anyway should appear** — but nobody has launched a quarantined copy of a current build to watch. Everything user-facing about that first launch is inferred from the signature state. |
+| **Where user data lives in the bundle** | **Decided, built and exercised.** `paths.js` resolves a user-data directory outside `APP_ROOT`, and the detection is a **positive test for "bundle"** so an unrecognised layout keeps data where it is. Verified on a real install at `/Applications`: the app launched, served on a dynamic port, and created its knowledge folder under `~/Library/Application Support/The Curator/` on first run. |
+| **Whether two installs may share one domains folder** | **Answered in the sync layer, not here** (v3.32.0). A second install pointed at a folder another one already syncs **adopts** that sync repository rather than creating a second history, and refuses by name if the remotes differ. What is *not* coordinated is concurrent writing: two servers over one folder is possible and unguarded. See [sync.md](sync.md) and [user-guide.md § Two installs, one knowledge folder](user-guide.md#two-installs-one-knowledge-folder). |
 
 ---
 
@@ -704,8 +868,14 @@ the code itself refuses:
   offline-suite dependency and never will be, so `main.js` and
   `electron-builder.yml` are **source-scanned**, not run;
   `scripts/test-desktop-packaging.js` says so in its own NOT ENFORCED block. Only
-  the four Electron-free `lib/` modules are genuinely executed. Treat a green
-  suite as proof about the **config**, never about the app.
+  the Electron-free `lib/` modules are genuinely executed — that is why they are
+  written to import nothing from Electron and nothing from `src/`, which is a
+  shape decision rather than an accident. Treat a green suite as proof about the
+  **config**, never about the app.
+- **`desktop/lib/` is no longer four files.** Count them on disk rather than from
+  prose here: the v3.33.0 updater added `update-plan.js`, `update-release.js` and
+  `update-engine.js` alongside the existing quit, window-state, port, menu,
+  version and signing modules.
 - **Nothing catches the `node_modules` class by launching the app.** A build
   missing its dependency tree launches perfectly while it sits inside the
   checkout, because Node walks *up* and finds the repo root's `node_modules`. The

@@ -35,6 +35,12 @@ no API cost — and shows a result for each:
 | **Knowledge folder** | That your `domains/` folder exists and is writable. The check writes a tiny throwaway file and immediately deletes it — **it never touches your wiki content.** |
 | **Credential file permissions** | That your credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`, and the sync git config) are owner-only (`0600`) so other accounts on the machine can't read your keys. |
 | **GitHub sync** | Whether sync is configured, and how many local changes are waiting to be pushed. |
+| **Install mode** | Which shape of The Curator you are running — *Source install (git checkout)* or *Packaged app* — and how updates reach it. Always ℹ️ **Info**: neither mode is wrong, and the point of the row is that a support conversation starts from the right mental model. **This is the fastest way to answer "which install do I have?"** |
+| **Git** | That `git` is on the PATH the app was launched with. It is here because a missing `git` breaks **two** features at once — Personal Sync and, in a source install, updating — and its natural error text used to be actively misleading (*"Repository not found. Check the URL"* for what was really *git is not installed*). On a build that needs neither, the row reports **Not required by this build** rather than warning about a tool that is never invoked. |
+| **Application log** | The full path to the app's own log file, and its size — so you can find it without knowing the OS convention. Always ℹ️ **Info**: a fresh install that has never hit an error legitimately has no log yet, and the row says *"Not written yet"* with the path rather than reporting a problem. |
+
+*(Enumerate this list from `src/brain/diagnostics.js` rather than trusting the table
+if you are checking it against a specific build — the rows have grown four times.)*
 
 Each result is marked:
 
@@ -70,6 +76,8 @@ click whether your key is fine and the provider is just busy.
 ## When to use it
 
 - **Right after installing or updating** — confirm everything is wired up.
+- **When a doc or a support answer asks which install you have** — the **Install
+  mode** row answers it in one line, without guessing from where the folder is.
 - **After changing your API key** — verify the new key works (use the AI test).
 - **When ingest or chat fails** — the AI connection test distinguishes a
   provider problem from a setup problem.

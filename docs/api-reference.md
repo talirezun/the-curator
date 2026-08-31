@@ -1829,7 +1829,7 @@ v3.0.1-beta.16. DESTRUCTIVE. SSE stream. Applies a plan (from `/plan`) to disk. 
 
 **SSE events**: `start { actions }`, `progress { done, total }`, `done { retargeted, stripped, downgraded, filesChanged, occurrencesReplaced, totalActions }`, `error { error }`.
 
-Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so recoverable — but via git on the command line, **not** from the Sync view: there is no revert or discard endpoint (`src/routes/sync.js` exposes status/setup/push/pull/sync/disconnect only). See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
+Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so recoverable — but via git on the command line, **not** from the Sync view: there is no revert or discard endpoint (`src/routes/sync.js` exposes status/remote-status/preflight/setup/push/pull/sync/disconnect only — enumerate its `router.<verb>` calls rather than trusting this list). See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
 
 ---
 
@@ -1927,6 +1927,168 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 - The pair must not be `{same slug, same folder}`.
 
 **`fix-all` is a no-op for `semanticDupe`** — per-pair only, deliberately.
+
+---
+
+## Personal Sync endpoints (`/api/sync`)
+
+Mounted at `/api/sync/` (`src/routes/sync.js`). Eight routes, and **that is the whole
+surface** — there is deliberately no revert, discard or history endpoint. Every mutating
+route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
+`conflictResponse` rather than letting a git command race it.
+
+| Route | Guarded | Writes the work tree? |
+|---|---|---|
+| `GET /status` | no | no |
+| `GET /remote-status` | no | no (network; 5-minute server-side TTL cache) |
+| `POST /preflight` | yes | **no — measures only** |
+| `POST /setup` | yes | depends on `mode`; see below |
+| `POST /push` | yes | commits + pushes |
+| `POST /pull` | yes | merges (`-X theirs`) |
+| `POST /sync` | yes | pull then push |
+| `DELETE /disconnect` | yes | no — removes this install's credential file only |
+
+### GET /api/sync/status
+
+Cheap enough to sit on the 60-second badge path: a `git status --porcelain` line count
+and two `stat` calls, no subprocess beyond git, no network.
+
+```json
+{
+  "configured": true,
+  "changesCount": 33,
+  "lastSync": "2026-08-31 14:02:11 +0200",
+  "repoUrl": "https://github.com/you/your-brain.git",
+  "splitSyncRepo": false,
+  "adoptedSyncRepo": false
+}
+```
+
+Unconfigured installs get `{"configured": false}`; a failure gets
+`{"configured": true, "error": "…"}`. `repoUrl` always has the token stripped.
+
+**`splitSyncRepo` and `adoptedSyncRepo` are new in v3.32.0** and are additive — every
+field above them keeps its name, type and meaning.
+
+- `adoptedSyncRepo` — this install is driving a sync repository it **adopted** rather
+  than one it created (see `POST /setup` below).
+- `splitSyncRepo` — a *second* sync repository exists beside the domains folder and this
+  install is not using it, i.e. two independent histories over one set of files. It is
+  deliberately only two `existsSync` calls: it reports **that a foreign repo is
+  present**, *not* that it points at the same remote, because confirming the remote
+  needs a subprocess and this field is on the badge's hot path. The split is **not**
+  self-healed — the Sync view renders the two-click remedy (Disconnect, then Connect)
+  instead, because silently switching a working install onto a different repository
+  would orphan its commits.
+
+The **path** of an adopted git dir is not returned here. It is returned exactly once, by
+`POST /setup`'s adopt branch.
+
+### POST /api/sync/preflight
+
+**v3.32.0.** Measure what connecting would do, before anything is written. This is the
+endpoint that exists because a refusal which leaves only the destructive path open is
+worse than no refusal.
+
+**Request** — `{ "repoUrl": "…", "token": "…" }`. Both required; a missing one is a
+`400`. It is a `POST` rather than a `GET` **because it carries a PAT**, which has no
+business in a URL.
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "remoteHasMain": true,
+  "localHasContent": true,
+  "overwriteCount": 4,
+  "overwriteSample": ["articles/wiki/index.md", "articles/state/main/…/current.md"],
+  "createCount": 812,
+  "foreignSyncRepo": { "originUrl": "https://github.com/you/your-brain.git", "matchesRequestedRepo": true },
+  "recommendedMode": "adopt"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `remoteHasMain` | The repository has a `main` branch. `false` means empty — not an error |
+| `localHasContent` | The domains folder holds at least one domain |
+| `overwriteCount` / `overwriteSample` | Files that exist **on both sides with different content**, i.e. what a checkout would replace. Sample is the first 10, sorted |
+| `createCount` | Files the checkout would merely create |
+| `foreignSyncRepo` | Another install's sync repository governing this same folder, or `null`. `originUrl` has credentials stripped |
+| `recommendedMode` | `adopt` \| `push` \| `merge` \| `pull` — a **UI hint**. Note `adopt` is *not* a valid `mode` for `POST /setup`; adoption is detected there, not requested |
+
+**It writes nothing outside a temporary directory.** The remote is fetched into a
+throwaway probe git dir under `os.tmpdir()`, and the comparison runs against a scratch
+index (`GIT_INDEX_FILE`) — the work tree is read and never written, and is fingerprinted
+and asserted unchanged by the suite. `getSyncGitDir()` is deliberately **not** created,
+so a previewed-then-cancelled connect leaves `isConfigured()` false.
+
+**Disclosed cost:** the fetch is a real network round trip that downloads the remote's
+objects into that tempdir and then discards them, so a connect that proceeds pays the
+download twice.
+
+`500` `{ok: false, error}` on failure.
+
+### POST /api/sync/setup
+
+**Request** — `{ repoUrl, token, mode, confirmOverwrite? }`.
+
+`mode` is one of **`push`**, **`merge`**, **`pull`**. Anything else is refused with
+`invalid-mode`.
+
+| `mode` | What it does to the folder on this machine |
+|---|---|
+| `push` | **Nothing.** Commits and pushes the folder up. Refuses with `remote-not-empty` if the repository already holds a wiki |
+| `merge` (v3.32.0) | **Commits the local folder FIRST**, then merges the remote in with `--allow-unrelated-histories -X ours`. That ordering is the entire recoverability property: the pre-merge bytes stay reachable from the merge commit's first parent |
+| `pull` | **Replaces** files that differ. See the confirmation gate below |
+
+**`confirmOverwrite` gates the only destructive path**, and is compared with strict
+`=== true` at both gates — never coerced, because `Boolean('false')` is `true`. Omit it
+and `pull` refuses with `pull-would-overwrite`, carrying the count and the file list.
+The consequence is deliberate: `/old`, a curl script, or any older client that does not
+send the field **cannot** reach the overwriting path.
+
+There are **two** distinct `pull-would-overwrite` refusals, tagged by
+`details.source`: `measured` (the preflight assessment said so) and `checkout-refused`
+(git itself refused the checkout). Before v3.32.0 the second of those was swallowed by
+the catch-ladder and escalated to `git reset --hard` — the defect that destroyed a
+morning's working state. There is now **no silent escalation**: only
+`confirmOverwrite === true` reaches the reset.
+
+**Repo adoption.** Before doing anything, `setup()` looks for a sibling sync repository
+at `dirname(domainsDir)/.knowledge-git` — the layout a pre-app install necessarily has,
+because in repo mode the user-data dir *is* the checkout. If one is there:
+
+- **Same remote** → it is **adopted**. The path is stored as `gitDir` in
+  `.sync-config.json` (the field is *omitted*, not null, when there is no adoption, so a
+  non-adopted config is byte-identical to pre-v3.32.0), its `config` file is chmod'd to
+  `0600`, and **not one byte of the work tree is written** — no checkout, no reset, no
+  merge. Response carries `{adopted: true, gitDir}`.
+- **Different remote** → refused by name with `foreign-sync-repo`, rather than creating
+  two independent histories over one folder.
+
+The candidate path is deliberately **singular**. A relocated `domainsPath` is not
+covered — stated as a limit rather than papered over with a directory walk. And
+`disconnect` never deletes an adopted git dir; it removes only this install's own
+credential file.
+
+**Refusals** are `409` with a `code` and a `details` object:
+`invalid-mode`, `foreign-sync-repo`, `remote-not-empty`, `remote-empty`,
+`pull-would-overwrite`.
+
+> **A policy that applies to every one of these strings:** they name an **action and a
+> screen**, never a button label. Naming *"Merge — keep both"* would reproduce the
+> v3.32.0 defect on `/old`, which is frozen and has no merge control.
+
+### POST /api/sync/push · /pull · /sync · DELETE /disconnect
+
+Unchanged behaviour. `pull()` resolves with `git pull --no-rebase -X theirs` — the
+steady-state rule, where origin is shared truth and this machine is expected to have
+pushed already. That is **not** the same as `merge`'s `-X ours` on a first connect,
+where the local side has by construction never been pushed anywhere, so preferring
+origin would prefer a revision that provably lacks the user's newest work.
+`pull()` was not touched by v3.32.0.
 
 ---
 
@@ -3240,9 +3402,12 @@ with a fixed `User-Agent` and an 8-second `AbortSignal.timeout`. **No credential
 other than the page size, and nothing derived from the user or the machine ever leaves the process.**
 No subprocess runs on this arm — `git` is never invoked.
 
-The packaged app cannot replace its own files, so this arm's job ends at *telling the user and giving
-them a link*. Automatic download and install are deliberately not implemented; see
-[`docs/mac-app.md` § Updates in the packaged app](mac-app.md#updates-in-the-packaged-app).
+The packaged app cannot replace its own files *from source*, so this arm reads GitHub's release list
+rather than a git branch. **Since v3.33.0 its verdict is no longer the end of the road:** the client
+can hand it to [`POST /api/config/update`'s installer arm](#arm-2--the-in-app-updater-updatestyle-download-installer),
+which downloads, verifies and stages that same release. The link this arm carries
+(`releaseUrl` / `releasesPageUrl`) remains the fallback for a build with no updater engine attached.
+See [`docs/mac-app.md` § Updating the packaged app](mac-app.md#updating-the-packaged-app).
 
 **Success response** `200 OK`
 
@@ -3426,7 +3591,7 @@ filesystem path is constructed, logged or rendered on any of these paths.
 is passed so the engine's own guards see a well-formed object, not as a half-wired cancel.
 
 The route owns the capability fork, the refusals, and the translation of the engine's progress into a
-stream. It does **not** own the engine's copy: `prepareUpdate` carries 34 named reasons and a
+stream. It does **not** own the engine's copy: `prepareUpdate` carries **36** named reasons and a
 user-facing `message` for each, and that sentence is **relayed verbatim**. A second sentence per
 reason here would be a second copy of one fact, free to drift.
 
@@ -3436,12 +3601,21 @@ the real route and compares the events it emitted against this table, and this t
 | Event | Payload |
 |---|---|
 | `progress` | `{type, phase, receivedBytes, totalBytes, percent}` — `phase` is one of `resolving`, `downloading`, `verifying`, `staging`, `installing`. `percent` is **derived from the two byte counts** when both are present, and is **`null`** when the total is unknown (no `content-length`) — never `0`, which would render as a bar stuck at the far left, i.e. indistinguishable from a hang. |
-| `staged` | `{type, version, prerelease, warning}` — downloaded, verified and staged. **Nothing has been replaced.** Carries **no token, no path and no digest**: the client has no use for any of them and each is a handle it should not hold. |
+| `staged` | `{type, version, prerelease, warning}` — downloaded, verified and staged. **Nothing has been replaced.** Carries **no token, no path and no digest**: the client has no use for any of them and each is a handle it should not hold. `warning` is `string\|null` on the wire — see the note below, because today it is always `null`. |
 | `error` | `{type, reason, error, hint}` — `error` is the engine's own `message` when there is one. `reason` is a short slug **for branching and for logs only**; the Settings UI deliberately does not render it, because an internal identifier shown to a person is the v3.31.0 defect this release undoes. |
 
 **There is no `done` event, deliberately.** "Staged" is not "done": the bundle is sitting beside the
 running app and the swap has not happened. Calling it `done` would collapse two different facts into
 one word.
+
+> **`warning` is always `null` today, and that is a defect rather than a design.** The route accepts
+> `warning` only when it is a string (`typeof result.warning === 'string'`), but the engine's
+> `classifyInstallTarget` returns it as an **object** — `{reason: 'downloads-folder', message}` — and
+> passes that through unchanged. So the one warning the engine can currently produce, *you are
+> running The Curator from your Downloads folder*, is discarded on the way to the wire and never
+> reaches `staged` or `GET /update-progress`. Neither suite catches it: `test-update-in-app.js`
+> feeds a string, while `test-desktop-update.js` asserts the object. Documented as the wire's
+> current behaviour, **not** as intent. Client authors should keep handling `string|null`.
 
 **No raw exception text ever reaches the wire.** A `{ok:false, message}` is the engine's own
 user-facing sentence and is relayed. A **rejection** is different: `reasonFromError()` reads
