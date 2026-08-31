@@ -76,7 +76,7 @@ Escape hatch, rarely the right answer: `git commit --no-verify`.
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (152 suites total — 132 OFFLINE
+The Curator has an extensive battle-test suite (153 suites total — 133 OFFLINE
 + 14 LIVE_CI + 6 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
@@ -728,18 +728,289 @@ of those in `styles.css` just means deleting its baseline entry.
 
 ## Cutting a release
 
-The Curator releases by pushing to `main`; the in-app auto-updater pulls it via
-`git fetch` + `git reset --hard origin/main` + `npm install` + a `.app` rebuild.
+**A push to `main` IS the deploy.** `main` has no branch protection and no
+rulesets — verified, not assumed:
 
-1. Make the change on a branch (or `main` for the maintainer's own flow).
-2. `npm test` green. For anything touching the LLM/sync/GitHub paths, also run
-   `npm run test:live` with keys present.
-3. Bump `version` in [package.json](package.json). Plain semver, PATCH for a normal release (e.g. `3.0.15` → `3.0.16`), MINOR for a feature milestone — no `-beta` pre-release suffixes (see CLAUDE.md's "Versioning policy" note).
-4. Add a release entry to the history table in [CLAUDE.md](CLAUDE.md) and update
-   the `**Version:**` line at the bottom. Keep the entry specific — what
-   changed, why, the blast radius, and how it was verified.
-5. Commit (end the message with the `Co-Authored-By` trailer if AI-assisted),
-   then push to `main`.
+```bash
+gh api repos/talirezun/the-curator/branches/main/protection
+# → {"message":"Branch not protected","status":"404"}
+gh api repos/talirezun/the-curator/rulesets
+# → []
+```
+
+and the in-app auto-updater (`POST /api/config/update`) runs `git fetch origin
+main` + `git reset --hard origin/main` + `npm install` + a `.app` rebuild. So
+whatever lands on `main` reaches every user's machine on their next update
+check, green or red.
+
+That is why the release is a script with refusals, and why it releases through
+a **gate** rather than pushing straight to `main`.
+
+### The gate
+
+```
+release/vX.Y.Z  ──push──▶  CI (~8 min)  ──green?──▶  main fast-forwards to it
+                                │
+                                └── red ──▶ main untouched. Nothing deployed.
+```
+
+`main` only ever receives a commit CI has already validated. Three properties
+fall out of that, and each is asserted in `scripts/test-release-preconditions.js`:
+
+- **The merge is `--ff-only`, and that is load-bearing rather than stylistic.**
+  A merge commit would make `main` a SHA that no CI run ever executed on, which
+  is precisely the property the gate exists to provide. `main` is always the
+  exact verified commit, byte for byte. `assertSafeCommand()` refuses a
+  non-`--ff-only` merge structurally, so no code path can construct one.
+- **The tag is created AFTER the merge**, on the commit `main` points at. A tag
+  can therefore never name a commit that failed CI.
+- **A red gate leaves `main` untouched and the release branch in place**, so the
+  fix is a commit ON TOP of that branch. The script refuses to release over an
+  existing release branch (`release-branch-exists`) precisely so a re-cut cannot
+  quietly bury a failed attempt.
+
+**The gate is the `offline` job.** `.github/workflows/test.yml` gates `live` to
+push-`main` plus manual dispatch, so it does not run on a release branch at all
+— and that is the right split rather than a gap. `live` spends real money, can
+take 20 minutes, and is deliberately flake-tolerant through
+`scripts/ci-flake.js`; a required check designed to tolerate its own transient
+failures is the wrong thing to block a green tree on. `live` still runs on
+`main` after the merge, exactly as before. `--watch-main` waits for it and
+reports it, and never changes the exit code.
+
+**The gate reports what it did NOT see.** A job that was skipped is named in the
+output rather than silently counted as a pass, so "green" never quietly means
+"green on the two checks that happened to run".
+
+> **`.github/workflows/test.yml`'s push trigger must stay unfiltered.** A bare
+> `push:` fires on every branch, which is what gives the release branch a run at
+> all. Restricting it to `main` would not break loudly — the branch would simply
+> get no run, and a gate waiting for a run that never starts is worse than no
+> gate, because it looks like one. `release.js` refuses (`ci-not-reachable`) if
+> it finds a `branches:` or `branches-ignore:` key there, and the suite asserts
+> the same thing against the real file.
+
+### The three commands
+
+```bash
+# 1. Land the work on main and write the release's row into CLAUDE.md's
+#    full-row changelog table. Leave the "- **Version:**" line ALONE —
+#    release.js moves it together with package.json and package-lock.json,
+#    so the three cannot disagree.
+
+# 2. Rehearse. Every check runs; nothing is written, created or pushed.
+node scripts/release.js 3.29.0 --dry-run
+
+# 3. Release.
+node scripts/release.js 3.29.0            # prompts for the version to confirm
+node scripts/release.js 3.29.0 --yes      # non-interactive (agents; CI)
+```
+
+Options: `--dry-run`/`-n`, `--yes`/`-y`, `--no-push` (commit on the release
+branch locally, push nothing), `--no-watch` (push the branch but don't wait —
+`main` is left untouched and you finish the merge yourself), `--keep-branch`,
+`--watch-main`, `-m "subject"` (the default subject is derived from the
+changelog row's first bolded run and clipped to 72 chars — pass `-m` for the
+longer hand-written style the history actually uses), `--skip-tests`, `--help`.
+
+Exit codes, so an agent can branch on the outcome: **0** released, **1** refused
+before anything irreversible, **2** the gate went red — `main` untouched and
+nothing deployed, **3** the gate's outcome could not be observed — `main`
+untouched. **An unobservable gate fails CLOSED**, because the whole point is
+that `main` only ever receives a verified commit.
+
+### What happens to the release branch
+
+**It is deleted after a successful merge, and that is the recommendation.** Its
+commit is reachable from both `main` and the annotated tag, so nothing is
+orphaned and the branch carries no history of its own — the tag is the durable
+record of that exact SHA. Keeping them would accumulate a `release/*` namespace
+that makes GitHub's branch list useless within a year, for no recoverable
+information. Pass `--keep-branch` to keep one.
+
+The deletion uses `git branch -d` (never `-D`), which refuses an unmerged
+branch, so the local delete is itself a last check that the merge really
+happened; if it refuses, the remote delete is not attempted. `assertSafeCommand()`
+permits this one deletion and nothing else: the branch name must match
+`release/vX.Y.Z` exactly. **A red gate never deletes the branch** — that is
+where the fix goes.
+
+### What it refuses, and why each one is there
+
+| Refusal | Fires when |
+|---|---|
+| `bad-version` | not plain `X.Y.Z` — the `-beta` line was retired in v3.0.2 after 27 "previews" shipped straight to production |
+| `wrong-branch` | not on `main` |
+| `dirty-tree` | any modified or untracked file outside `package.json`, `package-lock.json`, `CLAUDE.md`, `CHANGELOG-ARCHIVE.md`, `CONTRIBUTING.md` — unfinished work must not be swept into a release commit |
+| `behind-remote` / `diverged` | `origin/main` moved; a release must be a fast-forward |
+| `version-not-forward` | the target is not greater than `package.json`'s current version |
+| `tag-exists` | `vX.Y.Z` already exists locally or on `origin` — the script never moves or deletes a tag |
+| `release-branch-exists` | `release/vX.Y.Z` already exists — an earlier attempt is open, quite possibly one whose CI went red. Fix it with a commit on top; a re-cut would hide it |
+| `ci-not-reachable` | the workflow would not run on a release branch, so the gate would wait on a run that never starts |
+| `changelog-row-missing` | `CLAUDE.md` has no FULL row for the version (an index line is a pointer, never the record) |
+| `version-fields-disagree` | `package.json`, **both** `package-lock.json` fields and `CLAUDE.md`'s `**Version:**` line do not all read one version. Two starting states are accepted and nothing between them: all on the old version (the script bumps all three), or all on the target (someone pre-bumped). A half-bumped tree is what makes `npm test` go red mid-release for a reason that reads like a test failure. v3.24.1 found the lock six releases stale in both fields |
+| `leanness-cap-exceeded` | more full changelog rows than `test-changelog-completeness.js`'s cap. At the cap it **warns** — *"the next release must archive first"* — rather than letting someone discover it mid-release |
+| `suite-counts-stale` | `scripts/check-doc-suite-counts.js` fails. Correct the **doc** to the measured numbers; never do that arithmetic by hand and never edit `run-tests.js` to match the doc |
+| `lock-diff-too-large` | the bump changed more of `package-lock.json` than the two version lines, i.e. npm re-resolved the tree. v3.24.1 hand-edited the lock for exactly this reason |
+| `claude-rewrite-failed` | the `CLAUDE.md` version-line rewrite did not produce exactly a one-line change, or did not survive a read-back |
+| `tests-failed` | `npm test` went red |
+| `commit-message-refused` | the subject would be bounced by `.githooks/commit-msg` — reported up front rather than halfway through |
+| `not-confirmed` | no `--yes` and not a TTY. An unattended script cannot release by omission |
+| `branch-create-failed` | the release branch could not be created — nothing is committed |
+| `remote-moved` | `origin/main` advanced **while CI ran**, so `main` can no longer fast-forward to the verified commit. Rebasing would produce a SHA CI never saw, which destroys the gate's guarantee — so it refuses and tells you to merge `origin/main` *into* the release branch and re-gate |
+| `ff-failed` | the fast-forward refused, or reported success and landed on a different SHA than CI verified (the SHA is re-read, never assumed) |
+| `push-failed` | a push was rejected. The remedy printed is `git pull --rebase` or a re-gate, never a force |
+
+### What `release.js` will not do
+
+- Never `git push --force`, never `--force-with-lease`, never a `+refspec`,
+  never delete a tag, never delete any branch but a merged `release/vX.Y.Z`,
+  never a merge that is not `--ff-only`, never `git reset --hard` your checkout.
+  `assertSafeCommand()` refuses those argv shapes structurally, so no code path
+  can construct one by accident, and the suite proves the check is *wired into*
+  every command rather than merely present.
+- Never `git add -A`. It names the release files explicitly.
+- No flag makes a **failing** check pass. There is exactly one override,
+  `--skip-tests`, and it is loud: a banner, a warning in the summary, and a
+  permanent line in the annotated tag message saying the local gate was
+  bypassed. Note it does **not** bypass the CI gate — nothing does.
+- It does not write the changelog row. A generated one would be worthless.
+- It does not publish a GitHub Release. Tags are created now so that
+  `electron-updater` has something to depend on later; wiring a tag-triggered
+  release workflow before anything consumes it would be shipping an unwired
+  parameter.
+
+### When a release is bad
+
+The gate catches anything `npm test` can see, so this is now the narrower case:
+a defect CI cannot detect that reached `main` anyway.
+
+**Rollback is forward-only.** There is no release channel, no downgrade path,
+and no `releaseChannel` setting; clients pull `origin/main` and hard-reset to
+it. So the answer is always another release, never an undo:
+
+```bash
+# 1. Revert the release commit. A NEW commit — never a force-push, and never
+#    delete the tag. The bad release is history now.
+git revert --no-edit <sha-of-the-bad-release>
+
+# 2. Write a CLAUDE.md row for the patch release saying what was reverted and
+#    why. The row is the only durable record of why a version was skipped.
+
+# 3. Cut it — through the gate, like any other release.
+node scripts/release.js <next-patch> --dry-run
+node scripts/release.js <next-patch>
+```
+
+Users who already updated get the fix on their next update check — there is no
+push. If the damage is in `domains/` rather than in code, the wiki is
+git-tracked and a user with Personal Sync configured recovers with a git
+client; there is no in-app revert and never has been (see CLAUDE.md's
+semantic-duplicate note).
+
+**If the gate went red instead**, nothing was deployed and there is nothing to
+revert. Fix it with a commit on top of `release/vX.Y.Z`, push, and re-run — the
+branch is deliberately left in place for exactly that.
+
+### Branch protection — the recommendation
+
+**Recommended: protect `main` against force-push and deletion only. Do not add
+a required status check.**
+
+Changing a repository setting is the maintainer's call, so nothing here has been
+applied. The reasoning, including the case against:
+
+- **The release-branch gate already provides what a required check would.**
+  `main` only receives commits CI has validated, and the gate runs before the
+  push rather than after it. A required status check would re-verify the same
+  `offline` job on the same SHA, and cost a PR to do it.
+- **A required check cannot gate a direct push.** A status check can only run
+  after the commit exists somewhere, so requiring one on `main` forces a PR for
+  every release — and the maintainer is the only reviewer. The alternative is an
+  admin bypass, which makes the protection theatre.
+- **The flake argument is weaker than it looks, and is stated here corrected.**
+  `scripts/ci-flake.js` tolerates transient failures for **LIVE** suites, which
+  are not part of the gate and could not be a PR check anyway. The offline
+  suites are deterministic and the runner never retries them, so
+  `offline`-as-required-check would not be flaky. The case against a required
+  check rests on latency and ceremony, not flake.
+- **Force-push and deletion are the genuinely irrecoverable mistakes, and
+  blocking them costs nothing.** The maintainer never force-pushes `main`; but
+  because the auto-updater hard-resets to `origin/main`, a force-push that
+  rewrote history would propagate that rewritten history to every user machine.
+
+**The trade-off, stated plainly:** the gate lives in a script, so someone can
+still bypass it with a bare `git push` to `main`, and `--skip-tests` still skips
+the *local* test run. What the gate buys is that the *default* path cannot ship
+a commit CI has not validated; what the ruleset buys is that the *irreversible*
+class is blocked server-side. Neither buys enforcement against a determined
+operator, and the honest framing is that this is a solo maintainer protecting
+himself from his own hurry, not a repo defending against a hostile committer.
+
+If you agree, this is the whole change — one copy-paste:
+
+```bash
+gh api -X POST repos/talirezun/the-curator/rulesets --input - <<'JSON'
+{
+  "name": "main: no force-push, no deletion",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/main"], "exclude": [] } },
+  "rules": [ { "type": "non_fast_forward" }, { "type": "deletion" } ]
+}
+JSON
+
+# Verify it took:
+gh api repos/talirezun/the-curator/rulesets
+```
+
+Note this ruleset targets `refs/heads/main` only, so it does not touch
+`release/*` branches — `release.js` still deletes a merged one, which is
+intended.
+
+No `bypass_actors` is set on purpose — including for admins. The point is to
+guard against your own irreversible mistake, and deleting the ruleset takes ten
+seconds if you ever genuinely need to force-push:
+
+```bash
+gh api repos/talirezun/the-curator/rulesets            # find the id
+gh api -X DELETE repos/talirezun/the-curator/rulesets/<id>
+```
+
+**If you later decide you want the CI gate enforced server-side too**, add
+`offline` as a required check and **explicitly exclude `Dependency audit
+(advisory)`** — the workflow's own comment says so, and including it would make
+a lagging advisory feed block releases:
+
+```bash
+gh api -X PUT repos/talirezun/the-curator/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": { "strict": true, "contexts": ["Offline tests (free)"] },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
+```
+
+`"enforce_admins": false` is what keeps direct pushes to `main` possible; with
+it `true`, every release needs a PR. Be aware this interacts with the gate: a
+required check on `main` means the fast-forward push must ALSO carry a green
+check for that SHA, which it will, since the release branch's run is on the same
+commit — but a `strict: true` ("branches must be up to date") setting adds a
+second way for the same race `remote-moved` already covers to surface.
+
+### Does any of this belong in CI instead?
+
+The *checks* mostly already are in CI — `npm test` runs there on every push, and
+with the gate, CI is now what actually decides whether `main` moves. The
+*sequencing* cannot be: the release commit does not exist until after the
+sequence has run, so something local has to create it. The natural end-state,
+once `electron-updater` needs GitHub Releases, is that `release.js` keeps
+creating the tag and a new `on: push: tags: 'v*'` workflow builds and publishes
+the Release from it. That is a real next step, not a rewrite of this one.
 
 ---
 
