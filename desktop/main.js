@@ -43,9 +43,9 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, Menu, dialog, nativeTheme, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme, screen, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -62,6 +62,13 @@ import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
 } from './lib/window-state.js';
+import { buildTrayModel, liveExpiresInMs, MAX_ROWS } from './lib/tray-model.js';
+import { buildTrayMenuTemplate, trayToolTip } from './lib/tray-menu.js';
+import { trayIconPngs } from './lib/tray-icon.js';
+import { resolveBackgroundMode, resolveTrayPlan, planModeTransition } from './lib/background-mode.js';
+import {
+  createStateWatcher, createExpiryTimer, isConfigEvent, FALLBACK_POLL_MS,
+} from './lib/state-watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +124,34 @@ let quitCheckInFlight = false;
 let updateCheckInFlight = false;
 /** Resolved in boot() from the app's OWN path resolver, not re-derived here. */
 let logsDir = null;
+
+// ── Menubar widget state (see §2c) ───────────────────────────────────────────
+/** The `Tray`, or null in `window` mode. */
+let tray = null;
+/** Which glyph the tray is currently showing, so an unchanged one is never
+ *  re-set — replacing a tray image is not free and, more importantly, it is
+ *  not silent on every macOS version. */
+let trayGlyph = null;
+/** The last `getTraySummary()` result. Rendering from this costs no I/O, which
+ *  is what makes hovering the icon free and opening it instant. */
+let traySnapshot = null;
+/** The filesystem watch + fallback poll. Null while the tray is off — turning
+ *  the feature off must stop paying for it. */
+let stateWatcher = null;
+/** One-shot corrector for the `live` glyph. Never a repeating tick. */
+let glyphExpiry = null;
+/** The mode currently APPLIED, so a config re-read that changes nothing does
+ *  nothing. See planModeTransition() for why idempotence matters here. */
+let appliedMode = 'window';
+/** Watches `.curator-config.json`'s directory so a Settings flip takes effect
+ *  without a restart. Runs in every mode — it is what NOTICES the mode. */
+let configWatcher = null;
+/** The data layer's `getTraySummary`, resolved once in boot(). Null means the
+ *  function is not available, which the menu SAYS rather than hides. */
+let getTraySummary = null;
+let traySummaryError = null;
+/** The domains folder, resolved in boot() from the app's own path module. */
+let domainsDirForWatch = null;
 
 // ── 1. Single instance ───────────────────────────────────────────────────────
 //
@@ -263,6 +298,33 @@ async function boot() {
     // runs the app. The menu item says so when it is clicked.
     logsDir = null;
   }
+
+  // ── The menubar widget (§2c) ─────────────────────────────────────────────
+  //
+  // ORDER MATTERS AND IT BITES IF MISSED: the mode is needed BEFORE anything is
+  // created, and the renderer does not exist yet at this point, so it must not
+  // be waited on from the renderer. Everything here reads through the same
+  // APP_ROOT as the server import, so it is the same module instance the server
+  // is using rather than a second copy with its own overrides.
+  //
+  // Nothing in this block can be fatal. A shell that cannot resolve the domains
+  // folder, the config file, or the data function still opens the app; the tray
+  // then says what it could not do instead of not appearing.
+  try {
+    const paths = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
+    const cfg = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'config.js')).href);
+    domainsDirForWatch = typeof cfg.getDomainsDir === 'function' ? cfg.getDomainsDir() : null;
+    const configFile = typeof paths.getCuratorConfigFile === 'function'
+      ? paths.getCuratorConfigFile()
+      : null;
+    const resolved = await resolveTraySummary();
+    getTraySummary = resolved.fn;
+    traySummaryError = resolved.error;
+    startConfigWatch(configFile);
+    applyBackgroundMode(await readBackgroundMode());
+  } catch { /* the app runs; the menu bar icon simply does not appear */ }
 
   createWindow();
 }
@@ -617,6 +679,327 @@ async function checkForUpdates() {
     updateCheckInFlight = false;
     applyMenu();
   }
+}
+
+// ── 2c. The menubar widget ───────────────────────────────────────────────────
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  THE DECISIONS ARE IN lib/tray-*.js. ONLY THE WIRING IS HERE.             ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// Same split, and the same reason, as the application menu above: Electron is
+// not an offline-suite dependency, so nothing in this file can be EXECUTED by
+// `npm test`. The row model, the menu template, the glyph pixels, the mode
+// resolution and every timing decision therefore live in lib/, where
+// scripts/test-tray-shell.js runs them for real. What is left here is the
+// handful of Electron calls that cannot be anywhere else.
+//
+// ── THE TRAY IS CREATED IN THE MAIN PROCESS, NEVER A HELPER ─────────────────
+//
+// Not a style preference. Apple DTS documents apps whose status item never
+// appeared AND never showed up in macOS 26's "Allow in the Menu Bar" list at
+// all, because the item was owned by a second bare executable inside
+// Contents/MacOS/ rather than the main one. Apple's guidance is to own the
+// status item from the main executable, and `new Tray()` here is that.
+//
+// ── NOTHING IN THIS SECTION HAS EVER BEEN RENDERED ──────────────────────────
+//
+// Stated here rather than left to be assumed: no tray icon has been created on
+// any machine. Electron cannot be run by the suite and the maintainer is at his
+// own computer, so every claim below about how macOS behaves comes from
+// Electron's and Apple's documentation, and the parts that ARE proven are
+// proven as data — the template, the model, the pixels, the transitions.
+// desktop/README.md carries the same statement.
+
+/** The row limit asked of the data layer. The model caps again at MAX_ROWS;
+ *  asking for exactly what is displayable keeps the index read as small as the
+ *  contract allows. */
+const TRAY_ROW_LIMIT = MAX_ROWS;
+
+/**
+ * Resolve the data layer's `getTraySummary`.
+ *
+ * ONE FUNCTION, IMPORTED DIRECTLY. The shell and the server share a Node realm
+ * — `boot()` above did `await import(SERVER_ENTRY)` — so this is a plain call
+ * with no HTTP hop and no IPC, and the specifier is derived from the same
+ * APP_ROOT as everything else so it is the same module instance the rest of the
+ * app is using rather than a second copy.
+ *
+ * TWO CANDIDATE HOMES ARE TRIED, and that is a coordination hedge rather than a
+ * fallback of the kind desktop-host.js forbids: both resolve to the SAME
+ * function if it exists, so there is no half-working second behaviour. If
+ * neither is present the shell records WHY and the menu says "Agent memory
+ * could not be read" — loud, recoverable, and never a tray that silently shows
+ * an empty store to someone whose store is full.
+ */
+async function resolveTraySummary() {
+  const candidates = [
+    ['brain', 'tray-summary.js'],
+    ['brain', 'working-state.js'],
+  ];
+  const tried = [];
+  for (const rel of candidates) {
+    const spec = pathToFileURL(path.join(APP_ROOT, 'src', ...rel)).href;
+    try {
+      const mod = await import(spec);
+      if (typeof mod.getTraySummary === 'function') return { fn: mod.getTraySummary, error: null };
+      tried.push(`${rel.join('/')}: loaded, no getTraySummary export`);
+    } catch (err) {
+      tried.push(`${rel.join('/')}: ${(err && err.message) || String(err)}`);
+    }
+  }
+  return { fn: null, error: tried.join('; ') };
+}
+
+/** The current mode, read from the app's OWN config module. Never from the
+ *  renderer, and never waited on: the value is needed BEFORE the tray and the
+ *  window exist, and at that point there is no renderer to ask. */
+async function readBackgroundMode() {
+  try {
+    const mod = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'config.js')).href);
+    // Whichever shape the config module exposes. resolveBackgroundMode()
+    // accepts a bare string OR a whole config object and answers 'window' for
+    // anything it does not recognise, so no branch here can produce a wrong
+    // mode — only a default one.
+    if (typeof mod.getBackgroundMode === 'function') return resolveBackgroundMode(mod.getBackgroundMode());
+    if (typeof mod.getConfig === 'function') return resolveBackgroundMode(mod.getConfig());
+  } catch { /* fall through to the safe default */ }
+  return resolveBackgroundMode(null);
+}
+
+/** Build the tray menu from the snapshot already in memory. NO I/O, no network
+ *  — which is what makes it safe to do on hover. */
+function renderTrayFromSnapshot() {
+  if (!tray || tray.isDestroyed()) return;
+  const model = buildTrayModel(traySnapshot, { maxRows: TRAY_ROW_LIMIT });
+
+  if (model.glyph !== trayGlyph) {
+    trayGlyph = model.glyph;
+    tray.setImage(trayImage(model.glyph));
+  }
+  tray.setToolTip(trayToolTip(model));
+  tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate(model, {
+    onOpenScope: openScopeInApp,
+    onOpenMemory: () => openMemoryView(null),
+    onOpenApp: () => revealWindow(),
+    onOpenSettings: () => { openSettingsView(); },
+  })));
+
+  // THE ONE-SHOT CORRECTOR, NOT A TICK. `liveExpiresInMs` is null unless the
+  // glyph is `live`, so in the state the process is in almost all of the time
+  // this arms nothing at all. When it does fire it re-renders from this same
+  // snapshot — no index read, no filesystem, no network.
+  if (glyphExpiry) glyphExpiry.arm(liveExpiresInMs(model));
+}
+
+/** Re-read the index, then render. This is the only thing here that touches
+ *  the disk, and it happens on a real save, on the 5-minute fallback, on boot,
+ *  and on a deliberate click — never on a timer while the menu is closed. */
+async function refreshTraySummary() {
+  if (!tray || tray.isDestroyed()) return;
+  if (!getTraySummary) {
+    traySnapshot = {
+      ok: false, scopes: [], warnings: [
+        'Agent memory is unavailable in this build' + (traySummaryError ? ': ' + traySummaryError : ''),
+      ],
+    };
+    renderTrayFromSnapshot();
+    return;
+  }
+  try {
+    traySnapshot = await getTraySummary({ limit: TRAY_ROW_LIMIT });
+  } catch (err) {
+    // A throw here must not take the tray down: a menubar app that vanished is
+    // indistinguishable from one that was never installed.
+    traySnapshot = {
+      ok: false, scopes: [],
+      warnings: ['Could not read agent memory: ' + ((err && err.message) || String(err))],
+    };
+  }
+  renderTrayFromSnapshot();
+}
+
+/** The template image for a glyph state. Generated, not shipped — see
+ *  lib/tray-icon.js for why, and for why it is greyscale+alpha. */
+function trayImage(state) {
+  const png = trayIconPngs(state);
+  const img = nativeImage.createFromBuffer(png.scale1, { scaleFactor: 1 });
+  img.addRepresentation({ scaleFactor: 2, buffer: png.scale2 });
+  // WITHOUT THIS THE GLYPH IS A BLACK BLOB ON A DARK MENU BAR. A template
+  // image is tinted by macOS for the current bar — light, dark, tinted
+  // wallpaper, and the inverted state while the menu is open. Correct pixels
+  // are necessary and not sufficient; this call is the rest of it.
+  img.setTemplateImage(true);
+  return img;
+}
+
+/** Open the app on a scope. There is NO second reader in the shell. */
+async function openScopeInApp(row) {
+  await openMemoryView(row && row.project ? row.project : null);
+}
+
+/**
+ * Reveal the window on the Agent memory view, optionally on one project.
+ *
+ * ── THE HONEST LIMIT, AND IT IS A LIMIT ────────────────────────────────────
+ *
+ * This lands on the VIEW and on the PROJECT. It does NOT select the scope: the
+ * scope picker is internal to the memory view and has no routing attribute to
+ * address, whereas `data-view` and `data-mem-project` are the app's own
+ * dispatch attributes — what the rail's click handler reads and what
+ * `memory.js`'s own row handler matches on. Coupling to those two is the same
+ * coupling `lib/menu.js` already accepts for Settings, with the same property
+ * that makes it acceptable: `executeJavaScript` RESOLVES WITH A VALUE, so the
+ * shell learns when the coupling has rotted and says so, instead of offering a
+ * menu item that silently does nothing.
+ *
+ * The project name is passed as a JSON string and compared against
+ * `dataset.memProject` — never interpolated into a selector. A project name is
+ * user-supplied text, and building a CSS selector out of it would be an
+ * injection into code running in the app's own origin.
+ */
+async function openMemoryView(project) {
+  revealWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isLoading()) await waitForLoad(mainWindow.webContents);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const js =
+    '(() => { const rail = document.querySelector("[data-view=\\"memory\\"]");' +
+    ' if (!rail) return "no-view";' +
+    ' rail.click();' +
+    ' const want = ' + JSON.stringify(project === null ? '' : String(project)) + ';' +
+    ' if (!want) return "view";' +
+    ' const rows = Array.from(document.querySelectorAll(".mem-row[data-mem-project]"));' +
+    ' const hit = rows.find((el) => el.dataset.memProject === want);' +
+    ' if (!hit) return "view";' +
+    ' hit.click(); return "project"; })()';
+
+  let landed = 'error';
+  try {
+    landed = await mainWindow.webContents.executeJavaScript(js, true);
+  } catch {
+    landed = 'error';
+  }
+  if (landed === 'project' || landed === 'view') return;
+  dialog.showErrorBox(
+    'Could not open Agent Memory',
+    'The Curator’s window did not respond to the menu bar.\n\n' +
+    'Open it with the Agent memory button in the left-hand rail.'
+  );
+}
+
+/** Create the tray icon and everything that keeps it current. */
+function startTray() {
+  if (tray) return;
+  trayGlyph = 'idle';
+  tray = new Tray(trayImage('idle'));
+  tray.setToolTip('The Curator');
+
+  glyphExpiry = createExpiryTimer({ onExpire: renderTrayFromSnapshot });
+
+  // HOVER RE-RENDERS FROM MEMORY; A CLICK RE-READS THE INDEX.
+  //
+  // The reason for the split is the one thing a menu cannot do: there is no
+  // "menu will open" event on a Tray, so a menu built ten minutes ago would
+  // still say "just now". `mouse-enter` fires before the click, costs nothing
+  // (no I/O, no network — it renders the snapshot already held), and makes the
+  // ages exact at the moment the menu is about to appear. The click is a
+  // DELIBERATE act, so that is where the index read belongs — and it is the
+  // only place anything expensive is allowed to happen, because it is the only
+  // moment a human has asked for it.
+  //
+  // Correct even if neither event ever fires: the menu is also rebuilt on every
+  // real save and on the fallback tick, and it carries an absolute "Updated
+  // HH:MM" stamp so a stale reading is visible AS stale rather than confidently
+  // wrong.
+  tray.on('mouse-enter', renderTrayFromSnapshot);
+  tray.on('click', () => { refreshTraySummary(); });
+  tray.on('right-click', () => { refreshTraySummary(); });
+
+  stateWatcher = createStateWatcher({
+    roots: trayWatchRoots(),
+    watch: fsWatch,
+    onRefresh: () => { refreshTraySummary(); },
+    fallbackMs: FALLBACK_POLL_MS,
+    onWatchError: () => { /* the fallback poll covers it; never fatal */ },
+  });
+  stateWatcher.start();
+
+  refreshTraySummary();
+}
+
+/** Tear the tray down, including everything it was paying for. */
+function stopTray() {
+  if (stateWatcher) { stateWatcher.stop(); stateWatcher = null; }
+  if (glyphExpiry) { glyphExpiry.cancel(); glyphExpiry = null; }
+  if (tray && !tray.isDestroyed()) tray.destroy();
+  tray = null;
+  trayGlyph = null;
+  traySnapshot = null;
+}
+
+/** Where the working-state files live. Resolved in boot() through the app's
+ *  OWN resolver, never re-derived here — two copies of a path is how they
+ *  drift, and this one has to be the same folder the MCP writes into or the
+ *  watch is pointed at nothing and the tray only ever updates on the fallback
+ *  tick. An empty list is survivable and is exactly that degraded state. */
+function trayWatchRoots() {
+  return domainsDirForWatch ? [domainsDirForWatch] : [];
+}
+
+/**
+ * Apply a background mode, from any other mode, idempotently.
+ *
+ * The transition itself is computed by `planModeTransition()` — a pure function
+ * the suite drives over the whole 3x3 matrix — so this is nine cases decided in
+ * a file that can be executed and applied in a file that cannot.
+ */
+function applyBackgroundMode(next) {
+  const plan = planModeTransition(appliedMode, next);
+  if (!plan.changed) return plan;
+  if (plan.destroyTray) stopTray();
+  if (plan.createTray) startTray();
+  // TURNING IT OFF MUST NEVER LEAVE SOMEBODY WITH NO VISIBLE APP. Going back to
+  // `window` mode shows the window, so the transition always ends with
+  // something on screen rather than with a running process and no affordance.
+  if (plan.revealWindow) revealWindow();
+  // plan.hideDock is always false today — lib/background-mode.js holds
+  // `tray-only` back deliberately and says so in `plan.hedged`. There is no
+  // dock call here because there is no tested transition to make it with.
+  appliedMode = plan.to;
+  return plan;
+}
+
+/**
+ * Notice a Settings flip without a restart.
+ *
+ * Runs in EVERY mode, including `window`, because it is what notices the mode
+ * being turned ON. It is one non-recursive watch on one directory with an exact
+ * basename filter, which is the cheapest thing in this file.
+ *
+ * The DIRECTORY and not the file: config is written with `writeFileAtomic`, a
+ * temp file plus a rename, and a watch on an inode that gets renamed over stops
+ * delivering events silently.
+ */
+function startConfigWatch(configFile) {
+  if (configWatcher || !configFile) return;
+  const dir = path.dirname(configFile);
+  const base = path.basename(configFile);
+  configWatcher = createStateWatcher({
+    roots: [dir],
+    watch: fsWatch,
+    recursive: false,
+    filter: (name) => isConfigEvent(name, base),
+    // No fallback poll: an unnoticed mode change costs the user one restart,
+    // and a poll for a setting that changes twice a year is exactly the
+    // permanent cost this design refuses to pay.
+    fallbackMs: 0,
+    onRefresh: async () => { applyBackgroundMode(await readBackgroundMode()); },
+    onWatchError: () => { /* the setting then needs a restart; nothing breaks */ },
+  });
+  configWatcher.start();
 }
 
 // ── 3. The window ────────────────────────────────────────────────────────────
