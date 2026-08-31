@@ -184,9 +184,26 @@ const STEP_COPY = {
     done: 'A key is saved, so The Curator can read and write.',
     action: 'Open Settings',
   },
+  // ── WHY THIS STEP IS NOT CALLED "CREATE" ANY MORE ───────────────────
+  // It read "Create your first domain" / "A domain is one subject area
+  // with its own wiki", which is the right advice for exactly one of the
+  // two people who see it. The other — an existing user opening the new
+  // macOS app, whose six domains live in a folder the app is not pointed
+  // at — was being told to start over, on the one screen where they are
+  // already wondering whether their knowledge base survived. The step's
+  // real goal was never "create"; it is "have somewhere for knowledge to
+  // land", which its own `done` copy has always said. So the title states
+  // the goal and the body names BOTH ways to reach it.
+  //
+  // The action is unchanged, and deliberately so: this panel POSTS
+  // NOTHING (see the header), and views/domains.js now carries both routes
+  // on the screen this button opens. Adding a second button here would put
+  // a folder-switching call site inside a first-run panel that has, by
+  // design, never mutated anything.
   domain: {
-    title: 'Create your first domain',
-    todo: 'A domain is one subject area with its own wiki — “articles”, “research”, “work”.',
+    title: 'Point at a wiki, or start one',
+    todo: 'Already have a knowledge base? Open Domains and choose the folder it lives in. ' +
+          'Starting fresh? Create a domain — one subject area with its own wiki.',
     done: 'You have somewhere for knowledge to land.',
     action: 'Open Domains',
   },

@@ -550,7 +550,13 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
     let captured = null;
     const deps = {
       isCurrentMount: () => true, icon: () => '', setSidebar: (html) => { captured = html; },
-      gatedLoader: () => '<GATED/>', loadGate: {}, bindNewDomainBtn: () => {},
+      // `bindSidebarButtons` replaced `bindNewDomainBtn`, and
+      // `knowledgeFolderBtn` is new, when the sidebar gained the second
+      // action ("Use existing folder"). Both are tracked here for the reason
+      // the next comment gives: these deps are POSITIONAL, so a name that has
+      // moved on in domains.js is a ReferenceError in every case below.
+      gatedLoader: () => '<GATED/>', loadGate: {}, bindSidebarButtons: () => {},
+      knowledgeFolderBtn: () => '<KBBTN/>',
       // `domainDotClass` replaced `domainDotColor` when the identity dots
       // stopped being inline hex (see scripts/test-next-domain-dots.js). The
       // name in this list must track the real one: renderSidebar's deps are

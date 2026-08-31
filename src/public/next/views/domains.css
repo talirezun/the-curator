@@ -57,6 +57,56 @@
 
 .dm-new-btn { width: 100%; }
 
+/* ── Knowledge folder ("I already have a wiki") ──────────────────────────
+   SPACING AND WRAPPING ONLY. No font-size, no colour, no border anywhere in
+   this block — the type comes from shared/text.css (via renderStatus) and
+   from shell.css's `.btn`, `.empty-body` and `.mono`, exactly as the file
+   header requires. Nothing here can re-dress a shared role.
+
+   No box-shadow either: `.dm-kb-btn` and the undo button are focusable, and
+   a shadow on a focusable control fights base.css's global :focus-visible
+   ring. They are plain `.btn`s, so the press state, the disabled treatment
+   and the reduced-motion behaviour are all the ones shell.css already
+   defines — this view introduces no new interaction vocabulary. */
+
+/* Follows the full-width New domain button in every sidebar state. */
+.dm-kb-btn { width: 100%; margin-top: 8px; }
+
+/* The outcome of a folder switch. Sits directly under the view header in
+   the main column, above whatever the new folder turned out to contain. */
+.dm-kb-notice { margin-bottom: 18px; }
+.dm-kb-notice > * + * { margin-top: 10px; }
+
+.dm-kb-undo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* A filesystem path has no spaces to break at and can be arbitrarily long;
+   without this it forces the whole main column to scroll horizontally. */
+.dm-kb-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* "Looking in <path>" — the last line inside `.empty-body`, so it inherits
+   that role's type and needs only separation from the prose above it. */
+.dm-kb-lookedin { margin-top: 12px; }
+
+/* The empty state addresses two different readers in two paragraphs. */
+.dm-empty-lines > * + * { margin-top: 10px; }
+
+/* Two peer actions. Wraps rather than overflowing on a narrow window. */
+.dm-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .dm-row-list {
   display: flex;
   flex-direction: column;
