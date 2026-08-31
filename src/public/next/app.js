@@ -1962,6 +1962,66 @@ function _notifyWriteGateSubscribers() {
   }
 }
 
+// ── The pending-change badge is INVALIDATED here, not discovered by a timer ─
+//
+// THE DEFECT THIS CLOSES, reported from the packaged app: ingest a file, and
+// the rail badge kept reading the number it had computed BEFORE the ingest —
+// "1" while 33 files were genuinely pending. The 33 appeared on navigating to
+// Sync. Both numbers come from the SAME field (`changesCount` from GET
+// /api/sync/status, `git status --porcelain`) and the Sync view renders that
+// field directly, so a badge and a view disagreeing about it can only ever be
+// STALENESS — the count was never wrong, it was late. Health's broken-link fix
+// showed the same shape more mildly ("it took time"): the 60s tick eventually
+// found it.
+//
+// The mechanism was a missing invalidation, not a slow interval. /next's
+// refreshers ran on exactly four triggers — boot, every navigate(), the 60s
+// timer, and the batch-queue 'exit' transition — and NOT ONE of them is "an
+// operation that writes files just finished". So between finishing an ingest
+// and touching the rail, the interval was doing all the work and the number
+// was stale by construction, for up to a full minute. src/public/app.js has
+// never had this gap: it calls refreshSyncPendingBadge() from the single
+// ingest's own completion path (and from seven other post-write sites), which
+// is exactly why the maintainer reported the browser app as more prompt.
+//
+// SHORTENING THE INTERVAL WOULD HAVE BEEN THE WRONG FIX — it trades CPU for a
+// smaller stale window while leaving the window open, and this is a question
+// with an exact answer available for free: the moment a write RELEASES is the
+// moment the count is known to have changed. docs/roadmap-menubar-widget.md's
+// measured recursive `fs.watch` (6.5 ms median, 1/70th the CPU of a 20 s poll)
+// is the right instrument for a SERVER-side watcher feeding a push channel
+// that does not exist yet; it is not needed to answer a question the client
+// already knows the answer to.
+//
+// WHY THE LAST HANDLE, NOT EVERY HANDLE: `git status --porcelain` is
+// repo-wide, so a batch releasing ten per-domain handles has exactly one
+// answer to fetch, not ten. Waiting for the gate to fall completely idle
+// coalesces them into a single refresh and — because a release is the LAST
+// thing an operation does, after the server has finished writing — guarantees
+// we never recompute mid-write and cache a half-landed number, which is the
+// very defect being fixed.
+//
+// DELIBERATELY NOT GATED ON document.hidden, unlike the two shell TIMERS
+// above. The v3.31.0 rule is that a window nobody is looking at must not POLL
+// and must not `git fetch` GitHub on a schedule; this is neither. It is
+// event-driven, fires at most once per completed operation, and is a local
+// `git status` with no network in it — so a user who starts an ingest and
+// alt-tabs away comes back to a correct badge without depending on the wake
+// handler having fired. The REMOTE badge is deliberately NOT refreshed here:
+// a local write changes nothing about what GitHub is holding, and that one IS
+// a network call.
+//
+// Fire-and-forget, and it cannot break the release: refreshSyncBadge() is an
+// `async function`, which can never throw synchronously, and its own contract
+// is that it never rejects either. The try/catch is belt-and-braces for a
+// future edit that makes it non-async, because a throw escaping from here
+// would leave the write gate permanently busy and every guarded control
+// disabled for the life of the page.
+function _refreshSyncBadgeIfWritesSettled() {
+  if (isAnyWriteBusy()) return;
+  try { refreshSyncBadge(); } catch (err) { console.error('[next] post-write badge refresh failed', err); }
+}
+
 // Registers one open write against `domain` and returns a release function.
 // `opLabel` is a short human string (e.g. 'ingest', 'push') surfaced by
 // getDomainWriteLabel() below for a disabled control's tooltip — purely
@@ -1988,6 +2048,11 @@ export function beginDomainWrite(domain, opLabel) {
       if (cur.length === 0) _domainWrites.delete(domain);
     }
     _notifyWriteGateSubscribers();
+    // AFTER the subscribers, not before: a subscriber re-renders a view's
+    // own controls off the gate, and that is the synchronous work the user
+    // is waiting to see. The badge refresh is an un-awaited network call
+    // whose result lands later regardless, so it goes second.
+    _refreshSyncBadgeIfWritesSettled();
   };
 }
 
@@ -2189,6 +2254,16 @@ async function _checkActiveJobOnce() {
     // is the /next equivalent of the shipping app's post-ingest badge
     // refresh, hung off the ONE transition that already knows a batch
     // finished rather than a second watcher of its own.
+    //
+    // KEPT, and not redundant with the write-gate invalidation added to
+    // release() above: the line directly above releases only THIS watcher's
+    // handle, and a mounted Ingest view legitimately holds a SECOND handle
+    // for the same batch (that composition is the whole point of the
+    // watcher — see its own comment). When it does, the gate has not fallen
+    // idle here and _refreshSyncBadgeIfWritesSettled() correctly declines,
+    // so this call is the one that runs. When it has fallen idle, the two
+    // coalesce into one extra local `git status` on a path that fires once
+    // per finished batch.
     refreshSyncBadge();
   }
   _activeJobLastStatus = nextStatus;
