@@ -64,6 +64,7 @@ import {
 } from './lib/window-state.js';
 import { buildTrayModel, liveExpiresInMs, MAX_ROWS } from './lib/tray-model.js';
 import { buildTrayMenuTemplate, trayToolTip } from './lib/tray-menu.js';
+import { decideRemoteCheck, remoteAnswerIsRenderable } from './lib/tray-remote.js';
 import { trayIconPngs } from './lib/tray-icon.js';
 import { resolveBackgroundMode, resolveTrayPlan, planModeTransition } from './lib/background-mode.js';
 import {
@@ -150,6 +151,18 @@ let configWatcher = null;
  *  function is not available, which the menu SAYS rather than hides. */
 let getTraySummary = null;
 let traySummaryError = null;
+/** The two halves of the multi-machine signal, resolved once in boot():
+ *  `getRemoteStatus` from brain/sync.js (the check) and `noteRemoteStatus`
+ *  from brain/tray-summary.js (where the answer is parked for the next read).
+ *  Null when either is unavailable, in which case the remote line simply never
+ *  appears — which is exactly what it did before, so a failed resolve degrades
+ *  to the old behaviour rather than to an error. */
+let getRemoteStatus = null;
+let noteRemoteStatus = null;
+/** When a remote check was last STARTED, and whether one is running. Reset by
+ *  stopTray(), so turning the tray off also forgets it paid anything. */
+let remoteCheckLastAttemptMs = null;
+let remoteCheckInFlight = false;
 /** The domains folder, resolved in boot() from the app's own path module. */
 let domainsDirForWatch = null;
 
@@ -322,6 +335,7 @@ async function boot() {
     const resolved = await resolveTraySummary();
     getTraySummary = resolved.fn;
     traySummaryError = resolved.error;
+    await resolveRemoteCheck();
     startConfigWatch(configFile);
     applyBackgroundMode(await readBackgroundMode());
   } catch { /* the app runs; the menu bar icon simply does not appear */ }
@@ -751,6 +765,93 @@ async function resolveTraySummary() {
   return { fn: null, error: tried.join('; ') };
 }
 
+/**
+ * Resolve the two functions the multi-machine signal needs.
+ *
+ * SAME REALM, SAME MODULE INSTANCE, NO HTTP HOP — the same argument as
+ * `resolveTraySummary()` above: `boot()` already did `await
+ * import(SERVER_ENTRY)`, so these resolve to the very objects the server is
+ * using. That matters more here than it does for the summary: `getRemoteStatus`
+ * carries a repo-keyed TTL cache, an in-flight memo and — through
+ * `gitFetch()` — the process-wide fetch gate, and every one of those bounds is
+ * per-MODULE-INSTANCE. A second copy of `sync.js` would have its own gate, its
+ * own cache, and would be precisely the "second fetch site" the v3.9.1
+ * incident is about. Importing by the same APP_ROOT-derived specifier is what
+ * makes this ONE more caller of an existing bounded thing, rather than a new
+ * unbounded one.
+ *
+ * A failure is not fatal and is not reported anywhere: with these null the
+ * tray simply never runs a check, which is the behaviour that shipped.
+ */
+async function resolveRemoteCheck() {
+  try {
+    const sync = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'sync.js')).href);
+    const summary = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'tray-summary.js')).href);
+    if (typeof sync.getRemoteStatus === 'function' && typeof summary.noteRemoteStatus === 'function') {
+      getRemoteStatus = sync.getRemoteStatus;
+      noteRemoteStatus = summary.noteRemoteStatus;
+    }
+  } catch {
+    getRemoteStatus = null;
+    noteRemoteStatus = null;
+  }
+}
+
+/**
+ * Ask GitHub whether another machine has pushed — ON A MENU OPEN AND NOWHERE
+ * ELSE.
+ *
+ * `lib/tray-remote.js` owns the WHEN and explains at length why this is a
+ * check on open rather than a timer, what was verified about the fetch gate,
+ * and what could not be. This function owns only the doing.
+ *
+ * IT NEVER BLOCKS THE MENU. Electron shows the context menu that was already
+ * set, synchronously, so there is nothing to await into: the check lands, the
+ * observation is parked, and the menu is rebuilt for the next open. That is
+ * the identical latency contract the index re-read on click already has, and
+ * the absolute "Updated HH:MM" stamp is what keeps it honest.
+ *
+ * NOTHING HERE THROWS. `getRemoteStatus()` already converts a failed check
+ * into a well-formed "unknown" payload, and the catch covers the rest, because
+ * an unhandled rejection in a tray event handler is a crash in a process whose
+ * whole purpose is to still be running.
+ */
+async function maybeCheckRemote(trigger) {
+  if (!tray || tray.isDestroyed()) return;
+  if (!getRemoteStatus || !noteRemoteStatus) return;
+
+  const decision = decideRemoteCheck({
+    trigger,
+    nowMs: Date.now(),
+    lastAttemptMs: remoteCheckLastAttemptMs,
+    inFlight: remoteCheckInFlight,
+  });
+  if (!decision.check) return;
+
+  // Stamped BEFORE the await, not after. The floor has to bound ATTEMPTS: a
+  // check that takes thirty seconds and then fails must not leave the window
+  // wide open for every click made while it was running.
+  remoteCheckLastAttemptMs = Date.now();
+  remoteCheckInFlight = true;
+  try {
+    const payload = await getRemoteStatus();
+    if (!remoteAnswerIsRenderable(payload)) return;
+    noteRemoteStatus(payload);
+    // Re-render rather than re-read: the observation is the only thing that
+    // changed, and `getTraySummary()` picks it up from the module-level store
+    // on its next call anyway. Going through refreshTraySummary() here would
+    // spend a disk walk to deliver a fact that did not come from the disk.
+    await refreshTraySummary();
+  } catch {
+    /* A failed check is already an "unknown" payload; anything past that is
+       not something a menu bar can act on. */
+  } finally {
+    remoteCheckInFlight = false;
+  }
+}
+
 /** The current mode, read from the app's OWN config module. Never from the
  *  renderer, and never waited on: the value is needed BEFORE the tray and the
  *  window exist, and at that point there is no renderer to ask. */
@@ -914,9 +1015,16 @@ function startTray() {
   // real save and on the fallback tick, and it carries an absolute "Updated
   // HH:MM" stamp so a stale reading is visible AS stale rather than confidently
   // wrong.
+  //
+  // A MENU OPEN ALSO ASKS ABOUT THE OTHER MACHINES, and that is the ONLY
+  // trigger that does. `mouse-enter` deliberately stays free — see
+  // lib/tray-remote.js for the whole argument, including what was and was not
+  // verified about racing the user's own pull. Both calls are fire-and-forget
+  // because Electron shows the already-built menu synchronously; there is
+  // nothing here to await into.
   tray.on('mouse-enter', renderTrayFromSnapshot);
-  tray.on('click', () => { refreshTraySummary(); });
-  tray.on('right-click', () => { refreshTraySummary(); });
+  tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
+  tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
 
   stateWatcher = createStateWatcher({
     roots: trayWatchRoots(),
@@ -938,6 +1046,13 @@ function stopTray() {
   tray = null;
   trayGlyph = null;
   traySnapshot = null;
+  // Turning the feature off must stop paying for it, and that includes the
+  // rate-limit state: a tray turned back on is a fresh decision, not one
+  // still serving a floor armed by the previous one. `remoteCheckInFlight` is
+  // deliberately NOT cleared — a check started before the tray was destroyed
+  // is still running, and its own `finally` owns that flag; clearing it here
+  // would let a second check start alongside the first.
+  remoteCheckLastAttemptMs = null;
 }
 
 /** Where the working-state files live. Resolved in boot() through the app's

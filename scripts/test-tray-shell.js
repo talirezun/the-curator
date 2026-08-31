@@ -28,8 +28,13 @@
  *   §7   the icon: decoded back out of its own PNG bytes
  *   §8   backgroundMode: the fail-safe default and the 3x3 transition matrix
  *   §9   the watch: filter, debounce, fallback — driven with a fake clock
+ *   §2b  ages are RE-DERIVED at the render clock, not read out of the snapshot
+ *   §2c  a collision is announced ONCE, and the match is STRUCTURAL
+ *   §2d  the standing brief reaches a surface, and it is the tooltip
  *   §10  cross-file couplings, read-only
  *   §11  main.js source scan, and what is NOT enforced
+ *   §12  the multi-machine signal fires — on a menu open, and nowhere else
+ *   §13  main.js wiring for that check — source scan, weak like §11
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
  *
@@ -93,10 +98,11 @@ function stripJsComments(src) {
     .replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-let model, menu, icon, mode, watchMod;
+let model, menu, icon, mode, watchMod, remote;
 try {
   model = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
   menu = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
+  remote = await import(path.join(DESKTOP, 'lib', 'tray-remote.js'));
   icon = await import(path.join(DESKTOP, 'lib', 'tray-icon.js'));
   mode = await import(path.join(DESKTOP, 'lib', 'background-mode.js'));
   watchMod = await import(path.join(DESKTOP, 'lib', 'state-watch.js'));
@@ -108,27 +114,54 @@ try {
 const NOOPS = { onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {} };
 const NOW = new Date('2026-08-31T14:32:00');
 
+/** The absolute timestamp a row of the given age carries, as the data layer
+ *  emits it: `chooseClock()` puts the agent's `writtenAt` OR the file's mtime
+ *  into one `writtenAt` field, and `ageSource` says which. Both are absolute,
+ *  which is what lets the model re-derive an age at render time. */
+function atAge(seconds, base = NOW) {
+  return new Date(base.getTime() - seconds * 1000).toISOString();
+}
+
 /** One realistic summary. Every name here is INVENTED — this is a public
- *  repository and no real machine, project or host name may appear in it. */
+ *  repository and no real machine, project or host name may appear in it.
+ *
+ *  Every row carries BOTH `writtenAt` and `writtenAgeSeconds`, and that is the
+ *  real contract rather than a convenience: the fixture used to carry only the
+ *  age, which is a shape `getTraySummary()` cannot produce, and a model that
+ *  read the age verbatim looked correct against it forever. §2b drives the
+ *  same fixture at two different clocks, which is what the age alone made
+ *  impossible to test. */
 function summary(over = {}) {
   return {
     ok: true,
-    lastSave: { project: 'alpha', scope: 'main', writtenAgeSeconds: 30, ageSource: 'agent' },
+    lastSave: { project: 'alpha', scope: 'main', writtenAt: atAge(30), writtenAgeSeconds: 30, ageSource: 'agent' },
     scopes: [
       { project: 'alpha', scope: 'main', machine: 'laptop-a1b2c3', harness: 'harness-one',
-        writtenAgeSeconds: 30, ageSource: 'agent', headline: 'wired the tray bounds',
+        writtenAt: atAge(30), writtenAgeSeconds: 30, ageSource: 'agent', headline: 'wired the tray bounds',
         isThisMachine: true, harnessShared: false },
       { project: 'alpha', scope: 'research', machine: 'laptop-a1b2c3', harness: 'harness-two',
-        writtenAgeSeconds: 1080, ageSource: 'agent', headline: 'redid the section',
+        writtenAt: atAge(1080), writtenAgeSeconds: 1080, ageSource: 'agent', headline: 'redid the section',
         isThisMachine: true, harnessShared: true },
       { project: 'beta', scope: 'main', machine: 'studio-9f8e7d', harness: 'harness-two',
-        writtenAgeSeconds: 10800, ageSource: 'file', headline: 'rewrote the serialiser',
+        writtenAt: atAge(10800), writtenAgeSeconds: 10800, ageSource: 'file', headline: 'rewrote the serialiser',
         isThisMachine: false, harnessShared: false },
     ],
     brief: null,
     remote: null,
     warnings: [],
     ...over,
+  };
+}
+
+/** The REAL `harness-collision` warning, in the exact shape
+ *  `src/brain/tray-summary.js` emits it. §2c pins the message against that
+ *  file's own source, so this cannot quietly drift into a fiction the way the
+ *  hand-written string it replaces did. */
+function collisionWarning(project, scope) {
+  return {
+    code: 'harness-collision',
+    message: `Two agent tools are writing ${project} · ${scope}.`,
+    project, scope, machine: 'laptop-a1b2c3', harnesses: ['harness-one', 'harness-two'],
   };
 }
 
@@ -139,6 +172,7 @@ ok(typeof menu.buildTrayMenuTemplate === 'function', 'buildTrayMenuTemplate is a
 ok(typeof icon.trayIconPngs === 'function', 'trayIconPngs is a function');
 ok(typeof mode.resolveTrayPlan === 'function', 'resolveTrayPlan is a function');
 ok(typeof watchMod.createStateWatcher === 'function', 'createStateWatcher is a function');
+ok(typeof remote.decideRemoteCheck === 'function', 'decideRemoteCheck is a function');
 
 {
   const m = model.buildTrayModel(summary(), { now: NOW });
@@ -261,6 +295,250 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§2b ages are RE-DERIVED at the render clock, not read out of the snapshot');
+//
+// THE DEFECT THIS SECTION EXISTS FOR, reproduced as the first assertion:
+// `buildTrayModel` read `writtenAgeSeconds` straight out of the summary, so
+// driving ONE snapshot at two clocks forty minutes apart produced the
+// identical "Last save · 4 min ago" both times WHILE `renderedAtText` moved.
+// `mouse-enter` re-renders from the in-memory snapshot precisely so a hover
+// costs no I/O, so that is the ordinary path and not an edge case.
+//
+// It inverts the purpose of the absolute stamp, which tray-menu.js justifies
+// as the thing that makes a dead watch visible: the stamp said "fresh" over an
+// age that was not.
+{
+  const snap = summary();
+  const later = new Date(NOW.getTime() + 40 * 60 * 1000);
+  const a = model.buildTrayModel(snap, { now: NOW });
+  const b = model.buildTrayModel(snap, { now: later });
+
+  ok(a.renderedAtText !== b.renderedAtText,
+    'CONTROL — the absolute stamp really does move between the two renders');
+  eq(a.headline.text, 'Last save · just now', 'at the first clock the headline reads the true age');
+  eq(b.headline.text, 'Last save · 40 min ago',
+    'FORTY MINUTES LATER, from the SAME snapshot, the headline has moved — this is the defect');
+  ok(a.headline.text !== b.headline.text,
+    '…so the age under the stamp can no longer be stale while the stamp is fresh');
+
+  // Rows move too, and the bucket and the glyph move with them.
+  eq(a.rows[0].ageText, 'just now', 'a row reads its true age at the first clock');
+  eq(b.rows[0].ageText, '40 min ago', '…and its true age at the second');
+  eq(a.glyph, 'live', 'the glyph is live inside the window');
+  eq(b.glyph, 'idle', '…and the SAME snapshot rendered later is idle — no new read required');
+
+  // ageSource is untouched by re-deriving. Recomputing changes WHEN the age
+  // was measured, never WHICH CLOCK it came from.
+  ok(b.rows[2].ageText.startsWith('changed '),
+    'an ageSource:file row is re-derived too, and KEEPS its "changed" wording');
+  eq(b.rows[2].ageText, 'changed 3 hr ago', '…against the new clock, not the old one');
+
+  // THE LIMIT, and it is the one the brief names: do not invent precision.
+  const noStamp = model.buildTrayModel(summary({
+    lastSave: null,
+    scopes: [{ project: 'g', scope: 'main', machine: 'laptop-a1b2c3', isThisMachine: true,
+      writtenAt: null, writtenAgeSeconds: null, ageSource: null }],
+  }), { now: later });
+  eq(noStamp.rows[0].ageText, 'time unknown',
+    'a row with NO timestamp at all stays UNKNOWN — re-deriving is a way to be more accurate, never a way to manufacture a fact');
+
+  // A snapshot age with no timestamp is the best available and is used as-is.
+  const ageOnly = model.buildTrayModel(summary({
+    lastSave: null,
+    scopes: [{ project: 'g', scope: 'main', machine: 'laptop-a1b2c3', isThisMachine: true,
+      writtenAgeSeconds: 600, ageSource: 'agent' }],
+  }), { now: later });
+  eq(ageOnly.rows[0].ageText, '10 min ago',
+    'with an age but no timestamp the snapshot number is used unchanged — stale, but the best there is');
+
+  // The pure helper, driven directly across its whole precedence ladder.
+  const t = Date.parse('2026-08-31T14:32:00.000Z');
+  eq(model.effectiveAgeSeconds('2026-08-31T14:22:00.000Z', null, t), 600, 'a timestamp wins');
+  eq(model.effectiveAgeSeconds('2026-08-31T14:22:00.000Z', 5, t), 600, '…over a disagreeing snapshot age');
+  eq(model.effectiveAgeSeconds(null, 5, t), 5, 'with no timestamp the snapshot age is the fallback');
+  eq(model.effectiveAgeSeconds('not a date', 5, t), 5, '…and so it is for an unparseable one');
+  eq(model.effectiveAgeSeconds(null, null, t), null, 'with neither, null — never 0');
+  eq(model.effectiveAgeSeconds(null, -1, t), null, 'a negative snapshot age is refused, not clamped into a lie');
+  // CLOCK SKEW. Two machines' clocks differ; a handoff written "in the future"
+  // must not collapse to "time unknown".
+  eq(model.effectiveAgeSeconds('2026-08-31T14:32:03.000Z', null, t), 0,
+    'a timestamp a few seconds in the FUTURE clamps to 0, exactly as working-state.js does');
+  eq(model.formatAge(model.effectiveAgeSeconds('2026-08-31T14:32:03.000Z', null, t)), 'just now',
+    '…which renders as "just now" rather than as an absence');
+
+  // The arithmetic is the STORE'S OWN, not a second opinion. Pinned against
+  // working-state.js's source so a change there is visible here.
+  const wsSrc = read(path.join(ROOT, 'src', 'brain', 'working-state.js'));
+  ok(/Math\.max\(0,\s*Math\.round\(\(now - Date\.parse\(/.test(wsSrc),
+    'the store still derives ages as Math.max(0, Math.round((now - Date.parse(at)) / 1000)) — the expression this model re-runs');
+  const tmSrc = read(path.join(DESKTOP, 'lib', 'tray-model.js'));
+  ok(/Math\.max\(0,\s*Math\.round\(\(nowMs - ms\)\s*\/\s*1000\)\)/.test(tmSrc),
+    '…and the model re-runs that same expression rather than inventing its own');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
+//
+// THE DEFECT: `collisionNotices()` suppressed a supplied warning only when it
+// matched `/harness/i`. The ONLY producer is tray-summary.js's
+// `harness-collision`, whose message reads "Two agent tools are writing …" —
+// the word "harness" appears nowhere in it. So the suppression was dead
+// against the sole case it exists for, and every collision emitted BOTH lines,
+// burning 2 of the 4 notice slots to say one thing twice.
+//
+// It passed its own test because the fixture was a hand-written string that
+// happened to contain "harnesses". The fixture was the fiction.
+{
+  // THE PRODUCER'S REAL WORDING, read off disk. If this reds, the message was
+  // reworded — which is exactly the event that silently broke the old regex.
+  const tsSrc = read(path.join(ROOT, 'src', 'brain', 'tray-summary.js'));
+  ok(tsSrc.includes("code: 'harness-collision'"),
+    'the data layer still emits the code this model matches on');
+  const msgMatch = tsSrc.match(/code: 'harness-collision',[\s\S]{0,400}?message: `([^`]+)`/);
+  ok(msgMatch !== null, 'CONTROL — the real message was found in the producer');
+  const realMessage = msgMatch ? msgMatch[1] : '';
+  ok(/Two agent tools are writing/.test(realMessage),
+    `CONTROL — and it is the sentence expected: "${realMessage}"`);
+
+  // THE DEFECT, ASSERTED DIRECTLY: the old mechanism could not have worked.
+  ok(!/harness/i.test(realMessage),
+    'THE DEFECT — the real warning contains no "harness", so the old /harness/i suppression was DEAD against its only case');
+  ok(realMessage.includes('${c.project}') && realMessage.includes('${c.scope}'),
+    '…and it does name the scope, so the failure was the regex and not the data');
+
+  // THE FIX: the real warning shape now suppresses the derived line.
+  const withReal = model.buildTrayModel(summary({
+    warnings: [collisionWarning('alpha', 'research')],
+  }), { now: NOW });
+  const collisionLines = withReal.notices.filter((n) =>
+    /writing/.test(n.text) && /alpha/.test(n.text) && /research/.test(n.text));
+  eq(collisionLines.length, 1, 'the REAL producer warning now suppresses the derived line — exactly ONE notice');
+  eq(collisionLines.length ? collisionLines[0].text : '(no collision notice at all)',
+    'Two agent tools are writing alpha · research.',
+    '…and the SUPPLIED one is the survivor, because the data layer saw the whole store');
+
+  // A collision warning about a DIFFERENT scope must not suppress anything.
+  const other = model.buildTrayModel(summary({
+    warnings: [collisionWarning('alpha', 'somewhere-else')],
+  }), { now: NOW });
+  eq(other.notices.filter((n) => /writing/.test(n.text)).length, 2,
+    'a collision warning naming a DIFFERENT scope suppresses nothing — both facts are real');
+
+  // With NO supplied warning the derived line still fires: that is what it is for.
+  eq(model.buildTrayModel(summary(), { now: NOW })
+    .notices.filter((n) => n.kind === 'collision').length, 1,
+    'with no supplied warning the derived line is still emitted');
+
+  // THE MILDER INSTANCE OF THE SAME SHAPE — a truncated list said so twice.
+  const truncated = model.buildTrayModel(summary({
+    total: 40,
+    warnings: [{ code: 'scopes-truncated', message: 'Showing the 8 most recent of 40 saved work-streams.', shown: 8, total: 40 }],
+    scopes: Array.from({ length: 20 }, (_, i) => ({
+      project: 'p', scope: 's' + i, machine: 'laptop-a1b2c3', harness: 'h',
+      writtenAt: atAge(i * 60), writtenAgeSeconds: i * 60, ageSource: 'agent', isThisMachine: true,
+    })),
+  }), { now: NOW });
+  ok(truncated.truncatedNote !== null, 'CONTROL — the cap IS disclosed, on its own item under the last row');
+  eq(truncated.notices.filter((n) => n.code === 'scopes-truncated').length, 0,
+    '…so the scopes-truncated warning is dropped from the notices — the cap is stated once, where it belongs');
+
+  // …but only when the note is actually there to state it.
+  const truncWarnNoNote = model.buildTrayModel(summary({
+    warnings: [{ code: 'scopes-truncated', message: 'Showing the 8 most recent of 40 saved work-streams.' }],
+  }), { now: NOW });
+  ok(truncWarnNoNote.truncatedNote === null, 'CONTROL — with nothing truncated there is no note');
+  eq(truncWarnNoNote.notices.filter((n) => n.code === 'scopes-truncated').length, 1,
+    '…and then the warning DOES get through, because nothing else is saying it');
+
+  // A coded warning this model has no opinion about passes through untouched.
+  const passthrough = model.buildTrayModel(summary({
+    warnings: [{ code: 'unlisted-entries', message: '2 folders on disk could not be listed.' }],
+  }), { now: NOW });
+  ok(passthrough.notices.some((n) => n.code === 'unlisted-entries'),
+    'an unrelated coded warning is passed through unchanged');
+
+  // Bare strings still work — main.js pushes them on its own failure paths.
+  const bare = model.buildTrayModel({ ok: false, scopes: [], warnings: ['Could not read agent memory: EACCES'] },
+    { now: NOW });
+  ok(bare.notices.some((n) => n.text.includes('EACCES')),
+    'a bare STRING warning still renders — main.js emits those and they carry no code');
+
+  // THE TEXT BACKSTOP'S OWN JOB, and it needed finding: mutating it away first
+  // came back GREEN, because the structural path covers every CODED pair. What
+  // it and only it covers is a repeated message with no code to match on —
+  // which is the same "say one thing twice in a four-slot list" defect §2c is
+  // about, one layer down. Left in place because it has a case, and asserted
+  // so the next reader does not have to rediscover which.
+  const dupes = model.buildTrayModel({
+    ok: true, scopes: [], warnings: ['the same sentence twice', 'the same sentence twice'],
+  }, { now: NOW });
+  eq(dupes.notices.filter((n) => n.text === 'the same sentence twice').length, 1,
+    'two IDENTICAL uncoded warnings collapse to one notice — the backstop\'s only reachable job');
+  // And a bare string identical to the DERIVED collision line collapses too.
+  const echo = model.buildTrayModel(summary({
+    warnings: ['Two harnesses are writing alpha · research'],
+  }), { now: NOW });
+  eq(echo.notices.filter((n) => n.text === 'Two harnesses are writing alpha · research').length, 1,
+    'an uncoded warning that happens to echo the derived line exactly is not printed beside it');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§2d the standing brief reaches a surface, and it is the tooltip');
+//
+// `getTraySummary()` pays a `stat` for the brief on every read and NOTHING
+// rendered it — the unwired-field shape this project has an allergy to. The
+// menu is not the answer (the brief is Tier C: it changes on the order of
+// weeks and does not earn one of eight rows, and the rendered panel that would
+// give it one is a later phase). The tooltip costs no row and no menu-bar
+// width, and the value is already in the model.
+{
+  const withBrief = model.buildTrayModel(summary({
+    brief: { project: 'alpha', updatedAt: atAge(45 * 86400), ageSeconds: 45 * 86400 },
+  }), { now: NOW });
+  // `!== null` WOULD HAVE PASSED ON `undefined`, and that is not a nitpick:
+  // the first version of this assertion said so, and mutation M9 — deleting
+  // `brief` from the returned model — went GREEN through it and then CRASHED
+  // the suite two lines later on `.ageText` of undefined. A crash names no
+  // expectation and, worse, leaves the tally unwritten, so a harness reading
+  // the summary line sees nothing at all (the v3.24.1 shape). Every read below
+  // is guarded for the same reason.
+  const briefIsObject = !!withBrief.brief && typeof withBrief.brief === 'object';
+  ok(briefIsObject, 'the model now carries the brief instead of discarding it');
+  eq(briefIsObject ? withBrief.brief.ageText : '(no brief on the model)', '1 month ago', '…as an AGE');
+
+  const tip = menu.trayToolTip(withBrief);
+  ok(tip.includes('Last save'), 'the tooltip still leads with the headline answer');
+  ok(tip.includes('Brief · 1 month ago'), '…and now also answers the second question the maintainer asks');
+  ok(!/stale|old|out of date|should/i.test(tip),
+    'it states a MEASUREMENT and never a judgement about the user\'s own hand-authored document');
+
+  // Re-derived like everything else.
+  const later = new Date(NOW.getTime() + 40 * 86400 * 1000);
+  const laterBrief = model.buildTrayModel(summary({
+    brief: { project: 'alpha', updatedAt: atAge(45 * 86400), ageSeconds: 45 * 86400 },
+  }), { now: later }).brief;
+  eq(laterBrief ? laterBrief.ageText : '(no brief on the model)', '2 months ago',
+    'the brief\'s age is re-derived at the render clock too');
+
+  // ABSENCE IS ABSENCE. A project with no standing brief is the ordinary case.
+  const noBrief = model.buildTrayModel(summary(), { now: NOW });
+  eq(noBrief.brief, null, 'no brief on disk means no brief in the model');
+  ok(!/Brief/.test(menu.trayToolTip(noBrief)),
+    '…and the tooltip simply does not mention it — no "Brief · unknown"');
+
+  const unknownAge = model.buildTrayModel(summary({
+    brief: { project: 'alpha', updatedAt: null, ageSeconds: null },
+  }), { now: NOW });
+  ok(!/Brief/.test(menu.trayToolTip(unknownAge)),
+    'a brief whose age cannot be derived contributes NOTHING rather than "time unknown"');
+
+  // The menu is untouched: this is a tooltip decision, not a menu decision.
+  const flat = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(withBrief, NOOPS));
+  ok(flat.every((i) => !/Brief/.test(i.label || '')),
+    'the brief does NOT take a menu row — Tier C is honoured, not overturned');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§3 machine names, shortened and disambiguated only where needed');
 {
   eq(model.hostPart('laptop-a1b2c3'), 'laptop', 'the install id is stripped');
@@ -307,6 +585,8 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
   eq(model.remoteNotice({ ok: true, behindFiles: 1 }).text, '1 handoff waiting on GitHub', 'and it is singular when it is one');
   eq(model.remoteNotice({ ok: false, message: 'network is down' }).text, 'network is down',
     'a FAILED check says so — a third state, not folded into either of the others');
+  eq(model.remoteNotice({ ok: false }).text, 'Could not check GitHub for waiting handoffs',
+    '…and it says so even with no message, rather than falling silent');
 
   // Collisions.
   const coll = model.buildTrayModel(summary(), { now: NOW });
@@ -315,11 +595,15 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
   ok(coll.notices.every((n) => !/rename|split|should/i.test(n.text)),
     'and it proposes NO remedy — the fix is the user\'s and does not fit in six words');
 
-  const collSuppressed = model.buildTrayModel(summary({
-    warnings: ['Two harnesses are writing into alpha / research — give them separate scopes'],
+  // The suppression itself is §2c's subject, driven against the REAL producer
+  // shape. What is asserted here is only that a warning which does NOT name a
+  // collision cannot suppress one — the old prose-matching version could, on
+  // any sentence that happened to contain the word.
+  const collNotSuppressed = model.buildTrayModel(summary({
+    warnings: ['A harness log rotated'],
   }), { now: NOW });
-  eq(collSuppressed.notices.filter((n) => /harness/i.test(n.text)).length, 1,
-    'a supplied warning naming the same scope SUPPRESSES the derived one — two sources never both speak about one scope');
+  eq(collNotSuppressed.notices.filter((n) => n.kind === 'collision').length, 1,
+    'an unrelated warning that merely contains "harness" does NOT suppress a real collision');
 
   const noisy = model.buildTrayModel(summary({
     warnings: ['w1', 'w2', 'w3', 'w4', 'w5', 'w6'],
@@ -752,6 +1036,130 @@ section('§11 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
   const quitDecision = read(path.join(DESKTOP, 'lib', 'quit-decision.js'));
   ok(/safeToQuit === null/.test(quitDecision),
     'and quit-decision.js still treats a null safeToQuit as its own case — this feature changed none of it');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§12 the multi-machine signal fires — on a menu open, and nowhere else');
+//
+// THE DEFECT: the `remote` line had exactly one feed, `noteRemoteStatus()`,
+// called from `GET /api/sync/remote-status`, which the frontend drives from
+// `refreshSyncRemoteBadgeIfVisible()` — and that DECLINES to fetch while
+// `document.hidden`. With the window closed, which is the tray's normal state
+// and the only state it exists for, no observation ever arrived and any
+// existing one expired after five minutes. Nothing rendered wrongly; the
+// feature built for "another machine sent you something" simply never fired.
+{
+  const nowMs = Date.parse('2026-08-31T14:32:00.000Z');
+  const MIN = remote.TRAY_REMOTE_MIN_INTERVAL_MS;
+
+  // THE TRIGGER SET, and the exclusions are the design.
+  eq([...remote.REMOTE_CHECK_TRIGGERS], ['click', 'right-click'],
+    'a menu OPEN is the only trigger');
+  ok(!remote.REMOTE_CHECK_TRIGGERS.includes('mouse-enter'),
+    'HOVER IS NOT A TRIGGER — the pointer crosses the icon on the way elsewhere, and main.js re-renders on it precisely because that costs nothing');
+  eq(remote.decideRemoteCheck({ trigger: 'mouse-enter', nowMs }).check, false, '…and the decision refuses it');
+  eq(remote.decideRemoteCheck({ trigger: 'mouse-enter', nowMs }).reason, 'not-a-menu-open',
+    '…naming itself, so a refusal can be told from a rate limit');
+  eq(remote.decideRemoteCheck({ trigger: 'watch', nowMs }).check, false,
+    'a filesystem watch is not a trigger either — a LOCAL save says nothing about the remote, and it fires unattended');
+
+  // THE FIX: a click with no prior attempt checks.
+  const first = remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: null, inFlight: false });
+  eq(first.check, true, 'a click with nothing recorded runs the check — this is the defect closing');
+  eq(first.reason, 'check', '…and says so');
+  eq(remote.decideRemoteCheck({ trigger: 'right-click', nowMs }).check, true, 'so does a right-click');
+
+  // BOUNDED. Never a timer, and never unbounded clicking.
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: nowMs - 1000 }).check, false,
+    'a second click a second later is refused');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: nowMs - 1000 }).reason, 'rate-limited', '…as rate-limited');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: nowMs - MIN + 1 }).check, false,
+    'refused right up to the floor');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: nowMs - MIN }).check, true,
+    'and allowed exactly AT it — the boundary is asserted from both sides');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: null, inFlight: true }).check, false,
+    'one already running refuses a second — getRemoteStatus() would COALESCE, which is right for a route and wrong here');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: null, inFlight: true }).reason, 'in-flight', '…and says which');
+
+  // A clock that went BACKWARDS must not open the floodgates.
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs, lastAttemptMs: nowMs + 3600_000 }).check, false,
+    'a backwards clock jump is treated as rate-limited — the worst case is one check skipped, never a burst');
+  eq(remote.decideRemoteCheck({ trigger: 'click', nowMs: NaN, lastAttemptMs: null }).check, false,
+    'no usable clock means no check');
+
+  // Renderability, which is what stops a pointless re-render.
+  eq(remote.remoteAnswerIsRenderable({ configured: true, behindFiles: 0 }), true, 'a configured answer is renderable');
+  eq(remote.remoteAnswerIsRenderable({ configured: false }), false,
+    'an UNCONFIGURED install is not — there is no remote, and re-rendering the menu under an open one costs the user something even when the data costs nothing');
+  for (const junk of [null, undefined, 'x', 0, []]) {
+    eq(remote.remoteAnswerIsRenderable(junk), false, `garbage is not renderable (${JSON.stringify(junk) ?? String(junk)})`);
+  }
+
+  // ELECTRON-FREE AND src-FREE, like every module in this folder — which is
+  // the property that let the suite EXECUTE all of the above.
+  const remoteSrc = read(path.join(DESKTOP, 'lib', 'tray-remote.js'));
+  ok(!/from ['"]electron['"]/.test(remoteSrc), 'tray-remote.js imports nothing from Electron');
+  ok(!/from ['"].*\/src\//.test(remoteSrc), '…and nothing from src/');
+  ok(!/child_process|require\(|\bfetch\(/.test(stripJsComments(remoteSrc)),
+    '…and runs no subprocess and issues no request of its own — it decides, main.js does');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §11');
+{
+  const src = stripJsComments(read(path.join(DESKTOP, 'main.js')));
+
+  ok(/tray\.on\('click'[\s\S]{0,120}maybeCheckRemote\('click'\)/.test(src),
+    'a click asks about the other machines');
+  ok(/tray\.on\('right-click'[\s\S]{0,120}maybeCheckRemote\('right-click'\)/.test(src),
+    '…and so does a right-click');
+  // HOVER DOES NOT. Asserted two ways, because a loose window regex here would
+  // match the `click` line two lines below and prove nothing.
+  ok(!/tray\.on\('mouse-enter',[^;]*maybeCheckRemote/.test(src),
+    'the mouse-enter registration itself does not reach the remote check — asserted here as well as in §12, because this is the file that could reintroduce it');
+  // Every trigger main.js actually passes, compared as a SET against the
+  // module's own allow-list. A new call site with a new trigger string reds
+  // this even if it is written somewhere the regexes above do not look.
+  const passedTriggers = [...src.matchAll(/maybeCheckRemote\('([^']+)'\)/g)].map((m) => m[1]).sort();
+  eq([...new Set(passedTriggers)], [...remote.REMOTE_CHECK_TRIGGERS].sort(),
+    'the triggers main.js passes are EXACTLY the module\'s allow-list — no fourth call site, and no hover');
+  ok(passedTriggers.length >= 2, `CONTROL — trigger call sites were really found (${passedTriggers.length})`);
+  ok(!/setInterval\(/.test(src),
+    'STILL no interval in main.js — the check must never fire on a timer while nothing is watching');
+  ok(!/setTimeout\([\s\S]{0,80}maybeCheckRemote/.test(src),
+    '…and it is not smuggled in behind a setTimeout either');
+
+  // It goes through the EXISTING bounded path rather than issuing its own git.
+  ok(/getRemoteStatus\s*=\s*sync\.getRemoteStatus/.test(src),
+    'the check is brain/sync.js\'s own getRemoteStatus — so it inherits the TTL cache, the in-flight memo and gitFetch()\'s process-wide gate');
+  ok(!/child_process|execFile|spawn\(/.test(src.replace(/[\s\S]*?function maybeCheckRemote/, '').slice(0, 2000)),
+    '…and main.js runs no git of its own');
+  ok(/remoteCheckLastAttemptMs = Date\.now\(\)[\s\S]{0,120}await getRemoteStatus\(\)/.test(src),
+    'the attempt is stamped BEFORE the await — the floor bounds ATTEMPTS, so a slow failing check does not leave the window open');
+  ok(/stopTray[\s\S]{0,600}remoteCheckLastAttemptMs = null/.test(src),
+    'turning the tray off forgets the rate-limit state');
+  ok(!/stopTray[\s\S]{0,600}remoteCheckInFlight = false/.test(src),
+    '…but NOT the in-flight flag: a check still running owns that, and clearing it would let a second start alongside the first');
+
+  // THE PROPERTY THE WHOLE DESIGN RESTS ON, pinned against sync.js's source.
+  // Read-only; this suite must never edit that file.
+  const syncSrc = read(path.join(ROOT, 'src', 'brain', 'sync.js'));
+  const countRawFetches = (text) => (stripJsComments(text).match(/git\(`fetch /g) || []).length;
+  // CONTROL. These four pins are over a file this change is forbidden to edit,
+  // so they were never mutation-tested by breaking their subject. The counter
+  // is instead proven capable of other answers against synthetic input — a
+  // count that can only ever return 1 would assert nothing.
+  eq(countRawFetches('nothing here'), 0, 'CONTROL — the raw-fetch counter can return 0');
+  eq(countRawFetches('git(`fetch a`); git(`fetch b`);'), 2, 'CONTROL — …and 2, so counting 1 is a measurement');
+  const rawFetches = countRawFetches(syncSrc);
+  eq(rawFetches, 1,
+    'brain/sync.js still has exactly ONE raw fetch invocation — the one inside gitFetch(), which is what makes the gate a CLASS invariant rather than a per-call-site one');
+  ok(/_fetchGate\.then\(runOne, runOne\)/.test(syncSrc),
+    'gitFetch() still chains on BOTH arms, so one failed fetch cannot wedge every later one');
+  ok(/_remoteInFlight/.test(syncSrc) && /REMOTE_CHECK_TTL_MS/.test(syncSrc),
+    'getRemoteStatus() still carries the in-flight memo and the TTL cache this trigger relies on for its bounds');
+  ok(/remoteChecked: false/.test(syncSrc) && /behindFiles: null/.test(syncSrc),
+    'and a failed check still degrades to "we could not tell" rather than to a reassuring zero');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

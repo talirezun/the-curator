@@ -261,16 +261,44 @@ export function flattenTrayMenu(template, trail = []) {
 
 /**
  * The icon's own tooltip — what hovering the glyph says before anything is
- * clicked. One sentence, and it carries the headline, because a hover is
- * cheaper than a click and this is the one place the answer can arrive without
- * one.
+ * clicked. It carries the headline, because a hover is cheaper than a click
+ * and this is the one place the answer can arrive without one.
  *
  * It is NOT the tray TITLE (see this file's header for why the title is
  * empty): a tooltip costs no menu bar width and appears only on demand.
+ *
+ * ── WHY THE STANDING BRIEF IS HERE AND NOT IN THE MENU ─────────────────────
+ *
+ * The maintainer's stated need is two questions, not one: "I'm always
+ * wondering if we have updated the scope, AND if the standing brief is up to
+ * date." The menu's first line answers the first. The second has a computed
+ * answer — `getTraySummary()` pays a `stat` for it on every read — and until
+ * now nothing rendered it, so the app was paying for a fact it threw away.
+ *
+ * The brief is TIER C: it changes on the order of weeks, so it does not earn a
+ * menu row, and the rendered panel that would give it one is a later phase.
+ * That ranking is not overturned here. What changes is only WHERE a Tier C
+ * fact goes, and the tooltip is the one surface in this widget with no
+ * scarcity — it costs no menu row, no menu-bar width, and no extra I/O,
+ * because the value is already in the model. Tier C means subordinate, and a
+ * second clause on a hover is subordinate.
+ *
+ * It is stated as an AGE and never as a judgement. "Brief · 6 weeks ago" is a
+ * measurement; "brief is stale" would be the widget deciding something about
+ * the user's own hand-authored document, which is not its business. When there
+ * is no brief the clause is simply absent — a project with no standing brief
+ * is the ordinary case, not a problem to report in a menu bar.
  */
 export function trayToolTip(model, appName = 'The Curator') {
   const headline = model && model.headline ? model.headline : null;
   if (!headline) return appName;
   const where = headline.where ? ' (' + headline.where + ')' : '';
-  return appName + ' — ' + headline.text + where;
+  const brief = model && model.brief ? model.brief : null;
+  // Only when the age is actually known. A brief whose age could not be
+  // derived contributes nothing rather than "Brief · time unknown", which
+  // would spend the clause to say we do not know something nobody asked.
+  const briefPart = brief && brief.ageText && brief.ageSeconds !== null
+    ? ' · Brief · ' + brief.ageText
+    : '';
+  return appName + ' — ' + headline.text + where + briefPart;
 }
