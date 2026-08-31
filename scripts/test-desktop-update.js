@@ -337,14 +337,31 @@ const launcher = await import(path.join(ROOT, 'src', 'brain', 'mcp-launcher.js')
   ok(dl.ephemeral && dl.reason === 'downloads-folder', 'CONTROL — the real classifier still flags ~/Downloads');
   const dlTarget = plan.classifyInstallTarget({ execPath: '/Users/x/Downloads/The Curator.app/Contents/MacOS/The Curator', launchOrigin: dl });
   ok(dlTarget.ok, 'a Downloads install PROCEEDS — the two features disagree here, and deliberately');
-  eq(dlTarget.warning.reason, 'downloads-folder', '...carrying the classifier\'s own warning for the UI to show');
+  // A SENTENCE, not an object, and not the classifier's own message. Everything
+  // downstream of here — the engine's return, the route's relay, the panel —
+  // RENDERS this value; an object arriving where a sentence was expected is how
+  // this warning came to be built and then dropped on the floor for a release.
+  eq(typeof dlTarget.warning, 'string', 'carrying a warning the UI can show, as a SENTENCE rather than a record');
+  ok(/Downloads folder/.test(dlTarget.warning), '...that names the actual condition');
+  ok(/Applications/.test(dlTarget.warning), '...and the thing to do about it');
+  ok(!/Claude Desktop|launcher/i.test(dlTarget.warning),
+     'and NOT the origin classifier\'s own sentence, which is about the Claude Desktop launcher — true where it was written, false in front of someone updating an app');
+  eq(plan.updateWarning('downloads-folder'), dlTarget.warning, 'the sentence comes from the named table, so there is one copy of it');
+  ok(/temporary location/.test(plan.updateWarning('some-future-reason') || ''),
+     'an UNMAPPED ephemeral reason still produces a true sentence — returning null would put the warning back where this release found it');
+  eq(plan.updateWarning(null), null, 'and no reason is no warning');
   eq(dlTarget.bundlePath, '/Users/x/Downloads/The Curator.app', 'and it resolves the bundle it is going to replace');
   eq(dlTarget.installDir, '/Users/x/Downloads', 'and the folder the swap happens in');
 
   const good = launcher.classifyLaunchOrigin('/Applications/The Curator.app/Contents/MacOS/The Curator', '/Users/x', 'darwin');
   ok(!good.ephemeral, 'CONTROL — a normal /Applications install is not ephemeral');
-  ok(plan.classifyInstallTarget({ execPath: '/Applications/The Curator.app/Contents/MacOS/The Curator', launchOrigin: good }).ok,
-     'and it is accepted');
+  const goodTarget = plan.classifyInstallTarget({ execPath: '/Applications/The Curator.app/Contents/MacOS/The Curator', launchOrigin: good });
+  ok(goodTarget.ok, 'and it is accepted');
+  // ANTI-VACUITY for the Downloads warning above. Found by mutation: making
+  // the warning UNCONDITIONAL left this whole section green, because nothing
+  // here asserted the healthy case stays quiet — and a panel that warns on
+  // every update is a panel nobody reads.
+  eq(goodTarget.warning, null, 'and it carries NO warning — the Downloads one is carried, not manufactured');
   eq(plan.classifyInstallTarget({ execPath: '', launchOrigin: launcher.classifyLaunchOrigin('', '/Users/x', 'darwin') }).reason,
      'no-exec-path', 'an empty execPath refuses by name');
 }

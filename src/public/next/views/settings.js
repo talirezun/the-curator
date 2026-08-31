@@ -447,7 +447,12 @@ const UPDATE_RING_STAGES = ['Finding', 'Downloading', 'Checking', 'Preparing', '
  */
 const UPDATE_PHASE_COPY = {
   resolving:   { headline: 'Preparing the update',  body: 'Finding the download for the new version.' },
-  downloading: { headline: 'Downloading',           body: 'The download keeps going if you switch to another screen. Starting a new ingest or sync waits until the update finishes.' },
+  // NOT "or sync". `isUpdateInProgress()` is what gates a start during an
+  // update, and it is checked by ingest, compile, Health and Shared Brain —
+  // NOT by sync, whose `guardConcurrent` tests `hasActiveWrites()` only, a
+  // flag the updater never sets. Naming sync here promised a hold the app
+  // does not apply.
+  downloading: { headline: 'Downloading',           body: 'The download keeps going if you switch to another screen. A new ingest won’t start until the update finishes.' },
   // WHAT IS ACTUALLY CHECKED IS INTEGRITY, NOT APPLE'S BLESSING. The engine
   // compares a sha256 against the digest GitHub publishes for the asset, plus
   // the byte length, the staged bundle's version, and `codesign --verify`.

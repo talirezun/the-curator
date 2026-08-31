@@ -187,9 +187,15 @@ async function checkSync() {
 function checkInstallMode() {
   try {
     const { installMode, installModeLabel, capabilities } = describeInstall();
+    // BOTH ARMS START IN SETTINGS, and saying otherwise was this row's defect:
+    // v3.33.0 gave the packaged app its own updater, so "not from Settings" sent
+    // a user looking for a download page the app no longer needs them to visit.
+    // What still differs is HOW the new version arrives — a git pull into the
+    // checkout, or a downloaded build that replaces the whole app — which is the
+    // fact a support conversation actually turns on.
     const updates = capabilities.canSelfUpdateViaGit
       ? 'Updates in place from GitHub.'
-      : 'Updates are installed by replacing the app, not from Settings.';
+      : 'Updates download from Settings and replace the whole app.';
     return check('install-mode', 'Install mode', 'info', `${installModeLabel} (${installMode}). ${updates}`);
   } catch (err) {
     return check('install-mode', 'Install mode', 'warn', `Could not determine: ${err.message}`);

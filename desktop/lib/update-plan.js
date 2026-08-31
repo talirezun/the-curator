@@ -158,6 +158,63 @@ export const UPDATE_FAILURES = Object.freeze({
   'internal-error': 'Something went wrong while preparing the update, so nothing on this Mac was changed. Try again, or download the update from the releases page.',
 });
 
+/**
+ * Every reason this feature can WARN about, and the sentence each one shows.
+ *
+ * ── WHY THIS TABLE EXISTS AT ALL ────────────────────────────────────────────
+ *
+ * A warning is not a refusal — the update proceeds — but it travels the exact
+ * same road as a failure: engine -> route -> wire -> panel, and the panel
+ * renders whatever arrives. So it is subject to the same two rules the
+ * `UPDATE_FAILURES` block above was written for: it must be a NAMED reason
+ * rather than a borrowed string, and the sentence must be written by the side
+ * that knows what is actually about to happen.
+ *
+ * ── THE SENTENCE CANNOT BE BORROWED FROM `classifyLaunchOrigin` ─────────────
+ *
+ * The obvious shortcut is to pass `launchOrigin.message` straight through —
+ * the origin classifier already has a sentence for `downloads-folder`, and it
+ * is a good one. It is good for the MCP shim, which is what it was written
+ * for. Read in full it says the app "did not write the Claude Desktop
+ * launcher" and that moving the app will get "the Claude Desktop connection
+ * set up automatically" — every clause of which is FALSE in front of a user
+ * who just pressed Check for updates. Nothing about the Claude Desktop
+ * connection is happening; an application is being replaced.
+ *
+ * That is the whole reason the two sides share a REASON and not a message:
+ * `classifyLaunchOrigin` answers "is this location ephemeral, and why", which
+ * both features genuinely need, and each feature says its own consequence.
+ *
+ * ── AND WHY IT IS A STRING ON THE WAY OUT ──────────────────────────────────
+ *
+ * Because every consumer downstream of here renders it. The route relays it
+ * verbatim, exactly as it relays a failure's `message`; the panel prints it.
+ * `reason` is kept here so an unmapped one cannot silently vanish, but it is
+ * a lookup key, not a payload — a slug beside a sentence is an internal
+ * identifier shown to a person, which this release exists to undo.
+ */
+export const UPDATE_WARNINGS = Object.freeze({
+  'downloads-folder':
+    'The Curator is running from your Downloads folder, so the update will replace it there rather than in ' +
+    'your Applications folder. That works, but Downloads is a temporary place for an app — move The Curator ' +
+    'to Applications once the update has finished.',
+});
+
+/**
+ * A named, non-blocking warning as the sentence to show, or `null` for none.
+ *
+ * TOTAL, and an unmapped reason gets a true generic sentence rather than
+ * `null`. Returning `null` for something the classifier flagged would put the
+ * warning back where this release found it: computed, and then silently
+ * dropped on the way to the person it was for.
+ */
+export function updateWarning(reason) {
+  if (typeof reason !== 'string' || !reason) return null;
+  if (Object.hasOwn(UPDATE_WARNINGS, reason)) return UPDATE_WARNINGS[reason];
+  return 'The Curator is running from a temporary location, so the update will replace it where it is. ' +
+    'Move The Curator to your Applications folder once the update has finished.';
+}
+
 /** A refusal. `detail` is for the LOG, never for the dialog. */
 export function updateFailure(reason, detail = null) {
   const message = Object.hasOwn(UPDATE_FAILURES, reason)
@@ -372,7 +429,11 @@ export function bundlePathFromExecPath(execPath) {
  * is where it is, and an update applied there is exactly as durable as the app
  * it replaces. Refusing would mean telling a user their app cannot be updated
  * because of where they keep it, which is a worse outcome than updating it
- * there. So Downloads PROCEEDS, and rides along as a `warning` the UI may show.
+ * there. So Downloads PROCEEDS, and rides along as a `warning` the UI shows —
+ * a SENTENCE, from `updateWarning()` above, in this feature's own vocabulary.
+ * It is deliberately not `launchOrigin.message`: that sentence is about the
+ * Claude Desktop launcher, and relaying it here would tell a user in the
+ * middle of an app update about a connection nothing is touching.
  *
  * `app-translocation` is a hard refusal in BOTH features, and here it is not a
  * durability argument at all — it is arithmetic. Under translocation the app
@@ -398,9 +459,12 @@ export function classifyInstallTarget(opts = {}) {
     ok: true,
     bundlePath,
     installDir: path.dirname(bundlePath),
-    // Not a refusal. The UI may show it; the install proceeds either way.
-    warning: origin && origin.ephemeral && origin.reason === 'downloads-folder'
-      ? { reason: 'downloads-folder', message: origin.message }
+    // Not a refusal. The UI shows it; the install proceeds either way.
+    // A STRING or `null` — see `updateWarning()`. Every consumer from here to
+    // the panel renders this value, and an object arriving where a sentence
+    // was expected is how this warning came to be built and then dropped.
+    warning: origin && origin.ephemeral && origin.reason
+      ? updateWarning(origin.reason)
       : null,
   };
 }
