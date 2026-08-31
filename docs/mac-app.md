@@ -377,7 +377,7 @@ costs. The reasoning behind each row is in
 |---|---|---|
 | **What you install** | The installer clones the repo and builds a `.app` **on your machine** | An application you download and drag to Applications |
 | **Where your knowledge lives by default** | Inside the checkout, at `~/the-curator/domains/` | `~/Library/Application Support/The Curator/domains` — but you point it wherever you like |
-| **Updates** | Settings → Check for updates runs `git` against the checkout | Settings → Check for updates downloads, verifies and installs a new copy of the app — see [§ Updating](#updating-the-packaged-app). The git route refuses with a `501` |
+| **Updates** | Settings → Check for updates runs `git` against the checkout | Either entry point — the menu bar's **Check for Updates…** or Settings → General — downloads, verifies and installs a new copy of the app — see [§ Updating](#updating-the-packaged-app). The git route refuses with a `501` |
 | **Rebuilding the `.app`** | `bash scripts/build-app.sh`, as below | Never — that ad-hoc `codesign` would destroy the bundle's own signature |
 | **Your files** | Plain markdown in `domains/` | **Identical.** Same files, same folder, same Obsidian vault |
 
