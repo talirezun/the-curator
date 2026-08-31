@@ -25,9 +25,45 @@ export function rawPath(domain) {
   return path.join(getDomainsDir(), domain, 'raw');
 }
 
+/**
+ * Every domain on disk.
+ *
+ * ── AN ABSENT FOLDER IS AN EMPTY LIST; AN UNREADABLE ONE IS AN ERROR ────────
+ *
+ * These two cases are NOT collapsed, and the distinction is the whole point of
+ * the try/catch. "There is no domains folder" is a true and complete answer to
+ * "what domains do you have?" — zero — and it is the state of every fresh
+ * install. "There is a folder and I am not allowed to read it" is a fault, and
+ * reporting THAT as an empty wiki would hide a real problem behind a screen
+ * inviting the user to start over. So ONLY `ENOENT` returns []; `EACCES`,
+ * `ENOTDIR` (a FILE sitting where the folder should be — a broken install),
+ * `ELOOP` and everything else still throw and still reach the user as an error.
+ *
+ * ── Why this is fixed here and not only by creating the directory ──────────
+ *
+ * `ensureDefaultDomainsDir()` (config.js) provisions the DEFAULT location at
+ * startup, which is what a packaged app's first run needs. It deliberately
+ * does NOT create a user-configured `domainsPath` — that folder is the user's,
+ * and its absence means something. This layer is what keeps THAT case from
+ * rendering as a failure: an unmounted drive or a renamed folder shows an
+ * empty wiki rather than a stack-trace string, and the app stays usable.
+ *
+ * Reported from a real v3.30.0 install: on a fresh packaged app the Domains
+ * view rendered "Could not load domains: ENOENT … scandir '…/The Curator/
+ * domains'" in BOTH the sidebar and the main pane, beside a Getting Started
+ * panel telling the user to create their first domain. The app was not broken;
+ * it was empty. The UI already had a correct empty state for zero domains — it
+ * simply never got there, because the read threw.
+ */
 export async function listDomains() {
   const base = getDomainsDir();
-  const entries = await readdir(base, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(base, { withFileTypes: true });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return [];
+    throw err;
+  }
   const candidates = entries
     .filter(e => e.isDirectory() && !e.name.startsWith('.'))
     .map(e => e.name);

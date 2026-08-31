@@ -10,7 +10,7 @@
  *
  * (Two TEST-ONLY seams sit above all of these — see getDomainsDir.)
  */
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { writeFileAtomicSync } from './atomic-write.js';
 import { getCuratorConfigFile, getDefaultDomainsDir } from './paths.js';
@@ -130,6 +130,73 @@ export function getDomainsDir() {
   if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
   return getDefaultDomainsDir();
+}
+
+/**
+ * Provision the DEFAULT domains directory if it is not there yet.
+ *
+ * ── The bug this closes ─────────────────────────────────────────────────────
+ *
+ * In BUNDLE mode `getDefaultDomainsDir()` resolves under
+ * ~/Library/Application Support/The Curator, and on a fresh install NOTHING had
+ * ever created it. A repo checkout never showed this, because `domains/` ships
+ * in the tree (a TRACKED `domains/.gitkeep` — see .gitignore), so the folder is
+ * already there before the app first runs. The packaged app had no equivalent
+ * step, and every consumer that assumes the directory exists failed at once:
+ *
+ *   - `listDomains()` threw ENOENT, which the UI rendered as "Could not load
+ *     domains" on a brand-new install — beside a Getting Started panel telling
+ *     the user to create their first domain. (Fixed INDEPENDENTLY at the read
+ *     layer, in files.js: an absent collection is empty, not broken, and that
+ *     has to hold for a user-configured path this function will not create.)
+ *   - `sync.setup()` threw ENOENT on its FIRST statement, which writes
+ *     `<domains>/.gitignore` (`writeFileAtomic` does not create parents), so
+ *     Personal Sync — the way an existing user brings their real wiki onto a
+ *     new machine — could not be configured at all. Verified, not theorised.
+ *   - the same directory is Personal Sync's git WORK-TREE.
+ *
+ * Those writers each `mkdir -p` their own LEAF (a domain dir, a job dir, the
+ * bare git dir) but never this shared ROOT, so provisioning it once is the
+ * piece that was missing rather than a guard each of them should have carried.
+ *
+ * ── Why ONLY the default location ──────────────────────────────────────────
+ *
+ * A `domainsPath` in config (or DOMAINS_PATH, or the MCP's `--domains-path`) is
+ * a folder the USER chose and pointed at — an external drive, a synced folder,
+ * a second checkout. Its ABSENCE is information: the drive is not mounted, the
+ * folder was moved or renamed. Fabricating an empty directory there would
+ * shadow a real mount point on the boot disk and hand the user an empty wiki
+ * where a full one is expected. The default location has no other possible
+ * meaning and is ours to provision.
+ *
+ * Repo mode takes this path too, and is a NO-OP by construction: the default
+ * there is `<checkout>/domains`, which already exists, so this returns
+ * 'exists' having written nothing.
+ *
+ * ── Failure is reported, never cached ──────────────────────────────────────
+ *
+ * Deliberately unlike `paths.js`'s `getUserDataDir()`, which memoises after a
+ * FAILED mkdir and then reports 'blocked' for the life of the process even
+ * once the user has fixed the permission. This function keeps NO state: it
+ * re-checks and re-mkdirs on every call, so a later call after a repair
+ * reports the truth. Best-effort — it returns a status and never throws,
+ * because a startup step that cannot create a folder must not stop the server
+ * from starting and telling the user why.
+ *
+ * @returns {{status:'exists'|'created'|'not-default'|'failed', dir:string, error?:Error}}
+ */
+export function ensureDefaultDomainsDir() {
+  const dir = getDomainsDir();
+  if (path.resolve(dir) !== path.resolve(getDefaultDomainsDir())) {
+    return { status: 'not-default', dir };
+  }
+  if (existsSync(dir)) return { status: 'exists', dir };
+  try {
+    mkdirSync(dir, { recursive: true });
+    return { status: 'created', dir };
+  } catch (err) {
+    return { status: 'failed', dir, error: err };
+  }
 }
 
 /** Persists a new domains path to .curator-config.json. */

@@ -22,6 +22,7 @@ import writeStatusRouter from './routes/write-status.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
+import { ensureDefaultDomainsDir } from './brain/config.js';
 import { describeInstall } from './brain/install-mode.js';
 import { planRestart } from './brain/restart.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
@@ -52,6 +53,29 @@ for (const { abs } of getCredentialFiles()) {
   try {
     if (existsSync(abs)) chmodSync(abs, 0o600);
   } catch { /* best-effort */ }
+}
+
+// ── Default domains folder provisioning (v3.30.x) ─────────────────────────────
+// A repo checkout ships `domains/` (a TRACKED .gitkeep), so this is a no-op
+// there — `existsSync` is true and nothing is written. A packaged .app resolves
+// the default under ~/Library/Application Support/The Curator, where on a fresh
+// install NOTHING had ever created it: `sync.setup()` died on its first
+// statement writing `<domains>/.gitignore`, and `listDomains()` threw ENOENT
+// which the Domains view rendered as "Could not load domains" on a brand-new
+// install. See ensureDefaultDomainsDir's docblock for why a CONFIGURED
+// domainsPath is deliberately never created, and files.js's listDomains for
+// why the read layer tolerates absence independently of this.
+// Best-effort: a failure is announced on stderr and in the log, and startup
+// continues — the app must still come up to explain itself.
+const domainsProvision = ensureDefaultDomainsDir();
+if (domainsProvision.status === 'created') {
+  console.error(`[The Curator] Created knowledge folder ${domainsProvision.dir}`);
+  logInfo('server', `Created knowledge folder ${domainsProvision.dir}`);
+} else if (domainsProvision.status === 'failed') {
+  const msg = `Could not create the knowledge folder ${domainsProvision.dir}: ` +
+              `${domainsProvision.error && domainsProvision.error.message}`;
+  console.error(`[The Curator] ${msg}`);
+  logError('server', msg);
 }
 
 // ── Batch-ingest queue boot recovery (Track 3) ─────────────────────────────────
