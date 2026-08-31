@@ -3601,21 +3601,27 @@ the real route and compares the events it emitted against this table, and this t
 | Event | Payload |
 |---|---|
 | `progress` | `{type, phase, receivedBytes, totalBytes, percent}` — `phase` is one of `resolving`, `downloading`, `verifying`, `staging`, `installing`. `percent` is **derived from the two byte counts** when both are present, and is **`null`** when the total is unknown (no `content-length`) — never `0`, which would render as a bar stuck at the far left, i.e. indistinguishable from a hang. |
-| `staged` | `{type, version, prerelease, warning}` — downloaded, verified and staged. **Nothing has been replaced.** Carries **no token, no path and no digest**: the client has no use for any of them and each is a handle it should not hold. `warning` is `string\|null` on the wire — see the note below, because today it is always `null`. |
+| `staged` | `{type, version, prerelease, warning}` — downloaded, verified and staged. **Nothing has been replaced.** Carries **no token, no path and no digest**: the client has no use for any of them and each is a handle it should not hold. `warning` is `string\|null` on the wire — a sentence when the app is not running from `/Applications`, otherwise `null`. See the note below. |
 | `error` | `{type, reason, error, hint}` — `error` is the engine's own `message` when there is one. `reason` is a short slug **for branching and for logs only**; the Settings UI deliberately does not render it, because an internal identifier shown to a person is the v3.31.0 defect this release undoes. |
 
 **There is no `done` event, deliberately.** "Staged" is not "done": the bundle is sitting beside the
 running app and the swap has not happened. Calling it `done` would collapse two different facts into
 one word.
 
-> **`warning` is always `null` today, and that is a defect rather than a design.** The route accepts
-> `warning` only when it is a string (`typeof result.warning === 'string'`), but the engine's
-> `classifyInstallTarget` returns it as an **object** — `{reason: 'downloads-folder', message}` — and
-> passes that through unchanged. So the one warning the engine can currently produce, *you are
-> running The Curator from your Downloads folder*, is discarded on the way to the wire and never
-> reaches `staged` or `GET /update-progress`. Neither suite catches it: `test-update-in-app.js`
-> feeds a string, while `test-desktop-update.js` asserts the object. Documented as the wire's
-> current behaviour, **not** as intent. Client authors should keep handling `string|null`.
+> **`warning` carries the not-in-Applications case, and its sentence is the engine's own.** When the
+> running app is somewhere other than `/Applications` — still in `~/Downloads`, or App-Translocated —
+> `staged.warning` carries a sentence saying so. It is written by `updateWarning()` in
+> `desktop/lib/update-plan.js`, the same shape as `updateFailure()`, and the route relays it verbatim
+> rather than composing its own: one fact, one sentence, one place.
+>
+> **It did not always work, and the reason is worth keeping.** Until v3.34.0 the engine returned an
+> object where the route accepted only a string, so `warning` was unconditionally `null`. Neither
+> suite saw it — one fed the route a string, the other asserted the object, and nothing drove the
+> seam between them. The fix went into the ENGINE rather than the route, and that choice matters:
+> the object's `message` was `classifyLaunchOrigin`'s sentence, written for the MCP shim, which
+> talks about the Claude Desktop launcher. Relaying it would have replaced `null` with something
+> false in front of someone updating an app. The two features share a *reason*; each says its own
+> consequence.
 
 **No raw exception text ever reaches the wire.** A `{ok:false, message}` is the engine's own
 user-facing sentence and is relayed. A **rejection** is different: `reasonFromError()` reads
