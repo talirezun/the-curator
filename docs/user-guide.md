@@ -168,9 +168,9 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 | Platforms | macOS only | macOS, Windows, Linux |
 | Node.js | Bundled — nothing to install | You install it |
 | Where the UI appears | Its own window, with its own title bar | A tab at `http://localhost:3333` |
-| Updating | Download the new version and replace the app | Applied in place from **Settings**, or `git pull` |
+| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu | Applied in place from **Settings**, or `git pull` |
 | Your data lives in | `~/Library/Application Support/The Curator/` | Your install folder (default `~/the-curator/`) |
-| Status today | **Preview.** Unsigned, so macOS asks you to allow it once | Mature, fully supported, and **not** being retired |
+| Status today | **Preview.** No Apple identity yet, so macOS asks you to allow it once — on the **first** install only | Mature, fully supported, and **not** being retired |
 
 ### Platform support
 
@@ -196,25 +196,43 @@ A packaged macOS application is published on the project's
 M-series Macs, Intel for older ones) — open it, and drag **The Curator** into
 **Applications**.
 
-> ⚠️ **It is a preview, and it is not code-signed yet.** An Apple Developer
-> certificate is in progress. Until it exists, macOS treats the app as coming from an
-> unidentified developer and will **refuse to open it the first time**. That is
-> expected, not a fault, and you allow it once:
+> ⚠️ **It is a preview, and it carries no Apple developer identity yet.** The app is
+> **ad-hoc signed** — its contents are sealed, so macOS can tell it has not been
+> tampered with, but there is no certificate behind that seal and it is not
+> notarized, so macOS cannot tell you *who* built it. An Apple Developer enrolment is
+> in progress. Until it completes, macOS **refuses to open the app the first time**.
+> That is expected, not a fault, and you allow it once:
 >
 > 1. Open the app. macOS says it cannot verify the developer — click **Done**.
 > 2. Go to **System Settings → Privacy & Security**, scroll down to **Security**, and
 >    click **Open Anyway** next to the message about The Curator.
 > 3. Confirm. It opens normally from then on.
 >
-> On macOS Ventura and Sonoma (13–14) the older right-click → **Open** → **Open** still
-> works. On Sequoia (15) and later it does not — use the steps above.
+> Don't leave a long gap between steps 1 and 2 — that button only appears for a while
+> after a blocked launch. On macOS Ventura and Sonoma (13–14) the older right-click →
+> **Open** → **Open** still works. On Sequoia (15) and later it does not.
 >
-> The Intel build is produced by the same automated build but has not been run on Intel
-> hardware. If you are on an Intel Mac and something misbehaves, that is worth
+> **What is actually known here:** the app's signature state has been checked with
+> Apple's own `syspolicy_check`, which reports exactly one remaining problem —
+> notarization. Nobody has yet launched a quarantined copy of a current build to
+> watch which dialog macOS puts up, so the three steps above are inferred from that
+> signature state rather than observed. If you see something different, that is worth
 > [reporting](https://github.com/talirezun/the-curator/issues).
+>
+> **If macOS instead says the app *"is damaged and can't be opened"*** and offers no
+> **Open Anyway** at all, you have a build from `v3.30.0` or earlier. Those shipped
+> with a *broken* signature, which is a different and worse Gatekeeper class. Download
+> a build from `v3.31.0` or later.
+>
+> The Intel build is produced by the same automated build but **has never been run on
+> Intel hardware** — there is no Intel Mac to run it on. If you are on an Intel Mac,
+> anything odd is worth reporting.
 
 The app **does not need Node.js** and does not need the Terminal. It keeps its data in
 `~/Library/Application Support/The Curator/`.
+
+**You only need the Releases page for the first install.** After that the app updates
+itself — [§16 → Version and updates](#version-and-updates).
 
 **Already using the browser install?** Nothing is converted and nothing is moved — see
 [§3b → Moving an existing wiki into the app](#moving-an-existing-wiki-into-the-app).
@@ -311,7 +329,7 @@ the same code.
 | | The Mac app | The browser install |
 |---|---|---|
 | **1 · How it launches** | Open it from Applications or the Dock. It opens **its own window**; no browser tab is opened, and the address it uses is chosen fresh each launch rather than being a fixed `localhost:3333`. | The Dock launcher (or `node src/server.js`) starts the server and opens your browser at `http://localhost:3333`. |
-| **2 · How it updates** | You download the new version and replace the app. The in-app "install it for me" update does **not** apply — see [§16 → Version and updates](#version-and-updates). | **Settings → General → Check for updates** downloads and installs in place, then restarts. |
+| **2 · How it updates** | **Settings → General → Check for updates → Download and install.** The app fetches a new copy of itself, checks it, swaps it in and restarts — with no Gatekeeper prompt. The git-based update does not apply and refuses. See [§16 → Version and updates](#version-and-updates). | **Settings → General → Check for updates** replaces the source in place (`git` + `npm install`), then restarts. |
 | **3 · Where its data lives** | `~/Library/Application Support/The Curator/` — settings, sync configuration, and the default `domains/` folder. | Your install folder, default `~/the-curator/`. |
 | **4 · How the MCP bridge starts** | Through a small launcher the app writes for itself on every start. Because of that, **moving your knowledge folder no longer makes the Claude Desktop entry go stale.** | Through a direct command naming your Node binary, the bridge script, and your knowledge folder path — so moving that folder *does* make it stale, and the wizard tells you. |
 
@@ -319,8 +337,8 @@ Two things that follow from #3 and are worth knowing:
 
 - **The two installs do not share anything.** They have separate settings, separate API
   keys and separate sync configuration. They only meet if you deliberately point them at
-  the same knowledge folder — which works, but **run one at a time**; two copies writing
-  one wiki at once is not something either of them guards against.
+  the same knowledge folder — which is supported, with one rule and one surprise. See
+  [§16 → Two installs, one knowledge folder](#two-installs-one-knowledge-folder).
 - **The application log is in the same place for both:**
   `~/Library/Logs/The Curator/curator.log`.
 
@@ -336,9 +354,19 @@ flowchart TD
     A -.->|"never copied, never converted,<br/>never moved"| F
 ```
 
-Three steps, all of which are buttons that **already exist** in Settings. There is no
-import, no conversion and no database rebuild, because there is no database — pointing
-the app at the folder *is* the migration.
+Three steps, all of which are buttons that **already exist**. There is no import, no
+conversion and no database rebuild, because there is no database — pointing the app at
+the folder *is* the migration.
+
+**Where the button is.** Step one has two entrances and you will meet whichever you
+reach first. On the **Domains** view the sidebar carries **Use existing folder** on
+every state of that screen, and the *"No domains here yet"* card carries it too. In
+**Settings → Knowledge base** the same thing is called **Choose folder**. They do the
+same job.
+
+> ⚠️ **The one mistake worth naming in advance: pick the folder that CONTAINS your
+> domains, not a domain.** Full explanation, and what an empty list actually means,
+> in [§16 → Knowledge base folder](#knowledge-base-folder).
 
 | ✅ Comes across untouched | ⚠️ You redo once | ❌ Does not happen |
 |---|---|---|
@@ -2237,58 +2265,97 @@ updates reach that install.
 >
 > If the version badge shows **restart** next to it, files were updated but the running process hasn't been relaunched yet. Quit The Curator (right-click the Dock icon → **Quit**) and start it again.
 
-#### The Mac app — you install the new version yourself
+#### The Mac app — it updates itself
 
-The in-place update above **does not apply to the Mac app, by design.** That update works
-by pulling new source into the folder the app is running from and reinstalling its
-dependencies — and an installed application's own files are read-only, so doing that
-would break it. The app knows this about itself: internally it simply does not have the
-"can update itself from source" capability, and every code path that would have tried is
-switched off rather than allowed to fail halfway.
+**You do not go back to the Releases page.** That is a first install only.
 
-So updating the Mac app is the ordinary macOS routine:
+The in-place git update above does not apply here, by design: it works by pulling new
+source into the folder the app is running from and reinstalling its dependencies, and
+an installed application's own files are read-only. The app knows this about itself —
+internally it does not have the "can update itself from source" capability, and every
+code path that would have tried is switched off rather than allowed to fail halfway.
+So it takes the other route: it downloads a whole new copy of itself, checks it, and
+swaps it in.
 
-1. Go to the [**Releases page**](https://github.com/talirezun/the-curator/releases).
-2. Download the newer `.dmg` for your Mac.
-3. Quit The Curator, open the `.dmg`, and drag the new copy into **Applications**,
-   replacing the old one.
+```mermaid
+flowchart TD
+    A["Settings → General<br/>Check for updates"] --> B{"A newer release<br/>with an installer?"}
+    B -->|no| C["Up to date — or one of three other<br/>answers, each worded differently"]
+    B -->|yes| D["Update available<br/>v3.32.0 → v3.33.0"]
+    D --> E["Download and install<br/>confirm dialog"]
+    E --> F["Finding → Downloading → Checking<br/>→ Preparing → Installing"]
+    F --> G["Update ready to install<br/>NOTHING HAS BEEN REPLACED"]
+    G --> H["Restart and finish"]
+    H --> I["Restarts into the new version.<br/>This page reloads itself.<br/>No security warning."]
+    D -.->|"or do it by hand"| J["Open the download page"]
+    F -.->|"anything goes wrong"| K["A named reason.<br/>The copy you are running still works."]
+```
 
-**Nothing of yours is touched.** Your wiki, your settings, your API keys and your sync
-configuration all live in `~/Library/Application Support/The Curator/` and in your
-knowledge folder — outside the application — so replacing the app leaves every one of
-them exactly where it was. There is no re-setup after an update; only after a *first*
-install, and only the three steps in [§3b](#moving-an-existing-wiki-into-the-app).
+**Step by step, and what each screen means**
 
-> **This preview does not yet install updates for you, and does not update in the
-> background.** Watch the Releases page, or use its **Watch → Releases** option on GitHub
-> to be told when a new one appears.
+| Screen | What has happened | What you do |
+|---|---|---|
+| **Update available** — both version numbers and the release name | Nothing yet. The app read GitHub's public release list: one unauthenticated request, no credentials, no personal data | **Download and install** — or **Open the download page** if you would rather do it by hand |
+| A confirm dialog | Still nothing | Confirm. It deliberately does **not** quote a download size, because nobody knows it until the server has asked; the real number appears on the progress line |
+| **Downloading** — a five-step ring, with `58.2 MB of 137 MB · 43%` | Bytes are arriving into a staging folder | Nothing. Use the app; the download continues |
+| **Update ready to install** | Downloaded, checked, and **sitting beside the app you are running.** Nothing has been replaced | **Restart and finish**. A few seconds |
+| **Restarting** | The swap happened | Nothing — the page reloads itself |
 
-<!-- ─────────────────────────────────────────────────────────────────────────
-     MERGE NOTE (docs/user-guide.md, §16 "The Mac app — you install the new
-     version yourself").
+**Four things worth knowing before you press it**
 
-     The bundle-mode "check and tell" updates flow was being built in parallel
-     with this rewrite and is deliberately NOT described here in detail.
+- **Navigating away does not cancel it.** Switch to Chat, or reload the page entirely,
+  and the update keeps running — what you were watching is a view of the job, not the
+  job. The flip side is that **there is no cancel button**.
+- **It will not race your work.** Starting a **new ingest** — single or batch — while the
+  download runs is refused with a clear message. In the other direction, if a write is in
+  flight when you press **Restart and finish**, the app parks the update at *ready to
+  install* rather than truncating a document you have paid to have read; finish it
+  afterwards. (**Sync is not blocked** during the download. It is a fast, local-plus-network
+  operation rather than a long paid write, so it was not given the same gate — the guard
+  that stops the *swap* is the one that matters, and that one does cover it.)
+- **There is no security warning on an update**, unlike a first install. A `.dmg` your
+  browser downloads is quarantined by macOS; one the app fetched for itself is not.
+  Measured, with the browser download kept as the control.
+- **Nothing of yours is touched.** Your wiki, settings, API keys and sync configuration
+  live outside the application, so replacing it leaves all of them where they were.
+  There is no re-setup after an update — only after a *first* install, and only the
+  three steps in [§3b](#moving-an-existing-wiki-into-the-app).
 
-     What is written above is only the part that is durable whichever shape
-     that flow lands in: the in-place git update does not apply to the app,
-     and the user installs a new .dmg by hand.
+**What it checks, and the one thing it cannot**
 
-     What is NOT written, and belongs here at merge time:
-       - what Settings -> General actually shows in the app (a version
-         comparison, the newer version's number, a button that opens the
-         download page)
-       - the wording of that panel
-       - whether it checks automatically or only on a click
+| Checked | Against |
+|---|---|
+| The file arrived complete | The byte size GitHub publishes for that download |
+| The file is the one GitHub published | **A sha256 fingerprint GitHub publishes alongside it** |
+| The app inside is the version claimed | The version string inside the downloaded bundle |
+| The bundle is internally intact | macOS's own `codesign --verify` |
 
-     Verified at ca8e60e, and true unless the parallel work changed it:
-     GET /api/config/update-check and POST /api/config/update both return
-     501 with `refused: "capability_unavailable"` in bundle mode
-     (src/routes/config.js:2302 and :2405), and NEITHER frontend has any
-     handling for that body — /next renders it as a red "Couldn't check for
-     updates" card and /old as "Update check failed: ...". So do not promise
-     the user a friendly panel in this section until the new flow has landed.
-     ───────────────────────────────────────────────────────────────────── -->
+What none of that can prove is that **Apple** vouches for the bytes — the app has no
+Apple identity yet, so that check is an integrity check, not an authenticity one.
+Authenticity rests on the published fingerprint and on the encrypted connection to
+GitHub, which is why the fingerprint check is not optional and why the download can
+only come from GitHub's own hosts. Nothing on the screen claims Apple checked anything.
+
+**If it fails.** Every failure names a reason in plain language, says what was *not*
+changed, and offers both **Try again** and the download page. The copy you are running
+keeps working. The swap itself is two renames of neighbouring folders on the same disk,
+so "half-replaced" is not a state that can exist — either the old app is complete or
+the new one is.
+
+> **What has not been proven, stated rather than implied.** No automated run has ever
+> replaced a real installed application: the test suite swaps a real signed *fixture*
+> bundle in a temporary folder, and it genuinely replaces it, but the full download from
+> GitHub against a live release has not been exercised end to end, and **these screens
+> have never been rendered in a browser.** Treat your first update as the first real
+> test of it.
+
+> **If you are on the previous interface at `/old`,** there is no in-app update path
+> there — it still posts to the git updater, which the packaged app refuses. Use the
+> current interface.
+
+> **Rosetta:** an arm64 build running under x64 emulation stays on x64. The app updates
+> like for like rather than silently migrating you to another chip's build behind a
+> progress bar.
 
 ### Default domain for MCP writes (v2.5.2+)
 
@@ -2315,17 +2382,104 @@ The **Choose folder** button greys out while anything is writing to your wiki. T
 
 Either way you can point it anywhere you like, and **this screen is how an existing user
 moves an established wiki into the Mac app** — it is step one of the three in
-[§3b](#moving-an-existing-wiki-into-the-app).
+[§3b](#moving-an-existing-wiki-into-the-app). The Domains view has a second entrance to
+the same action, labelled **Use existing folder**, in its sidebar and on the empty-state
+card.
 
-> **Choose folder** is the only way to set this from the current interface — there is no
+> **A picker is the only way to set this from the current interface** — there is no
 > field to type a path into. On Linux and Windows, where the picker does not exist, set
 > the folder with the `DOMAINS_PATH` environment variable instead.
 
-> ⚠️ **Two installs, one folder: run one at a time.** Pointing both the Mac app and a
-> browser install at the same `domains/` folder works and is a reasonable thing to do
-> while you try the app. But nothing stops them running simultaneously, and two copies
-> writing one wiki at the same time is not a case either of them guards against. Quit one
-> before starting the other.
+#### Pick the folder that CONTAINS your domains
+
+This is the one mistake that costs people an afternoon, so it is worth thirty seconds.
+
+A knowledge folder holds **one folder per domain**, and each of those holds a
+`CLAUDE.md` and a `wiki/`. The folder to point at is the parent — the one with the
+domain folders inside it.
+
+```
+the-curator/
+└── domains/          ← ✅ PICK THIS ONE
+    ├── articles/     ← ❌ not this
+    │   ├── CLAUDE.md
+    │   └── wiki/
+    ├── business/
+    └── projects/
+```
+
+Pick `articles` and The Curator looks inside it for domains, finds none, and shows you
+an empty list — because as far as the app is concerned, that is what is there.
+
+**And it cannot tell you which mistake you made.** This was measured: an empty folder,
+somebody's Pictures folder, a folder picked one level too deep, and a drive that is not
+mounted **all produce exactly the same answer — no domains — and are indistinguishable
+from each other.** So rather than guess, the app tells you what it looked in:
+
+| What you see | What it means |
+|---|---|
+| **No domains found there**, with *"Looking in `<path>`"* | The switch already happened. The path shown is what to check — is it the parent of your domain folders? Is the drive mounted? |
+| A button: **Go back to the previous folder** | An undo, offered only in this case and when the folder could not be read |
+| Your domains appear | Done. Nothing was copied, moved or converted |
+
+Two things about that undo, because "undo" can promise more than it delivers:
+
+- **It restores the folder setting and nothing else.** No file is moved back, because no
+  file was moved in the first place — the switch only ever changed which folder the app
+  looks at.
+- **It does not restore a default domain.** If you had set a default domain in the old
+  folder and it does not exist in the new one, that setting is left pointing at a name
+  that is not there. Re-pick it in Settings.
+
+The switch takes effect immediately — no restart, no reload. The **Choose folder** and
+**Use existing folder** buttons grey out while anything is writing to your wiki, which
+is deliberate: changing the folder mid-ingest would scatter the rest of that document's
+pages into the new location.
+
+#### Two installs, one knowledge folder
+
+Pointing both the Mac app and a browser install at the same `domains/` folder is
+supported, and it is a reasonable thing to do while you try the app. Here is what
+actually happens.
+
+```mermaid
+flowchart TD
+    APP["The Mac app<br/>own window · own port"] --> D[("domains/<br/>plain markdown")]
+    BROWSER["The browser install<br/>localhost:3333"] --> D
+    D --> G["ONE sync history<br/>.knowledge-git"]
+    APP -. "keys, sync config,<br/>default domain" .-> S1["separate settings"]
+    BROWSER -. "keys, sync config,<br/>default domain" .-> S2["separate settings"]
+    G --> GH[("your private<br/>GitHub repo")]
+```
+
+**Shared: the folder, and — since v3.32.0 — the sync history. Not shared: every
+setting, and any coordination between them while both are running.**
+
+**Sync joins rather than splits.** If one install already syncs that folder to GitHub
+and you connect the second one to the *same* repository, The Curator notices and **joins
+the existing sync history instead of starting a second one.** Nothing in your folder is
+changed. Point it at a *different* repository and it refuses, by name, rather than
+creating two independent histories over one set of files — which is the situation where
+a merge can silently replace an edited page. Details in
+[sync.md → If another install already syncs this folder](sync.md#if-another-install-already-syncs-this-folder).
+
+**Writing is not coordinated, so run one at a time.** Nothing stops both from running
+simultaneously, and two copies writing one wiki at the same moment is not a case either
+of them guards against. Each one protects itself, not the other.
+
+> ⚠️ **The part that surprises people: closing the browser tab does NOT stop the browser
+> install's server.** It keeps running in the background at near-zero CPU — that is
+> documented, deliberate behaviour, and it is why clicking the Dock icon reopens
+> instantly. But it means that if you close the tab and then open the Mac app, **both
+> are running.**
+>
+> To actually stop the browser install: **right-click its Dock icon → Quit**, or press
+> `Ctrl + C` in the terminal you started it from. Quitting the Mac app is `⌘Q` — and
+> unlike the browser install, it asks first if a write is in flight.
+
+**Neither install can see the other's settings.** Separate API keys, separate sync
+configuration, separate default domain. The only thing they share is the folder of
+markdown files — which is the whole point.
 
 > If you use the My Curator MCP, changing this folder in the **browser install** makes the
 > Claude Desktop entry stale, and the wizard shows you a banner — re-run it. In the **Mac
@@ -2918,11 +3072,17 @@ The line under the panel's headline (*"Scanned 600 entities · 2,651 concepts ·
 
 **macOS refuses to open it — *"Apple could not verify 'The Curator' is free of malware"***
 
-Expected on this preview: the app is not code-signed yet. Allow it once —
-**System Settings → Privacy & Security**, scroll to **Security**, **Open Anyway** next to
-the message about The Curator, then confirm. It opens normally from then on. Full steps
-and the Ventura/Sonoma variant are in [§3](#the-mac-app-macos-only). Nothing about this
-is specific to your machine and nothing is broken.
+Expected on this preview: the app carries no Apple developer identity yet and is not
+notarised. Allow it once — **System Settings → Privacy & Security**, scroll to **Security**,
+**Open Anyway** next to the message about The Curator, then confirm. It opens normally from
+then on, and **it does not recur on later updates**, because the app fetches those itself and
+macOS only flags files a browser downloaded. Full steps and the Ventura/Sonoma variant are in
+[§3](#the-mac-app-macos-only). Nothing about this is specific to your machine and nothing is
+broken.
+
+**If instead it says *"is damaged and can't be opened"*** with no Open Anyway button at all,
+that is a different and older fault — builds up to `v3.30.0` shipped a broken signature.
+Download `v3.31.0` or later.
 
 **The app opens completely empty — no domains, no wiki**
 
@@ -2956,10 +3116,15 @@ the app — see [§16 → System check](#system-check).
 
 **Updates in the app**
 
-The Mac app does not install updates for itself. Download the newer `.dmg` from the
-[Releases page](https://github.com/talirezun/the-curator/releases) and replace the app in
-Applications — nothing of yours is touched. [§16 → Version and updates](#version-and-updates)
-explains why, and what does happen to your data.
+The Mac app installs its own updates — **Settings → General → Check for updates**, or the
+**The Curator → Check for Updates…** menu item. It downloads the new version, checks it, and
+restarts into it, with **no security warning to click through**. Nothing of yours is touched.
+[§16 → Version and updates](#version-and-updates) has the whole flow.
+
+If the update fails, it says why in plain language and the copy you are running keeps working
+— the new version is never put in place until every check on it has passed. The
+[Releases page](https://github.com/talirezun/the-curator/releases) stays available as a manual
+route if you would rather use it.
 
 ### Everything else
 
@@ -3005,11 +3170,11 @@ Reload the page first — a partly-downloaded file usually fixes itself. If that
 
 Three different causes, and they look the same:
 
-- **You are running the Mac app.** It never offers to install an update — that is by design, not a failure. Download the new `.dmg` instead; see the Mac app entries above.
+- **You are running the Mac app and no updater engine is attached** — an older build, or one whose shell failed to start its updater. Current builds show **Download and install**; if you only see *Open the download page*, that is the app telling you honestly that it cannot install this one for itself. Use the link.
 - **Your local build is newer than the published one.** If you have pulled or committed ahead of `main`, no install button is offered on purpose — installing would run `git reset --hard origin/main` and discard your newer commit.
 - **Something in the update itself failed** — a `git` or `npm` error, which the banner names. `cd` into the project folder and run `git pull && npm install` by hand to see the full message.
 
-Otherwise, in the browser install, **Settings → General → Check for updates** both checks and installs, on every platform. Full explanation in [§16 → Version and updates](#version-and-updates).
+Otherwise **Settings → General → Check for updates** both checks and installs in either shell — in place from source in the browser install, and by replacing the application in the Mac app. Full explanation in [§16 → Version and updates](#version-and-updates).
 
 **Claude says "returned no text content … usually transient — try again", and retrying never helps**
 

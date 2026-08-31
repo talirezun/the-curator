@@ -40,7 +40,9 @@ Nothing needs to create the folder by hand — the first save makes `state/` and
 
 ## 2. Managing domains (recommended path: the UI)
 
-The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator at `http://localhost:3333` and click the **Domains** tab.
+The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator (a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window on a port it picks fresh each launch) and go to **Domains**.
+
+> **Already have a knowledge folder?** Don't create a domain — **point the app at the folder you already have.** The Domains sidebar carries **Use existing folder** in every state of the view, and the empty-state card carries it too. **Pick the folder that CONTAINS your domains, not one of the domains** — the difference, and why an empty list cannot tell you which mistake you made, is in [user-guide.md § Knowledge base folder](user-guide.md#pick-the-folder-that-contains-your-domains).
 
 ### Creating a new domain
 
@@ -74,7 +76,15 @@ Click the **trash icon** on a domain card. The confirmation panel shows exactly 
 
 ### Manual setup (advanced)
 
-If you want a custom schema beyond what the templates offer, you can create a domain by hand:
+If you want a custom schema beyond what the templates offer, you can create a domain by hand.
+
+> **`domains/` below is your knowledge folder, which is not always a folder called
+> `domains` inside the checkout.** A source install defaults to `<project>/domains`;
+> the packaged Mac app defaults to
+> `~/Library/Application Support/The Curator/domains`; and either can be pointed
+> anywhere. **Settings → Knowledge base** shows the real path and offers a **Copy**
+> button — `cd` there first, or these commands will create an orphan `domains/`
+> wherever your shell happens to be.
 
 ```bash
 SLUG="my-domain"

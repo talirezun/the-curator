@@ -14,8 +14,9 @@ It's the fastest path for people who live in a terminal, and it removes every ma
 2. **Obtain a token** the Curator can use:
    - If the GitHub CLI (`gh`) is authenticated, the agent can use `gh auth token` directly — zero browser steps.
    - Otherwise it walks you through creating a **fine-grained token** (Contents: Read and write) and pastes it in for you.
-3. **Trigger the first sync** by calling The Curator's own setup endpoint (`POST http://localhost:3333/api/sync/setup`) — this reuses the exact same, tested code path the wizard uses, so nothing is reimplemented.
-4. **Verify** the result via `GET /api/sync/status` and report back.
+3. **Measure first** with `POST /api/sync/preflight` (v3.32.0) — it reports how many local files a checkout would replace, and writes nothing. This is what picks the right mode instead of guessing.
+4. **Trigger the first sync** by calling The Curator's own setup endpoint (`POST http://localhost:3333/api/sync/setup`) — this reuses the exact same, tested code path the wizard uses, so nothing is reimplemented.
+5. **Verify** the result via `GET /api/sync/status` and report back.
 
 The token lands in `.sync-config.json` (gitignored, local-only) — same as the wizard.
 
@@ -23,7 +24,7 @@ The token lands in `.sync-config.json` (gitignored, local-only) — same as the 
 
 ## Prerequisites
 
-- The Curator **installed** and ideally **running** (`node src/server.js` → `http://localhost:3333`). The agent can start it if it isn't.
+- The Curator **installed** and ideally **running**. In a source install that is `node src/server.js` on `http://localhost:3333`, and the agent can start it if it isn't. **In the packaged Mac app the port is different on every launch** — the app picks a free one so it can never collide with a checkout — so this whole document is written for the source install. On the app, use **Settings → Sync** and follow [sync.md](sync.md) instead.
 - A coding agent that can **run shell commands** in the Curator project folder and make local HTTP requests.
 - **GitHub access**, one of:
   - The **GitHub CLI** (`gh`) installed and authenticated (`gh auth login`) — the smoothest, fully-automatic path, **or**
@@ -81,9 +82,18 @@ Do this:
 1. Confirm the Curator server responds at http://localhost:3333/api/sync/status (start it if needed).
 2. Get a token for git over HTTPS — use `gh auth token` if `gh` is logged in, otherwise ask me to
    paste a fine-grained token with Contents: Read and write on that repo.
-3. Call POST http://localhost:3333/api/sync/setup with
-   { "repoUrl": "<repo URL>", "token": "<token>", "mode": "pull" }
-4. Verify via GET /api/sync/status and confirm my domains now appear (GET /api/domains).
+3. FIRST measure, do not guess. Call
+   POST http://localhost:3333/api/sync/preflight
+   { "repoUrl": "<repo URL>", "token": "<token>" }
+   It writes nothing. Read `overwriteCount` and `foreignSyncRepo` from the reply and TELL ME both.
+4. Then choose the mode from that reply, and say which you chose and why:
+   - overwriteCount is 0  -> { ..., "mode": "pull" }
+   - overwriteCount > 0   -> { ..., "mode": "merge" }   <- combines both sides, deletes nothing
+   Call POST http://localhost:3333/api/sync/setup with the repoUrl, the token and that mode.
+   Do NOT send "confirmOverwrite". If you get a 409 with code "pull-would-overwrite",
+   that is the app protecting my files: STOP, show me the count and file list, and ask me.
+   Never retry it with confirmOverwrite:true unless I say so in this conversation.
+5. Verify via GET /api/sync/status and confirm my domains now appear (GET /api/domains).
 5. Report. Never print the token. Don't modify anything outside the project folder.
 ```
 
@@ -94,9 +104,9 @@ Do this:
 | Capability | Why |
 |---|---|
 | **Run shell commands** in the project folder | To run `gh` / `git` and start the server |
-| **Local HTTP requests** to `localhost:3333` | To call `/api/sync/setup` and `/api/sync/status` |
+| **Local HTTP requests** to `localhost:3333` | To call `/api/sync/preflight`, `/api/sync/setup` and `/api/sync/status` |
 | **`gh` CLI** (optional but ideal) | Creates the repo and supplies a token with no browser step |
-| **Write access to the project folder** | The setup endpoint writes `.sync-config.json` and `.knowledge-git/` there |
+| **Write access to the project folder** | The setup endpoint writes `.sync-config.json` and `.knowledge-git/` there — in a source install. (The packaged app puts both under `~/Library/Application Support/The Curator/` instead, which is one more reason this document targets the source install.) |
 
 The agent does **not** need access to your API keys, your `domains/` content, or anything outside the project folder.
 
@@ -104,7 +114,9 @@ The agent does **not** need access to your API keys, your `domains/` content, or
 
 ## Notes & caveats
 
-- **Empty repo is mandatory.** A repo created with a README/.gitignore/license will reject the first push. If the agent reuses an existing non-empty repo, tell it to use `mode: "pull"` first (to absorb the remote), or create a fresh empty repo.
+- **Empty repo is mandatory for `mode: "push"`.** A repo created with a README/.gitignore/license will reject the first push, and the app refuses it by name (`remote-not-empty`). If you must use an existing non-empty repo, the answer is **`mode: "merge"`**, not `pull` — merge commits this folder *first*, then combines the two sides, so nothing local is lost. `pull` **replaces** local files that differ, and since v3.32.0 it is refused outright unless the caller explicitly sends `confirmOverwrite: true`. An earlier version of this page recommended `pull` here; that was advice pointing at the destructive path.
+- **`confirmOverwrite` is a real safety gate and an agent should not reach for it.** Because a client that omits the field cannot overwrite anything, a coding agent following this page gets a clear 409 rather than silently destroying local work. Treat that 409 as a question for the human, never as an error to retry past. This matters: a connect exactly like the one this page automates destroyed four hours of a real user's working state before that gate existed.
+- **If another install already syncs this folder**, `setup()` **adopts** its existing sync repository rather than creating a second history over the same files — and refuses by name if that install points at a *different* repository. `preflight`'s `foreignSyncRepo` field is how an agent sees this coming.
 - **`gh auth token` is broad.** The token the GitHub CLI hands out has the CLI's full scope, not a repo-scoped fine-grained token. It works fine for sync, but if you want the tightest security, have the agent stop at step 3 and create a **fine-grained** token (Contents: Read and write, single repo) instead — see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token).
 - **The token is stored locally.** `.sync-config.json` is gitignored and never leaves your machine — same as the wizard.
 - **One write path.** The agent calls the same `/api/sync/setup` endpoint the wizard uses, so there's no parallel or untested logic — the git init/commit/push happens inside The Curator exactly as designed.

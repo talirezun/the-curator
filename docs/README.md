@@ -70,7 +70,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 
-**On a Mac?** Read [Mac App Setup](mac-app.md) to turn The Curator into a double-click app in your Dock — no terminal needed. That is a launcher the installer builds on your machine; **there is no `.dmg` to download.** A packaged Mac app is being worked on, and every decision taken so far is recorded in [the decision record](desktop-app-decisions.md) — including [what migrating would cost you](desktop-app-decisions.md#4-migration-for-existing-users) (short answer: your wiki comes across untouched; you re-paste your API key).
+**On a Mac?** There are two shapes and [Mac App Setup](mac-app.md) covers both: a **downloadable `.dmg` application** (Apple Silicon or Intel — it carries its own runtime, needs no Terminal, and **installs its own updates**), and the **Dock launcher** the one-line installer builds around a checkout. Neither is deprecated. The app is not notarised yet, so a first launch needs a one-time *Open Anyway*; updates it installs for itself do not. Every packaging decision — and, for each, whether code exists yet — is in [the decision record](desktop-app-decisions.md), including [what moving an existing wiki costs you](desktop-app-decisions.md#4-migration-for-existing-users) (short answer: nothing is copied or converted; you re-paste your API key, and you point the app at the folder that *contains* your domains).
 
 ---
 
@@ -89,7 +89,7 @@ first group applies to all three.
 | [sync.md](sync.md) | Personal Sync — GitHub backup of your wiki, chat history and working state across your own computers (wizard, token permissions, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
 | [system-check.md](system-check.md) | Settings → System Check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
-| [mac-app.md](mac-app.md) | How to create a double-click Dock app on macOS so you never need the terminal — plus what changes when the packaged app arrives, and what it would cost you |
+| [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, and how it downloads and installs its own updates) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
 
 **Layer 1 — your brain** (the personal wiki; knowledge accumulates)
 
@@ -124,7 +124,7 @@ first group applies to all three.
 | [roadmap-chat-modes.md](roadmap-chat-modes.md) | Design context for Chat Modes 3 (**Dictate**) and 4 (**Curate**) — **designed but never built**. Nothing in it describes shipped behaviour; read it before implementing either mode |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |
 | [architecture.md](architecture.md) | System design, data flow, module reference |
-| [desktop-app-decisions.md](desktop-app-decisions.md) | **The native Mac app — decisions, not features.** One codebase / two shells, why `desktop/` gets its own manifest, why the first DMG turns `asar` off, the release gate, what migrates and what deliberately does not, and the MCP launcher. Every entry carries its reasoning, its evidence, and a status saying whether code exists for it yet — most do not. Read it before proposing anything about packaging |
+| [desktop-app-decisions.md](desktop-app-decisions.md) | **The native Mac app — decisions, not features.** One codebase / two shells, why `desktop/` gets its own manifest, why the first DMG turns `asar` off, the release gate, what migrates and what deliberately does not, and the MCP launcher. Also why `electron-updater` cannot be the update mechanism while the app is ad-hoc signed. Every entry carries its reasoning, its evidence, and a status saying whether code exists for it yet. Read it before proposing anything about packaging |
 | [chat-streaming.md](chat-streaming.md) | How a chat turn streams from the provider to the screen — the frame format, how reasoning is kept out of the answer, and why a streamed attempt is never retried or handed to a fallback model |
 | [api-reference.md](api-reference.md) | REST API reference — the endpoints an integrator is most likely to need. Not exhaustive: some shipped routes (notably the `/api/sync/*` family) have no entry yet, so treat the routers under [`src/routes/`](../src/routes/) as the authoritative list |
 | [model-lifecycle.md](model-lifecycle.md) | Provider/model fallback policy and what happens when a model is retired |

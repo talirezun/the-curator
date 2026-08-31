@@ -10,7 +10,7 @@
 <p align="center">
   <a href="#licensing"><img src="https://img.shields.io/badge/License-MIT%20%2B%20source--available-yellow.svg" alt="License: MIT + source-available"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
-  <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/badge/Mac%20app-.dmg%20(unsigned)-blue" alt="Mac app: .dmg (unsigned)"></a>
+  <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/badge/Mac%20app-.dmg%20(not%20notarised)-blue" alt="Mac app: .dmg (not notarised)"></a>
   <a href="#option-c--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
@@ -198,7 +198,8 @@ appears. Eject the disk image afterwards.
 > 1. Open **Applications** and double-click **The Curator**. macOS blocks it — dismiss the dialog.
 > 2. Open **System Settings → Privacy & Security**, scroll down to **Security**, and click
 >    **Open Anyway**. Confirm, and enter your password if asked.
-> 3. Open the app again. The exception is remembered — you do this once.
+> 3. Open the app again. The exception is remembered — you do this once, and **updates the
+>    app installs for itself never ask again.**
 >
 > Don't leave a long gap between steps 1 and 2: the button appears only for a while after a
 > blocked launch. If it isn't there, double-click the app again and go straight back.
@@ -206,9 +207,16 @@ appears. Eject the disk image afterwards.
 > **Control-click → Open no longer works.** Apple removed that shortcut in macOS Sequoia (15);
 > System Settings is the only route on Sequoia and later.
 >
+> These steps are what the app's signature state *should* produce — Apple's own
+> `syspolicy_check` reports notarization as the only remaining problem — but nobody has yet
+> launched a quarantined copy of a current build to watch which dialog appears. If you see
+> something different, please [tell us](https://github.com/talirezun/the-curator/issues).
+>
 > **If macOS instead says the app *"is damaged and can't be opened"*** — and offers no Open
-> Anyway button — that is the download-quarantine flag on an unsigned app, not a corrupt file.
-> In Terminal:
+> Anyway button — **you have a build from `v3.30.0` or earlier.** Those shipped with a
+> *broken* signature (a header declaring sealed contents the bundle did not have), which is a
+> different and worse Gatekeeper class than "unidentified developer". **The fix is to download
+> `v3.31.0` or later**, where that class is gone. If you must open an old build first:
 >
 > ```bash
 > xattr -dr com.apple.quarantine "/Applications/The Curator.app"
@@ -216,12 +224,28 @@ appears. Eject the disk image afterwards.
 >
 > then open it normally. (Don't disable Gatekeeper system-wide to get around this.)
 
-**What this first Mac release is, plainly.** It is a first release, unsigned, and it has **no
-auto-update** — moving to a newer version means downloading the new `.dmg` and replacing the app.
-Your knowledge is plain markdown in a folder you chose, so nothing about it is affected. Coming
+**What this Mac release is, plainly.** It is not signed with an Apple identity and not
+notarised, so the **one-time** Open Anyway step above applies to this first manual install.
+
+**After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)
+downloads the new version, verifies it against the sha256 GitHub publishes on the asset, and
+swaps it in with a progress bar. You do not come back to this page for updates — the Releases
+page is for a first install. And an update installed this way carries **no Gatekeeper prompt at
+all**: macOS flags a file your *browser* downloads, but not one the app fetched itself, so the
+Open Anyway step never recurs. That difference is measured, with the browser download kept as
+the control.
+
+**One limit, stated rather than glossed:** no automated run has ever replaced a real installed
+application. The swap is proven against a real signed bundle in a test folder, and the design
+makes a half-replaced app impossible — either the old one is complete or the new one is — but
+the first real update is the first real test.
+
+Your knowledge is plain markdown in a folder you chose, so nothing above affects it. Coming
 from the shell installer below? Your wiki comes across untouched; you re-paste your API key and
-re-run the MCP wizard. The decisions behind the packaging — and, for each, whether code exists
-yet — are in [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
+re-run the MCP wizard — and point the app at your existing folder, which is
+[one button and one trap](docs/user-guide.md#pick-the-folder-that-contains-your-domains). The
+decisions behind the packaging — and, for each, whether code exists yet — are in
+[docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
 
 ### Option B — One-command installer (Mac, no download)
 
@@ -385,7 +409,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Shared Brain — Monetization](docs/shared-brain-monetization.md) | Charging for brain access today using no-code payment platforms |
 | [Use Cases](docs/use-cases.md) | Detailed workflows for every profile, including cohort, team and monetization scenarios |
 | [System Check](docs/system-check.md) | Confirm the app itself is set up correctly (key, folder, credentials, sync), plus an optional AI connection test |
-| [Mac App Setup](docs/mac-app.md) | The Dock launcher that ships today — how it's built, how to use it, rebuilding, troubleshooting |
+| [Mac App Setup](docs/mac-app.md) | Both Mac shapes — the downloadable `.dmg` app (first install, Gatekeeper, how it updates itself) and the Dock launcher the shell installer builds |
 | [Skills](skills/README.md) | The two agent skills, what they enforce, and how portable they actually are |
 
 **For developers**
