@@ -698,7 +698,15 @@ const okJson = (payload, extra = {}) => async () => ({
   eq(r.body.reason, 'unreachable', '§7 with the `unreachable` reason');
   ok(r.body.updateAvailable === undefined, '§7 and NO updateAvailable field — it can never read as "up to date"');
   ok(!/ENOTFOUND/.test(JSON.stringify(r.body)), '§7 and the raw transport error never reaches the user');
-  eq(r.body.current, '3.30.0', '§7 but the version the user IS running is still reported');
+  // Derived from the manifest, never a literal. A hardcoded shipping version
+  // here breaks on EVERY release — it refused v3.31.0 after the bump, which
+  // is a test that must be edited each release and will therefore be edited
+  // carelessly. The FIXTURE versions elsewhere in this file are deliberately
+  // literal: they are test data, not the running build.
+  const RUNNING_VERSION = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  eq(r.body.current, RUNNING_VERSION,
+     '§7 but the version the user IS running is still reported');
 }
 {
   const r = await realCheck(async () => ({ ok: false, status: 403, headers: new Map([['x-ratelimit-remaining', '0']]) }));
