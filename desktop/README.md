@@ -92,6 +92,10 @@ names out of both files rather than from a hardcoded list.
 | `lib/app-version.js` | The app's version, and the About panel. See *Version identity* below. |
 | `lib/dist.js` | `npm run dist`. Injects the root manifest's version into the build. |
 | `lib/verify-version.mjs` | electron-builder `afterPack` hook. **Fails the build** on a wrong version. |
+| `lib/adhoc-sign.mjs` | The other `afterPack` half. Applies and **proves** a valid ad-hoc signature. |
+| `lib/update-plan.js` | Every DECISION the in-app updater makes, and no I/O. Includes the swap script's text. |
+| `lib/update-release.js` | "Which release, which .dmg?" — delegates every version question to `src/routes/config.js`. |
+| `lib/update-engine.js` | Download, verify, stage, swap, relaunch. Every effect injected. |
 
 The `lib/` modules import **nothing** from Electron and nothing from
 `src/`, which is what lets `scripts/test-desktop-packaging.js` and
@@ -266,8 +270,11 @@ It builds and it runs. It is still not a shippable product.
   unsigned build so electron-builder cannot silently produce a locally-signed
   artifact that runs on exactly one Mac.
 - **No notarization.** Requires paid enrolment. There is no `afterSign` hook.
-- **No `electron-updater`.** Not installed, not wired, `publish: null`. The
-  first DMG is a local artifact by design.
+- **No `electron-updater`, and it is not a choice — see *In-app updating*
+  below.** Squirrel.Mac validates a downloaded build against the running app's
+  designated code requirement, which for an ad-hoc signature is a bare
+  `cdhash` that only the installed build can satisfy. It would reject every
+  update. The app updates itself with its own downloader instead.
 - **No first-launch adoption of an existing repo install.** A user with a
   checkout and a DMG would end up with two installs pointing at one
   `domains/` folder and no migration story.
@@ -582,6 +589,135 @@ what to change.
   which `role: 'resetZoom'` already owns. §2 of the suite now walks the whole
   template — including the accelerators a *role* implies, which are invisible
   in the template — and fails on any collision.
+
+---
+
+## In-app updating
+
+Two hooks on `src/brain/desktop-host.js`, `prepareUpdate` and `installUpdate`.
+They belong to the `updateStyle: 'download-installer'` capability, which before
+them could only open a release page in the user's browser and leave them to
+drag a `.dmg` over their own application.
+
+### electron-updater cannot be used, and this is what was measured
+
+Read off the shipped v3.32.0 bundle, in `/Applications`:
+
+```
+$ codesign -d -r- "/Applications/The Curator.app"
+# designated => cdhash H"…"
+
+$ codesign -dv --verbose=4 "/Applications/The Curator.app"
+flags=0x2(adhoc)   Signature=adhoc   TeamIdentifier=not set
+```
+
+On macOS `electron-updater`'s `MacUpdater` is a driver over Electron's own
+`autoUpdater`, which is Squirrel.Mac. Squirrel.Mac takes the **running** app's
+designated requirement and validates the downloaded bundle against it. An
+ad-hoc signature has no certificate and no team, so `codesign` has nothing to
+build a requirement out of except the code directory hash — the hash of *this
+exact build*. Every genuine update has a different cdhash by definition, so the
+check fails 100% of the time, deterministically. The check lives in Squirrel.Mac
+inside Electron's binary, not in electron-updater's JavaScript, so no
+configuration reaches it.
+
+Two further blockers, each sufficient on its own:
+
+- Squirrel.Mac installs from a **ZIP**. The releases publish two `.dmg` files
+  and nothing else.
+- electron-updater reads `latest-mac.yml`, which electron-builder emits only
+  when `publish` is configured. `publish: null`.
+
+### The design
+
+1. **Resolve.** One unauthenticated GET to `RELEASES_API_URL` — *config.js's own
+   exported constant* — then `pickInstallableRelease()` and
+   `decideInstallerUpdate()`, *config.js's own exported functions*. There is no
+   version comparator anywhere in `desktop/lib/`, and the suite asserts it. The
+   only thing `update-release.js` adds is re-associating the chosen release's
+   **assets** by tag, because the route's projection drops them.
+2. **Download** with real byte progress, hashed as it streams.
+3. **Verify** the byte length against the asset's declared `size` **and** the
+   sha256 against the `digest` GitHub publishes on the asset (real, and
+   populated: both DMGs of v3.31.0 and v3.32.0 carry `sha256:…`). Then, after
+   staging, the bundle's own `CFBundleShortVersionString` and
+   `codesign --verify --deep --strict`.
+4. **Stage** beside the installed app. Creating that directory *is* the
+   writability probe — `access(W_OK)` is not reliable under ACLs, so the engine
+   creates the real directory in the real place and reports the real errno.
+5. **Swap**, in a detached `/bin/sh` helper that waits for this process to exit.
+
+### The swap, and what power loss leaves behind
+
+`rename(2)` onto an existing non-empty directory fails with `ENOTEMPTY`, and
+macOS's atomic directory swap — `renamex_np(…, RENAME_SWAP)` — is not reachable
+from Node or from any shipped command-line tool. So the swap is two renames,
+back to back, on paths that are siblings by construction (proved same-device
+with `stat -f %d` first, so `mv` cannot fall back to a copy):
+
+```
+rename(TARGET -> BACKUP)     atomic, metadata only
+rename(STAGED -> TARGET)     atomic, metadata only
+```
+
+| When power is lost | What is on disk |
+|---|---|
+| before the first rename | the old app, complete. Nothing changed. |
+| **between the two renames** | `The Curator.app` is **absent**. Both complete bundles sit beside it as `.the-curator-backup-…app` and `.the-curator-update-…/`. Neither is half-written — both were fully written and verified before the app quit, and `rename` moves no bytes. Recovery is one `mv`. |
+| after the second rename | the new app, complete. A leftover backup may survive; the next update sweeps it. |
+
+That middle window is two syscalls wide and is the only state in the design
+that needs a human. It buys the property that a **half-replaced bundle is
+impossible** — an app that exists at the right path and will not launch is a
+much worse outcome than a missing one, because the user cannot tell what
+happened and has nothing to drag back. Every other failure rolls back and
+reopens the old app.
+
+### Quarantine: a real benefit, measured with a control
+
+`com.apple.quarantine` is applied by the *downloading application* through
+LaunchServices, not by the kernel. Measured:
+
+| Source | Extracted bundle |
+|---|---|
+| a `.dmg` stamped with `com.apple.quarantine` (what a browser download is) | **quarantined** |
+| a `.dmg` fetched by this app's `fetch()` | **not quarantined** |
+
+So the swapped-in app opens with no Gatekeeper prompt and is never App
+Translocated — the thing that makes a hand-installed unsigned build unpleasant.
+Both arms are asserted in `scripts/test-desktop-update-macos.js`; the first is
+the control that stops the second being vacuous.
+
+### What changes the day a Developer ID exists
+
+Everything, and that is why the surface is two functions. Enrol; set
+`mac.identity`; add a `zip` target beside `dmg`; set `publish: github` so
+`latest-mac.yml` is emitted; add `electron-updater` to `desktop/package.json`;
+register the two hooks against `autoUpdater` instead of against
+`lib/update-engine.js`. `lib/adhoc-sign.mjs` already turns **itself** off the
+moment a real identity appears. **Nothing in `src/` changes**, because nothing
+in `src/` knows how an update is performed — only that a hook exists.
+
+### Not proven
+
+- **No application has ever been replaced by an automated run.** Both suites
+  work on fixture bundles in temp directories. The macOS suite really does swap
+  a real, ad-hoc-signed bundle — but it is a fixture, not an install, and its
+  relaunch step is stubbed so nothing is ever launched.
+- **The download has never run against GitHub.** The suites serve the `.dmg`
+  from disk through an injected fetch. Streaming, hashing, truncation,
+  cancellation and every refusal are proven; the 140 MB round trip is not.
+- **The two-syscall window is not measured**, only reasoned about. The suite
+  asserts that no statement sits between the two renames, which is the part
+  under this code's control.
+- **`main.js` is source-scanned, never executed.** Electron is not an
+  offline-suite dependency, so the wiring — `runCommand`, `spawnDetached`,
+  `quitApp`, and the `buildUpdateEngine()` imports — has never run.
+- **Rosetta is not accommodated.** An arm64 Mac running the x64 build reports
+  `process.arch === 'x64'` and stays on the x64 build forever. Detecting
+  translation and silently installing a different architecture from a progress
+  bar is an architecture migration wearing an update's clothes; it belongs in
+  an explicit, one-time offer in the UI.
 
 ---
 

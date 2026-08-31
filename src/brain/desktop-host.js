@@ -8,6 +8,9 @@
  *
  *     folderPickerStyle: 'native-dialog'   → Electron's dialog.showOpenDialog
  *     restartStyle:      'app-relaunch'    → Electron's app.relaunch()
+ *     updateStyle:       'download-installer'
+ *                                          → download the .dmg, verify it,
+ *                                            swap the bundle, relaunch
  *
  * Both live in Electron's MAIN process. The obvious reading is therefore that
  * a route can never reach them, and that the only options are a refusal the
@@ -109,8 +112,46 @@
  *   been sent and after `hasActiveWrites()` has already refused a restart
  *   during an ingest, so it must not re-litigate either. It is not expected to
  *   return.
+ *
+ * ── THE TWO UPDATE HOOKS, AND WHY THERE ARE TWO OF THEM ────────────────────
+ *
+ * These belong to `updateStyle: 'download-installer'`. Before them, that
+ * capability could only TELL the user a new version existed and open its
+ * download page in a browser; the user then dragged a .dmg over their own
+ * application by hand. That is the whole gap they close.
+ *
+ * `prepareUpdate({ onProgress, signal }) -> Promise<result>`
+ *   Resolve the newest installable release, download its installer, verify it,
+ *   and place a complete, verified application bundle beside the installed
+ *   one. REPLACES NOTHING. Resolves with
+ *       { ok:true, token, version, current, bytes, verifiedDigest, … }
+ *   or a REFUSAL — `{ ok:false, reason, message }` — never a rejection and
+ *   never a raw exception string, because the caller renders `message` and
+ *   branches on `reason`.
+ *
+ *   `onProgress` is called with `{ phase, receivedBytes, totalBytes, percent }`
+ *   where `phase` ∈ resolving | downloading | verifying | staging | installing
+ *   and `percent` is `null` — never a number — when the total is unknown, so a
+ *   bar can render "indeterminate" rather than a fabricated 0%.
+ *
+ * `installUpdate({ token, onProgress }) -> Promise<result>`
+ *   Swap the prepared bundle in and relaunch. Does not return on success.
+ *
+ *   IT IS A SEPARATE HOOK, and the split is load-bearing three times over:
+ *     · the expensive, slow, cancellable, entirely REVERSIBLE part is kept
+ *       apart from the part that cannot be undone;
+ *     · the UI gets to say "ready — restarting now" instead of the window
+ *       vanishing halfway through a progress bar;
+ *     · `hasActiveWrites()` is checked at the moment of the RESTART, which is
+ *       the only moment it matters. Downloading during an ingest is harmless;
+ *       restarting during one is data loss.
+ *
+ *   It takes an opaque `token` and NEVER a path. The caller is a renderer over
+ *   loopback HTTP, and a hook that accepted `{stagedPath, targetPath}` would
+ *   be a "replace any directory with any other" primitive reachable from a
+ *   page. Both paths come only from the record the shell built itself.
  */
-export const DESKTOP_HOOKS = Object.freeze(['pickFolder', 'relaunch']);
+export const DESKTOP_HOOKS = Object.freeze(['pickFolder', 'relaunch', 'prepareUpdate', 'installUpdate']);
 
 /** Process-local. Never persisted, never serialised, never sent over the wire. */
 const hooks = Object.create(null);
