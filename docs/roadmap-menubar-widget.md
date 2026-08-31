@@ -44,6 +44,21 @@ says so in the section itself.
 
 ---
 
+
+> **SUPERSEDED.** Deviation 2 above described the remote count as an observation that never triggers a
+> check, and recorded the consequence — with the window closed, which is the tray's normal state, no
+> observation ever arrived and the line could essentially never appear. That is fixed: the tray now runs
+> a check **on menu open only**, never on hover and never on a timer, through `brain/sync.js`'s own
+> `getRemoteStatus()` so it inherits the existing TTL cache, in-flight memo and fetch gate rather than
+> creating a parallel set. The honest limit is narrower than the original claim: `gitFetch()` serialises
+> the fetches **that module issues**, and `git pull`'s own internal fetch is git's subprocess and outside
+> it. 60 concurrent runs against real git produced zero failures on either side — including in the
+> fetch-vs-fetch shape that is the recorded incident — so that harness could not reproduce the known
+> failure and therefore cannot certify its absence. The decision rests instead on this reaching the same
+> function, through the same gate, as a call the app already makes on a 10-minute timer whenever the
+> window is open.
+
+
 ## 0. The one-paragraph version
 
 The Curator's memory layer is written by **agents, over MCP, while the user is
@@ -91,7 +106,7 @@ below, and the section below is left as it was written.
    silently collapsing the mode. **§1.8 is therefore unbuilt design, not a
    description.**
 
-2. **The remote count is an OBSERVATION, not a check on menu open.** §2.9 and §7
+2. **The remote count WAS an observation rather than a check on menu open (superseded — see below).** §2.9 and §7
    both say the unpulled-remote count is fetched *at the moment the menu opens*.
    It is not, and the reason is one `brain/sync.js` exposes no way around:
    `getRemoteStatus()` is *cache hit ? return : `git fetch`* with no peek, and a
