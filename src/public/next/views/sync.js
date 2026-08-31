@@ -1027,18 +1027,44 @@ function fileCount(n) {
 // git left behind. Silence here reads as "nothing happened" for what is
 // actually the most consequential thing a pull can do.
 //
+// THE WORDING IS PART OF THE DEFECT THIS FIXES. "removed N deleted domains"
+// was printed for whatever the prune had deleted — and until v3.33.0 that
+// included any top-level folder without a CLAUDE.md, so the one sentence
+// the user got about a recursive delete could be false about the single
+// fact that mattered: what was destroyed was not a domain at all. The
+// backend is now narrow enough that a stray folder cannot reach here, but
+// the sentence still says only what is provable: this folder's contents
+// were deleted on another machine and that deletion has now arrived. It
+// does not claim the folder was a domain.
+//
 // Named list capped at 5 — the shipping app joins all of them, which is
 // fine for the realistic 1-2 but would build an unbounded sentence from
 // remote-controlled names. Cap, then say how many more.
 const PRUNED_NAMES_SHOWN = 5;
 
+function nameList(names) {
+  const shown = names.slice(0, PRUNED_NAMES_SHOWN);
+  const rest = names.length - shown.length;
+  return shown.join(', ') + (rest > 0 ? ', and ' + rest + ' more' : '');
+}
+
 function describePruned(pruned) {
   if (!pruned || !pruned.length) return null;
-  const shown = pruned.slice(0, PRUNED_NAMES_SHOWN);
-  const rest = pruned.length - shown.length;
-  const names = shown.join(', ') + (rest > 0 ? ', and ' + rest + ' more' : '');
-  return 'removed ' + pruned.length + ' deleted domain'
-    + (pruned.length === 1 ? '' : 's') + ' (' + names + ')';
+  return 'removed ' + pruned.length + ' folder'
+    + (pruned.length === 1 ? '' : 's') + ' deleted on another machine ('
+    + nameList(pruned) + ')';
+}
+
+// The other half of the same event, and the one that needs saying out loud:
+// the pull found a folder whose synced content is gone, but it still holds
+// a file the user has never pushed, so nothing was deleted. Without this
+// line the user's only signal is silence, and the folder looks like it
+// simply survived by luck.
+function describePruneKept(kept) {
+  if (!kept || !kept.length) return null;
+  return 'kept ' + kept.length + ' folder' + (kept.length === 1 ? '' : 's')
+    + ' that still ' + (kept.length === 1 ? 'holds' : 'hold')
+    + ' local files (' + nameList(kept) + ')';
 }
 
 function describeResult(kind, data) {
@@ -1050,10 +1076,12 @@ function describeResult(kind, data) {
   if (kind === 'pull') {
     const n = data.filesChanged || 0;
     const pruned = describePruned(data.pruned);
-    if (n === 0 && !pruned) return 'Already up to date — nothing new on GitHub.';
+    const kept = describePruneKept(data.prunedKept);
+    if (n === 0 && !pruned && !kept) return 'Already up to date — nothing new on GitHub.';
     const parts = [];
     if (n > 0) parts.push('Pulled ' + fileCount(n) + ' from GitHub');
     if (pruned) parts.push(pruned);
+    if (kept) parts.push(kept);
     return parts.join(', ') + '.';
   }
 
@@ -1073,6 +1101,8 @@ function describeResult(kind, data) {
   if (pushResult.pushed && pushed > 0) parts.push('pushed ' + fileCount(pushed) + ' to GitHub');
   const pruned = describePruned(pullResult.pruned);
   if (pruned) parts.push(pruned);
+  const kept = describePruneKept(pullResult.prunedKept);
+  if (kept) parts.push(kept);
 
   if (!parts.length) return 'Sync complete — everything was already up to date.';
   return 'Sync complete — ' + parts.join(', ') + '.';
