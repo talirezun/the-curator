@@ -1542,9 +1542,11 @@ try {
     const view = new Function(
       extractConst(syncViewSrc, 'PRUNED_NAMES_SHOWN', 'views/sync.js') + '\n' +
       extractFn(syncViewSrc, 'fileCount', 'views/sync.js') + '\n' +
+      extractFn(syncViewSrc, 'nameList', 'views/sync.js') + '\n' +
       extractFn(syncViewSrc, 'describePruned', 'views/sync.js') + '\n' +
+      extractFn(syncViewSrc, 'describePruneKept', 'views/sync.js') + '\n' +
       extractFn(syncViewSrc, 'describeResult', 'views/sync.js') + '\n' +
-      'return { describeResult, describePruned };'
+      'return { describeResult, describePruned, describePruneKept };'
     )();
 
     const remoteDir = await makeBareRemote();
@@ -1622,8 +1624,13 @@ try {
       `the message states the PULLED count (${pulledN}) — got: ${msg}`);
     assertTrue(msg.includes('pushed ' + pushedN + ' file'),
       `the message states the PUSHED count (${pushedN}) — got: ${msg}`);
-    assertTrue(msg.includes('removed 1 deleted domain (ghost)'),
-      `the message names the pruned domain — got: ${msg}`);
+    // v3.33.0 reworded: the prune no longer proves the folder was a domain
+    // (it only ever proved "no CLAUDE.md"), so the sentence says what is
+    // actually true — this folder's synced content was deleted elsewhere.
+    assertTrue(msg.includes('removed 1 folder deleted on another machine (ghost)'),
+      `the message names the pruned folder — got: ${msg}`);
+    assertTrue(!/deleted domain/.test(msg),
+      `the message never calls a pruned folder a "deleted domain" — got: ${msg}`);
 
     // (c) The two directions stay DISTINCT facts. A single combined total
     //     would be meaningless (they describe different machines) and would
@@ -1653,8 +1660,8 @@ try {
     // (f) Pull-only ALSO surfaces pruned domains (the shipping app did; /next
     //     dropped it in the same function).
     const pullMsg = view.describeResult('pull', { pulled: true, filesChanged: 4, pruned: ['old-domain'] });
-    assertTrue(pullMsg.includes('Pulled 4 files') && pullMsg.includes('removed 1 deleted domain (old-domain)'),
-      'pull-only names pruned domains as well as the file count');
+    assertTrue(pullMsg.includes('Pulled 4 files') && pullMsg.includes('removed 1 folder deleted on another machine (old-domain)'),
+      'pull-only names pruned folders as well as the file count');
     assertEq(view.describeResult('pull', { pulled: true, filesChanged: 0, pruned: [] }),
       'Already up to date — nothing new on GitHub.',
       'a pull with nothing incoming says "already up to date", not "Pulled 0 files"');
@@ -1663,7 +1670,7 @@ try {
     assertTrue(view.describeResult('pull', { filesChanged: 1, pruned: [] }).includes('1 file from'),
       'one file is singular');
     const many = view.describePruned(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
-    assertTrue(many.includes('removed 7 deleted domains') && many.includes('and 2 more'),
+    assertTrue(many.includes('removed 7 folders deleted on another machine') && many.includes('and 2 more'),
       'the pruned name list is capped and says how many more');
   }
 

@@ -1742,6 +1742,20 @@ export async function pull() {
     }
   }
 
+  // The prune's baseline — see pruneGhostDomainDirs(). Captured HERE, after
+  // the auto-save commit and before the merge, so the deletion diff below
+  // contains only what the REMOTE removed. Capturing it earlier would put
+  // the user's own local deletions into that diff and hand the prune a
+  // nomination it has no business acting on.
+  //
+  // An unborn HEAD (a repo with no commits) throws; that is not an error
+  // condition here, it means nothing can have been deleted yet.
+  let preMergeHead = null;
+  try {
+    const { stdout: headSha } = await git('rev-parse HEAD');
+    preMergeHead = headSha.trim() || null;
+  } catch { /* no commits yet — prune nothing */ }
+
   // ── THIS FETCH IS FOR REPORTING ONLY, AND ITS FAILURE MUST NOT ABORT THE
   // SYNC (RELEASE-BLOCKER fix) ────────────────────────────────────────────
   // It used to sit OUTSIDE this try, one bare `await` with nothing to catch
@@ -1870,8 +1884,9 @@ export async function pull() {
 
   // Prune ghost domain directories. When another machine deletes a domain, the
   // pull removes every tracked file, but empty dirs are left behind because git
-  // doesn't track them.
-  const pruned = await pruneGhostDomainDirs();
+  // doesn't track them. Scoped to what THIS merge deleted — read that
+  // function's header before widening anything here.
+  const { pruned, keptLocalContent } = await pruneGhostDomainDirs(preMergeHead);
 
   // We just merged everything origin had — anything cached about "waiting to
   // pull" describes a state that no longer exists.
@@ -1883,6 +1898,11 @@ export async function pull() {
     commitsPulled,
     files: filePreview,
     pruned,
+    // Folders this pull's merge emptied of tracked files but which still
+    // hold something the user has not pushed. Reported rather than removed
+    // — see pruneGhostDomainDirs() rule 4. Additive on the wire: /old reads
+    // `pruned` only and is unaffected.
+    prunedKept: keptLocalContent,
     details: pullOut,
   };
 }
@@ -2010,31 +2030,196 @@ function extractUntrackedOverwritePaths(message) {
 }
 
 /**
- * Remove any directory under the domains root that has no CLAUDE.md.
- * Called after pull so sync-delete from another machine fully takes effect.
- * Returns the list of pruned domain names (usually empty).
+ * Split NUL-separated git path output into the set of TOP-LEVEL segments.
+ *
+ * `-z` is what makes this safe to do by hand: without it git C-quotes any
+ * path containing a non-ASCII byte, a space-edge case or a quote
+ * (`"caf\303\251/x.md"`), and the quoting is NOT disabled by
+ * `core.quotePath=false` on every command — see the KNOWN GAP on
+ * extractUntrackedOverwritePaths above, which is exactly that bug. With
+ * `-z` the bytes are literal and a `split('/')` means what it says.
+ *
+ * Rename records in `status --porcelain -z` emit a SECOND, bare path chunk
+ * with no status prefix. Callers below only match a specific prefix, so a
+ * bare chunk is ignored; a file perversely named `?? x` could make one look
+ * like an untracked entry, which biases toward KEEPING a directory. That is
+ * the safe direction and is why it is left alone rather than parsed harder.
  */
-async function pruneGhostDomainDirs() {
-  const base = getDomainsDir();
+function topLevelSegments(nulSeparated, prefix = '') {
+  const out = new Set();
+  for (const chunk of String(nulSeparated).split('\0')) {
+    if (!chunk) continue;
+    let p = chunk;
+    if (prefix) {
+      if (!p.startsWith(prefix)) continue;
+      p = p.slice(prefix.length);
+    }
+    const seg = p.split('/')[0];
+    if (seg) out.add(seg);
+  }
+  return out;
+}
+
+/**
+ * Remove the EMPTY SHELL a remote domain-delete leaves behind.
+ *
+ * ── WHY THIS EXISTS (v2.3.4, and the property that must survive) ─────────
+ * Computer 2 deletes a domain and pushes. Computer 1 pulls: every TRACKED
+ * file under `domains/test/` is removed, but the directory survives,
+ * because git does not track directories and will not remove one that still
+ * holds untracked content — and a domain's `raw/` and `conversations/`
+ * folders are gitignored, so a real domain always does. The result was a
+ * ghost: no `CLAUDE.md`, so `listDomains()` hid it from the app and MCP, while
+ * Obsidian and Finder still showed the folder. The delete had not finished
+ * propagating. That is the property this function exists to hold, and it
+ * still holds it.
+ *
+ * ── WHY IT CHANGED (v3.33.0+) ────────────────────────────────────────────
+ * The original test for "is this a ghost" was `no CLAUDE.md`, applied to
+ * every non-dot directory at the top of the domains folder, on every pull,
+ * unconditionally. Measured (research pass for docs/roadmap-automatic-sync.md,
+ * nothing incoming from the remote):
+ *
+ *     before pull: [ Attachments, demo, newdomain ]
+ *     after  pull: [ demo ]      pruned: ["Attachments","newdomain"]
+ *
+ * THE DOMAINS FOLDER IS A DOCUMENTED OBSIDIAN VAULT ROOT — docs/sync.md and
+ * the user guide both tell people to point Obsidian at it, and Obsidian's
+ * own default location for a pasted image is an attachments folder at the
+ * vault root. So a folder created by the normal use of the tool we
+ * recommend was recursively deleted by the next pull, with no confirmation
+ * and no undo. So was a domain still being written by hand, before its
+ * schema existed. "No CLAUDE.md" is evidence of a great many things; being
+ * a deleted domain is only one of them.
+ *
+ * Worse, and not in the original report: `push()` runs `git add -A`, so a
+ * stray folder that survived long enough to be pushed was TRACKED. Deleting
+ * it here staged a deletion that the next push propagated to the remote and
+ * from there to every other machine. The blast radius was not local.
+ *
+ * ── THE RULE NOW: PROOF, NOT INFERENCE ───────────────────────────────────
+ * A directory is removed only when all four hold:
+ *
+ *   1. THIS pull's merge deleted tracked files under it (`preMergeHead..HEAD`,
+ *      diff-filter=D). This is the whole fix. A folder git has never heard
+ *      of cannot appear in a deletion diff, so it is now unreachable by this
+ *      code no matter what it is named or what it contains. It also means a
+ *      pull with nothing incoming prunes nothing, which is what the
+ *      measurement above should always have shown.
+ *   2. It has no `CLAUDE.md` (the v2.3.4 test, kept — necessary, never
+ *      sufficient).
+ *   3. Git tracks NOTHING under it any more. A partially-deleted domain is
+ *      not a deleted domain. This also guarantees the removal can never
+ *      stage anything, so it can never propagate on the next push.
+ *   4. Nothing under it is untracked-and-not-ignored — i.e. nothing git
+ *      would offer to commit. Ignored content (`raw/`, `conversations/`, `.DS_Store`) does not block, because that is the v2.3.4 case
+ *      itself; a file the user made and has not pushed does.
+ *
+ * ── WHAT THIS NO LONGER HANDLES, STATED PLAINLY ──────────────────────────
+ * (a) A domain whose `CLAUDE.md` the user deleted BY HAND locally is no
+ *     longer swept away by a pull. It lingers, hidden from the app by the
+ *     `listDomains()` schema filter, until the user deletes it themselves.
+ * (b) A shell this function declines under rule 4 stays declined: the
+ *     deletion diff that nominated it belongs to one pull and does not
+ *     recur. The user is told (`prunedKept`) and can delete it, or push the
+ *     local file and let the folder become a normal tracked thing again.
+ * (c) A stray folder a user ALREADY has — the case that motivated this — is
+ *     now permanently safe, not merely safer: it can only be nominated by a
+ *     pull that deletes tracked files under that exact path, which requires
+ *     that they pushed it and then deleted it somewhere else on purpose.
+ *
+ * FAILURE MODE, NAMED: every branch here fails toward KEEPING the
+ * directory. A git call that throws, an unborn HEAD, a diff we cannot read
+ * — all return without deleting anything. A lingering folder is a tidiness
+ * bug the user can fix in one drag; a deleted one is gone, and for
+ * `raw/`-only content it was never on GitHub to recover from.
+ *
+ * STILL DESTRUCTIVE, DELIBERATELY: a shell that passes all four rules is
+ * removed WITH its ignored, machine-local content (`raw/` sources,
+ * `conversations/`). Those files were never on the remote and cannot be
+ * recovered. That is the v2.3.4 contract — deleting a domain on one machine
+ * deletes it everywhere — and narrowing it further would leave the reported
+ * case unhandled, so it is preserved rather than quietly dropped.
+ *
+ * @param {string|null} preMergeHead  commit HEAD pointed at BEFORE this
+ *   pull's merge, captured by pull() after its auto-save commit. Null (no
+ *   commits yet, or unreadable) prunes nothing.
+ * @returns {{pruned: string[], keptLocalContent: string[]}}
+ */
+async function pruneGhostDomainDirs(preMergeHead) {
   const pruned = [];
+  const keptLocalContent = [];
+
+  // Rule 1's baseline. Also the injection gate: this value is interpolated
+  // into a shell command string by git(), so it must be a commit id and
+  // nothing else, even though today's only caller derives it from
+  // rev-parse.
+  if (!preMergeHead || !/^[0-9a-f]{7,64}$/.test(preMergeHead)) return { pruned, keptLocalContent };
+
+  const base = getDomainsDir();
+
+  let nominated, trackedTops, unpushedTops;
+  try {
+    // 1. What did this merge actually delete? Empty ⇒ nothing to do, which
+    //    is the common case (most pulls delete nothing).
+    const { stdout: deleted } =
+      await git(`diff --diff-filter=D --name-only -z ${preMergeHead} HEAD`);
+    nominated = topLevelSegments(deleted);
+    // An OPTIMISATION, not a guard: `nominated.has(name)` below is already
+    // false for every name when the set is empty, and mutation M2 (removing
+    // this line) is correctly GREEN. It exists so the ordinary pull — which
+    // deletes nothing — costs two fewer git subprocesses.
+    if (nominated.size === 0) return { pruned, keptLocalContent };
+
+    // 3. What does git still track, and 4. what is untracked-not-ignored?
+    //    Both are one bulk call each — no per-directory pathspec, so no
+    //    quoting of a user-chosen folder name ever reaches a shell.
+    const { stdout: tracked } = await git('ls-files -z');
+    trackedTops = topLevelSegments(tracked);
+
+    const { stdout: status } = await git('status --porcelain -z');
+    unpushedTops = topLevelSegments(status, '?? ');
+  } catch {
+    // Cannot prove anything ⇒ delete nothing.
+    return { pruned, keptLocalContent };
+  }
+
   let entries;
   try {
     const { readdir } = await import('fs/promises');
     entries = await readdir(base, { withFileTypes: true });
-  } catch { return pruned; }
+  } catch { return { pruned, keptLocalContent }; }
 
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!nominated.has(entry.name)) continue;          // 1. not deleted by this pull
     const dirPath = path.join(base, entry.name);
-    const schemaPath = path.join(dirPath, 'CLAUDE.md');
-    if (existsSync(schemaPath)) continue;    // real domain, keep
-    // Schema is gone → ghost directory. Remove it recursively.
+    // 2. live domain. SUBSUMED, and kept anyway: a live domain's CLAUDE.md
+    //    is tracked (rule 3 keeps it) or locally-made and untracked (rule 4
+    //    keeps it), so mutation M5 removing this line is GREEN and no test
+    //    can see it. It stays because it is the v2.3.4 test, it is the only
+    //    rule here that needs no git, and it is the last line of defence if
+    //    a future edit weakens one of the other three.
+    if (existsSync(path.join(dirPath, 'CLAUDE.md'))) continue;
+    if (trackedTops.has(entry.name)) continue;         // 3. partial delete
+    // 4. holds local work. ITS LIVE WINDOW IS NARROW AND THAT IS MEASURED:
+    //    pull() commits the tree twice, and the second commit (`git add -A`,
+    //    "Sync hygiene cleanup") runs immediately before this function — so
+    //    anything the user left lying around is TRACKED by now and rule 3
+    //    catches it. What is left for rule 4 is a write landing between that
+    //    commit and this call: the MCP server or an ingest in ANOTHER
+    //    process, which this app genuinely has. See section 5 / 5b of
+    //    test-sync-prune-safety.js, which drives both halves.
+    if (unpushedTops.has(entry.name)) {
+      keptLocalContent.push(entry.name);
+      continue;
+    }
     try {
       await rm(dirPath, { recursive: true, force: true });
       pruned.push(entry.name);
     } catch { /* best-effort; fall through */ }
   }
-  return pruned;
+  return { pruned, keptLocalContent };
 }
 
 export async function sync() {
@@ -2101,6 +2286,8 @@ export const __testing = {
   recoverHygieneMergeConflict,
   isHygieneJunkPath,
   extractUntrackedOverwritePaths,
+  pruneGhostDomainDirs,
+  topLevelSegments,
   countIncoming,
   invalidateRemoteCache,
   REMOTE_CHECK_TTL_MS,
