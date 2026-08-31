@@ -51,6 +51,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pickFreePort, appUrl } from './lib/port.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
+import { applyAboutPanel } from './lib/app-version.js';
 import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
@@ -82,6 +83,20 @@ const SERVER_ENTRY = path.join(APP_ROOT, 'src', 'server.js');
 /** Resolved once `boot()` has picked a port. */
 let baseUrl = null;
 let mainWindow = null;
+
+// ── About panel ──────────────────────────────────────────────────────────────
+//
+// The default panel showed `0.0.0 (0.0.0)` and nothing else — reported as "it
+// doesn't have any data" — and the number was not a display bug: the packaged
+// Info.plist really did say 0.0.0, because electron-builder derives both
+// version keys from the app manifest and desktop/package.json is pinned at the
+// sentinel.
+//
+// The whole implementation is in lib/app-version.js so the offline suite can
+// EXECUTE it against a stub `app`; this file keeps only the call site, because
+// nothing here is importable without Electron. lib/verify-version.mjs is the
+// other half — the build-time refusal that stops a wrong version reaching an
+// artifact at all.
 
 /**
  * Set once the quit has been authorised, so the `before-quit` handler does not
@@ -162,6 +177,10 @@ async function boot() {
   // rather than a private selector. That is an app-CSS/app-JS change and is
   // reported in desktop/README.md, not made here.
   nativeTheme.themeSource = 'dark';
+
+  // Before the window, so the App menu's "About The Curator" item is correct
+  // the first time it is opened. It reads nothing that depends on the server.
+  applyAboutPanel(app, APP_ROOT);
 
   const port = await pickFreePort();
   baseUrl = appUrl(port);
