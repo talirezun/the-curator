@@ -23,6 +23,7 @@ import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
 import { describeInstall } from './brain/install-mode.js';
+import { planRestart } from './brain/restart.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
 import { logInfo, logWarn, logError, getLogFilePath } from './brain/logger.js';
 import { ensureMcpLauncherShim } from './brain/mcp-launcher.js';
@@ -222,11 +223,34 @@ app.post('/api/restart', (_req, res) => {
     const { status, body } = conflictResponse('restart the app');
     return res.status(status).json(body);
   }
-  logInfo('server', 'Restart requested — spawning a replacement process.');
-  res.json({ ok: true, restarting: true });
+  // FORKED on `restartStyle` (see src/brain/restart.js for the whole argument).
+  // The write-registry refusal above is checked FIRST and is unchanged, so a
+  // restart during an ingest is still refused identically in both modes; the
+  // capability only decides HOW a permitted restart is performed.
+  const plan = planRestart();
+  if (!plan.ok) {
+    logWarn('server', 'Restart requested but this build cannot restart itself.');
+    return res.status(plan.status).json(plan.body);
+  }
+  logInfo('server', plan.style === 'app-relaunch'
+    ? 'Restart requested — relaunching the desktop app.'
+    : 'Restart requested — spawning a replacement process.');
+  res.json(plan.body);
 
   // Brief delay so the HTTP response can flush before we tear down.
   setTimeout(() => {
+    if (plan.style === 'app-relaunch') {
+      // The shell's own relaunch. It is not expected to return; if it throws,
+      // the response has already been sent, so the only useful thing left is
+      // to say so in the log rather than fall through to the spawn — which is
+      // the second-window bug this branch exists to remove.
+      try {
+        plan.perform();
+      } catch (err) {
+        logError('server', `The desktop relaunch failed: ${err && err.message}`);
+      }
+      return;
+    }
     // Spawn the replacement BEFORE we close this server. Detached + unref
     // makes the child fully independent — survives our process.exit.
     // The child inherits PATH and env vars (so npm and friends resolve

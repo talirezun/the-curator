@@ -67,6 +67,9 @@ function eq(actual, expected, label) {
   const same = actual === expected;
   ok(same, `${label}${same ? '' : `\n        expected: ${JSON.stringify(expected)}\n        actual:   ${JSON.stringify(actual)}`}`);
 }
+function deepEqJson(actual, expected, label) {
+  eq(JSON.stringify(actual), JSON.stringify(expected), label);
+}
 function section(t) { console.log(`\n${t}`); }
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
@@ -140,6 +143,7 @@ const EXPECTED_CAPABILITY_KEYS = [
   'canWriteBesideCode',
   'mcpLaunchStyle',
   'restartStyle',
+  'folderPickerStyle',
 ];
 const EXPECTED_MODES = ['repo', 'bundle'];
 
@@ -170,6 +174,15 @@ eq(installMode.getCapabilities('bundle').canRunNpmInstall, false, 'bundle CANNOT
 eq(installMode.getCapabilities('bundle').canRebuildAppleScriptApp, false,
   'bundle CANNOT rebuild the .app (build-app.sh ends in `codesign --force --deep --sign -`)');
 eq(installMode.getCapabilities('bundle').canWriteBesideCode, false, 'bundle CANNOT write beside its code');
+// The three NAMED-STRING capabilities. Transcribed, never read back off the
+// module — a fork below branches on the exact spelling of each of these, so a
+// silent rename would move behaviour with nothing going red.
+eq(installMode.getCapabilities('repo').mcpLaunchStyle, 'node-script', 'repo launches the MCP as a node script');
+eq(installMode.getCapabilities('bundle').mcpLaunchStyle, 'launcher-script', 'bundle launches the MCP through a launcher shim');
+eq(installMode.getCapabilities('repo').restartStyle, 'respawn-node', 'repo restarts by respawning node');
+eq(installMode.getCapabilities('bundle').restartStyle, 'app-relaunch', 'bundle restarts by relaunching the application');
+eq(installMode.getCapabilities('repo').folderPickerStyle, 'osascript', 'repo picks a folder with osascript');
+eq(installMode.getCapabilities('bundle').folderPickerStyle, 'native-dialog', 'bundle picks a folder with the shell’s native dialog');
 
 // A programming error must be LOUD. This is not the environment-driven unknown
 // case — that one resolves to 'repo' inside getInstallMode(), proven in §3.
@@ -289,13 +302,36 @@ function stripComments(src) {
 }
 const stripCommentsAndStrings = stripComments;   // name kept at the call sites
 
-// A fork site = a route file that reads a capability off getCapabilities().
+// ── THE SCAN SET IS WIDER THAN src/routes/, and it had to be ────────────────
+//
+// This scan used to enumerate route files ONLY, which was true of the tree at
+// the time and became false the moment a fork landed in `src/brain/`. Two
+// already had: `mcp-launcher.js` (covered, by luck of the mapping) and
+// `diagnostics.js` (NOT covered by anything, and nobody knew). A scan that
+// cannot see a whole directory reports "all clear" over it forever — the same
+// class as `test-route-write-guards.js`'s hardcoded list, which this file's
+// own header cites.
+//
+// Every candidate is still ENUMERATED FROM DISK. `install-mode.js` is excluded
+// because it DEFINES getCapabilities; including the definer would report the
+// capability table as a fork site on itself.
+const brainFiles = fs.readdirSync(path.join(ROOT, 'src/brain'))
+  .filter(f => f.endsWith('.js') && f !== 'install-mode.js')
+  .sort();
+ok(brainFiles.length >= 10, `enumerated ${brainFiles.length} brain files from disk`);
+const scanTargets = [
+  ...routeFiles.map(f => ({ key: `routes/${f}`, rel: path.join('src/routes', f) })),
+  ...brainFiles.map(f => ({ key: `brain/${f}`, rel: path.join('src/brain', f) })),
+  { key: 'server.js', rel: 'src/server.js' },
+];
+
+// A fork site = a file that reads a capability off getCapabilities().
 const discovered = [];
-for (const f of routeFiles) {
-  const code = stripCommentsAndStrings(read(path.join('src/routes', f)));
+for (const t of scanTargets) {
+  const code = stripCommentsAndStrings(read(t.rel));
   if (!/getCapabilities\s*\(/.test(code)) continue;
   const caps = EXPECTED_CAPABILITY_KEYS.filter(k => new RegExp(`\\b${k}\\b`).test(code));
-  discovered.push({ file: f, caps });
+  discovered.push({ file: t.key, caps });
 }
 ok(discovered.length >= 1, `discovered ${discovered.length} route file(s) that fork on a capability`);
 for (const d of discovered) {
@@ -307,11 +343,25 @@ for (const d of discovered) {
 // nothing MEASURABLE distinguishes them; what distinguishes them is that a
 // third mode must be a decision someone writes into the table, not a default
 // inherited by every `!== 'bundle'` in the tree.
+//
+// SCOPE, stated precisely so nobody widens it into a false failure: this binds
+// every ROUTE file, `src/server.js`, and every brain file DISCOVERED above as a
+// fork site. It deliberately does NOT bind all of `src/brain/` — `paths.js`
+// OWNS `isBundleInstall()` and `install-mode.js` is the one legitimate caller,
+// so a blanket rule there would red on the two files that must branch on the
+// form for the rest of the tree not to.
 const MODE_BRANCH = /getInstallMode\s*\(\s*\)\s*[!=]==?\s*|isRepoInstall\s*\(|isBundleInstall\s*\(/;
-for (const f of routeFiles) {
-  const code = stripCommentsAndStrings(read(path.join('src/routes', f)));
+const modeBranchTargets = [
+  ...routeFiles.map(f => ({ key: `src/routes/${f}`, rel: path.join('src/routes', f) })),
+  { key: 'src/server.js', rel: 'src/server.js' },
+  ...discovered
+    .filter(d => d.file.startsWith('brain/'))
+    .map(d => ({ key: `src/${d.file}`, rel: `src/${d.file}` })),
+];
+for (const t of modeBranchTargets) {
+  const code = stripCommentsAndStrings(read(t.rel));
   ok(!MODE_BRANCH.test(code),
-    `src/routes/${f} does NOT branch on the install FORM — capability only`);
+    `${t.key} does NOT branch on the install FORM — capability only`);
 }
 
 // Anti-vacuity: prove the scanner CAN see a mode-branch when one exists.
@@ -336,8 +386,11 @@ ok(!MODE_BRANCH.test('const caps = getCapabilities(); if (caps.canSelfUpdateViaG
 // suite nobody runs, and it mentions every capability key the fork reads.
 // That is strictly stronger than the Set it replaces.
 const BEHAVIOURALLY_COVERED = new Map([
-  ['config.js', 'test-install-mode.js'],      // §5 of THIS file
-  ['mcp.js',    'test-mcp-launcher.js'],      // the launcher seam
+  ['routes/config.js',       'test-install-mode.js'],   // §5, §5b of THIS file
+  ['routes/mcp.js',          'test-mcp-launcher.js'],   // the launcher seam
+  ['brain/mcp-launcher.js',  'test-mcp-launcher.js'],   // the shim writer
+  ['brain/restart.js',       'test-install-mode.js'],   // §5c of THIS file
+  ['brain/diagnostics.js',   'test-diagnostics.js'],    // the skipped git row
 ]);
 const runnerSrc = read('scripts/run-tests.js');
 for (const d of discovered) {
@@ -362,6 +415,48 @@ for (const f of BEHAVIOURALLY_COVERED.keys()) {
   ok(discovered.some(d => d.file === f),
     `CONTROL: ${f} is still a real fork site (a stale mapping entry is not coverage)`);
 }
+
+// ── EVERY CAPABILITY KEY IS ACCOUNTED FOR: branched, or DECLARED-ONLY ───────
+//
+// The rule this file existed without for three releases. `mcpLaunchStyle` and
+// `restartStyle` each shipped with no consumer, on an argument written into
+// install-mode.js — and that same docblock then claimed those were the ONLY
+// two unwired keys, which was FALSE: `canRebuildAppleScriptApp` and
+// `canWriteBesideCode` were unread as well and nothing said so.
+//
+// So a key may now be one of exactly two things, and the second requires a
+// reason written down HERE, where it is checked against the tree rather than
+// remembered. A key that is neither goes red.
+const DECLARED_ONLY = new Map([
+  ['canRebuildAppleScriptApp',
+    'SUBSUMED: scripts/build-app.sh runs at exactly one site, below ' +
+    'updateHandler\'s canSelfUpdateViaGit early return. A second check there ' +
+    'is unreachable code, and unreachable code is not a guard.'],
+  ['canWriteBesideCode',
+    'SUBSUMED: mcp-launcher.js writes the shim into the user-data dir ' +
+    'precisely so nothing ever writes beside the code. It is the statement of ' +
+    'an invariant, not a switch — branching on it would imply the opposite.'],
+]);
+const branchedKeys = new Set(discovered.flatMap(d => d.caps));
+for (const k of EXPECTED_CAPABILITY_KEYS) {
+  const branched = branchedKeys.has(k);
+  const declared = DECLARED_ONLY.get(k);
+  ok(branched || (typeof declared === 'string' && declared.length > 40),
+    `capability "${k}" is either BRANCHED by a discovered fork site, or recorded DECLARED-ONLY with a reason`);
+}
+// And the other direction, which is the half that rots: a key listed as
+// declared-only that has since GROWN a branch is a stale excuse, and leaving
+// it there is how the next auditor concludes the branch does not exist.
+for (const k of DECLARED_ONLY.keys()) {
+  ok(EXPECTED_CAPABILITY_KEYS.includes(k), `CONTROL: declared-only key "${k}" is still a real capability key`);
+  ok(!branchedKeys.has(k), `CONTROL: "${k}" is still unbranched — a declared-only entry for a branched key is a stale excuse`);
+}
+// The scan must be able to SEE a branch, or the accounting above passes by
+// finding nothing anywhere.
+ok(branchedKeys.size >= 4,
+  `CONTROL: the scan found ${branchedKeys.size} branched capabilities (a scanner that matches nothing reports every key declared-only)`);
+ok(branchedKeys.has('folderPickerStyle') && branchedKeys.has('restartStyle') && branchedKeys.has('mcpLaunchStyle'),
+  'CONTROL: the three named-string capabilities are all discovered as branched, from disk');
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§5  Both arms, driven through the INJECTED seam (never a source scan)');
@@ -465,6 +560,424 @@ function recordingExec(responses = {}) {
   eq(res.body.capability, 'canSelfUpdateViaGit', 'update bundle arm names the capability');
   eq(rec.calls.length, 0, 'update bundle arm runs ZERO subprocesses — no git, no npm, no build-app.sh');
   ok(!writeRegistry.isUpdateInProgress(), 'update bundle arm leaves the update flag CLEAR (it never began one)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5b  pick-folder — both arms, and the repo arm proven UNCHANGED');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── WHY A `git diff -w` PROOF IS NOT ENOUGH HERE ────────────────────────────
+//
+// Inserting a branch ABOVE a body shows in a diff as a pure insertion, and a
+// pure insertion looks reassuring. It says nothing about whether the surviving
+// arm is still REACHED with the same inputs — which is the only claim that
+// matters when the change is "add a branch". So the repo arm is proven three
+// ways, and the third is the one that cannot be faked:
+//
+//   §5b-a  TEXT      the osascript command transcribed HERE as a literal and
+//                    asserted byte-identical in HEAD and the working tree.
+//   §5b-b  BEHAVIOUR the handler extracted from BOTH revisions, compiled with
+//                    the same fake collaborators, and run over an input matrix
+//                    — WITH THE CONTROL that the two must DISAGREE when the
+//                    capability is stubbed to bundle mode. Without that
+//                    control, "they agree" is satisfied by a branch that does
+//                    nothing, and the proof is vacuous.
+//   §5b-c  LIVE      the real exported handler, driven with an injected exec.
+//
+// This is the method `scripts/test-mcp-launcher.js` §2 established.
+
+const headConfigSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/routes/config.js'], { encoding: 'utf8' });
+const workConfigSrc = read('src/routes/config.js');
+
+// ── §5b-a TEXT ──────────────────────────────────────────────────────────────
+const OSASCRIPT_COMMAND =
+  `      \`osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'\`,`;
+ok(headConfigSrc.includes(OSASCRIPT_COMMAND), '§5b-a HEAD contains the transcribed osascript command line');
+ok(workConfigSrc.includes(OSASCRIPT_COMMAND), '§5b-a the working tree contains it too, BYTE-IDENTICALLY');
+eq((workConfigSrc.match(/osascript -e 'POSIX path of/g) || []).length, 1,
+  '§5b-a exactly ONE osascript folder-picker command survives (a second copy is drift)');
+ok(!OSASCRIPT_COMMAND.includes('${'),
+  '§5b-a CONTROL: the pinned command is a fixed literal, not built by interpolation from a variable');
+
+// ── §5b-b BEHAVIOUR ─────────────────────────────────────────────────────────
+// HEAD has the handler as an inline arrow inside router.post(); the working
+// tree has it as an exported function. Both are extracted by brace-matching
+// from their own revision and wrapped into the same callable shape, so the
+// comparison is of BEHAVIOUR and not of text.
+function braceSlice(src, fromIdx) {
+  let i = src.indexOf('{', fromIdx);
+  let depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(fromIdx, i + 1); }
+  }
+  return null;
+}
+function extractHeadPickFolder(src) {
+  const at = src.indexOf("router.post('/pick-folder'");
+  if (at === -1) return null;
+  const arrow = src.indexOf('async (_req, res) => {', at);
+  if (arrow === -1) return null;
+  const body = braceSlice(src, arrow);
+  if (!body) return null;
+  return 'async function pickFolderHandler(_req, res, deps) ' + body.slice(body.indexOf('{'));
+}
+function extractExportedAsyncFn(src, name) {
+  const at = src.indexOf(`export async function ${name}(`);
+  if (at === -1) return null;
+  const whole = braceSlice(src, at);
+  return whole ? whole.replace(/^export /, '') : null;
+}
+const headPick = extractHeadPickFolder(headConfigSrc);
+const workPick = extractExportedAsyncFn(workConfigSrc, 'pickFolderHandler');
+ok(!!headPick && !!workPick, '§5b-b extracted the pick-folder handler from BOTH revisions');
+ok(/^async function pickFolderHandler/.test(headPick || '') && /^async function pickFolderHandler/.test(workPick || ''),
+  '§5b-b both extractions are callable function sources (a desynced matcher would not be)');
+
+// One compiler for both revisions. Every collaborator is supplied by name, so
+// the HEAD version (which reads them from module scope) and the working-tree
+// version (which reads them through `deps ||` defaults) close over the same
+// fakes. `Object` comes from the realm; nothing here touches a real file.
+function compilePick(fnSrc, capsFor, hookFor, io) {
+  // eslint-disable-next-line no-new-func
+  const make = new Function(
+    'execAsync', 'defaultExec', 'SUBPROCESS_ENV', 'existsSync', 'hasActiveWrites',
+    'conflictResponse', 'setDomainsDir', 'getCapabilities', 'capabilityRefusal', 'getDesktopHook',
+    `${fnSrc}; return pickFolderHandler;`
+  );
+  return make(
+    io.exec, io.exec, { PATH: '/usr/bin' }, io.existsSync, io.hasActiveWrites,
+    (action) => ({ status: 409, body: { error: `busy: ${action}`, refused: 'write_in_progress' } }),
+    io.setDomainsDir,
+    () => capsFor,
+    installMode.capabilityRefusal,
+    () => hookFor,
+  );
+}
+// The input matrix. Each entry drives the SAME scenario through both revisions.
+const PICK_INPUTS = [
+  { name: 'a real folder is chosen', exec: { stdout: '/Users/x/Knowledge\n' }, exists: true, busy: false },
+  { name: 'a folder with spaces', exec: { stdout: '/Users/x/My Drive/Knowledge\n' }, exists: true, busy: false },
+  { name: 'a non-ascii path', exec: { stdout: '/Users/x/ünïcode/Knowledge\n' }, exists: true, busy: false },
+  { name: 'the chosen folder does not exist', exec: { stdout: '/gone\n' }, exists: false, busy: false },
+  { name: 'a write started while the dialog was open', exec: { stdout: '/Users/x/K\n' }, exists: true, busy: true },
+  { name: 'empty stdout (cancel)', exec: { stdout: '\n' }, exists: true, busy: false },
+  { name: 'AppleScript -128 (real cancel)', throw: { stderr: 'execution error: User cancelled. (-128)', code: 1 }, exists: true, busy: false },
+  { name: 'killed by the timeout', throw: { killed: true, message: 'timed out' }, exists: true, busy: false },
+  { name: 'exit 1 with empty stderr', throw: { code: 1, stderr: '', message: 'Command failed' }, exists: true, busy: false },
+  { name: 'exit 1 with a TCC refusal on stderr', throw: { code: 1, stderr: 'Not authorized to send Apple events', message: 'Command failed' }, exists: true, busy: false },
+  { name: 'a generic spawn failure', throw: { message: 'spawn ENOENT' }, exists: true, busy: false },
+  { name: 'setDomainsDir itself throws', exec: { stdout: '/Users/x/K\n' }, exists: true, busy: false, setThrows: true },
+];
+async function runPick(fnSrc, capsFor, hookFor, input) {
+  const calls = { exec: [], setDomainsDir: [], hook: 0 };
+  const io = {
+    exec: async (cmd) => {
+      calls.exec.push(cmd);
+      if (input.throw) { const e = new Error(input.throw.message || 'x'); Object.assign(e, input.throw); throw e; }
+      return input.exec;
+    },
+    existsSync: () => input.exists,
+    hasActiveWrites: () => input.busy,
+    setDomainsDir: (p) => { calls.setDomainsDir.push(p); if (input.setThrows) throw new Error('read-only volume'); },
+  };
+  const hook = typeof hookFor === 'function'
+    ? async (...a) => { calls.hook++; return hookFor(...a); }
+    : hookFor;
+  const fn = compilePick(fnSrc, capsFor, hook, io);
+  const res = fakeRes();
+  let threw = null;
+  try { await fn({}, res, null); } catch (e) { threw = e.message; }
+  return { status: res.statusCode, body: res.body, calls, threw };
+}
+const REPO_CAPS_FOR_PICK = installMode.getCapabilities('repo');
+const BUNDLE_CAPS_FOR_PICK = installMode.getCapabilities('bundle');
+
+let pickAllSame = true;
+const pickMismatches = [];
+for (const input of PICK_INPUTS) {
+  const a = await runPick(headPick, REPO_CAPS_FOR_PICK, null, input);
+  const b = await runPick(workPick, REPO_CAPS_FOR_PICK, null, input);
+  if (JSON.stringify(a) !== JSON.stringify(b)) { pickAllSame = false; pickMismatches.push(input.name); }
+}
+ok(pickAllSame,
+  `§5b-b HEAD and HEAD+change agree on ALL ${PICK_INPUTS.length} inputs in repo mode` +
+  (pickAllSame ? '' : ` — differed on: ${pickMismatches.join('; ')}`));
+
+// THE CONTROL. Agreement in both modes would mean the branch does nothing, and
+// the agreement above would prove nothing at all.
+let pickDiffers = 0;
+for (const input of PICK_INPUTS) {
+  const a = await runPick(headPick, REPO_CAPS_FOR_PICK, null, input);
+  const b = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, null, input);
+  if (JSON.stringify(a) !== JSON.stringify(b)) pickDiffers++;
+}
+eq(pickDiffers, PICK_INPUTS.length,
+  '§5b-b CONTROL: with folderPickerStyle stubbed to native-dialog the two DISAGREE on EVERY input (so the agreement above is not vacuous)');
+
+// ── The BUNDLE arm's own behaviour ──────────────────────────────────────────
+{
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, null,
+    { name: 'no shell attached', exec: { stdout: '/x\n' }, exists: true, busy: false });
+  eq(r.status, 501, '§5b bundle arm with NO hook registered answers 501');
+  eq(r.body.capability, 'folderPickerStyle', 'and names the capability');
+  eq(r.body.refused, 'capability_unavailable', 'and carries the machine-readable refusal code');
+  eq(r.calls.exec.length, 0, 'and runs ZERO subprocesses — it never falls back to osascript');
+  eq(r.calls.setDomainsDir.length, 0, 'and changes nothing');
+  ok(/type or paste/i.test(r.body.hint || ''), 'and its hint names the typed-path route that needs no dialog');
+}
+{
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, async () => '/Users/x/Knowledge',
+    { name: 'hook returns a path', exec: { stdout: 'IGNORED\n' }, exists: true, busy: false });
+  eq(r.status, 200, '§5b bundle arm WITH a hook succeeds');
+  eq(r.body.ok, true, 'and reports ok');
+  eq(r.body.path, '/Users/x/Knowledge', 'and returns the hook’s path');
+  eq(r.calls.setDomainsDir[0], '/Users/x/Knowledge', 'and applies exactly that path');
+  eq(r.calls.exec.length, 0, 'and STILL runs no subprocess — osascript is unreachable on this arm');
+  eq(r.calls.hook, 1, 'and called the hook exactly once');
+}
+{
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, async () => null,
+    { name: 'hook cancels', exec: { stdout: '' }, exists: true, busy: false });
+  eq(r.body.cancelled, true, '§5b a hook returning null is a CANCEL, not an error');
+  eq(r.status, 200, 'and answers 200');
+}
+{
+  // The post-pick rules are SHARED. If the bundle arm had its own copy this is
+  // where it would drift — a native dialog can return a path that was deleted
+  // between choosing and confirming, and it must be refused identically.
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, async () => '/gone',
+    { name: 'hook path missing', exec: { stdout: '' }, exists: false, busy: false });
+  eq(r.status, 400, '§5b the bundle arm applies the SAME existence check');
+  ok(/Folder does not exist/.test(r.body.error || ''), 'with the same message');
+}
+{
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, async () => '/Users/x/K',
+    { name: 'hook path but busy', exec: { stdout: '' }, exists: true, busy: true });
+  eq(r.status, 409, '§5b the bundle arm applies the SAME concurrency re-check');
+  eq(r.calls.setDomainsDir.length, 0, 'and does not mutate while a write is in flight');
+  ok(r.body.cancelled === undefined,
+    'and the refusal carries NO `cancelled` field (the frontend reads that BEFORE res.ok)');
+}
+{
+  const boom = async () => { throw new Error('dialog exploded'); };
+  const r = await runPick(workPick, BUNDLE_CAPS_FOR_PICK, boom,
+    { name: 'hook throws', exec: { stdout: '' }, exists: true, busy: false });
+  eq(r.status, 500, '§5b a throwing hook is a 500, never a silent cancel');
+  ok(r.body.cancelled === undefined,
+    'and is NOT reported as a cancellation — the exact mis-classification the osascript arm was fixed for');
+  ok(!/osascript|Apple event|-128/i.test(JSON.stringify(r.body)),
+    'and borrows none of the osascript classifier’s vocabulary');
+}
+
+// ── §5b-c LIVE ──────────────────────────────────────────────────────────────
+// The REAL exported handler, on the real repo capabilities of this checkout.
+{
+  const rec = recordingExec({});
+  const res = fakeRes();
+  await configRoute.pickFolderHandler({}, res, {
+    execAsync: async (cmd) => { rec.calls.push(cmd); return { stdout: '\n' }; },
+    setDomainsDir: () => { throw new Error('the live probe must never mutate the domains dir'); },
+  });
+  eq(res.body.cancelled, true, '§5b-c live: the real handler treats empty output as a cancel');
+  eq(rec.calls.length, 1, '§5b-c live: exactly one subprocess command was issued');
+  ok(rec.calls[0].startsWith('osascript -e '),
+    '§5b-c live: and it is the osascript command (this checkout is repo mode)');
+}
+ok(typeof configRoute.pickFolderHandler === 'function' && configRoute.pickFolderHandler.length === 2,
+  '§5b-c pickFolderHandler is the real exported handler with the (req, res, deps) signature');
+{
+  const src = stripCommentsAndStrings(workConfigSrc);
+  ok(/pickFolderHandler\s*\(\s*req\s*,\s*res\s*\)/.test(src),
+    '§5b-c the production registration passes NO deps — the seam is null in production');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5c  POST /api/restart — both arms, and the repo arm proven UNCHANGED');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Same three-proof method as §5b. The restart handler lives in `src/server.js`,
+// which CANNOT be imported here — it calls startListen() at module scope, so
+// importing it would bind a port from inside `npm test`. It is therefore
+// extracted from both revisions by brace-matching and executed in a sandbox,
+// which is the only honest way to reach it.
+
+const restartModule = await import(path.join(ROOT, 'src/brain/restart.js'));
+const desktopHost = await import(path.join(ROOT, 'src/brain/desktop-host.js'));
+
+const headServerSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/server.js'], { encoding: 'utf8' });
+const workServerSrc = read('src/server.js');
+
+// ── §5c-a TEXT: the repo arm's spawn, pinned as a literal ───────────────────
+const RESPAWN_BLOCK = [
+  '    const child = spawn(',
+  '      process.execPath,',
+  "      [path.join(PROJECT_ROOT, 'src/server.js')],",
+].join('\n');
+ok(headServerSrc.includes(RESPAWN_BLOCK), '§5c-a HEAD contains the transcribed respawn block');
+ok(workServerSrc.includes(RESPAWN_BLOCK), '§5c-a the working tree contains it too, BYTE-IDENTICALLY');
+eq((workServerSrc.match(/const child = spawn\(/g) || []).length, 1,
+  '§5c-a exactly ONE respawn survives');
+ok(RESPAWN_BLOCK !== RESPAWN_BLOCK.replace('execPath', 'execpath'),
+  '§5c-a CONTROL: flipping one character in the transcribed block changes it');
+
+// ── §5c-b BEHAVIOUR ─────────────────────────────────────────────────────────
+function extractRestartHandler(src) {
+  const at = src.indexOf("app.post('/api/restart'");
+  if (at === -1) return null;
+  const arrow = src.indexOf('(_req, res) => {', at);
+  if (arrow === -1) return null;
+  const body = braceSlice(src, arrow);
+  if (!body) return null;
+  return 'function restartRoute(_req, res) ' + body.slice(body.indexOf('{'));
+}
+const headRestart = extractRestartHandler(headServerSrc);
+const workRestart = extractRestartHandler(workServerSrc);
+ok(!!headRestart && !!workRestart, '§5c-b extracted the /api/restart handler from BOTH revisions');
+
+function runRestart(fnSrc, { busy, plan }) {
+  const calls = { spawn: [], exit: [], close: 0, closeAll: 0, log: [], perform: 0 };
+  // eslint-disable-next-line no-new-func
+  const make = new Function(
+    'hasActiveWrites', 'conflictResponse', 'logInfo', 'logWarn', 'logError',
+    'spawn', 'path', 'PROJECT_ROOT', 'process', 'server', 'setTimeout', 'planRestart',
+    `${fnSrc}; return restartRoute;`
+  );
+  const fn = make(
+    () => busy,
+    (action) => ({ status: 409, body: { error: `busy: ${action}`, refused: 'write_in_progress' } }),
+    (s, m) => calls.log.push(['info', s, m]),
+    (s, m) => calls.log.push(['warn', s, m]),
+    (s, m) => calls.log.push(['error', s, m]),
+    (bin, args, opts) => { calls.spawn.push({ bin, args, opts }); return { unref() {} }; },
+    { join: (...p) => p.join('/') },
+    '/APP',
+    { execPath: '/opt/node', env: {}, exit: (c) => calls.exit.push(c) },
+    { closeAllConnections: () => { calls.closeAll++; }, close: () => { calls.close++; } },
+    (cb) => { cb(); return 0; },              // run every scheduled step synchronously
+    () => { if (plan && plan.perform) return { ...plan, perform: () => { calls.perform++; plan.perform(); } }; return plan; },
+  );
+  const res = fakeRes();
+  let threw = null;
+  try { fn({}, res); } catch (e) { threw = e.message; }
+  return { status: res.statusCode, body: res.body, calls, threw };
+}
+const REPO_PLAN = restartModule.planRestart(installMode.getCapabilities('repo'), null);
+const BUNDLE_PLAN_NO_HOOK = restartModule.planRestart(installMode.getCapabilities('bundle'), null);
+const RESTART_INPUTS = [
+  { name: 'idle', busy: false },
+  { name: 'a write is in flight', busy: true },
+];
+let restartAllSame = true;
+for (const input of RESTART_INPUTS) {
+  const a = runRestart(headRestart, { busy: input.busy, plan: REPO_PLAN });
+  const b = runRestart(workRestart, { busy: input.busy, plan: REPO_PLAN });
+  if (JSON.stringify(a) !== JSON.stringify(b)) restartAllSame = false;
+}
+ok(restartAllSame,
+  `§5c-b HEAD and HEAD+change agree on ALL ${RESTART_INPUTS.length} inputs with restartStyle at 'respawn-node'`);
+// THE CONTROL — again, agreement in both modes would prove nothing.
+let restartDiffers = 0;
+for (const input of RESTART_INPUTS) {
+  const a = runRestart(headRestart, { busy: input.busy, plan: REPO_PLAN });
+  const b = runRestart(workRestart, { busy: input.busy, plan: BUNDLE_PLAN_NO_HOOK });
+  if (JSON.stringify(a) !== JSON.stringify(b)) restartDiffers++;
+}
+eq(restartDiffers, 1,
+  '§5c-b CONTROL: with restartStyle stubbed to app-relaunch the two DISAGREE on the idle input (and correctly AGREE on the busy one — the write-registry refusal is checked FIRST and is unchanged)');
+{
+  const a = runRestart(headRestart, { busy: true, plan: REPO_PLAN });
+  const b = runRestart(workRestart, { busy: true, plan: BUNDLE_PLAN_NO_HOOK });
+  eq(JSON.stringify(a), JSON.stringify(b),
+    '§5c-b and that agreement is asserted directly: an ingest still refuses a restart identically in BOTH modes');
+}
+{
+  const r = runRestart(workRestart, { busy: false, plan: REPO_PLAN });
+  deepEqJson(r.body, { ok: true, restarting: true }, '§5c the repo arm’s response body is unchanged');
+  eq(r.calls.spawn.length, 1, 'and it spawns exactly one replacement');
+  eq(r.calls.spawn[0].bin, '/opt/node', 'using process.execPath');
+  eq(r.calls.spawn[0].args[0], '/APP/src/server.js', 'with the server entry as its argument');
+  eq(r.calls.exit[0], 0, 'and exits 0');
+}
+{
+  let relaunched = 0;
+  const plan = restartModule.planRestart(installMode.getCapabilities('bundle'), () => { relaunched++; });
+  const r = runRestart(workRestart, { busy: false, plan });
+  eq(r.status, 200, '§5c the bundle arm with a relaunch hook is a SUCCESS, not a refusal');
+  eq(r.body.restarting, true, 'and still reports restarting:true, the field every client reads');
+  eq(r.body.restartStyle, 'app-relaunch', 'plus restartStyle, so a non-browser caller can tell the app is going away');
+  eq(r.calls.perform, 1, 'and it calls the shell’s relaunch exactly once');
+  eq(relaunched, 1, 'which really ran');
+  eq(r.calls.spawn.length, 0, 'and it NEVER spawns — the second-window bug is unreachable on this arm');
+  eq(r.calls.exit.length, 0, 'and does not exit the process itself; the shell owns that');
+}
+{
+  const r = runRestart(workRestart, { busy: false, plan: BUNDLE_PLAN_NO_HOOK });
+  eq(r.status, 501, '§5c the bundle arm with NO hook answers 501');
+  eq(r.body.capability, 'restartStyle', 'and names the capability');
+  eq(r.calls.spawn.length, 0, 'and does NOT fall back to the spawn (that is the bug, silently)');
+  eq(r.calls.exit.length, 0, 'and leaves the process running');
+  ok(/Quit The Curator/i.test(r.body.hint || ''), 'and tells the user what to do instead');
+}
+{
+  const plan = restartModule.planRestart(installMode.getCapabilities('bundle'),
+    () => { throw new Error('relaunch failed'); });
+  const r = runRestart(workRestart, { busy: false, plan });
+  eq(r.threw, null, '§5c a THROWING relaunch hook does not take the request down');
+  eq(r.calls.spawn.length, 0, 'and still does not fall through to the spawn');
+  ok(r.calls.log.some(l => l[0] === 'error'), 'and the failure is logged');
+}
+
+// planRestart itself, directly.
+{
+  const p = restartModule.planRestart(installMode.getCapabilities('repo'), () => {});
+  eq(p.style, 'respawn-node', '§5c planRestart: repo mode is respawn-node even when a hook exists');
+  eq(p.perform, null, 'and hands back no perform');
+  deepEqJson(p.body, { ok: true, restarting: true }, 'and the byte-identical legacy body');
+}
+{
+  const p = restartModule.planRestart(installMode.getCapabilities('bundle'), 'not-a-function');
+  eq(p.ok, false, '§5c planRestart: a non-function hook is refused, not called');
+  eq(p.status, 501, 'with 501');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5d  desktop-host — the registry both bundle arms resolve through');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  desktopHost.__resetDesktopHost();
+  eq(desktopHost.getDesktopHook('pickFolder'), null, 'nothing is registered by default');
+  eq(desktopHost.getDesktopHook('relaunch'), null, 'neither hook');
+  eq(desktopHost.describeDesktopHost().attached, false, 'and describeDesktopHost reports NOT attached');
+  // This is the state every repo install is in, forever, which is why the
+  // whole bundle half of this release is a provable no-op here.
+  eq(installMode.getInstallMode(), 'repo', 'CONTROL: this checkout is repo mode, so no bundle arm is reachable in production');
+
+  const r = desktopHost.registerDesktopHost({ relaunch: () => {} });
+  deepEqJson(r.registered, ['relaunch'], 'registration is PARTIAL — a shell installs only what it has');
+  ok(typeof desktopHost.getDesktopHook('relaunch') === 'function', 'the registered hook comes back');
+  eq(desktopHost.getDesktopHook('pickFolder'), null, 'and the unregistered one is still null, not undefined');
+  eq(desktopHost.describeDesktopHost().hooks.relaunch, true, 'describeDesktopHost reports booleans...');
+  eq(desktopHost.describeDesktopHost().hooks.pickFolder, false, '...for both hooks');
+  ok(!Object.values(desktopHost.describeDesktopHost().hooks).some(v => typeof v === 'function'),
+    'and NEVER leaks the functions themselves onto the wire');
+
+  let threw = null;
+  try { desktopHost.registerDesktopHost({ pickfolder: () => {} }); } catch (e) { threw = e; }
+  ok(threw instanceof Error && /unknown hook/i.test(threw.message),
+    'a TYPO is refused loudly — silently registering nothing would leave the route refusing forever');
+  threw = null;
+  try { desktopHost.registerDesktopHost({ pickFolder: 'nope' }); } catch (e) { threw = e; }
+  ok(threw instanceof Error && /must be a function/i.test(threw.message), 'a non-function is refused too');
+  threw = null;
+  try { desktopHost.registerDesktopHost(null); } catch (e) { threw = e; }
+  ok(threw instanceof Error, 'and so is a non-object');
+
+  eq(desktopHost.getDesktopHook('__proto__'), null, 'an unknown name never reaches Object.prototype');
+  eq(desktopHost.getDesktopHook('constructor'), null, 'nor Function.prototype');
+
+  desktopHost.__resetDesktopHost();
+  eq(desktopHost.getDesktopHook('relaunch'), null, 'the reset seam really clears');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -779,19 +1292,46 @@ ok(typeof configRoute.updateCheckHandler === 'function' && configRoute.updateChe
  *
  * Stated so nobody reads a green run as more than it is:
  *
- *  1. THE BUNDLE ARM IS NEVER EXERCISED END TO END. §5 drives the handlers
- *     with an injected `caps`; §3 proves the mode flips on a real path shape.
- *     Nothing here runs a genuine packaged app, because none exists.
- *  2. THE FOUR BOOLEANS ARE NOT INDEPENDENTLY MEASURED. Today they are all
- *     `mode === 'repo'`. §4 enforces the part that is enforceable — that
- *     routes branch on a capability rather than the mode — not that any
- *     capability is empirically true of the machine.
- *  3. `mcpLaunchStyle` and `restartStyle` have NO BRANCH behind them. They are
- *     asserted to exist and to be surfaced; nothing asserts they are correct,
- *     because nothing consumes them yet.
+ *  1. NO BUNDLE ARM RUNS END TO END, AND NONE CAN. §5/§5b/§5c drive the
+ *     handlers with an injected `caps`; §3 proves the mode flips on a real
+ *     path shape. Nothing here runs a genuine packaged app, BECAUSE NO
+ *     PACKAGED APP EXISTS — `scripts/build-app.sh` still builds an AppleScript
+ *     wrapper around the checkout, and `desktop/` has never been run. Every
+ *     bundle assertion in this file is therefore a statement about a code path
+ *     no user can reach today. That is the point (the release is a provable
+ *     no-op), and it is also the ceiling on what a green run means.
+ *  2. NEITHER DESKTOP HOOK HAS EVER BEEN CALLED BY A REAL SHELL. §5b and §5c
+ *     prove the ROUTE half — what happens when a hook is present, absent, or
+ *     throwing. Nothing proves that Electron's `dialog.showOpenDialog` or
+ *     `app.relaunch()` behaves as the hook contract in `desktop-host.js`
+ *     describes, and nothing proves a shell can reach this module's registry
+ *     at all: that rests on `desktop/main.js` importing `src/server.js` into
+ *     the Electron main process, which is READ from that file rather than
+ *     observed. If that ever becomes a child process, every hook reads null
+ *     and both arms refuse — the fail-safe direction, but a real regression
+ *     that this suite would report as passing.
+ *  3. THE FOUR BOOLEANS ARE NOT INDEPENDENTLY MEASURED. Today all seven
+ *     capabilities are `mode === 'repo'`. §4 enforces the part that is
+ *     enforceable — that a fork branches on a capability rather than the mode,
+ *     and that every key is either branched or recorded declared-only WITH a
+ *     reason — not that any capability is empirically true of the machine.
  *  4. §4's scan is TEXTUAL over stripped source. A fork built by computed
- *     property access (`caps[someVar]`) is invisible to it, and a route that
- *     imports paths.js under an alias would defeat the mode-branch rule.
+ *     property access (`caps[someVar]`) is invisible to it, and a file that
+ *     imports paths.js under an alias would defeat the mode-branch rule. Its
+ *     scan set is `src/routes/*.js` + `src/brain/*.js` + `src/server.js`, all
+ *     from disk — a fork placed anywhere else (`mcp/`, `scripts/`) is unseen.
+ *  4a. THE EQUIVALENCE PROOFS COMPARE AGAINST `HEAD`, so once this change is
+ *     committed they compare the working tree to itself and the "they agree"
+ *     halves become trivially true. What survives that is the part built to:
+ *     the transcribed literals in §5b-a/§5c-a, which fail if the surviving arm
+ *     is ever edited, and the DISAGREEMENT controls, which fail if the branch
+ *     stops doing anything. Read a green §5b-b/§5c-b on a later commit as
+ *     "the arms still differ", not as "the arm is unchanged since v3.30.0".
+ *  4b. THE RESTART HANDLER IS EXECUTED IN A SANDBOX, NOT IMPORTED.
+ *     `src/server.js` binds a port at module scope, so importing it inside
+ *     `npm test` is not an option. The sandbox supplies `setTimeout` as a
+ *     synchronous call, so the REAL flush delay, the real detach and the real
+ *     500 ms exit grace are not exercised — only the order of the decisions.
  *  5. §6 pins the command STRINGS and their ORDER, not their exec OPTIONS —
  *     a changed `cwd`, `env` or `timeout` passes.
  *  6. The two git-missing MESSAGES (sync.js and config.js) are separate

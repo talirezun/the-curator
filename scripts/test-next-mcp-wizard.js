@@ -170,6 +170,8 @@ const PURE_FNS = [
   'interpretMcpConfig',
   'wholeFilePayloadAvailability',
   'wholeFileUsable',
+  'writeConfigAvailability',
+  'writeConfigOutcome',
   'classifyResponse',
   'copyOutcome',
   'runCopyAndAdvance',
@@ -194,6 +196,7 @@ const sandbox = new Function(
 
 const {
   interpretMcpConfig, wholeFilePayloadAvailability, wholeFileUsable, classifyResponse,
+  writeConfigAvailability, writeConfigOutcome,
   copyOutcome, runCopyAndAdvance, describeSelfTest, blockerFor, joinCauses, currentPayload,
   STALE_CAUSES, TOOL_TOTAL, TOOL_WRITE, TOOL_READ, __setState,
 } = sandbox;
@@ -373,6 +376,84 @@ section('2c. currentPayload() — the clipboard cannot bypass the gate');
 
   __setState({ payloadChoice: 'whole', status: healthy, snippet, wholeFile: null });
   ok(currentPayload().kind === 'entry', 'and with no whole-file payload at all');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('2d. writeConfigAvailability() — the "Write it for me" gate');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // POST /api/mcp/write-config shipped proven and UNWIRED. This is the gate
+  // in front of its only caller. The state that matters most is the corrupt
+  // one: rewriting a file we cannot parse means emitting a document holding
+  // only our entry, which DELETES every other MCP server the user has.
+  const absent = interpretMcpConfig(healthyConfig({ claude_config_exists: false, installed: false }));
+  const stale = interpretMcpConfig(healthyConfig({ installed: true, stale: true }));
+  const connected = interpretMcpConfig(healthyConfig({ installed: true, stale: false }));
+  const corrupt = interpretMcpConfig(healthyConfig({ claude_config_parse_error: true }));
+
+  ok(absent.connection === 'absent', 'fixture check: the absent fixture really is "absent"');
+  ok(stale.connection === 'stale', 'fixture check: the stale fixture really is "stale"');
+  ok(connected.connection === 'connected', 'fixture check: the connected fixture really is "connected"');
+  ok(corrupt.connection === 'unknown', 'fixture check: a parse error reads as "unknown", never as a negative claim');
+
+  ok(writeConfigAvailability(absent).offered === true, 'OFFERED when no config entry exists');
+  ok(writeConfigAvailability(stale).offered === true, 'OFFERED when the entry is stale');
+  ok(writeConfigAvailability(connected).offered === false,
+    'NOT offered when already connected — a write there replaces the user’s file for no change');
+  ok(writeConfigAvailability(connected).reason === null,
+    'and that is not an error, so it carries no reason to show');
+
+  ok(writeConfigAvailability(corrupt).offered === false, 'REFUSED on a parse error');
+  ok(/valid JSON/i.test(writeConfigAvailability(corrupt).reason || ''),
+    'and says why, in terms of the file rather than of an HTTP code');
+  ok(/other MCP server/i.test(writeConfigAvailability(corrupt).reason || ''),
+    'naming the ACTUAL harm — the other servers that would be dropped');
+
+  ok(writeConfigAvailability(null).offered === false, 'a missing status is refused, not treated as absent');
+  ok(writeConfigAvailability(undefined).offered === false, 'and so is undefined');
+  ok(writeConfigAvailability('nope').offered === false, 'and a non-object');
+  ok(writeConfigAvailability({}).offered === false,
+    'an object with NO connection field is refused — the gate opens on a positive match, never by default');
+
+  // CONTROL: the gate must be able to say yes, or every assertion above is
+  // satisfied by a function that returns false unconditionally.
+  ok([absent, stale].every(s => writeConfigAvailability(s).offered),
+    'CONTROL: the gate DOES open on both states it is meant to open on');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('2e. writeConfigOutcome() — what the user is told after a write');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const created = writeConfigOutcome({ ok: true, written: true, created: true, backup_path: null, preserved_servers: [] });
+  ok(created.tone === 'ok', 'a successful create reports tone ok');
+  ok(/Created the config file/.test(created.message), 'and says it CREATED the file');
+  ok(!/\.bak/.test(created.message), 'and does NOT mention a backup, because there was nothing to back up');
+
+  const updated = writeConfigOutcome({
+    ok: true, written: true, created: false,
+    backup_path: '/Users/x/Library/Application Support/Claude/claude_desktop_config.json.bak',
+    preserved_servers: ['a', 'b', 'c'],
+  });
+  ok(/Updated the config file/.test(updated.message), 'an update says UPDATED, not created');
+  ok(/3 other MCP servers were left untouched/.test(updated.message),
+    'and REPORTS the other servers rather than asking the user to take it on trust');
+  ok(/\.bak/.test(updated.message), 'and names the backup of the original bytes');
+
+  const one = writeConfigOutcome({ created: false, backup_path: '/x.bak', preserved_servers: ['solo'] });
+  ok(/1 other MCP server was/.test(one.message), 'one server is singular');
+  ok(!/1 other MCP servers/.test(one.message), 'and not "1 other MCP servers"');
+
+  // A malformed or partial response must still produce a sentence rather than
+  // "undefined" — the route is proven, but a stale server answering this route
+  // is exactly the case classifyResponse exists for and it can reach here.
+  const bare = writeConfigOutcome({});
+  ok(typeof bare.message === 'string' && bare.message.length > 0, 'a bare payload still yields a message');
+  ok(!/undefined|NaN|\[object/.test(bare.message), 'with no undefined/NaN/[object Object] leaking into it');
+  ok(!/other MCP server/.test(bare.message), 'and claims nothing about servers it was not told about');
+  ok(/restart Claude Desktop/i.test(bare.message), 'while still naming the next step, which is always true');
+  const nullish = writeConfigOutcome(null);
+  ok(typeof nullish.message === 'string' && nullish.message.length > 0, 'and null does not throw');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -678,6 +759,41 @@ section('9. Source guards — the shapes the pure tests cannot reach');
     'step 2 is populated on ENTRY, inside goToStep');
   ok(/function goToStep[\s\S]{0,700}if \(n === 3\) renderStep3\(\);/.test(wizCode),
     'step 3 too');
+
+  // ── "Write it for me": the wiring the pure tests above cannot reach ──────
+  //
+  // The endpoint shipped proven and with NO caller. These assert that it now
+  // has exactly one, that the one is a user click, and that the gate sits in
+  // front of it — the three things a green §2d does not say by itself.
+  const writeCfgPosts = (wizCode.match(/getJson\('\/api\/mcp\/write-config', \{ method: 'POST' \}\)/g) || []).length;
+  ok(writeCfgPosts === 1, 'there is exactly ONE /write-config request site');
+  ok(/function onWriteConfig\(myGen\)[\s\S]{0,900}getJson\('\/api\/mcp\/write-config'/.test(wizCode),
+    'and it lives inside onWriteConfig');
+  ok(/id="mcpw-writecfg"[\s\S]{0,200}addEventListener|byId\('mcpw-writecfg'\)[\s\S]{0,120}addEventListener\('click', \(\) => onWriteConfig\(/.test(wizCode),
+    'onWriteConfig is reached only from a click on the step-2 button');
+  ok(!/setInterval[\s\S]{0,300}onWriteConfig|loadAll[\s\S]{0,2000}onWriteConfig\(/.test(wizCode),
+    'and NEVER from a poll or from loadAll — this writes another application’s config file');
+  // The gate is checked at CLICK time, not only at render time. A hidden
+  // button is still in the DOM, and a status refresh between paint and click
+  // could change the verdict.
+  ok(/function onWriteConfig[\s\S]{0,400}writeConfigAvailability\(state\.status\)/.test(wizCode),
+    'onWriteConfig re-evaluates the gate before issuing the request');
+  const gateIdx2 = wizCode.indexOf('writeConfigAvailability(state.status)');
+  const postIdx2 = wizCode.indexOf("getJson('/api/mcp/write-config'");
+  ok(gateIdx2 !== -1 && postIdx2 !== -1 && gateIdx2 < postIdx2,
+    'and the gate is evaluated BEFORE the request is issued');
+  // Busy discipline, matching onReveal.
+  ok(/function onWriteConfig[\s\S]{0,200}state\.writeCfgBusy\) return;/.test(wizCode),
+    'a second click while one write is in flight is refused');
+  ok(/function onWriteConfig[\s\S]{0,1400}finally \{[\s\S]{0,200}writeCfgBusy = false/.test(wizCode),
+    'and the busy flag is cleared in a finally, so a failure does not wedge the button');
+  ok(/writeCfgBusy: false/.test(wizCode), 'writeCfgBusy is part of freshState, so closing the wizard resets it');
+  // Rendered always, hidden by class — the shape that stops markup and wiring
+  // disagreeing about whether the element exists (bindStep2 binds once).
+  ok(/id="mcpw-writecfg"[^>]*mcpw-hidden|mcpw-hidden[^>]*id="mcpw-writecfg"/.test(wizCode),
+    'the button ships hidden in the static markup');
+  ok(/function renderStep2\(\)[\s\S]{0,800}mcpw-writecfg[\s\S]{0,300}writeConfigAvailability/.test(wizCode),
+    'and renderStep2 — which goToStep runs on ENTRY — decides its visibility');
 
   // Defect 3, wiring half: the copy handler routes through the shell that
   // the §4 tests actually drive, rather than open-coding a second copy path.

@@ -133,6 +133,7 @@ function freshState() {
     selfTest: null,        // describeSelfTest() result
     selfTestBusy: false,
     revealBusy: false,
+    writeCfgBusy: false,   // POST /api/mcp/write-config in flight
     recheckBusy: false,
     onDone: null,
     prevFocus: null,
@@ -268,6 +269,61 @@ function wholeFileUsable(status, wholeFile) {
     return { usable: false, reason: 'The whole-file version came back empty.' };
   }
   return { usable: true, reason: null, wasEmpty: wholeFile.was_empty === true };
+}
+
+// ── "Write it for me" — the gate, and it is a THIRD independent layer ──────
+//
+// `POST /api/mcp/write-config` shipped proven and unwired: this is the one
+// control that reaches it. It writes ANOTHER APPLICATION'S configuration file,
+// which is a category of action this app takes nowhere else, so the offer is
+// deliberately narrow and every reason is written down.
+//
+// OFFERED when the connection is 'stale' or 'absent' — the two states where a
+// write actually changes something. NOT offered when it is 'connected' (the
+// entry already matches; a write would be a no-op that replaces the user's
+// file for nothing) and NOT when it is 'unknown'.
+//
+// REFUSED OUTRIGHT on a parse error, and the route refuses too — deliberately
+// belt and braces, in the same shape as wholeFilePayloadAvailability /
+// wholeFileUsable above. `interpretMcpConfig` already collapses parseError to
+// connection:'unknown', and `blockerFor` already shows the corrupt panel so
+// step 2 is unreachable, so this check is the THIRD layer. It is still written
+// explicitly, because the harm it prevents is the one that cannot be undone:
+// rewriting a file we cannot parse means emitting a document containing only
+// our entry, which DELETES every other MCP server the user configured.
+function writeConfigAvailability(status) {
+  if (!status || typeof status !== 'object') {
+    return { offered: false, reason: 'We could not read the Curator’s MCP status.' };
+  }
+  if (status.parseError) {
+    return {
+      offered: false,
+      reason: 'Your Claude Desktop config file is not valid JSON, so The Curator cannot safely ' +
+        'rewrite it — doing so would drop every other MCP server in it. Fix the syntax error first.',
+    };
+  }
+  if (status.connection === 'stale' || status.connection === 'absent') {
+    return { offered: true, reason: null };
+  }
+  return { offered: false, reason: null };
+}
+
+// What to SAY after a successful write. Pure, so the wording is testable and
+// so the two facts a user needs — that other servers survived, and that the
+// original bytes were kept — cannot quietly stop being reported.
+function writeConfigOutcome(d) {
+  const preserved = Array.isArray(d && d.preserved_servers) ? d.preserved_servers.length : 0;
+  const parts = [d && d.created
+    ? 'Created the config file with the Curator entry.'
+    : 'Updated the config file with the Curator entry.'];
+  if (preserved > 0) {
+    parts.push(preserved === 1
+      ? 'Your 1 other MCP server was left untouched.'
+      : `Your ${preserved} other MCP servers were left untouched.`);
+  }
+  if (d && d.backup_path) parts.push('A copy of the original was saved beside it as .bak.');
+  parts.push('Now restart Claude Desktop and check it.');
+  return { tone: 'ok', message: parts.join(' ') };
 }
 
 // v2.3.3 SPA-fallthrough guard (defect 6). Content-type decides first:
@@ -905,6 +961,11 @@ function panelStep2() {
         '<code class="mono mcpw-path" id="mcpw-config-path"></code>' +
       '</div>' +
       '<div class="mcpw-actions mcpw-actions-inline">' +
+        // Rendered ALWAYS and hidden by class, never conditionally emitted —
+        // renderStep2() runs on entry and can then toggle it without the
+        // markup and the wiring being able to disagree about whether the
+        // element exists (bindStep2 binds once, at build time).
+        '<button type="button" class="btn btn-primary mcpw-hidden" id="mcpw-writecfg">Write it for me</button>' +
         '<button type="button" class="btn btn-secondary" id="mcpw-reveal">' + icon('folder', 14) + ' Show it in Finder</button>' +
         '<button type="button" class="btn btn-ghost" id="mcpw-copy-path">' + icon('copy', 13) + ' Copy the path</button>' +
       '</div>' +
@@ -1084,6 +1145,20 @@ function renderPayload() {
 function renderStep2() {
   const status = state.status;
   setText('mcpw-config-path', status ? status.configPath : '');
+
+  // The write-it-for-me offer. Populated on ENTRY like everything else in this
+  // panel (goToStep calls renderStep2), so it can never be left showing from a
+  // previous status read.
+  const wcfg = byId('mcpw-writecfg');
+  if (wcfg) {
+    wcfg.classList.toggle('mcpw-hidden', !writeConfigAvailability(status).offered);
+    wcfg.disabled = state.writeCfgBusy;
+    // textContent, matching renderStep3's "Test the bridge" button. The label
+    // deliberately carries no icon: this render path REPLACES the button's
+    // contents on every entry, and an icon would have to be re-inserted as
+    // markup each time for no gain.
+    wcfg.textContent = state.writeCfgBusy ? 'Writing…' : 'Write it for me';
+  }
 
   const kind = state.copiedPayload || (currentPayload().kind);
   const chip = byId('mcpw-clipchip');
@@ -1336,6 +1411,9 @@ async function onCopyAndContinue(myGen) {
 }
 
 function bindStep2() {
+  const writecfg = byId('mcpw-writecfg');
+  if (writecfg) writecfg.addEventListener('click', () => onWriteConfig(wizardGen));
+
   const reveal = byId('mcpw-reveal');
   if (reveal) reveal.addEventListener('click', () => onReveal(wizardGen, 'mcpw-step2-status', 'mcpw-reveal'));
 
@@ -1365,6 +1443,53 @@ function bindBlocked() {
   if (reveal) reveal.addEventListener('click', () => onReveal(wizardGen, 'mcpw-blocked-status', 'mcpw-blocked-reveal'));
   const recheck = byId('mcpw-blocked-recheck');
   if (recheck) recheck.addEventListener('click', () => onRecheckFromBlocked(wizardGen));
+}
+
+/**
+ * "Write it for me" — the only caller of POST /api/mcp/write-config.
+ *
+ * Follows onReveal's shape exactly: generation guard, busy flag, disable,
+ * showStatus, finally. It is triggered ONLY here, by an explicit click, and
+ * never from a poll, a page load or a status refresh — see the route's own
+ * docblock on why that matters for a write into another app's config.
+ *
+ * The gate is re-evaluated at CLICK time, not only at render time: the button
+ * is hidden rather than removed, and a status refresh between paint and click
+ * could in principle change the verdict. Cheap, and it means the destructive
+ * case cannot be reached by a stale button.
+ *
+ * On failure the status message is whatever the route said. `getJson` already
+ * surfaces the JSON `error` body for a 409, so a parse-error or missing-launcher
+ * refusal reaches the user in the route's own words rather than as an HTTP code.
+ */
+async function onWriteConfig(myGen) {
+  if (!isFresh(myGen) || state.writeCfgBusy) return;
+  const gate = writeConfigAvailability(state.status);
+  if (!gate.offered) {
+    if (gate.reason) showStatus('mcpw-step2-status', 'error', gate.reason);
+    return;
+  }
+  state.writeCfgBusy = true;
+  renderStep2();
+  showStatus('mcpw-step2-status', 'checking', 'Writing the Curator entry into Claude Desktop’s config…');
+  try {
+    const d = await getJson('/api/mcp/write-config', { method: 'POST' });
+    if (!isFresh(myGen)) return;
+    const outcome = writeConfigOutcome(d);
+    showStatus('mcpw-step2-status', outcome.tone, outcome.message);
+  } catch (err) {
+    if (!isFresh(myGen)) return;
+    showStatus('mcpw-step2-status', 'error',
+      (err && err.mcpwStaleRoutes)
+        ? err.message
+        : ((err && err.message) || 'The config file could not be written.') +
+          ' Nothing was changed — you can still paste it in by hand using the steps below.');
+  } finally {
+    if (isFresh(myGen)) {
+      state.writeCfgBusy = false;
+      renderStep2();
+    }
+  }
 }
 
 async function onReveal(myGen, statusId, btnId) {
