@@ -954,7 +954,13 @@ for (const [kind, check] of Object.entries(SCENARIOS)) {
 // never asserted" shape (v3.26.0 M6). `renderUpdateStatus` is what the view
 // actually calls, so it is driven here, through real `state`.
 {
-  const mkStatus = (state) => new Function('escapeHtml', 'state', 'crossWriteBusy', `
+  // `inAppUpdate` and `updaterAttached` are module-level in the view and are
+  // read by renderUpdateStatus / its installer arm since the in-app updater
+  // landed. Injected as NULL here on purpose: null is the idle, nothing-known
+  // state, in which both functions must behave exactly as they did before that
+  // feature existed — which is what the byte-for-byte assertions below then
+  // prove. The in-app states are driven by scripts/test-update-in-app.js.
+  const mkStatus = (state) => new Function('escapeHtml', 'state', 'crossWriteBusy', 'inAppUpdate', 'updaterAttached', `
     ${extractLocalFn(workSettingsSrc, 'compareSemver')}
     ${extractLocalFn(workSettingsSrc, 'updateStyleOf')}
     ${extractLocalFn(workSettingsSrc, 'classifyInstallerUpdate')}
@@ -962,7 +968,7 @@ for (const [kind, check] of Object.entries(SCENARIOS)) {
     ${extractLocalFn(workSettingsSrc, 'box')}
     ${extractLocalFn(workSettingsSrc, 'renderInstallerUpdateStatus')}
     ${extractLocalFn(workSettingsSrc, 'renderUpdateStatus')}
-    return renderUpdateStatus;`)(escapeHtml, state, () => false);
+    return renderUpdateStatus;`)(escapeHtml, state, () => false, null, null);
 
   const ver = { version: '3.30.0', onDiskVersion: '3.30.0', restartRequired: false };
   const html = mkStatus({ updatePhase: 'idle', updateCheck: SCENARIOS.available, version: ver })();

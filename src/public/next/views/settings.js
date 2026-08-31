@@ -172,6 +172,12 @@ import { formatModelSummary } from '../shared/model-summary.js';
 // prose, a paragraph of it directly under the <h1> of four of the five
 // sections. The header component has no parameter that can put it back.
 import { renderViewHeader } from '../shared/text.js';
+// The design system's own progress component. REUSED rather than replaced by a
+// new linear bar: it refuses to fill a phase that reports nothing, it carries
+// the liveness cue during a long download, and its reduced-motion behaviour is
+// already the deliberate one (rotation dropped, a 2.6s breath substituted).
+// See renderInAppUpdate() for the full argument.
+import { progressRingHtml } from '../shared/progress-ring.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -402,6 +408,156 @@ function classifyInstallerUpdate(check) {
   if (check.localAhead) return { ...base, kind: 'local-ahead' };
   if (!check.updateAvailable) return { ...base, kind: 'current' };
   return { ...base, kind: 'available' };
+}
+
+// ── The in-app updater: the decisions, as pure functions ─────────────────
+// DOM-free and fetch-free for the same reason classifyUpdate() above is —
+// scripts/test-update-in-app.js executes these directly rather than asserting
+// on the shape of the markup that renders them.
+//
+// ── WHAT THE UPDATER IS AND WHY THIS EXISTS ──────────────────────────────
+// A packaged install used to be told an update exists and handed a link to
+// the download page; the maintainer did that by hand once and called it
+// "terrible". The engine that downloads, verifies, stages, swaps and
+// relaunches lives in the desktop shell; `POST /api/config/update` streams its
+// progress and `POST /api/config/update/apply` finishes the job. This half
+// turns that stream into something a person can read.
+
+/** The five phases the server may report, in order. Duplicated from
+ *  `UPDATE_PHASES` in src/routes/config.js rather than imported, for the same
+ *  reason `compareSemver` is duplicated at the top of this file: this is
+ *  browser ESM served to the client and that is a server route. The suite
+ *  asserts the two lists are identical AND in the same order — which is the
+ *  only thing that makes duplicating it safe. */
+const UPDATE_PHASE_ORDER = ['resolving', 'downloading', 'verifying', 'staging', 'installing'];
+
+/** The outer ring's segment names. SHORTER than the phase names: a five-
+ *  segment ring is 48px across and the full sentence is already the ring's
+ *  label, so these only have to be distinguishable from each other. */
+const UPDATE_RING_STAGES = ['Finding', 'Downloading', 'Checking', 'Preparing', 'Installing'];
+
+/**
+ * One sentence per phase, in the user's terms rather than the engine's.
+ *
+ * `headline` is the state; `body` says what is happening to their machine.
+ * The two that matter most are `verifying` and `staging`: both are fast and
+ * neither reports sub-progress, so their ring segments sit EMPTY while they
+ * run and the sentence is the only thing carrying the information. That is
+ * deliberate — see updateRingPosition below.
+ */
+const UPDATE_PHASE_COPY = {
+  resolving:   { headline: 'Preparing the update',  body: 'Finding the download for the new version.' },
+  downloading: { headline: 'Downloading',           body: 'The download keeps going if you switch to another screen. Starting a new ingest or sync waits until the update finishes.' },
+  // WHAT IS ACTUALLY CHECKED IS INTEGRITY, NOT APPLE'S BLESSING. The engine
+  // compares a sha256 against the digest GitHub publishes for the asset, plus
+  // the byte length, the staged bundle's version, and `codesign --verify`.
+  // Authenticity rests on that digest and on TLS to GitHub — nothing here can
+  // say Apple vouched for the build, so nothing here says so.
+  verifying:   { headline: 'Checking the download', body: 'Confirming the file arrived complete and unaltered, and that the app inside it is intact. Nothing has been replaced yet.' },
+  staging:     { headline: 'Preparing to install',  body: 'Unpacking the new version beside the one you are running. Nothing has been replaced yet.' },
+  installing:  { headline: 'Installing',            body: 'Putting the new version in place. The Curator restarts on its own, and this page reloads itself.' },
+};
+
+/**
+ * Is the Software-update block busy enough that "Check for updates" must be
+ * disabled?
+ *
+ * A pure function of the two states rather than an expression inside
+ * `renderGeneral`, so it can be driven directly — an expression buried in a
+ * 100-line render function is only reachable by rendering the whole section,
+ * which is how a call site comes to be untested. Found by mutation: replacing
+ * the in-app half with `false` was invisible until this existed.
+ *
+ * The in-app half matters for the same reason the git half does: re-checking
+ * mid-install races the very process being replaced, and a fresh verdict drawn
+ * over a live progress ring is a UI contradicting itself. `staged` and
+ * `install-failed` are deliberately NOT busy — both are resting states where
+ * re-checking is a reasonable thing to want.
+ */
+function updatesAreBusy(s, inApp) {
+  const st = s || {};
+  const gitBusy = !!st.updateChecking || st.updatePhase === 'applying' || st.updatePhase === 'restarting';
+  const appBusy = !!inApp && (inApp.phase === 'streaming' || inApp.phase === 'relaunching');
+  return gitBusy || appBusy;
+}
+
+/**
+ * Map a job snapshot onto the progress ring's `{stage, stageProgress}`.
+ *
+ * ── THE HONESTY RULE, AND WHY AN EMPTY SEGMENT IS NOT A BUG ──────────────
+ *
+ * `stageProgress` is derived from the DOWNLOAD PERCENTAGE and from nothing
+ * else, and only for the `downloading` phase. Every other phase returns 0, so
+ * its segment stays visibly empty for as long as it runs.
+ *
+ * That is the point. `resolving`, `verifying` and `staging` report no
+ * sub-progress because they genuinely have none — each is a single HTTP call,
+ * a single hash, a single move. A bar creeping across them would be inventing
+ * a duration nobody measured. progress-ring.js's own header states the same
+ * rule from the other side ("a segment fills only when that stage genuinely
+ * advances… that is CORRECT, not a bug to paper over"), and the orbit inside
+ * the ring carries the liveness while a segment is honestly empty.
+ *
+ * A `downloading` phase with an UNKNOWN total (no `content-length`) also
+ * returns 0 rather than a guess: `percent` is null there, and null is a
+ * different fact from zero.
+ */
+function updateRingPosition(job) {
+  const j = job || {};
+  const idx = UPDATE_PHASE_ORDER.indexOf(j.phase);
+  const stage = idx >= 0 ? idx : 0;
+  const pct = typeof j.percent === 'number' && isFinite(j.percent) ? j.percent : null;
+  const stageProgress = (j.phase === 'downloading' && pct !== null)
+    ? Math.max(0, Math.min(1, pct / 100))
+    : 0;
+  return { stage, stageProgress };
+}
+
+/**
+ * Bytes → "136.4 MB". Binary units, one decimal, because that is what macOS
+ * and every browser download shelf show — a user comparing the two should not
+ * have to reconcile them.
+ *
+ * Returns null for anything that is not a real byte count, so a caller can
+ * tell "no size reported" from "zero bytes" and say different things.
+ */
+function formatBytes(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return null;
+  if (n < 1024) return n + ' B';
+  const units = ['KB', 'MB', 'GB'];
+  let v = n / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  // One decimal below 100, whole numbers above: "58.2 MB of 137 MB" reads as a
+  // download in progress, while "58.16 MB" reads as a measurement nobody asked
+  // for and "58 MB" stops moving for a second at a time on a slow connection —
+  // which is the thing a progress line exists to disprove.
+  return (v < 100 ? v.toFixed(1) : String(Math.round(v))) + ' ' + units[u];
+}
+
+/**
+ * The monospace second line under the ring — the numbers.
+ *
+ * THREE OUTCOMES, NEVER COLLAPSED (this repo's rule that a fact and its
+ * absence never share a presentation):
+ *
+ *   both counts known   "58.2 MB of 136.4 MB · 43%"
+ *   total unknown       "58.2 MB downloaded · total size unknown"
+ *   nothing reported    null — the caller renders no line at all, rather than
+ *                       a reassuring "0 MB of 0 MB"
+ *
+ * The percentage appears only alongside the two numbers it is derived from, so
+ * the line cannot contradict itself.
+ */
+function updateProgressSublabel(job) {
+  const j = job || {};
+  if (j.phase !== 'downloading') return null;
+  const got = formatBytes(j.receivedBytes);
+  if (got === null) return null;
+  const total = formatBytes(j.totalBytes);
+  if (total === null) return got + ' downloaded · total size unknown';
+  const pct = typeof j.percent === 'number' && isFinite(j.percent) ? Math.round(j.percent) : null;
+  return got + ' of ' + total + (pct === null ? '' : ' · ' + pct + '%');
 }
 
 // ── Model lifecycle: the decision, as pure functions ─────────────────────
@@ -898,6 +1054,56 @@ let loadGate = null;
 // to gate changes.
 let unsubscribeWriteGate = null;
 
+// ── The in-app update, which OUTLIVES THE MOUNT ON PURPOSE ───────────────
+//
+// Everything else in this view lives in `state`, which is reassigned wholesale
+// on every onEnter — leave Settings and come back and it is gone. That is the
+// right rule for a typed key or an open confirm panel, and the WRONG rule for
+// a 140 MB download.
+//
+// THE DECISION, stated so it is not "fixed" back into `state` later:
+//
+//   Navigating away does NOT cancel the download. The server keeps going (its
+//   stream deliberately has no `req.on('close')` cancel — see the header block
+//   in src/routes/config.js), and this object keeps reading it, so coming back
+//   to Settings shows the live progress immediately rather than an idle panel
+//   over a running job. Silently binning a nearly-finished download because
+//   somebody clicked Chat is the outcome this shape exists to prevent.
+//
+//   A hidden download with no way back to it is the opposite failure, and is
+//   prevented by the SERVER holding the job: `GET /api/config/update-progress`
+//   re-finds it after a full page reload, when this object is gone too.
+//
+//   THE HONEST GAP, reported rather than papered over: while the user is on
+//   another view there is no indicator anywhere, because a shell-level badge
+//   would have to live in src/public/next/app.js, which this change does not
+//   own. The download is findable in one click (Settings → General); it is not
+//   ambient.
+//
+// Shape: null when idle, otherwise
+//   { phase: 'streaming'|'staged'|'relaunching'|'install-failed',
+//     job:   { phase, receivedBytes, totalBytes, percent } | null,
+//     version: string|null,
+//     failure: { reason, error, hint } | null,
+//     restartHint: boolean }
+let inAppUpdate = null;
+
+// Whether a desktop updater engine is attached to the running server, and
+// whether we have asked. `null` = not asked yet; it gates the difference
+// between offering a button that installs and the link that has always opened
+// the download page, so a build with no engine keeps EXACTLY the pre-existing
+// behaviour rather than being offered an action that would 501.
+let updaterAttached = null;
+
+/** Re-render whichever mount is current, if any. The in-app update flow is
+ *  mount-INDEPENDENT (above), so it cannot capture a token the way every other
+ *  action here does; it asks the shell instead. When no Settings mount is
+ *  showing, this is a no-op and the state it would have drawn is picked up by
+ *  the next render. */
+function renderIfSettingsMounted() {
+  if (isCurrentMount(myMountToken)) render(myMountToken);
+}
+
 registerView('settings', {
   onEnter(mountToken) {
     state = freshState();
@@ -1188,6 +1394,14 @@ async function loadVersion(token) {
     if (!isCurrentMount(token)) return;
     state.version = data;
     render(token);
+    // Packaged installs only, and only once per mount. Two facts come back:
+    // whether a desktop updater engine is attached (which decides whether the
+    // "Update available" card offers a button or the download link), and any
+    // job already in flight — which is how a page RELOADED mid-download finds
+    // its way back to it. A browser install never issues this request.
+    if (installUpdateStyle() === 'download-installer') {
+      await probeInAppUpdate();
+    }
   } catch { /* footer just shows nothing — not worth surfacing as an error */ }
 }
 
@@ -1385,7 +1599,7 @@ function renderMain(token) {
 function renderGeneral() {
   const dark = currentTheme() === 'dark';
   // Re-checking mid-install would race the very process being replaced.
-  const updatesBusy = state.updateChecking || state.updatePhase === 'applying' || state.updatePhase === 'restarting';
+  const updatesBusy = updatesAreBusy(state, inAppUpdate);
   const installerMode = installUpdateStyle() === 'download-installer';
   const recovery = infoMark('settings-update-recovery-info', 'How to go back to an earlier version',
     installerMode ? UPDATE_RECOVERY_INFO_INSTALLER : UPDATE_RECOVERY_INFO);
@@ -1449,10 +1663,14 @@ function renderGeneral() {
         // own program files and restarts it") is not merely irrelevant to a
         // packaged install — it describes something that build refuses to do.
         (installerMode
-          ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
-            'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
-            'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
-            'are never touched.</p>'
+          ? (updaterAttached === true
+            ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build, and installs it here — ' +
+              'it downloads, checks the file, then restarts into the new version. Your knowledge base, API keys and ' +
+              'sync settings are never touched.</p>'
+            : '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
+              'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
+              'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
+              'are never touched.</p>')
           : '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
             'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>') +
         recovery.panel +
@@ -1517,6 +1735,13 @@ function renderTextSize() {
 // install in progress must never be redrawn as a stale "Update available"
 // banner underneath the process replacing itself.
 function renderUpdateStatus() {
+  // The in-app updater owns the panel outright while it is running, for the
+  // same reason the git flow does below: a live install must never be redrawn
+  // as a stale "Update available" banner underneath the process replacing
+  // itself. It is checked FIRST because it is the only one of the two that can
+  // still be running after a navigate-away and a return.
+  if (inAppUpdate) return renderInAppUpdate();
+
   if (state.updatePhase === 'applying') {
     return box('', 'Installing…', 'Pulling the published version and installing dependencies. This can take a minute. Don’t quit the app.');
   }
@@ -1550,7 +1775,17 @@ function renderUpdateStatus() {
       '<button type="button" class="btn btn-primary btn-xs" id="btn-update-restart">Restart now</button>');
   }
 
-  if (v.style === 'download-installer') return renderInstallerUpdateStatus(v);
+  if (v.style === 'download-installer') {
+    // The two facts this function must NOT read for itself. It is extracted by
+    // brace-matching and executed standalone by scripts/test-update-installer.js
+    // §8c, so a module-level free variable inside it is a ReferenceError in the
+    // suite rather than a wrong answer in the app — and, more importantly, a
+    // render function that reaches outside its arguments for state is one that
+    // cannot be reasoned about from its call site. Called with NO second
+    // argument (the pre-existing suite's shape), both flags read false and the
+    // function returns exactly what it returned before this change.
+    return renderInstallerUpdateStatus(v, { canInstall: updaterAttached === true, busy: crossWriteBusy() });
+  }
 
   if (v.kind === 'local-ahead') {
     // The maintainer's own state: a release committed locally and not yet
@@ -1588,6 +1823,123 @@ function renderUpdateStatus() {
     '<button type="button" class="btn btn-primary btn-xs" id="btn-apply-update"' + (updBusy ? ' disabled' : '') + '>Install update</button>');
 }
 
+
+/**
+ * The whole in-app update flow, as one status box.
+ *
+ * FIVE STATES, and no two of them say the same thing:
+ *
+ *   streaming       the ring, one sentence per phase, real bytes while
+ *                   downloading
+ *   staged          downloaded and verified, NOTHING REPLACED YET, one
+ *                   button to finish
+ *   relaunching     the swap is happening; this page reloads itself
+ *   install-failed  a named reason, what was NOT changed, and two ways out
+ *
+ * WHY THE RING AND NOT A LINEAR BAR. The linear bar this app used to have was
+ * deliberately removed (see views/ingest.css) in favour of
+ * shared/progress-ring.js, which is the design system's own progress
+ * component. Reusing it buys three things that matter here and would each have
+ * to be re-decided for a new bar: the outer ring refuses to fill for a phase
+ * that reports nothing; the inner orbit is the liveness cue during the long
+ * silent minutes of a download; and its `prefers-reduced-motion` behaviour is
+ * already the deliberate one — it drops the ROTATION and substitutes a 2.6s
+ * opacity breath, keeping a liveness signal rather than freezing the only
+ * moving thing on screen. A download is exactly the class the ingest ring's
+ * exception was written for, so it inherits the same answer, and this change
+ * adds NO new animation anywhere.
+ */
+function renderInAppUpdate() {
+  const u = inAppUpdate;
+  // The releases page, from whatever the SERVER last said it was — the failure
+  // body carries it, and so does the check. Never a literal in this file: a URL
+  // hardcoded on the client is a second copy of a fact the route already owns,
+  // and it would go on rendering a link to the wrong place after the route
+  // moved. When neither source has one, no link is rendered rather than a
+  // guessed one.
+  const page = (u.failure && typeof u.failure.releasesPageUrl === 'string' && u.failure.releasesPageUrl)
+    || (state.updateCheck && typeof state.updateCheck.releasesPageUrl === 'string' && state.updateCheck.releasesPageUrl)
+    || null;
+  const releasesLink = (label) => (page
+    ? '<a class="btn btn-secondary btn-xs" href="' + escapeHtml(page) +
+      '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
+    : '');
+
+  if (u.phase === 'install-failed') {
+    const f = u.failure || {};
+    // `f.error` is the sentence the ENGINE wrote for this reason, relayed by
+    // the route. The reason CODE is deliberately not rendered: a slug beside a
+    // sentence is an internal identifier shown to a person, which is the
+    // v3.31.0 defect this release exists to undo. It stays on the wire for
+    // branching and for logs.
+    return box('upd-bad', 'Update didn’t finish',
+      escapeHtml(f.error || 'The update stopped before it finished, and nothing was replaced.'),
+      null,
+      f.hint || null,
+      '<button type="button" class="btn btn-primary btn-xs" id="btn-inapp-retry">Try again</button>' +
+      releasesLink('Open the download page'));
+  }
+
+  if (u.phase === 'staged') {
+    // NOT "installed", and not "done". The bundle is verified and sitting
+    // beside the running app; the swap has not happened. This state is
+    // reachable two ways — the finish step was refused because a write was in
+    // flight, or the page was reloaded mid-download — and in both cases the
+    // honest sentence is the same one.
+    const f = u.failure;
+    return box('upd-attention',
+      'Update ready to install',
+      (u.version ? 'v' + escapeHtml(String(u.version)) + ' has been' : 'The update has been') +
+        ' downloaded and checked. The Curator hasn’t changed yet — finishing takes a few seconds and restarts the app.' +
+        (u.warning ? '<span class="upd-detail">' + escapeHtml(String(u.warning)) + '</span>' : ''),
+      f ? f.error : null,
+      'Your knowledge base, API keys and sync settings are untouched.',
+      '<button type="button" class="btn btn-primary btn-xs" id="btn-inapp-finish">Restart and finish</button>');
+  }
+
+  if (u.phase === 'relaunching') {
+    // "No warning to click through" is MEASURED, not hopeful: a DMG stamped by
+    // a browser download yields a quarantined app, while the same DMG fetched
+    // by the app's own `fetch()` yields an unquarantined one — so there is no
+    // Gatekeeper prompt and no Privacy & Security detour. Saying it is worth a
+    // line, because that detour is most of the difference from the manual
+    // flow this release replaces.
+    return box('', 'Restarting',
+      'The new version is in place. Waiting for The Curator to come back, then this page reloads itself — ' +
+        'with no security warning to click through.',
+      null,
+      u.restartHint
+        ? 'The app hasn’t answered yet. If it doesn’t come back on its own, open The Curator again from your Applications folder.'
+        : null);
+  }
+
+  // streaming
+  const job = u.job || { phase: 'resolving' };
+  const copy = UPDATE_PHASE_COPY[job.phase] || UPDATE_PHASE_COPY.resolving;
+  const pos = updateRingPosition(job);
+  const sub = updateProgressSublabel(job);
+  const ring = progressRingHtml({
+    stages: UPDATE_RING_STAGES,
+    stage: pos.stage,
+    stageProgress: pos.stageProgress,
+    size: 48,
+    tone: 'accent',
+    label: copy.headline + '…',
+    sublabel: sub || '',
+    // 'stage' rather than 'value': the centre says "2/5", which is the one
+    // number a five-segment ring can carry without competing with the byte
+    // figures on the sublabel line. Two different percentages on one control
+    // is how a display comes to contradict itself.
+    center: 'stage',
+  });
+  return box('',
+    copy.headline,
+    '<div class="upd-progress">' + ring + '</div>' +
+      '<span class="upd-detail">' + escapeHtml(copy.body) + '</span>',
+    null,
+    'Don’t quit The Curator until it finishes.');
+}
+
 /**
  * The `download-installer` half of the status box.
  *
@@ -1613,7 +1965,7 @@ function renderUpdateStatus() {
  * No new CSS variant, no new modal, no new tone: this reuses `box()` and the
  * same three `.upd-status` variants the git arm uses.
  */
-function renderInstallerUpdateStatus(v) {
+function renderInstallerUpdateStatus(v, ui) {
   const ver = (s) => 'v' + escapeHtml(String(s));
   const page = v.releaseUrl || v.releasesPageUrl;
   const link = (label, cls) => (page
@@ -1651,16 +2003,45 @@ function renderInstallerUpdateStatus(v) {
         (v.prerelease ? ' It is published as a pre-release.' : ''));
   }
 
-  // available
-  return box('upd-attention', 'Update available',
-    ver(v.current) + ' → ' + ver(v.latest) +
-      (v.releaseName ? '<span class="upd-detail">' + escapeHtml(v.releaseName) + '</span>' : ''),
-    v.prerelease
-      ? 'This build is published as a pre-release. It is the newest one with an installer.'
-      : null,
-    'The Curator can’t install this for itself. The release page has the download — open it, ' +
-      'run the installer, and it replaces this copy. Your knowledge base, keys and sync settings are untouched.',
-    link('Open the download page', 'btn-primary'));
+  // available — and this is the ONE arm that forks on whether a desktop
+  // updater engine is attached to the running server.
+  //
+  // WHY THE FORK IS ON A MEASURED FACT AND NOT ON HOPE. `updaterAttached`
+  // comes from GET /api/config/update-progress, which asks the hook registry
+  // live. Without it the only way to find out would be to show the button,
+  // POST, and read a 501 back — i.e. advertise an action this build cannot
+  // perform, which is precisely the defect v3.31.0 was written to fix wearing
+  // the opposite hat. `null` (not asked yet, or the probe failed) takes the
+  // LINK arm: that is the behaviour every packaged build has shipped with, so
+  // the unknown case degrades to the one that has always worked.
+  const canInstallHere = !!(ui && ui.canInstall);
+  const busyNow = !!(ui && ui.busy);
+  const versions = ver(v.current) + ' → ' + ver(v.latest) +
+    (v.releaseName ? '<span class="upd-detail">' + escapeHtml(v.releaseName) + '</span>' : '');
+  const pre = v.prerelease
+    ? 'This build is published as a pre-release. It is the newest one with an installer.'
+    : null;
+
+  if (!canInstallHere) {
+    return box('upd-attention', 'Update available', versions, pre,
+      'The Curator can’t install this for itself. The release page has the download — open it, ' +
+        'run the installer, and it replaces this copy. Your knowledge base, keys and sync settings are untouched.',
+      link('Open the download page', 'btn-primary'));
+  }
+
+  // The reason is rendered as TEXT and not as a `title=` on the disabled
+  // button: a disabled control is out of the tab order, so a tooltip on it is
+  // reachable only by hovering with a mouse. Same rule the git arm records
+  // directly above.
+  return box('upd-attention', 'Update available', versions,
+    busyNow
+      ? 'Wait for the running ingest or sync to finish before installing.'
+      : pre,
+    'The Curator downloads this itself, checks it, and restarts into the new version. ' +
+      'Your knowledge base, API keys and sync settings are untouched.',
+    '<button type="button" class="btn btn-primary btn-xs" id="btn-inapp-install"' +
+      (busyNow ? ' disabled' : '') + '>Download and install</button>' +
+    link('Open the download page', 'btn-secondary'));
 }
 
 // Small local builder — everything interpolated is either escaped at the
@@ -5362,6 +5743,16 @@ function wireGeneralListeners() {
   if (applyBtn) applyBtn.addEventListener('click', () => onApplyUpdate(myMountToken).catch(reportAsyncActionFailure));
   const restartBtn = document.getElementById('btn-update-restart');
   if (restartBtn) restartBtn.addEventListener('click', () => onRestartOnly(myMountToken).catch(reportAsyncActionFailure));
+
+  // The in-app updater's three. NO MOUNT TOKEN is passed, and that is not an
+  // oversight — see the `inAppUpdate` declaration: the work outlives the mount
+  // on purpose, so a captured token would be the wrong thing to gate it on.
+  const inappBtn = document.getElementById('btn-inapp-install');
+  if (inappBtn) inappBtn.addEventListener('click', () => onInstallInApp().catch(reportAsyncActionFailure));
+  const finishBtn = document.getElementById('btn-inapp-finish');
+  if (finishBtn) finishBtn.addEventListener('click', () => finishInAppUpdate().catch(reportAsyncActionFailure));
+  const retryBtn = document.getElementById('btn-inapp-retry');
+  if (retryBtn) retryBtn.addEventListener('click', () => onRetryInApp().catch(reportAsyncActionFailure));
 }
 
 function wireProviderListeners() {
@@ -5714,11 +6105,16 @@ async function runUpdate(token) {
 // this outlives the request that started it. It reloads the page on
 // success rather than touching state, so it does not need a mount guard
 // for correctness — only for the "gave up" hint it renders.
-function pollForRestart(token) {
+function pollForRestart(token, onGiveUp) {
   const started = Date.now();
   const timer = setInterval(async () => {
     if (Date.now() - started > 30000) {
       clearInterval(timer);
+      // The in-app updater passes its own give-up handler because its banner
+      // is mount-INDEPENDENT and must not be gated on `isCurrentMount` — the
+      // relaunch can legitimately be running while the user sits on another
+      // view. The default arm below is the git flow's, byte-for-byte.
+      if (typeof onGiveUp === 'function') { onGiveUp(); return; }
       if (!isCurrentMount(token)) return;
       state.updateRestartHint = true;
       render(token);
@@ -5732,6 +6128,307 @@ function pollForRestart(token) {
       }
     } catch { /* still down — keep polling */ }
   }, 1200);
+}
+
+
+// ── The in-app updater: the actions ──────────────────────────────────────
+//
+// EVERY FUNCTION BELOW IS MOUNT-INDEPENDENT. None of them takes a mount token
+// and none of them calls `isCurrentMount` to decide whether to keep working —
+// only whether to repaint. That is the whole navigate-away decision, expressed
+// in code: the work is the server's, the panel is a view of it, and leaving the
+// view stops the drawing and nothing else. See `inAppUpdate`'s declaration for
+// the argument and for the honest gap it leaves.
+
+/**
+ * Ask the server what the updater is doing. Cheap: in-memory, no lock, no
+ * filesystem, no network on the server side.
+ *
+ * Called once per Settings mount on a packaged install — which is how a FULL
+ * PAGE RELOAD mid-download finds its way back to the running job, since
+ * `inAppUpdate` died with the page. A browser install never calls it at all.
+ */
+async function probeInAppUpdate() {
+  try {
+    const res = await fetch('/api/config/update-progress');
+    const data = await res.json();
+    if (!data || data.ok !== true) return;
+    updaterAttached = data.updaterAttached === true;
+    const job = data.job;
+    // Adopt the server's job ONLY when this page is not already tracking one.
+    // A live stream in this tab is strictly better information than a
+    // snapshot, and overwriting it with one would make the ring jump
+    // backwards on every re-entry.
+    if (!inAppUpdate && job) {
+      if (job.state === 'running' || job.state === 'applying') {
+        // Running, but NOT streamed to this page — this tab has no reader for
+        // it (it was reloaded). Show it, and let the poll below pick up the
+        // ending. Deliberately does NOT start a second POST: that would be a
+        // second download.
+        inAppUpdate = { phase: 'streaming', job, version: job.version || null, failure: null, restartHint: false };
+        pollInAppUpdate();
+      } else if (job.state === 'staged') {
+        inAppUpdate = {
+          phase: 'staged', job: null, version: job.version || null, warning: job.warning || null,
+          failure: job.error ? { reason: job.reason, error: job.error, hint: job.hint } : null,
+          restartHint: false,
+        };
+      } else if (job.state === 'failed') {
+        inAppUpdate = {
+          phase: 'install-failed', job: null, version: null,
+          failure: { reason: job.reason, error: job.error, hint: job.hint },
+          restartHint: false,
+        };
+      }
+    }
+    renderIfSettingsMounted();
+  } catch { /* the panel simply shows the ordinary check result — not worth an error box */ }
+}
+
+/**
+ * The re-attached case: this page is watching a download it did not start (it
+ * was reloaded mid-flight), so it has no stream. Poll the same read-only
+ * endpoint the mount probe uses.
+ *
+ * 1.5 s, matching the restart poller's order of magnitude. It stops on any
+ * terminal state and on any error, so it cannot outlive what it describes.
+ */
+function pollInAppUpdate() {
+  const timer = setInterval(async () => {
+    if (!inAppUpdate || inAppUpdate.phase !== 'streaming') { clearInterval(timer); return; }
+    try {
+      const res = await fetch('/api/config/update-progress', { cache: 'no-store' });
+      const data = await res.json();
+      const job = data && data.job;
+      if (!job) { clearInterval(timer); inAppUpdate = null; renderIfSettingsMounted(); return; }
+      if (job.state === 'running' || job.state === 'applying') {
+        inAppUpdate.job = job;
+      } else if (job.state === 'staged') {
+        clearInterval(timer);
+        inAppUpdate = { phase: 'staged', job: null, version: job.version || null, warning: job.warning || null, failure: null, restartHint: false };
+      } else {
+        clearInterval(timer);
+        inAppUpdate = {
+          phase: 'install-failed', job: null, version: null,
+          failure: { reason: job.reason, error: job.error, hint: job.hint }, restartHint: false,
+        };
+      }
+      renderIfSettingsMounted();
+    } catch {
+      clearInterval(timer);
+    }
+  }, 1500);
+}
+
+/**
+ * The button. One confirm, then the whole thing runs to a restart.
+ *
+ * The dialog is `shared/confirm.js` — the same five-modal set the rest of the
+ * app uses, not a sixth shape. Tone is `danger` for the same reason the git
+ * flow's is: it ends in the app restarting under the user.
+ *
+ * WHAT THE DIALOG DELIBERATELY DOES NOT SAY is a download size. Nobody knows it
+ * until the server has asked; quoting one here would be a number invented for
+ * reassurance, which is the failure this project names as a fact and its
+ * absence sharing a presentation. The real size appears the moment it is
+ * measured, on the progress line.
+ */
+function onInstallInApp() {
+  const v = classifyUpdate(state.updateCheck, state.version);
+  if (v.kind !== 'available' || v.style !== 'download-installer') return Promise.resolve();
+  if (updaterAttached !== true) return Promise.resolve();
+  return confirmThen({
+    title: 'Download and install this update?',
+    message: 'v' + v.current + ' → v' + v.latest,
+    detail: 'The Curator downloads the new version, checks it arrived complete and unaltered, then restarts ' +
+      'into it — with no security warning to click through. Nothing is replaced until that check passes, so ' +
+      'a failed download leaves this copy working. Your knowledge base, API keys and sync settings are untouched.',
+    confirmLabel: 'Download and install',
+    cancelLabel: 'Not now',
+    tone: 'danger',
+    onConfirm: () => runInAppUpdate(),
+  });
+}
+
+/**
+ * Stream `POST /api/config/update` and, when it reaches `staged`, finish.
+ *
+ * ── WHY IT AUTO-CONTINUES TO THE RESTART ─────────────────────────────────
+ *
+ * Because that is what the user asked for at the confirm dialog — "and then
+ * the app restarts and that's it" — and because stopping to ask again after
+ * the only long part is over is ceremony, not consent.
+ *
+ * It is safe to do so even if they have wandered off, and the safety is the
+ * SERVER'S, not a guess made here: `POST /update/apply` re-checks
+ * `hasActiveWrites()` at the moment of the swap. So an ingest started during
+ * the download is not truncated — the finish is refused, this lands in the
+ * `staged` state, and the panel says the update is downloaded and one button
+ * away. That is the entire disagreement between "restart under them" and
+ * "leave it hanging", resolved by the one participant that can actually see
+ * whether a write is in flight.
+ */
+async function runInAppUpdate() {
+  inAppUpdate = { phase: 'streaming', job: { phase: 'resolving' }, version: null, failure: null, restartHint: false };
+  renderIfSettingsMounted();
+
+  let res;
+  try {
+    res = await fetch('/api/config/update', { method: 'POST' });
+  } catch (err) {
+    return failInApp({ reason: 'offline', error: 'The Curator couldn’t reach its own server to start the update. Nothing was replaced.' });
+  }
+
+  if (!res.ok || !res.body) {
+    // Every refusal on this route is plain JSON sent BEFORE any SSE header, so
+    // it is readable here in full — the 409s (a write in flight, an update
+    // already running) and the 501 (no updater engine attached) all land here
+    // with a `reason` and a sentence already written for a person.
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    return failInApp({
+      reason: (data && data.reason) || 'unknown',
+      error: (data && data.error) || ('The update could not start (HTTP ' + res.status + ').'),
+      hint: data && data.hint,
+      releasesPageUrl: data && data.releasesPageUrl,
+    });
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let staged = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        let type = 'message';
+        let payload = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) type = line.slice(6).trim();
+          else if (line.startsWith('data:')) payload += line.slice(5).trim();
+        }
+        if (!payload) continue;
+        let ev = null;
+        try { ev = JSON.parse(payload); } catch { continue; }
+        if (type === 'progress') {
+          if (inAppUpdate && inAppUpdate.phase === 'streaming') {
+            inAppUpdate.job = {
+              phase: ev.phase, receivedBytes: ev.receivedBytes,
+              totalBytes: ev.totalBytes, percent: ev.percent,
+            };
+            renderIfSettingsMounted();
+          }
+        } else if (type === 'staged') {
+          staged = true;
+          inAppUpdate = { phase: 'staged', job: null, version: ev.version || null, warning: ev.warning || null, failure: null, restartHint: false };
+          renderIfSettingsMounted();
+        } else if (type === 'error') {
+          return failInApp(ev);
+        }
+      }
+    }
+  } catch (err) {
+    return failInApp({ reason: 'interrupted' });
+  } finally {
+    try { await reader.cancel(); } catch { /* already closed */ }
+  }
+
+  // The stream ended with no `staged` and no `error`: the server hung up
+  // mid-download. Reported as its own thing rather than left on a ring that
+  // will never move again — a progress display frozen forever is the exact
+  // "my click didn't register" shape this app has already been reported for.
+  if (!staged) {
+    return failInApp({ reason: 'interrupted' });
+  }
+  await finishInAppUpdate();
+}
+
+/**
+ * Swap the staged bundle in and restart. Also the `#btn-inapp-finish` button's
+ * handler, so the manual and the automatic paths are literally the same code.
+ */
+async function finishInAppUpdate() {
+  if (!inAppUpdate || inAppUpdate.phase !== 'staged') return;
+  const version = inAppUpdate.version;
+  const warning = inAppUpdate.warning || null;
+  inAppUpdate = { phase: 'relaunching', job: null, version, warning, failure: null, restartHint: false };
+  renderIfSettingsMounted();
+
+  let res = null;
+  try {
+    res = await fetch('/api/config/update/apply', { method: 'POST' });
+  } catch {
+    // The process going away mid-request is the SUCCESS case here — the swap
+    // happened and the server relaunched under us. `/api/restart` is treated
+    // the same way by the git flow, and for the same reason. Fall through to
+    // the poller, which is the thing that can actually tell the difference:
+    // the app comes back, or it does not and the hint appears.
+    pollForRestart(0, () => {
+      if (inAppUpdate && inAppUpdate.phase === 'relaunching') {
+        inAppUpdate.restartHint = true;
+        renderIfSettingsMounted();
+      }
+    });
+    return;
+  }
+
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    // Back to `staged`, NOT to a dead end: the verified bundle is still on
+    // disk, so the honest state is "downloaded, not yet installed" and the
+    // button that finishes it is still the right one to offer. The server
+    // holds the same view — its own job record goes back to `staged` too.
+    inAppUpdate = {
+      phase: 'staged', job: null, version, warning,
+      failure: {
+        reason: (data && data.reason) || 'install-failed',
+        error: (data && data.error) || ('The update could not be installed (HTTP ' + res.status + ').'),
+        hint: data && data.hint,
+        releasesPageUrl: data && data.releasesPageUrl,
+      },
+      restartHint: false,
+    };
+    renderIfSettingsMounted();
+    return;
+  }
+
+  pollForRestart(0, () => {
+    if (inAppUpdate && inAppUpdate.phase === 'relaunching') {
+      inAppUpdate.restartHint = true;
+      renderIfSettingsMounted();
+    }
+  });
+}
+
+/** One place that turns any named failure into the failed panel, so no arm can
+ *  invent its own wording or forget the reason code. */
+function failInApp(ev) {
+  inAppUpdate = {
+    phase: 'install-failed', job: null, version: null,
+    failure: {
+      reason: (ev && ev.reason) || 'unknown',
+      error: (ev && ev.error) || 'The update stopped before it finished, and nothing was replaced — this copy of The Curator still works.',
+      hint: ev && ev.hint,
+      releasesPageUrl: ev && ev.releasesPageUrl,
+    },
+    restartHint: false,
+  };
+  renderIfSettingsMounted();
+}
+
+/** "Try again" on the failed panel. Clears the failure and re-runs from the
+ *  top — no second confirm, because the user has already agreed to this exact
+ *  operation and the button they just pressed says what it does. */
+function onRetryInApp() {
+  inAppUpdate = null;
+  return runInAppUpdate();
 }
 
 // The `restartRequired` branch: the files on disk are ALREADY newer than
