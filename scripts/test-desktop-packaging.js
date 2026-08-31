@@ -53,6 +53,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { inflateSync as zlibInflateSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -109,6 +110,122 @@ function stripYamlComments(src) {
     }
     return out;
   }).join('\n');
+}
+
+/**
+ * Split a .icns file into its OSType-tagged chunks. Pure byte parsing, no
+ * native dependency — this suite runs `npm test` OFFLINE on ubuntu-latest CI,
+ * where `iconutil` does not exist, so §12 cannot shell out to it.
+ * Format: 4-byte magic "icns", 4-byte BE total length, then a sequence of
+ * chunks each `<4-byte OSType><4-byte BE length (includes this 8-byte header)><data>`.
+ */
+function readIcnsChunks(buf) {
+  if (buf.length < 8 || buf.toString('ascii', 0, 4) !== 'icns') return null;
+  const totalLen = buf.readUInt32BE(4);
+  const chunks = [];
+  let off = 8;
+  while (off + 8 <= Math.min(totalLen, buf.length)) {
+    const type = buf.toString('ascii', off, off + 4);
+    const len = buf.readUInt32BE(off + 4);
+    if (len < 8 || off + len > buf.length) break;
+    chunks.push({ type, data: buf.slice(off + 8, off + len) });
+    off += len;
+  }
+  return chunks;
+}
+
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** IHDR fields read directly by byte offset — the dumb, independent check
+ * beside the full chunk-walking decoder below (this repo's own "give a
+ * clever test an independent dumb cross-check" rule, v3.1.0). Byte 25 (0-
+ * indexed) is the colour-type byte in every valid PNG, unconditionally. */
+function pngIhdrByOffset(buf) {
+  if (!buf.subarray(0, 8).equals(PNG_SIG)) return null;
+  return {
+    width: buf.readUInt32BE(16),
+    height: buf.readUInt32BE(20),
+    bitDepth: buf[24],
+    colorType: buf[25],
+    interlace: buf[28],
+  };
+}
+
+/**
+ * Walk a PNG's chunk stream properly (length/type/data/crc) rather than
+ * trusting fixed offsets past IHDR, and decode IDAT into raw RGBA pixels for
+ * an 8-bit, non-interlaced, colour-type-6 image — enough to read a corner
+ * pixel's alpha. Returns null for any shape it does not handle (bit depth,
+ * interlacing, colour type) rather than guessing.
+ */
+function decodePngRGBA(buf) {
+  if (!buf.subarray(0, 8).equals(PNG_SIG)) return null;
+  const chunks = [];
+  let off = 8;
+  while (off + 8 <= buf.length) {
+    const len = buf.readUInt32BE(off);
+    const type = buf.toString('ascii', off + 4, off + 8);
+    chunks.push({ type, data: buf.slice(off + 8, off + 8 + len) });
+    off += 8 + len + 4; // + CRC
+    if (type === 'IEND') break;
+  }
+  const ihdr = chunks.find((c) => c.type === 'IHDR');
+  if (!ihdr) return null;
+  const width = ihdr.data.readUInt32BE(0);
+  const height = ihdr.data.readUInt32BE(4);
+  const bitDepth = ihdr.data[8];
+  const colorType = ihdr.data[9];
+  const interlace = ihdr.data[12];
+  if (bitDepth !== 8 || colorType !== 6 || interlace !== 0) {
+    return { width, height, bitDepth, colorType, interlace, pixels: null };
+  }
+  const idat = Buffer.concat(chunks.filter((c) => c.type === 'IDAT').map((c) => c.data));
+  const raw = zlibInflateSync(idat);
+  const bpp = 4;
+  const stride = width * bpp;
+  const pixels = Buffer.alloc(height * stride);
+  let rawOff = 0;
+  for (let y = 0; y < height; y++) {
+    const filterType = raw[rawOff]; rawOff += 1;
+    const scanline = raw.subarray(rawOff, rawOff + stride); rawOff += stride;
+    const prevRow = y === 0 ? null : pixels.subarray((y - 1) * stride, y * stride);
+    const outRow = pixels.subarray(y * stride, (y + 1) * stride);
+    for (let x = 0; x < stride; x++) {
+      const a = scanline[x];
+      const b = x >= bpp ? outRow[x - bpp] : 0;
+      const c = prevRow ? prevRow[x] : 0;
+      const d = prevRow && x >= bpp ? prevRow[x - bpp] : 0;
+      let val;
+      switch (filterType) {
+        case 0: val = a; break;
+        case 1: val = (a + b) & 0xff; break;
+        case 2: val = (a + c) & 0xff; break;
+        case 3: val = (a + Math.floor((b + c) / 2)) & 0xff; break;
+        case 4: {
+          const p = b + c - d;
+          const pa = Math.abs(p - b), pb = Math.abs(p - c), pc = Math.abs(p - d);
+          const pr = pa <= pb && pa <= pc ? b : pb <= pc ? c : d;
+          val = (a + pr) & 0xff;
+          break;
+        }
+        default: throw new Error(`bad PNG filter type ${filterType}`);
+      }
+      outRow[x] = val;
+    }
+  }
+  return { width, height, bitDepth, colorType, interlace, pixels };
+}
+
+function cornerAlphas(decoded) {
+  const { width, height, pixels } = decoded;
+  const bpp = 4, stride = width * bpp;
+  const at = (x, y) => pixels[y * stride + x * bpp + 3];
+  return {
+    topLeft: at(0, 0),
+    topRight: at(width - 1, 0),
+    bottomLeft: at(0, height - 1),
+    bottomRight: at(width - 1, height - 1),
+  };
 }
 
 /** Every .js/.mjs file under a directory, recursively, skipping node_modules. */
@@ -775,6 +892,105 @@ section('§11 The `files` mapping — the defect that shipped a broken .app');
   // electron-builder.yml header applies again.
   ok(/^asar:\s*false\s*$/m.test(builderNoComments),
      'asar is still false — extraResources into app/ only makes sense on an unpacked app root');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§12 images/applet.icns — every PNG entry carries a real alpha channel');
+// ═══════════════════════════════════════════════════════════════════════════
+// ── THE BUG THIS GUARDS ─────────────────────────────────────────────────────
+// The shipping icns had every LARGE PNG entry (128/256/512/1024, both 1x and
+// 2x) encoded as PNG colour type 2 (RGB, no alpha channel). The area outside
+// the tile's rounded corners was therefore opaque WHITE, and macOS composited
+// a white square behind the icon everywhere it renders — Spotlight, Finder,
+// the Dock. Confirmed with `iconutil -c iconset` + reading byte 25 (the IHDR
+// colour-type byte) of each extracted PNG: 2 = RGB (the bug), 6 = RGBA.
+//
+// This suite runs OFFLINE on ubuntu-latest CI, where `iconutil` does not
+// exist, so the check below parses the .icns chunk stream and each embedded
+// PNG's own byte stream directly (readIcnsChunks / pngIhdrByOffset /
+// decodePngRGBA above) rather than shelling out to a macOS-only tool.
+{
+  const ICNS = path.join(ROOT, 'images', 'applet.icns');
+  ok(existsSync(ICNS), 'images/applet.icns exists');
+
+  const icnsBuf = readFileSync(ICNS);
+  const chunks = readIcnsChunks(icnsBuf);
+  ok(Array.isArray(chunks) && chunks.length > 0,
+     `CONTROL — images/applet.icns parsed into ${chunks ? chunks.length : 0} chunks (anti-vacuity)`);
+
+  // PNG chunks are found by their own magic bytes, never a hardcoded OSType
+  // allow-list (ic07/ic08/... codes can shift between macOS/iconutil
+  // versions) — the same "enumerate, don't hardcode" rule §2 and §4 use.
+  const pngChunks = (chunks || []).filter((c) => c.data.subarray(0, 8).equals(PNG_SIG));
+  ok(pngChunks.length >= 6,
+     `CONTROL — found ${pngChunks.length} PNG-encoded entries inside applet.icns (anti-vacuity; a real icns has several)`);
+
+  const badColorType = [];
+  const seenSizes = new Set();
+  for (const { type, data } of pngChunks) {
+    // Two independent reads: a dumb fixed-offset read (byte 25) and the full
+    // chunk-walking parser. They must agree, or one of them is wrong.
+    const dumb = pngIhdrByOffset(data);
+    const decoded = decodePngRGBA(data);
+    ok(dumb !== null, `${type}: byte-25 IHDR read succeeded (looks like a real PNG)`);
+    if (dumb) {
+      eq(dumb.colorType, decoded ? decoded.colorType : dumb.colorType,
+         `${type}: the dumb byte-offset colour-type read agrees with the chunk-walking decoder`);
+      if (dumb.colorType !== 6) badColorType.push(`${type} (${dumb.width}x${dumb.height}, colourType=${dumb.colorType})`);
+      seenSizes.add(dumb.width);
+    }
+  }
+  eq(badColorType, [],
+     'every PNG entry in applet.icns is colour type 6 (RGBA) — none are colour type 2 (RGB, the white-box bug)');
+
+  // The full size ladder must be represented, not just the ones that happen
+  // to be PNG-encoded in whichever macOS produced this file (iconutil embeds
+  // the 16px/32px "1x" entries as a legacy raw ARGB format rather than PNG —
+  // see the comment further down — so 16 is deliberately not required here).
+  for (const want of [32, 64, 128, 256, 512, 1024]) {
+    ok(seenSizes.has(want), `a ${want}x${want} PNG entry is present`);
+  }
+
+  // ── CORNER-PIXEL ALPHA, DECODED, NOT INFERRED FROM THE COLOUR TYPE ────────
+  // Colour type 6 alone proves an alpha CHANNEL exists; it does not prove the
+  // channel is actually 0 at the corners rather than, say, 255 (opaque) —
+  // which would still be a bug wearing the alpha channel as a disguise. Find
+  // one 256px entry and the 1024px entry and decode them for real.
+  const byWidth = (w) => pngChunks.find((c) => {
+    const h = pngIhdrByOffset(c.data);
+    return h && h.width === w && h.colorType === 6;
+  });
+  for (const w of [256, 1024]) {
+    const chunk = byWidth(w);
+    ok(!!chunk, `a ${w}x${w} RGBA PNG entry exists to decode for corner alpha`);
+    if (!chunk) continue;
+    const decoded = decodePngRGBA(chunk.data);
+    ok(decoded && decoded.pixels, `the ${w}x${w} entry decoded to real pixel data`);
+    if (!decoded || !decoded.pixels) continue;
+    const corners = cornerAlphas(decoded);
+    eq(corners, { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 },
+       `${w}x${w}: all four corner pixels are fully transparent (alpha 0), not opaque white`);
+  }
+
+  // ── THE PACKAGED APP MUST ACTUALLY REFERENCE THIS FILE ────────────────────
+  // A fixed icns is pointless if nothing in the build config points at it.
+  const builderRaw = read(path.join(DESKTOP, 'electron-builder.yml'));
+  const builderNoComments2 = stripYamlComments(builderRaw);
+  ok(/icon:\s*\.\.\/images\/applet\.icns\s*$/m.test(builderNoComments2),
+     'desktop/electron-builder.yml points `icon:` at ../images/applet.icns');
+
+  // The two 16px/32px "1x" entries are legacy raw ARGB (Apple's icns format
+  // predates embedding PNG for the smallest sizes), not PNG — recorded here
+  // so a reader of this section does not go looking for a 16x16 PNG chunk
+  // that this icns was never going to contain. ARGB is alpha-native by
+  // construction (the format IS four 8-bit planes, one of them alpha), so it
+  // cannot exhibit the colour-type-2 bug this section guards against; its
+  // planes are additionally PackBits-RLE compressed, which is why this suite
+  // does not attempt to decode them for a corner-pixel check the way it does
+  // for the PNG entries.
+  const rawArgb = (chunks || []).filter((c) => c.data.subarray(0, 4).toString('ascii') === 'ARGB');
+  ok(rawArgb.length >= 1,
+     `CONTROL — ${rawArgb.length} legacy raw-ARGB entries found alongside the PNG entries (the 16px/32px 1x sizes) — not a gap, a different format`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
