@@ -316,7 +316,7 @@ ok(!existsSync(path.join(DOMAINS_DIR, MIRROR, 'state')),
 
 const unknown = asJson(await callTool('save_working_state', { project: 'zz-not-a-domain', headline: 'x' }));
 ok(unknown?.ok === false && /Unknown domain/i.test(unknown.error || ''),
-  'an unknown project is refused (a folder with no CLAUDE.md is pruned by the next sync pull)');
+  'an unknown project is refused (a folder with no CLAUDE.md is invisible to listDomains())');
 ok(/project/i.test(unknown.error || ''),
   '…and the refusal uses the caller\'s noun ("project"), not only "domain"');
 

@@ -1879,7 +1879,7 @@ So the division of labour is:
 
 A **project is a domain**; a **workstream is a scope inside it**. Reach for a second **domain** only when the *knowledge* is genuinely separate — a different product, a different client, a body of reading you would not want mixed into the first one's wiki. That is the same judgement as [§10, Manage your domains](#10-manage-your-domains); working state does not change it, because state lives inside whichever domain you already chose. Three unrelated products are three domains; three features of one product are three scopes in one.
 
-One hard edge: the project you name must already be a domain. An unknown name is **refused, not created** — a folder with no `CLAUDE.md` is pruned by the next sync pull, so state saved there would be silently deleted, and the store refuses rather than let that happen.
+One hard edge: the project you name must already be a domain. An unknown name is **refused, not created** — a folder with no `CLAUDE.md` is invisible to `listDomains()`, so state saved there would go unseen by the app and every tool, and the store refuses rather than let that happen.
 
 ### Turning it off
 

@@ -351,7 +351,7 @@ Rough budgets, so you can stay well inside them: a headline is one short line; e
 
 **Refusals come back as `ok: false` with an `error` message and, where the store supplied one, a `reason`. The two that matter most:**
 
-- **`unknown-project`** — the name is not a domain in this Curator. **Do not invent a project name to get past this.** A folder with no domain behind it is pruned by the next sync pull, so state written there is silently deleted later. Call `list_domains`, and ask the user which project this belongs to, or to create it in the app first.
+- **`unknown-project`** — the name is not a domain in this Curator. **Do not invent a project name to get past this.** A folder with no domain behind it is invisible to `list_domains` and every tool that lists domains, so state written there would go unseen. Call `list_domains`, and ask the user which project this belongs to, or to create it in the app first.
 - **`readonly`** — the target is a read-only shared mirror. Save on the user's own project instead; mirrors are rebuilt from the collective and local writes are lost.
 - **`would-replace-larger-state`** — your save renders almost no body, and a substantial handoff is already stored under that scope and machine. Nothing was written.
 
