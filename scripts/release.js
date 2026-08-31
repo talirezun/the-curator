@@ -578,12 +578,24 @@ export async function release(argv, deps = null) {
   // Hooks are hygiene, not correctness, so this warns rather than refuses —
   // but it is worth saying, because the release commit is the one commit whose
   // attribution is most visible on a public repo.
+  // `core.hooksPath` may be stored ABSOLUTE (`/Users/x/repo/.githooks`) or
+  // RELATIVE (`.githooks`) — `git config` returns whichever was written, and a
+  // literal string compare reports a correctly-configured repo as unhooked.
+  // That false positive is worse than no check: a security warning that cries
+  // wolf on every release is one people learn to scroll past. Compare the
+  // RESOLVED directory instead, and confirm the hooks are actually there.
   const hooksR = exec(['git', 'config', 'core.hooksPath']);
-  if (hooksR.stdout.trim() !== '.githooks') {
-    warn('core.hooksPath is not .githooks — the attribution and secret hooks will not run. ' +
-         'Fix with: git config core.hooksPath .githooks');
+  const hooksRaw = hooksR.stdout.trim();
+  const wanted = path.resolve(ROOT, '.githooks');
+  const actual = hooksRaw ? path.resolve(ROOT, hooksRaw) : '';
+  if (actual !== wanted) {
+    warn('core.hooksPath is ' + (hooksRaw || 'unset') + ', not ' + wanted + ' — the ' +
+         'attribution and secret hooks will not run. Fix with: git config core.hooksPath .githooks');
+  } else if (!existsSync(path.join(actual, 'commit-msg'))) {
+    warn('core.hooksPath points at ' + actual + ' but commit-msg is missing there — ' +
+         'the attribution hook will not run.');
   } else {
-    pass('git hooks installed (.githooks)');
+    pass('git hooks installed (' + hooksRaw + ')');
   }
 
   const statusR = exec(['git', 'status', '--porcelain']);
