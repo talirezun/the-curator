@@ -120,6 +120,26 @@ export const ID_SHOW_LOGS = 'show-logs';
 export const CHECK_LABEL_IDLE = 'Check for Updates…';
 export const CHECK_LABEL_BUSY = 'Checking for Updates…';
 
+/**
+ * ── AND THE THIRD STATE: AN UPDATE IS ACTUALLY BEING INSTALLED ─────────────
+ *
+ * `updateStatus` is a whole label, composed by `updateMenuLabel()` in
+ * lib/update-client.js from the server's own progress record ("Downloading
+ * Update… 43%"). It is not composed here, because the phase vocabulary is the
+ * update route's and this module must not grow a second copy of it.
+ *
+ * It takes PRECEDENCE over `checking`, and that ordering is load-bearing
+ * rather than arbitrary: the install runs for minutes and the check runs for
+ * seconds, so a menu that let `checking` win would show "Checking for
+ * Updates…" for the whole of a download. The suite drives both flags set at
+ * once and asserts which one is on screen.
+ *
+ * The item is DISABLED throughout, which is what stops a second click starting
+ * a second download — and disabling it is safe here in a way it would not be
+ * for a long silent operation, because the label is simultaneously saying what
+ * is happening and how far along it is.
+ */
+
 const sep = { type: 'separator' };
 
 /**
@@ -128,6 +148,9 @@ const sep = { type: 'separator' };
  * @param {string}   [o.platform]         defaults to process.platform; injected
  *                                        so the suite can drive both arms.
  * @param {boolean}  [o.checking]         is an update check in flight?
+ * @param {string}   [o.updateStatus]     a whole label from updateMenuLabel(),
+ *                                        shown while an update is installing.
+ *                                        Wins over `checking`.
  * @param {Function} o.onCheckForUpdates
  * @param {Function} o.onOpenSettings
  * @param {Function} o.onRevealWindow
@@ -139,6 +162,7 @@ export function buildMenuTemplate({
   appName = 'The Curator',
   platform = process.platform,
   checking = false,
+  updateStatus = null,
   onCheckForUpdates,
   onOpenSettings,
   onRevealWindow,
@@ -158,10 +182,17 @@ export function buildMenuTemplate({
     }
   }
 
+  // A non-string, or an empty string, is NOT a status — it is the absence of
+  // one, and must never render as a blank menu item. Checked for a usable
+  // value rather than for truthiness so a caller handing over `0` or `{}`
+  // falls back to the real labels instead of producing an unreadable row.
+  const installing = typeof updateStatus === 'string' && updateStatus.trim().length > 0;
+
   const checkForUpdatesItem = {
     id: ID_CHECK_FOR_UPDATES,
-    label: checking ? CHECK_LABEL_BUSY : CHECK_LABEL_IDLE,
-    enabled: !checking,
+    // Precedence: installing › checking › idle. See the constants above.
+    label: installing ? updateStatus.trim() : (checking ? CHECK_LABEL_BUSY : CHECK_LABEL_IDLE),
+    enabled: !installing && !checking,
     click: onCheckForUpdates,
   };
 
