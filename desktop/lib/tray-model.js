@@ -128,25 +128,53 @@ export const LIVE_WINDOW_SECONDS = 120;
 // ── Age formatting ──────────────────────────────────────────────────────────
 
 /**
+ * The precision ladder, coarsest first. `null` is the ordinary ladder — the one
+ * `src/public/next/views/memory.js` renders and the one every row uses unless
+ * something forces a finer reading. See `resolveCollisions` for the only thing
+ * that ever does.
+ */
+export const AGE_PRECISIONS = [null, 'hour', 'minute'];
+
+/**
  * Relative age from a whole-second count.
  *
- * A VERBATIM COPY of `formatAge` in `src/public/next/views/memory.js`, and the
- * duplication is deliberate: that module registers a view and touches the DOM
- * at import time, so it cannot be imported here. Two functions rendering
- * "4 min ago" differently is the smallest possible version of the
- * two-surfaces-drift problem, so the suite does not merely diff the text — it
- * extracts the real one, evaluates it, and asserts both agree on a matrix that
- * crosses every boundary in the ladder.
+ * ── THE DEFAULT ARM IS A VERBATIM COPY, AND IT MUST STAY ONE ───────────────
  *
- * A null/absent age is NOT rendered as "0s ago". Callers get null and render
- * their own words.
+ * Called with ONE argument this is `formatAge` from
+ * `src/public/next/views/memory.js`, unchanged. The duplication is deliberate:
+ * that module registers a view and touches the DOM at import time, so it cannot
+ * be imported here. Two functions rendering "4 min ago" differently is the
+ * smallest possible version of the two-surfaces-drift problem, so the suite
+ * does not merely diff the text — it extracts the real one, evaluates it, and
+ * asserts both agree on a matrix that crosses every boundary in the ladder.
+ *
+ * ── AND `precision` EXTENDS IT RATHER THAN BRANCHING AROUND IT ─────────────
+ *
+ * A second age formatter living beside this one would be that same drift
+ * problem, created deliberately, to solve a narrower problem. So the ladder
+ * gained a FLOOR instead: `precision` names the coarsest unit the answer is
+ * allowed to use, and everything below that floor is the existing ladder
+ * untouched.
+ *
+ *   undefined  the ordinary ladder            "1 day ago"
+ *   'hour'     never coarser than hours       "34 hr ago"
+ *   'minute'   never coarser than minutes     "2041 min ago"
+ *
+ * It is the SAME FACT at a finer resolution, never a different fact, and it is
+ * reached only from `resolveCollisions` — where two rows would otherwise render
+ * the identical label and the alternative is naming a machine.
+ *
+ * Every arm still returns `null` for an absent age. A null/absent age is NOT
+ * rendered as "0s ago"; callers get null and render their own words.
  */
-export function formatAge(seconds) {
+export function formatAge(seconds, precision) {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 60) return 'just now';
   const m = Math.floor(seconds / 60);
+  if (precision === 'minute') return m + ' min ago';
   if (m < 60) return m + ' min ago';
   const h = Math.floor(m / 60);
+  if (precision === 'hour') return h + ' hr ago';
   if (h < 24) return h + ' hr ago';
   const d = Math.floor(h / 24);
   if (d < 7) return d + ' day' + (d === 1 ? '' : 's') + ' ago';
@@ -170,8 +198,8 @@ export function formatAge(seconds) {
  * unqualified "just now" over a day-old handoff is not merely imprecise — it
  * is the exact reading that stops someone looking.
  */
-export function ageText(ageSeconds, ageSource) {
-  const rel = formatAge(ageSeconds);
+export function ageText(ageSeconds, ageSource, precision) {
+  const rel = formatAge(ageSeconds, precision);
   if (rel === null) return 'time unknown';
   return ageSource === 'file' ? 'changed ' + rel : rel;
 }
@@ -651,6 +679,11 @@ export function buildTrayModel(summary, opts = {}) {
   const sourceOf = (s) => (s.ageSource === 'file' ? 'file' : (s.ageSource === 'agent' ? 'agent' : null));
   const machineOf = (s) => machineLabels.get(s.machine) || str(s.machine) || 'unknown machine';
 
+  // The per-row age precision, escalated only by the collision resolver below.
+  // Every row starts on the ordinary ladder — the one the app's own memory view
+  // renders — and a row is moved off it only to avoid printing a machine name.
+  const precisions = shown.map(() => null);
+
   const provenances = shown.map((s) => (
     s.isThisMachine === true
       ? (dropHarness ? null : (str(s.harness) || 'unknown harness'))
@@ -661,48 +694,112 @@ export function buildTrayModel(summary, opts = {}) {
     const scp = str(s.scope) || '(unnamed)';
     return (showProject ? (str(s.project) || '(unnamed)') + ' · ' : '') + (scopeLabels.get(scp) || scp);
   };
-  const composeLabel = (s, age, provenance) =>
-    identityOf(s) + (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s));
+  const composeLabel = (s, age, provenance, precision) =>
+    identityOf(s) + (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s), precision);
+
+  /**
+   * ── WHICH ROWS ARE THE SAME COMPUTER ────────────────────────────────────
+   *
+   * KEYED ON `isThisMachine`, NOT on the producer's `machineMatch`, and the
+   * reason is that this module must hold exactly ONE notion of "this machine".
+   * `isThisMachine` is already the field the two-meaning slot is built on — it
+   * decides whether a row's provenance is a harness or a machine at all — so
+   * reusing it means the collision fix and the provenance rule can never
+   * disagree about what a row is. Reading `machineMatch` here would put a
+   * SECOND identity opinion in the same function, which is the drift shape this
+   * project keeps recording; it is also a diagnostic that must never be
+   * displayed, and a diagnostic that silently governs what IS displayed is
+   * worse than one that is merely unused.
+   *
+   * Two rows are one computer when they are both THIS installation — which is
+   * exactly the maintainer's case, one laptop whose hostname flapped under DHCP
+   * leaving two `<machine>` folders — or when they name the same folder.
+   */
+  const machineKey = (s) => (s.isThisMachine === true ? '@this' : (str(s.machine) || '@unknown'));
 
   // ── AND THEN THE COLLISION GUARD, WHICH IS WHY IT IS TWO PASSES ─────────
   //
   // Compaction that makes two rows READ THE SAME is worse than the width it
   // saved: a list in which two entries are indistinguishable is not a shorter
   // list, it is a broken one. So the compacted labels are composed, checked
-  // against each other, and any row that has become a duplicate gets its
-  // provenance token back.
+  // against each other, and any row that has become a duplicate is separated.
   //
-  // WHICH token comes back is chosen by what actually differs in that
-  // collision, not by a fixed preference: the machine when the colliding rows
-  // are on different machines, the harness otherwise. Restoring a token that
-  // is identical across the colliding rows would spend the width and still
-  // leave two identical rows — the shape of fix that looks like a fix.
+  // ── HOW IT SEPARATES THEM, IN ORDER, AND WHY THAT ORDER ────────────────
+  //
+  // The first version of this restored a MACHINE FOLDER NAME whenever the
+  // colliding rows sat in different folders. Driven against the maintainer's
+  // real store it produced exactly this:
+  //
+  //   2026-08-30-design-conformance-pre-native — talis-macbook-pro · 1 day ago
+  //   2026-08-30-design-conformance-pre-native — mac · 1 day ago
+  //
+  // Those two folders are ONE LAPTOP whose hostname flapped under DHCP. So the
+  // fix reasserted a phantom second computer that the machine-identity work had
+  // just removed, and it did it on the only two lines in the whole menu still
+  // over the width target — a fix that is wrong about the hardware AND the
+  // most expensive thing on screen.
+  //
+  //  1. If the colliding rows are the SAME COMPUTER (see `machineKey`),
+  //     escalate the PRECISION OF THE AGE — day, then hour, then minute — until
+  //     the labels differ. "1 day ago" becomes "34 hr ago" and "36 hr ago".
+  //     That is the same fact at a finer resolution, it costs no width, and it
+  //     makes no claim about hardware at all. It goes through `formatAge`'s own
+  //     ladder with a floor rather than through a second formatter.
+  //  2. If they are DIFFERENT computers, the machine label is restored exactly
+  //     as before. That is not really a collision to be worked around — the
+  //     machine IS the distinguishing fact, and it is the news.
+  //  3. If the same computer saved twice within one MINUTE, escalation runs out
+  //     and the folder names come back. Two saves that close genuinely need
+  //     another discriminator, and at that point the folder name is the
+  //     least-bad one available.
+  //
+  // The loop re-groups after every step because separating one pair can move a
+  // row into collision with a third; it stops when nothing collides or when no
+  // step made progress. A pair that survives all of it is genuinely two rows
+  // identical in every field, which no label composition can separate; the
+  // tooltip and the Agent memory view are where that goes.
   //
   // This is the same rule `shortScopeNames` applies to prefixes, one level up,
   // and it is reachable in ordinary use: one scope worked on from two machines
   // whose two ages round to the same words is not exotic, it is a handoff.
-  //
-  // A pair that still collides after this is genuinely two rows with the same
-  // project, scope, machine, harness and age text, which no amount of label
-  // composition can separate; the tooltip and the Agent memory view are where
-  // that goes, and nothing here pretends otherwise.
-  {
+  for (let pass = 0; pass < AGE_PRECISIONS.length + 2; pass++) {
     const groups = new Map();
     shownWithAge.forEach(({ s, age }, i) => {
-      const l = composeLabel(s, age, provenances[i]);
+      const l = composeLabel(s, age, provenances[i], precisions[i]);
       if (!groups.has(l)) groups.set(l, []);
       groups.get(l).push(i);
     });
-    for (const idxs of groups.values()) {
-      if (idxs.length < 2) continue;
+    const colliding = [...groups.values()].filter((g) => g.length > 1);
+    if (!colliding.length) break;
+
+    let progressed = false;
+    for (const idxs of colliding) {
+      const oneComputer = new Set(idxs.map((i) => machineKey(shown[i]))).size === 1;
+      if (oneComputer) {
+        const next = AGE_PRECISIONS[AGE_PRECISIONS.indexOf(precisions[idxs[0]]) + 1];
+        if (next !== undefined) {
+          for (const i of idxs) precisions[i] = next;
+          progressed = true;
+          continue;
+        }
+        // Escalation exhausted: these rows are the same computer saving twice
+        // inside one minute. The finer age bought nothing, so it is HANDED
+        // BACK before falling through — leaving a row reading "60 min ago"
+        // when "1 hr ago" is what every other row says, and when the thing
+        // that actually separates them is about to be the folder name, would
+        // be paying width for a distinction that failed.
+        for (const i of idxs) precisions[i] = null;
+      }
       const machines = new Set(idxs.map((i) => str(shown[i].machine)));
       for (const i of idxs) {
         if (provenances[i] !== null) continue;
         provenances[i] = machines.size > 1
           ? machineOf(shown[i])
           : (str(shown[i].harness) || 'unknown harness');
+        progressed = true;
       }
     }
+    if (!progressed) break;
   }
 
   const rows = shownWithAge.map(({ s, age }, idx) => {
@@ -761,7 +858,8 @@ export function buildTrayModel(summary, opts = {}) {
       bucket: ageBucket(age),
       ageSeconds: age,
       ageSource: source,
-      ageText: ageText(age, source),
+      agePrecision: precisions[idx],
+      ageText: ageText(age, source, precisions[idx]),
       headline: clip(s.headline, MAX_HEADLINE_CHARS),
       writtenAt: str(s.writtenAt),
       // What a row SAYS. Identity, provenance and age on the label; the
@@ -771,7 +869,7 @@ export function buildTrayModel(summary, opts = {}) {
       scopeShort,
       showsProject: showProject,
       showsProvenance: provenance !== null,
-      label: composeLabel(s, age, provenance),
+      label: composeLabel(s, age, provenance, precisions[idx]),
       sublabel: clip(s.headline, MAX_HEADLINE_CHARS),
       // The tooltip is where the precise facts go — the ones that are true but
       // too long for a row, including BOTH clocks when they disagree.

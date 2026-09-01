@@ -170,7 +170,10 @@ function realStoreScopes() {
   ];
   return rows.map(([scope, machine, age, headline]) => ({
     project: 'projects', scope, machine, harness: 'claude-code',
-    isThisMachine: machine === 'mac-17d23c',   // what his installed app resolves
+    // BOTH folders are this installation: they share the trailing install id
+    // `17d23c`, and the machine-identity fix now resolves them as one laptop.
+    // This is what the merged producer emits against his store.
+    isThisMachine: machine.endsWith('-17d23c'),
     writtenAt: new Date(NOW.getTime() - age * 1000).toISOString(),
     writtenAgeSeconds: age, ageSource: 'agent', headline, harnessShared: false,
   }));
@@ -659,19 +662,23 @@ section('§8 width compaction — three levers, each conditional and each revers
   }
   const max = Math.max(...lens);
   const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
-  ok(max < 93, `the widest rendered line is ${max}, down from the 93 measured before this change`);
-  ok(mean < 50, `and the mean is ${mean.toFixed(1)}, down from 58.4`);
-  ok(lens.filter((n) => n > 70).length <= 3,
-    `${lens.filter((n) => n > 70).length} lines run past 70, down from 15`);
-  // The one row that still runs long is a REMOTE row, and its excess is
-  // entirely the machine label — which may not be dropped. Stated as an
-  // assertion so it cannot quietly become something else.
-  const overRows = model.buildTrayModel(REAL_STORE, { now: NOW }).rows.filter((r) => r.label.length > 56);
-  ok(overRows.every((r) => !r.isThisMachine),
-    'every row still over 56 characters is a row from ANOTHER machine, whose machine label is not droppable');
-  const localMax = Math.max(...model.buildTrayModel(REAL_STORE, { now: NOW })
-    .rows.filter((r) => r.isThisMachine).map((r) => r.label.length));
-  ok(localMax <= 56, `the widest LOCAL row is ${localMax} characters, inside the 56 target`);
+  // THE TARGET. 56 characters, over the whole rendered menu — every label, every
+  // sublabel, the pulse row included — measured on his real store shape.
+  ok(max <= 56, `the widest rendered line in the whole menu is ${max}, inside the 56 target (was 87)`);
+  ok(mean < 45, `and the mean is ${mean.toFixed(1)}, down from 57.2`);
+  eq(lens.filter((n) => n > 70).length, 0, 'no line runs past 70 any more; fourteen did');
+  // A CONTROL on the measurement itself: a suite that measured an empty menu,
+  // or one row, would report a small maximum and prove nothing.
+  ok(lens.length >= 24, `CONTROL: ${lens.length} lines were actually measured`);
+  ok(max > 40, 'CONTROL: and the widest is a real row, not a truncated stub');
+  // The collision on his store resolves by AGE, not by a folder name — which
+  // is the fix, asserted here against the full store rather than only against
+  // the two-row fixture in §10.
+  const realRows = model.buildTrayModel(REAL_STORE, { now: NOW }).rows;
+  ok(realRows.every((r) => !/talis-macbook-pro|17d23c/.test(r.label)),
+    'and NO row names a machine folder — the two colliding rows are one laptop and are separated by a finer age');
+  ok(realRows.filter((r) => r.agePrecision === 'hour').length === 2,
+    'exactly the two colliding rows were escalated, and no others');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -727,46 +734,143 @@ section('§9 nothing dropped from a label becomes unreachable');
 // ═══════════════════════════════════════════════════════════════════════════
 section('§10 the collision guard: compaction may never make two rows read alike');
 //
-// Reachable in ordinary use, not exotic: one scope worked on from two machines,
-// whose two ages round to the same words, is a handoff.
+// Reachable in ordinary use, not exotic: one scope worked on from two machines
+// whose two ages round to the same words is a handoff. THE FIRST VERSION OF
+// THIS SECTION TESTED THE WRONG FIX — it restored a machine FOLDER NAME, which
+// on the maintainer's real store printed two names for one laptop on the only
+// two lines still over the width target. The order asserted below is the fixed
+// one: same computer -> finer age; different computers -> the machine stays;
+// same computer inside one minute -> the folder name, as a last resort.
 {
-  const twin = (machine, isLocal) => ({
-    project: 'projects', scope: 'session-alpha', machine, harness: 'claude-code',
-    isThisMachine: isLocal, ageSource: 'agent', writtenAgeSeconds: 90000, headline: 'h',
+  const row = (over) => ({
+    project: 'projects', scope: 'session-alpha', harness: 'claude-code',
+    ageSource: 'agent', headline: 'h', ...over,
   });
-  const m = model.buildTrayModel({
-    ok: true, scopes: [twin('mac-17d23c', true), twin('studio-9f8e7d', true)],
-  }, { now: NOW });
-  eq(m.rows[0].ageText, m.rows[1].ageText, 'the two rows really do have the same age text — the collision is real');
-  ok(m.rows[0].label !== m.rows[1].label, 'and yet the two labels differ');
-  ok(/mac/.test(m.rows[0].label) && /studio/.test(m.rows[1].label),
-    'because the MACHINE came back — the token that actually differs, not the one that is shared');
+  const build = (scopes) => model.buildTrayModel({ ok: true, scopes }, { now: NOW });
 
-  // CONTROL: with the ages apart, the same two rows stay compact. Without this
-  // the assertion above would pass on an implementation that never compacts.
-  const apart = model.buildTrayModel({
-    ok: true,
-    scopes: [twin('mac-17d23c', true), { ...twin('studio-9f8e7d', true), writtenAgeSeconds: 300 }],
-  }, { now: NOW });
-  ok(!/mac-17d23c|studio/.test(apart.rows[0].label + apart.rows[1].label),
-    'CONTROL: when the labels already differ, nothing is restored and both rows stay compact');
+  // ── A. THE MAINTAINER'S REAL CASE ──────────────────────────────────────
+  //
+  // One project, one scope, TWO machine folders sharing the trailing install id
+  // `17d23c` — one laptop whose hostname flapped under DHCP — and two ages that
+  // both round to "1 day ago". This is transcribed from what the merged
+  // producer and model actually rendered against his store.
+  // The REAL scope name, not a short stand-in: it is the longest on his store
+  // at 48 characters, so the "<= 56" assertions below are a real test of the
+  // width target rather than a test of a fixture that could never fail it.
+  const REAL_SCOPE = 'session-2026-08-30-design-conformance-pre-native';
+  const real = build([
+    row({ scope: REAL_SCOPE, machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 124066 }),
+    row({ scope: REAL_SCOPE, machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 132529 }),
+  ]);
+  eq(model.ageText(124066, 'agent'), model.ageText(132529, 'agent'),
+    'the two ages really do render identically on the ordinary ladder — the collision is real, not manufactured');
+  ok(real.rows[0].label !== real.rows[1].label, 'and yet the two labels differ');
+  for (const r of real.rows) {
+    ok(!/talis|macbook|17d23c|\bmac\b/.test(r.label),
+      `no machine name appears — ${JSON.stringify(r.label)}`);
+    ok(r.label.length <= 56, `and the row is ${r.label.length} characters, inside the 56 target`);
+    eq(r.agePrecision, 'hour', 'because the AGE was escalated to hours instead');
+    ok(/hr ago/.test(r.label), 'which is the same fact at a finer resolution, and makes no claim about hardware');
+  }
+  eq(real.rows.map((r) => r.ageText), ['34 hr ago', '36 hr ago'],
+    'the exact two readings the maintainer will see');
+  // The escalated age is the row's OWN ageText, not something composed only
+  // into the label — two fields disagreeing about one age is how a list comes
+  // to be sorted by one number and labelled with another.
+  for (const r of real.rows) ok(r.label.endsWith(r.ageText), 'the label and the ageText field agree');
 
-  // ── THE GUARD THE FIRST MUTATION PASS MISSED ──────────────────────────
+  // AND THE FOLDER NAME IS STILL REACHABLE. For this case the tooltip is the
+  // ONLY place it appears anywhere, which is what makes the label safe to drop.
+  ok(real.rows.some((r) => r.toolTip.includes('talis-macbook-pro-17d23c')),
+    'the full machine folder name survives in the tooltip — the only place it now appears');
+  ok(real.rows.some((r) => r.toolTip.includes('mac-17d23c')), 'and so does the other one');
+  ok(real.rows.every((r) => r.toolTip.includes(REAL_SCOPE) && r.toolTip.includes('projects')),
+    'along with everything else the compaction dropped');
+
+  // CONTROL: with the ages already apart, nothing is escalated at all. Without
+  // this, the assertions above would pass on an implementation that always
+  // escalates — which would be a second, quieter defect.
+  const apart = build([
+    row({ machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 300 }),
+    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 132529 }),
+  ]);
+  eq(apart.rows.map((r) => r.agePrecision), [null, null],
+    'CONTROL: rows that do not collide stay on the ordinary ladder, the one the app\'s memory view renders');
+  ok(!/hr ago/.test(apart.rows[1].label) && /day ago/.test(apart.rows[1].label),
+    'CONTROL: and still read "1 day ago", so the escalation above was caused by the collision');
+
+  // ── B. GENUINELY DIFFERENT MACHINES ────────────────────────────────────
+  //
+  // Two hosts of the same name whose install ids share their first four hex
+  // characters, so `shortMachineNames` gives them the same short label and they
+  // collide. They are NOT one computer, so the machine label stays exactly as
+  // it is and the age is NOT escalated — a finer age would be inventing a
+  // distinction while the real one, that these are two computers, is already
+  // on the row.
+  //
+  // THE AGES HERE ARE THE TWO FROM CASE A, DELIBERATELY. With identical ages an
+  // escalation would be invisible — it would run, change nothing, and hand the
+  // precision back — so a mutation letting different machines escalate came
+  // back GREEN against the first version of this fixture. These two ages round
+  // to the same words but ARE different, so escalation would visibly separate
+  // them, and the assertion that it does not is a real one.
+  const twoMachines = build([
+    row({ machine: 'laptop-abcd1111', isThisMachine: false, writtenAgeSeconds: 124066 }),
+    row({ machine: 'laptop-abcd2222', isThisMachine: false, writtenAgeSeconds: 132529 }),
+  ]);
+  for (const r of twoMachines.rows) {
+    ok(/laptop/.test(r.label), 'a row from another machine keeps its machine label through a collision');
+    eq(r.agePrecision, null, 'and its age is NOT escalated — different computers are not one computer');
+  }
+  ok(twoMachines.rows.every((r) => r.toolTip.includes('laptop-abcd')),
+    'with the full, undisambiguated machine name in the tooltip');
+  // Stated rather than implied: these two rows remain identical. That is a
+  // shortMachineNames tag collision (four hex characters), not a compaction
+  // defect, and inventing a finer age would hide it rather than fix it.
+  eq(twoMachines.rows[0].label, twoMachines.rows[1].label,
+    'they DO remain identical, which is a machine-label disambiguation problem and is recorded as one');
+  ok(twoMachines.rows.every((r) => /1 day ago/.test(r.label)),
+    'CONTROL: both still read "1 day ago" — the ages differ and an escalation WOULD have separated them, so declining to escalate is a decision this fixture can see');
+
+  // A local row and a remote row never collide in the first place, because a
+  // machine label is never dropped. The ordinary shape of "two machines".
+  const mixed = build([
+    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 90000 }),
+    row({ machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 90000 }),
+  ]);
+  ok(mixed.rows[0].label !== mixed.rows[1].label, 'a local row and a remote row are distinguished with no work at all');
+  ok(/studio/.test(mixed.rows.find((r) => !r.isThisMachine).label), 'the remote one names its machine');
+  eq(mixed.rows.map((r) => r.agePrecision), [null, null], 'and neither age is touched');
+
+  // ── C. THE UNRESOLVABLE CASE — same computer, inside one minute ────────
+  const sameMinute = build([
+    row({ machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 3600 }),
+    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 3600 }),
+  ]);
+  ok(sameMinute.rows[0].label !== sameMinute.rows[1].label,
+    'two saves from one computer inside one minute are still told apart');
+  ok(/talis-macbook-pro/.test(sameMinute.rows[0].label + sameMinute.rows[1].label)
+    && /— mac ·/.test(sameMinute.rows[0].label + sameMinute.rows[1].label),
+    'by the FOLDER NAMES, which is the last resort and the least-bad discriminator left');
+  eq(sameMinute.rows.map((r) => r.agePrecision), [null, null],
+    'and the finer age is HANDED BACK once it is shown to buy nothing — no row reads "60 min ago" beside rows saying "1 hr ago"');
+
+  // ── D. AND THE GUARD THE FIRST MUTATION PASS MISSED ────────────────────
   //
   // The collision fix only ever FILLS AN EMPTY SLOT; it must never overwrite a
   // provenance that was already there. Deleting that skip came back GREEN on
   // the first pass, so a fixture was built for the shape it is reachable in.
   //
   // Two REMOTE rows whose machine field is absent both render "unknown
-  // machine", which collides — and since there is then only one distinct
-  // machine value in the group, an unguarded fix would replace that label with
-  // the HARNESS. A harness on a row from another computer is the one thing the
-  // two-meaning slot exists to prevent: it says that tool is running HERE.
-  const anon = (over) => ({
-    project: 'projects', scope: 'session-alpha', harness: 'claude-code',
-    isThisMachine: false, ageSource: 'agent', writtenAgeSeconds: 90000, headline: 'h', ...over,
-  });
-  const anonymous = model.buildTrayModel({ ok: true, scopes: [anon({}), anon({})] }, { now: NOW });
+  // machine". They key as one computer, so the age escalates first — and with
+  // identical ages that changes nothing, so it falls through. An unguarded fix
+  // would then replace "unknown machine" with the HARNESS, which is the one
+  // thing the two-meaning slot exists to prevent: it says that tool is running
+  // HERE.
+  const anonymous = build([
+    row({ isThisMachine: false, writtenAgeSeconds: 90000 }),
+    row({ isThisMachine: false, writtenAgeSeconds: 90000 }),
+  ]);
   eq(anonymous.rows[0].label, anonymous.rows[1].label,
     'two rows with no machine and nothing else to tell them apart really do collide — the fixture is the shape being guarded');
   for (const r of anonymous.rows) {
@@ -776,16 +880,24 @@ section('§10 the collision guard: compaction may never make two rows read alike
       'and is NEVER relabelled with a harness — that would say the tool is running on THIS computer');
   }
 
-  // When it is the HARNESS that differs, the harness is what comes back.
-  const harnessTwin = model.buildTrayModel({
-    ok: true,
-    scopes: [
-      { ...twin('mac-17d23c', true), harness: 'claude-code' },
-      { ...twin('mac-17d23c', true), harness: 'claude-code' },
-    ],
-  }, { now: NOW });
-  ok(harnessTwin.rows[0].label === harnessTwin.rows[1].label,
-    'two rows identical in EVERY field stay identical — no label composition can separate them, and none pretends to');
+  // ── E. THE LADDER ITSELF ───────────────────────────────────────────────
+  //
+  // Extended rather than duplicated: a second age formatter beside the app's
+  // own is the smallest version of the drift problem this project keeps
+  // recording. The DEFAULT arm must be byte-identical to the one
+  // test-tray-shell.js §1 pins against src/public/next/views/memory.js.
+  eq(model.AGE_PRECISIONS, [null, 'hour', 'minute'], 'the ladder is coarsest-first and has three rungs');
+  for (const secs of [0, 59, 60, 3599, 3600, 86400, 400 * 86400, -1, null, NaN]) {
+    eq(model.formatAge(secs, undefined), model.formatAge(secs),
+      `an absent precision is byte-identical to the one-argument call (${secs})`);
+  }
+  eq(model.formatAge(124066), '1 day ago', 'the default ladder is unchanged');
+  eq(model.formatAge(124066, 'hour'), '34 hr ago', 'an hour floor never goes coarser than hours');
+  eq(model.formatAge(124066, 'minute'), '2067 min ago', 'a minute floor never goes coarser than minutes');
+  eq(model.formatAge(30, 'minute'), 'just now', 'but nothing below a minute is invented — "just now" survives every floor');
+  eq(model.formatAge(-1, 'minute'), null, 'and an absent age stays absent at every precision');
+  eq(model.ageText(124066, 'file', 'hour'), 'changed 34 hr ago',
+    'the file-clock qualifier survives escalation — which clock it came from is unchanged by reading it finer');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
