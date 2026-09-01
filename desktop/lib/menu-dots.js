@@ -68,7 +68,7 @@
  * changes what a person does next — something is being written right now — and
  * it is the only FILLED disc at full size, so it is separable from everything
  * else without reference to colour at all. `cold` returns to a filled shape at
- * 19% of `live`'s area, which no viewer will confuse with it.
+ * 16% of `live`'s area, which no viewer will confuse with it.
  *
  * The ring/disc vocabulary is deliberately the tray glyph's own: `tray-icon.js`
  * draws a ring always and fills the centre when live. A user who has learned
