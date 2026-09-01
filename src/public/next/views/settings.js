@@ -803,7 +803,7 @@ function activeModelLine(keys) {
 // in-flight state (e.g. a confirm panel left open) from a prior visit.
 function freshState() {
   return {
-    section: 'providers', // matches the design prototype's default state
+    section: SETTINGS_SECTIONS[0][0], // the default IS whichever section is drawn first
 
     // General
     version: null,          // { version, onDiskVersion, restartRequired }
@@ -1128,7 +1128,7 @@ registerView('settings', {
     });
     render(mountToken);
     loadVersion(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));       // cheap, always shown in the sidebar footer
-    ensureSectionData('providers', mountToken).catch((err) => reportAsyncMountFailure(mountToken, err)); // default section — prefetch immediately
+    ensureSectionData(SETTINGS_SECTIONS[0][0], mountToken).catch((err) => reportAsyncMountFailure(mountToken, err)); // default section — prefetch immediately
 
     // Re-render whenever ANY domain's write-gate state changes — e.g. an
     // ingest starts/finishes on some domain while the user is sitting on
