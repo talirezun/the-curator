@@ -572,18 +572,40 @@ section('§7  The provisioning is actually WIRED — a real server start, not a 
   child.stdout.on('data', c => { out += c; });
   child.stderr.on('data', c => { out += c; });
   try {
-    // Wait for the folder or for the process to die, whichever comes first.
-    const deadline = Date.now() + 20000;
+    // Poll for the TWO conditions this assertion block actually needs, not a
+    // wall-clock sleep. This used to poll fs.existsSync(expected) ALONE and
+    // then, the instant it went true, immediately check `out` for the
+    // "Created knowledge folder" announcement — but server.js's own order is
+    // mkdirSync() (synchronous, complete on disk before it returns) THEN
+    // console.error/logInfo (a pipe write the PARENT only sees once libuv
+    // delivers the 'data' event). Those are two independently-timed signals:
+    // the disk state can go true well before the corresponding stdout bytes
+    // land in `out`, especially if the parent's own event loop is delayed by
+    // system load. Asserting on `out` immediately after the fs check alone
+    // raced that delivery with zero margin — GREEN almost always, since the
+    // gap is normally sub-millisecond, and occasionally red for a reason
+    // that looks like nothing changed. Wait for BOTH the folder AND the
+    // announcement (or the process dying) before asserting on either.
+    const waitStarted = Date.now();
+    const deadline = waitStarted + 60000;
     let seen = false;
+    let folderExists = false;
+    let announced = false;
     while (Date.now() < deadline) {
-      if (fs.existsSync(expected)) { seen = true; break; }
+      folderExists = fs.existsSync(expected);
+      announced = /Created knowledge folder/.test(out);
+      if (folderExists && announced) { seen = true; break; }
       if (child.exitCode !== null) break;
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 50));
     }
-    ok(seen, `starting the real src/server.js creates the knowledge folder${seen ? '' : `\n        server output:\n${out.split('\n').slice(0, 12).map(l => '        ' + l).join('\n')}`}`);
+    const waitedMs = Date.now() - waitStarted;
+    ok(seen,
+      `starting the real src/server.js creates the knowledge folder and announces it (waited ${waitedMs}ms)` +
+      (seen ? '' : `\n        folder present: ${folderExists}, announcement seen: ${announced}, process exited: ${child.exitCode !== null ? `yes (code ${child.exitCode})` : 'no'}` +
+        `\n        server output:\n${out.split('\n').slice(0, 12).map(l => '        ' + l).join('\n')}`));
     ok(seen && fs.statSync(expected).isDirectory(),
       'and it is a directory Personal Sync can use as its git work-tree');
-    ok(/Created knowledge folder/.test(out),
+    ok(announced,
       'startup ANNOUNCES the creation — relocating or creating user data is never silent');
   } finally {
     // Killed by PID, always. A leaked node process holding an ephemeral port
