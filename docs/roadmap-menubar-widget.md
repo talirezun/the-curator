@@ -1,11 +1,15 @@
-# Roadmap — menubar widget: background running + a live view of agent memory (Phase 1 SHIPPED; Phases 2–3 not built)
+# Roadmap — menubar widget: background running + a live view of agent memory (Phase 1 SHIPPED; Phase 3 PARTLY; Phase 2 not built)
 
 > **This file is no longer entirely a plan, and the split is exact.** **Phase 1 —
-> the menu bar icon and its native menu — is built and is in the code.** Phases 2
-> (the rendered popover panel and the per-scope popup) and 3 (the bucketed event
-> strip) are **not built**, and every word about them below is still design
-> context rather than a description of behaviour. §0a is the boundary; read it
-> before trusting any other section in the present tense.
+> the menu bar icon and its native menu — is built and is in the code.** Phase 2
+> (the rendered popover panel and the per-scope popup) is **not built**, and
+> every word about it below is still design context rather than a description of
+> behaviour. **Phase 3 — the bucketed event strip — is PARTLY built**, as a
+> single *aggregate* strip in the top-level menu rather than the per-scope,
+> per-source lanes §1.5 designed; §1.5's own demotion of it has effectively been
+> reversed for the aggregate case and left standing for the per-source one. §0a
+> deviation 6 states that in full. §0a is the boundary; read it before trusting
+> any other section in the present tense.
 >
 > **Nothing in the rest of this file was rewritten to match what shipped**, on
 > purpose. Where the build deviated from the plan, §0a names the deviation and
@@ -87,13 +91,15 @@ the app is read-only over working state by design, and it must stay that way.
 | Row model, age formatting, recency buckets, glyph state | `desktop/lib/tray-model.js` | **Built** |
 | The native `Menu` template — Phase 1's whole surface | `desktop/lib/tray-menu.js` | **Built**, per §1.4 |
 | The generated template-image glyph (ring / filled) | `desktop/lib/tray-icon.js` | **Built** |
+| The **save pulse** — 28 buckets of 6 hours over a 7-day window, computed from journal `at` values the index already parsed | `src/brain/tray-summary.js` (`computePulse`) | **Built.** Phase 3 material, arrived early and in a different shape — see deviation 6 |
+| The pulse **drawn**, as an 83 × 11-point alpha-only template PNG on one menu item's `icon` | `desktop/lib/pulse-strip.js` | **Built.** See deviation 6 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
 | The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
 | Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked |
 
 ### What deviated from the plan, and why
 
-Five deviations. Each one is a decision taken at build time against a section
+Eight deviations. Each one is a decision taken at build time against a section
 below, and the section below is left as it was written.
 
 1. **`tray-only` does not hide the Dock icon.** §1.8 argued for
@@ -136,7 +142,104 @@ below, and the section below is left as it was written.
    five states of §1.5's table) and today drives only the glyph; the bar has no
    surface at all until Phase 2. **Both survive as Phase 2 work, unbuilt.**
 
-### The consequence of deviation 2, stated because it is the widget's weakest point
+   > **AMENDED by deviation 6.** The premise of the first sentence — that a menu
+   > item cannot draw — is **wrong as stated**, and the correction is what made
+   > the pulse strip possible. A menu item is a label, a sublabel, a tooltip
+   > **and an `icon`**. What it cannot do is host a *view*. The budget bar and
+   > the recency pip remain unbuilt, but "an `NSMenu` cannot draw" is no longer
+   > the reason; the reason is that neither has been designed against the icon
+   > gutter, and the pip in particular wants to sit **per row**, which deviation
+   > 6 refused on legibility rather than on capability.
+
+6. **Phase 3's event strip is PARTLY BUILT, and its own §1.5 demotion has been
+   reversed for the aggregate case.** This is the largest deviation in the file
+   and it goes in both directions at once, so it is worth stating plainly.
+
+   §1.5 **accepted the event strip and demoted it** — "ACCEPTED, DEMOTED — a
+   per-source event strip, **in the scope popup only**" — to twelve five-minute
+   cells across the last hour, **one lane per source** (per `harness` in
+   Scenario A, per `machine` in Scenario B), reachable only from a per-scope
+   popup. §6 listed it as Phase 3 and called it the first thing to cut.
+
+   **What shipped is one AGGREGATE strip in the TOP-LEVEL menu**, and it differs
+   from that design on every axis:
+
+   | §1.5's design | What shipped |
+   |---|---|
+   | In the **scope popup** | In the **top-level menu**, one item under the headline pair |
+   | **One lane per source** (harness, or machine) | **One lane, aggregated over the whole store** — no lanes at all |
+   | **12 cells × 5 minutes** = the last hour | **28 cells × 6 hours** = the last 7 days |
+   | Per **scope** | Across every `(scope, machine)` pair read |
+   | Phase 3, "the first thing to cut" | Shipped ahead of Phase 2 |
+
+   **So the demotion is effectively reversed for the aggregate case, and left
+   standing for the per-source case.** The scope popup §1.5 demoted it *into*
+   **does not exist**, which is what forced the choice: the strip was either
+   built somewhere else or not built. A per-row sparkline — the closest thing to
+   §1.5's lanes that a menu can hold — was considered and **refused on
+   legibility**, not on capability: eight to eleven independent bands a few
+   points tall, in a menu the same release was making narrower, each drawn from
+   one scope's handful of saves, most of which would be a single mark and a lot
+   of empty. **§1.5's per-source lanes therefore remain unbuilt design**, and
+   they are still the right shape for the Phase 2 popup when it exists.
+
+   Two things §1.5 argued that shipped **unchanged**: uniform bucketing rather
+   than events at irregular timestamps (§3.7's StreakBar/VitalsBar precedent),
+   and **every cell drawn with empties at low opacity** — the fact-versus-absence
+   rule. The window moved from an hour to a week because the median gap between
+   saves on the maintainer's real store is **28.8 minutes** and the last 24 hours
+   hold **four** saves: an hour-wide strip would be empty most of the time and
+   would say nothing about whether the habit is alive, which is the one question
+   a heartbeat is for.
+
+   Two things the build **added** that §1.5 did not anticipate. A **third cell
+   state** — `unknown`, for buckets predating the store, drawn as a baseline
+   tick rather than a fainter bar, because on a 3.5-day-old store **13 of 28
+   cells** are unknown and collapsing them into "nothing happened" would
+   misdescribe half the picture. And a label that **states only what it can
+   support** — *"4 days known"* rather than *"7 days"* when the store is younger
+   than the window, and *"at least N saves"* when a journal hit its 16 KB tail
+   cap.
+
+   §1.5's refusal — "any encoding that makes save FREQUENCY look like
+   productivity" — is carried into the build as a recorded refusal on the alpha
+   ramp, and asserted as copy: an agent told to *save early and often* produces
+   more ticks than one told to save twice, so a denser column means a different
+   capture cadence and never a better day's work.
+
+7. **One laptop was appearing as two computers, and the fix is not in any
+   section below.** `mac-17d23c` and `talis-macbook-pro-17d23c` are one machine
+   whose hostname flapped under DHCP — working-state.js's own D10 finding, and
+   half the maintainer's own history. Rows now match on the **trailing
+   installation id alone**, never the hostname half. When two rows for one scope
+   collide, the **age precision escalates** (day → hour → minute) rather than
+   falling back to folder names, because the first attempt at that fix
+   reasserted the phantom second computer the identity work had just removed —
+   on the only two lines in the menu still over the width target. Genuinely
+   different machines keep their labels.
+
+8. **The menu is materially narrower than anything below specifies, because
+   nothing below specified it.** Widest rendered line **87 → 54 characters**,
+   zero lines over 56 (was 16). Four levers, each conditional on the data at
+   render time and each reversible: the project token is dropped when one
+   project has state, a leading `session-` is stripped, a harness shared by every
+   shown local row is dropped, and the headline cap came down 72 → 54. **Every
+   dropped fact stays reachable in that row's tooltip.**
+
+### The consequence of deviation 2 — SUPERSEDED, and kept because it names the shape
+
+> **This subsection describes behaviour that has been fixed.** It is kept
+> verbatim because the defect it names — a feature that is built, correct, and
+> silently unable to fire in the only state it exists for — is the shape worth
+> remembering, and because deviation 2's own entry above points here. **What is
+> true now:** the tray runs a check **on menu open only**, never on hover and
+> never on a timer, through `brain/sync.js`'s own `getRemoteStatus()`
+> (`desktop/lib/tray-remote.js`), inheriting the existing TTL cache, in-flight
+> memo and fetch gate rather than creating a parallel set. A fifth defect fell
+> out of fixing it: `remoteNotice()` branched on `remote.ok === false` and the
+> store never emitted an `ok`, so a **failed** check reached the menu as
+> `{behindFiles: null}` and rendered byte-identically to never having checked.
+> Read the paragraphs below as history.
 
 The remote line is fed by a poll that is **deliberately suppressed exactly when
 the widget is the surface in use.** `refreshSyncRemoteBadgeIfVisible()` declines
@@ -160,7 +263,7 @@ serialises against `pull()` — both real work, neither in this change.
 | **0** — two fields on the store's index row | **Shipped** in v3.34.0 |
 | **1** — tray + native menu, `window` default | **Shipped** |
 | **2** — popover panel + per-scope popup + budget bar + recency pips | **Not built.** §1.7's tier rule (*the widget renders the journal; the app renders the handoff*) and §1.7's hard constraint are the contract it must be built to |
-| **3** — bucketed event strip | **Not built**, and §6 still calls it the first thing to cut |
+| **3** — bucketed event strip | **PARTLY BUILT — see deviation 6.** One **aggregate** strip shipped, in the **top-level menu**, at 28 × 6 hours over 7 days. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
 
 Two items §6 raised that are **not** part of the widget and are still open:
 gating the two shell `setInterval`s on `document.hidden` (§2.7 rec 1) — **now
@@ -179,6 +282,20 @@ a second line, that the template image tints correctly in a light bar, a dark
 bar and the inverted open-menu state, that `mouse-enter` fires at all, and that
 the icon is visible rather than pushed behind the notch. Treat a green suite as
 proof about the **model**, never about the **menu bar**.
+
+**The pulse strip is in the same position, one layer worse.** Its geometry, its
+three cell states, its labels and its decoded pixels are executed and asserted
+offline, and the emitted PNG is opened by macOS's own `sips` to prove validity by
+something other than its author's encoder. What is **not** proven: that Electron
+accepts a `MenuItemConstructorOptions.icon` at these dimensions, that Electron
+really performs no scaling on it (read from `electron_menu_controller.mm`, not
+observed), that macOS tints an alpha-only template strip correctly in the three
+contexts above, that the 2x representation is chosen on a retina display, and
+that the item does not widen the menu past the budget the suite reasons about in
+**assumed** glyph advances (`MENU_CHAR_POINTS = 6.5`, stated as an assumption
+because no font has ever been measured and neither Electron nor AppKit exposes a
+width API to ask). `main.js`'s wiring of the strip is **source-scanned only**,
+and the suite's own section heading says so.
 
 ---
 

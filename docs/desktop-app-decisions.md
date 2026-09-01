@@ -719,8 +719,8 @@ of which is an existing, shipping surface:
 | Step | Where | Already exists? |
 |---|---|---|
 | 1. **Choose your knowledge folder** — pick the folder that **contains** your domains, not a domain | Domains → **Use existing folder** (sidebar or empty card), or Settings → Knowledge base | ✅ `POST /api/config/pick-folder` |
-| 2. **Paste your API key** | Settings → API keys | ✅ `POST /api/config/api-keys` |
-| 3. **Run the MCP wizard** | Settings → My Curator MCP | ✅ the three-step wizard |
+| 2. **Paste your API key** | Settings → Providers & keys | ✅ `POST /api/config/api-keys` |
+| 3. **Run the MCP wizard** | Settings → MCP bridge | ✅ the three-step wizard |
 
 **Why step 3 is not optional for MCP users.** The Claude Desktop entry embeds
 absolute paths, so an entry written by a browser install names the checkout's

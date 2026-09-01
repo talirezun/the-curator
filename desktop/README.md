@@ -100,6 +100,8 @@ names out of both files rather than from a hardcoded list.
 | `lib/tray-model.js` | The menubar widget's ROW MODEL: order, ages, the harness-vs-machine slot, caps, notices, the glyph state. Pure. |
 | `lib/tray-menu.js` | Row model → `Menu.buildFromTemplate` template. Pure. |
 | `lib/tray-icon.js` | Generates the template-image glyph as PNG bytes. No binary is checked in. Pure. |
+| `lib/pulse-strip.js` | The save pulse DRAWN: cell vocabulary, geometry, the label and tooltip, and an 83x11pt alpha-only template PNG at 1x and 2x. Reuses `tray-icon.js`'s encoder. Pure. |
+| `lib/tray-remote.js` | WHEN the menubar may ask GitHub whether another machine has pushed: menu open only, never hover, never a timer. Pure decision. |
 | `lib/background-mode.js` | Resolves `backgroundMode` and the 3x3 live transition between modes. Pure. |
 | `lib/state-watch.js` | The refresh strategy: `/state/` path filter, 150 ms debounce, 5-minute fallback, one-shot glyph expiry. Every timer injected. |
 
@@ -263,7 +265,9 @@ so nothing was launched. Every claim about how macOS behaves here comes from
 Electron's and Apple's documentation.
 
 What IS proven, by execution rather than by scan, in
-`scripts/test-tray-shell.js` (200 assertions, OFFLINE):
+`scripts/test-tray-shell.js` (296 assertions, OFFLINE) — plus
+`scripts/test-tray-summary.js` (124), `scripts/test-tray-pulse.js` (169) and
+`scripts/test-tray-pulse-strip.js` (256), all OFFLINE:
 
 - the row model, including that a `null` age renders as *time unknown* and
   never as *just now*, and that an `ageSource: 'file'` row says **changed**
@@ -283,12 +287,29 @@ What IS proven, by execution rather than by scan, in
 - the watch's filter, its debounce (three events per save collapse to one
   refresh), and the fallback interval.
 
+- the save pulse, end to end: `computePulse()` driven directly on its bucket
+  boundaries (it is exported for exactly that reason), and the strip's own
+  pixels decoded back out of the PNG — three cell states separated by SHAPE
+  rather than opacity, because on a 3.5-day-old store 13 of 28 cells are
+  *unknown* and an opacity difference does not survive 2pt of width. `sips`
+  opens the emitted file, so validity is confirmed by something other than the
+  encoder that wrote it.
+
 **What is NOT proven, beyond the fact that nothing has been rendered:** that
-Electron accepts these `role` and `sublabel` values; that macOS tints the
-generated image as a template (that needs `setTemplateImage(true)` at runtime,
-which is source-scanned only); that `tray.on('mouse-enter')` fires; and that the
-data layer's `getTraySummary()` exists or returns the documented shape — the
-model is only proven to survive it not doing so.
+Electron accepts these `role` and `sublabel` values; that a menu item's `icon`
+is accepted at the strip's dimensions, is drawn without scaling, and does not
+push the menu past its width budget (the budget is reasoned about in an
+**assumed** glyph advance — no font has ever been measured, and neither Electron
+nor AppKit exposes a width API to ask); that macOS tints the generated glyph and
+the generated strip as templates (that needs `setTemplateImage(true)` at
+runtime, which is source-scanned only); that the 2x representation is chosen on
+a retina display; and that `tray.on('mouse-enter')` fires.
+
+The data layer is no longer in that list: `scripts/test-tray-pulse.js` imports
+the real `getTraySummary`, `computePulse` and `machineIdentity` from
+`src/brain/tray-summary.js` and executes them against real fixture stores, so
+the documented shape is asserted rather than assumed. The model is still built
+to survive a producer that does not supply it.
 
 **`tray-only` is recognised and deliberately half-applied.** It turns the tray
 on and leaves the Dock icon alone. Hiding it needs
