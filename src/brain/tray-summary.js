@@ -65,6 +65,12 @@
  * journal tail read per pair it returns, bounded by MAX_INDEX_ENTRIES. No
  * LLM, no network, no subprocess, no write to the state store.
  *
+ * The `pulse` strip adds NO file I/O to that. Every timestamp it buckets was
+ * already read and already parsed to compute a row's age — `journalFacts` then
+ * discarded all but the newest (54 of 65 lines on the maintainer's real
+ * store). The heartbeat is those numbers kept rather than thrown away; see
+ * `computePulse` and working-state.js's `withSaveTimes` opt-in.
+ *
  * ── EVERY NUMBER IS A MEASUREMENT OR A NULL ───────────────────────────────
  *
  * An age that is not known arrives as `null`, never as 0 and never as a
@@ -81,6 +87,7 @@ import {
   machineId,
   hostSlug,
   BRIEF_FILENAME,
+  INSTALL_ID_RE,
 } from './working-state.js';
 
 /** Rows the panel asks for when it does not say. §1.3's eight-row layout. */
@@ -126,6 +133,151 @@ export const REMOTE_OBSERVATION_MAX_AGE_MS = 5 * 60 * 1000;
  * is; this cap exists only so a pathological store cannot flood the payload.
  */
 const MAX_LISTED_COLLISIONS = 10;
+
+// ─────────────────────────────────────────────────────────────────────────
+// The pulse — an aggregate heartbeat over the memory layer
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * How far back the heartbeat looks: SEVEN DAYS, and the number is measured
+ * rather than chosen for tidiness.
+ *
+ * On the maintainer's real store the median gap between saves is 28.8 minutes
+ * and the last 24 hours hold FOUR saves. A 24-hour window would therefore draw
+ * a strip that is empty most of the time and says nothing about whether the
+ * habit is alive — the one question a heartbeat is for. Seven days covers the
+ * 3.52-day span his store actually holds with room for it to grow, and it puts
+ * a weekend inside the window, which is where an honest work rhythm shows.
+ */
+export const PULSE_WINDOW_SECONDS = 7 * 24 * 3600;      // 604800
+
+/**
+ * Six hours per cell. 28 cells across the window — enough resolution to see
+ * morning-versus-evening within a day, few enough that one cell is a
+ * meaningful number of saves rather than a coin flip at a 28.8-minute median.
+ */
+export const PULSE_BUCKET_SECONDS = 6 * 3600;           // 21600
+
+/** 604800 / 21600 = 28. Derived, never typed twice. */
+export const PULSE_BUCKET_COUNT = PULSE_WINDOW_SECONDS / PULSE_BUCKET_SECONDS;
+
+/**
+ * Reduce per-pair save timestamps to the heartbeat strip.
+ *
+ * PURE and exported, so bucket boundaries can be driven directly rather than
+ * inferred from a tree on disk — the same reason `journalFacts` is exported.
+ *
+ * @param {Array<{saveTimes: number[]|null, journalTailTruncated?: boolean}>} pairs
+ *   one entry per (scope, machine) pair READ, in any order. `saveTimes` is
+ *   epoch ms; `null` means there was no journal to read, which is different
+ *   from an empty array and is counted differently.
+ * @param {number} now  the clock the buckets are anchored to.
+ * @returns {object|null} the `pulse` payload, or null when NOTHING was read.
+ *
+ * ── WHERE THE BOUNDARIES ARE, STATED ONCE SO IT CANNOT DRIFT ─────────────
+ *
+ * Buckets are anchored on `now`, not on midnight, so the newest cell is
+ * always the one containing this instant. Cell `i` (0 = oldest, 27 = newest)
+ * covers
+ *
+ *     ( now - (COUNT - i) * bucket ,  now - (COUNT - 1 - i) * bucket ]
+ *
+ * — OPEN at the older edge, CLOSED at the newer edge. So the whole window is
+ * `(now - window, now]`, an event landing EXACTLY on an internal boundary
+ * belongs to the OLDER of the two cells it touches, and an event landing
+ * exactly on `now - window` is outside the window rather than in cell 0.
+ * Every event therefore lands in exactly one cell, and the suite asserts it
+ * on a real boundary rather than trusting this paragraph.
+ *
+ * A save stamped in the FUTURE — a machine with a skewed clock, which sync
+ * makes reachable — is clamped into the newest cell and counted. That is the
+ * same direction `journalFacts` already clamps a negative age to 0: a real
+ * save is not made unreal by a bad clock, and dropping it would silently
+ * shrink the count a user is being shown.
+ */
+export function computePulse(pairs, now = Date.now()) {
+  const bucketMs = PULSE_BUCKET_SECONDS * 1000;
+  const windowMs = PULSE_WINDOW_SECONDS * 1000;
+  const windowStart = now - windowMs;
+  const buckets = new Array(PULSE_BUCKET_COUNT).fill(0);
+
+  let events = 0;
+  let eventsOutsideWindow = 0;
+  let pairsCounted = 0;
+  let pairsTruncated = 0;
+  let oldestCounted = null;      // oldest event INSIDE the window
+  let oldestSeen = null;         // oldest event at all, window or not
+
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    // A pair with no journal fed nothing. It is not counted as a pair that
+    // reported zero saves, because it did not report anything.
+    if (!p || !Array.isArray(p.saveTimes)) continue;
+    pairsCounted++;
+    if (p.journalTailTruncated === true) pairsTruncated++;
+    for (const t of p.saveTimes) {
+      if (!Number.isFinite(t)) continue;
+      if (oldestSeen === null || t < oldestSeen) oldestSeen = t;
+      if (t <= windowStart) { eventsOutsideWindow++; continue; }
+      buckets[bucketIndex(t, now, bucketMs)]++;
+      events++;
+      if (oldestCounted === null || t < oldestCounted) oldestCounted = t;
+    }
+  }
+
+  // NULL ONLY WHEN THERE ARE NO JOURNALS AT ALL. A store that has journals but
+  // no usable timestamps in them is a real, drawable state — an empty strip
+  // with `clock: 'none'` — and must not be collapsed into "there is no store".
+  if (pairsCounted === 0) return null;
+
+  // COVERAGE IS THE FACT-VERSUS-ABSENCE RULE APPLIED TO A CHART.
+  //
+  // A brand-new store and a dormant one draw the same 28 empty cells, and they
+  // mean opposite things. `coversWholeWindow` is true only when something was
+  // saved at or before the window opened — i.e. the store demonstrably existed
+  // for the whole span — so the renderer can grey the leading cells as "did
+  // not exist yet" instead of drawing them as "nothing happened".
+  const coversWholeWindow = oldestSeen !== null && oldestSeen <= windowStart;
+
+  return {
+    windowSeconds: PULSE_WINDOW_SECONDS,
+    bucketSeconds: PULSE_BUCKET_SECONDS,
+    buckets,
+    events,
+    eventsOutsideWindow,
+    pairsCounted,
+    // A LOWER BOUND, DISCLOSED. Any pair here had more history than the 16 KB
+    // journal tail could reach, so its older cells under-count. Derived from
+    // readTail's own signal — see readPairJournalFacts.
+    pairsTruncated,
+    // 'agent' means every counted event came from a journal line's own `at`.
+    // There is no other value it could take: this module never reads an mtime
+    // into the pulse, so there is deliberately no 'file' and no 'mixed'.
+    clock: (events + eventsOutsideWindow) > 0 ? 'agent' : 'none',
+    oldestEventAt: oldestCounted === null ? null : new Date(oldestCounted).toISOString(),
+    coversWholeWindow,
+    // Cells BEFORE this index are unknown, not empty. When the store provably
+    // predates the window there is nothing unknown, so it is 0. When nothing
+    // at all was counted it is PULSE_BUCKET_COUNT — one past the last cell,
+    // meaning "no cell is known", which is the honest answer and still an int.
+    firstKnownBucket: coversWholeWindow ? 0
+      : (oldestCounted === null ? PULSE_BUCKET_COUNT
+        : bucketIndex(oldestCounted, now, bucketMs)),
+  };
+}
+
+/**
+ * Which cell an in-window (or future) timestamp belongs to.
+ *
+ * Counting BACK from `now` rather than forward from the window start: the
+ * newest cell is then 27 by construction for anything at or after `now -
+ * bucket`, and the "is `now` itself in the last cell or one past the end?"
+ * off-by-one simply cannot arise. The clamp catches future timestamps only.
+ */
+function bucketIndex(t, now, bucketMs) {
+  const back = Math.floor((now - t) / bucketMs);
+  const i = PULSE_BUCKET_COUNT - 1 - back;
+  return i < 0 ? 0 : (i > PULSE_BUCKET_COUNT - 1 ? PULSE_BUCKET_COUNT - 1 : i);
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // The remote observation
@@ -312,12 +464,74 @@ function orderKey(clock) {
  * different installation, which is the entire reason the installation id
  * exists. `readWorkingState` makes the same split for the same reason; this
  * is that rule, not a new one.
+ *
+ * EXPORTED PURELY AS A TEST SEAM, and it was a mutation that forced it. The
+ * `selfInstallId !== null` guard below is only REACHABLE when this install has
+ * no parseable installation id — the degraded case where the home directory
+ * could not hold `.curator-install-id`. A tempdir install always mints one, so
+ * deleting that guard ran GREEN through the whole end-to-end suite: it was
+ * masked by the fixture, not redundant. The one honest way to drive it is to
+ * hand this function `selfInstallId: null` directly. Same reason `journalFacts`
+ * and `computePulse` are exported.
  */
-function machineIdentity(machine, self, host, hostRe) {
+export function machineIdentity(machine, self, host, hostRe, selfInstallId) {
+  const exact = machine === self;
+  // ── ONE LAPTOP, TWO FOLDER NAMES — and the user was being shown two
+  //    computers. MEASURED on the maintainer's own store: `mac-17d23c` and
+  //    `talis-macbook-pro-17d23c` are the same machine, because macOS
+  //    re-derives the hostname from DHCP and the folder name followed it. That
+  //    is working-state.js's own D10 finding; D10 fixed the GO-FORWARD case by
+  //    remembering the folder name instead of recomputing it, but the split it
+  //    describes is already on disk and no future save removes it.
+  //
+  //    An exact-string comparison therefore classified half of his own history
+  //    as a remote machine, and the menu rendered a machine name in the slot
+  //    that shows a harness for local rows.
+  //
+  //    THE MATCH IS ON THE INSTALLATION ID AND NOTHING ELSE, which is what
+  //    makes it safe. That id is minted once per install and lives in
+  //    `.curator-install-id`; two different computers do not share one. The
+  //    hostname half — the part that flaps — is deliberately not compared at
+  //    all, so `buildbox-a1b2c3` cannot become "this machine" unless it
+  //    literally carries this installation's id.
+  //
+  //    BOTH SIDES MUST HAVE ONE. A degraded install with no id resolves to a
+  //    bare hostname, and `installIdOf` returns null for it; two nulls must
+  //    never compare equal, or every id-less machine in a synced store would
+  //    claim to be this one. The `!== null` guards below are that rule, and the
+  //    suite asserts it directly rather than trusting the shape.
+  const sameInstall = !exact
+    && selfInstallId !== null
+    && installIdOf(machine) === selfInstallId;
   return {
-    isThisMachine: machine === self,
+    isThisMachine: exact || sameInstall,
+    // HOW it matched, because a derived answer that cannot be questioned is
+    // one nobody can debug. 'install-id' is the renamed-hostname case above.
+    machineMatch: exact ? 'exact' : (sameInstall ? 'install-id' : 'none'),
     isThisHost: machine === host || hostRe.test(machine),
   };
+}
+
+/**
+ * The trailing installation id of a `<hostname-slug>-<install-id>` segment, or
+ * null when there is not one.
+ *
+ * The SHAPE COMES FROM working-state.js's own INSTALL_ID_RE rather than from a
+ * second regex written beside it — a local `/-[0-9a-f]+$/` would be free to
+ * drift from the id that module actually mints, and would already be wrong
+ * about the length bounds.
+ *
+ * `lastIndexOf` and not a split: a hostname may contain hyphens
+ * (`talis-macbook-pro`), and only the final segment is ever the id. `i <= 0`
+ * rejects both "no hyphen at all" and a leading hyphen, so a bare hostname
+ * yields null and can never match anything.
+ */
+function installIdOf(machine) {
+  if (typeof machine !== 'string') return null;
+  const i = machine.lastIndexOf('-');
+  if (i <= 0) return null;
+  const tail = machine.slice(i + 1);
+  return INSTALL_ID_RE.test(tail) ? tail : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -336,6 +550,9 @@ function machineIdentity(machine, self, host, hostRe) {
  *               ageSource, headline, isThisMachine, harnessShared, ...}],
  *   total: <rows before the limit>, pairsOnDisk: <every pair seen>,
  *   truncated: <total > scopes.length>,
+ *   pulse:    {windowSeconds, bucketSeconds, buckets[28], events,
+ *              eventsOutsideWindow, pairsCounted, pairsTruncated, clock,
+ *              oldestEventAt, coversWholeWindow, firstKnownBucket} | null,
  *   brief:    {project, ageSeconds} | null,
  *   remote:   {ok, behindFiles, behindCommits, checkedAt} | null,
  *   warnings: [{code, message, ...}]
@@ -370,6 +587,10 @@ export async function getTraySummary(opts = {}) {
     // user who moved it, a disconnected volume) and it is reported as one.
     return {
       ok: true, lastSave: null, scopes: [], brief: null,
+      // Nothing was read, so there is no heartbeat — not an empty one. A strip
+      // of 28 zeroes here would be a confident claim that nothing was saved
+      // this week, made by a call that could not open the folder.
+      pulse: null,
       remote: readRemoteObservation(now),
       warnings: [{
         code: 'domains-unreadable',
@@ -401,17 +622,29 @@ export async function getTraySummary(opts = {}) {
   // any save would do the same — but a read causing a write is worth not
   // doing when one `if` avoids it.
   let identityResolved = false;
-  let self = null, host = null, hostRe = null;
+  let self = null, host = null, hostRe = null, selfInstallId = null;
 
   const rows = [];
   let pairTotal = 0;
   let unlisted = 0;
   const collisions = [];
+  // ── THE PULSE'S INPUT, GATHERED FROM EVERY PAIR READ ────────────────────
+  //
+  // Filled inside the walk, BEFORE the sort and BEFORE `rows.slice(0, limit)`.
+  // The tray shows 8 rows while reading 11 pairs on the maintainer's own
+  // store; a heartbeat drawn from the 8 would be a picture of the display cap
+  // rather than of his week. Reporting a CAP as a MEASUREMENT is this repo's
+  // own twice-shipped defect, and the suite asserts that `limit: 1` does not
+  // move `events`.
+  const pulseInput = [];
 
   for (const project of scanned) {
     let idx;
     try {
-      idx = await listWorkingScopes(project);
+      // THE ONLY CALLER THAT ASKS FOR SAVE TIMES. `src/routes/memory.js` and
+      // `mcp/tools/working-state.js` both call this with one argument, so the
+      // MCP index — which is under a 400 KB response budget — is unchanged.
+      idx = await listWorkingScopes(project, { withSaveTimes: true });
     } catch {
       continue;                       // listWorkingScopes does not throw; belt.
     }
@@ -422,6 +655,12 @@ export async function getTraySummary(opts = {}) {
 
     for (const p of idx.scopes) {
       if (!p || typeof p.scope !== 'string' || typeof p.machine !== 'string') continue;
+      // Same validated pairs the rows are built from, so the strip and the
+      // list can never be describing different sets.
+      pulseInput.push({
+        saveTimes: Array.isArray(p.saveTimes) ? p.saveTimes : null,
+        journalTailTruncated: p.journalTailTruncated === true,
+      });
       if (!identityResolved) {
         // A boolean rather than `self === null`: machineId() cannot return
         // null today (it falls back to 'unknown-machine'), but keying the
@@ -434,9 +673,13 @@ export async function getTraySummary(opts = {}) {
         // hyphen: a host named `mac` would otherwise claim `mac-pro-2`, which
         // is a different computer. Same expression readWorkingState uses.
         hostRe = new RegExp(`^${host}-[0-9a-f]{4,16}$`);
+        // Derived from the resolved identity, once, for the same reason the
+        // rest of it is: it cannot change mid-loop, and re-deriving per row
+        // would ask one question dozens of times.
+        selfInstallId = installIdOf(self);
       }
       const clock = chooseClock(p);
-      const ident = machineIdentity(p.machine, self, host, hostRe);
+      const ident = machineIdentity(p.machine, self, host, hostRe, selfInstallId);
       rows.push({
         project,
         scope: p.scope,
@@ -575,6 +818,13 @@ export async function getTraySummary(opts = {}) {
     total: rowTotal,
     pairsOnDisk: pairTotal,
     truncated: rowTotal > shown.length,
+    // ── THE HEARTBEAT ───────────────────────────────────────────────────
+    //
+    // Built from `pulseInput`, which was filled during the walk — so it draws
+    // on every pair READ, not on the rows that survived `limit`. Costs no
+    // file I/O of its own: the timestamps were already parsed to compute each
+    // row's age and were previously discarded.
+    pulse: computePulse(pulseInput, now),
     brief: lastSave ? await briefFor(lastSave.project, now) : null,
     remote: readRemoteObservation(now),
     warnings,
