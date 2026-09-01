@@ -49,14 +49,36 @@ name: Desktop DMG
 #  Keep the two triggers absent anyway: that pin protects the gate, while these
 #  absences are also what keep a macOS runner off every commit and out of reach
 #  of a fork.
+#
+#  ── 3. IT NOW PUBLISHES THE RELEASE, AND THAT ADDS NO RUN ────────────────
+#  Added in v3.38.0. Until then this workflow uploaded the two DMGs as a
+#  14-day workflow ARTIFACT and stopped, and publishing them — renamed — as a
+#  GitHub Release was a manual step nobody had written down. Six releases went
+#  out with a tag and no release, during which the in-app updater, which
+#  resolves "the newest release carrying an installer" from the Releases API,
+#  told every installed copy it was up to date while it ran the previous
+#  version. A wrong reassurance is worse than an error.
+#
+#  Publishing does NOT re-open the hazard argued above. `gh release create`
+#  produces no workflow run of its own: GitHub does not start a workflow from
+#  an event raised with the automatic `GITHUB_TOKEN`, and this repository has
+#  no `on: release` workflow for it to start even if it did. Nothing here
+#  pushes a commit, a branch or a tag either — `--verify-tag` makes `gh` abort
+#  rather than create the tag it is publishing against. So the set of runs a
+#  release SHA can produce is unchanged, and `watchCi`'s `--workflow` pin
+#  keeps holding regardless.
 # ═══════════════════════════════════════════════════════════════════════════
 on:
   push:
     tags:
       - 'v*'
 
-# Read-only token. This workflow builds an artifact; it publishes nothing,
-# creates no release, and writes nothing back to the repository.
+# The DEFAULT token for this workflow is read-only, and the `gate` job below
+# inherits it. Exactly one job widens it — `dmg`, to `contents: write`, at the
+# JOB level, because that is the only scope GitHub offers for "may create a
+# release" and a job-level block REPLACES this one rather than adding to it.
+# Declaring it here instead would hand a write token to the cheap Linux gate
+# and to every job anyone adds later, none of which has any reason to hold one.
 permissions:
   contents: read
 
@@ -111,6 +133,13 @@ jobs:
     needs: gate
     if: needs.gate.outputs.buildable == 'true'
     runs-on: macos-latest
+    # NARROW ON PURPOSE. `contents: write` is what `gh release create` needs and
+    # it is the smallest scope that can do it — GitHub has no "releases only"
+    # permission. It is declared HERE rather than at the top of the file so the
+    # Linux gate job keeps the read-only default, and so a future job does not
+    # inherit a write token by being added below this one.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -177,9 +206,116 @@ jobs:
             --config.extraMetadata.version="$VERSION" \
             --publish never
 
+      # ── 1. THE RENAME, AND THE CHECK THAT IT WORKED ──────────────────────
+      #
+      # electron-builder writes `The Curator-3.37.0-arm64.dmg` and
+      # `The Curator-3.37.0.dmg` — note that the x64 build carries NO arch in
+      # its name at all, which is electron-builder's documented default. The
+      # in-app updater picks its download with `archFromAssetName()` in
+      # `desktop/lib/update-plan.js`, which splits the stem on `-` and looks
+      # for a whole token `arm64` or `x64`. Run against those raw names it
+      # returns `arm64` and **null**, so a release published unrenamed offers
+      # nothing at all to an Intel Mac, silently.
+      #
+      # `scripts/publish-dmg-assets.js` renames them and then feeds the final
+      # names through the REAL `archFromAssetName` — the imported function, not
+      # a regex transcribed into this file — asserting one resolves to `arm64`
+      # and the other to `x64`. It re-reads the directory after renaming, so it
+      # verifies the files that exist rather than the plan it made. A refusal
+      # exits non-zero and this job fails before anything is published.
+      #
+      # It also writes the two final paths to $GITHUB_OUTPUT, so the steps
+      # below address them by name. Globbing would put "which file is which
+      # architecture" back into shell ordering, which is the exact thing being
+      # verified.
+      - name: Name the DMGs the way the updater matches them
+        id: names
+        run: node scripts/publish-dmg-assets.js --dir desktop/dist --version "${GITHUB_REF_NAME#v}"
+
+      # ── 2. AND THE NAME IS ONLY A CLAIM ──────────────────────────────────
+      #
+      # The step above proves the FILENAMES parse correctly. It opens no disk
+      # image, so a `.dmg` named `x64-Intel` holding an arm64 binary would sail
+      # through it — and that mistake ships an Intel user a build their Mac
+      # cannot execute, discovered only on their machine. So mount each image
+      # and ask the binary itself.
+      #
+      # `lipo -archs` spells x64 as `x86_64`; the mapping is asserted in
+      # scripts/test-release-publish.js against LIPO_ARCH so the two spellings
+      # cannot drift. Detach happens BEFORE the comparison so a mismatch does
+      # not leave a mounted image behind.
+      - name: Verify each DMG really contains the architecture its name claims
+        run: |
+          set -euo pipefail
+          check() {
+            want="$1"; dmg="$2"
+            mnt="$(mktemp -d)"
+            hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt" >/dev/null
+            got="$(lipo -archs "$mnt/The Curator.app/Contents/MacOS/The Curator")"
+            hdiutil detach "$mnt" >/dev/null
+            echo "$(basename "$dmg"): name claims $want, lipo reports '$got'"
+            if [ "$got" != "$want" ]; then
+              echo "::error::$(basename "$dmg") contains '$got' but is named for '$want'"
+              exit 1
+            fi
+          }
+          check arm64  "${{ steps.names.outputs.arm64 }}"
+          check x86_64 "${{ steps.names.outputs.x64 }}"
+
+      # KEPT. The artifact is a 14-day fallback if the publish below fails, and
+      # it costs nothing. It now carries the published names, because it runs
+      # after the rename.
       - uses: actions/upload-artifact@v4
         with:
           name: the-curator-dmg-${{ github.ref_name }}
           path: desktop/dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+      # ── 3. PUBLISH ───────────────────────────────────────────────────────
+      #
+      # `--verify-tag` is not decoration: without it `gh release create` will
+      # CREATE the tag it cannot find. This workflow only ever runs on a tag
+      # that already exists, and `scripts/release.js` is the only thing allowed
+      # to make one, so a run that somehow reached here without its tag must
+      # fail rather than invent it.
+      #
+      # The re-run arm exists because this job is not the only thing that can
+      # fail — a red `lipo` check, a runner timeout, a re-run from the Actions
+      # UI. `gh release create` errors on an existing release, so a second
+      # attempt would fail for the wrong reason and leave the release without
+      # its installers. Uploading with `--clobber` replaces the assets of the
+      # release that is already there.
+      #
+      # `--latest` is what `pickInstallableRelease()`'s callers see reflected on
+      # the Releases page. It does not drive the updater — that reads the whole
+      # release list and picks the newest one carrying an installer — but a
+      # human landing on /releases/latest should not be sent to an older build.
+      - name: Publish the GitHub Release with both installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ARM64_DMG: ${{ steps.names.outputs.arm64 }}
+          X64_DMG: ${{ steps.names.outputs.x64 }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — replacing its installers."
+            gh release upload "$TAG" "$ARM64_DMG" "$X64_DMG" --clobber
+            gh release edit "$TAG" --latest
+          else
+            gh release create "$TAG" "$ARM64_DMG" "$X64_DMG" \
+              --title "The Curator $TAG" \
+              --generate-notes \
+              --verify-tag \
+              --latest
+          fi
+          {
+            echo "### Published $TAG"
+            echo
+            echo "- \`$(basename "$ARM64_DMG")\`"
+            echo "- \`$(basename "$X64_DMG")\`"
+            echo
+            echo "The in-app updater reads these from the Releases API. Until this step ran,"
+            echo "every installed copy reported \"up to date\" while running the previous version."
+          } >> "$GITHUB_STEP_SUMMARY"

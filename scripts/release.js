@@ -70,10 +70,23 @@
  *     is no flag that makes a FAILING check pass.
  *   • It does not write the changelog row. A row is the only durable record of
  *     why a release exists; a generated one would be worthless.
- *   • It does not publish a GitHub Release. Tags are created now so that
- *     `electron-updater` has something to depend on later; wiring a
- *     tag-triggered release workflow before anything consumes it would be
- *     shipping an unwired parameter.
+ *   • It does not publish the GitHub Release ITSELF, and no longer pretends
+ *     nothing needs one. This bullet used to read "wiring a tag-triggered
+ *     release workflow before anything consumes it would be shipping an
+ *     unwired parameter." That reasoning EXPIRED IN v3.31.0, when the in-app
+ *     updater shipped and began resolving "the newest release carrying an
+ *     installer" from the Releases API — and the stale justification is how
+ *     six releases then went out with a tag, no release, and every installed
+ *     copy confidently reporting "up to date" while running the old version.
+ *
+ *     The publish now happens where the files are:
+ *     `.github/workflows/desktop-dmg.yml` fires on the tag this script pushes,
+ *     builds both DMGs, renames them to the names the updater matches on, and
+ *     creates the Release. Teaching this script to do it instead would mean
+ *     downloading a workflow artifact from inside the release gate — a network
+ *     dependency on the one script that must not acquire more of them. What it
+ *     does do is SAY SO, in the closing banner, so nobody reads a green run as
+ *     "the installers are out".
  *
  * ── THE INJECTED SEAM ─────────────────────────────────────────────────────
  * `release(argv, deps = null)` takes a trailing defaulted `deps` — the pattern
@@ -1155,6 +1168,11 @@ export async function release(argv, deps = null) {
       : 'npm test: green (offline suites, locally).',
     ...(warnings.length ? ['', 'Warnings at release time:', ...warnings.map((w) => `  - ${w}`)] : []),
   ].join('\n');
+  // THE TAG PUSH IS WHAT STARTS THE INSTALLER BUILD, so whether it succeeded
+  // decides what the closing banner may claim. Tracked rather than assumed: a
+  // banner that promises a DMG workflow after a failed tag push would be the
+  // same class of wrong reassurance this release exists to remove.
+  let tagPushed = false;
   const tagR = exec(['git', 'tag', '-a', tag, '-m', tagBody]);
   if (tagR.status !== 0) {
     warn(`main is pushed but creating ${tag} failed: ${(tagR.stderr || tagR.stdout).trim()}. ` +
@@ -1167,6 +1185,7 @@ export async function release(argv, deps = null) {
            `Retry with: git push origin ${tag}`);
     } else {
       pass(`pushed ${tag}`);
+      tagPushed = true;
     }
   }
 
@@ -1226,9 +1245,33 @@ export async function release(argv, deps = null) {
     out("  main's own run (which adds the paid live suites) is starting now:");
     out('  https://github.com/talirezun/the-curator/actions');
   }
+
+  // ── THE INSTALLERS ARE NOT OUT YET, AND SAYING SO IS THE POINT ──────────
+  // Read `main` and the tag are done; a reader stops here and concludes the
+  // release is finished. It is not: until the DMG workflow publishes the
+  // GitHub Release, the in-app updater finds no release carrying an installer
+  // and tells every installed copy it is up to date — while it runs the
+  // previous version. Six releases went out that way. This banner is
+  // deliberately TEXT and not a check: verifying it would mean polling GitHub
+  // from inside the release gate, and this script does not acquire network
+  // dependencies it can do without.
+  out('');
+  if (tagPushed) {
+    out(`  The INSTALLERS are still building. The ${tag} push starts`);
+    out('  .github/workflows/desktop-dmg.yml, which builds both DMGs, renames them to the');
+    out('  names the in-app updater matches on, and publishes the GitHub Release.');
+    out('  Until that finishes, installed copies still report "up to date". Confirm at:');
+    out(`  https://github.com/talirezun/the-curator/releases/tag/${tag}`);
+  } else {
+    out(`  NO INSTALLERS WILL BE BUILT: ${tag} was not pushed (see the warning above).`);
+    out('  .github/workflows/desktop-dmg.yml triggers on the tag push and nothing else,');
+    out('  so until the tag reaches origin there is no release and the in-app updater');
+    out('  will keep telling installed copies they are up to date.');
+  }
+
   if (warnings.length) { out(''); for (const w of warnings) out(`  ⚠ ${w}`); }
   out('');
-  return { code: EXIT.OK, refusal: null, warnings, commands, sha, ci, mainCi, branch: relBranch };
+  return { code: EXIT.OK, refusal: null, warnings, commands, sha, ci, mainCi, branch: relBranch, tagPushed };
 }
 
 // ── CI watch ──────────────────────────────────────────────────────────────

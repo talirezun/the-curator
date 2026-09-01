@@ -808,6 +808,63 @@ section('§6  The nominal release — the exact commands, in order, and nothing 
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+section('§6b  The closing banner does not imply the installers are published');
+// ─────────────────────────────────────────────────────────────────────────
+//
+// THE DEFECT THIS GUARDS. `release.js` bumps, gates, merges and tags, then
+// prints `✓ vX.Y.Z released.` and stops. It does NOT publish a GitHub Release
+// — `.github/workflows/desktop-dmg.yml` does that, on the tag push. Between
+// v3.31.0 (when the in-app updater shipped and began resolving "the newest
+// release carrying an installer" from the Releases API) and v3.38.0 nothing
+// published one at all, so a green banner meant "tagged", while every
+// installed copy reported "up to date" and ran the previous version. The
+// script's own header said publishing was deliberate because nothing consumed
+// a release yet; that justification had expired six releases earlier.
+//
+// The fix in `release.js` is deliberately TEXT rather than a check — polling
+// GitHub from inside the release gate would add a network dependency to the
+// one script that must not grow more. So the guard is on the text, and on the
+// one thing the text is conditional on: whether the tag actually reached
+// origin, because the workflow triggers on that and nothing else.
+{
+  const r = await run([TARGET, '--yes']);
+  eq(r.result.tagPushed, true, 'a nominal release reports the tag reached origin');
+  ok(/desktop-dmg\.yml/.test(r.out),
+     'the closing banner NAMES the workflow that publishes the installers');
+  ok(/still building|not been published|INSTALLERS/i.test(r.out),
+     '…and says the installers are not out yet');
+  ok(r.out.includes(`https://github.com/talirezun/the-curator/releases/tag/${TAG}`),
+     '…and gives the exact URL to confirm the release on');
+  // Anti-vacuity: the banner must be part of the SUCCESS path, not something
+  // only a warning shape produces.
+  ok(r.out.includes(`✓ ${TAG} released.`),
+     'CONTROL — this is the same run that printed the success line');
+
+  // A tag that never reached origin starts no workflow, so the banner must not
+  // promise one. This is the arm that would have been wrong to hardcode.
+  const noTag = await run([TARGET, '--yes'], { run: { 'push-tag': () => R('', 1, 'remote rejected') } });
+  eq(noTag.result.code, EXIT.OK, 'a failed tag push is a warning, not a refusal — main is already deployed');
+  eq(noTag.result.tagPushed, false, '…and the script knows the tag did not reach origin');
+  ok(/NO INSTALLERS WILL BE BUILT/.test(noTag.out),
+     '…and the banner says no installers will be built rather than pointing at a release that cannot appear');
+  ok(!noTag.out.includes(`https://github.com/talirezun/the-curator/releases/tag/${TAG}`),
+     '…and does NOT hand out a release URL that will 404');
+
+  // MUTUALLY EXCLUSIVE, both directions. Without these a banner printing both
+  // paragraphs unconditionally would satisfy every assertion above.
+  //
+  // Written this way after a weaker control was measured and found to pass for
+  // the wrong reason: comparing the two runs' whole tails found them different
+  // because the failed run also prints a WARNING, which has nothing to do with
+  // the banner. That control stayed green through a mutation that deleted the
+  // banner outright.
+  ok(!r.out.includes('NO INSTALLERS WILL BE BUILT'),
+     'CONTROL — the nominal run does NOT also print the no-installers wording');
+  ok(!/still building/.test(noTag.out),
+     'CONTROL — the failed-tag-push run does NOT also print the installers-are-building wording');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 section('§7  CI watch — the advisory job must never gate a release');
 // ─────────────────────────────────────────────────────────────────────────
 {

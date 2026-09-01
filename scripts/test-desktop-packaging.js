@@ -599,7 +599,16 @@ section('§8  The DMG workflow triggers on TAGS and cannot join the release gate
   // Signing must be explicitly disabled while unsigned, or electron-builder
   // auto-discovers a keychain identity and silently produces a one-Mac build.
   ok(/CSC_IDENTITY_AUTO_DISCOVERY/.test(yml), 'the build step forces CSC_IDENTITY_AUTO_DISCOVERY off');
-  ok(/permissions:/.test(yml) && /contents:\s*read/.test(yml), 'the workflow token is read-only');
+  // The WORKFLOW default is read-only. The `dmg` job deliberately overrides it
+  // with `contents: write`, because since v3.38.0 that job publishes the GitHub
+  // Release the in-app updater resolves against — before that, a tag shipped with
+  // no installers and every installed copy said "you're up to date" on the old
+  // version. So this asserts the DEFAULT is read-only, which is the property that
+  // still holds; the job-level override and its narrow scope are asserted in
+  // scripts/test-release-publish.js, which parses the document rather than
+  // grepping it and can tell the two apart.
+  ok(/permissions:/.test(yml) && /contents:\s*read/.test(yml),
+     'the workflow-level default token is read-only (the dmg job overrides it — see test-release-publish.js)');
 
   // Nothing may be built out of a scaffold that was never installed.
   ok(/desktop\/package-lock\.json/.test(yml),
