@@ -362,7 +362,7 @@ export function pulseToolTip(pulse) {
   }
   if (Number.isFinite(pulse.eventsOutsideWindow) && pulse.eventsOutsideWindow > 0) {
     lines.push(pulse.eventsOutsideWindow + ' older save' +
-      (pulse.eventsOutsideWindow === 1 ? '' : 's') + ' fall outside this window.');
+      (pulse.eventsOutsideWindow === 1 ? ' falls' : 's fall') + ' outside this window.');
   }
   if (typeof pulse.oldestEventAt === 'string' && pulse.oldestEventAt) {
     lines.push('Oldest save seen: ' + pulse.oldestEventAt);
