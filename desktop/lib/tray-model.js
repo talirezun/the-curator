@@ -152,7 +152,7 @@ export const MAX_ROWS = 5;
 //   MENU_WIDTH_POINTS     260  the target for the whole item, edge to edge
 //   MENU_CHROME_POINTS     36  the leading state column plus trailing padding
 //   MENU_ICON_GAP_POINTS    4  the bearing between an icon and its title
-//   ROW_ICON_POINTS        10  the gutter a row's recency dot occupies
+//   ROW_ICON_POINTS        11  the gutter a row's recency dot occupies
 //   MENU_CHAR_POINTS      6.5  the average glyph advance of the menu font
 //
 // `MENU_CHAR_POINTS` is pulse-strip.js's own stated assumption and is READ FROM
@@ -163,7 +163,7 @@ export const MAX_ROWS = 5;
 export const MENU_WIDTH_POINTS = 260;
 export const MENU_CHROME_POINTS = 36;
 export const MENU_ICON_GAP_POINTS = 4;
-export const ROW_ICON_POINTS = 10;
+export const ROW_ICON_POINTS = 11;
 
 /** pulse-strip.js's assumption, not a second one. Defaulted only so a sibling
  *  module that has not landed yet cannot take this one down. */
@@ -199,8 +199,24 @@ export function labelBudgetChars(iconPoints = 0, charPoints = MENU_CHAR_POINTS) 
 /** An item with no icon: the headline, the commands, the notices, the stamp. */
 export const PLAIN_LABEL_CHARS = labelBudgetChars(0);
 
-/** A scope row. It carries a recency dot, so it has LESS text budget than a
- *  plain item — the gutter is ADDED to the label width, not overlaid on it. */
+/**
+ * A scope row. It carries a recency dot, so it has LESS text budget than a plain
+ * item — the gutter is ADDED to the label width, not overlaid on it.
+ *
+ * ── WHY THE GUTTER IS RESERVED AND NOT MEASURED ────────────────────────────
+ *
+ * `ROW_ICON_POINTS` is a fixed reservation rather than `dot.widthPoints` read
+ * back off whatever the renderer returned. If it were measured, a row's TEXT
+ * WIDTH would depend on whether the drawing module was present — the label
+ * would silently gain three characters on a build where `menu-dots.js` failed
+ * to import, which is a width that changes for a reason having nothing to do
+ * with the width.
+ *
+ * It is 11 because that is `menu-dots.js`'s own `DOT_POINTS`, and the suite
+ * PINS it against that module rather than trusting this sentence: a reservation
+ * smaller than the thing reserved is a budget that is quietly wrong on every
+ * row.
+ */
 export const ROW_LABEL_CHARS = labelBudgetChars(ROW_ICON_POINTS);
 
 /** The "where" line under the headline, which is indented four spaces. */
@@ -1484,20 +1500,23 @@ export function buildTrayModel(summary, opts = {}) {
     // passed through untouched. If that module ever stops emitting the noun,
     // this is a no-op rather than a corruption.
     //
-    // ── AND THEN THE BUDGET, WHICH THIS ITEM CANNOT ALWAYS MEET ────────
+    // ── AND THEN THE BUDGET, WHICH THE STRIP'S OWN GEOMETRY SETS ───────
     //
-    // The strip is about 83 points wide and Electron does NO scaling, so the
-    // picture alone spends a third of the 260-point target before a single
-    // character is drawn. At the assumed 6.5pt advance the reading gets 21
-    // characters, and `4 days known · 69 saves` is 23. It is therefore CLIPPED
-    // ON A CLAUSE BOUNDARY (see `clipClauses` for why an ordinary clip is
-    // unsafe on a reading), and the whole reading remains in this item's own
-    // tooltip.
+    // Electron does NO scaling on a menu icon, so the picture's width is spent
+    // before a single character is drawn, and the label gets whatever is left.
+    // Taken from `strip.widthPoints` and never from a constant here, because
+    // the drawing module owns that number and a second copy of it would be
+    // wrong the first time it changed — which it did: the strip folded from 28
+    // six-hour cells at 83pt to 14 twelve-hour ones at 55pt while this was
+    // being written, and this expression needed no edit.
     //
-    // Two characters over is inside the error of the font assumption — at 6.0pt
-    // per character the same reading fits whole — so the honest statement is
-    // that the strip's own geometry, not this label, is what sets this item's
-    // width. Narrowing the strip belongs to the module that draws it.
+    // At 55pt the reading gets 25 characters, and the longest form the producer
+    // emits — `4 days known · 69 saves`, the young-store case carrying its own
+    // honesty caveat — is 23. It fits WHOLE. At the previous 83pt it did not,
+    // and would have been cut back to `4 days known…`; the clause-boundary clip
+    // below is still the behaviour when a reading does overrun, and it is still
+    // the right one (see `clipClauses`), but it is no longer reached by any
+    // shape the producer is known to emit.
     label: clipClauses(stripPulseNoun(_pulseLabel ? _pulseLabel(rawPulse) : null),
       labelBudgetChars(strip.widthPoints)),
     toolTip: _pulseToolTip ? _pulseToolTip(rawPulse) : null,

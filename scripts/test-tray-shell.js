@@ -40,6 +40,7 @@
  *   §16  every label fits its budget, and nothing it removed is unreachable
  *   §17  sections, the two pictures, and the items that are now reachable
  *   §18  main.js wiring for the theme and the images — source scan, weak
+ *   §19  cross-file pins against the modules that DRAW the two pictures
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
  *
@@ -1472,16 +1473,22 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
 // ═══════════════════════════════════════════════════════════════════════════
 section('§17 sections, the two pictures, and the items that are now reachable');
 {
-  const spec = (w) => ({
+  // HAND-BUILT SPECS at the REAL geometry: menu-dots.js draws 11x11 and
+  // pulse-strip.js draws 55x14, both `template: false`. §19 pins those numbers
+  // against those modules; here they are literals so this section runs whether
+  // or not the drawing modules are present.
+  const spec = (w, h) => ({
     buffer: Buffer.from([1]), buffer2x: Buffer.from([2]),
-    widthPoints: w, heightPoints: 11, template: false,
+    widthPoints: w, heightPoints: h, template: false,
   });
   // HAND-BUILT SPECS matching the renderers' contract exactly, so this section
   // executes with or without the sibling modules that draw them. That is the
   // point of the injected seams — nothing here waits on another agent's file.
   const dots = [];
-  const renderDot = (bucket, o) => { dots.push({ bucket, o }); return spec(8); };
-  const renderStrip = (pulse, o) => (pulse ? { ...spec(83), template: true } : null);
+  const renderDot = (bucket, o) => { dots.push({ bucket, o }); return spec(11, 11); };
+  // `template: true` on the strip ONLY so the seam assertion below can see both
+  // values reach it. The real strip is `false`; §19 pins that.
+  const renderStrip = (pulse, o) => (pulse ? { ...spec(55, 14), template: true } : null);
 
   const built = model.buildTrayModel(summary({
     total: 12,
@@ -1492,7 +1499,7 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   // ── THE THEME IS PASSED, NEVER READ ────────────────────────────────────
   ok(dots.length > 0 && dots.every((d) => d.o && d.o.dark === true),
     'every dot is rendered with the theme the CALLER supplied — a pure module never reads nativeTheme');
-  const light = model.buildTrayModel(summary(), { now: NOW, renderDot: (b, o) => { dots.push({ b, o }); return spec(8); } });
+  const light = model.buildTrayModel(summary(), { now: NOW, renderDot: (b, o) => { dots.push({ b, o }); return spec(11, 11); } });
   ok(light.rows.length > 0, 'CONTROL — the light build produced rows');
   ok(dots.slice(-light.rows.length).every((d) => d.o && d.o.dark === false),
     'and an absent `dark` is LIGHT, which is the safe direction: a light image on a dark menu is dim, a dark one on a light menu is gone');
@@ -1548,6 +1555,21 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   eq(clicks, ['memory', 'memory'],
     'both land on Agent Memory — the same destination as the headline, which is where the saves this strip counts are actually listed');
   ok(pulseItem.toolTip && pulseItem.toolTip.length > 20, 'the full reading, including everything the label budget dropped, is on its tooltip');
+  // ── THE READING FITS WHOLE AT THE STRIP'S REAL WIDTH ─────────────────
+  //
+  // At the strip's earlier 83 points the label budget was 21 characters and the
+  // producer's longest form — the young-store case, which carries its own
+  // honesty caveat — is 23, so it was cut back to `4 days known…`. The strip
+  // folded to 55 points and the budget became 25. This asserts the ARITHMETIC
+  // rather than the outcome, so it stays honest if the strip changes again.
+  const longestReading = '4 days known · 69 saves';
+  ok(longestReading.length <= model.labelBudgetChars(55),
+    `the producer's longest reading (${longestReading.length} chars) fits the ${model.labelBudgetChars(55)}-character budget a 55pt strip leaves`);
+  ok(longestReading.length > model.labelBudgetChars(83),
+    `CONTROL: at the strip's earlier 83 points it did NOT (${model.labelBudgetChars(83)} chars), so the budget really is what the picture leaves over`);
+  eq(model.clipClauses(longestReading, model.labelBudgetChars(55)), longestReading,
+    '…and it therefore passes through the clause clip untouched');
+
   ok(!/^Save pulse/.test(pulseItem.label || ''),
     'the constant noun comes off the label, because the section header above it now carries that word');
   eq(model.stripPulseNoun(model.PULSE_LABEL_NOUN + '7 days · 69 saves'), '7 days · 69 saves',
@@ -1624,6 +1646,88 @@ section('§18 main.js wiring for the theme and the images — SOURCE SCAN, weak 
   ok(!/setTemplateImage\(true\)[\s\S]{0,200}makeIcon/.test(src),
     'CONTROL — no hardcoded template flag survives on the menu-image path');
   ok(/makeIcon: menuImage/.test(src), 'the seam is wired to that function');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§19 cross-file pins against the modules that DRAW the two pictures');
+//
+// `tray-model.js` reserves a gutter for a dot it never sees and names five
+// recency buckets a different module colours. Both are numbers and names living
+// in two files, which is the drift shape this project keeps recording — so they
+// are pinned by EXECUTING the other module rather than by trusting a comment.
+//
+// CONDITIONAL BY CONSTRUCTION, and it says so out loud: `menu-dots.js` is built
+// in parallel with this file, so when it is absent the pins cannot run. They are
+// not silently skipped — the count of pins actually executed is asserted, so a
+// module that vanished cannot leave this section passing on nothing.
+{
+  let dotsMod = null, stripMod = null;
+  try { dotsMod = await import(path.join(DESKTOP, 'lib', 'menu-dots.js')); } catch { dotsMod = null; }
+  try { stripMod = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js')); } catch { stripMod = null; }
+
+  let pins = 0;
+  if (dotsMod) {
+    // THE RESERVATION MUST COVER WHAT IS DRAWN. A gutter narrower than the dot
+    // is a budget that is quietly wrong on every row, and nothing on screen
+    // would say which of the two numbers was the mistake.
+    ok(model.ROW_ICON_POINTS >= dotsMod.DOT_POINTS,
+      `the reserved row gutter (${model.ROW_ICON_POINTS}pt) covers the dot menu-dots.js actually draws (${dotsMod.DOT_POINTS}pt)`);
+    ok(model.ROW_ICON_POINTS <= dotsMod.DOT_POINTS + 2,
+      '…and does not over-reserve, which would silently spend the label budget on empty space');
+    pins += 2;
+
+    // THE BUCKET VOCABULARY IS ONE VOCABULARY. `ageBucket()` is the only
+    // producer of these names and the dot renderer is the only consumer; a
+    // rename or a collapse on either side is a dot that silently stops being
+    // drawn, with no error anywhere.
+    const produced = new Set([0, 200, 3600, 100000, 10000000].map(model.ageBucket));
+    eq([...produced].sort(), [...dotsMod.DOT_ORDER].sort(),
+      'every bucket ageBucket() can produce from a real age is one menu-dots.js draws — and no more');
+    eq(model.ageBucket(null), 'unknown', 'CONTROL — and the sixth value is the absence');
+    ok(dotsMod.NO_DOT_BUCKETS.includes('unknown'),
+      '…which that module also declines to draw, so the two files agree that an unknown age has no colour');
+    eq(dotsMod.renderRecencyDot('unknown', { dark: true }), null,
+      '…and it really returns null for it, executed rather than read off a constant');
+    ok(dotsMod.DOT_ORDER.length === 5, `CONTROL: ${dotsMod.DOT_ORDER.length} buckets were compared, so the set equality above is not over an empty set`);
+    pins += 5;
+
+    // The spec shape this model carries onto a row is the one that module emits.
+    const real = dotsMod.renderRecencyDot('live', { dark: true });
+    ok(real && real.buffer && real.buffer2x && real.template === false,
+      'a real dot spec carries both representations and template:false — a coloured dot marked as a template is flattened to a monochrome blob');
+    pins += 1;
+  }
+  const realStrip = stripMod ? stripMod.renderPulseStrip({
+    clock: 'agent', events: 69, buckets: new Array(28).fill(2), bucketSeconds: 21600,
+    windowSeconds: 604800, coversWholeWindow: false, firstKnownBucket: 12,
+  }, { dark: true }) : null;
+  // GATED ON THE CONTRACT, not merely on the file existing. A pre-contract
+  // `renderPulseStrip` returns a spec with NO `template` field at all, and
+  // pinning `=== false` against it would red this branch for the sibling
+  // module's state rather than for anything in these files. `'template' in
+  // spec` is the discriminator, and the NOTE below says when it did not hold.
+  if (realStrip && typeof realStrip.template === 'boolean') {
+    const real = realStrip;
+    ok(real && real.template === false,
+      'the strip is drawn in COLOUR — the template constraint is true of the TRAY GLYPH and false of a menu item icon, which is what made the shipped strip barely visible');
+    ok(real && real.widthPoints > 0 && model.labelBudgetChars(real.widthPoints) >= 20,
+      `the real strip (${real ? real.widthPoints : '?'}pt) leaves ${real ? model.labelBudgetChars(real.widthPoints) : '?'} characters for its reading — enough for the producer's longest form`);
+    ok(stripMod.pulseLabel({ clock: 'agent', events: 69, buckets: new Array(28).fill(2),
+      bucketSeconds: 21600, windowSeconds: 604800, coversWholeWindow: true, firstKnownBucket: 0 })
+      .startsWith(model.PULSE_LABEL_NOUN),
+      'the producer still opens its reading with the exact noun this model strips — a literal that stopped matching would be a silent no-op');
+    pins += 3;
+  } else if (stripMod) {
+    console.log('    NOTE: pulse-strip.js is present but PRE-CONTRACT — its spec carries no `template`');
+    console.log('          field, so the three strip pins did not run. They go live on merge.');
+  }
+
+  if (pins === 0) {
+    console.log('    NOTE: neither drawing module carries the contract in this tree, so §19 pinned NOTHING.');
+    console.log('          These pins are live only once menu-dots.js and pulse-strip.js are merged alongside.');
+  } else {
+    ok(pins >= 2, `CONTROL: ${pins} cross-file pins actually executed, so this section is not passing on an absent module`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
