@@ -1018,7 +1018,30 @@ async function readBackgroundMode() {
  *  — which is what makes it safe to do on hover. */
 function renderTrayFromSnapshot() {
   if (!tray || tray.isDestroyed()) return;
-  const model = buildTrayModel(traySnapshot, { maxRows: TRAY_ROW_LIMIT });
+  // `dark` is READ HERE and passed in, because lib/tray-model.js must stay
+  // importable by `npm test`, where Electron does not exist. It is the same
+  // split as `makeIcon` below, for the same reason.
+  //
+  // ── AND IT IS CURRENTLY A CONSTANT. FOUND, NOT FIXED. ─────────────────
+  //
+  // boot() sets `nativeTheme.themeSource = 'dark'` so the window's real title
+  // bar matches the app's near-black theme. That setter is exactly what
+  // `shouldUseDarkColors` reports, so on this app it reads TRUE on every Mac,
+  // and `nativeTheme.on('updated')` below will not fire for a system light/dark
+  // switch either. The tray therefore always draws its dark-menu images.
+  //
+  // Whether that is WRONG depends on something no test here can answer: a
+  // status item's menu is drawn by AppKit, and if it follows the SYSTEM menu
+  // appearance rather than this process's overridden one, a light-mode Mac gets
+  // dark-menu images. Reading a second theme value to work around the first
+  // would be two opinions about one fact in the one file no test can execute,
+  // which is worse than the defect. It is recorded here and in the release
+  // notes instead, and the wiring is the contracted one so the fix is a
+  // one-line change to this expression when somebody can see a screen.
+  const model = buildTrayModel(traySnapshot, {
+    maxRows: TRAY_ROW_LIMIT,
+    dark: nativeTheme.shouldUseDarkColors,
+  });
 
   if (model.glyph !== trayGlyph) {
     trayGlyph = model.glyph;
@@ -1030,7 +1053,7 @@ function renderTrayFromSnapshot() {
     onOpenMemory: () => openMemoryView(null),
     onOpenApp: () => revealWindow(),
     onOpenSettings: () => { openSettingsView(); },
-    makeIcon: pulseStripImage,
+    makeIcon: menuImage,
   })));
 
   // THE ONE-SHOT CORRECTOR, NOT A TICK. `liveExpiresInMs` is null unless the
@@ -1068,27 +1091,36 @@ async function refreshTraySummary() {
 }
 
 /**
- * The pulse strip as a nativeImage — WIRING ONLY.
+ * One drawn image spec as a nativeImage — WIRING ONLY.
  *
- * Every decision about the strip (its geometry, its cell vocabulary, its words,
- * whether there is one at all) is in lib/pulse-strip.js and lib/tray-model.js,
- * where the offline suite executes them. main.js cannot be imported, evaluated
- * or run by `npm test` — Electron is not an offline dependency — so anything
- * put here can only ever be source-scanned, which is the reason there is as
- * little of it as possible.
+ * Every decision about the pictures (their geometry, their cell vocabulary,
+ * their words, their palette, whether there is one at all) is in
+ * lib/pulse-strip.js, lib/menu-dots.js and lib/tray-model.js, where the offline
+ * suite executes them. main.js cannot be imported, evaluated or run by
+ * `npm test` — Electron is not an offline dependency — so anything put here can
+ * only ever be source-scanned, which is the reason there is as little of it as
+ * possible.
+ *
+ * ── `spec.template` IS OBEYED, NOT DECIDED ─────────────────────────────────
+ *
+ * A TEMPLATE image is tinted by macOS for the current bar and inverts with a
+ * highlighted row; that is mandatory for the tray glyph and it is what the
+ * pulse strip wants. A MENU ITEM ICON, by contrast, renders in full colour, so
+ * a coloured recency dot must NOT be marked as a template or macOS will flatten
+ * it to a monochrome blob. The renderer knows which it drew; this function
+ * reads the field and never guesses, so no colour decision lives in the one
+ * file no test can run.
  *
  * Returns null on anything unexpected: a menu item that throws while being
  * BUILT takes the whole menu with it, and a missing picture must never cost the
  * reading beside it.
  */
-function pulseStripImage(strip) {
-  if (!strip || !strip.buffer) return null;
+function menuImage(spec) {
+  if (!spec || !spec.buffer) return null;
   try {
-    const img = nativeImage.createFromBuffer(strip.buffer, { scaleFactor: 1 });
-    if (strip.buffer2x) img.addRepresentation({ scaleFactor: 2, buffer: strip.buffer2x });
-    // Same hard constraint as the glyph: without this the strip is a black
-    // smear on a dark menu and it does not invert with a highlighted row.
-    img.setTemplateImage(true);
+    const img = nativeImage.createFromBuffer(spec.buffer, { scaleFactor: 1 });
+    if (spec.buffer2x) img.addRepresentation({ scaleFactor: 2, buffer: spec.buffer2x });
+    img.setTemplateImage(spec.template === true);
     return img;
   } catch {
     return null;
@@ -1197,6 +1229,20 @@ function startTray() {
   // because Electron shows the already-built menu synchronously; there is
   // nothing here to await into.
   tray.on('mouse-enter', renderTrayFromSnapshot);
+
+  // ── A THEME CHANGE REDRAWS THE PICTURES, AND NOTHING ELSE ──────────────
+  //
+  // The strip and the recency dots are PNG bytes chosen for a light or a dark
+  // menu, and lib/tray-model.js is a pure module that cannot notice the switch —
+  // it is handed `dark` and has no way to ask again. Without this, a Mac moving
+  // to dark mode at sunset leaves the menu carrying images drawn for the light
+  // one, which is the case where a dot is closest to invisible.
+  //
+  // It re-renders FROM THE SNAPSHOT: no index read, no filesystem, no network —
+  // the same no-I/O path `mouse-enter` uses. `nativeTheme` is a process-level
+  // singleton, so the listener is removed in stopTray() rather than left to
+  // accumulate one per tray the user toggles on.
+  nativeTheme.on('updated', renderTrayFromSnapshot);
   tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
   tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
 
@@ -1214,6 +1260,7 @@ function startTray() {
 
 /** Tear the tray down, including everything it was paying for. */
 function stopTray() {
+  nativeTheme.removeListener('updated', renderTrayFromSnapshot);
   if (stateWatcher) { stateWatcher.stop(); stateWatcher = null; }
   if (glyphExpiry) { glyphExpiry.cancel(); glyphExpiry = null; }
   if (tray && !tray.isDestroyed()) tray.destroy();

@@ -22,9 +22,12 @@
  *
  *   1  the headline answer          "Last save · 4 min ago"
  *   2  where that save was          "curator · main"
+ *   -  header                       "Save pulse"
  *   2b the save pulse               a drawn strip + "7 days · 65 saves"
- *   -  separator
- *   3  up to eight rows             newest first, flat, not grouped
+ *   -  header                       "Recent scopes"
+ *   3  up to FIVE rows              newest first, flat, not grouped, each with
+ *                                   a recency dot in its icon gutter
+ *   3b the overflow                 "More in Agent Memory… (6)" — clickable
  *   -  separator
  *   4  notices, only when true      waiting handoffs; harness collisions
  *   -  separator
@@ -33,6 +36,11 @@
  *   6  "Updated 14:32"              the reading's own freshness
  *   -  separator
  *   7  Quit The Curator
+ *
+ * The two headers are what make this read as a WIDGET rather than a list of
+ * items, which was the maintainer's verdict on the version before it ("it does
+ * not look like a widget yet"). They replace the separators that used to sit in
+ * the same two places, so the menu gained structure without gaining height.
  *
  * The headline is FIRST because it is the question the maintainer actually
  * asks — "am I approaching the end of the context window, and did we update the
@@ -87,6 +95,8 @@
  *  Labels are user-visible copy and will change; ids are a contract. */
 export const ID_HEADLINE = 'tray-headline';
 export const ID_HEADLINE_WHERE = 'tray-headline-where';
+export const ID_HEADER_PULSE = 'tray-header-pulse';
+export const ID_HEADER_ROWS = 'tray-header-rows';
 export const ID_PULSE = 'tray-pulse';
 export const ID_OPEN_MEMORY = 'tray-open-memory';
 export const ID_OPEN_APP = 'tray-open-app';
@@ -108,6 +118,56 @@ export const EMPTY_HINT = 'A coding agent writes here through the my-curator MCP
  *  would tell a user with a full store that their store is empty. */
 export const UNREADABLE_HINT = 'Open The Curator to see what went wrong';
 
+/**
+ * ── SECTION HEADERS, AND THE ONE THING THAT IS NOT PROVEN ABOUT THEM ───────
+ *
+ * `type: 'header'` renders as a proper macOS section header — small, quiet,
+ * non-interactive — and it is what turns this from a list of items into
+ * something shaped like the widgets the maintainer pointed at. It was verified
+ * to be in Electron's accepted `type` union (`'normal' | 'separator' |
+ * 'submenu' | 'checkbox' | 'radio' | 'header' | 'palette'`) on 43.5.0.
+ *
+ * ── macOS BELOW 14 ────────────────────────────────────────────────────────
+ *
+ * `header` is a macOS 14+ affordance. Electron's own type CHECK is JavaScript
+ * and runs the same on every macOS, so `Menu.buildFromTemplate` cannot throw on
+ * macOS 13 for a type this Electron accepts — the risk is not a crash, it is
+ * that AppKit draws an ordinary item instead of a header.
+ *
+ * SO THE FALLBACK IS BUILT INTO THE ITEM RATHER THAN BRANCHED AROUND: a header
+ * here carries `enabled: false` and NO click handler, so its worst case is a
+ * dimmed, inert caption line — which is what a section heading looks like
+ * anyway, and is the same idiom the notices and the freshness stamp already
+ * use. There is no arrangement of macOS versions in which one of these becomes
+ * a clickable item that does nothing, which is the failure worth preventing.
+ *
+ * THIS HAS NOT BEEN RENDERED ON ANY SCREEN. Electron is not an offline
+ * dependency, no menu has been built, and neither the header drawing on macOS
+ * 14 nor the degraded drawing below it has been observed.
+ */
+export const MENU_HEADER_TYPE = 'header';
+
+/** Section captions. Nouns, not sentences — a header that explains is a header
+ *  that costs a line of a surface with no vertical space. */
+export const HEADER_PULSE = 'Save pulse';
+export const HEADER_ROWS = 'Recent scopes';
+
+/**
+ * One image spec through the injected seam, or null.
+ *
+ * Guarded because a menu item that throws WHILE BEING BUILT takes the whole
+ * menu with it, and a menubar with no menu is indistinguishable from one that
+ * was never installed. A missing picture must never cost the reading beside it.
+ */
+function image(makeIcon, spec) {
+  if (typeof makeIcon !== 'function' || !spec) return null;
+  try { return makeIcon(spec) || null; } catch { return null; }
+}
+
+function header(id, label) {
+  return { id, type: MENU_HEADER_TYPE, label, enabled: false };
+}
+
 const sep = { type: 'separator' };
 
 /**
@@ -118,9 +178,11 @@ const sep = { type: 'separator' };
  * @param {Function} o.onOpenMemory  () => void      — open the Agent memory view
  * @param {Function} o.onOpenApp     () => void      — reveal the window
  * @param {Function} o.onOpenSettings () => void
- * @param {Function} [o.makeIcon]  (strip) => NativeImage — the ONE Electron
- *   call the pulse strip needs, injected rather than imported. See the pulse
- *   block below for why it is a parameter and not a build step in main.js.
+ * @param {Function} [o.makeIcon]  (spec) => NativeImage|null — the ONE Electron
+ *   call the drawn images need, injected rather than imported. A spec is
+ *   `{buffer, buffer2x, widthPoints, heightPoints, template}`; the seam is
+ *   expected to honour `spec.template` and is never asked to invent it. See the
+ *   pulse block below for why it is a parameter and not a build step in main.js.
  * @returns {Array} a `Menu.buildFromTemplate` template
  */
 export function buildTrayMenuTemplate(model, o = {}) {
@@ -157,36 +219,45 @@ export function buildTrayMenuTemplate(model, o = {}) {
     click: onOpenMemory,
   });
   if (headline && headline.where) {
+    const whereFull = headline.whereFull && headline.whereFull !== headline.where
+      ? headline.whereFull : null;
     template.push({
       id: ID_HEADLINE_WHERE,
       label: '    ' + headline.where,
       // A statement about the line above it, not a second action.
       enabled: false,
+      // The uncompacted project · scope, whenever the compaction changed it.
+      ...(whereFull ? { toolTip: whereFull } : {}),
     });
   }
 
   // ── 2b. The save pulse ──────────────────────────────────────────────────
   //
-  // ONE item, directly under the headline pair it elaborates, carrying a drawn
-  // strip in its icon gutter and the reading in words on its label.
+  // ONE item under its own section header, carrying a drawn strip in its icon
+  // gutter and the reading in words on its label.
   //
   // ── WHY ONE STRIP AND NOT ONE PER ROW ──────────────────────────────────
   //
-  // A per-row sparkline was considered and REFUSED on legibility: eight to
-  // eleven independent bands, each a few points tall, in a menu that this same
-  // release is trying to make NARROWER, and each drawn from a single scope's
-  // handful of saves — most would be one mark and a lot of empty. One strip
-  // over the whole store is a reading somebody can take at a glance, which is
-  // the only thing a menu bar surface is for.
+  // A per-row sparkline was considered and REFUSED on legibility: five to
+  // eleven independent bands, each a few points tall, in a menu this release is
+  // making NARROWER, and each drawn from a single scope's handful of saves —
+  // most would be one mark and a lot of empty. One strip over the whole store is
+  // a reading somebody can take at a glance, which is the only thing a menu bar
+  // surface is for.
   //
-  // ── WHY IT IS DISABLED ─────────────────────────────────────────────────
+  // ── AND WHY IT IS NOW ENABLED ──────────────────────────────────────────
   //
-  // It is a STATEMENT, not an action, and a disabled item is this menu's
-  // existing idiom for a status line — the notices and the freshness stamp are
-  // both disabled for the same reason. That does mean reduced contrast, which
-  // is the right trade HERE and the wrong one for the headline: the headline is
-  // the ANSWER and stays enabled at full contrast, and clicking a picture of
-  // the last seven days would have no obvious destination anyway.
+  // It shipped `enabled: false`, reasoned as "a statement, not an action", and
+  // the maintainer's first words about it were that the pulse "is barely
+  // visible". A disabled item is drawn at REDUCED CONTRAST — so the one piece
+  // of graphics he asked for was put in the dimmest style macOS offers, which is
+  // the compounding-opacity defect this repo has already fixed twice in its own
+  // CSS. The reasoning was sound and the outcome was the known bad one.
+  //
+  // Enabling it needs a destination, and it has the same one as the headline
+  // above it: the Agent memory view, which is where the saves this strip counts
+  // are actually listed. A picture of the last seven days that opens the list of
+  // the last seven days is not a stretch.
   //
   // ── WHY `makeIcon` IS INJECTED ─────────────────────────────────────────
   //
@@ -194,18 +265,22 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // stay importable by `npm test`, where Electron does not exist. Passing it in
   // keeps EVERY decision here — whether there is a strip at all, what it says,
   // where it sits, whether it is actionable — inside a module the suite runs
-  // for real, and leaves main.js the two lines it cannot give away. Same split,
-  // and the same reason, as lib/menu.js and lib/quit-decision.js.
+  // for real, and leaves main.js the two lines it cannot give away.
   //
-  // With no `makeIcon` the item still appears with its label and its tooltip
-  // and simply carries no picture: a missing image must not cost the reading.
+  // The seam takes a whole SPEC and reads `spec.template` for whether macOS
+  // should tint the image or draw it as authored, so this module never has an
+  // opinion about a pixel. With no `makeIcon` the item still appears with its
+  // label and its tooltip and simply carries no picture: a missing image must
+  // not cost the reading.
   const pulse = m && m.pulse ? m.pulse : null;
   if (pulse && pulse.label) {
-    const icon = typeof makeIcon === 'function' ? makeIcon(pulse.strip) : null;
+    const icon = image(makeIcon, pulse.strip);
+    template.push(header(ID_HEADER_PULSE, HEADER_PULSE));
     template.push({
       id: ID_PULSE,
       label: pulse.label,
-      enabled: false,
+      enabled: true,
+      click: onOpenMemory,
       ...(icon ? { icon } : {}),
       ...(pulse.toolTip ? { toolTip: pulse.toolTip } : {}),
     });
@@ -218,15 +293,18 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // happened" is a recency question. Grouping answers a different one, spends
   // the one surface with no vertical space on headings, and the app's own
   // Agent memory view already answers it better. The project survives as a
-  // prefix on every row, so nothing is lost but the ordering.
+  // prefix on every row when more than one project has state, so nothing is
+  // lost but the ordering.
   //
-  // The cost, stated rather than mitigated: one busy project can monopolise
-  // all eight rows. A per-project quota inside an eight-row list is the kind of
-  // cleverness that produces two behaviours and one bug, and the overflow item
-  // below reaches everything.
+  // FIVE OF THEM, and the overflow below is a real destination rather than an
+  // apology — see `truncatedNote` in tray-model.js. The cost, stated rather
+  // than mitigated: one busy project can monopolise all five rows. A per-project
+  // quota inside a five-row list is the kind of cleverness that produces two
+  // behaviours and one bug, and the overflow item reaches everything.
   if (rows.length) {
-    template.push(sep);
+    template.push(header(ID_HEADER_ROWS, HEADER_ROWS));
     for (const row of rows) {
+      const dot = image(makeIcon, row.dot);
       template.push({
         id: row.id,
         label: row.label,
@@ -234,15 +312,20 @@ export function buildTrayMenuTemplate(model, o = {}) {
         // not simply drops it, which is exactly why every fact a person needs
         // is on the LABEL and the sublabel carries only the agent's own prose.
         ...(row.sublabel ? { sublabel: row.sublabel } : {}),
+        ...(dot ? { icon: dot } : {}),
         ...(row.toolTip ? { toolTip: row.toolTip } : {}),
         click: () => onOpenScope(row),
       });
     }
     if (m.truncatedNote) {
-      template.push({ id: ID_TRUNCATED, label: m.truncatedNote, enabled: false });
+      // ENABLED. It is the only route to the rows the cap hid, and a disabled
+      // line that names a place you cannot go from it is worse than no line.
+      template.push({
+        id: ID_TRUNCATED, label: m.truncatedNote, enabled: true, click: onOpenMemory,
+      });
     }
   } else {
-    template.push(sep);
+    template.push(header(ID_HEADER_ROWS, HEADER_ROWS));
     template.push({ id: ID_EMPTY, label: EMPTY_LABEL, enabled: false });
     template.push({
       label: (m && m.ok === false) ? UNREADABLE_HINT : EMPTY_HINT,
@@ -254,7 +337,12 @@ export function buildTrayMenuTemplate(model, o = {}) {
   if (notices.length) {
     template.push(sep);
     for (const n of notices) {
-      template.push({ label: n.text, enabled: false });
+      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE — the same absolute rule
+      // the rows are held to. A notice long enough to be clipped carries its
+      // whole sentence on the tooltip; one that fits carries no tooltip at all,
+      // because a tooltip repeating the label verbatim is noise.
+      const full = n.full && n.full !== n.text ? n.full : null;
+      template.push({ label: n.text, enabled: false, ...(full ? { toolTip: full } : {}) });
     }
     if (m.noticesHidden > 0) {
       template.push({ label: '…and ' + m.noticesHidden + ' more', enabled: false });
