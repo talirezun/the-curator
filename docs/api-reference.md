@@ -2642,6 +2642,7 @@ getTraySummary({ limit = 8, now = Date.now() })   // limit is clamped to [1, 40]
 | `agentWrittenAt` / `fileChangedAt` (+ their `…AgeSeconds`) | Both raw clocks, always emitted under names that can only mean one thing, so a consumer wanting *"written 3 hr ago · arrived just now"* re-derives nothing |
 | `isThisMachine` | Whether this row was written by **this installation**. True on an exact match of the whole `<hostname-slug>-<install-id>` segment, **and** on a match of the trailing installation id alone — macOS re-derives the hostname from DHCP, so one laptop can own two `<machine>` folders, and comparing the whole string classified half of a real store as a remote machine. The hostname half is **never** compared, so `buildbox-a1b2c3` cannot claim to be this machine unless it carries this installation's id, and two absent ids never compare equal. **Read it strictly**: anything but `true` should be treated as remote |
 | `machineMatch` | `'exact'` · `'install-id'` · `'none'` — **how** `isThisMachine` was decided. A diagnostic, so a derived answer is not one nobody can debug; it is deliberately never displayed, and a renderer that branched on it would put a second identity opinion beside `isThisMachine` |
+| *(consumer-side)* `machineIdentityKey` | Not a field. The tray menu needs a **different** question — *are these two rows one computer* — and answers it in `desktop/lib/tray-model.js` by comparing the **trailing installation id** and never the raw `<machine>` folder string, so `talis-macbook-pro-17d23c` and `mac-17d23c` both key to `id:17d23c`. It falls back to `isThisMachine === true`, then to the folder name, only when no id parses. Noted here because it is the rule that keeps a DHCP hostname flap from rendering as a phantom second computer, and because it is **not** `machineMatch` |
 | `isThisHost` | The weaker fact: the folder shares this host's *name*. A folder can share a hostname and belong to a different installation, which is the entire reason the installation id exists |
 | `harness` / `harnessShared` / `harnesses[]` | Which agent tool wrote last, whether **two** tools are alternating in this one folder, and which ones. A collision silently overwrites handoffs; the remedy — a separate scope per tool — is the user's |
 | `kind` | The store's own verdict on the last save (`lastSaveKind`), e.g. `trimmed`. **`null` means there is no journal line, so we do not know — not "complete"** |
@@ -2670,6 +2671,20 @@ a 400 KB budget — is byte-identical.
 brand-new store and a dormant one draw the same 28 empty cells and mean opposite things. On a
 3.5-day-old store against the 7-day window, **13 of 28 cells are unknown** — the common case, not an
 edge one.
+
+> **28 is the PRODUCER's resolution and not the drawn one.** `desktop/lib/pulse-strip.js` folds these
+> buckets two-to-one at draw time (`mergeCells(cells, mergeFactor(28))`), so the menu bar strip draws
+> **14 cells of 12 hours** in 55 × 14 points. Nothing here changes: `windowSeconds`, `bucketSeconds`
+> and `buckets[]` are the contract, and a consumer is free to draw them at full resolution. A
+> renderer's legend must quote `drawnBucketSeconds()` rather than `bucketSeconds`, because a legend
+> has to describe the picture in front of the reader. The 13-of-28 store above folds to **6 of 14**
+> unknown cells — still half the strip.
+
+> **`TRAY_DEFAULT_LIMIT` is 8; the tray shell asks for 5.** The default is what a caller gets when it
+> expresses no opinion. `desktop/main.js` sets `TRAY_ROW_LIMIT = MAX_ROWS` (5, imported from
+> `tray-model.js`) so it asks for exactly what it can display, and `buildTrayModel()` caps again at
+> `MAX_ROWS` independently. Because `total` and `pairsOnDisk` are both counted **before** the slice,
+> neither cap can be reported as a measurement at any limit.
 
 A save stamped in the **future** — a machine with a skewed clock, which sync makes reachable — is
 clamped into the newest cell and counted, the same direction the store already clamps a negative age

@@ -92,14 +92,17 @@ the app is read-only over working state by design, and it must stay that way.
 | The native `Menu` template — Phase 1's whole surface | `desktop/lib/tray-menu.js` | **Built**, per §1.4 |
 | The generated template-image glyph (ring / filled) | `desktop/lib/tray-icon.js` | **Built** |
 | The **save pulse** — 28 buckets of 6 hours over a 7-day window, computed from journal `at` values the index already parsed | `src/brain/tray-summary.js` (`computePulse`) | **Built.** Phase 3 material, arrived early and in a different shape — see deviation 6 |
-| The pulse **drawn**, as an 83 × 11-point alpha-only template PNG on one menu item's `icon` | `desktop/lib/pulse-strip.js` | **Built.** See deviation 6 |
+| The pulse **drawn**, as a **55 × 14-point colour RGBA PNG** on one menu item's `icon`, folding the producer's 28 buckets two-to-one into **14 twelve-hour cells** | `desktop/lib/pulse-strip.js` | **Built.** Shipped first at 83 × 11 alpha-only; see deviations 6 and 9 |
+| A **recency dot** per row — `ageBucket()`'s five states drawn as a green/amber/grey ladder, `unknown` drawn as nothing | `desktop/lib/menu-dots.js` | **Built.** Not in §1.5's plan in this form; see deviation 9 |
+| Two `type: 'header'` section captions — **Save pulse** and **Recent scopes** — replacing the two separators that sat in the same places | `desktop/lib/tray-menu.js` | **Built.** See deviation 9 |
+| A hard width budget — `MENU_WIDTH_POINTS` 260 spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** See deviation 9 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
 | The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
 | Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked |
 
 ### What deviated from the plan, and why
 
-Eight deviations. Each one is a decision taken at build time against a section
+Nine deviations. Each one is a decision taken at build time against a section
 below, and the section below is left as it was written.
 
 1. **`tray-only` does not hide the Dock icon.** §1.8 argued for
@@ -226,6 +229,47 @@ below, and the section below is left as it was written.
    shown local row is dropped, and the headline cap came down 72 → 54. **Every
    dropped fact stays reachable in that row's tooltip.**
 
+9. **The menu was retuned after the maintainer used it, and four things moved
+   at once.** He said it did not yet look like a widget and that the pulse was
+   *"barely visible"*, and measuring his real store through the **reader's**
+   view — the installed app's own data directory, not the repo checkout the
+   suites had always used — showed a widest label of **74 characters** and about
+   **517 points** against a 260-point target. Four changes followed, and they are
+   one decision rather than four:
+
+   - **Colour.** The strip and the new dots ship as RGBA with `template: false`.
+     The constraint they had inherited from the tray glyph was **false**: macOS
+     tints a menu-*bar* icon, but a menu-*item* icon is drawn as authored. The
+     alpha-only strip's heaviest bar was alpha 1.0 of the disabled-text tint,
+     under 2:1 against the menu — which is the whole of *"barely visible"*.
+   - **Two section headers**, `Save pulse` and `Recent scopes`, in place of the
+     two separators that already sat there — structure at no cost in height. The
+     pulse label then drops the words *Save pulse ·*, because the header carries
+     the noun.
+   - **A width budget rather than a target.** `labelBudgetChars()` spends 260
+     points minus chrome minus the icon at an assumed 6.5-point advance. Rows
+     came down from eight to **five**, and the strip from **83 × 11 to 55 × 14**
+     — narrower and twice the ink per cell at once, which is the only honest
+     answer to *make it more present* inside a shrinking budget. Measured after:
+     **41 characters, about 259 points.**
+   - **The dots**, which draw a calculation `ageBucket()` was already making and
+     discarding. §1.5 planned *recency pips* for the Phase 2 popover; this is a
+     narrower thing that fits a menu, and it does not build toward that panel.
+
+   Two smaller corrections rode along and are worth naming because both were
+   *silent*. `isThisMachine` was the wrong question for a **width** decision —
+   on the maintainer's setup the installed app and his checkout are two
+   installations on one computer, so it is false on every row he owns and a
+   machine name was printed on every line; the rule now asks whether the token
+   **varies across the visible rows**, and same-computer is decided by
+   `machineIdentityKey`, which compares the trailing installation id and never
+   the raw folder string. And the menu's light/dark choice is read from
+   `AppleInterfaceStyle`, not `nativeTheme.shouldUseDarkColors`, because `boot()`
+   pins `themeSource = 'dark'` for the window's title bar and that setter is
+   exactly what `shouldUseDarkColors` reports — measured on a light-appearance
+   Mac on Electron 43.5.0, where `getEffectiveAppearance()` follows the override
+   too and only `AppleInterfaceStyle` does not.
+
 ### The consequence of deviation 2 — SUPERSEDED, and kept because it names the shape
 
 > **This subsection describes behaviour that has been fixed.** It is kept
@@ -263,7 +307,7 @@ serialises against `pull()` — both real work, neither in this change.
 | **0** — two fields on the store's index row | **Shipped** in v3.34.0 |
 | **1** — tray + native menu, `window` default | **Shipped** |
 | **2** — popover panel + per-scope popup + budget bar + recency pips | **Not built.** §1.7's tier rule (*the widget renders the journal; the app renders the handoff*) and §1.7's hard constraint are the contract it must be built to |
-| **3** — bucketed event strip | **PARTLY BUILT — see deviation 6.** One **aggregate** strip shipped, in the **top-level menu**, at 28 × 6 hours over 7 days. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
+| **3** — bucketed event strip | **PARTLY BUILT — see deviations 6 and 9.** One **aggregate** strip shipped, in the **top-level menu**, drawn at 14 × 12 hours over 7 days from a producer that still buckets at 28 × 6 hours. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
 
 Two items §6 raised that are **not** part of the widget and are still open:
 gating the two shell `setInterval`s on `document.hidden` (§2.7 rec 1) — **now
@@ -283,19 +327,37 @@ bar and the inverted open-menu state, that `mouse-enter` fires at all, and that
 the icon is visible rather than pushed behind the notch. Treat a green suite as
 proof about the **model**, never about the **menu bar**.
 
-**The pulse strip is in the same position, one layer worse.** Its geometry, its
-three cell states, its labels and its decoded pixels are executed and asserted
-offline, and the emitted PNG is opened by macOS's own `sips` to prove validity by
-something other than its author's encoder. What is **not** proven: that Electron
-accepts a `MenuItemConstructorOptions.icon` at these dimensions, that Electron
-really performs no scaling on it (read from `electron_menu_controller.mm`, not
-observed), that macOS tints an alpha-only template strip correctly in the three
-contexts above, that the 2x representation is chosen on a retina display, and
-that the item does not widen the menu past the budget the suite reasons about in
-**assumed** glyph advances (`MENU_CHAR_POINTS = 6.5`, stated as an assumption
-because no font has ever been measured and neither Electron nor AppKit exposes a
-width API to ask). `main.js`'s wiring of the strip is **source-scanned only**,
-and the suite's own section heading says so.
+**The pulse strip and the recency dots are in the same position, one layer
+worse.** Their geometry, the strip's three cell states, the dots' five, their
+labels, their contrast ratios and their decoded pixels are executed and asserted
+offline, and the emitted PNGs are opened by macOS's own `sips` to prove validity
+by something other than their author's encoder. What is **not** proven: that
+Electron accepts a `MenuItemConstructorOptions.icon` at these dimensions, that
+Electron really performs no scaling on it (read from `electron_menu_controller.mm`,
+not observed), that macOS leaves a **non-template colour** image alone in a light
+bar, a dark bar and the inverted open-menu state, that the 2x representation is
+chosen on a retina display, and that the items do not widen the menu past the
+budget the suite computes from **assumed** glyph advances (`MENU_CHAR_POINTS =
+6.5`, stated as an assumption because no font has ever been measured and neither
+Electron nor AppKit exposes a width API to ask). `main.js`'s wiring of the strip
+is **source-scanned only**, and the suite's own section heading says so.
+
+**The two section headers have never been drawn either.** `type: 'header'` was
+verified to be in Electron 43.5.0's accepted `type` union, and Electron's own
+check is JavaScript that runs identically on every macOS — so
+`Menu.buildFromTemplate` cannot throw on macOS 13 for it. What is unproven is
+whether macOS 14 draws it as a section header at all, and whether macOS 13
+degrades it to the dimmed inert caption the fallback is designed around. The
+fallback is built into the item rather than branched around: a header carries
+`enabled: false` and no click handler, so there is no arrangement of macOS
+versions in which one becomes a clickable item that does nothing.
+
+**And the appearance subscription is unproven.** That
+`systemPreferences.subscribeNotification('AppleInterfaceThemeChangedNotification')`
+actually fires on a real appearance change has never been observed; what *is*
+measured is only that `nativeTheme.shouldUseDarkColors` and
+`getEffectiveAppearance()` both follow the `themeSource` override and therefore
+cannot answer the question, while `AppleInterfaceStyle` does not follow it.
 
 ---
 

@@ -100,7 +100,8 @@ names out of both files rather than from a hardcoded list.
 | `lib/tray-model.js` | The menubar widget's ROW MODEL: order, ages, the harness-vs-machine slot, caps, notices, the glyph state. Pure. |
 | `lib/tray-menu.js` | Row model → `Menu.buildFromTemplate` template. Pure. |
 | `lib/tray-icon.js` | Generates the template-image glyph as PNG bytes. No binary is checked in. Pure. |
-| `lib/pulse-strip.js` | The save pulse DRAWN: cell vocabulary, geometry, the label and tooltip, and an 83x11pt alpha-only template PNG at 1x and 2x. Reuses `tray-icon.js`'s encoder. Pure. |
+| `lib/pulse-strip.js` | The save pulse DRAWN: cell vocabulary, the five-rung colour ramp, geometry, the label and tooltip, and a **55x14pt colour RGBA PNG** at 1x and 2x carrying 14 twelve-hour cells folded from the producer's 28. `template: false`. Uses `rgba-png.js`. Pure. |
+| `lib/menu-dots.js` | The per-row recency dot: `ageBucket()`'s five states as an 11pt colour RGBA PNG at 1x and 2x, on a green/amber/grey palette and a strictly decreasing ink ladder. `'unknown'` returns **null** — no mark. `template: false`. Pure. |
 | `lib/tray-remote.js` | WHEN the menubar may ask GitHub whether another machine has pushed: menu open only, never hover, never a timer. Pure decision. |
 | `lib/background-mode.js` | Resolves `backgroundMode` and the 3x3 live transition between modes. Pure. |
 | `lib/state-watch.js` | The refresh strategy: `/state/` path filter, 150 ms debounce, 5-minute fallback, one-shot glyph expiry. Every timer injected. |
@@ -368,21 +369,55 @@ What IS proven, by execution rather than by scan, in
 
 - the save pulse, end to end: `computePulse()` driven directly on its bucket
   boundaries (it is exported for exactly that reason), and the strip's own
-  pixels decoded back out of the PNG — three cell states separated by SHAPE
-  rather than opacity, because on a 3.5-day-old store 13 of 28 cells are
-  *unknown* and an opacity difference does not survive 2pt of width. `sips`
-  opens the emitted file, so validity is confirmed by something other than the
-  encoder that wrote it.
+  pixels decoded back out of the PNG — three cell states separated by HEIGHT
+  (12 / 3 / 1 points) rather than by tint, because on a 3.5-day-old store half
+  the strip is *unknown* and a tint difference does not survive 3pt of width.
+  The producer's 28 six-hour buckets are folded two-to-one at draw time, so the
+  image is **55 x 14 points carrying 14 twelve-hour cells** — it was 83 x 11
+  carrying 28, and narrowing it was the only lever available, because Electron
+  does not scale a menu icon and a character budget cannot shrink a fixed-width
+  image. `sips` opens the emitted file, so validity is confirmed by something
+  other than the encoder that wrote it;
+
+- the recency dots: `renderRecencyDot()` over every one of `ageBucket()`'s
+  states, the strictly-decreasing ink ladder asserted from the shipped geometry,
+  and `'unknown'` returning **null** — a row whose age is not known gets no mark
+  at all, because the coldest dot would assert *old* about a row whose own label
+  says the time is unknown. Both the dots and the strip are **colour** images
+  with `template: false`: the tray GLYPH must be a template because macOS tints
+  a menu-bar icon, but a menu ITEM's icon is drawn as authored, and every colour
+  is checked to clear 3:1 against each background in its theme's band.
 
 **What is NOT proven, beyond the fact that nothing has been rendered:** that
-Electron accepts these `role` and `sublabel` values; that a menu item's `icon`
-is accepted at the strip's dimensions, is drawn without scaling, and does not
-push the menu past its width budget (the budget is reasoned about in an
-**assumed** glyph advance — no font has ever been measured, and neither Electron
-nor AppKit exposes a width API to ask); that macOS tints the generated glyph and
-the generated strip as templates (that needs `setTemplateImage(true)` at
-runtime, which is source-scanned only); that the 2x representation is chosen on
-a retina display; and that `tray.on('mouse-enter')` fires.
+Electron accepts these `role`, `sublabel` and `header` values; that macOS 14
+draws `type: 'header'` as a section header at all, or that macOS 13 degrades it
+to the dimmed inert caption the fallback is designed around; that a menu item's
+`icon` is accepted at the strip's and the dots' dimensions, is drawn without
+scaling, and does not push the menu past its width budget (the budget is
+arithmetic over an **assumed** glyph advance — no font has ever been measured,
+and neither Electron nor AppKit exposes a width API to ask); that macOS tints
+the generated glyph as a template and leaves the colour strip and dots alone;
+that the 2x representation is chosen on a retina display; that
+`systemPreferences.subscribeNotification('AppleInterfaceThemeChangedNotification')`
+delivers on a real appearance change; and that `tray.on('mouse-enter')` fires.
+
+**The menu's appearance is read from `AppleInterfaceStyle`, and that was
+measured rather than assumed.** `boot()` pins `nativeTheme.themeSource = 'dark'`
+for the window's title bar, and that setter is exactly what
+`nativeTheme.shouldUseDarkColors` reports — so it reads `true` on every Mac,
+whatever the system is set to. Running Electron 43.5.0 on a light-appearance Mac
+and reading all three values before and after the override gave
+`shouldUseDarkColors` `false → true`, `getEffectiveAppearance()` `light → dark`,
+and `getUserDefault('AppleInterfaceStyle', 'string')` `light → light`.
+`getEffectiveAppearance()` follows the override too and is no better;
+`AppleInterfaceStyle` is the only one immune to it. That is not two opinions
+about one fact — `themeSource` is a fact about **this app's window** and
+`AppleInterfaceStyle` is a fact about **the system menu bar**, which is where
+AppKit draws this menu, and they are allowed to disagree. For the same reason
+the rebuild hangs off `AppleInterfaceThemeChangedNotification` rather than
+`nativeTheme.on('updated')`, which does not fire for a system appearance change
+while `themeSource` is pinned; both are wired, the notification as the signal
+and `updated` as a belt, and both are torn down in `stopTray()`.
 
 The data layer is no longer in that list: `scripts/test-tray-pulse.js` imports
 the real `getTraySummary`, `computePulse` and `machineIdentity` from

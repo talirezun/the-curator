@@ -606,52 +606,63 @@ flowchart LR
 ### What you see when you click it
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  Last save · 4 min ago                                     │  ① the answer, first
-│      notes · main                                          │  ② where
-│  ▁▁▁▂▅▁ ▃▄  ▆▂ ▁▄█▃  Save pulse · 4 days known · 41 saves  │  ②b the last 7 days
-├────────────────────────────────────────────────────────────┤
-│  main — claude-code · 4 min ago                            │
-│      wired the remote observation and its 5-minute window  │  ③ up to 8 rows,
-│  drafting — opencode · 22 min ago                          │     newest first
-│      pulled the three measurements into one table          │
-│  api-rewrite — studio · changed 3 hr ago                   │
-│      ruled out the polling design; watch it is             │
-│  …and 4 more in Agent memory                               │  ④ a cap, disclosed
-├────────────────────────────────────────────────────────────┤
-│  Two agent tools are writing notes · drafting              │  ⑤ notices, only
-│  14 handoffs waiting on GitHub                             │     when true
-├────────────────────────────────────────────────────────────┤
-│  Open Agent Memory…                                        │
-│  Open The Curator                                          │  ⑥ always here,
-│  Settings…                                                 │     in every state
-├────────────────────────────────────────────────────────────┤
-│  Updated 14:32                                             │  ⑦ how fresh this
-├────────────────────────────────────────────────────────────┤     reading is
-│  Quit The Curator                                          │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Last save · 44 min ago                                  │  ① the answer, first
+│      menubar-widget-design                               │  ② where
+│  ── Save pulse ─────────────────────────────────────────  │
+│  ▁▁▁▁▁▁▂█▇█ ▁▃▆   4 days known · 70 saves                │  ②b the last 7 days
+│  ── Recent scopes ──────────────────────────────────────  │
+│  ● menubar-widget-des… · 44 min ago                      │
+│      v3.37.0 SHIPPED and its GitHub Release p…           │  ③ up to 5 rows,
+│  ○ native-prep-and-rel… · 15 hr ago                      │     newest first,
+│      FOUR RELEASES SHIPPED (v3.31-v3.34). Mac…           │     each with a dot
+│  ○ design-conformance-… · 38 hr ago                      │
+│      7 of 11 issues + ramp + machine-id fix M…           │
+│  More in Agent Memory… (6)                               │  ④ a cap, disclosed
+├──────────────────────────────────────────────────────────┤
+│  14 handoffs waiting on GitHub                           │  ⑤ notices, only
+│  Two agent tools are writing notes…                      │     when true
+├──────────────────────────────────────────────────────────┤
+│  Open Agent Memory…                                      │
+│  Open The Curator                                        │  ⑥ always here,
+│  Settings…                                               │     in every state
+├──────────────────────────────────────────────────────────┤
+│  Updated 12:42                                           │  ⑦ how fresh this
+├──────────────────────────────────────────────────────────┤     reading is
+│  Quit The Curator                                        │
+└──────────────────────────────────────────────────────────┘
 ```
 
-*Abbreviated: the real menu lists up to eight work-streams, and the notice lines appear only when
-they apply. Everything else is always in that order. The pulse is a real drawn image, not text —
-the blocks above are the closest a page of text can get.*
+*Abbreviated — three rows are drawn above where the real menu shows five, and the notice lines
+appear only when they apply. Everything else is always in that order. **Save pulse** and
+**Recent scopes** are real macOS section headers, not drawn rules; the pulse and the row dots are
+real drawn images, not text — the blocks above are the closest a page of text can get.*
 
-> **The rows are shorter than they used to be, and nothing was thrown away.** The menu's widest line
-> came down from **87 characters to 54**. Four things get dropped, and each one **only while it
-> distinguishes nothing**: the project name when only one project has state, a leading
-> `session-` on a work-stream name, the tool name when every row shows the same tool, and anything
-> past 54 characters of the agent's own summary. Every one of them comes straight back the moment it
-> starts telling you something — a second project, a second tool. **And every dropped fact is still
-> there when you hover that row.**
+> **The rows are shorter than they used to be, and nothing was thrown away.** Measured on a real
+> store, the menu's widest line came down from **74 characters to 41**. Four things get dropped, and
+> each one **only while it distinguishes nothing**: the project name when only one project has
+> state, a leading `session-` on a work-stream name, the tool name when every row shows the same
+> tool, and the computer name when every row came from the same computer. Every one of them comes
+> straight back the moment it starts telling you something — a second project, a second tool, a
+> second machine. Anything still too long is cut with an **…**, and the cut always falls on the
+> work-stream name, never on the age: *`menubar-widget-des… · 44 min ago`* keeps the one token the
+> whole widget exists to show.
+>
+> **And nothing a cut removed becomes unreachable. Hover the row and you get all of it** — the full
+> `project · work-stream`, the machine folder, the tool, and the exact timestamp. That is an
+> absolute rule rather than a courtesy, and it applies everywhere a budget bites: the line under the
+> headline carries the uncompacted name on hover, and a notice long enough to be clipped carries its
+> whole sentence. A notice that already fits carries no tooltip at all, because a tooltip repeating
+> the label word for word is noise.
 
 | | What it is | Why it is where it is |
 |---|---|---|
 | ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
 | ② | Which project and work-stream that save was | A statement about the line above, not a second action |
 | ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ①. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ③ | Up to **eight** work-streams, newest first, **flat — not grouped by project** | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping |
-| ④ | *"…and N more"* — how many work-streams did **not** fit | A cap is never allowed to look like a measurement. A list that shows eight when you have twelve, and says nothing about the other four, is the one case where you most need telling. (The exact figures — *"the 8 most recent of 12"* — arrive as a notice line, ⑤) |
-| ⑤ | Notices | They appear **only when they have something to say**, and at most four at a time. Two agent tools writing one work-stream; handoffs waiting on GitHub; a list that had to be cut short |
+| ③ | Up to **five** work-streams, newest first, **flat — not grouped by project**, each with a small [recency dot](#the-recency-dot) | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping. It was eight; five plus a real overflow line reads better in a menu this narrow |
+| ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
+| ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
 | ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. It is what makes a reading that has silently stopped updating visible as stale, and it is the moment the [pulse strip](#reading-the-save-pulse) is a picture of |
 
@@ -696,30 +707,56 @@ notes · main — claude-code · 4 min ago
 > already there. **`Updated 14:32`** tells you when the menu was last drawn, which is what makes a
 > reading that has silently stopped updating visible as stale.
 
+### The recency dot
+
+Every row in **Recent scopes** carries a small mark to its left. It is a **band**, not a number — the exact age is printed on the same row, in words, right beside it.
+
+| Mark | Colour | It means |
+|---|---|---|
+| **●** a filled disc | green | **Being written right now** — within the last **2 minutes** |
+| **◯** a large ring | green | Saved within the last **half hour** |
+| **◦** a medium ring | amber | Saved **earlier today** — between half an hour and **12 hours** ago |
+| **·** a small ring | grey | Saved **in the last week** |
+| **▪** a tiny filled dot | grey | **Older than a week** |
+| *(nothing at all)* | — | **No save time is known** for this work-stream |
+
+**Why five marks share three colours.** Green covers both *right now* and *the last half hour* on purpose: a menu you open by hand will essentially never land inside the two-minute live window, so a green reserved for that alone would spend the strongest colour in the set on the state you almost never see, and everything would be amber or grey in practice. **Half an hour is the point at which the handoff stops being in your head** — which is the thing the colour is actually being asked about. At the other end, three days ago and three weeks ago call for the same thing from you — read it properly before you touch it — so a third shade between them would be a distinction with no consequence.
+
+**The colour is never the only signal.** Green and amber are the classic hard pair for the commonest kinds of colour blindness, so the five marks are also a ladder of *how much ink is on the screen*, biggest to smallest, and the one state that changes what you do next — something is being written **right now** — is the only large filled disc. You can read the whole ladder with the colour removed. **Hover a row** and the band is also stated in words.
+
+> **A row with no known save time gets no mark at all — deliberately.** It does not get the faintest, oldest-looking dot. *We do not know when this was saved* and *this was saved a long time ago* are different claims, and drawing the second when only the first is true would be inventing a fact. The row's own label says *"time unknown"*, and the space where the dot would be stays empty.
+
 ### Reading the save pulse
 
-One line in the menu carries a small drawn strip — **28 marks, one per six hours, covering the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up to.
+Under the **Save pulse** header, one line carries a small drawn strip — **14 marks, one per twelve hours, covering the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up to. (The strip used to draw 28 marks at six hours each; it was folded to half the marks and twice the width per mark so the picture could be made **narrower and much more visible at the same time**. Nothing about what is counted changed.)
 
 ```
-▁▁▁▁▁▁▁▁▁▁▁▁▁ ▂▅▁ ▃▄  ▆▂ ▁▄█▃   Save pulse · 4 days known · 41 saves
-└──── before this store ────┘└──── what actually happened ────┘
-      existed (baseline
-      ticks, not "quiet")
+▁▁▁▁▁▁ ▂█▇█ ▁▃▆     4 days known · 70 saves
+└─ before ─┘└── what actually happened ──┘
+   this store
+   existed
 ```
 
 **There are three kinds of mark, and telling two of them apart is the whole point.**
 
 | Mark | What it means |
 |---|---|
-| **A tall bar** | Saves landed in that six-hour block. **The darker the bar, the more saves** — one save is already clearly a mark; four or more is solid |
-| **A faint tall bar** | That six hours **existed and nothing was saved.** A quiet evening |
-| **A tick on the baseline** — short, sitting on the floor | **Your store did not exist yet.** Not "quiet" — *unknown* |
+| **A tall green bar** | Saves landed in that twelve-hour block. **The darker the green, the more saves** — one save is already a clear mark, and five or more is the darkest it goes |
+| **A low grey stub** — about a quarter the height | That twelve hours **existed and nothing was saved.** A quiet evening |
+| **A grey hairline on the baseline** — thinner still | **Your store did not exist yet.** Not "quiet" — *unknown* |
 
 > **Why the third one has its own shape rather than just being fainter.** *Nothing happened* and
 > *we have no idea* are opposite claims, and a strip that draws them the same way is lying about
-> half of itself. This is not an edge case: a store that is three and a half days old fills
-> **13 of its 28 marks** with "did not exist yet". The difference is carried in **shape** — a bar
-> versus a floor tick — because at two points wide, two similar shades of grey are the same shade.
+> half of itself. This is not an edge case: a store three and a half days old fills **half its
+> marks** with "did not exist yet". The difference is carried in **height** — 12 points against
+> 3 against 1 — because at three points wide, two similar shades of grey are the same shade. And
+> "did not exist yet" is deliberately drawn *heavier* than "quiet", not fainter: making *no data*
+> the faintest thing on the strip would encode it as **even less than nothing**.
+>
+> **The colours are measured, not picked.** Every one of them clears the 3:1 contrast floor for
+> non-text against the menu backgrounds it can be drawn on, and the lightest *green* is checked to
+> be heavier than a *grey stub* — because a block holding one save must never read as quieter than
+> a block holding none. An earlier palette failed exactly that and the test caught it, not the eye.
 
 **The sentence beside it never claims more than the picture can support.**
 
@@ -732,13 +769,15 @@ One line in the menu carries a small drawn strip — **28 marks, one per six hou
 | **`nothing recorded yet`** | Every mark is "did not exist yet". Deliberately *not* worded as an empty week, because nothing here knows anything about that week |
 | **`no save times recorded`** | There are journals, but none of them carries a usable time |
 
-**Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave out — how many work-streams were counted, how many older saves fall outside the window entirely, and the timestamp of the oldest save it can see.
+> **The words no longer repeat the header.** The sentence used to read *"Save pulse · 4 days known · 70 saves"*. Now that **Save pulse** is a header line of its own directly above it, the label drops the noun and simply says *"4 days known · 70 saves"* — the same reading, one fewer thing to read.
+
+**Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave out — how many work-streams were counted, how many older saves fall outside the window entirely, and the timestamp of the oldest save it can see. It is also a live menu item: **clicking the strip opens Agent memory**, where the saves it counts are listed. It used to be dimmed and unclickable, which put the one picture in the whole widget into the faintest style macOS offers — the opposite of what it was for.
 
 > ### What the darkness is NOT
 >
 > **It is a measure of how often your agents check in. It is not a measure of how much they got done, and it must never be read as one.**
 >
-> An agent told to *save early and often* — which is exactly what The Curator's own continuity instructions ask for — produces far more marks than one told to save twice at the end. A dense column means **a different capture habit**, not a better day's work. That is why the label says *"saves"* and never *"activity"* or *"progress"*, and why nothing anywhere ranks a dense column above a sparse one.
+> An agent told to *save early and often* — which is exactly what The Curator's own continuity instructions ask for — produces far more marks than one told to save twice at the end. A dark bar means **a different capture habit**, not a better day's work. That is why the label says *"saves"* and never *"activity"* or *"progress"*, and why nothing anywhere ranks a dark column above a pale one.
 
 **Only the agent's own recorded save time is ever counted** — never the file's timestamp on disk. That matters most on a second computer: file times get rewritten when Personal Sync checks files out, so a strip built from them would draw a colleague-machine's entire history as one giant spike at the moment you pulled. Yours shows *when the work happened*, not *when it landed here*.
 
@@ -859,7 +898,7 @@ no standing brief at all gets no clause, because that is the ordinary case and n
 report in a menu bar.
 
 It does not get a **menu row**, and that is the ranking rather than an oversight: a brief is up to
-32 KB of prose that changes on the order of weeks, so it does not earn one of eight scarce rows.
+32 KB of prose that changes on the order of weeks, so it does not earn one of five scarce rows.
 The tooltip is the one surface here with no scarcity — it costs no row, no menu bar width, and no
 extra reading of the disk. For the full picture, **Open Agent Memory…** still lands you on the
 save-status strip ([§7](#the-save-status-strip)).
@@ -887,7 +926,7 @@ The strip is **the whole store, not one project** — every work-stream on every
 
 And the numbers **count what could be read**. If a work-stream has more history than the last 16 KB of its journal, the sentence says **`at least 41 saves`** — the strip's oldest marks under-count, and it tells you so rather than presenting a floor as a total.
 
-> **A young store and a dead one draw the same empty cells, and the widget refuses to confuse them.** That is the entire reason there are three kinds of mark rather than two. A brand-new install shows twenty-eight floor ticks and says **`nothing recorded yet`** — never *"7 days · no saves"*, which would be a confident statement about a week it knows nothing about.
+> **A young store and a dead one draw the same empty cells, and the widget refuses to confuse them.** That is the entire reason there are three kinds of mark rather than two. A brand-new install shows fourteen baseline hairlines and says **`nothing recorded yet`** — never *"7 days · no saves"*, which would be a confident statement about a week it knows nothing about.
 
 #### Scenarios this does not serve
 
@@ -938,12 +977,14 @@ Stated plainly rather than left for you to discover.
 | | |
 |---|---|
 | **No menu bar icon has ever been rendered, on any machine.** | The rows, the menu, the switching between modes, the icon's own pixels **and the pulse strip's** are all produced and checked by the automated tests — but nothing has yet put one in a real menu bar. How macOS tints the icon and the strip in a light bar, whether the second line of each row draws at all, and whether the tooltip appears on hover are **unproven**. Treat your first launch with it on as the first real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
-| **The save pulse has never been drawn by macOS either**, and it is the newest thing here | The image is generated and inspected pixel by pixel by the tests, and macOS's own image tools confirm the file is valid — but nothing has yet shown it inside a menu. If the strip looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
+| **The save pulse and the row dots have never been drawn by macOS either**, and they are the newest things here | Both images are generated and inspected pixel by pixel by the tests, their contrast is arithmetic over decoded pixels, and macOS's own image tools confirm the files are valid — but nothing has yet shown either inside a menu. If a strip or a dot looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
+| **The two section headers have never been drawn either.** | **Save pulse** and **Recent scopes** use a macOS 14+ menu affordance. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but that fallback has never been observed. Neither has the real thing. Either way they can never become a clickable item that does nothing |
+| **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn. The two are genuinely different questions and are allowed to disagree. What is unproven is that macOS delivers the appearance-changed notification the rebuild listens for |
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
-| **The standing brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of eight scarce rows. Hover the icon for it, or open Agent memory for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
+| **The standing brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of five scarce rows. Hover the icon for it, or open Agent memory for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
-| **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put eight of them legibly |
-| **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At six hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
+| **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put five of them legibly |
+| **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At twelve hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
 | **A row click opens the project, not the work-stream.** | You land on Agent memory at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly |
 
 ---

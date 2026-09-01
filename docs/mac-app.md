@@ -90,8 +90,9 @@ itself — you should not need the Releases page again. See
 
 The app can put a small icon in the macOS menu bar that answers one question without you
 opening anything: **has my agent actually saved, and how long ago?** Click it and you get the
-last save, a **save pulse** — a small drawn strip of the last seven days — up to eight recent
-work-streams newest first, and *Open Agent Memory · Open The Curator · Settings · Quit*.
+last save, a **save pulse** — a small drawn strip of the last seven days — up to five recent
+work-streams newest first under their own section headers, each carrying a coloured **recency
+dot**, and *Open Agent Memory · Open The Curator · Settings · Quit*.
 
 **It is off by default, and that is not caution.** A fresh install has no agent memory, so an
 on-by-default icon's only possible content is *"No agent memory yet"* — the worst first
@@ -114,12 +115,19 @@ in the menu bar is either stale or it needs waking every minute forever, and ext
 what makes an icon vanish behind the notch on a narrow screen. **Hovering** the icon gives you
 the headline plus the standing brief's age, without a click.
 
-**The menu does draw one picture.** The save pulse is a still image redrawn each time you open
-the menu — 28 marks, one per six hours, across the last seven days. A menu item can carry an
-image; what it cannot carry is a *live* view, and a menu is frozen by macOS once it is open, so
-a ticking trace is not possible and was never attempted. How to read it, including why a mark
-for *"nothing happened"* and a mark for *"this store did not exist yet"* are different shapes,
-is in [user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse).
+**The menu draws its pictures in colour.** The save pulse is a still image redrawn each time
+you open the menu — **14 marks, one per twelve hours**, across the last seven days — and every
+row carries a small recency dot beside it. A menu item can carry an image; what it cannot carry
+is a *live* view, and a menu is frozen by macOS once it is open, so a ticking trace is not
+possible and was never attempted. How to read the strip, including why a mark for *"nothing
+happened"* and a mark for *"this store did not exist yet"* are different heights, is in
+[user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse); the dots are in
+[§ The recency dot](user-guide.md#the-recency-dot).
+
+**The menu's light or dark colours follow your SYSTEM appearance, not the app's own theme.**
+Those are genuinely different questions — the menu is drawn by macOS against the system menu
+bar, while the app themes its own window — so running the app in light mode on a Mac set to
+dark correctly gives you a dark-mode menu.
 
 Everything the widget does is described from the user's side, with the scenarios it was built
 for, in **[user-guide.md § 6b](user-guide.md#6b-the-menu-bar-icon-mac-app)**. The engineering
@@ -135,10 +143,11 @@ is in [architecture.md § The menu bar widget](architecture.md#the-menu-bar-widg
 > **Two limits, stated rather than glossed.**
 >
 > **No tray icon has ever been rendered on any machine.** The rows, the menu, the mode
-> switching, the icon's own pixels and the pulse strip's are all produced and checked by the
-> test suite, but nothing has yet put one in a real menu bar — so how macOS tints the icon and
-> the strip, whether the second line of each row draws, and whether the hover event fires at
-> all are unproven. (That a re-render *does* re-time the ages is proven by the tests; whether
+> switching, the icon's own pixels and the pulse strip's and dots' are all produced and checked
+> by the test suite, but nothing has yet put one in a real menu bar — so how macOS tints the
+> icon, whether it leaves the colour strip and dots alone, whether the two section headers draw
+> as headers on macOS 14 or degrade to dimmed captions below it, whether the second line of each
+> row draws, and whether the hover event fires at all are unproven. (That a re-render *does* re-time the ages is proven by the tests; whether
 > macOS delivers the hover that triggers one is not.) Treat the first real launch with it
 > switched on as the first real test.
 >
