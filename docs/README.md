@@ -62,6 +62,12 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 
 ## Start here
 
+**Want the whole picture first — or handing this to an AI agent?** Read the
+[Product Overview](product-overview.md). One document covering every capability, what each one
+is for, the scenarios it serves, where the project stands, and an explicit account of what it
+does *not* do. It describes capability rather than implementation, so it is also the file to
+paste into an assistant that needs to understand The Curator before it helps you with it.
+
 **New to the project?** Read the [User Guide](user-guide.md) — it covers everything from installation to chat, sync, and Obsidian, written in plain language for non-technical users.
 
 **Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository. Prefer to let an AI agent do it? See [Set up sync with a coding agent](sync-via-coding-agent.md).
@@ -83,6 +89,7 @@ first group applies to all three.
 
 | Document | What's inside |
 |----------|---------------|
+| [product-overview.md](product-overview.md) | **The whole product in one document** — the three layers, every capability and what it is for, the memory layer, the menu bar icon, named scenarios, where the project stands, and an explicit "what this is not". Capability-level, no implementation; written to be handed to a person *or* a model |
 | [user-guide.md](user-guide.md) | The master guide — setup, ingest, chat, Obsidian, sync, daily workflow, troubleshooting |
 | [use-cases.md](use-cases.md) | Detailed workflows for every user profile, including coding continuity across sessions and tools |
 | [domains.md](domains.md) | Domains end-to-end — managing them, the CLAUDE.md schema, siloing model, custom templates. A domain is the container all three layers live in |

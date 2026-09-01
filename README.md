@@ -305,7 +305,9 @@ Then open **http://localhost:3333**.
 > from one pasted prompt: [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent).
 
 > **First time?** The [User Guide](docs/user-guide.md) covers every step in plain language —
-> getting a key, real cost estimates, using the chat, and setting up Obsidian.
+> getting a key, real cost estimates, using the chat, and setting up Obsidian. For the whole
+> product in one document — every capability, the scenarios it serves, and what it deliberately
+> does not do — read the [Product Overview](docs/product-overview.md).
 
 ---
 
@@ -408,6 +410,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 
 | | |
 |-|-|
+| [Product Overview](docs/product-overview.md) | **Start here for the whole picture.** Every capability and what it is for, the memory layer, the menu bar icon, worked scenarios, where the project stands, and an explicit "what this is not". Capability-level rather than technical — also the file to hand an AI agent that needs to understand The Curator |
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
