@@ -11,7 +11,7 @@
  *
  * The strip's PNG bytes are INFLATED AND WALKED here, the same standard
  * `scripts/test-tray-shell.js` §7 already holds `tray-icon.js` to. Every
- * assertion about how a cell looks is an assertion about decoded alpha values
+ * assertion about how a cell looks is an assertion about decoded RGBA values
  * at named coordinates, not about a line of source having been written — and
  * the three-way ACTIVE/EMPTY/UNKNOWN distinction, which is the load-bearing
  * part of the design, carries its own control proving the comparison it uses
@@ -26,7 +26,7 @@
  *   §1   the cell vocabulary, over the five required pulse fixtures
  *   §2   the PNG, decoded back out of its own bytes
  *   §3   ACTIVE / EMPTY / UNKNOWN differ in real pixels — with a control
- *   §4   alpha encodes CADENCE, is capped, and never claims more
+ *   §4   the ramp encodes CADENCE, is capped, and never claims more
  *   §5   the label: the window, the count, and the two honesty disclosures
  *   §6   the tooltip carries every fact the label had to compress
  *   §7   the menu item: where it sits, that it is a statement, and its width
@@ -42,9 +42,14 @@
  *    the strip. Electron is deliberately not an offline dependency. The bytes
  *    are proven to be a valid PNG decoding to the matrix that produced them;
  *    that macOS accepts `MenuItemConstructorOptions.icon`, draws it at the
- *    declared size, and tints it as a template image is INFERRED from the
- *    installed electron.d.ts and from electron_menu_controller.mm, and is not
- *    observed.
+ *    declared size is INFERRED from the installed electron.d.ts and from
+ *    electron_menu_controller.mm, and is not observed.
+ *  - THE STRIP IS NO LONGER A TEMPLATE IMAGE. That constraint was inherited
+ *    from `tray-icon.js`, is true of the TRAY GLYPH, and was FALSE here: a
+ *    template image on a disabled row is tinted to the disabled-text colour,
+ *    which is exactly the "barely visible" report. The colour palette and its
+ *    3:1 measurements live in `scripts/test-tray-paint.js`; this file asserts
+ *    the three-state distinction independently of it.
  *  - The strip is a STILL FRAME by construction — `NSMenuItem.setView:` does
  *    not exist in Electron and an NSMenu is frozen once open. Nothing here can
  *    prove that a user finds a still frame legible.
@@ -194,7 +199,21 @@ function realStoreMenu() {
 // reconstructs nothing — the encoder writes filter byte 0 on every row, so the
 // matrix comes straight back with no filter arithmetic the test could get wrong
 // in a way that happens to agree with a broken encoder.
-function decodeGrayAlpha(buf) {
+//
+// ── RGBA SINCE THE STRIP BECAME A COLOUR IMAGE ────────────────────────────
+//
+// It read GREYSCALE+ALPHA (colour type 4) while the strip was a template image.
+// The strip is no longer a template image — the constraint it inherited from
+// `tray-icon.js` is true of the TRAY GLYPH and false of a MENU ITEM ICON, which
+// is why the shipped strip was being tinted to the disabled-text colour and
+// read as "barely visible". The decoder follows the encoder to colour type 6.
+//
+// The pixel-level and CONTRAST work now lives in `scripts/test-tray-paint.js`,
+// which decodes with `scripts/visual/png.js` — an INDEPENDENT decoder — and
+// recomputes every shipped colour's WCAG ratio. This file keeps its own
+// three-state assertions rather than delegating them: two independent readings
+// of the load-bearing property is the point, not duplication to be tidied away.
+function decodeRgba(buf) {
   const SIG = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
   for (let i = 0; i < SIG.length; i++) if (buf[i] !== SIG[i]) throw new Error('bad signature');
   let p = 8, width = 0, height = 0, depth = 0, colorType = -1;
@@ -210,28 +229,34 @@ function decodeGrayAlpha(buf) {
     p += 12 + len;
   }
   const raw = inflateSync(Buffer.concat(idat));
-  const grey = [], alpha = [];
+  const rgba = [], alpha = [];
   let q = 0;
   for (let y = 0; y < height; y++) {
     if (raw[q++] !== 0) throw new Error('unexpected filter byte');
-    const gr = [], al = [];
-    for (let x = 0; x < width; x++) { gr.push(raw[q++]); al.push(raw[q++]); }
-    grey.push(gr); alpha.push(al);
+    const px = [], al = [];
+    for (let x = 0; x < width; x++) {
+      const r = raw[q++], g = raw[q++], b = raw[q++], a = raw[q++];
+      px.push([r, g, b, a]); al.push(a);
+    }
+    rgba.push(px); alpha.push(al);
   }
-  return { width, height, depth, colorType, grey, alpha };
+  return { width, height, depth, colorType, rgba, alpha };
 }
 
-/** Every alpha value in cell `i`'s own column band, top to bottom, as one
- *  flat array — the thing two cell states must differ in. */
+/** Every pixel in cell `i`'s own column band, top to bottom, as one flat array
+ *  of "r,g,b,a" strings — the thing two cell states must differ in. */
 function cellColumn(decoded, i, scale = 1) {
   const pitch = (strip.CELL_POINTS + strip.GAP_POINTS) * scale;
   const x0 = i * pitch;
   const out = [];
   for (let y = 0; y < decoded.height; y++) {
-    for (let x = x0; x < x0 + strip.CELL_POINTS * scale; x++) out.push(decoded.alpha[y][x]);
+    for (let x = x0; x < x0 + strip.CELL_POINTS * scale; x++) out.push(decoded.rgba[y][x].join(','));
   }
   return out;
 }
+
+/** How many pixels of a cell column carry ink. */
+const inkedCount = (col) => col.filter((p) => !p.endsWith(',0')).length;
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0 positive control on the imports');
@@ -241,14 +266,17 @@ section('§0 positive control on the imports');
   ok(typeof strip.pulseLabel === 'function', 'pulseLabel is exported');
   ok(typeof strip.pulseToolTip === 'function', 'pulseToolTip is exported');
   ok(typeof menu.ID_PULSE === 'string' && menu.ID_PULSE, 'the strip item has an id, so a caller need never match on its label');
-  // The PNG encoder is IMPORTED from tray-icon.js, not reimplemented. Proven by
-  // behaviour rather than by a grep: both modules must produce byte-identical
-  // output for the same matrix, which a second encoder would not.
-  const iconMod = await import(path.join(DESKTOP, 'lib', 'tray-icon.js'));
-  const m = [[0, 128], [255, 7]];
-  const viaStrip = strip.renderPulseStrip(pulseFixture({ buckets: [1] }));
+  // The PNG encoder is IMPORTED from rgba-png.js, not reimplemented here.
+  // `tray-icon.js`'s greyscale encoder stays where it is and still serves the
+  // TRAY GLYPH, which really is a template image; menu artwork is colour.
+  const rgbaMod = await import(path.join(DESKTOP, 'lib', 'rgba-png.js'));
+  const viaStrip = strip.renderPulseStrip(pulseFixture({ buckets: [1] }), { dark: false });
   ok(viaStrip !== null, 'a one-bucket pulse still renders');
-  ok(Buffer.isBuffer(iconMod.encodeAlphaPng(m)), 'and tray-icon.js is the encoder both use');
+  const probe = rgbaMod.createCanvas(1, 1);
+  rgbaMod.fillRect(probe, 0, 0, 1, 1, [1, 2, 3]);
+  ok(Buffer.isBuffer(rgbaMod.encodeRgbaPng(probe)), 'and rgba-png.js is the encoder the strip uses');
+  eq(viaStrip.template, false,
+    'the spec declares template:false — the alpha-only TEMPLATE image was the whole "barely visible" defect');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -314,24 +342,44 @@ section('§1 the cell vocabulary, over the five required pulse fixtures');
 // ═══════════════════════════════════════════════════════════════════════════
 section('§2 the PNG, decoded back out of its own bytes');
 {
-  const s = strip.renderPulseStrip(fullWindow());
+  const s = strip.renderPulseStrip(fullWindow(), { dark: false });
   // GUARDED BEFORE THE DECODE. A missing representation would otherwise throw
-  // inside decodeGrayAlpha, and a suite that reddens by CRASHING names nothing
-  // — it reports that something broke, not which property was lost.
+  // inside decodeRgba, and a suite that reddens by CRASHING names nothing —
+  // it reports that something broke, not which property was lost.
   ok(Buffer.isBuffer(s.buffer), 'a 1x representation exists');
   ok(Buffer.isBuffer(s.buffer2x),
     'and a 2x one — without it the strip is downsampled by the OS on every retina Mac sold in a decade');
-  const d1 = decodeGrayAlpha(s.buffer);
-  const d2 = decodeGrayAlpha(Buffer.isBuffer(s.buffer2x) ? s.buffer2x : s.buffer);
+  const d1 = decodeRgba(s.buffer);
+  const d2 = decodeRgba(Buffer.isBuffer(s.buffer2x) ? s.buffer2x : s.buffer);
 
-  eq(s.widthPoints, 28 * (strip.CELL_POINTS + strip.GAP_POINTS) - strip.GAP_POINTS,
-    'the declared width is 28 bars at a 3pt pitch, less the trailing gap');
-  eq([s.widthPoints, s.heightPoints], [83, 11], 'which is 83 x 11 points');
-  eq([d1.width, d1.height], [83, 11], 'and the 1x bytes really are that size');
-  eq([d2.width, d2.height], [166, 22], 'the 2x representation is exactly double — one drawing at two resolutions');
-  eq([d1.depth, d1.colorType], [8, 4], 'colour type 4 = greyscale + alpha, 8 bits each');
-  ok(d1.grey.every((r) => r.every((v) => v === 0)),
-    'EVERY grey value is 0 — a template image carries all its information in alpha, and macOS tints it');
+  eq(s.widthPoints, 14 * (strip.CELL_POINTS + strip.GAP_POINTS) - strip.GAP_POINTS,
+    'the declared width is 14 bars at a 4pt pitch, less the trailing gap');
+  eq([s.widthPoints, s.heightPoints], [55, 14], 'which is 55 x 14 points — NARROWER than the 83 x 11 it replaces, and taller');
+  eq([d1.width, d1.height], [55, 14], 'and the 1x bytes really are that size');
+  eq([d2.width, d2.height], [110, 28], 'the 2x representation is exactly double — one drawing at two resolutions');
+  eq([d1.depth, d1.colorType], [8, 6], 'colour type 6 = truecolour with alpha, 8 bits each');
+
+  // ── THE HEIGHT CHANGED, AND SO DID THE REASON FOR IT ──────────────────
+  //
+  // 11pt -> 14pt. NOT because bigger is better: width is what costs menu, and
+  // it did not move (see HEIGHT_POINTS in pulse-strip.js for the arithmetic).
+  // 14pt is inside the 16pt a macOS menu row accommodates without growing, so
+  // the extra 3pt of drawn bar is free.
+  eq([strip.HEIGHT_POINTS, strip.CELL_POINTS], [14, 3],
+    'the strip is 14pt tall with 3pt bars, up from 11pt and 2pt — and NARROWER overall, because it draws 14 cells rather than 28');
+
+  // ── AND IT IS NO LONGER A TEMPLATE IMAGE ──────────────────────────────
+  //
+  // REPLACES, deliberately and loudly, the assertion that every grey value is
+  // 0. That assertion was correct for a template image and it was the bug: a
+  // template image on a DISABLED row is tinted to the disabled-text colour,
+  // which is exactly the "barely visible ... such a light colour" report. The
+  // opposite is now required — the pixels must NOT be a uniform grey.
+  eq(s.template, false, 'the spec says template:false, so the consumer cannot re-apply the tint out of habit');
+  const inkedPixels = d1.rgba.flat().filter((p) => p[3] > 0);
+  ok(inkedPixels.length > 0, 'the strip has ink');
+  ok(inkedPixels.some((p) => !(p[0] === p[1] && p[1] === p[2])),
+    'and some of it is REAL COLOUR — channels not all equal, which a greyscale template image could never be');
 
   // Electron does no scaling, so the declared size IS the drawn size.
   ok(s.buffer.length < 2048 && s.buffer2x.length < 4096,
@@ -352,79 +400,124 @@ section('§3 ACTIVE / EMPTY / UNKNOWN differ in real pixels — with a control')
 // period predates the store" must not render the same. Collapsing a fact into
 // its own absence is this project's named defect, and on the maintainer's store
 // half the strip is UNKNOWN, so it is not a corner the user will never reach.
+//
+// EVERY ASSERTION HERE NOW RUNS IN BOTH THEMES. A coloured image does not adapt
+// the way a template image did, so a distinction that survives in light and
+// collapses in dark is a real and newly-possible failure.
 {
-  // One image holding all three states at known indices, so every comparison
-  // below is between pixels of the SAME rendering.
+  // SOURCE buckets fold two-to-one into DRAWN cells (28 -> 14), so the fixture
+  // is written in source terms and the indices below are the drawn cells they
+  // land in: sources 20+21 -> drawn 10, sources 22+23 -> drawn 11, and
+  // firstKnownBucket 10 greys drawn 0..4.
   const b = new Array(28).fill(0);
-  b[20] = 1;          // ACTIVE
-  b[21] = 0;          // EMPTY
-  const mixed = pulseFixture({ buckets: b, events: 1, firstKnownBucket: 10, coversWholeWindow: false });
-  const d = decodeGrayAlpha(strip.renderPulseStrip(mixed).buffer);
+  b[20] = 1; b[21] = 1;   // -> drawn 10, ACTIVE
+  b[22] = 0; b[23] = 0;   // -> drawn 11, EMPTY
+  const mixed = pulseFixture({ buckets: b, events: 2, firstKnownBucket: 10, coversWholeWindow: false });
+  eq(strip.drawnCells(mixed).map((c) => c.state).slice(0, 12),
+    ['unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'empty', 'empty', 'empty', 'empty', 'empty', 'active', 'empty'],
+    'the fixture really does put ACTIVE at drawn 10, EMPTY at 11 and UNKNOWN at 1 — checked against the shipped merge, not assumed');
 
-  const active = cellColumn(d, 20);
-  const empty = cellColumn(d, 21);
-  const unknown = cellColumn(d, 3);
+  for (const dark of [false, true]) {
+    const theme = dark ? 'dark' : 'light';
+    const d = decodeRgba(strip.renderPulseStrip(mixed, { dark }).buffer);
 
-  const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+    const active = cellColumn(d, 10);
+    const empty = cellColumn(d, 11);
+    const unknown = cellColumn(d, 1);
 
-  ok(!same(active, empty), 'ACTIVE and EMPTY differ in decoded alpha');
-  ok(!same(empty, unknown), 'EMPTY and UNKNOWN differ in decoded alpha — "nothing happened" is not "no data"');
-  ok(!same(active, unknown), 'ACTIVE and UNKNOWN differ in decoded alpha');
+    const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 
-  // THE CONTROL. Without it, `!same(...)` proves only that the comparator is
-  // capable of saying "different" — an assertion that can never fail is worth
-  // nothing, and this repo has shipped several. Two cells in the SAME state
-  // must compare EQUAL through the identical code path.
-  ok(same(cellColumn(d, 4), cellColumn(d, 5)),
-    'CONTROL: two UNKNOWN cells compare IDENTICAL, so the comparison above can fail');
-  b[22] = 1;
-  const twoActive = decodeGrayAlpha(strip.renderPulseStrip(
-    pulseFixture({ buckets: b, events: 2, firstKnownBucket: 10 })).buffer);
-  ok(same(cellColumn(twoActive, 20), cellColumn(twoActive, 22)),
-    'CONTROL: two ACTIVE cells with the same count compare IDENTICAL too');
+    ok(!same(active, empty), `${theme}: ACTIVE and EMPTY differ in decoded pixels`);
+    ok(!same(empty, unknown), `${theme}: EMPTY and UNKNOWN differ — "nothing happened" is not "no data"`);
+    ok(!same(active, unknown), `${theme}: ACTIVE and UNKNOWN differ`);
 
-  // The distinction is by SHAPE and not merely by opacity — which is what makes
-  // it survive at a 2pt bar width, where two similar alphas do not.
-  const inked = (col) => col.filter((v) => v > 0).length;
-  // EVERY CELL IS DRAWN, empties included. A strip that omits its empty cells
-  // stops being a timeline and becomes a scatter of marks with no scale.
-  ok(inked(empty) > 0, `an EMPTY bucket is DRAWN, at low opacity (${inked(empty)} inked pixels)`);
-  ok(inked(unknown) > 0, 'and so is an UNKNOWN one');
-  ok(inked(unknown) < inked(empty),
-    `UNKNOWN is a shorter mark than EMPTY (${inked(unknown)} inked pixels against ${inked(empty)}) — a tick, not a bar`);
-  eq(inked(active), inked(empty), 'ACTIVE and EMPTY are the same SHAPE and differ only in weight');
-  ok(Math.max(...active) > Math.max(...empty),
-    `and ACTIVE is the heavier of the two (${Math.max(...active)} against ${Math.max(...empty)})`);
+    // THE CONTROL. Without it, `!same(...)` proves only that the comparator is
+    // capable of saying "different" — an assertion that can never fail is worth
+    // nothing, and this repo has shipped several. Two cells in the SAME state
+    // must compare EQUAL through the identical code path.
+    ok(same(cellColumn(d, 1), cellColumn(d, 2)),
+      `${theme}: CONTROL — two UNKNOWN cells compare IDENTICAL, so the comparisons above can fail`);
 
-  // The UNKNOWN tick sits on the BASELINE, so the strip still reads as a
-  // timeline across the boundary rather than as two unrelated drawings.
-  const bottomRow = d.height - 2;
-  ok(d.alpha[bottomRow][3 * (strip.CELL_POINTS + strip.GAP_POINTS)] > 0,
-    'the UNKNOWN tick is on the baseline row');
-  ok(d.alpha[2][3 * (strip.CELL_POINTS + strip.GAP_POINTS)] === 0,
-    'and nowhere near the top of the band');
+    // EVERY CELL IS DRAWN, empties included. A strip that omits its empty cells
+    // stops being a timeline and becomes a scatter of marks with no scale.
+    ok(inkedCount(empty) > 0, `${theme}: an EMPTY bucket is DRAWN (${inkedCount(empty)} inked pixels)`);
+    ok(inkedCount(unknown) > 0, `${theme}: and so is an UNKNOWN one`);
 
-  // And at 2x it is the same drawing, not a second one.
-  const d2 = decodeGrayAlpha(strip.renderPulseStrip(mixed).buffer2x);
-  ok(!same(cellColumn(d2, 20, 2), cellColumn(d2, 21, 2)), 'the three states are still distinct at 2x');
-  ok(!same(cellColumn(d2, 21, 2), cellColumn(d2, 3, 2)), 'including EMPTY against UNKNOWN');
+    // ── THE SHAPE LADDER — CHANGED ON PURPOSE, AND SAID LOUDLY ──────────
+    //
+    // v3.37.0 asserted here that "ACTIVE and EMPTY are the same SHAPE and
+    // differ only in weight". THAT ASSERTION IS DELIBERATELY REVERSED. It was
+    // sound while the drawing was alpha-only, because alpha was not colour. In
+    // colour, "differs only in weight" means "differs only in colour", and this
+    // project's standing rule is that colour is never the only signal. ACTIVE
+    // is now a full-height bar and EMPTY a short baseline stub, so the strip
+    // survives being read by someone who cannot separate green from grey.
+    ok(inkedCount(active) > inkedCount(empty),
+      `${theme}: ACTIVE is a TALLER mark than EMPTY (${inkedCount(active)} against ${inkedCount(empty)}) — a second signal beside the colour`);
+    ok(inkedCount(unknown) < inkedCount(empty),
+      `${theme}: UNKNOWN is a shorter mark than EMPTY (${inkedCount(unknown)} against ${inkedCount(empty)}) — a hairline, not a stub`);
+    ok(inkedCount(active) >= inkedCount(empty) * 3,
+      `${theme}: and ACTIVE is at least three times an EMPTY stub, not a shade of it`);
+
+    // Both quiet marks sit on the BASELINE, so the strip still reads as a
+    // timeline across the boundary rather than as two unrelated drawings.
+    const bottomRow = d.height - 2;
+    ok(d.alpha[bottomRow][1 * (strip.CELL_POINTS + strip.GAP_POINTS)] > 0,
+      `${theme}: the UNKNOWN hairline is on the baseline row`);
+    ok(d.alpha[2][1 * (strip.CELL_POINTS + strip.GAP_POINTS)] === 0,
+      `${theme}: and nowhere near the top of the band`);
+
+    // And at 2x it is the same drawing, not a second one.
+    const d2 = decodeRgba(strip.renderPulseStrip(mixed, { dark }).buffer2x);
+    ok(!same(cellColumn(d2, 10, 2), cellColumn(d2, 11, 2)), `${theme}: the three states are still distinct at 2x`);
+    ok(!same(cellColumn(d2, 11, 2), cellColumn(d2, 1, 2)), `${theme}: including EMPTY against UNKNOWN`);
+  }
+
+  // The two themes are DIFFERENT drawings, with a control proving the
+  // comparison can report "identical".
+  const l = strip.renderPulseStrip(mixed, { dark: false }).buffer;
+  const k = strip.renderPulseStrip(mixed, { dark: true }).buffer;
+  ok(!l.equals(k), 'light and dark are different images — the theme argument is not decorative');
+  ok(l.equals(strip.renderPulseStrip(mixed, { dark: false }).buffer),
+    'CONTROL: the same theme twice is byte-identical, so the comparison above can fail');
+  ok(l.equals(strip.renderPulseStrip(mixed).buffer),
+    'and an absent option resolves to LIGHT rather than throwing inside a menu build');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§4 alpha encodes CADENCE, is capped, and never claims more');
+section('§4 the ramp encodes CADENCE, is capped, and never claims more');
+//
+// REPLACES the alpha ramp. `ACTIVE_ALPHA_BASE` / `_STEP` / `_MAX` /
+// `EMPTY_ALPHA` / `UNKNOWN_ALPHA` are gone with the template image; a busier
+// bucket is now a DEEPER GREEN rather than a heavier tint. The properties they
+// carried are unchanged and are re-asserted here on the ramp:
+//   one save is a mark and not a shade; more saves is heavier; it is capped;
+//   and nothing anywhere reads it as productivity.
 {
-  eq(strip.activeAlpha(1), strip.ACTIVE_ALPHA_BASE, 'one save is the base weight');
-  ok(strip.activeAlpha(2) > strip.activeAlpha(1), 'two saves is heavier than one');
-  ok(strip.activeAlpha(9) <= strip.ACTIVE_ALPHA_MAX, 'and it is capped — the scale cannot run away');
-  eq(strip.activeAlpha(50), strip.ACTIVE_ALPHA_MAX, 'a pathological bucket saturates rather than overflowing');
-  ok(strip.ACTIVE_ALPHA_BASE > strip.EMPTY_ALPHA + 0.3,
-    'ONE save is unmistakably heavier than an empty bucket, not a shade darker');
+  eq(strip.activeLevel(1), 1, 'one save is the first rung');
+  ok(strip.activeLevel(2) > strip.activeLevel(1), 'two saves is heavier than one');
+  ok(strip.activeLevel(9) <= strip.ACTIVE_LEVELS, 'and it is capped — the scale cannot run away');
+  eq(strip.activeLevel(50), strip.ACTIVE_LEVELS, 'a pathological bucket saturates rather than overflowing');
+  eq(strip.STRIP_PALETTE.light.active.length, strip.ACTIVE_LEVELS, 'the light ramp has exactly that many rungs');
+  eq(strip.STRIP_PALETTE.dark.active.length, strip.ACTIVE_LEVELS, 'and so does the dark one');
+
+  // ONE save is unmistakably heavier than an empty bucket. This was
+  // `ACTIVE_ALPHA_BASE > EMPTY_ALPHA + 0.3`; it is now a CONTRAST comparison,
+  // and it caught a real defect — the first palette written had the lightest
+  // green BELOW the empty grey. `scripts/test-tray-paint.js` §2 owns the
+  // measurement; this is the structural half of it.
+  for (const theme of ['light', 'dark']) {
+    ok(strip.STRIP_PALETTE[theme].active[0] !== strip.STRIP_PALETTE[theme].empty,
+      `${theme}: a one-save bar and an empty bucket are not the same colour`);
+  }
 
   const b = new Array(28).fill(0);
-  b[0] = 1; b[1] = 4;
-  const d = decodeGrayAlpha(strip.renderPulseStrip(pulseFixture({ buckets: b, events: 5 })).buffer);
-  ok(Math.max(...cellColumn(d, 1)) > Math.max(...cellColumn(d, 0)),
-    'and the difference survives into the actual pixels');
+  b[0] = 1; b[2] = 4;       // -> drawn 0 holds one save, drawn 1 holds four
+  const d = decodeRgba(strip.renderPulseStrip(pulseFixture({ buckets: b, events: 5 }), { dark: false }).buffer);
+  ok(JSON.stringify(cellColumn(d, 1)) !== JSON.stringify(cellColumn(d, 0)),
+    'and the difference between one save and four survives into the actual pixels');
+  eq(inkedCount(cellColumn(d, 0)), inkedCount(cellColumn(d, 1)),
+    'while both bars are exactly the same HEIGHT — a count is never drawn as a taller bar, which would read as a productivity chart');
 
   // The recorded refusal, asserted as copy rather than as a comment: nothing
   // the user reads may rank a dense column above a sparse one.
@@ -502,8 +595,10 @@ section('§6 the tooltip carries every fact the label had to compress');
   });
   const tip = strip.pulseToolTip(p);
   ok(/oldest on the left/i.test(tip), 'the tooltip says which way time runs');
-  ok(/6 hours/.test(tip), 'and how much time one bar is');
-  ok(/Solid|faint|baseline tick/.test(tip), 'it carries the legend for all three marks');
+  ok(/12 hours/.test(tip),
+    'and how much time one DRAWN bar is — twelve, because two of the producer\'s six-hour buckets are folded into one cell');
+  ok(/bar/.test(tip) && /stub/.test(tip) && /hairline/.test(tip),
+    'it carries the legend for all three marks, naming their SHAPES and not only their colours');
   ok(tip.includes('13'), 'the count');
   ok(/younger than the window/.test(tip), 'the partial-coverage fact');
   ok(tip.includes('5') && /floor/.test(tip), 'the truncation, named as a floor');
@@ -529,6 +624,7 @@ section('§7 the menu item: where it sits, that it is a statement, and its width
   const m = model.buildTrayModel(summary, { now: NOW });
   ok(m.pulse !== null, 'the model carries a pulse when the summary does');
   ok(Buffer.isBuffer(m.pulse.strip.buffer), 'including the 1x PNG bytes');
+  eq(m.pulse.strip.template, false, 'and the spec the model carries says template:false');
   ok(Buffer.isBuffer(m.pulse.strip.buffer2x), 'and the 2x ones');
 
   const seen = [];
