@@ -449,7 +449,12 @@ export function slugSegment(input) {
 // than in a new one.
 // ─────────────────────────────────────────────────────────────────────────
 export const INSTALL_ID_FILENAME = '.curator-install-id';
-const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
+// EXPORTED so a consumer can ask "do these two machine segments carry the SAME
+// installation id?" without writing a second copy of this shape. `mac-17d23c`
+// and `talis-macbook-pro-17d23c` are ONE laptop (see D10 below); the tray has
+// to be able to say so, and a hand-rolled `/-[0-9a-f]+$/` beside it would be
+// free to drift from the id this module actually mints.
+export const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
 
 // ── D10: the folder name is REMEMBERED, not recomputed ────────────────────
 //
@@ -2122,7 +2127,24 @@ export function classifySaveNotes(notes) {
  * counted in `entriesWithoutHarness` so a caller can see how much of the
  * window was blind.
  */
-export function journalFacts(entries, now = Date.now()) {
+export function journalFacts(entries, now = Date.now(), opts = {}) {
+  // ── `saveTimes` IS OPT-IN, AND THAT IS A BUDGET DECISION, NOT A STYLE ONE.
+  //
+  // Every timestamp in the tail is already parsed on the line below that
+  // computes `writtenAgeSeconds`; 54 of 65 on the maintainer's real store are
+  // then thrown away because only the newest one is wanted. Keeping them costs
+  // no file I/O and no extra parse — the tray's heartbeat is built out of data
+  // this function already paid for.
+  //
+  // But `journalFacts` also feeds the MCP index, which is under a 400 KB
+  // response budget (mcp/tools/index.js), and an array of up to ~40 numbers
+  // per (scope, machine) pair on every row of every index response is a real
+  // cost against it for a consumer that has no use for them. So the numbers
+  // are handed out only when asked for: with `opts.withSaveTimes` absent or
+  // false, the returned object is BYTE-IDENTICAL to what this function has
+  // always returned, key order included, and `scripts/test-tray-pulse.js`
+  // pins that against literals captured from the pre-change implementation.
+  const withSaveTimes = !!(opts && opts.withSaveTimes === true);
   const facts = {
     headline: null,
     writtenAt: null,
@@ -2137,6 +2159,11 @@ export function journalFacts(entries, now = Date.now()) {
     entriesScanned: 0,
     entriesWithoutHarness: 0,
   };
+  // Added AFTER the literal so the default object's key order is untouched.
+  // Set before the early return: a journal that parsed to nothing has zero
+  // saves, which is a measurement. "There is no journal" is a different fact
+  // and is expressed by `readPairJournalFacts` returning null here instead.
+  if (withSaveTimes) facts.saveTimes = [];
   if (!Array.isArray(entries) || !entries.length) return facts;
   facts.entriesScanned = entries.length;
 
@@ -2173,6 +2200,20 @@ export function journalFacts(entries, now = Date.now()) {
   for (const e of entries) {
     const h = meta(e && e.harness);
     if (h) named.push(h); else facts.entriesWithoutHarness++;
+    // Folded into the pass that was already walking every entry, so asking
+    // for the times adds one branch per line and not a second traversal.
+    //
+    // ONLY THE LINE'S OWN `at` IS EVER TAKEN. There is deliberately no mtime
+    // fallback anywhere on this path: git rewrites mtime on checkout, so a
+    // handoff pulled from another machine has a filesystem clock reading "the
+    // moment of the pull". A heartbeat built on that would draw a second
+    // machine's whole history as one spike at the instant of a `git pull` —
+    // the v3.34.0 defect redrawn as a chart. An entry whose `at` is missing or
+    // unusable contributes NOTHING rather than contributing `now`.
+    if (withSaveTimes && e && isIsoish(e.at)) {
+      const ms = Date.parse(e.at);
+      if (Number.isFinite(ms)) facts.saveTimes.push(ms);
+    }
   }
   const distinct = [];
   for (let i = named.length - 1; i >= 0; i--) {          // newest-first
@@ -2203,12 +2244,29 @@ export function journalFacts(entries, now = Date.now()) {
  * which is the honest answer — `writtenAt: null`, `lastSaveKind: null` — and
  * not a fabricated one.
  */
-async function readPairJournalFacts(project, scopeDir, machine, now) {
+async function readPairJournalFacts(project, scopeDir, machine, now, opts = {}) {
+  const withSaveTimes = !!(opts && opts.withSaveTimes === true);
+  // NO JOURNAL AT ALL is not "a journal holding no saves", and collapsing the
+  // two here would let the tray draw an empty heartbeat over a store it never
+  // managed to read. `saveTimes: null` says "nothing was read"; `[]` says "read
+  // it, there were no usable timestamps in it". Same rule the module applies to
+  // every other absent-versus-zero pair.
+  const absent = () => {
+    const f = journalFacts(null, now, opts);
+    if (withSaveTimes) { f.saveTimes = null; f.journalTailTruncated = false; }
+    return f;
+  };
   const jAbs = resolveInsideState(project, `${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
-  if (!jAbs) return journalFacts(null, now);
+  if (!jAbs) return absent();
   const tail = await readTail(jAbs, INDEX_JOURNAL_TAIL_BYTES);
-  if (!tail) return journalFacts(null, now);
-  return journalFacts(parseJournalLines(tail.text), now);
+  if (!tail) return absent();
+  const f = journalFacts(parseJournalLines(tail.text), now, opts);
+  // DERIVED FROM readTail's OWN SIGNAL, never guessed. A journal past
+  // INDEX_JOURNAL_TAIL_BYTES has history this read cannot see, so any count
+  // taken over it is a LOWER BOUND — and a consumer that draws it as a
+  // measurement would show a busy long-lived scope as a quiet one.
+  if (withSaveTimes) f.journalTailTruncated = tail.truncated === true;
+  return f;
 }
 
 /**
@@ -2310,7 +2368,11 @@ export async function listScopeMachines(project, scope) {
  * that one. It is moved rather than rewritten — the words were always right,
  * they were two functions out of place.)
  */
-export async function listWorkingScopes(project) {
+export async function listWorkingScopes(project, opts = {}) {
+  // Opt-in, threaded straight through to `journalFacts`. Only the tray's
+  // heartbeat asks for it; `src/routes/memory.js` and `mcp/tools/working-state.js`
+  // both call this with one argument, so the MCP payload is unchanged.
+  const withSaveTimes = !!(opts && opts.withSaveTimes === true);
   if (!isSafeSegment(project)) {
     return { ok: false, reason: 'invalid-project', message: `"${project}" is not a valid project name.`, scopes: [] };
   }
@@ -2385,7 +2447,7 @@ export async function listWorkingScopes(project) {
   for (const p of shown) {
     p.ageSeconds = Math.max(0, Math.round((now - p.mtimeMs) / 1000));
     delete p.mtimeMs;
-    const f = await readPairJournalFacts(project, p.scope, p.machine, now);
+    const f = await readPairJournalFacts(project, p.scope, p.machine, now, opts);
     p.headline = f.headline;
     p.writtenAt = f.writtenAt;
     p.writtenAgeSeconds = f.writtenAgeSeconds;
@@ -2397,6 +2459,12 @@ export async function listWorkingScopes(project) {
     p.harnessSwitches = f.harnessSwitches;
     p.harnessShared = f.harnessShared;
     p.journalEntriesScanned = f.entriesScanned;
+    // Two extra keys, and ONLY when the caller asked. A default call's row is
+    // the same object it has always been.
+    if (withSaveTimes) {
+      p.saveTimes = f.saveTimes;                       // epoch ms, oldest first; null = no journal
+      p.journalTailTruncated = f.journalTailTruncated;
+    }
   }
 
   return {
