@@ -122,7 +122,8 @@ display bug. The packaged `Info.plist` genuinely carried
 electron-builder derives both from the app manifest's `version` and
 `desktop/package.json` is pinned at `0.0.0`. The DMGs were then **renamed by
 hand** at upload time, so the filename said `3.30.0` and the app inside said
-`0.0.0`.
+`0.0.0`. (That hand-rename is now automated and verified — see
+[§ Publishing](#publishing-the-rename-and-the-release-that-was-never-created).)
 
 ### A claim in v3.30.0's changelog row that was half wrong
 
@@ -220,6 +221,84 @@ version, and calling that number "macOS" would be a fabricated field.
 The implementation lives in `lib/app-version.js`, not in `main.js`, so
 `scripts/test-desktop-version-identity.js` can execute it against a stub `app`.
 `main.js` keeps one call site, which is source-scanned and labelled as such.
+
+---
+
+## Publishing: the rename, and the release that was never created
+
+The hand-rename described above is gone, and so is the larger problem it was a
+symptom of. **`.github/workflows/desktop-dmg.yml` now publishes the GitHub
+Release**, on the `v*` tag `scripts/release.js` pushes.
+
+### The defect
+
+Until v3.38.0 the workflow built both DMGs and uploaded them as a **14-day
+workflow artifact**. Renaming and publishing them was a manual step nobody had
+written down, and six releases went out with a tag and no release.
+
+That is not a cosmetic gap. `src/routes/config.js` resolves *the newest release
+carrying an installer* from the Releases API, so a tag with no release makes the
+in-app updater tell every installed copy **"You're up to date"** while it runs
+the previous version — a wrong reassurance, which is worse than an error.
+`scripts/release.js` carried a comment saying a tag-triggered release workflow
+would be "shipping an unwired parameter"; that reasoning expired in v3.31.0,
+when the updater shipped and started consuming exactly that.
+
+### The naming rule, and why the x64 file is the dangerous one
+
+electron-builder's default mac artifact name is
+`${productName}-${version}-${arch}.${ext}` and it **omits the arch for x64**:
+
+```
+The Curator-3.37.0-arm64.dmg      arm64
+The Curator-3.37.0.dmg            x86_64 — no architecture in the name at all
+```
+
+`archFromAssetName()` in `lib/update-plan.js` lowercases the name, requires
+`.dmg`, splits the stem on `-` **only**, and looks for a whole token `arm64` or
+`x64`. Run against those two it returns `arm64` and **`null`**. So a release
+published with the raw names offers nothing to any Intel Mac, and does it
+silently — `pickInstallerAsset()` reports `no-asset-for-arch`, which reads like
+"no build for you" rather than "the release is mis-named".
+
+The published names are therefore:
+
+```
+TheCurator-<version>-arm64-AppleSilicon.dmg
+TheCurator-<version>-x64-Intel.dmg
+```
+
+`arm64` / `x64` is the token the matcher needs; `AppleSilicon` / `Intel` is the
+word a human picking a download reads; the prefix drops the space, which would
+otherwise be percent-encoded in every download URL.
+
+### Two verifications, checking two different things
+
+| | |
+|---|---|
+| `scripts/publish-dmg-assets.js` | the **name** is matchable — it renames, then feeds the final names through the **imported** `archFromAssetName`, so producer and consumer cannot drift. It re-reads the directory afterwards, so it verifies the files that exist rather than the plan it made. |
+| the `lipo -archs` step | the **contents** match the name — each image is mounted and the real binary architecture read. A `.dmg` named `x64-Intel` holding an arm64 binary passes every name check there is, and fails only on the user's machine. |
+
+The first is pure and runs in `npm test`
+(`scripts/test-release-publish.js`, which drives the CLI against real files in a
+tempdir and uses the raw electron-builder names as negative controls). The
+second needs a macOS runner and has **never been executed** — like everything
+else in this workflow.
+
+### What it does NOT close
+
+- **No GitHub Action has been run for any of this.** The YAML is parsed and
+  asserted structurally; that GitHub accepts it, that `contents: write` at the
+  job level is sufficient, and that `gh release create --verify-tag --latest`
+  behaves as described are all unproven.
+- Publishing adds **no workflow run**: GitHub does not start a workflow from an
+  event raised with the automatic `GITHUB_TOKEN`, and there is no `on: release`
+  workflow here anyway. That matters because `scripts/release.js`'s `watchCi`
+  finds its run by branch and SHA, and a second run on the same pair would be a
+  coin flip — see the header of `desktop-dmg.yml`.
+- `release.js` still does not check that the release appeared. Its closing
+  banner **says** the installers are still building and gives the URL to
+  confirm; verifying it would put a network call in the release gate.
 
 ---
 
