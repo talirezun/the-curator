@@ -22,6 +22,7 @@
  *
  *   1  the headline answer          "Last save · 4 min ago"
  *   2  where that save was          "curator · main"
+ *   2b the save pulse               a drawn strip + "7 days · 65 saves"
  *   -  separator
  *   3  up to eight rows             newest first, flat, not grouped
  *   -  separator
@@ -86,6 +87,7 @@
  *  Labels are user-visible copy and will change; ids are a contract. */
 export const ID_HEADLINE = 'tray-headline';
 export const ID_HEADLINE_WHERE = 'tray-headline-where';
+export const ID_PULSE = 'tray-pulse';
 export const ID_OPEN_MEMORY = 'tray-open-memory';
 export const ID_OPEN_APP = 'tray-open-app';
 export const ID_SETTINGS = 'tray-settings';
@@ -116,12 +118,15 @@ const sep = { type: 'separator' };
  * @param {Function} o.onOpenMemory  () => void      — open the Agent memory view
  * @param {Function} o.onOpenApp     () => void      — reveal the window
  * @param {Function} o.onOpenSettings () => void
+ * @param {Function} [o.makeIcon]  (strip) => NativeImage — the ONE Electron
+ *   call the pulse strip needs, injected rather than imported. See the pulse
+ *   block below for why it is a parameter and not a build step in main.js.
  * @returns {Array} a `Menu.buildFromTemplate` template
  */
 export function buildTrayMenuTemplate(model, o = {}) {
   const {
     appName = 'The Curator',
-    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings,
+    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, makeIcon,
   } = o;
 
   // Every handler is required. A menu item wired to `undefined` throws at
@@ -157,6 +162,52 @@ export function buildTrayMenuTemplate(model, o = {}) {
       label: '    ' + headline.where,
       // A statement about the line above it, not a second action.
       enabled: false,
+    });
+  }
+
+  // ── 2b. The save pulse ──────────────────────────────────────────────────
+  //
+  // ONE item, directly under the headline pair it elaborates, carrying a drawn
+  // strip in its icon gutter and the reading in words on its label.
+  //
+  // ── WHY ONE STRIP AND NOT ONE PER ROW ──────────────────────────────────
+  //
+  // A per-row sparkline was considered and REFUSED on legibility: eight to
+  // eleven independent bands, each a few points tall, in a menu that this same
+  // release is trying to make NARROWER, and each drawn from a single scope's
+  // handful of saves — most would be one mark and a lot of empty. One strip
+  // over the whole store is a reading somebody can take at a glance, which is
+  // the only thing a menu bar surface is for.
+  //
+  // ── WHY IT IS DISABLED ─────────────────────────────────────────────────
+  //
+  // It is a STATEMENT, not an action, and a disabled item is this menu's
+  // existing idiom for a status line — the notices and the freshness stamp are
+  // both disabled for the same reason. That does mean reduced contrast, which
+  // is the right trade HERE and the wrong one for the headline: the headline is
+  // the ANSWER and stays enabled at full contrast, and clicking a picture of
+  // the last seven days would have no obvious destination anyway.
+  //
+  // ── WHY `makeIcon` IS INJECTED ─────────────────────────────────────────
+  //
+  // `nativeImage.createFromBuffer` is an Electron call, and this module must
+  // stay importable by `npm test`, where Electron does not exist. Passing it in
+  // keeps EVERY decision here — whether there is a strip at all, what it says,
+  // where it sits, whether it is actionable — inside a module the suite runs
+  // for real, and leaves main.js the two lines it cannot give away. Same split,
+  // and the same reason, as lib/menu.js and lib/quit-decision.js.
+  //
+  // With no `makeIcon` the item still appears with its label and its tooltip
+  // and simply carries no picture: a missing image must not cost the reading.
+  const pulse = m && m.pulse ? m.pulse : null;
+  if (pulse && pulse.label) {
+    const icon = typeof makeIcon === 'function' ? makeIcon(pulse.strip) : null;
+    template.push({
+      id: ID_PULSE,
+      label: pulse.label,
+      enabled: false,
+      ...(icon ? { icon } : {}),
+      ...(pulse.toolTip ? { toolTip: pulse.toolTip } : {}),
     });
   }
 

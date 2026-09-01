@@ -243,6 +243,17 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   ok(m.rows[2].label.includes('studio'), 'a REMOTE row shows the machine');
   ok(!m.rows[2].label.includes('harness-two'), 'a REMOTE row does NOT show the harness — that is the other computer\'s business');
 
+  // THE PRECONDITION THE FOUR ASSERTIONS ABOVE NOW CARRY, made explicit so a
+  // future fixture edit cannot make them vacuous in silence. Since the width
+  // compaction, a harness is shown only while it DISTINGUISHES something: with
+  // one harness across every local row it is dropped as noise, which is the
+  // whole point of the lever and is asserted in test-tray-pulse-strip.js §8.
+  // This fixture has two, so "a LOCAL row shows the harness" is a real test of
+  // the slot rather than a test of a token that is always printed.
+  ok(new Set(model.buildTrayModel(summary(), { now: NOW }).rows
+    .filter((r) => r.isThisMachine).map((r) => r.harness)).size > 1,
+    'CONTROL — this fixture really does carry more than one local harness, which is what makes the slot assertions above non-vacuous');
+
   // ageSource: a filesystem timestamp is never dressed as the agent's clock.
   ok(m.rows[0].label.includes('just now') && !m.rows[0].label.includes('changed'),
     'an ageSource:agent row reads as a plain relative age');

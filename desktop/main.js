@@ -1030,6 +1030,7 @@ function renderTrayFromSnapshot() {
     onOpenMemory: () => openMemoryView(null),
     onOpenApp: () => revealWindow(),
     onOpenSettings: () => { openSettingsView(); },
+    makeIcon: pulseStripImage,
   })));
 
   // THE ONE-SHOT CORRECTOR, NOT A TICK. `liveExpiresInMs` is null unless the
@@ -1064,6 +1065,34 @@ async function refreshTraySummary() {
     };
   }
   renderTrayFromSnapshot();
+}
+
+/**
+ * The pulse strip as a nativeImage — WIRING ONLY.
+ *
+ * Every decision about the strip (its geometry, its cell vocabulary, its words,
+ * whether there is one at all) is in lib/pulse-strip.js and lib/tray-model.js,
+ * where the offline suite executes them. main.js cannot be imported, evaluated
+ * or run by `npm test` — Electron is not an offline dependency — so anything
+ * put here can only ever be source-scanned, which is the reason there is as
+ * little of it as possible.
+ *
+ * Returns null on anything unexpected: a menu item that throws while being
+ * BUILT takes the whole menu with it, and a missing picture must never cost the
+ * reading beside it.
+ */
+function pulseStripImage(strip) {
+  if (!strip || !strip.buffer) return null;
+  try {
+    const img = nativeImage.createFromBuffer(strip.buffer, { scaleFactor: 1 });
+    if (strip.buffer2x) img.addRepresentation({ scaleFactor: 2, buffer: strip.buffer2x });
+    // Same hard constraint as the glyph: without this the strip is a black
+    // smear on a dark menu and it does not invert with a highlighted row.
+    img.setTemplateImage(true);
+    return img;
+  } catch {
+    return null;
+  }
 }
 
 /** The template image for a glyph state. Generated, not shipped — see
