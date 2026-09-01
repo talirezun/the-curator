@@ -166,7 +166,7 @@ Be specific about scale and quantity. "Some tests fail" is nearly worthless; "6 
 
 | Field | Shape | What belongs in it |
 |---|---|---|
-| `headline` | string, required, one line | The one thing a future session sees before deciding to open this state. Make it a **specific claim**, not a topic. |
+| `headline` | string, required, one line, **≤200 chars** | The one thing a future session sees before deciding to open this state. Make it a **specific claim**, not a topic. Over the cap it is silently truncated — see below. |
 | `now_state` | prose | Where the build **actually** stands. Compressed present tense, not a history. |
 | `next_steps` | string list | Specific enough to start work immediately. |
 | `decisions` | string list | **Negative constraints.** "Do not re-litigate X, because Y." Accumulates. |
@@ -184,7 +184,7 @@ The argument names are snake_case; the camelCase spellings (`nowState`, `nextSte
 
 ### headline
 
-Not a topic. A claim.
+Not a topic. A claim. **Hard cap: 200 characters.** It is the one thing a future session reads before deciding whether to open this state at all, and it is also the line stored in the scope index and in every `journal.jsonl` entry — so put the claim that matters in the first half of the sentence. Over 200 characters it is truncated **silently** (mid-word, mid-sentence, wherever the cut falls) with only a `notes` entry to tell you — see §9. A clipped headline is worse than a shorter true one: write it short in the first place, then check `notes` to be sure.
 
 ```
 BAD   auth work
@@ -331,7 +331,7 @@ For the same reason, protocol-shaped tokens and line-initial chat role markers a
 A successful save returns `ok: true` with `path`, `bytes`, `sections_written`, `truncated`, `journal_written`, a one-line `report`, **`notes`**, and **`notes_meaning`**.
 
 - **`notes` records what the store did to your input; `notes_meaning` says in one line which of four things happened.** Read `notes_meaning` first — it is derived from the notes themselves, so the two can never disagree. **Three of the four need something from you; only the last is routine:**
-  - **Loss** — something was dropped, omitted or truncated. Shorten what mattered and save again.
+  - **Loss** — something was dropped, omitted or truncated. Shorten what mattered and save again — a save overwrites (§4), so this costs nothing and there is no reason to leave a known-clipped handoff on disk.
   - **Replacement** — nothing you sent was lost, but this save overwrote a larger stored handoff, which is not recoverable. See `would-replace-larger-state` below.
   - **Machine identity** — the note begins `machine identity:` and `install_id_available` is `false`. **Nothing you sent was dropped and the save is complete, but this is a standing risk rather than a description of this call**, and it is the one case where saying nothing is wrong. This installation has no persisted machine id, so state is stored under the bare hostname — and two computers sharing a hostname (the macOS default collides readily) will overwrite each other's handoff through sync, silently. **Tell the user, once, in plain words.** Do not classify it as normalisation: this warning exists precisely because the fallback used to be silent while the user stood in the layout that had already cost a real handoff and its journal.
   - **Normalisation** — a value was filled in and disclosed; nothing was lost, the save is complete. **This is the commonest case by far and it needs no action.** Do not re-save because you saw a note.
@@ -345,7 +345,7 @@ A successful save returns `ok: true` with `path`, `bytes`, `sections_written`, `
 
 > **Order every list most-important-first.** Over-budget trimming drops from the **end**. If the critical trap is last in the list, it is the one that disappears.
 
-Rough budgets, so you can stay well inside them: a headline is one short line; each list item is a sentence or two, not a paragraph; keep lists under about forty items; `now_state` is a few paragraphs, not a document. If you are near any of these, you are probably recording history instead of state — compress, or move the durable part to the wiki (§10).
+**Exact limits, not rough ones — stay well inside them, not just under them:** `headline` truncates at **200 characters** (§6); `now_state` truncates at **8,000 characters**; each list item — every `next_steps`, `decisions`, `traps`, `open_questions` entry, and an observation's `statement` — truncates at **600 characters**; each list drops anything past its **40th** item outright, not trimmed, just gone. The whole saved document tops out at **48 KB**, and past that whole trailing sections are omitted rather than trimmed. None of this refuses the save — it clips and discloses in `notes` (§9) — but a clip you never read is a clip you never know about. If you are near any of these numbers, you are probably recording history instead of state: cut narrative and keep the current frame (`now_state` wants where things stand, not how you got there); anything that should still matter next month, in every future session, belongs in the user's `project.md` brief — you cannot write it, but you can tell them (§3); a cross-cutting pattern belongs in the wiki, not the handoff (§10).
 
 `journal_written: false` is cosmetic only. The handoff is on disk; the index line is missing. Do not retry the save for it alone.
 
