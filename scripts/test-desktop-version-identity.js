@@ -617,8 +617,23 @@ writeFileSync(path.join(deadDir, 'Dead'), '#!/nonexistent\n');
 spawnSync('chmod', ['000', path.join(deadDir, 'Dead')]);
 const deadRun = threw(() => assertLoadable(path.join(SCRATCH, 'dead.app')));
 ok(deadRun.threw, 'assertLoadable REFUSES a bundle whose executable cannot start');
-ok(deadRun.threw && /FAILS TO LOAD/.test(deadRun.message),
-   'and it says FAILS TO LOAD — the failure a signature check cannot see');
+// STRENGTHENED in v3.38.1. This used to require the literal "FAILS TO LOAD",
+// which the probe printed for THREE different facts — a non-zero exit, a
+// timeout, and a process that never started — while discarding status, signal
+// and error. v3.38.0's DMG build refused twice on that message above an empty
+// output, and it was unusable for telling a dyld refusal from a stopwatch. The
+// probe now names the mode, so the guard asserts the NAME rather than the
+// alarm: this executable is chmod 000, so it cannot be STARTED, and calling
+// that "the app fails to load" would be the same overstatement again.
+ok(deadRun.threw && /BUILD REFUSED — the load probe did not pass/.test(deadRun.message),
+   'and it REFUSES with the load-probe message — the failure a signature check cannot see');
+ok(deadRun.threw && /could not be STARTED/.test(deadRun.message),
+   'and it names THIS failure mode (the executable cannot be started) rather than asserting a dyld refusal');
+ok(deadRun.threw && /status=/.test(deadRun.message) && /signal=/.test(deadRun.message)
+   && /retried=/.test(deadRun.message),
+   'and it carries status, signal and retried, which the old message discarded before printing');
+ok(deadRun.threw && !/hardened-runtime-over-ad-hoc/.test(deadRun.message),
+   'CONTROL: it does NOT print the dyld diagnosis for a failure that is not one');
 
 // THE SKIP DISCRIMINATOR, driven on fabricated inputs. §12b skips a STALE
 // bundle instead of failing on it, and a skip nothing tests is

@@ -333,7 +333,12 @@ export function adhocSign({ appPath, identity, env = process.env, electronFuses 
  * It does NOT prove the server serves or the window paints. It proves the one
  * thing that was silently failing.
  */
-export function assertLoadable(appPath) {
+export function assertLoadable(appPath, budgets = null) {
+  // TEST-ONLY SEAM, null in production — the same shape as compile.js's
+  // `opts.generateText`. Without it the timeout arm costs 5 minutes to
+  // exercise, which means in practice it is never exercised at all.
+  const FIRST_MS = budgets && budgets.firstMs ? budgets.firstMs : 60_000;
+  const RETRY_MS = budgets && budgets.retryMs ? budgets.retryMs : 240_000;
   const macOsDir = path.join(appPath, 'Contents', 'MacOS');
   let exe;
   try {
@@ -346,21 +351,69 @@ export function assertLoadable(appPath) {
     throw new Error(`BUILD REFUSED — cannot locate the app executable to load-test it: ${err.message}`);
   }
 
-  const r = spawnSync(exe, ['-e', 'process.exit(0)'], {
+  // ── THE PROBE NAMES WHICH WAY IT FAILED, AND RETRIES A TIMEOUT ────────
+  //
+  // This threw ONE message for three different facts — the app exited non-zero,
+  // the probe was KILLED for taking too long, or the process never started at
+  // all — and it discarded `status`, `signal` and `error`. So the log carried a
+  // confident "the signed app FAILS TO LOAD" above an EMPTY output, with no way
+  // to tell a dyld refusal from a stopwatch running out.
+  //
+  // It cost a real release. v3.38.0's x64 bundle built green in the morning and
+  // refused twice that afternoon on the same runner image, from the same code
+  // path, and the message said the same thing either way.
+  //
+  // A cold x64 bundle on an arm64 runner pays for Rosetta translation on its
+  // FIRST launch — exactly the kind of cost a fixed 60s budget survives on an
+  // idle machine and loses on a loaded one. So a TIMEOUT is retried once,
+  // generously; a genuine non-zero EXIT is fatal immediately, because that is
+  // the defect this guard exists to catch and retrying it would only make the
+  // guard intermittent.
+  const probe = (timeout) => spawnSync(exe, ['-e', 'process.exit(0)'], {
     encoding: 'utf8',
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    timeout: 60_000,
+    timeout,
   });
+  const timedOut = (x) => x.signal === 'SIGTERM' || (x.error && x.error.code === 'ETIMEDOUT');
+
+  let r = probe(FIRST_MS);
+  let retried = false;
+  if (r.status !== 0 && timedOut(r)) {
+    retried = true;
+    r = probe(RETRY_MS);
+  }
+  if (r.status === 0) return true;
+
   const output = `${r.stdout || ''}${r.stderr || ''}`;
-  if (r.status !== 0) {
-    throw new Error(
-      'BUILD REFUSED — the signed app FAILS TO LOAD.\n\n' +
-      'It passed every static signature check and still cannot start. This is the\n' +
+  const how = timedOut(r)
+    ? `the probe was KILLED after ${Math.round((retried ? RETRY_MS : FIRST_MS) / 1000)}s without answering` +
+      (retried ? ', having already been retried once with a longer budget' : '')
+    : r.error
+      ? `the probe could not be STARTED: ${(r.error.code || '') + ' ' + r.error.message}`.trim()
+      : `the app EXITED with status ${r.status}`;
+  // THREE modes, THREE diagnoses. Branching on `timedOut ? … : dyld` sent a
+  // process that never STARTED into the dyld text — caught by the control in
+  // test-desktop-version-identity.js, which is precisely the overstatement this
+  // whole change exists to remove, reintroduced by the change itself.
+  const diagnosis = (r.error && !timedOut(r))
+    ? 'THE PROCESS NEVER STARTED, so nothing has been learned about the signature\n' +
+      'at all. This is an environment or permissions problem — an unreadable or\n' +
+      'non-executable file, a missing interpreter, a full disk — and it is NOT\n' +
+      'evidence of a dyld refusal. Fix the environment and run it again.'
+    : timedOut(r)
+    ? 'A TIMEOUT IS NOT A DYLD REFUSAL, and this message must not pretend it is.\n' +
+      'On an arm64 runner an x64 bundle pays for Rosetta translation on first\n' +
+      'launch, and a loaded machine can exceed the budget where an idle one does\n' +
+      'not. If this recurs on an otherwise unchanged build, suspect the machine\n' +
+      'before the app.'
+    : 'It passed every static signature check and still cannot start. This is the\n' +
       'hardened-runtime-over-ad-hoc failure mode, or a nested component whose\n' +
       'signature the loader rejects. Shipping this would be worse than shipping\n' +
       'the unsigned bundle: a Gatekeeper prompt can be clicked through, a dyld\n' +
-      `crash cannot.\n\n${output.slice(0, 2000)}`
-    );
-  }
-  return true;
+      'crash cannot.';
+  throw new Error(
+    `BUILD REFUSED — the load probe did not pass: ${how}.\n\n${diagnosis}\n\n` +
+    `exe=${exe}\nstatus=${r.status} signal=${r.signal || 'none'} retried=${retried}\n` +
+    `output=${output ? output.slice(0, 2000) : '(empty — the process produced no output at all)'}`
+  );
 }
