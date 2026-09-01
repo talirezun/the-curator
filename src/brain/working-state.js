@@ -2065,9 +2065,40 @@ const SAVE_NOTE_LOSS_RE = /\b(dropped|omitted|truncated|rejected|discarded|lost)
 const SAVE_NOTE_REPLACED_RE = /\boverwrote\b/i;
 
 /**
+ * Every note this module writes is prefixed `"<field>: …"` (see `rulesNotes`,
+ * `sanitiseBlock`, `sanitiseLine`, `sanitiseList`, `sanitiseObservations`, and
+ * the `omitted` loop in `saveWorkingState`) — the label argument threaded
+ * through each of those IS the field name. So a loss note's own prefix says
+ * which field it is about, and `classifySaveNotes` uses that rather than
+ * guessing.
+ *
+ * BODY fields are derived from `STATE_SECTIONS` itself — the array that
+ * defines both the rendered document AND the `label`/`omitted` keys above —
+ * so a future section cannot silently land in the wrong bucket by being
+ * hand-typed here and forgotten there.
+ *
+ * METADATA fields have no equivalent exported array to derive from: each is
+ * a single `sanitiseLine(...)` call inside `saveWorkingState` for a field
+ * that describes the SAVE rather than the HANDOFF — `headline` (the one-line
+ * summary), `harness`/`model` (who wrote it), and the scope-normalisation
+ * note keyed `scope`. If `saveWorkingState` ever grows another metadata-only
+ * field with its own label, add it here too — an unlisted field fails SAFE
+ * (see below), so forgetting this list under-classifies as "worse", never
+ * as "fine".
+ */
+const BODY_SAVE_NOTE_FIELDS = new Set(STATE_SECTIONS.map((s) => s.key));
+const METADATA_SAVE_NOTE_FIELDS = new Set(['headline', 'harness', 'model', 'scope']);
+
+/** The `<field>` a `"<field>: …"` note is about, or null if it isn't shaped that way. */
+function saveNoteField(note) {
+  const m = /^([A-Za-z][A-Za-z0-9]*):/.exec(note);
+  return m ? m[1] : null;
+}
+
+/**
  * What a save's notes say about whether the save was COMPLETE.
  *
- * Four verdicts and a null, and the null is the important one:
+ * Five verdicts and a null, and the null is the important one:
  *
  *   null          there is no journal line, so we do not know. NOT "complete".
  *   'complete'    a journal line with no notes at all — nothing to disclose.
@@ -2080,8 +2111,31 @@ const SAVE_NOTE_REPLACED_RE = /\boverwrote\b/i;
  *   'replaced'    a larger prior handoff was deliberately overwritten
  *                 (`replace: true`). Nothing the caller sent was lost, but
  *                 something was, so 'complete' would be false comfort.
- *   'trimmed'     content was dropped, omitted or truncated. This is the one
- *                 that must never be rendered as "saved, you are fine".
+ *   'clipped'     a loss word fired, but EVERY such note is about a metadata
+ *                 field (`headline`/`harness`/`model`/`scope`) — the save's
+ *                 own label, not the handoff. The handoff body is stored in
+ *                 full. Named apart from `trimmed` because the two cost a
+ *                 reader nothing alike: a shortened headline is a smaller,
+ *                 less useful index entry; a trimmed body is missing content
+ *                 an agent will act on. This split exists because a real save
+ *                 was misreported before it did: its ONLY note was "headline:
+ *                 truncated to 200 chars (was 244)" and its body — 6698 of
+ *                 49152 budget bytes — was untouched, yet the reading badged
+ *                 `incomplete` and told the maintainer the handoff was
+ *                 missing content. It was not.
+ *   'trimmed'     a loss word fired on at least one note that is NOT
+ *                 positively known to be metadata-only — i.e. it names a
+ *                 BODY field (`nowState`/`decisions`/`traps`/`nextSteps`/
+ *                 `observations`/`openQuestions`), or it names no recognised
+ *                 field at all (the whole-document last-resort truncation is
+ *                 keyed `__document`, which matches neither list). This is
+ *                 the one that must never be rendered as "saved, you are
+ *                 fine" — and the fail-safe direction: an unrecognised field
+ *                 reads as body loss, never as a harmless clip.
+ *
+ * When several notes fire at once the WORST verdict wins: one body-loss note
+ * among five metadata-only ones is still `trimmed`, never averaged away into
+ * `clipped`.
  *
  * The bucket for "notes, but nothing lost" is `noted` rather than
  * `normalised` deliberately: not every such note is a normalisation, and a
@@ -2092,7 +2146,14 @@ export function classifySaveNotes(notes) {
   if (!Array.isArray(notes)) return null;
   const list = notes.filter((n) => typeof n === 'string' && n);
   if (!list.length) return 'complete';
-  if (list.some((n) => SAVE_NOTE_LOSS_RE.test(n))) return 'trimmed';
+  const lossNotes = list.filter((n) => SAVE_NOTE_LOSS_RE.test(n));
+  if (lossNotes.length) {
+    const allMetadataOnly = lossNotes.every((n) => {
+      const field = saveNoteField(n);
+      return field !== null && METADATA_SAVE_NOTE_FIELDS.has(field) && !BODY_SAVE_NOTE_FIELDS.has(field);
+    });
+    return allMetadataOnly ? 'clipped' : 'trimmed';
+  }
   if (list.some((n) => SAVE_NOTE_REPLACED_RE.test(n))) return 'replaced';
   return 'noted';
 }

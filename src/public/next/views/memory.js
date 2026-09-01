@@ -1333,15 +1333,36 @@ function renderSaveStatus(read, d) {
           // The badge is on the READING, not in a note underneath it. A
           // completeness caveat that lives below the figure is a caveat the
           // one-second glance never reaches.
+          //
+          // `clipped` gets the QUIET badge class (the one "shared mirror"
+          // uses), not the attention one `trimmed` gets: nothing about the
+          // handoff was lost, only a metadata field — most often the
+          // one-line summary — was shortened to fit its own limit. Badging
+          // that `incomplete` is the exact defect this verdict exists to
+          // fix, so it must never share `trimmed`'s badge or its class.
           (kind === 'trimmed'
-            ? '<span class="mem-badge mem-badge-attn">incomplete</span>' : '') +
+            ? '<span class="mem-badge mem-badge-attn">incomplete</span>'
+            : kind === 'clipped'
+              ? '<span class="mem-badge mem-badge-quiet">summary shortened</span>' : '') +
         '</div>';
     }
 
     if (kind === 'trimmed') {
       lines.push(saveLine('alertTriangle', 'loud',
-        'That save did not fit the state budget, so part of it was trimmed before it was written. '
-        + 'The handoff below is missing what the note names — ask the agent to save again, shorter. '
+        'Part of this handoff did not survive the save — content named in the note below was dropped '
+        + 'or cut short before it was written, so what you are reading beneath is missing it. '
+        + 'Ask the agent to save that content again. '
+        + firstNote(cur.lastSaveNotes), true));
+    } else if (kind === 'clipped') {
+      // Deliberately NOT the 'loud' tone `trimmed` gets, and deliberately
+      // avoids "missing" / "budget" / "save again" — each was part of the
+      // false alarm this verdict replaces. See the real case recorded on
+      // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
+      // untouched, badged and worded as if content had been lost.
+      lines.push(saveLine('', '',
+        'The handoff itself was written in full. What got shortened is a label attached to the save '
+        + '— most often its one-line summary — not the handoff’s content. That label matters because '
+        + 'it is the only thing a future session sees before deciding whether to open this state. '
         + firstNote(cur.lastSaveNotes), true));
     } else if (kind === 'replaced') {
       lines.push(saveLine('alertTriangle', '',
