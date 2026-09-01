@@ -83,37 +83,139 @@
  * a way to manufacture one.
  */
 
-import { renderPulseStrip, pulseLabel, pulseToolTip } from './pulse-strip.js';
+/**
+ * ── THE TWO SIBLING MODULES ARE READ DEFENSIVELY, AND ON PURPOSE ───────────
+ *
+ * `pulse-strip.js` and `menu-dots.js` DRAW the two pictures this menu carries.
+ * They are built alongside this file rather than before it, so both are read
+ * through a namespace import and a guarded dynamic one: a NAMED import of an
+ * export that is not there yet fails at link time and takes the whole module
+ * with it, and a menubar module that fails to import is a menubar that is
+ * simply ABSENT — no error, no icon, nothing anywhere a user will look.
+ *
+ * Neither picture is load-bearing. A missing renderer costs a dot or a strip
+ * and never a reading: every row still says what it says, and the width budget
+ * below is computed from RESERVED gutters rather than from whatever a renderer
+ * happened to return, so a label cannot change width depending on whether an
+ * image module was present.
+ */
+import * as pulseStrip from './pulse-strip.js';
+
+/** The recency dot renderer, or null. Resolved once, at import. */
+let _renderRecencyDot = null;
+try {
+  const dots = await import('./menu-dots.js');
+  if (dots && typeof dots.renderRecencyDot === 'function') _renderRecencyDot = dots.renderRecencyDot;
+} catch { _renderRecencyDot = null; }
+
+/** Read off the namespace for the same reason: the strip renderer may not have
+ *  grown its `{dark}` option yet, and an older single-argument version simply
+ *  ignores the second argument rather than failing. */
+const _renderPulseStrip = typeof pulseStrip.renderPulseStrip === 'function'
+  ? pulseStrip.renderPulseStrip : null;
+const _pulseLabel = typeof pulseStrip.pulseLabel === 'function' ? pulseStrip.pulseLabel : null;
+const _pulseToolTip = typeof pulseStrip.pulseToolTip === 'function' ? pulseStrip.pulseToolTip : null;
 
 // ── Caps ────────────────────────────────────────────────────────────────────
 //
-// Eight rows: roughly what fits above the fold of a menubar menu without the
-// menu becoming a window. It is also a CAP, so it is disclosed — a cap must
-// never read as a measurement (v3.17.0). See `truncatedNote`.
-export const MAX_ROWS = 8;
+// FIVE ROWS, DOWN FROM EIGHT, and the maintainer asked for the number: "we
+// need the scopes to be more compact, maybe just five of them, the latest five,
+// and then people can click more". Five is also what turns a list into a
+// SECTION — eight rows under a header is still a list with a caption, and both
+// reference surfaces he supplied (iStat Menus, Little Snitch) keep a section to
+// about five lines.
+//
+// It is a CAP, so it is disclosed, and the disclosure carries the TRUE
+// remaining count taken BEFORE any slice — reporting a cap as a measurement is
+// this project's own twice-shipped defect. See `truncatedNote`.
+export const MAX_ROWS = 5;
+
+// ── The width budget ────────────────────────────────────────────────────────
+//
+// ── WHY THIS IS ARITHMETIC AND NOT A HOPE ──────────────────────────────────
+//
+// v3.37.0 tried to narrow this menu by DROPPING tokens that carried no
+// information, and every lever it built was correct. It still did not narrow on
+// the maintainer's own machine, because dropping tokens is a lever with no
+// FLOOR: when the remaining text is long, the menu is still wide. A budget is
+// the missing half — a number every label is measured against and clipped to,
+// so no arrangement of data can produce a 74-character row again.
+//
+// The target comes from the two surfaces he supplied as references: iStat
+// Menus' panels run about 270 points and Little Snitch's menu about 240. 260 is
+// between them, and the v3.37.0 menu measured on his own store is about 425.
+//
+// THE COMPONENTS, each an ASSUMPTION rather than a measurement, because nothing
+// here has ever been rendered and there is no width API in Electron or in
+// AppKit's maximum direction to ask:
+//
+//   MENU_WIDTH_POINTS     260  the target for the whole item, edge to edge
+//   MENU_CHROME_POINTS     36  the leading state column plus trailing padding
+//   MENU_ICON_GAP_POINTS    4  the bearing between an icon and its title
+//   ROW_ICON_POINTS        10  the gutter a row's recency dot occupies
+//   MENU_CHAR_POINTS      6.5  the average glyph advance of the menu font
+//
+// `MENU_CHAR_POINTS` is pulse-strip.js's own stated assumption and is READ FROM
+// THERE rather than retyped, so the two files cannot disagree about the font.
+// It is the single largest source of error in everything below, which is why
+// `labelBudgetChars` takes it as a PARAMETER and the suite reports the budget
+// across the whole plausible range instead of asserting one number.
+export const MENU_WIDTH_POINTS = 260;
+export const MENU_CHROME_POINTS = 36;
+export const MENU_ICON_GAP_POINTS = 4;
+export const ROW_ICON_POINTS = 10;
+
+/** pulse-strip.js's assumption, not a second one. Defaulted only so a sibling
+ *  module that has not landed yet cannot take this one down. */
+export const MENU_CHAR_POINTS = typeof pulseStrip.MENU_CHAR_POINTS === 'number'
+  && pulseStrip.MENU_CHAR_POINTS > 0 ? pulseStrip.MENU_CHAR_POINTS : 6.5;
 
 /**
- * Headlines are the agent's own prose and can run long; a menu item that is
- * 400px wide pushes everything else off the screen. Truncation is visible
- * (an ellipsis) rather than silent.
+ * The sublabel's advance. macOS draws a sublabel in a SMALLER face, so the same
+ * budget in points buys MORE characters there — which is why the headline cap
+ * below comes out larger than the row-label cap rather than smaller.
  *
- * ── WHY THIS CAME DOWN FROM 72, AND WHY IT DID NOT GO TO ZERO ──────────────
- *
- * The maintainer's complaint was that the menu takes "close to a quarter of a
- * screen". Measured on his real store, the sublabel sat at 71–72 characters on
- * EVERY row — a clip cap that a real headline always reaches is not a cap on
- * an outlier, it is a fixed width, so the second line of every row was always
- * near maximum. That made it, and not the label, the thing setting the menu's
- * width half the time.
- *
- * He also said explicitly that he wants the headline "available for a quick
- * glance". So it is SHORTER, not GONE: 54 is the width of the longest ROW
- * LABEL after the compaction below, so the headline can never be the widest
- * thing in the menu while still carrying the first clause of the agent's own
- * sentence. The full headline stays reachable — it is what the Agent memory
- * view shows, one click away on the same row.
+ * Taken as 5.0pt against the label's 6.5, about the 11pt-versus-14pt ratio
+ * AppKit uses. An assumption of exactly the same kind as the one above, stated
+ * the same way, and wrong in the same direction if it is wrong at all.
  */
-export const MAX_HEADLINE_CHARS = 54;
+export const MENU_SUBLABEL_CHAR_POINTS = 5.0;
+
+/**
+ * How many characters fit on one menu item, given what its icon costs.
+ *
+ * @param {number} [iconPoints]  the width of the item's icon, 0 for none
+ * @param {number} [charPoints]  the assumed average glyph advance
+ * @returns {number} a whole number of characters, never below 12 — a budget
+ *   that clips a label to nothing is not a narrower menu, it is a broken one.
+ */
+export function labelBudgetChars(iconPoints = 0, charPoints = MENU_CHAR_POINTS) {
+  const icon = Number.isFinite(iconPoints) && iconPoints > 0
+    ? iconPoints + MENU_ICON_GAP_POINTS : 0;
+  const cp = Number.isFinite(charPoints) && charPoints > 0 ? charPoints : MENU_CHAR_POINTS;
+  return Math.max(12, Math.floor((MENU_WIDTH_POINTS - MENU_CHROME_POINTS - icon) / cp));
+}
+
+/** An item with no icon: the headline, the commands, the notices, the stamp. */
+export const PLAIN_LABEL_CHARS = labelBudgetChars(0);
+
+/** A scope row. It carries a recency dot, so it has LESS text budget than a
+ *  plain item — the gutter is ADDED to the label width, not overlaid on it. */
+export const ROW_LABEL_CHARS = labelBudgetChars(ROW_ICON_POINTS);
+
+/** The "where" line under the headline, which is indented four spaces. */
+export const WHERE_LABEL_CHARS = PLAIN_LABEL_CHARS - 4;
+
+/**
+ * The headline cap, now DERIVED rather than chosen.
+ *
+ * It was 72, then 54 "because 54 is the width of the longest row label". That
+ * reasoning was right and its arithmetic was done by hand; this is the same
+ * reasoning as a calculation, against the same 260-point item, in the
+ * sublabel's own smaller face. The full headline stays reachable — it is what
+ * the Agent memory view shows, one click away on the same row.
+ */
+export const MAX_HEADLINE_CHARS = labelBudgetChars(ROW_ICON_POINTS, MENU_SUBLABEL_CHAR_POINTS);
 
 /** Tier B lines: shown only when they have something to say, and bounded so a
  *  pathological warning list cannot become the whole menu. */
@@ -284,6 +386,65 @@ export function hostPart(machine) {
   return /^[0-9a-f]{4,}$/i.test(tail) ? machine.slice(0, i) : machine;
 }
 
+/**
+ * The FULL trailing installation id of a `<hostname-slug>-<install-id>` folder,
+ * or null when there is not one.
+ *
+ * ── WHY THE WHOLE TAIL AND NOT `installTag`'s FOUR CHARACTERS ──────────────
+ *
+ * `installTag` produces a four-character DISPLAY suffix; this produces an
+ * IDENTITY. Two genuinely different installations sharing the first four hex
+ * characters is unlikely and not impossible, and the consequence of collapsing
+ * them would be a second computer's handoffs rendering as if they were written
+ * here — the one direction this widget must never be wrong in.
+ *
+ * The rule itself is not new: `src/brain/tray-summary.js`'s `machineIdentity()`
+ * already matches two folder names on their trailing installation id and
+ * nothing else, which is how one laptop whose hostname flapped under DHCP stops
+ * reading as two machines. This is that comparison, applied to a second
+ * question — see `machineIdentityKey`.
+ */
+export function installIdPart(machine) {
+  if (typeof machine !== 'string' || !machine) return null;
+  const i = machine.lastIndexOf('-');
+  if (i <= 0) return null;
+  const tail = machine.slice(i + 1);
+  return /^[0-9a-f]{4,}$/i.test(tail) ? tail.toLowerCase() : null;
+}
+
+/**
+ * WHICH COMPUTER a row came from, as one comparable key.
+ *
+ * ── THIS IS THE FIX FOR THE READER'S VIEW, AND IT IS WORTH STATING WHY ─────
+ *
+ * v3.37.0 dropped the machine name from a row when `isThisMachine` was true.
+ * On the maintainer's own setup that field is FALSE ON EVERY ROW, because the
+ * installed `.app` and his repo checkout are two different INSTALLATIONS on one
+ * computer: the app runs under one installation id and his agents write state
+ * under another. So the reader classified every row as a foreign machine and
+ * printed its name, and the widest label was 74 characters where the suites —
+ * every one of which took the WRITER's view — measured 54.
+ *
+ * `isThisMachine` is the wrong question for a WIDTH decision. The right one is
+ * whether the token VARIES ACROSS THE VISIBLE ROWS, which is the rule that
+ * already governs the project token and the harness. This key is what that rule
+ * is measured over: rows sharing an installation id are ONE identity, whether
+ * or not that identity happens to be the reader's own.
+ *
+ * `isThisMachine` keeps its OTHER job — deciding whether the provenance slot
+ * holds a harness or a machine — untouched. One field, two questions, and only
+ * the width question changes here.
+ */
+export function machineIdentityKey(scope) {
+  const m = typeof scope === 'string' ? scope : (scope && typeof scope.machine === 'string' ? scope.machine : null);
+  const id = installIdPart(m);
+  if (id) return 'id:' + id;
+  // No parseable id on either side. `isThisMachine` is then the only evidence
+  // there is, and a bare folder name is the fallback below it.
+  if (scope && typeof scope === 'object' && scope.isThisMachine === true) return '@this';
+  return m ? 'name:' + m : '@unknown';
+}
+
 /** The disambiguator appended when two VISIBLE rows share a host part —
  *  exactly the hostname-split condition docs/working-state.md describes. */
 function installTag(machine) {
@@ -324,10 +485,14 @@ export function shortMachineNames(machines) {
 /**
  * Prefixes that carry no information in a list where every row is a scope.
  *
- * `session-` is the one the skill's own examples produce, and on the
- * maintainer's real store it is 14 characters (`session-2026-0`) shared by
- * every single row. A token every row carries is a token that distinguishes
- * nothing; it is pure width.
+ * `session-` is the one the skill's own examples produce, and it is shared by
+ * every single row of the maintainer's real store. A token every row carries is
+ * a token that distinguishes nothing; it is pure width.
+ *
+ * The DATE that usually follows it is stripped separately, by
+ * `scopeCandidates`, because it is a different kind of redundancy: the prefix
+ * is redundant against the other ROWS, and the date is redundant against the
+ * AGE on its own row.
  */
 export const SCOPE_DISPLAY_PREFIXES = ['session-'];
 
@@ -357,27 +522,76 @@ export function shortScopeNames(scopes) {
   const list = (Array.isArray(scopes) ? scopes : []).filter((s) => typeof s === 'string' && s);
   const taken = new Set(list);
 
-  const proposed = new Map();
-  for (const s of list) {
-    let short = s;
-    for (const p of SCOPE_DISPLAY_PREFIXES) {
-      if (s.length > p.length && s.slice(0, p.length) === p) { short = s.slice(p.length); break; }
+  // Most compact first. `candidates[0]` is what a row would say if nothing
+  // collided; the last entry is always the untouched scope.
+  const candidates = new Map();
+  for (const s of list) candidates.set(s, scopeCandidates(s));
+
+  // ── ONE LEVEL FOR THE WHOLE LIST, NOT ONE PER ROW ──────────────────────
+  //
+  // Per-row back-off would leave one row carrying a date and its neighbour not,
+  // which reads as two different KINDS of scope rather than one list at two
+  // resolutions. The list steps back together, and it steps back only as far as
+  // the first level at which every shown scope reads differently from every
+  // other — and from every other scope's full name, which is the pre-existing
+  // rule for `session-` and is unchanged.
+  const depth = Math.max(1, ...[...candidates.values()].map((c) => c.length));
+  for (let level = 0; level < depth; level++) {
+    const out = new Map();
+    const counts = new Map();
+    for (const [raw, cands] of candidates) {
+      const short = cands[Math.min(level, cands.length - 1)];
+      out.set(raw, short);
+      counts.set(short, (counts.get(short) || 0) + 1);
     }
-    proposed.set(s, short);
+    const clean = [...out].every(([raw, short]) =>
+      short === raw || (!taken.has(short) && counts.get(short) === 1));
+    if (clean || level === depth - 1) {
+      // The last level is every scope's own full name, which cannot collide
+      // with anything (two identical raw scopes are one Map entry), so the loop
+      // always terminates on a list nobody can misread.
+      if (clean) return out;
+    }
   }
-
-  // A shortened form is only accepted when nothing else shown already answers
-  // to it — neither another scope's full name nor another scope's short form.
-  const shortCounts = new Map();
-  for (const short of proposed.values()) shortCounts.set(short, (shortCounts.get(short) || 0) + 1);
-
-  const out = new Map();
-  for (const [raw, short] of proposed) {
-    const collides = short !== raw && (taken.has(short) || shortCounts.get(short) > 1);
-    out.set(raw, collides ? raw : short);
-  }
-  return out;
+  return new Map(list.map((s) => [s, s]));
 }
+
+/**
+ * The display ladder for one scope, MOST COMPACT FIRST.
+ *
+ * Two strips, applied in order, each losing something the row says elsewhere:
+ *
+ *   session-2026-08-30-chat-streaming   the scope, as written
+ *   2026-08-30-chat-streaming           minus a prefix every row shares
+ *   chat-streaming                      minus a date the row's AGE already gives
+ *
+ * ── WHY THE DATE GOES, AND WHAT BRINGS IT BACK ─────────────────────────────
+ *
+ * Every row already carries a relative age, computed from the agent's own
+ * clock, in the same label. A leading `YYYY-MM-DD-` is therefore the same fact
+ * a second time in eleven characters — on the maintainer's store it was eleven
+ * characters on eight of eight rows. It comes straight back the moment two
+ * shown scopes would read the same without it, through the collision machinery
+ * above rather than through a second rule written beside it.
+ *
+ * A scope that is ONLY a date keeps it: `cur.length > m[0].length` refuses to
+ * shorten to nothing, exactly as the prefix strip already refuses.
+ */
+export function scopeCandidates(scope) {
+  if (typeof scope !== 'string' || !scope) return [''];
+  let cur = scope;
+  const ladder = [scope];
+  for (const p of SCOPE_DISPLAY_PREFIXES) {
+    if (cur.length > p.length && cur.slice(0, p.length) === p) { cur = cur.slice(p.length); ladder.push(cur); break; }
+  }
+  const m = SCOPE_DATE_PREFIX_RE.exec(cur);
+  if (m && cur.length > m[0].length) ladder.push(cur.slice(m[0].length));
+  return ladder.reverse();
+}
+
+/** A leading ISO date on a scope name. Anchored and fixed-width on purpose: a
+ *  looser `\d+-\d+-\d+` would eat the front of a scope like `3-2-1-launch`. */
+export const SCOPE_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}-/;
 
 // ── Text helpers ────────────────────────────────────────────────────────────
 
@@ -390,6 +604,68 @@ export function clip(text, max) {
   if (!flat) return null;
   if (flat.length <= max) return flat;
   return flat.slice(0, Math.max(1, max - 1)).trimEnd() + '…';
+}
+
+/**
+ * Fit a ` · `-separated reading into a budget WITHOUT cutting inside a clause.
+ *
+ * ── WHY AN ORDINARY CLIP IS NOT SAFE ON A READING ──────────────────────────
+ *
+ * `clip('4 days known · 69 saves', 21)` yields `4 days known · 69 s…`, and
+ * `69 s…` is not a shortened `69 saves` to a reader — it is plausibly
+ * `69 seconds`. A clip that produces a DIFFERENT FACT is worse than a clip that
+ * produces less of one, and this menu's whole argument is that a fact and its
+ * absence must never share a presentation.
+ *
+ * So whole clauses are dropped from the end and the ellipsis stands where they
+ * were. Everything dropped is in the item's tooltip, which is where the full
+ * reading already lives.
+ */
+export function clipClauses(text, max, sep = ' · ') {
+  if (typeof text !== 'string') return null;
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  if (flat.length <= max) return flat;
+  const parts = flat.split(sep);
+  // Nothing to drop, or even the first clause is over budget: fall back to the
+  // ordinary visible clip rather than returning something over the budget.
+  if (parts.length < 2) return clip(flat, max);
+  let kept = '';
+  for (const part of parts) {
+    const next = kept ? kept + sep + part : part;
+    if (next.length + 1 > max) break;
+    kept = next;
+  }
+  return kept ? kept + '…' : clip(flat, max);
+}
+
+/**
+ * The constant noun `pulse-strip.js` opens every one of its readings with.
+ *
+ * Pinned as a LITERAL here and asserted against that module's real output by
+ * the suite, rather than matched with a loose regex over its prose: this repo
+ * has already shipped a suppression that matched the word "harness" against a
+ * producer whose message never contains it, and passed its own test because the
+ * fixture was the fiction. A literal that stops matching is a no-op; a regex
+ * that stops matching is a silent one.
+ */
+/** The remote check's own failure line. Written to fit the width budget rather
+ *  than be clipped into it — an ellipsis lands on "handoffs", which is the only
+ *  word that makes the sentence mean anything. */
+export const REMOTE_CHECK_FAILED = 'Could not check GitHub handoffs';
+
+/** The derived harness-collision line. Long by nature — it names a project and
+ *  a scope — so it is clipped for the label and kept whole for the tooltip. */
+function collisionText(r) {
+  return 'Two harnesses are writing ' + r.project + ' · ' + r.scope;
+}
+
+export const PULSE_LABEL_NOUN = 'Save pulse · ';
+
+/** Drop the noun when the section header above the item already carries it. */
+export function stripPulseNoun(label) {
+  if (typeof label !== 'string' || !label) return label;
+  return label.startsWith(PULSE_LABEL_NOUN) ? label.slice(PULSE_LABEL_NOUN.length) : label;
 }
 
 /** Two-digit local clock time. The menu's own freshness stamp is ABSOLUTE and
@@ -436,7 +712,12 @@ export function remoteNotice(remote) {
   if (remote.ok === false) {
     return {
       kind: 'remote', ok: false,
-      text: str(remote.message) || 'Could not check GitHub for waiting handoffs',
+      // Reworded to fit the budget rather than clipped into it: "handoffs" is
+      // the noun that makes the sentence mean anything, and it is the word an
+      // ellipsis would have eaten. A supplied message is clipped and its full
+      // form carried on `full` for the item's tooltip.
+      text: clip(str(remote.message) || REMOTE_CHECK_FAILED, PLAIN_LABEL_CHARS),
+      full: str(remote.message) || REMOTE_CHECK_FAILED,
     };
   }
   const files = num(remote.behindFiles) ?? num(remote.waiting);
@@ -445,7 +726,8 @@ export function remoteNotice(remote) {
   const unit = files !== null
     ? (n === 1 ? 'handoff' : 'handoffs')
     : (n === 1 ? 'commit' : 'commits');
-  return { kind: 'remote', ok: true, text: n + ' ' + unit + ' waiting on GitHub' };
+  const text = n + ' ' + unit + ' waiting on GitHub';
+  return { kind: 'remote', ok: true, text: clip(text, PLAIN_LABEL_CHARS), full: text };
 }
 
 /** The data layer's warning codes this model has an opinion about. They are
@@ -512,7 +794,8 @@ function collisionNotices(rows) {
       kind: 'collision',
       project: r.project,
       scope: r.scope,
-      text: 'Two harnesses are writing ' + r.project + ' · ' + r.scope,
+      text: clip(collisionText(r), PLAIN_LABEL_CHARS),
+      full: collisionText(r),
     });
   }
   return out;
@@ -594,6 +877,42 @@ export function buildTrayModel(summary, opts = {}) {
   const now = opts.now instanceof Date ? opts.now : new Date();
   const maxRows = Number.isInteger(opts.maxRows) && opts.maxRows > 0 ? opts.maxRows : MAX_ROWS;
 
+  // ── THE THEME IS PASSED IN, NEVER READ HERE ────────────────────────────
+  //
+  // `nativeTheme.shouldUseDarkColors` is an Electron call and this module must
+  // stay importable by `npm test`, where Electron does not exist — the same
+  // reason `makeIcon` is injected into tray-menu.js rather than imported. It is
+  // also the reason main.js subscribes to `nativeTheme.on('updated')` and
+  // re-renders: a pure module cannot notice a theme change, and a menu drawn in
+  // the wrong palette is a menu whose dots are invisible.
+  //
+  // Anything other than a literal `true` is light, which is the safe direction:
+  // a light-palette image on a dark menu is dim, a dark one on a light menu is
+  // invisible.
+  const dark = opts.dark === true;
+
+  // ── THE TWO RENDERERS, INJECTABLE ──────────────────────────────────────
+  //
+  // Defaults are the sibling modules resolved at import. The seams exist so the
+  // suite can drive the whole model from HAND-BUILT spec objects matching the
+  // contract exactly — which is what makes this file testable before, and
+  // independently of, the module that draws the pictures.
+  //
+  // Both are wrapped: a renderer that throws must cost a picture, never the
+  // menu. A menu item that throws while being BUILT takes the whole menu with
+  // it, and a menubar with no menu is indistinguishable from one that was never
+  // installed.
+  const dotFn = typeof opts.renderDot === 'function' ? opts.renderDot : _renderRecencyDot;
+  const stripFn = typeof opts.renderStrip === 'function' ? opts.renderStrip : _renderPulseStrip;
+  const renderDot = (bucket, isDark) => {
+    if (!dotFn) return null;
+    try { return dotFn(bucket, { dark: isDark }) || null; } catch { return null; }
+  };
+  const renderStrip = (raw, isDark) => {
+    if (!stripFn) return null;
+    try { return stripFn(raw, { dark: isDark }) || null; } catch { return null; }
+  };
+
   const nowMs = now.getTime();
   const ok = !!(summary && summary.ok !== false);
   const all = readScopes(summary);
@@ -629,16 +948,20 @@ export function buildTrayModel(summary, opts = {}) {
   // ── WIDTH COMPACTION, AND EVERY LEVER IS CONDITIONAL ON THE DATA ────────
   //
   // The measured complaint was that this menu takes "close to a quarter of a
-  // screen": the widest rendered line on the maintainer's own store was 93
-  // characters, with a mean of 57 across 24 lines. There is NO width API in
-  // Electron, and none in AppKit's maximum direction either — the LENGTH OF
-  // THE CONTENT is the only lever that exists, so the content is what changes.
+  // screen". There is NO width API in Electron, and none in AppKit's maximum
+  // direction either — the LENGTH OF THE CONTENT is the only lever that exists,
+  // so the content is what changes. That is HALF the answer; the other half is
+  // the BUDGET above, which is what stops long content being wide content.
   //
-  // What was measured as pure width, carrying zero information on his store:
+  // What was measured as pure width, carrying zero information on his store,
+  // re-measured through the READER's view (see `machineIdentityKey`) where the
+  // widest label was 74 characters:
   //
-  //   "projects · "     11 chars on 8 rows — exactly one project has state
-  //   "session-2026-0"  a 14-char prefix common to every scope name
-  //   "claude-code"     11 chars — the harness on 65 of 65 journal lines
+  //   "projects · "        11 chars on every row — one project has state
+  //   "session-"            8 chars on every scope name
+  //   "2026-08-30-"        11 more, and the row already carries an age
+  //   "talis-macbook-pro"  17 chars of machine on every row, for one computer
+  //   "claude-code"        11 chars — the harness on 65 of 65 journal lines
   //
   // NONE of these is deleted unconditionally. Each is dropped only while the
   // data says it distinguishes nothing, and each comes straight back the
@@ -659,16 +982,41 @@ export function buildTrayModel(summary, opts = {}) {
   const projectsPresent = new Set(all.map((s) => str(s.project) || '(unnamed)'));
   const showProject = projectsPresent.size !== 1;
 
-  // Harness: dropped only when EVERY shown row that would display one displays
-  // the same one. A row with no harness at all counts against dropping — an
-  // absent harness is not evidence that it matches the others, and "unknown
-  // harness" is a real distinction worth its width.
-  const localHarnesses = shown
-    .filter((s) => s.isThisMachine === true)
-    .map((s) => str(s.harness));
-  const dropHarness = localHarnesses.length > 0
-    && localHarnesses.every((h) => h !== null)
-    && new Set(localHarnesses).size === 1;
+  // ── THE RULE, STATED ONCE AND THEN APPLIED THREE TIMES ─────────────────
+  //
+  // DOES THIS COMPONENT VARY ACROSS THE VISIBLE ROWS? A component identical on
+  // every shown row distinguishes nothing, so it is pure width and it goes; the
+  // moment it distinguishes something it comes straight back.
+  //
+  // v3.37.0 applied that rule to the project token and to the harness and got
+  // both right. For the MACHINE it asked a different question — "was this row
+  // written on this machine?" — and that question has a wrong answer in the
+  // configuration the maintainer actually runs. See `machineIdentityKey` for the
+  // whole mechanism; the short version is that the installed app and his repo
+  // checkout are two INSTALLATIONS on one computer, so `isThisMachine` is false
+  // on every row he owns and a machine name was printed on every line.
+  //
+  // Here the machine is decided by the same rule as its two neighbours.
+
+  // Harness: dropped when every shown row carries the SAME known harness.
+  // A row with no harness at all counts against dropping — an absent harness is
+  // not evidence that it matches the others, and "unknown harness" is a real
+  // distinction worth its width.
+  //
+  // Measured over EVERY shown row rather than only the local ones (which is
+  // what v3.37.0 did): on the reader's view there are no local rows at all, so
+  // a local-only test is vacuously false and the harness would come back on
+  // every row of a store that has exactly one.
+  const harnesses = shown.map((s) => str(s.harness));
+  const showHarness = !(harnesses.length > 0
+    && harnesses.every((h) => h !== null)
+    && new Set(harnesses).size === 1);
+
+  // Machine: dropped when every shown row is the same computer. Rows sharing a
+  // trailing installation id ARE one computer — that is `tray-summary.js`'s own
+  // comparison, not a second opinion about hardware.
+  const machineIdentities = new Set(shown.map(machineIdentityKey));
+  const showMachine = machineIdentities.size > 1;
 
   // ── THE PROVENANCE SLOT, DECIDED ACROSS THE WHOLE SHOWN SET ─────────────
   //
@@ -678,44 +1026,87 @@ export function buildTrayModel(summary, opts = {}) {
   // it.
   const sourceOf = (s) => (s.ageSource === 'file' ? 'file' : (s.ageSource === 'agent' ? 'agent' : null));
   const machineOf = (s) => machineLabels.get(s.machine) || str(s.machine) || 'unknown machine';
+  const harnessOf = (s) => str(s.harness) || 'unknown harness';
 
   // The per-row age precision, escalated only by the collision resolver below.
   // Every row starts on the ordinary ladder — the one the app's own memory view
   // renders — and a row is moved off it only to avoid printing a machine name.
   const precisions = shown.map(() => null);
 
-  const provenances = shown.map((s) => (
-    s.isThisMachine === true
-      ? (dropHarness ? null : (str(s.harness) || 'unknown harness'))
-      : machineOf(s)
-  ));
+  // ── WHAT THE SLOT HOLDS, AND WHY THE ORDER IS THIS ORDER ───────────────
+  //
+  // A LOCAL row shows the harness, because the machine is constant by
+  // definition on a row from here and the harness is what differs when two
+  // agent tools run side by side. A REMOTE row shows the machine, because "the
+  // other computer did this" is the news and which harness is running over
+  // there is somebody else's business. That inversion is unchanged.
+  //
+  // What is new is the third arm: a remote row whose machine carries NO
+  // information — every visible row is the same computer — falls back to the
+  // harness rather than printing a name that separates nothing. On the
+  // maintainer's own store both components are constant, so the slot is empty
+  // and a row reads `scope · age`. That is the 74-character label becoming a
+  // 32-character one, and no fact left the row: both are in the tooltip.
+  const provenances = shown.map((s) => {
+    if (s.isThisMachine === true) return showHarness ? harnessOf(s) : null;
+    if (showMachine) return machineOf(s);
+    // The machine is constant across every visible row, so it distinguishes
+    // nothing and goes. It does NOT fall back to the harness: a harness printed
+    // on a row from another computer says that tool is running HERE, which is
+    // the one thing the two-meaning slot exists to prevent.
+    //
+    // The exception is a row whose machine is UNKNOWN. "unknown machine" is not
+    // a name that failed to distinguish, it is a FACT about the row, and it is
+    // also what keeps the collision resolver from filling an empty slot with a
+    // harness further down.
+    return str(s.machine) ? null : machineOf(s);
+  });
 
   const identityOf = (s) => {
     const scp = str(s.scope) || '(unnamed)';
     return (showProject ? (str(s.project) || '(unnamed)') + ' · ' : '') + (scopeLabels.get(scp) || scp);
   };
-  const composeLabel = (s, age, provenance, precision) =>
-    identityOf(s) + (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s), precision);
+
+  // ── THE BUDGET IS SPENT ON THE SCOPE, NEVER ON THE AGE ─────────────────
+  //
+  // A row is `[project · ]scope[ — provenance] · age`, and a blind clip of the
+  // finished string would eat the AGE — the one token the whole widget exists
+  // to show, and the last one in the line. So everything except the identity is
+  // composed FIRST, and the identity is given whatever budget is left.
+  //
+  // The floor of 8 characters is a real decision rather than a defensive one: a
+  // scope clipped to two characters is not a shorter row, it is an unreadable
+  // one, so a pathological provenance is allowed to push the row past the
+  // budget instead of destroying the name. The final `clip` below catches that
+  // case so nothing ever renders unbounded.
+  const composeLabel = (s, age, provenance, precision, budget = ROW_LABEL_CHARS) => {
+    const tail = (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s), precision);
+    const identity = identityOf(s);
+    const room = budget - tail.length;
+    const head = identity.length <= room ? identity : (clip(identity, Math.max(8, room)) || identity);
+    return head + tail;
+  };
 
   /**
    * ── WHICH ROWS ARE THE SAME COMPUTER ────────────────────────────────────
    *
-   * KEYED ON `isThisMachine`, NOT on the producer's `machineMatch`, and the
-   * reason is that this module must hold exactly ONE notion of "this machine".
-   * `isThisMachine` is already the field the two-meaning slot is built on — it
-   * decides whether a row's provenance is a harness or a machine at all — so
-   * reusing it means the collision fix and the provenance rule can never
-   * disagree about what a row is. Reading `machineMatch` here would put a
-   * SECOND identity opinion in the same function, which is the drift shape this
-   * project keeps recording; it is also a diagnostic that must never be
-   * displayed, and a diagnostic that silently governs what IS displayed is
+   * THE SAME KEY THE WIDTH RULE USES, and that identity is deliberate: two
+   * rows the menu calls one computer when deciding to DROP a machine name must
+   * be the same two rows it calls one computer when deciding how to SEPARATE
+   * them. Two notions of "same machine" in one function is the drift shape this
+   * project keeps recording, and here it would be visible — a pair grouped for
+   * one purpose and split for the other would drop the name and then print it.
+   *
+   * It is NOT the producer's `machineMatch`, which is a diagnostic that must
+   * never be displayed; a diagnostic that silently governs what IS displayed is
    * worse than one that is merely unused.
    *
-   * Two rows are one computer when they are both THIS installation — which is
-   * exactly the maintainer's case, one laptop whose hostname flapped under DHCP
-   * leaving two `<machine>` folders — or when they name the same folder.
+   * Two rows are one computer when they share an installation id — which covers
+   * the maintainer's laptop, whose hostname flapped under DHCP leaving two
+   * `<machine>` folders under one id — or, failing that, when they name the
+   * same folder. See `machineIdentityKey`.
    */
-  const machineKey = (s) => (s.isThisMachine === true ? '@this' : (str(s.machine) || '@unknown'));
+  const machineKey = machineIdentityKey;
 
   // ── AND THEN THE COLLISION GUARD, WHICH IS WHY IT IS TWO PASSES ─────────
   //
@@ -793,7 +1184,10 @@ export function buildTrayModel(summary, opts = {}) {
       const machines = new Set(idxs.map((i) => str(shown[i].machine)));
       for (const i of idxs) {
         if (provenances[i] !== null) continue;
-        provenances[i] = machines.size > 1
+        // A REMOTE row falls back to its machine and never to a harness, for
+        // the reason stated on `provenances` above — the collision resolver
+        // must not be a second door to the label the slot exists to prevent.
+        provenances[i] = machines.size > 1 || shown[i].isThisMachine !== true
           ? machineOf(shown[i])
           : (str(shown[i].harness) || 'unknown harness');
         progressed = true;
@@ -843,6 +1237,7 @@ export function buildTrayModel(summary, opts = {}) {
     const harness = str(s.harness);
     const machineShort = machineLabels.get(s.machine) || str(s.machine);
     const provenance = provenances[idx];
+    const bucket = ageBucket(age);
 
     const scopeShort = scopeLabels.get(scope) || scope;
 
@@ -855,7 +1250,7 @@ export function buildTrayModel(summary, opts = {}) {
       harness,
       isThisMachine,
       harnessShared: s.harnessShared === true,
-      bucket: ageBucket(age),
+      bucket,
       ageSeconds: age,
       ageSource: source,
       agePrecision: precisions[idx],
@@ -869,8 +1264,34 @@ export function buildTrayModel(summary, opts = {}) {
       scopeShort,
       showsProject: showProject,
       showsProvenance: provenance !== null,
+      showsMachine: provenance !== null && provenance === machineOf(s),
       label: composeLabel(s, age, provenance, precisions[idx]),
       sublabel: clip(s.headline, MAX_HEADLINE_CHARS),
+      // ── THE RECENCY DOT ─────────────────────────────────────────────
+      //
+      // The row's bucket, as a drawn image spec, or null. It is the SAME
+      // `ageBucket()` value the label's words come from, so the picture and the
+      // sentence cannot disagree — a dot saying "live" beside "3 days ago"
+      // would be two answers to one question.
+      //
+      // FULL COLOUR, not a template image, and that is a real finding: the
+      // template constraint is true of the TRAY GLYPH, which macOS tints for
+      // the menu bar, and false of MENU ITEM ICONS, which render as authored.
+      // The renderer says which through `spec.template`, and main.js honours
+      // that field rather than assuming either answer.
+      //
+      // ── `unknown` IS AN EXPLICIT CASE, NOT A FALLTHROUGH ────────────
+      //
+      // A row with no parseable save time has NO recency, and the natural
+      // default of a switch over buckets is the coldest colour — which would
+      // assert "old" about a row whose own label two inches away reads "time
+      // unknown". A fact and its absence must never share a presentation, so
+      // the absence is drawn as nothing at all. Decided HERE rather than left
+      // to the renderer, so the rule holds whichever renderer is attached.
+      //
+      // Null otherwise costs the row nothing. See the header on the sibling
+      // modules for why a missing picture is survivable by construction.
+      dot: bucket === 'unknown' ? null : renderDot(bucket, dark),
       // The tooltip is where the precise facts go — the ones that are true but
       // too long for a row, including BOTH clocks when they disagree.
       toolTip: [
@@ -915,7 +1336,9 @@ export function buildTrayModel(summary, opts = {}) {
     if (!p && !c) return { text: null, full: null };
     const short = c ? (scopeLabels.get(c) || c) : null;
     return {
-      text: [showProject ? p : null, short].filter(Boolean).join(' · ') || null,
+      // Budgeted like every other line. The full form is kept beside it, so
+      // nothing a later surface needs has to be re-derived from the short one.
+      text: clip([showProject ? p : null, short].filter(Boolean).join(' · '), WHERE_LABEL_CHARS) || null,
       full: [p, c].filter(Boolean).join(' · ') || null,
     };
   };
@@ -927,7 +1350,7 @@ export function buildTrayModel(summary, opts = {}) {
       known: true,
       ageSeconds: lsAge,
       ageSource: lsSource,
-      text: 'Last save · ' + ageText(lsAge, lsSource),
+      text: clip('Last save · ' + ageText(lsAge, lsSource), PLAIN_LABEL_CHARS),
       where: w.text,
       whereFull: w.full,
       bucket: ageBucket(lsAge),
@@ -939,7 +1362,7 @@ export function buildTrayModel(summary, opts = {}) {
       known: true,
       ageSeconds: r.ageSeconds,
       ageSource: r.ageSource,
-      text: 'Last save · ' + r.ageText,
+      text: clip('Last save · ' + r.ageText, PLAIN_LABEL_CHARS),
       where: w.text,
       whereFull: w.full,
       bucket: r.bucket,
@@ -972,8 +1395,17 @@ export function buildTrayModel(summary, opts = {}) {
   // Computed BEFORE the notices, because the notice block has to know whether
   // the cap is already disclosed here in order not to disclose it twice.
   const total = num(summary && summary.total);
-  const hidden = (total !== null ? total : all.length) - rows.length;
-  const truncatedNote = hidden > 0 ? '…and ' + hidden + ' more in Agent memory' : null;
+  const hiddenRows = Math.max(0, (total !== null ? total : all.length) - rows.length);
+  // ── THE OVERFLOW IS A DESTINATION, NOT AN APOLOGY ──────────────────────
+  //
+  // It was `…and 3 more in Agent memory`, a disabled statement. With five rows
+  // instead of eight it is reached far more often, and it is the ONLY route to
+  // the rows the cap hid — so it reads as the command it now is, and it is
+  // clickable. The count is the TRUE remainder: `total` is what the data layer
+  // counted BEFORE its own slice, and `all.length` is the honest fallback when
+  // it supplied none.
+  const truncatedNote = hiddenRows > 0
+    ? 'More in Agent Memory… (' + hiddenRows + ')' : null;
 
   const deduped = dedupeAgainstSuppliedWarnings(
     readWarnings(summary), collisionNotices(rows), truncatedNote !== null);
@@ -986,11 +1418,19 @@ export function buildTrayModel(summary, opts = {}) {
   // (main.js pushes bare strings on its own failure paths). It is a backstop
   // and never the mechanism — see dedupeAgainstSuppliedWarnings for why the
   // mechanism must be structural.
-  const seenText = new Set(notices.map((n) => n.text));
+  // Compared on the FULL text, never on the clipped one: two different warnings
+  // that happen to share their first 34 characters are two warnings, and
+  // collapsing them because a WIDTH BUDGET made them look alike would be the
+  // budget silently deciding what the user is told.
+  const seenText = new Set(notices.map((n) => n.full || n.text));
   for (const w of deduped.supplied) {
     if (seenText.has(w.message)) continue;
     seenText.add(w.message);
-    notices.push({ kind: 'warning', code: w.code, text: clip(w.message, 96) || w.message });
+    notices.push({
+      kind: 'warning', code: w.code,
+      text: clip(w.message, PLAIN_LABEL_CHARS) || w.message,
+      full: w.message,
+    });
   }
 
   // ── The standing brief — TIER C, and it lives in the tooltip ────────────
@@ -1028,11 +1468,39 @@ export function buildTrayModel(summary, opts = {}) {
   // free not to compute one and nothing here degrades.
   const rawPulse = summary && typeof summary.pulse === 'object' && summary.pulse
     ? summary.pulse : null;
-  const strip = renderPulseStrip(rawPulse);
+  const strip = renderStrip(rawPulse, dark);
   const pulse = strip ? {
     strip,
-    label: pulseLabel(rawPulse),
-    toolTip: pulseToolTip(rawPulse),
+    // ── THE NOUN COMES OFF, BECAUSE THE SECTION HEADER NOW SAYS IT ──────
+    //
+    // `pulseLabel()` opens every one of its forms with a constant
+    // `Save pulse · `, written when this item had no heading above it. It now
+    // sits under a section header carrying that noun, so those thirteen
+    // characters are the drop-constant-component rule again, one layer up: a
+    // token identical on every rendering of the item distinguishes nothing.
+    //
+    // Stripped as a LITERAL PREFIX and never by re-deriving the sentence — the
+    // reading itself, including both of the producer's honesty caveats, is
+    // passed through untouched. If that module ever stops emitting the noun,
+    // this is a no-op rather than a corruption.
+    //
+    // ── AND THEN THE BUDGET, WHICH THIS ITEM CANNOT ALWAYS MEET ────────
+    //
+    // The strip is about 83 points wide and Electron does NO scaling, so the
+    // picture alone spends a third of the 260-point target before a single
+    // character is drawn. At the assumed 6.5pt advance the reading gets 21
+    // characters, and `4 days known · 69 saves` is 23. It is therefore CLIPPED
+    // ON A CLAUSE BOUNDARY (see `clipClauses` for why an ordinary clip is
+    // unsafe on a reading), and the whole reading remains in this item's own
+    // tooltip.
+    //
+    // Two characters over is inside the error of the font assumption — at 6.0pt
+    // per character the same reading fits whole — so the honest statement is
+    // that the strip's own geometry, not this label, is what sets this item's
+    // width. Narrowing the strip belongs to the module that draws it.
+    label: clipClauses(stripPulseNoun(_pulseLabel ? _pulseLabel(rawPulse) : null),
+      labelBudgetChars(strip.widthPoints)),
+    toolTip: _pulseToolTip ? _pulseToolTip(rawPulse) : null,
   } : null;
 
   return {
@@ -1044,6 +1512,7 @@ export function buildTrayModel(summary, opts = {}) {
     notices: notices.slice(0, MAX_NOTICES),
     noticesHidden: Math.max(0, notices.length - MAX_NOTICES),
     truncatedNote,
+    hiddenRows,
     brief,
     // ── THE GLYPH CARRIES AT MOST ONE BIT BEYOND PRESENCE ───────────────
     //

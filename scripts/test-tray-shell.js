@@ -35,6 +35,11 @@
  *   §11  main.js source scan, and what is NOT enforced
  *   §12  the multi-machine signal fires — on a menu open, and nowhere else
  *   §13  main.js wiring for that check — source scan, weak like §11
+ *   §14  the width budget: the arithmetic, and what the answer is sensitive to
+ *   §15  the READER's view — the configuration the maintainer actually runs
+ *   §16  every label fits its budget, and nothing it removed is unreachable
+ *   §17  sections, the two pictures, and the items that are now reachable
+ *   §18  main.js wiring for the theme and the images — source scan, weak
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
  *
@@ -421,10 +426,16 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   const withReal = model.buildTrayModel(summary({
     warnings: [collisionWarning('alpha', 'research')],
   }), { now: NOW });
+  // MATCHED ON `full`, NOT ON `text`. `text` is the WIDTH-BUDGETED rendering
+  // and is clipped at PLAIN_LABEL_CHARS; `full` is the sentence. A content
+  // assertion against a budgeted string would start passing or failing with the
+  // font assumption, which is not what any of these are about. §14 asserts the
+  // budget itself, and that the full form reaches the item's tooltip.
+  const noticeText = (n) => n.full || n.text;
   const collisionLines = withReal.notices.filter((n) =>
-    /writing/.test(n.text) && /alpha/.test(n.text) && /research/.test(n.text));
+    /writing/.test(noticeText(n)) && /alpha/.test(noticeText(n)) && /research/.test(noticeText(n)));
   eq(collisionLines.length, 1, 'the REAL producer warning now suppresses the derived line — exactly ONE notice');
-  eq(collisionLines.length ? collisionLines[0].text : '(no collision notice at all)',
+  eq(collisionLines.length ? noticeText(collisionLines[0]) : '(no collision notice at all)',
     'Two agent tools are writing alpha · research.',
     '…and the SUPPLIED one is the survivor, because the data layer saw the whole store');
 
@@ -432,7 +443,7 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   const other = model.buildTrayModel(summary({
     warnings: [collisionWarning('alpha', 'somewhere-else')],
   }), { now: NOW });
-  eq(other.notices.filter((n) => /writing/.test(n.text)).length, 2,
+  eq(other.notices.filter((n) => /writing/.test(n.full || n.text)).length, 2,
     'a collision warning naming a DIFFERENT scope suppresses nothing — both facts are real');
 
   // With NO supplied warning the derived line still fires: that is what it is for.
@@ -471,7 +482,7 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   // Bare strings still work — main.js pushes them on its own failure paths.
   const bare = model.buildTrayModel({ ok: false, scopes: [], warnings: ['Could not read agent memory: EACCES'] },
     { now: NOW });
-  ok(bare.notices.some((n) => n.text.includes('EACCES')),
+  ok(bare.notices.some((n) => (n.full || n.text).includes('EACCES')),
     'a bare STRING warning still renders — main.js emits those and they carry no code');
 
   // THE TEXT BACKSTOP'S OWN JOB, and it needed finding: mutating it away first
@@ -483,13 +494,13 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   const dupes = model.buildTrayModel({
     ok: true, scopes: [], warnings: ['the same sentence twice', 'the same sentence twice'],
   }, { now: NOW });
-  eq(dupes.notices.filter((n) => n.text === 'the same sentence twice').length, 1,
+  eq(dupes.notices.filter((n) => (n.full || n.text) === 'the same sentence twice').length, 1,
     'two IDENTICAL uncoded warnings collapse to one notice — the backstop\'s only reachable job');
   // And a bare string identical to the DERIVED collision line collapses too.
   const echo = model.buildTrayModel(summary({
     warnings: ['Two harnesses are writing alpha · research'],
   }), { now: NOW });
-  eq(echo.notices.filter((n) => n.text === 'Two harnesses are writing alpha · research').length, 1,
+  eq(echo.notices.filter((n) => (n.full || n.text) === 'Two harnesses are writing alpha · research').length, 1,
     'an uncoded warning that happens to echo the derived line exactly is not printed beside it');
 }
 
@@ -578,15 +589,17 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
     })),
   }), { now: NOW });
   eq(many.rows.length, model.MAX_ROWS, 'the row list is capped');
-  ok(many.truncatedNote && many.truncatedNote.includes('32'),
-    'and the TRUE remainder is disclosed against the supplied total, not against what was visible');
+  eq(many.hiddenRows, 40 - model.MAX_ROWS,
+    'and the TRUE remainder is measured against the supplied total, not against what was visible');
+  ok(many.truncatedNote && many.truncatedNote.includes(String(40 - model.MAX_ROWS)),
+    '…and the note carries that number rather than a re-derived one');
 
   const noTotal = model.buildTrayModel(summary({
     scopes: Array.from({ length: 12 }, (_, i) => ({
       project: 'p', scope: 's' + i, machine: 'laptop-a1b2c3', writtenAgeSeconds: i, ageSource: 'agent', isThisMachine: true,
     })),
   }), { now: NOW });
-  ok(noTotal.truncatedNote && noTotal.truncatedNote.includes('4'),
+  eq(noTotal.hiddenRows, 12 - model.MAX_ROWS,
     'with no supplied total the remainder falls back to what was handed over');
 
   // THE FACT AND ITS ABSENCE.
@@ -596,14 +609,17 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
   eq(model.remoteNotice({ ok: true, behindFiles: 1 }).text, '1 handoff waiting on GitHub', 'and it is singular when it is one');
   eq(model.remoteNotice({ ok: false, message: 'network is down' }).text, 'network is down',
     'a FAILED check says so — a third state, not folded into either of the others');
-  eq(model.remoteNotice({ ok: false }).text, 'Could not check GitHub for waiting handoffs',
+  eq(model.remoteNotice({ ok: false }).text, model.REMOTE_CHECK_FAILED,
     '…and it says so even with no message, rather than falling silent');
+  ok(model.REMOTE_CHECK_FAILED.length <= model.PLAIN_LABEL_CHARS,
+    'that default is WRITTEN to fit the width budget rather than clipped into it — an ellipsis lands on "handoffs", the word that carries the meaning');
+  ok(/handoffs/.test(model.REMOTE_CHECK_FAILED), 'CONTROL: and it still says what is waiting');
 
   // Collisions.
   const coll = model.buildTrayModel(summary(), { now: NOW });
-  ok(coll.notices.some((n) => n.kind === 'collision' && n.text.includes('alpha · research')),
+  ok(coll.notices.some((n) => n.kind === 'collision' && (n.full || n.text).includes('alpha · research')),
     'harnessShared produces a collision line naming the scope');
-  ok(coll.notices.every((n) => !/rename|split|should/i.test(n.text)),
+  ok(coll.notices.every((n) => !/rename|split|should/i.test(n.full || n.text)),
     'and it proposes NO remedy — the fix is the user\'s and does not fit in six words');
 
   // The suppression itself is §2c's subject, driven against the REAL producer
@@ -1171,6 +1187,421 @@ section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §1
     'getRemoteStatus() still carries the in-flight memo and the TTL cache this trigger relies on for its bounds');
   ok(/remoteChecked: false/.test(syncSrc) && /behindFiles: null/.test(syncSrc),
     'and a failed check still degrades to "we could not tell" rather than to a reassuring zero');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§14 the width budget — arithmetic, and what it is sensitive to');
+//
+// v3.37.0 narrowed this menu by DROPPING tokens that carry no information, and
+// on the maintainer's own machine it did not narrow: measured against his real
+// store through the READER's view, the widest label was 74 characters. Dropping
+// tokens is a lever with no FLOOR — when what is left is long, the menu is still
+// wide. This section is the floor.
+//
+// EVERY NUMBER HERE RESTS ON `MENU_CHAR_POINTS`, which is an assumption about a
+// font nobody has measured, so nothing below asserts a single character count as
+// though it were a fact: the arithmetic is asserted, and the SENSITIVITY of the
+// answer across the plausible range is reported.
+{
+  const B = model.labelBudgetChars;
+
+  // The formula, driven rather than restated.
+  eq(B(0, 6.5), Math.floor((model.MENU_WIDTH_POINTS - model.MENU_CHROME_POINTS) / 6.5),
+    'a label with no icon gets the whole item minus the chrome');
+  eq(B(10, 6.5), Math.floor((model.MENU_WIDTH_POINTS - model.MENU_CHROME_POINTS - 14) / 6.5),
+    'an icon costs its own width PLUS the bearing beside it — a row carrying a dot has less text budget than one without');
+  ok(B(10, 6.5) < B(0, 6.5), 'CONTROL: so the icon really does reduce the budget');
+  eq(B(0, 6.5), model.PLAIN_LABEL_CHARS, 'PLAIN_LABEL_CHARS is that formula, not a second number');
+  eq(B(model.ROW_ICON_POINTS, 6.5), model.ROW_LABEL_CHARS, 'and so is ROW_LABEL_CHARS');
+  eq(model.WHERE_LABEL_CHARS, model.PLAIN_LABEL_CHARS - 4,
+    'the "where" line pays for its own four-space indent');
+
+  // The sublabel is drawn in a SMALLER face, so the same points buy MORE
+  // characters — which is why the headline cap comes out LARGER than the row
+  // label cap. That inversion is the easiest thing here to get backwards.
+  ok(model.MENU_SUBLABEL_CHAR_POINTS < model.MENU_CHAR_POINTS,
+    'the sublabel advance is smaller than the label advance');
+  ok(model.MAX_HEADLINE_CHARS > model.ROW_LABEL_CHARS,
+    '…so the sublabel budget is MORE characters than the label budget, in the same width');
+
+  // A budget can never clip a label to nothing.
+  ok(B(400, 6.5) >= 12, 'a pathological icon still leaves a readable floor rather than an empty label');
+  ok(B(0, 0.0001) > 0 && Number.isFinite(B(0, 0.0001)), 'and a nonsense advance cannot produce an infinite budget');
+  eq(B(0, 0), B(0, model.MENU_CHAR_POINTS), 'a zero advance falls back to the stated assumption rather than dividing by zero');
+
+  // ── THE SENSITIVITY, WHICH IS THE HONEST PART ─────────────────────────
+  //
+  // 5–7 pt per character is the plausible range for a 14pt system font. The
+  // budget is REPORTED across it rather than asserted at one value, because a
+  // suite that pins 32 characters is pinning the assumption and not the design.
+  const table = [];
+  for (const cp of [5.0, 5.5, 6.0, 6.5, 7.0]) {
+    table.push({ cp, plain: B(0, cp), row: B(model.ROW_ICON_POINTS, cp) });
+  }
+  console.log('    pt/char   plain   row      (target ' + model.MENU_WIDTH_POINTS + 'pt, chrome ' +
+    model.MENU_CHROME_POINTS + 'pt, dot gutter ' + (model.ROW_ICON_POINTS + model.MENU_ICON_GAP_POINTS) + 'pt)');
+  for (const t of table) {
+    console.log('    ' + t.cp.toFixed(1).padStart(5) + '   ' + String(t.plain).padStart(5) + '   ' + String(t.row).padStart(3));
+  }
+  ok(table.every((t, i) => i === 0 || t.row <= table[i - 1].row),
+    'the budget shrinks monotonically as the assumed glyph gets wider — no arm of the formula inverts');
+  ok(table[0].row - table[table.length - 1].row >= 8,
+    `CONTROL: the range genuinely moves the answer (${table[table.length - 1].row}–${table[0].row} characters), so quoting one number would be quoting an assumption`);
+  ok(table.every((t) => t.row >= 24),
+    'and even at the widest assumed glyph a row still holds a readable scope plus its age');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§15 the READER\'S view — the configuration the maintainer actually runs');
+//
+// ── THE DEFECT THIS FIXTURE EXISTS FOR ─────────────────────────────────────
+//
+// v3.37.0 dropped a machine name when `isThisMachine` was true. On his setup it
+// is FALSE ON EVERY ROW: the installed .app and his repo checkout are two
+// INSTALLATIONS on one computer, so the app reads state written under an id that
+// is not its own. Every existing fixture took the WRITER's view — the one
+// configuration in which this is invisible — and measured 54 characters where
+// the reader saw 74.
+//
+// The rule is no longer "was this written here". It is "does this component VARY
+// across the visible rows", which is what already governs the project token and
+// the harness. Two folder names sharing a trailing installation id are ONE
+// identity: his laptop owns `laptop-a1b2c3` and `notebook-a1b2c3` because a
+// hostname flapped under DHCP, and a naive comparison over folder STRINGS would
+// see two computers and reassert the phantom the identity work removed.
+{
+  const readerRow = (over) => ({
+    project: 'projects', scope: 'session-2026-08-31-native-prep-and-release-process',
+    machine: 'laptop-a1b2c3', harness: 'claude-code', ageSource: 'agent',
+    headline: 'four releases shipped', isThisMachine: false, ...over,
+  });
+  const readerStore = (extra = []) => ({
+    ok: true, total: 11,
+    scopes: [
+      readerRow({ writtenAt: atAge(1800), writtenAgeSeconds: 1800,
+        scope: 'session-2026-09-01-menubar-widget-design' }),
+      readerRow({ writtenAt: atAge(50400), writtenAgeSeconds: 50400 }),
+      readerRow({ writtenAt: atAge(122400), writtenAgeSeconds: 122400,
+        scope: 'session-2026-08-30-design-conformance-pre-native' }),
+      // THE DHCP PAIR: same scope, same coarse age, a DIFFERENT folder, one
+      // installation. Naming the machine here is the fix that is wrong about
+      // the hardware; the age is escalated instead.
+      readerRow({ writtenAt: atAge(129600), writtenAgeSeconds: 129600,
+        scope: 'session-2026-08-30-design-conformance-pre-native', machine: 'notebook-a1b2c3' }),
+      readerRow({ writtenAt: atAge(140400), writtenAgeSeconds: 140400,
+        scope: 'session-2026-08-30-ingest-continuity-tables' }),
+      ...extra,
+    ],
+  });
+
+  // CONTROL FIRST: the naive test really would see two machines here.
+  eq(new Set(['laptop-a1b2c3', 'notebook-a1b2c3']).size, 2,
+    'CONTROL — as raw strings those two folder names are different, so the identity grouping below is doing real work');
+  eq(model.machineIdentityKey({ machine: 'laptop-a1b2c3' }),
+    model.machineIdentityKey({ machine: 'notebook-a1b2c3' }),
+    '…and as IDENTITIES they are one computer, because they share an installation id');
+  ok(model.machineIdentityKey({ machine: 'laptop-a1b2c3' })
+    !== model.machineIdentityKey({ machine: 'studio-9f8e7d' }),
+    'CONTROL — a genuinely different installation id is a different identity');
+  eq(model.installIdPart('laptop-a1b2c3'), 'a1b2c3', 'the id is the WHOLE trailing segment, not a four-character display suffix');
+  eq(model.installIdPart('build-box'), null, 'a hostname whose last word is not hex carries no id');
+  eq(model.machineIdentityKey({ machine: 'build-box', isThisMachine: true }), '@this',
+    'and with no id on either side the only evidence left is isThisMachine');
+
+  const reader = model.buildTrayModel(readerStore(), { now: NOW });
+  eq(reader.rows.length, 5, 'CONTROL — five rows were built, so the assertions below are not vacuous');
+  ok(reader.rows.every((r) => r.isThisMachine === false),
+    'CONTROL — and every one of them is classified as a FOREIGN machine, which is the whole point of this fixture');
+  ok(reader.rows.every((r) => !/laptop|notebook|a1b2c3/.test(r.label)),
+    'NO row names a machine — the component is identical across every visible row, so it carries nothing');
+  ok(reader.rows.every((r) => r.showsMachine === false), '…and the model says so rather than leaving it to be inferred');
+  ok(reader.rows.every((r) => !/claude-code/.test(r.label)),
+    'nor a harness, by the same rule and for the same reason');
+  ok(reader.rows.every((r) => !/^projects/.test(r.label)),
+    'nor the project token, which one project makes constant');
+
+  // THE DHCP PAIR IS SEPARATED BY A FINER AGE, NEVER BY A FOLDER NAME.
+  const pair = reader.rows.filter((r) => r.scope.includes('design-conformance'));
+  eq(pair.length, 2, 'CONTROL — the colliding pair is present');
+  ok(pair[0].label !== pair[1].label, 'the two rows read differently');
+  ok(pair.every((r) => r.agePrecision === 'hour'),
+    '…and they were separated by escalating the AGE, which costs no width and makes no claim about hardware');
+
+  // AND THE MOMENT A SECOND COMPUTER APPEARS, THE NAME COMES BACK.
+  const twoMachines = model.buildTrayModel(readerStore([
+    { project: 'projects', scope: 'session-2026-08-29-ux-polish', machine: 'studio-9f8e7d',
+      harness: 'claude-code', writtenAt: atAge(400), writtenAgeSeconds: 400,
+      ageSource: 'agent', headline: 'h', isThisMachine: false },
+  ]), { now: NOW });
+  ok(twoMachines.rows.some((r) => /studio/.test(r.label)),
+    'a genuinely second installation brings the machine name straight back');
+  ok(twoMachines.rows.filter((r) => r.showsMachine).length === twoMachines.rows.length,
+    '…on every row, because "which computer" is only answerable if every row answers it');
+
+  // NOTHING THE RULE REMOVED IS UNREACHABLE. Checked per row against the RAW
+  // input, which is the absolute rule of every lever in this file.
+  let checked = 0;
+  for (const r of reader.rows) {
+    const src = readerStore().scopes.find((x) => x.scope === r.scope && x.machine === r.machine);
+    ok(r.toolTip.includes(src.machine), `row ${checked}: the full machine folder is in the tooltip`);
+    ok(r.toolTip.includes(src.scope), `row ${checked}: the FULL scope is in the tooltip, date prefix and all`);
+    ok(r.toolTip.includes(src.harness), `row ${checked}: the harness is in the tooltip`);
+    ok(r.toolTip.includes(src.project), `row ${checked}: the project is in the tooltip`);
+    checked++;
+  }
+  eq(checked, 5, `all ${checked} rows were checked, so the loop above is not vacuous`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§16 every label fits the budget, and nothing it removed is unreachable');
+{
+  // A realistic reader's-view summary with prose headlines of real length.
+  const wide = {
+    ok: true, total: 11,
+    scopes: Array.from({ length: 8 }, (_, i) => ({
+      project: 'projects',
+      scope: 'session-2026-08-3' + (i % 10) + '-a-deliberately-long-work-stream-name-' + i,
+      machine: 'laptop-a1b2c3', harness: 'claude-code',
+      writtenAt: atAge(1800 + i * 7200), writtenAgeSeconds: 1800 + i * 7200,
+      ageSource: 'agent', isThisMachine: false,
+      headline: 'FOUR RELEASES SHIPPED (v3.31-v3.34). Mac app installs, updates itself, and the sync path was rebuilt end to end',
+    })),
+    pulse: null, brief: null, remote: null, warnings: [],
+  };
+  const m = model.buildTrayModel(wide, { now: NOW });
+
+  // ANTI-VACUITY: without a budget these labels really would be over it.
+  const unbudgeted = wide.scopes.map((s) => s.scope + ' — ' + s.machine + ' · 4 hr ago');
+  ok(unbudgeted.every((l) => l.length > model.ROW_LABEL_CHARS * 1.5),
+    `CONTROL: the un-budgeted composition runs ${Math.max(...unbudgeted.map((l) => l.length))} characters, well past the ${model.ROW_LABEL_CHARS}-character budget — so the clip below is doing work`);
+
+  ok(m.rows.every((r) => r.label.length <= model.ROW_LABEL_CHARS),
+    `every row label is inside the ${model.ROW_LABEL_CHARS}-character budget`);
+  ok(m.rows.every((r) => r.sublabel === null || r.sublabel.length <= model.MAX_HEADLINE_CHARS),
+    `every sublabel is inside the ${model.MAX_HEADLINE_CHARS}-character budget`);
+  ok(m.rows.some((r) => r.label.endsWith(' ago') && /…/.test(r.label)),
+    'a clipped row still ENDS in its age — the budget is spent on the scope, never on the one token the widget exists to show');
+  ok(m.rows.every((r) => /ago|unknown/.test(r.label)), 'and no row lost its age to a clip at all');
+  ok(m.headline.text.length <= model.PLAIN_LABEL_CHARS, 'the headline is budgeted too');
+  ok(m.headline.where === null || m.headline.where.length <= model.WHERE_LABEL_CHARS,
+    'and so is the line under it');
+
+  // The whole rendered menu, every line, against the budget it belongs to.
+  const NOOPS2 = { ...NOOPS, makeIcon: () => ({ fake: 'image' }) };
+  const flat = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(m, NOOPS2));
+  let lines = 0, widest = 0;
+  for (const it of flat) {
+    if (it.type === 'separator') continue;
+    for (const key of ['label', 'sublabel']) {
+      if (!it[key]) continue;
+      lines++;
+      widest = Math.max(widest, it[key].length);
+      const cap = key === 'sublabel' ? model.MAX_HEADLINE_CHARS : model.PLAIN_LABEL_CHARS;
+      if (it[key].length > cap) ok(false, `"${it[key]}" (${it[key].length}) is over the ${cap}-character budget for a ${key}`);
+    }
+  }
+  ok(lines >= 18, `CONTROL: ${lines} rendered lines were measured, so the sweep above is not looking at an empty menu`);
+  ok(widest > model.ROW_LABEL_CHARS - 4, `CONTROL: and the widest of them is ${widest}, a real line rather than a stub`);
+  console.log(`    widest rendered line: ${widest} characters over ${lines} lines ` +
+    `(≈${(model.MENU_CHROME_POINTS + model.ROW_ICON_POINTS + model.MENU_ICON_GAP_POINTS + model.ROW_LABEL_CHARS * model.MENU_CHAR_POINTS).toFixed(0)}pt at the assumed advance)`);
+
+  // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE — per row, against the raw input.
+  let checked = 0;
+  for (const r of m.rows) {
+    const src = wide.scopes.find((s) => s.scope === r.scope);
+    ok(r.toolTip.includes(src.scope), `row ${checked}: the full scope survives the clip, in the tooltip`);
+    ok(r.toolTip.includes(src.machine), `row ${checked}: and so does the machine`);
+    checked++;
+  }
+  eq(checked, model.MAX_ROWS, `all ${checked} rows checked`);
+
+  // ── A NOTICE IS A SENTENCE, AND SENTENCES DO NOT COMPRESS ────────────
+  //
+  // Found by mutation: deleting the notice tooltip came back GREEN, because
+  // nothing asserted it. A notice is the one line here whose whole value is its
+  // wording — "Two agent tools are writing projects · session-…" says nothing
+  // useful clipped at 34 characters — so the budget is met by clipping the
+  // LABEL and carrying the sentence on the tooltip, and that pairing is the
+  // thing worth guarding.
+  const longNotice = 'Two agent tools are writing projects · session-2026-08-30-a-long-one.';
+  const noticed = model.buildTrayModel({
+    ok: true, scopes: [],
+    warnings: [{ code: 'harness-collision', message: longNotice, project: 'projects', scope: 'x' }],
+  }, { now: NOW });
+  const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, NOOPS))
+    .find((i) => i.label && i.label.startsWith('Two agent tools'));
+  ok(nItem, 'CONTROL — the notice reached the menu');
+  ok(nItem && nItem.label.length <= model.PLAIN_LABEL_CHARS,
+    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget`);
+  ok(nItem && nItem.label.length < longNotice.length,
+    'CONTROL — it really was clipped, so the tooltip assertion below is not vacuous');
+  eq(nItem ? nItem.toolTip : null, longNotice,
+    '…and the WHOLE sentence is on its tooltip — the absolute rule that nothing a budget removed becomes unreachable');
+  const shortNotice = model.buildTrayModel({
+    ok: true, scopes: [], warnings: [{ code: 'x', message: 'short enough' }],
+  }, { now: NOW });
+  const sItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(shortNotice, NOOPS))
+    .find((i) => i.label === 'short enough');
+  ok(sItem && !('toolTip' in sItem),
+    'a notice that FITS carries no tooltip at all — one repeating the label verbatim is noise');
+
+  // The DATE PREFIX: gone by default, back when dropping it would collide.
+  eq(model.shortScopeNames(['session-2026-08-30-chat-streaming']).get('session-2026-08-30-chat-streaming'),
+    'chat-streaming', 'a leading YYYY-MM-DD- is dropped — the row already carries an age');
+  const dateClash = model.shortScopeNames(['session-2026-08-30-x', 'session-2026-09-01-x']);
+  eq(dateClash.get('session-2026-08-30-x'), '2026-08-30-x',
+    'and it comes STRAIGHT back when dropping it would make two shown rows read the same');
+  eq(dateClash.get('session-2026-09-01-x'), '2026-09-01-x', '…on both of them, so the list stays one list at one resolution');
+  eq(model.shortScopeNames(['2026-08-30']).get('2026-08-30'), '2026-08-30',
+    'a scope that IS a date keeps it — shortening to nothing is not a shortening');
+  eq(model.scopeCandidates('session-2026-08-30-x').length, 3,
+    'the ladder is three rungs: full, prefix-stripped, date-stripped');
+  eq(model.scopeCandidates('session-2026-08-30-x')[0], 'x', 'most compact first');
+
+  // clipClauses: the reason an ordinary clip is unsafe on a reading.
+  eq(model.clipClauses('4 days known · 69 saves', 21), '4 days known…',
+    'a reading is shortened by dropping a WHOLE clause');
+  ok(!/69 s…/.test(model.clipClauses('4 days known · 69 saves', 21)),
+    'THE DEFECT AVOIDED — an ordinary clip yields "69 s…", which a reader may take for "69 seconds": a clip that produces a DIFFERENT fact');
+  eq(model.clipClauses('7 days · 69 saves', 21), '7 days · 69 saves',
+    'CONTROL — a reading that fits is untouched, which is the ordinary steady-state case');
+  eq(model.clipClauses('oneverylongsingleclause', 10), 'oneverylo…',
+    'and with no clause boundary to use it falls back to the ordinary visible clip rather than overflowing');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§17 sections, the two pictures, and the items that are now reachable');
+{
+  const spec = (w) => ({
+    buffer: Buffer.from([1]), buffer2x: Buffer.from([2]),
+    widthPoints: w, heightPoints: 11, template: false,
+  });
+  // HAND-BUILT SPECS matching the renderers' contract exactly, so this section
+  // executes with or without the sibling modules that draw them. That is the
+  // point of the injected seams — nothing here waits on another agent's file.
+  const dots = [];
+  const renderDot = (bucket, o) => { dots.push({ bucket, o }); return spec(8); };
+  const renderStrip = (pulse, o) => (pulse ? { ...spec(83), template: true } : null);
+
+  const built = model.buildTrayModel(summary({
+    total: 12,
+    pulse: { clock: 'agent', events: 69, buckets: new Array(28).fill(0), bucketSeconds: 21600,
+      windowSeconds: 604800, coversWholeWindow: true, firstKnownBucket: 0 },
+  }), { now: NOW, dark: true, renderDot, renderStrip });
+
+  // ── THE THEME IS PASSED, NEVER READ ────────────────────────────────────
+  ok(dots.length > 0 && dots.every((d) => d.o && d.o.dark === true),
+    'every dot is rendered with the theme the CALLER supplied — a pure module never reads nativeTheme');
+  const light = model.buildTrayModel(summary(), { now: NOW, renderDot: (b, o) => { dots.push({ b, o }); return spec(8); } });
+  ok(light.rows.length > 0, 'CONTROL — the light build produced rows');
+  ok(dots.slice(-light.rows.length).every((d) => d.o && d.o.dark === false),
+    'and an absent `dark` is LIGHT, which is the safe direction: a light image on a dark menu is dim, a dark one on a light menu is gone');
+
+  // ── `unknown` IS A CASE, NOT A FALLTHROUGH ────────────────────────────
+  const noClock = model.buildTrayModel({
+    ok: true, scopes: [{ project: 'p', scope: 's', machine: 'laptop-a1b2c3', isThisMachine: true }],
+  }, { now: NOW, renderDot });
+  eq(noClock.rows[0].bucket, 'unknown', 'CONTROL — a row with no timestamp buckets as unknown');
+  eq(noClock.rows[0].dot, null,
+    'and gets NO dot at all — the coldest colour would assert "old" about a row whose own label reads "time unknown"');
+  ok(built.rows.every((r) => r.dot !== null), 'CONTROL — rows that DO have a clock all carry one');
+
+  // A renderer that throws costs a picture and never the menu.
+  const boom = model.buildTrayModel(summary(), { now: NOW, renderDot: () => { throw new Error('x'); } });
+  ok(boom.rows.length > 0 && boom.rows.every((r) => r.dot === null),
+    'a throwing renderer degrades to no picture rather than taking the model down');
+
+  // ── THE MENU'S NEW SHAPE ──────────────────────────────────────────────
+  const seen = [];
+  const flat = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(built, {
+    ...NOOPS, makeIcon: (sp) => { seen.push(sp); return { fake: 'image', from: sp }; },
+  }));
+  const byId = (id) => flat.find((i) => i.id === id);
+
+  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE], [menu.ID_HEADER_ROWS, menu.HEADER_ROWS]]) {
+    const h = byId(id) || {};
+    ok(byId(id), `the ${label} section header is in the menu`);
+    eq(h.type, menu.MENU_HEADER_TYPE, '…as a header type, which is what makes it read as a section');
+    eq(h.enabled, false, '…drawn inert, so on macOS below 14 its worst case is a dimmed caption rather than a live item that does nothing');
+    ok(!h.click, '…and carrying no click handler at all, so no macOS version can make it actionable');
+  }
+  eq(menu.MENU_HEADER_TYPE, 'header', 'the type is the one verified present in Electron 43.5.0\'s accepted union');
+
+  // The pulse row is now an ACTION at full contrast.
+  const pulseItem = byId(menu.ID_PULSE) || {};
+  ok(byId(menu.ID_PULSE), 'the pulse item is present');
+  eq(pulseItem.enabled, true,
+    'ENABLED — a disabled item is drawn at reduced contrast, and the maintainer\'s verdict on the drawn strip was that it "is barely visible"');
+  eq(typeof pulseItem.click, 'function', '…and enabled means it does something: an enabled item with no handler swallows a click');
+  const clicks = [];
+  const routed = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(built, {
+    ...NOOPS, onOpenMemory: () => clicks.push('memory'), makeIcon: () => null,
+  }));
+  // Guarded rather than dereferenced: a mutation that makes one of these items
+  // VANISH must red on a named assertion, not crash the suite two lines later —
+  // the shape v3.24.1 recorded, and one this file has now reproduced once.
+  for (const id of [menu.ID_PULSE, menu.ID_TRUNCATED]) {
+    const item = routed.find((i) => i.id === id);
+    ok(item && typeof item.click === 'function', `${id} is present and clickable`);
+    if (item && typeof item.click === 'function') item.click();
+  }
+  eq(clicks, ['memory', 'memory'],
+    'both land on Agent Memory — the same destination as the headline, which is where the saves this strip counts are actually listed');
+  ok(pulseItem.toolTip && pulseItem.toolTip.length > 20, 'the full reading, including everything the label budget dropped, is on its tooltip');
+  ok(!/^Save pulse/.test(pulseItem.label || ''),
+    'the constant noun comes off the label, because the section header above it now carries that word');
+  eq(model.stripPulseNoun(model.PULSE_LABEL_NOUN + '7 days · 69 saves'), '7 days · 69 saves',
+    'CONTROL — the noun is stripped as a LITERAL prefix');
+  eq(model.stripPulseNoun('7 days · 69 saves'), '7 days · 69 saves',
+    '…and a label that never carried it is untouched, so this is a no-op rather than a corruption if the producer reworded');
+
+  // The overflow is a destination.
+  const more = byId(menu.ID_TRUNCATED) || {};
+  ok(byId(menu.ID_TRUNCATED), 'the overflow item is present');
+  eq(more.enabled, true, 'ENABLED — at five rows it is on screen constantly, and its "…" promises a destination');
+  eq(typeof more.click, 'function', '…which it now has');
+  ok(/\(\d+\)/.test(more.label || ''), 'and it carries the count');
+  eq(built.hiddenRows, 12 - built.rows.length,
+    'the count is the TRUE remainder, taken against the supplied TOTAL rather than against what happened to be visible');
+  ok(built.hiddenRows > summary().scopes.length - built.rows.length,
+    'CONTROL — it exceeds anything derivable from the scopes handed over, so it really is the producer\'s uncapped count');
+
+  // Icons: one per row plus the strip, each handed the SPEC ITSELF.
+  const rowItems = built.rows.map((r) => byId(r.id));
+  ok(rowItems.every((i) => i && i.icon), 'every scope row carries its recency dot');
+  eq(seen.length, built.rows.length + 1, 'makeIcon is called exactly once per row plus once for the strip');
+  ok(seen.some((sp) => sp.template === true) && seen.some((sp) => sp.template === false),
+    'the seam is handed the SPEC, template flag and all — main.js reads that field and never guesses, because a coloured dot marked as a template is flattened to a monochrome blob');
+  ok(seen.every((sp) => sp.buffer && sp.buffer2x),
+    'and both representations reach it, so a retina asset cannot be dropped on the way');
+
+  // A throwing seam is survivable at the menu layer too.
+  const survived = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(built, {
+    ...NOOPS, makeIcon: () => { throw new Error('nativeImage exploded'); },
+  }));
+  ok(survived.length > 5, 'a makeIcon that throws still produces a whole menu');
+  ok(survived.filter((i) => i.icon).length === 0, '…simply with no pictures in it');
+
+  // Five rows, and the number is the maintainer's own ask.
+  eq(model.MAX_ROWS, 5, 'five rows: "maybe just five of them, the latest five, and then people can click more"');
+  eq(built.rows.length, Math.min(5, summary().scopes.length), 'CONTROL — the model really caps there');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§18 main.js wiring for the theme and the images — SOURCE SCAN, weak like §11');
+{
+  const src = stripJsComments(read(path.join(DESKTOP, 'main.js')));
+  ok(/dark:\s*nativeTheme\.shouldUseDarkColors/.test(src),
+    'main.js reads the theme and PASSES it into buildTrayModel rather than the model reaching for Electron');
+  ok(/nativeTheme\.on\('updated', renderTrayFromSnapshot\)/.test(src),
+    'and re-renders on a theme change — a pure module cannot notice one');
+  ok(/nativeTheme\.removeListener\('updated', renderTrayFromSnapshot\)/.test(src),
+    'the listener is removed when the tray goes away — nativeTheme is a process singleton and would otherwise accumulate one per toggle');
+  ok(/img\.setTemplateImage\(spec\.template === true\)/.test(src),
+    'and the image seam OBEYS spec.template rather than deciding it');
+  ok(!/setTemplateImage\(true\)[\s\S]{0,200}makeIcon/.test(src),
+    'CONTROL — no hardcoded template flag survives on the menu-image path');
+  ok(/makeIcon: menuImage/.test(src), 'the seam is wired to that function');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
