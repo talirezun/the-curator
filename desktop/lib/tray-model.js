@@ -83,6 +83,8 @@
  * a way to manufacture one.
  */
 
+import { renderPulseStrip, pulseLabel, pulseToolTip } from './pulse-strip.js';
+
 // ── Caps ────────────────────────────────────────────────────────────────────
 //
 // Eight rows: roughly what fits above the fold of a menubar menu without the
@@ -90,10 +92,28 @@
 // never read as a measurement (v3.17.0). See `truncatedNote`.
 export const MAX_ROWS = 8;
 
-/** Headlines are the agent's own prose and can run long; a menu item that is
- *  400px wide pushes everything else off the screen. Truncation is visible
- *  (an ellipsis) rather than silent. */
-export const MAX_HEADLINE_CHARS = 72;
+/**
+ * Headlines are the agent's own prose and can run long; a menu item that is
+ * 400px wide pushes everything else off the screen. Truncation is visible
+ * (an ellipsis) rather than silent.
+ *
+ * ── WHY THIS CAME DOWN FROM 72, AND WHY IT DID NOT GO TO ZERO ──────────────
+ *
+ * The maintainer's complaint was that the menu takes "close to a quarter of a
+ * screen". Measured on his real store, the sublabel sat at 71–72 characters on
+ * EVERY row — a clip cap that a real headline always reaches is not a cap on
+ * an outlier, it is a fixed width, so the second line of every row was always
+ * near maximum. That made it, and not the label, the thing setting the menu's
+ * width half the time.
+ *
+ * He also said explicitly that he wants the headline "available for a quick
+ * glance". So it is SHORTER, not GONE: 54 is the width of the longest ROW
+ * LABEL after the compaction below, so the headline can never be the widest
+ * thing in the menu while still carrying the first clause of the agent's own
+ * sentence. The full headline stays reachable — it is what the Agent memory
+ * view shows, one click away on the same row.
+ */
+export const MAX_HEADLINE_CHARS = 54;
 
 /** Tier B lines: shown only when they have something to say, and bounded so a
  *  pathological warning list cannot become the whole menu. */
@@ -267,6 +287,66 @@ export function shortMachineNames(machines) {
     const h = hostPart(m) || m;
     const tag = installTag(m);
     out.set(m, distinct.get(h).size > 1 && tag ? h + '·' + tag : h);
+  }
+  return out;
+}
+
+// ── Scope names ─────────────────────────────────────────────────────────────
+
+/**
+ * Prefixes that carry no information in a list where every row is a scope.
+ *
+ * `session-` is the one the skill's own examples produce, and on the
+ * maintainer's real store it is 14 characters (`session-2026-0`) shared by
+ * every single row. A token every row carries is a token that distinguishes
+ * nothing; it is pure width.
+ */
+export const SCOPE_DISPLAY_PREFIXES = ['session-'];
+
+/**
+ * Display names for a set of scopes, shortened only where it stays lossless.
+ *
+ * ── THE COLLISION GUARD IS THE WHOLE REASON THIS IS A SET OPERATION ────────
+ *
+ * Stripping a prefix per-row in isolation can make two DIFFERENT scopes render
+ * identically — a store holding both `deploy` and `session-deploy` would show
+ * two rows reading `deploy`, and a list in which two rows are the same row is
+ * worse than a list that is slightly too wide. So the strip is computed over
+ * all the scopes that will be SHOWN together, and any scope whose shortened
+ * form collides with another shown scope's displayed form keeps its full name.
+ *
+ * Computed over the shown rows and not over the whole store for the same
+ * reason `shortMachineNames` is: disambiguating against something the user
+ * cannot see is noise.
+ *
+ * The full scope always remains in the row's tooltip. Nothing becomes
+ * unreachable — that rule is absolute here.
+ *
+ * @param {string[]} scopes
+ * @returns {Map<string, string>} raw scope -> displayed scope
+ */
+export function shortScopeNames(scopes) {
+  const list = (Array.isArray(scopes) ? scopes : []).filter((s) => typeof s === 'string' && s);
+  const taken = new Set(list);
+
+  const proposed = new Map();
+  for (const s of list) {
+    let short = s;
+    for (const p of SCOPE_DISPLAY_PREFIXES) {
+      if (s.length > p.length && s.slice(0, p.length) === p) { short = s.slice(p.length); break; }
+    }
+    proposed.set(s, short);
+  }
+
+  // A shortened form is only accepted when nothing else shown already answers
+  // to it — neither another scope's full name nor another scope's short form.
+  const shortCounts = new Map();
+  for (const short of proposed.values()) shortCounts.set(short, (shortCounts.get(short) || 0) + 1);
+
+  const out = new Map();
+  for (const [raw, short] of proposed) {
+    const collides = short !== raw && (taken.has(short) || shortCounts.get(short) > 1);
+    out.set(raw, collides ? raw : short);
   }
   return out;
 }
@@ -516,6 +596,114 @@ export function buildTrayModel(summary, opts = {}) {
   const shownWithAge = withAge.slice(0, maxRows);
   const shown = shownWithAge.map((x) => x.s);
   const machineLabels = shortMachineNames(shown.map((s) => s.machine));
+  const scopeLabels = shortScopeNames(shown.map((s) => str(s.scope)).filter(Boolean));
+
+  // ── WIDTH COMPACTION, AND EVERY LEVER IS CONDITIONAL ON THE DATA ────────
+  //
+  // The measured complaint was that this menu takes "close to a quarter of a
+  // screen": the widest rendered line on the maintainer's own store was 93
+  // characters, with a mean of 57 across 24 lines. There is NO width API in
+  // Electron, and none in AppKit's maximum direction either — the LENGTH OF
+  // THE CONTENT is the only lever that exists, so the content is what changes.
+  //
+  // What was measured as pure width, carrying zero information on his store:
+  //
+  //   "projects · "     11 chars on 8 rows — exactly one project has state
+  //   "session-2026-0"  a 14-char prefix common to every scope name
+  //   "claude-code"     11 chars — the harness on 65 of 65 journal lines
+  //
+  // NONE of these is deleted unconditionally. Each is dropped only while the
+  // data says it distinguishes nothing, and each comes straight back the
+  // moment it does: a second project, a scope that does not share the prefix,
+  // a second harness. A hardcoded strip would be a lie waiting for the day the
+  // user's setup changes, and it would be a silent one.
+  //
+  // THE ABSOLUTE RULE ON TOP OF ALL OF THEM: every fact removed from a label
+  // is still in that row's `toolTip`, in full and unshortened. The tooltip is
+  // built below from the RAW values for exactly this reason, and the suite
+  // asserts it for every lever.
+
+  // Projects: counted over every scope the summary handed us, not merely the
+  // rows that survived the cap, so a project sitting just past the row limit
+  // still keeps the token on the rows above it. (If the DATA LAYER itself
+  // capped before we saw it, a project hidden past that cap is not rendered
+  // anywhere either, and `truncatedNote` is what points at the full list.)
+  const projectsPresent = new Set(all.map((s) => str(s.project) || '(unnamed)'));
+  const showProject = projectsPresent.size !== 1;
+
+  // Harness: dropped only when EVERY shown row that would display one displays
+  // the same one. A row with no harness at all counts against dropping — an
+  // absent harness is not evidence that it matches the others, and "unknown
+  // harness" is a real distinction worth its width.
+  const localHarnesses = shown
+    .filter((s) => s.isThisMachine === true)
+    .map((s) => str(s.harness));
+  const dropHarness = localHarnesses.length > 0
+    && localHarnesses.every((h) => h !== null)
+    && new Set(localHarnesses).size === 1;
+
+  // ── THE PROVENANCE SLOT, DECIDED ACROSS THE WHOLE SHOWN SET ─────────────
+  //
+  // Provisional first, because whether a token may be dropped is a fact about
+  // the LIST and not about the row: a token can only be dropped when it
+  // distinguishes nothing, and "nothing" is measured against the rows beside
+  // it.
+  const sourceOf = (s) => (s.ageSource === 'file' ? 'file' : (s.ageSource === 'agent' ? 'agent' : null));
+  const machineOf = (s) => machineLabels.get(s.machine) || str(s.machine) || 'unknown machine';
+
+  const provenances = shown.map((s) => (
+    s.isThisMachine === true
+      ? (dropHarness ? null : (str(s.harness) || 'unknown harness'))
+      : machineOf(s)
+  ));
+
+  const identityOf = (s) => {
+    const scp = str(s.scope) || '(unnamed)';
+    return (showProject ? (str(s.project) || '(unnamed)') + ' · ' : '') + (scopeLabels.get(scp) || scp);
+  };
+  const composeLabel = (s, age, provenance) =>
+    identityOf(s) + (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s));
+
+  // ── AND THEN THE COLLISION GUARD, WHICH IS WHY IT IS TWO PASSES ─────────
+  //
+  // Compaction that makes two rows READ THE SAME is worse than the width it
+  // saved: a list in which two entries are indistinguishable is not a shorter
+  // list, it is a broken one. So the compacted labels are composed, checked
+  // against each other, and any row that has become a duplicate gets its
+  // provenance token back.
+  //
+  // WHICH token comes back is chosen by what actually differs in that
+  // collision, not by a fixed preference: the machine when the colliding rows
+  // are on different machines, the harness otherwise. Restoring a token that
+  // is identical across the colliding rows would spend the width and still
+  // leave two identical rows — the shape of fix that looks like a fix.
+  //
+  // This is the same rule `shortScopeNames` applies to prefixes, one level up,
+  // and it is reachable in ordinary use: one scope worked on from two machines
+  // whose two ages round to the same words is not exotic, it is a handoff.
+  //
+  // A pair that still collides after this is genuinely two rows with the same
+  // project, scope, machine, harness and age text, which no amount of label
+  // composition can separate; the tooltip and the Agent memory view are where
+  // that goes, and nothing here pretends otherwise.
+  {
+    const groups = new Map();
+    shownWithAge.forEach(({ s, age }, i) => {
+      const l = composeLabel(s, age, provenances[i]);
+      if (!groups.has(l)) groups.set(l, []);
+      groups.get(l).push(i);
+    });
+    for (const idxs of groups.values()) {
+      if (idxs.length < 2) continue;
+      const machines = new Set(idxs.map((i) => str(shown[i].machine)));
+      for (const i of idxs) {
+        if (provenances[i] !== null) continue;
+        provenances[i] = machines.size > 1
+          ? machineOf(shown[i])
+          : (str(shown[i].harness) || 'unknown harness');
+      }
+    }
+  }
 
   const rows = shownWithAge.map(({ s, age }, idx) => {
     const project = str(s.project) || '(unnamed)';
@@ -542,11 +730,24 @@ export function buildTrayModel(summary, opts = {}) {
     // safe direction — a machine name is never WRONG, only redundant, whereas a
     // harness label on a row from another computer implies that harness is
     // running here.
+    //
+    // ── AND WHEN THE SLOT IS EMPTY, THAT IS ALSO A READING ──────────────
+    //
+    // The harness token is dropped from a LOCAL row when every local row
+    // carries the same one (see `dropHarness` above). A MACHINE token is never
+    // dropped: `isThisMachine === false` is the whole reason that row needs a
+    // provenance at all, and dropping it would make a handoff from another
+    // computer indistinguishable from one written here.
+    //
+    // The result is that a row showing no provenance is a row from HERE, and a
+    // row showing a machine name is a row from THERE — which is more legible
+    // than the same fact spelled out on every line, and it degrades safely:
+    // the moment a second harness appears, every local row says which.
     const harness = str(s.harness);
     const machineShort = machineLabels.get(s.machine) || str(s.machine);
-    const provenance = isThisMachine
-      ? (harness || 'unknown harness')
-      : (machineShort || 'unknown machine');
+    const provenance = provenances[idx];
+
+    const scopeShort = scopeLabels.get(scope) || scope;
 
     return {
       id: 'tray-row-' + idx,
@@ -567,7 +768,10 @@ export function buildTrayModel(summary, opts = {}) {
       // agent's own sentence on the sublabel (macOS renders it as a second
       // line, and a platform that does not simply drops it — which is why the
       // essential facts are on the LABEL and never only on the sublabel).
-      label: project + ' · ' + scope + ' — ' + provenance + ' · ' + ageText(age, source),
+      scopeShort,
+      showsProject: showProject,
+      showsProvenance: provenance !== null,
+      label: composeLabel(s, age, provenance),
       sublabel: clip(s.headline, MAX_HEADLINE_CHARS),
       // The tooltip is where the precise facts go — the ones that are true but
       // too long for a row, including BOTH clocks when they disagree.
@@ -604,33 +808,53 @@ export function buildTrayModel(summary, opts = {}) {
   const lsAge = ls ? effectiveAgeSeconds(str(ls.writtenAt), num(ls.writtenAgeSeconds), nowMs) : null;
   const lsSource = ls && ls.ageSource === 'file' ? 'file' : (ls && ls.ageSource === 'agent' ? 'agent' : null);
 
+  // The "where" line is compacted by the SAME rules as the rows it sits above,
+  // so the two cannot disagree about what a scope is called. `whereText` is
+  // the compacted form; `whereFull` is kept beside it so the tooltip and any
+  // later surface still has the unshortened truth.
+  const whereOf = (proj, scp) => {
+    const p = str(proj), c = str(scp);
+    if (!p && !c) return { text: null, full: null };
+    const short = c ? (scopeLabels.get(c) || c) : null;
+    return {
+      text: [showProject ? p : null, short].filter(Boolean).join(' · ') || null,
+      full: [p, c].filter(Boolean).join(' · ') || null,
+    };
+  };
+
   let headline;
   if (ls && lsAge !== null) {
+    const w = whereOf(ls.project, ls.scope);
     headline = {
       known: true,
       ageSeconds: lsAge,
       ageSource: lsSource,
       text: 'Last save · ' + ageText(lsAge, lsSource),
-      where: [str(ls.project), str(ls.scope)].filter(Boolean).join(' · ') || null,
+      where: w.text,
+      whereFull: w.full,
       bucket: ageBucket(lsAge),
     };
   } else if (rows.length && rows[0].ageSeconds !== null) {
     const r = rows[0];
+    const w = whereOf(r.project, r.scope);
     headline = {
       known: true,
       ageSeconds: r.ageSeconds,
       ageSource: r.ageSource,
       text: 'Last save · ' + r.ageText,
-      where: r.project + ' · ' + r.scope,
+      where: w.text,
+      whereFull: w.full,
       bucket: r.bucket,
     };
   } else if (rows.length) {
+    const w = whereOf(rows[0].project, rows[0].scope);
     headline = {
       known: false, ageSeconds: null, ageSource: null,
       // NOT "just now", and not a blank. The menu says out loud that it does
       // not know, which is a different sentence from "nothing has been saved".
       text: 'Last save · time unknown',
-      where: rows[0].project + ' · ' + rows[0].scope,
+      where: w.text,
+      whereFull: w.full,
       bucket: 'unknown',
     };
   } else {
@@ -692,10 +916,32 @@ export function buildTrayModel(summary, opts = {}) {
     ageText: ageText(briefAge, null),
   } : null;
 
+  // ── The pulse ───────────────────────────────────────────────────────────
+  //
+  // A picture of when saves happened, drawn as a template PNG and carried on
+  // ONE menu item near the top. The whole argument for it being a still frame
+  // in an icon gutter — rather than the live multi-band graph iStat Menus
+  // draws — is in `lib/pulse-strip.js`; the short version is that
+  // `NSMenuItem.setView:` does not exist in Electron and an NSMenu is frozen
+  // once open regardless.
+  //
+  // `null` when the data layer supplied no pulse, so the menu simply has no
+  // strip item rather than an item carrying a blank rectangle. The producer is
+  // free not to compute one and nothing here degrades.
+  const rawPulse = summary && typeof summary.pulse === 'object' && summary.pulse
+    ? summary.pulse : null;
+  const strip = renderPulseStrip(rawPulse);
+  const pulse = strip ? {
+    strip,
+    label: pulseLabel(rawPulse),
+    toolTip: pulseToolTip(rawPulse),
+  } : null;
+
   return {
     ok,
     empty: rows.length === 0,
     headline,
+    pulse,
     rows,
     notices: notices.slice(0, MAX_NOTICES),
     noticesHidden: Math.max(0, notices.length - MAX_NOTICES),
