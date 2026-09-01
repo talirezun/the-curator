@@ -1591,8 +1591,30 @@ section('§17 sections, the two pictures, and the items that are now reachable')
 section('§18 main.js wiring for the theme and the images — SOURCE SCAN, weak like §11');
 {
   const src = stripJsComments(read(path.join(DESKTOP, 'main.js')));
-  ok(/dark:\s*nativeTheme\.shouldUseDarkColors/.test(src),
+  // The INTENT is unchanged — main.js reads the theme and hands it in, so no
+  // pure module reaches for Electron. The SOURCE of the theme changed, and it
+  // was settled by measurement rather than by reading documentation.
+  //
+  // boot() pins `nativeTheme.themeSource = 'dark'` for the window's title bar,
+  // and that setter is exactly what `shouldUseDarkColors` reports. Measured by
+  // running Electron 43.5.0 on a LIGHT-appearance Mac, before and after:
+  //
+  //     shouldUseDarkColors        false  ->  TRUE      (follows the override)
+  //     getEffectiveAppearance()   light  ->  dark      (follows it too)
+  //     getUserDefault('AppleInterfaceStyle')  light -> light   (immune)
+  //
+  // So `shouldUseDarkColors` would have painted the DARK palette onto a LIGHT
+  // menu bar on every Mac. The menu is drawn by AppKit against the SYSTEM
+  // appearance, which is a different question from what this app's own window
+  // is themed as, and the two are allowed to disagree.
+  ok(/dark:\s*menuAppearanceIsDark\(\)/.test(src),
     'main.js reads the theme and PASSES it into buildTrayModel rather than the model reaching for Electron');
+  ok(/getUserDefault\('AppleInterfaceStyle',\s*'string'\)\s*===\s*'Dark'/.test(src),
+    'and it reads the SYSTEM appearance, which themeSource cannot reach');
+  ok(!/dark:\s*nativeTheme\.shouldUseDarkColors/.test(src),
+    'and NOT shouldUseDarkColors, which this app pins to dark and which would invert the palette on every light Mac');
+  ok(/AppleInterfaceThemeChangedNotification/.test(src),
+    'the rebuild is driven by the system notification, because `updated` does not fire while themeSource is pinned');
   ok(/nativeTheme\.on\('updated', renderTrayFromSnapshot\)/.test(src),
     'and re-renders on a theme change — a pure module cannot notice one');
   ok(/nativeTheme\.removeListener\('updated', renderTrayFromSnapshot\)/.test(src),

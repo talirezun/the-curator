@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
@@ -141,6 +141,7 @@ let tray = null;
 /** Which glyph the tray is currently showing, so an unchanged one is never
  *  re-set — replacing a tray image is not free and, more importantly, it is
  *  not silent on every macOS version. */
+let themeNotificationId = null;
 let trayGlyph = null;
 /** The last `getTraySummary()` result. Rendering from this costs no I/O, which
  *  is what makes hovering the icon free and opening it instant. */
@@ -1016,31 +1017,60 @@ async function readBackgroundMode() {
 
 /** Build the tray menu from the snapshot already in memory. NO I/O, no network
  *  — which is what makes it safe to do on hover. */
+/**
+ * Is the SYSTEM menu bar in dark appearance?
+ *
+ * Deliberately NOT `nativeTheme.shouldUseDarkColors`, which this app pins to
+ * `dark` for its own window — see the measurement table at the buildTrayModel
+ * call below. Reads the system default, which that override cannot reach.
+ * Absent or empty means light, which is macOS's own encoding.
+ */
+function menuAppearanceIsDark() {
+  try {
+    return systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark';
+  } catch {
+    // A refusal here must fail toward LIGHT: it is macOS's default appearance,
+    // and the light palette on a dark bar is a legibility loss, while the dark
+    // palette on a light bar is the defect being fixed.
+    return false;
+  }
+}
+
 function renderTrayFromSnapshot() {
   if (!tray || tray.isDestroyed()) return;
   // `dark` is READ HERE and passed in, because lib/tray-model.js must stay
   // importable by `npm test`, where Electron does not exist. It is the same
   // split as `makeIcon` below, for the same reason.
   //
-  // ── AND IT IS CURRENTLY A CONSTANT. FOUND, NOT FIXED. ─────────────────
+  // ── IT MUST NOT BE `shouldUseDarkColors`, AND THIS WAS MEASURED ───────
   //
   // boot() sets `nativeTheme.themeSource = 'dark'` so the window's real title
   // bar matches the app's near-black theme. That setter is exactly what
-  // `shouldUseDarkColors` reports, so on this app it reads TRUE on every Mac,
-  // and `nativeTheme.on('updated')` below will not fire for a system light/dark
-  // switch either. The tray therefore always draws its dark-menu images.
+  // `shouldUseDarkColors` reports, so it reads TRUE on every Mac regardless of
+  // the system appearance — and the menu it would paint is drawn by AppKit
+  // against the SYSTEM menu bar, not against this app's window.
   //
-  // Whether that is WRONG depends on something no test here can answer: a
-  // status item's menu is drawn by AppKit, and if it follows the SYSTEM menu
-  // appearance rather than this process's overridden one, a light-mode Mac gets
-  // dark-menu images. Reading a second theme value to work around the first
-  // would be two opinions about one fact in the one file no test can execute,
-  // which is worse than the defect. It is recorded here and in the release
-  // notes instead, and the wiring is the contracted one so the fix is a
-  // one-line change to this expression when somebody can see a screen.
+  // Measured on a light-appearance Mac by running Electron 43.5.0 and reading
+  // all three values before and after the override:
+  //
+  //                                  system default    after themeSource='dark'
+  //     shouldUseDarkColors                 false                        TRUE
+  //     getEffectiveAppearance()            light                        dark
+  //     getUserDefault('AppleInterfaceStyle')  light                     light
+  //
+  // So `getEffectiveAppearance()` follows the override too and is no better.
+  // `AppleInterfaceStyle` is the only one immune to it, and it is the one that
+  // answers the question actually being asked. This is NOT two opinions about
+  // one fact: `themeSource` is a fact about THIS APP'S WINDOW, and
+  // AppleInterfaceStyle is a fact about THE SYSTEM MENU BAR. They are
+  // different questions and they are allowed to disagree.
+  //
+  // The subscription below is `AppleInterfaceThemeChangedNotification` rather
+  // than `nativeTheme.on('updated')` for the same reason: with themeSource
+  // pinned, `updated` does not fire for a system appearance change.
   const model = buildTrayModel(traySnapshot, {
     maxRows: TRAY_ROW_LIMIT,
-    dark: nativeTheme.shouldUseDarkColors,
+    dark: menuAppearanceIsDark(),
   });
 
   if (model.glyph !== trayGlyph) {
@@ -1242,7 +1272,14 @@ function startTray() {
   // the same no-I/O path `mouse-enter` uses. `nativeTheme` is a process-level
   // singleton, so the listener is removed in stopTray() rather than left to
   // accumulate one per tray the user toggles on.
+  // `updated` does not fire for a system appearance change while themeSource is
+  // pinned, so the system notification is the one that actually reaches us.
+  // Both are wired: the notification is the real signal, `updated` is a belt.
   nativeTheme.on('updated', renderTrayFromSnapshot);
+  try {
+    themeNotificationId = systemPreferences.subscribeNotification(
+      'AppleInterfaceThemeChangedNotification', () => renderTrayFromSnapshot());
+  } catch { themeNotificationId = null; }
   tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
   tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
 
@@ -1261,6 +1298,10 @@ function startTray() {
 /** Tear the tray down, including everything it was paying for. */
 function stopTray() {
   nativeTheme.removeListener('updated', renderTrayFromSnapshot);
+  if (themeNotificationId !== null && themeNotificationId !== undefined) {
+    try { systemPreferences.unsubscribeNotification(themeNotificationId); } catch { /* best effort */ }
+    themeNotificationId = null;
+  }
   if (stateWatcher) { stateWatcher.stop(); stateWatcher = null; }
   if (glyphExpiry) { glyphExpiry.cancel(); glyphExpiry = null; }
   if (tray && !tray.isDestroyed()) tray.destroy();

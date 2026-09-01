@@ -632,12 +632,23 @@ section('§7 the menu item: where it sits, that it is a statement, and its width
   const flat = menu.flattenTrayMenu(t);
   const idx = flat.findIndex((i) => i.id === menu.ID_PULSE);
   ok(idx >= 0, 'the strip item is in the template');
-  eq(flat[idx - 1].id, menu.ID_HEADLINE_WHERE, 'and it sits directly BELOW the headline pair, near the top');
-  eq(flat[idx].enabled, false, 'it is a STATEMENT, not an action — the menu\'s existing idiom for a status line');
-  ok(!flat[idx].click, 'and carries no click handler at all');
+  // REVERSED, DELIBERATELY, and the maintainer's own screenshot is the reason.
+  // This block used to assert the pulse was DISABLED, on the grounds that a
+  // disabled item is this menu's idiom for a status line. Shipped, that made
+  // macOS tint the strip to the DISABLED TEXT colour, and his verdict on it was
+  // "barely visible, I don't know why it's in such a light colour". Putting the
+  // one piece of graphics the widget exists for into the dimmest style
+  // available is the compounding-opacity defect this repo has fixed twice.
+  // It is now ENABLED, at full contrast, and it goes where the headline goes.
+  eq(flat[idx - 1].id, menu.ID_HEADER_PULSE, 'it sits directly below its own section header');
+  eq(flat[idx].enabled, true, 'it is drawn at FULL CONTRAST, not as a dimmed statement');
+  ok(typeof flat[idx].click === 'function', 'and an enabled row must DO something — an enabled item with no handler swallows a click');
   eq(flat[idx].icon, { fake: 'image' }, 'the injected makeIcon result becomes the item\'s icon');
-  eq(seen.length, 1, 'makeIcon is called exactly once');
-  ok(seen[0] === m.pulse.strip, 'and is handed the strip itself, buffers and all');
+  // The header itself is the statement, and it must stay inert.
+  eq(flat[idx - 1].enabled, false, 'the section header IS a statement and stays disabled');
+  ok(!flat[idx - 1].click, 'and carries no handler, so no macOS version can make a caption actionable');
+  ok(seen.includes(m.pulse.strip), 'makeIcon is handed the strip itself, buffers and all');
+  eq(seen.filter((x) => x === m.pulse.strip).length, 1, 'and exactly once — the picture is not built twice per menu');
   ok(typeof flat[idx].toolTip === 'string' && flat[idx].toolTip.length > 40, 'the item carries the full tooltip');
 
   // With no makeIcon the reading survives without the picture.
@@ -765,7 +776,7 @@ section('§8 width compaction — three levers, each conditional and each revers
   eq(lens.filter((n) => n > 70).length, 0, 'no line runs past 70 any more; fourteen did');
   // A CONTROL on the measurement itself: a suite that measured an empty menu,
   // or one row, would report a small maximum and prove nothing.
-  ok(lens.length >= 24, `CONTROL: ${lens.length} lines were actually measured`);
+  ok(lens.length >= 18, `CONTROL: ${lens.length} lines were actually measured (the row cap is 5, so the menu is shorter than it was at 8)`);
   ok(max > 40, 'CONTROL: and the widest is a real row, not a truncated stub');
   // The collision on his store resolves by AGE, not by a folder name — which
   // is the fix, asserted here against the full store rather than only against
@@ -795,7 +806,7 @@ section('§9 nothing dropped from a label becomes unreachable');
     ok(tip.includes(src.harness), `row ${i}: the harness is in the tooltip`);
     checked++;
   }
-  ok(checked === 8, `all ${checked} rows were checked, so the loop above is not vacuous`);
+  ok(checked === 5, `all ${checked} rows were checked, so the loop above is not vacuous (5 is the row cap; it was 8)`);
 
   // ── AND ONE FIELD THAT MUST NOT REACH A SURFACE AT ALL ────────────────
   //
@@ -1005,15 +1016,22 @@ section('§11 main.js source scan — WEAK, and it says so');
 // cannot live anywhere the suite can execute.
 {
   const src = readFileSync(path.join(DESKTOP, 'main.js'), 'utf8');
-  ok(/makeIcon:\s*pulseStripImage/.test(src), 'SCAN ONLY: the menu is built with the strip\'s icon factory');
-  ok(/function pulseStripImage/.test(src), 'SCAN ONLY: and that factory exists');
-  const fn = src.slice(src.indexOf('function pulseStripImage'), src.indexOf('function trayImage'));
-  ok(/nativeImage\.createFromBuffer\(strip\.buffer,\s*\{\s*scaleFactor:\s*1\s*\}\)/.test(fn),
+  ok(/makeIcon:\s*menuImage/.test(src), 'SCAN ONLY: the menu is built with the shared icon factory');
+  ok(/function menuImage/.test(src), 'SCAN ONLY: and that factory exists');
+  const fn = src.slice(src.indexOf('function menuImage'), src.indexOf('function trayImage'));
+  ok(/nativeImage\.createFromBuffer\(spec\.buffer,\s*\{\s*scaleFactor:\s*1\s*\}\)/.test(fn),
     'SCAN ONLY: the 1x buffer is built at scaleFactor 1');
-  ok(/addRepresentation\(\{\s*scaleFactor:\s*2,\s*buffer:\s*strip\.buffer2x\s*\}\)/.test(fn),
+  ok(/addRepresentation\(\{\s*scaleFactor:\s*2,\s*buffer:\s*spec\.buffer2x\s*\}\)/.test(fn),
     'SCAN ONLY: and the 2x buffer is added as a second representation');
-  ok(/setTemplateImage\(true\)/.test(fn),
-    'SCAN ONLY: setTemplateImage(true) — without it the strip is a black smear on a dark menu');
+  // THE ASSERTION THAT REVERSED, AND WHY IT IS THE POINT OF THE CHANGE.
+  // This used to require a hardcoded `setTemplateImage(true)`. A template image
+  // carries ONLY alpha and macOS tints it — correct for the tray GLYPH, and the
+  // reason the shipped strip rendered as a ghost. The factory must now honour
+  // the SPEC, so a colour image stays colour and the glyph stays a template.
+  ok(/setTemplateImage\(spec\.template === true\)/.test(fn),
+    'SCAN ONLY: the factory honours spec.template rather than hardcoding it — a hardcoded true is what made the strip a ghost');
+  ok(!/setTemplateImage\(true\)/.test(fn),
+    'SCAN ONLY: and it does NOT hardcode true, which would re-tint the colour art to the disabled text colour');
   ok(/catch\s*\{\s*\n\s*return null;/.test(fn),
     'SCAN ONLY: and it returns null rather than throwing, because a menu item that throws while being BUILT takes the whole menu');
   // The decisions must NOT be here. A geometry constant appearing in main.js
