@@ -1103,7 +1103,8 @@ each has something to say**, up to five qualifying lines:
 
 | Line | When it appears | What to do |
 |---|---|---|
-| **`incomplete`** badge on the reading, plus *"part of it was trimmed"* | The save did not fit the size budget, so the end of it was dropped. The app knows because the store recorded the trim | Ask the agent to save again, shorter. The handoff you are reading is **missing** what the note names |
+| **`incomplete`** badge, plus *"part of this handoff did not survive the save"* | Handoff CONTENT was cut — a section, or items past a list's 40-item cap. The app knows because the store recorded it | Ask the agent to save that content again. The handoff you are reading really is **missing** what the note names |
+| **`summary shortened`** badge, plus *"the handoff itself was written in full"* | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
 | *"deliberately replaced a larger handoff"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
 | *"the reading above is the file's own timestamp"* | No journal entry carried a save time, so the age is the file's, not the agent's | On a computer that syncs, that is when the file **arrived**, not when it was written |
 | *"This file arrived on this computer N ago"* | Both clocks are known and disagree by more than two minutes | Nothing — it is telling you the handoff was written elsewhere and pulled in later |
