@@ -1407,7 +1407,7 @@ This endpoint never returns a non-200 status — availability is a soft signal, 
 
 ## GET /api/diagnostics/quick
 
-Run the **free, local** self-diagnostics behind the Settings → System Check panel (v3.0.1-beta.23+). No network call, no API cost; never touches wiki content (the folder-writable probe writes a self-deleting temp file).
+Run the **free, local** self-diagnostics behind the Settings → General → System check panel (v3.0.1-beta.23+). No network call, no API cost; never touches wiki content (the folder-writable probe writes a self-deleting temp file).
 
 **Success response** `200 OK`
 
@@ -2142,7 +2142,7 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 ## My Curator MCP endpoints (`/api/mcp`)
 
-These back the **Settings → My Curator** wizard. They inspect and help assemble the Claude Desktop
+These back the **Settings → MCP bridge** wizard. They inspect and help assemble the Claude Desktop
 config; **none of them writes `claude_desktop_config.json`** — the user always pastes the snippet
 themselves. `CLAUDE_CONFIG_PATH` is a module constant in `src/routes/mcp.js` with no override seam.
 
@@ -2598,14 +2598,22 @@ getTraySummary({ limit = 8, now = Date.now() })   // limit is clamped to [1, 40]
       "fileChangedAt": "2026-08-31T18:04:11.000Z", "fileChangedAgeSeconds": 240,
       "writtenAt": "2026-08-31T18:04:11.000Z", "writtenAgeSeconds": 240,
       "ageSource": "agent",
-      "isThisMachine": true, "isThisHost": true
+      "isThisMachine": true, "machineMatch": "exact", "isThisHost": true
     }
   ],
   "total": 12,
   "pairsOnDisk": 12,
   "truncated": true,
+  "pulse": {
+    "windowSeconds": 604800, "bucketSeconds": 21600,
+    "buckets": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 5, 1, 0, 3, 4, 0, 0, 6, 2, 0, 1, 4, 7, 3],
+    "events": 41, "eventsOutsideWindow": 0,
+    "pairsCounted": 11, "pairsTruncated": 0,
+    "clock": "agent", "oldestEventAt": "2026-08-28T23:41:02.000Z",
+    "coversWholeWindow": false, "firstKnownBucket": 13
+  },
   "brief": { "project": "curator", "updatedAt": "2026-08-19T09:22:00.000Z", "ageSeconds": 1067531 },
-  "remote": { "behindFiles": 14, "behindCommits": 2, "checkedAt": "2026-08-31T18:00:02.000Z" },
+  "remote": { "ok": true, "behindFiles": 14, "behindCommits": 2, "checkedAt": "2026-08-31T18:00:02.000Z" },
   "warnings": [
     { "code": "scopes-truncated", "message": "Showing the 8 most recent of 12 saved work-streams.",
       "shown": 8, "total": 12, "pairsOnDisk": 12 }
@@ -2621,7 +2629,8 @@ getTraySummary({ limit = 8, now = Date.now() })   // limit is clamped to [1, 40]
 | `total` | How many rows `scopes` was sliced **from** — counted before the slice |
 | `pairsOnDisk` | Every `(scope, machine)` pair the store saw, including pairs past a project's own `MAX_INDEX_ENTRIES`. `>= total`, and the gap is truncation inside the store rather than here. Two different facts, two names; neither derived from the other |
 | `truncated` | `total > scopes.length` |
-| `brief` | The standing brief's age for the project of the **newest** save — one `stat`, never a read. `null` when there is no brief, which is the normal case rather than an error. No `ageSource`: a brief has no journal, so mtime is the only clock and there is nothing to be honest between. **Nothing consumes this today** — the menu does not render it, per the design's Tier-C ranking; it is Phase 2 material |
+| `pulse` | The save heartbeat — see below. `null` only when **no journal was read at all**; a store that has journals but no usable timestamps in them is a real, drawable state and arrives as `clock: 'none'` |
+| `brief` | The standing brief's age for the project of the **newest** save — one `stat`, never a read. `null` when there is no brief, which is the normal case rather than an error. No `ageSource`: a brief has no journal, so mtime is the only clock and there is nothing to be honest between. Rendered as a `· Brief · 6 weeks ago` clause on the **tray icon's hover tooltip** (`trayToolTip()` in `desktop/lib/tray-menu.js`) — the Tier-C ranking keeps it out of a *menu row*, and the tooltip is the one surface in the widget with no scarcity |
 | `remote` | See below. `null` means **nobody has checked** |
 | `warnings[]` | `{code, message, …}`. Codes: `domains-unreadable` · `projects-truncated` · `scopes-truncated` · `harness-collision` · `harness-collisions-truncated` · `unlisted-entries` |
 
@@ -2631,11 +2640,40 @@ getTraySummary({ limit = 8, now = Date.now() })   // limit is clamped to [1, 40]
 |---|---|
 | `ageSource` | `'agent'` or `'file'`. `writtenAt`/`writtenAgeSeconds` carry whichever clock was chosen, and this says which. **`'file'` is `st.mtime`, which git rewrites on checkout** — so a handoff that arrived over Personal Sync carries the moment of the *pull*, not the moment of the save. A renderer must qualify a `'file'` age in words (*"changed 4 min ago"*) rather than present it as a written time |
 | `agentWrittenAt` / `fileChangedAt` (+ their `…AgeSeconds`) | Both raw clocks, always emitted under names that can only mean one thing, so a consumer wanting *"written 3 hr ago · arrived just now"* re-derives nothing |
-| `isThisMachine` | Exact match on this installation's machine id — identity. **Read it strictly**: anything but `true` should be treated as remote |
+| `isThisMachine` | Whether this row was written by **this installation**. True on an exact match of the whole `<hostname-slug>-<install-id>` segment, **and** on a match of the trailing installation id alone — macOS re-derives the hostname from DHCP, so one laptop can own two `<machine>` folders, and comparing the whole string classified half of a real store as a remote machine. The hostname half is **never** compared, so `buildbox-a1b2c3` cannot claim to be this machine unless it carries this installation's id, and two absent ids never compare equal. **Read it strictly**: anything but `true` should be treated as remote |
+| `machineMatch` | `'exact'` · `'install-id'` · `'none'` — **how** `isThisMachine` was decided. A diagnostic, so a derived answer is not one nobody can debug; it is deliberately never displayed, and a renderer that branched on it would put a second identity opinion beside `isThisMachine` |
 | `isThisHost` | The weaker fact: the folder shares this host's *name*. A folder can share a hostname and belong to a different installation, which is the entire reason the installation id exists |
 | `harness` / `harnessShared` / `harnesses[]` | Which agent tool wrote last, whether **two** tools are alternating in this one folder, and which ones. A collision silently overwrites handoffs; the remedy — a separate scope per tool — is the user's |
 | `kind` | The store's own verdict on the last save (`lastSaveKind`), e.g. `trimmed`. **`null` means there is no journal line, so we do not know — not "complete"** |
 | `bytes` | Size of the handoff, against the store's 48 KB cap |
+
+**`pulse` costs no file I/O, and that is why it exists at all.** `listWorkingScopes()` already read
+and parsed every journal in full on every call, and the index then discarded every timestamp except
+the newest — 54 of 65 entries on the maintainer's own store, parsed and thrown away. The pulse is
+those numbers kept. `saveTimes` is a **strict opt-in** (`opts.withSaveTimes === true`), and
+`getTraySummary()` is its only caller, so the MCP's `get_working_state` payload — which lives under
+a 400 KB budget — is byte-identical.
+
+| Field | Meaning |
+|---|---|
+| `windowSeconds` · `bucketSeconds` | `604800` (7 days) and `21600` (6 hours). 28 buckets, derived rather than typed twice |
+| `buckets[]` | Saves per bucket, **oldest first**. Anchored on `now`, not on midnight, so the last cell always contains this instant. Cell `i` covers `(now − (28−i)·bucket, now − (27−i)·bucket]` — open at the older edge, closed at the newer — so an event on an internal boundary belongs to the **older** cell and every event lands in exactly one |
+| `events` | Saves counted **inside** the window. Counted during the walk, **before** the display slice, so `limit: 1` does not move it |
+| `eventsOutsideWindow` | Saves older than the window. Ordinary history, not a reason to distrust the drawing |
+| `pairsCounted` / `pairsTruncated` | How many `(scope, machine)` pairs fed the strip, and how many of those hit the 16 KB journal-tail cap. **`pairsTruncated > 0` makes `events` a floor**, which a renderer must say in words (*"at least 65 saves"*) rather than quietly present as a count |
+| `clock` | `'agent'` or `'none'`. **There is no `'file'` and no `'mixed'`, deliberately.** Only a journal line's own `at` is ever counted; an mtime fallback would draw a second machine's pulled history as a spike at the moment of the pull, because git rewrites mtime on checkout |
+| `oldestEventAt` | ISO time of the oldest save **inside** the window, or `null` |
+| `coversWholeWindow` | `true` only when something was saved at or before the window opened — i.e. the store demonstrably existed for the whole span |
+| `firstKnownBucket` | Cells **before** this index are *unknown*, not *empty*. `0` when the window is covered; `28` (one past the last cell) when nothing was counted, which is the honest answer and still an integer |
+
+`coversWholeWindow` and `firstKnownBucket` are the fact-versus-absence rule applied to a chart: a
+brand-new store and a dormant one draw the same 28 empty cells and mean opposite things. On a
+3.5-day-old store against the 7-day window, **13 of 28 cells are unknown** — the common case, not an
+edge one.
+
+A save stamped in the **future** — a machine with a skewed clock, which sync makes reachable — is
+clamped into the newest cell and counted, the same direction the store already clamps a negative age
+to 0. A real save is not made unreal by a bad clock.
 
 **`remote` is an OBSERVATION, not a live check.** `getTraySummary()` never fetches. `brain/sync.js`
 exposes no non-fetching accessor — `getRemoteStatus()` is *cache hit ? return : `git fetch`*, and
@@ -2645,13 +2683,21 @@ ref lock. So `noteRemoteStatus(payload)` records whatever a completed check last
 [`GET /api/sync/remote-status`](#personal-sync-endpoints-apisync) calls it with no fetch of its own.
 
 - An **unconfigured** install records nothing. That is not an observation of "0 waiting".
-- A **failed** check keeps `behindFiles: null` — *"we could not ask"* and *"there is nothing
-  waiting"* are different facts.
+- A **failed** check carries `ok: false` and keeps `behindFiles: null` — *"we could not ask"* and
+  *"there is nothing waiting"* are different facts. **`ok` is the third state, and without it the
+  first two collapse**: the renderer branches on `remote.ok === false`, and while the store emitted
+  no `ok` at all a failed check reached the menu as `{behindFiles: null}`, took the no-number exit,
+  and rendered byte-identically to never having checked. The distinction survived the store and died
+  at the model.
 - An observation older than **5 minutes** is dropped, not shown with an age: a line reading
   *"2 waiting"* is read as current and there is no room beside it to say it is not.
-- **`null` is the normal state of this field, not an error.** The only feed is the sync badge's
-  poll, which the renderer suppresses while the window is hidden — so with the window closed the
-  observation goes stale within five minutes and nothing refreshes it.
+- **`null` still means nobody has checked, and it is never rendered as "up to date".** There are two
+  feeders: `GET /api/sync/remote-status`, which the sync badge polls and which keeps the observation
+  warm for free while the window is open; and the desktop shell's `maybeCheckRemote()`
+  (`desktop/lib/tray-remote.js`), on a tray **menu open** — never on hover, never on a timer. The
+  second exists because the first declines to fetch while `document.hidden`, and a hidden window is
+  the tray's normal state, so the multi-machine signal was previously inert exactly where it was
+  needed.
 
 ---
 

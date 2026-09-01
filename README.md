@@ -232,8 +232,10 @@ notarised, so the **one-time** Open Anyway step above applies to this first manu
 
 **One optional extra the browser install has no equivalent for:** a **menu bar icon** showing
 what your coding agents have just saved, so you can check your state is written without leaving
-what you are doing. It is **off by default** — a fresh install has no agent memory, so an
-on-by-default icon would have nothing to show — and lives in **Settings → General → Menu bar**.
+what you are doing — the last save and where it was, a **save pulse** drawing the last seven
+days, and up to eight recent work-streams newest first. It is **off by default** — a fresh
+install has no agent memory, so an on-by-default icon would have nothing to show — and lives in
+**Settings → General → Menu bar**.
 See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
 
 **After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)

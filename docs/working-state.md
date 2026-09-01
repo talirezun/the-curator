@@ -808,8 +808,8 @@ Adding a second writer to `state/project.md` would take that away — see
 ### A second read surface: the menu bar widget (Mac app, off by default)
 
 The Mac app can put a small icon in the macOS menu bar that shows the same store — the last
-save, the most recent work-streams, and how stale the standing brief is — without opening the
-window. **It is off unless you turn it on** (Settings → General → Menu bar), and it is a
+save, the most recent work-streams, a seven-day **save pulse**, and the standing brief's age —
+without opening the window. **It is off unless you turn it on** (Settings → General → Menu bar), and it is a
 *reader*, under exactly the same rule as the in-app view: it never writes, and there is still
 one writer.
 

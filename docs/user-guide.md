@@ -609,16 +609,17 @@ flowchart LR
 ┌────────────────────────────────────────────────────────────┐
 │  Last save · 4 min ago                                     │  ① the answer, first
 │      notes · main                                          │  ② where
+│  ▁▁▁▂▅▁ ▃▄  ▆▂ ▁▄█▃  Save pulse · 4 days known · 41 saves  │  ②b the last 7 days
 ├────────────────────────────────────────────────────────────┤
-│  notes · main — claude-code · 4 min ago                    │
+│  main — claude-code · 4 min ago                            │
 │      wired the remote observation and its 5-minute window  │  ③ up to 8 rows,
-│  notes · drafting — opencode · 22 min ago                  │     newest first
+│  drafting — opencode · 22 min ago                          │     newest first
 │      pulled the three measurements into one table          │
-│  research · api-rewrite — studio · changed 3 hr ago        │
+│  api-rewrite — studio · changed 3 hr ago                   │
 │      ruled out the polling design; watch it is             │
 │  …and 4 more in Agent memory                               │  ④ a cap, disclosed
 ├────────────────────────────────────────────────────────────┤
-│  Two harnesses are writing notes · drafting                │  ⑤ notices, only
+│  Two agent tools are writing notes · drafting              │  ⑤ notices, only
 │  14 handoffs waiting on GitHub                             │     when true
 ├────────────────────────────────────────────────────────────┤
 │  Open Agent Memory…                                        │
@@ -632,17 +633,27 @@ flowchart LR
 ```
 
 *Abbreviated: the real menu lists up to eight work-streams, and the notice lines appear only when
-they apply. Everything else is always in that order.*
+they apply. Everything else is always in that order. The pulse is a real drawn image, not text —
+the blocks above are the closest a page of text can get.*
+
+> **The rows are shorter than they used to be, and nothing was thrown away.** The menu's widest line
+> came down from **87 characters to 54**. Four things get dropped, and each one **only while it
+> distinguishes nothing**: the project name when only one project has state, a leading
+> `session-` on a work-stream name, the tool name when every row shows the same tool, and anything
+> past 54 characters of the agent's own summary. Every one of them comes straight back the moment it
+> starts telling you something — a second project, a second tool. **And every dropped fact is still
+> there when you hover that row.**
 
 | | What it is | Why it is where it is |
 |---|---|---|
 | ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
 | ② | Which project and work-stream that save was | A statement about the line above, not a second action |
+| ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ①. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
 | ③ | Up to **eight** work-streams, newest first, **flat — not grouped by project** | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping |
 | ④ | *"…and N more"* — how many work-streams did **not** fit | A cap is never allowed to look like a measurement. A list that shows eight when you have twelve, and says nothing about the other four, is the one case where you most need telling. (The exact figures — *"the 8 most recent of 12"* — arrive as a notice line, ⑤) |
-| ⑤ | Notices | They appear **only when they have something to say**. Up to four. Today some of them **double up** — see the note below |
+| ⑤ | Notices | They appear **only when they have something to say**, and at most four at a time. Two agent tools writing one work-stream; handoffs waiting on GitHub; a list that had to be cut short |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
-| ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. **It is meant to make a stale reading visible as stale, and today it under-reports** — see the note under [How to read a row](#how-to-read-a-row) |
+| ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. It is what makes a reading that has silently stopped updating visible as stale, and it is the moment the [pulse strip](#reading-the-save-pulse) is a picture of |
 
 **Quit is always last, and it is the system's own Quit.** It is not a shortcut that skips anything: quitting from the menu bar runs the same check as ⌘Q, so if an ingest or a compile is in flight you still get the *"Quit now?"* dialog described in [§6](#6-starting-and-quitting). That matters more here, not less — an app that keeps running with no window on screen is more likely to be alive while something is being written.
 
@@ -675,15 +686,61 @@ notes · main — claude-code · 4 min ago
 
 **Hovering the icon** shows the same headline in a tooltip, without clicking.
 
-> ⚠️ **How current are the ages, really?** They are recalculated **when a save happens**, and
-> otherwise **every five minutes**. They are *not* recalculated by hovering, and clicking
-> re-reads the store for the *next* time you open the menu rather than the one appearing in
-> front of you. So an age can be up to about five minutes behind — which is fine for *"did it
-> save in the last few minutes or the last few hours?"*, and not fine if you are watching the
-> seconds tick. **`Updated 14:32` currently tells you when the menu was last drawn, not when the
-> store was last read**, so it can look fresher than the rows above it. This is a known defect
-> rather than a design choice, and it is recorded as one in
-> [architecture.md](architecture.md#the-menu-bar-widget-desktoplibtray-js--srcbraintray-summaryjs).
+> **How current are the ages, really?** **The ages themselves are recalculated every time the menu
+> is drawn** — including when you merely hover the icon, which costs nothing because it re-uses the
+> reading already in memory. So *"4 min ago"* is 4 minutes as of the moment you are looking at it.
+>
+> What can lag is the **reading underneath** — which work-streams exist and what each one last
+> said. That is refreshed the instant a save happens (the app watches the folder), and otherwise
+> every five minutes as a safety net, and again when you click. In practice a save you just made is
+> already there. **`Updated 14:32`** tells you when the menu was last drawn, which is what makes a
+> reading that has silently stopped updating visible as stale.
+
+### Reading the save pulse
+
+One line in the menu carries a small drawn strip — **28 marks, one per six hours, covering the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up to.
+
+```
+▁▁▁▁▁▁▁▁▁▁▁▁▁ ▂▅▁ ▃▄  ▆▂ ▁▄█▃   Save pulse · 4 days known · 41 saves
+└──── before this store ────┘└──── what actually happened ────┘
+      existed (baseline
+      ticks, not "quiet")
+```
+
+**There are three kinds of mark, and telling two of them apart is the whole point.**
+
+| Mark | What it means |
+|---|---|
+| **A tall bar** | Saves landed in that six-hour block. **The darker the bar, the more saves** — one save is already clearly a mark; four or more is solid |
+| **A faint tall bar** | That six hours **existed and nothing was saved.** A quiet evening |
+| **A tick on the baseline** — short, sitting on the floor | **Your store did not exist yet.** Not "quiet" — *unknown* |
+
+> **Why the third one has its own shape rather than just being fainter.** *Nothing happened* and
+> *we have no idea* are opposite claims, and a strip that draws them the same way is lying about
+> half of itself. This is not an edge case: a store that is three and a half days old fills
+> **13 of its 28 marks** with "did not exist yet". The difference is carried in **shape** — a bar
+> versus a floor tick — because at two points wide, two similar shades of grey are the same shade.
+
+**The sentence beside it never claims more than the picture can support.**
+
+| You see | It means |
+|---|---|
+| **`7 days · 41 saves`** | The strip really does cover a full week |
+| **`4 days known · 41 saves`** | Your store is **younger than the window**. The count and the picture are about those four days, not about a week |
+| **`at least 41 saves`** | One or more work-streams had **more history than could be read** — each journal is read from its last 16 KB. The number is a **floor**, and the oldest marks under-count |
+| **`no saves`** | The window really is covered and really is empty. A quiet week |
+| **`nothing recorded yet`** | Every mark is "did not exist yet". Deliberately *not* worded as an empty week, because nothing here knows anything about that week |
+| **`no save times recorded`** | There are journals, but none of them carries a usable time |
+
+**Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave out — how many work-streams were counted, how many older saves fall outside the window entirely, and the timestamp of the oldest save it can see.
+
+> ### What the darkness is NOT
+>
+> **It is a measure of how often your agents check in. It is not a measure of how much they got done, and it must never be read as one.**
+>
+> An agent told to *save early and often* — which is exactly what The Curator's own continuity instructions ask for — produces far more marks than one told to save twice at the end. A dense column means **a different capture habit**, not a better day's work. That is why the label says *"saves"* and never *"activity"* or *"progress"*, and why nothing anywhere ranks a dense column above a sparse one.
+
+**Only the agent's own recorded save time is ever counted** — never the file's timestamp on disk. That matters most on a second computer: file times get rewritten when Personal Sync checks files out, so a strip built from them would draw a colleague-machine's entire history as one giant spike at the moment you pulled. Yours shows *when the work happened*, not *when it landed here*.
 
 ### The icon itself
 
@@ -702,7 +759,7 @@ The filled state is a **local** instrument: a handoff pulled from another machin
 
 ### Ways to use it
 
-Three situations the widget was actually designed around. They are not illustrations — each one is the reason a specific decision in it was made the way it was.
+Four situations the widget was actually designed around. They are not illustrations — each one is the reason a specific decision in it was made the way it was.
 
 #### Scenario 1 — Two agent tools on one computer
 
@@ -713,7 +770,7 @@ The widget shows you **which tool wrote last**, because on a local row that is w
 It also warns you about something that is otherwise completely silent:
 
 ```
-Two harnesses are writing notes · drafting
+Two agent tools are writing notes · drafting
 ```
 
 **Here is why that matters.** Working state is stored per *project · work-stream · computer* — there is **no slot in that path for the tool**. So two agent tools on one machine, told to use the same work-stream, write to the **same handoff file**, and each save **replaces** the other's. Nothing errors. Nothing warns. The screen looks calm. You come back the next day, resume, and the handoff you are reading is whichever tool happened to save last.
@@ -747,11 +804,26 @@ Two things the widget gives you here:
 
 The practical use: **before you resume a work-stream, glance at the icon.** If the newest row for it names another machine, that machine wrote it more recently than you did, and pulling before you start is the difference between continuing and diverging.
 
-> **Honest limit — the *"14 handoffs waiting on GitHub"* line is not a live check, and in the state you will actually use the widget in, it is usually absent.**
+> **One laptop counts as one computer, even when your Mac has changed its own name.** macOS re-derives your machine's hostname from the network, so a laptop that has moved between Wi-Fi networks can end up with **two folders on disk** — `mac-…` and `talis-macbook-pro-…` — that are the same computer. The widget matches on the **installation** identity rather than the name, so those collapse into one row instead of inventing a second machine you do not own. Two genuinely different computers still get their own names, because there the machine **is** the news.
 >
-> The count comes from the same GitHub check that drives the Sync badge in the app, and that check **stops running while the app window is hidden** — correct on its own terms, since a window nobody is looking at should not phone GitHub every ten minutes, but it means that with the window closed no fresh answer arrives. The widget refuses to show an answer older than five minutes, because a line saying *"14 waiting"* reads as current and there is no room beside it to say it is not.
+> If two rows for one work-stream would otherwise read identically, the widget **shows their ages more precisely** — *"34 hr ago"* and *"36 hr ago"* instead of two rows both saying *"1 day ago"* — rather than falling back to those raw folder names. Same fact, read finer; no invented hardware.
+
+> **How the *"14 handoffs waiting on GitHub"* line gets its answer — and what its absence means.**
 >
-> So: **treat the line as a bonus when it appears, never as an all-clear when it does not.** Absence means *nobody has checked*, and it is deliberately never rendered as "you are up to date". **Pulling is still a deliberate act you take in the Sync view.** [Automatic sync is researched and not built](#automatic-sync-is-not-built).
+> **Opening the menu asks GitHub.** Only opening it: never hovering, never on a timer. That is
+> deliberate — a background check would mean The Curator phoning GitHub forever behind a closed
+> menu, on battery, possibly on a metered connection, to keep a line fresh that nobody is looking
+> at. Clicking is you asking, so that is when it asks. It goes through the app's existing sync
+> machinery, so it inherits the same cache and the same queueing as the check the app already
+> makes while the window is open, rather than opening a second channel to GitHub.
+>
+> An answer older than five minutes is dropped rather than shown with an age, because a line saying
+> *"14 waiting"* reads as current and there is no room beside it to say it is not.
+>
+> So: **absence means nobody has checked, and it is deliberately never rendered as "you are up to
+> date."** If the check itself fails — no network, a bad token — you are told that, rather than being
+> shown silence that looks identical to *nothing is waiting*. **Pulling is still a deliberate act
+> you take in the Sync view.** [Automatic sync is researched and not built](#automatic-sync-is-not-built).
 
 #### Scenario 3 — Running low on context
 
@@ -772,18 +844,58 @@ Read it with the five-minute caveat from [How to read a row](#how-to-read-a-row)
 figure may be a reading taken up to five minutes back. That is precise enough to separate *just
 saved* from *this morning*, and not precise enough to time a save to the second.
 
-**The other half of that worry — *"is my standing brief still describing this project?"* — the
-menu does not answer.** That is deliberate for now: a brief is up to 32 KB of prose that changes
-on the order of weeks, so the design puts its one line in the richer panel that has not been
-built yet, not in the menu. Today the answer is one click away instead of zero — **Open Agent
-Memory…** lands you on the save-status strip, whose last line is
-*"Standing brief — 6 weeks ago"* ([§7](#the-save-status-strip)).
+**The other half of that worry — *"is my standing brief still describing this project?"* — is in
+the same tooltip**, as a second clause:
+
+```
+The Curator — Last save · just now (notes · main) · Brief · 6 weeks ago
+```
+
+It is stated as an **age and never as a judgement**. *"Brief · 6 weeks ago"* is a measurement;
+*"your brief is stale"* would be the widget passing an opinion on a document you wrote by hand,
+which is not its business — an old brief on a settled project is not a stale one. If the age cannot
+be worked out the clause is simply absent rather than saying *"time unknown"*, and a project with
+no standing brief at all gets no clause, because that is the ordinary case and not a problem to
+report in a menu bar.
+
+It does not get a **menu row**, and that is the ranking rather than an oversight: a brief is up to
+32 KB of prose that changes on the order of weeks, so it does not earn one of eight scarce rows.
+The tooltip is the one surface here with no scarcity — it costs no row, no menu bar width, and no
+extra reading of the disk. For the full picture, **Open Agent Memory…** still lands you on the
+save-status strip ([§7](#the-save-status-strip)).
 
 > **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
+
+#### Scenario 4 — "Have we actually been saving, or did the habit quietly die?"
+
+*The one the [save pulse](#reading-the-save-pulse) exists for, and the only one that is about a **week** rather than a **moment**.*
+
+Continuity only works if the saves keep happening. But nothing ever tells you they have stopped — a missed save is not an error, it is an absence. You notice weeks later, when you resume a work-stream and the handoff describes a problem you solved on Tuesday.
+
+**Open the menu and look at the second line down. You are looking at the shape, not the numbers.**
+
+| The strip looks like | Read it as |
+|---|---|
+| Marks spread across most days, with gaps at night and at weekends | **A working rhythm.** This is what a healthy store looks like — the gaps are you sleeping, not the habit failing |
+| A dense cluster at the left and **nothing on the right** | **Saving stopped.** Something changed — a harness reconfigured, an MCP connection that quietly dropped, a project you moved off. Worth a minute of your attention |
+| Ticks on the floor for the left half, marks only on the right | **Your store is just young.** Nothing is wrong; there was no history to draw. The label confirms it — *"4 days known"*, not *"7 days"* |
+| Marks everywhere and very dark | Frequent check-ins. **Not "a good week"** — see the box in [Reading the save pulse](#reading-the-save-pulse). It tells you about cadence, and cadence is an instruction you gave, not an outcome you earned |
+
+**Two things worth knowing before you act on it.**
+
+The strip is **the whole store, not one project** — every work-stream on every machine, added together. A gap means *nothing anywhere*, which is a much stronger signal than one quiet project, and it is why one aggregate strip was drawn instead of a tiny sparkline per row. (Eight or eleven bands a few points tall, each from one work-stream's handful of saves, would have been mostly empty and unreadable at that size.)
+
+And the numbers **count what could be read**. If a work-stream has more history than the last 16 KB of its journal, the sentence says **`at least 41 saves`** — the strip's oldest marks under-count, and it tells you so rather than presenting a floor as a total.
+
+> **A young store and a dead one draw the same empty cells, and the widget refuses to confuse them.** That is the entire reason there are three kinds of mark rather than two. A brand-new install shows twenty-eight floor ticks and says **`nothing recorded yet`** — never *"7 days · no saves"*, which would be a confident statement about a week it knows nothing about.
 
 #### Scenarios this does not serve
 
 Named so you do not go looking:
+
+- **Watching the pulse move.** It is a **still picture, redrawn each time you open the menu** — not a live trace that ticks along while you watch. That is a limit of what a macOS menu can do, not a shortcut: a menu item can carry an **image** (which is how the strip exists at all), but it cannot host a live view, and a menu is frozen by the system the moment it opens. The *"Updated 14:32"* line at the bottom tells you which moment the picture is of. Hovering re-times the **rows**; the strip is from the last read.
+- **Judging your week by it.** Covered above and worth repeating because it is the most tempting misreading: darkness is **how often**, never **how well**.
+- **Per-tool or per-work-stream history.** The strip is one lane over everything. A lane per tool — *"are Claude Code and opencode taking turns in this scope?"* — is designed and **not built**; it needs a surface the menu does not have. See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
 - **Reading the handoff.** Clicking a row opens **the app**, on Agent memory, at that project — it does not render the document in the menu, and there is deliberately no second reader. A handoff runs to fifteen thousand characters or more; there is no honest way to put that in a menu bar. (It lands on the *project*, not the individual work-stream — pick the work-stream from the picker once you are there.)
 - **Watching progress.** A save is not partly done; it has happened or it has not. There is no progress bar and there will not be one.
@@ -825,13 +937,14 @@ Stated plainly rather than left for you to discover.
 
 | | |
 |---|---|
-| **No menu bar icon has ever been rendered, on any machine.** | The rows, the menu, the switching between modes and the icon's own pixels are all produced and checked by the automated tests — but nothing has yet put one in a real menu bar. How macOS tints the icon in a light bar, whether the second line of each row draws at all, and whether the tooltip appears on hover are **unproven**. Treat your first launch with it on as the first real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
+| **No menu bar icon has ever been rendered, on any machine.** | The rows, the menu, the switching between modes, the icon's own pixels **and the pulse strip's** are all produced and checked by the automated tests — but nothing has yet put one in a real menu bar. How macOS tints the icon and the strip in a light bar, whether the second line of each row draws at all, and whether the tooltip appears on hover are **unproven**. Treat your first launch with it on as the first real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
+| **The save pulse has never been drawn by macOS either**, and it is the newest thing here | The image is generated and inspected pixel by pixel by the tests, and macOS's own image tools confirm the file is valid — but nothing has yet shown it inside a menu. If the strip looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
-| **The standing brief's age is not in the menu.** | By design for now — it belongs in the richer panel that has not been built. Open Agent memory to see it, one click from the menu |
+| **The standing brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of eight scarce rows. Hover the icon for it, or open Agent memory for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
-| **Some notices appear twice.** | A two-tools collision is currently announced on **two** lines in two different wordings (*"Two harnesses are writing…"* and *"Two agent tools are writing…"*), because the line meant to suppress the duplicate looks for a word the other line does not use. A truncated list likewise says *"…and 4 more in Agent memory"* and *"Showing the 8 most recent of 12…"*. Both are true and neither contradicts the other — but they eat notice slots, and only four notices are shown. A known defect, not a design choice |
-| **The GitHub-waiting line is usually absent** | See [Scenario 2](#scenario-2--two-or-three-computers-one-private-github-repo) |
-| **The ages can be up to five minutes behind**, and the *Updated* stamp does not currently say so | See [How to read a row](#how-to-read-a-row) |
+| **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put eight of them legibly |
+| **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At six hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
+| **A row click opens the project, not the work-stream.** | You land on Agent memory at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly |
 
 ---
 
@@ -981,7 +1094,7 @@ brief by hand, open `state/project.md` in Obsidian.
 
 > 💡 **On a Mac you can watch this without opening the app.** The optional
 > **[menu bar icon](#6b-the-menu-bar-icon-mac-app)** shows the same store — the last save, recent
-> work-streams, and how stale the standing brief is — from the menu bar. It is off by default and
+> work-streams, a seven-day save pulse, and the standing brief's age — from the menu bar. It is off by default and
 > it is a reader too: nothing in it writes.
 
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
