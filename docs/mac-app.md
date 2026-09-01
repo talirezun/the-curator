@@ -37,9 +37,20 @@ already running on 3333.
 
 Download the `.dmg` from the
 [**Releases page**](https://github.com/talirezun/the-curator/releases) — the newest
-release at the top, and the build whose filename carries **`arm64`** (Apple Silicon)
-or **`x64`** (Intel). About 140 MB, because the app carries its own runtime. Open it
-and drag **The Curator** onto **Applications**.
+release at the top, and the build for your chip:
+
+| Your Mac | The file |
+|---|---|
+| Apple Silicon (M1 and later) | `TheCurator-<version>-arm64-AppleSilicon.dmg` |
+| Intel | `TheCurator-<version>-x64-Intel.dmg` |
+
+About 140 MB, because the app carries its own runtime. Open it and drag
+**The Curator** onto **Applications**.
+
+> Both files are attached to every release from **v3.38.0** onward, built and
+> published by the same automated job, so a release either carries the pair or
+> does not exist. Earlier releases were named differently and some carry no
+> installer at all.
 
 **This is a first install only.** Once the app is on your machine it updates
 itself — you should not need the Releases page again. See
@@ -333,7 +344,9 @@ panel behind the ⓘ next to *Software update* does not claim one. Going back me
 installing an older build the way you installed the first one — and **only
 releases that carry a download can be reinstalled**. Check
 [the releases page](https://github.com/talirezun/the-curator/releases) to see which
-ones do before relying on it. Your knowledge base, API keys and sync settings are
+ones do before relying on it. Releases from **v3.38.0** onward always carry both
+installers; several before it carry none, because publishing them was a manual
+step that was often missed. Your knowledge base, API keys and sync settings are
 stored outside the app and are untouched by installing, reinstalling or deleting
 it.
 

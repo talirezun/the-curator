@@ -958,10 +958,56 @@ already has: `CLAUDE.md`'s v3.29.0 row says 25, and the object declares 30.
   permanent line in the annotated tag message saying the local gate was
   bypassed. Note it does **not** bypass the CI gate — nothing does.
 - It does not write the changelog row. A generated one would be worthless.
-- It does not publish a GitHub Release. Tags are created now so that
-  `electron-updater` has something to depend on later; wiring a tag-triggered
-  release workflow before anything consumes it would be shipping an unwired
-  parameter.
+- It does not publish the GitHub Release **itself** — the DMG workflow does,
+  on the tag this script pushes. See *[How the installers get published](#how-the-installers-get-published)*
+  below; the closing banner says so too, so a green run is never read as
+  "the installers are out".
+
+### How the installers get published
+
+`release.js` finishes at the tag. **The installers are not out yet**, and the
+gap between those two facts used to be silent and expensive.
+
+`.github/workflows/desktop-dmg.yml` triggers on the `v*` tag push and does five
+things, in this order:
+
+1. Builds both DMGs on a macOS runner, with the version injected from the tag.
+2. Runs `node scripts/publish-dmg-assets.js --dir desktop/dist --version <v>`,
+   which **renames** them and then feeds the final names through the app's own
+   `archFromAssetName()` — the imported function, not a copied regex — and
+   fails the job if either name does not resolve to the architecture it claims.
+3. Mounts each image and reads the real binary architecture with
+   `lipo -archs`, failing if the contents disagree with the name.
+4. Uploads the pair as a 14-day workflow artifact, as a fallback.
+5. Creates the GitHub Release for that tag with both DMGs attached, marked
+   latest. `--verify-tag` makes `gh` abort rather than create a tag.
+
+**The rename is not cosmetic.** electron-builder writes
+`The Curator-3.37.0-arm64.dmg` and — the dangerous one —
+`The Curator-3.37.0.dmg` for x86_64, with no architecture in the name at all.
+`archFromAssetName()` splits the stem on `-` and looks for a whole token
+`arm64` or `x64`, so the raw x64 name resolves to **null** and a release
+published unrenamed offers nothing to any Intel Mac. The published names are
+
+```
+TheCurator-<version>-arm64-AppleSilicon.dmg
+TheCurator-<version>-x64-Intel.dmg
+```
+
+**Why this matters more than it looks.** The in-app updater resolves *the
+newest release carrying an installer* from the Releases API. A tag with no
+release is not a neutral state: every installed copy then reports **"You're up
+to date"** while running the previous version. Between v3.31.0, when the
+updater shipped, and v3.38.0, when this workflow started publishing, that is
+exactly what happened — the DMGs were built and left in a workflow artifact,
+and renaming and publishing them was a manual step nobody had written down.
+`scripts/release.js` carried a comment saying a release workflow would be "an
+unwired parameter"; that reasoning had expired six releases earlier.
+
+Guarded by `scripts/test-release-publish.js` (the naming rule and the rename,
+driven as real code) and `scripts/test-release-preconditions.js` §6b (the
+closing banner). Neither runs a GitHub Action, so the publish path itself is
+covered by structure, not by execution.
 
 ### When a release is bad
 
