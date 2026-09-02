@@ -45,6 +45,7 @@ for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'DOMAINS_PATH', 'LLM_MOD
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ } });
 
 const D = await import('../mcp/tools/dismissed.js');
+const H = await import('../mcp/tools/health.js');
 const { AUTO_FIXABLE, scanWiki } = await import('../src/brain/health.js');
 const { createStorageAdapter } = await import('../mcp/storage/local.js');
 const { registerTools } = await import('../mcp/tools/index.js');
@@ -135,6 +136,27 @@ for (const [name, def] of [['dismiss', D.dismissWikiIssueDefinition], ['undismis
   ok(dismissEnum.every((t) => desc.includes(t)),
     `the ${name} description still lists every accepted value — it is composed FROM the enum, so it cannot drift from it`, desc);
 }
+
+// fix_wiki_issue's OWN enum — the neighbouring surface that gates on
+// AUTO_FIXABLE directly rather than a separately-hand-typed set (§1's own
+// CONTROL above already proves this set legitimately differs from
+// dismissEnum: orphanLink is in one and not the other). The equality here is
+// the same kind of proof as `same(accepted.dismiss, dismissEnum)` above, just
+// against the fixable side instead of the dismissible side.
+const fixEnum = H.fixWikiIssueDefinition.inputSchema.properties.type.enum;
+ok(Array.isArray(fixEnum) && fixEnum.length > 0,
+  'fix_wiki_issue declares an `enum` for `type` at all — a client can validate before calling',
+  JSON.stringify(fixEnum));
+const sameSet = (a, b) => {
+  const as = [...a].sort(), bs = [...b].sort();
+  return as.length === bs.length && as.every((v, i) => v === bs[i]);
+};
+ok(sameSet(fixEnum, AUTO_FIXABLE),
+  'THE EQUALITY: fix_wiki_issue\'s schema enum is EXACTLY AUTO_FIXABLE at runtime — neither wider nor narrower',
+  `enum=${JSON.stringify([...fixEnum].sort())} AUTO_FIXABLE=${JSON.stringify([...AUTO_FIXABLE].sort())}`);
+const fixDesc = H.fixWikiIssueDefinition.inputSchema.properties.type.description || '';
+ok([...AUTO_FIXABLE].every((t) => fixDesc.includes(t)),
+  'the fix_wiki_issue description still lists every accepted value — it is composed FROM AUTO_FIXABLE, so it cannot drift from it', fixDesc);
 
 // ═══ §2 ════════════════════════════════════════════════════════════════════
 section('§2 · the size guard names the budget it actually enforces');

@@ -147,7 +147,13 @@ export const fixWikiIssueDefinition = {
       },
       type: {
         type: 'string',
-        description: "Issue type. One of: brokenLinks, folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, orphanLink, semanticDupe.",
+        // DERIVED from AUTO_FIXABLE (src/brain/health.js) rather than re-typed
+        // beside it — same pattern as DISMISSIBLE_TYPE_VALUES in
+        // mcp/tools/dismissed.js. A client can validate before calling, and
+        // the description sentence cannot list a value the runtime gate
+        // (AUTO_FIXABLE.has(type), a few lines below) does not also accept.
+        enum: [...AUTO_FIXABLE],
+        description: `Issue type. One of: ${[...AUTO_FIXABLE].join(', ')}.`,
       },
       issue: {
         type: 'object',

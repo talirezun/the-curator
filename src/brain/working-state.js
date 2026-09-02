@@ -1592,13 +1592,10 @@ export function wouldDestroyState(prior, incoming) {
  *
  * Overwrites current.md and appends one journal line. Never throws.
  *
- * CONCURRENCY: no lock is taken, deliberately. `acquireFileLock` in
- * write-registry.js is `existsSync` then a write with no `O_EXCL`, so it
- * DOUBLE-GRANTS — including across processes — and ingest-queue.js records
- * that in an unqualified comment. Presenting it here as mutual exclusion
- * would be a false claim. It is also unnecessary: the write target is
- * per-(scope, machine), so the only racers are two savers on the SAME
- * machine for the SAME scope. current.md is written with writeFileAtomic
+ * CONCURRENCY: acquireFileLock is a real exclusive lock since v3.40.0, but
+ * it is still not taken here, and deliberately: it is also unnecessary — the
+ * write target is per-(scope, machine), so the only racers are two savers
+ * on the SAME machine for the SAME scope. current.md is written with writeFileAtomic
  * (rename(2) — the reader sees the old file or the new file, never a
  * partial), so that race is last-writer-wins on a file that is defined as
  * "supersedes", and BOTH journal lines land because appendFile is atomic at

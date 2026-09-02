@@ -676,11 +676,19 @@ section('12. Source guards — the invariants a refactor must not lose');
   // Keyed on the CALL, not the identifier: the identifier appears in the
   // docblock explaining why it is not used, and an assertion that fires on
   // its own explanation is an assertion that cannot mean anything.
+  //
+  // acquireFileLock became a REAL exclusive lock (link(2)) in v3.40.0 — the
+  // premise this section used to pin ("it double-grants") is no longer true,
+  // so it is no longer the reason given. The reason now is that a lock here
+  // is simply unnecessary: the write target is per-(scope, machine), so the
+  // only racers are two savers on the SAME machine for the SAME scope, which
+  // the atomic-rename + append-only journal already resolve safely.
   assert(!/acquireFileLock\s*\(/.test(src),
-    'never CALLS acquireFileLock — it double-grants, so claiming mutual exclusion would be false');
+    'never CALLS acquireFileLock — a lock is unnecessary here given the per-(scope, machine) write target, not because the lock is unsafe');
   assert(!/from\s+['"][^'"]*write-registry/.test(src),
     'does not import write-registry at all');
-  assert(/DOUBLE-GRANTS/.test(src), 'and the reason is recorded in the source, not just here');
+  assert(/exclusive lock since v3\.40\.0/.test(src) && /still not taken here, and deliberately/.test(src),
+    'and the CURRENT reason (real lock, deliberately unused, not "it double-grants") is recorded in the source, not just here');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -1327,15 +1327,32 @@ section('10. Disclosure survives its own budget');
     '10i: the terminal note survives the MCP 200-char per-note cap intact',
     `${terminal.length} chars`);
 
-  // CROSS-LAYER. notes_meaning is derived from note TEXT by the MCP handler.
-  // The regex is pinned to a HAND-WRITTEN LITERAL and then checked against the
-  // real source, so this cannot pass by reading the same constant the code
-  // reads, and it goes red if the MCP's classifier drifts away from it.
-  const LOSSY_LITERAL = '/\\b(dropped|omitted|truncated)\\b/i';
+  // CROSS-LAYER. notes_meaning is derived from note TEXT, and the CLASSIFICATION
+  // now lives in exactly ONE place: src/brain/working-state.js's SAVE_NOTE_LOSS_RE,
+  // imported into the MCP layer as `classifySaveNotes` rather than duplicated as a
+  // second regex. This section used to pin a HAND-WRITTEN LITERAL against a
+  // `LOSSY_NOTE_RE` the MCP file declared itself — that constant was deliberately
+  // deleted (see the "WHY THERE ARE NO LOSS/REPLACE REGEXES HERE ANY MORE" block
+  // in mcp/tools/working-state.js): it was the two-copy drift v3.39.0 diagnosed,
+  // missing `rejected|discarded|lost`, so a note using one of those words read to
+  // a model as "nothing was dropped". Pin BOTH halves of that fix: the STORE still
+  // declares the full regex (checked against the same hand-written literal, so
+  // this cannot pass by reading the constant the code reads), and the MCP FILE
+  // declares no competing loss-word regex of its own and does import the shared
+  // classifier — so the two layers cannot drift apart again.
+  const LOSS_RE_LITERAL = '/\\b(dropped|omitted|truncated|rejected|discarded|lost)\\b/i';
+  const storeSrc = stripComments(readFileSync(path.join(REPO, 'src', 'brain', 'working-state.js'), 'utf8'));
+  const declaredInStore = /const SAVE_NOTE_LOSS_RE = (.+);/.exec(storeSrc)?.[1];
+  const litStore = checkLiteral(LOSS_RE_LITERAL, declaredInStore, '10j: the STORE (src/brain/working-state.js) still declares the loss regex this section pins');
+  assert(litStore.pass, litStore.message);
+
   const mcpSrc = stripComments(readFileSync(path.join(REPO, 'mcp', 'tools', 'working-state.js'), 'utf8'));
-  const declared = /const LOSSY_NOTE_RE = (.+);/.exec(mcpSrc)?.[1];
-  const lit = checkLiteral(LOSSY_LITERAL, declared, '10j: the MCP lossy-note classifier is still the regex this section pins');
-  assert(lit.pass, lit.message);
+  assert(!/const\s+LOSSY_NOTE_RE\s*=/.test(mcpSrc) && !/dropped\|omitted\|truncated/.test(mcpSrc),
+    '10j2: the MCP file (mcp/tools/working-state.js) declares NO loss-word regex of its own any more');
+  const mcpImport = /import\s*\{([^}]*)\}\s*from\s*['"]\.\.\/\.\.\/src\/brain\/working-state\.js['"]/.exec(mcpSrc)?.[1] ?? '';
+  assert(/\bclassifySaveNotes\b/.test(mcpImport),
+    '10j3: the MCP file IMPORTS classifySaveNotes from the store instead of reimplementing the verdict',
+    mcpImport ? `import list: ${mcpImport.trim()}` : 'no import found from src/brain/working-state.js');
   assert(res.notes.some(n => /\b(dropped|omitted|truncated)\b/i.test(n)),
     '10k: a lossy note survives, so notes_meaning can never report "nothing was dropped" over this save');
 

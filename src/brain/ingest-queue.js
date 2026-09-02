@@ -81,10 +81,11 @@
  * it. Two requests landing inside that window BOTH saw `null` and BOTH
  * started a worker loop: reproduced at 3 items ingesting concurrently, one
  * document written to log.md three times, and the job reporting `done` while
- * two items were still `running`. Double-clicking Resume was enough. The
- * per-domain `.write-lock` did not save it either — `acquireFileLock` is
- * `existsSync` -> `writeFileAtomic` with no `O_EXCL`, so two callers racing
- * through the same window both "acquire" it.
+ * two items were still `running`. Double-clicking Resume was enough.
+ * The per-domain `.write-lock` is exclusive since v3.40.0 (link(2)), but it
+ * is per-DOMAIN and per-PROCESS-pair, not a claim on the queue's
+ * single-worker invariant — the synchronous claim below is what enforces
+ * sequentiality.
  *
  * The rule now, and the reason it is a rule rather than a convention:
  *

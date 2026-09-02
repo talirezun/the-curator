@@ -12,12 +12,14 @@
  * Graph-logic sharing decision (see CLAUDE.md "Active workstream" context /
  * task brief): `mcp/graph.js` already parses frontmatter, [[wikilinks]], and
  * backlinks for the MCP server. This module deliberately does NOT import
- * from `mcp/` and does NOT get imported by anything under `mcp/` — the MCP
- * server runs as a stdio JSON-RPC child process where a stray `console.log`
+ * from `mcp/`. It IS imported under `mcp/` as of v3.40.0 — `mcp/storage/local.js`
+ * imports `resolveInsideWiki` from here, specifically to reuse this module's
+ * symlink-aware path guard rather than keep a second hand-maintained copy —
+ * so the stdout-purity obligation below is not theoretical: the MCP server
+ * runs as a stdio JSON-RPC child process where a stray `console.log`
  * (or any surprise transitive import) corrupts the protocol stream (see the
- * v2.5.3 "MCP stdout pollution" fix in CLAUDE.md). Coupling the long-running
- * app process to that module in either direction is a bigger risk than a
- * small amount of duplicated parsing logic. The frontmatter parser below is
+ * v2.5.3 "MCP stdout pollution" fix in CLAUDE.md). This module and everything
+ * it imports must stay stdout-silent for exactly that reason. The frontmatter parser below is
  * intentionally a close mirror of mcp/graph.js's `parseFrontmatter` (same
  * bracket-tags convention, same key:value shape) so the two independent
  * readers agree on what a page's metadata means — see the module docblock
