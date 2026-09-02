@@ -45,6 +45,7 @@
  *   §21  line two: whole-token dropping, and the two warnings that outrank prose
  *   §22  the per-row submenu, the headline's second line, and the new notice
  *   §23  main.js wiring for the submenu — source scan, weak like §11
+ *   §24  the collision is decided over the WHOLE ROW, and the minute ceiling
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
  *
@@ -2520,6 +2521,159 @@ section('§23 main.js wiring for the submenu — source scan, WEAK like §11');
   ok(!/app\.exit|process\.exit|app\.quit/.test(fnBody),
     'the submenu handler reaches NO exit path — a hand-rolled quit would walk past the write guard before-quit runs');
   ok(!/role:\s*'quit'[^}]*click/.test(code), 'and no quit role anywhere is paired with a handler');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§24 the collision is decided over the WHOLE ROW, and no age reads in the hundreds');
+//
+// ── THE PHOTOGRAPH ────────────────────────────────────────────────────────
+//
+// The maintainer installed v3.42.0, opened his own menubar widget, and two
+// rows read:
+//
+//   brand-buil… — Antigravity · 1271 min ago
+//   brand-buil… — Antigravity · 1271 min ago
+//
+// Every part of that is wrong, and all of it came from ONE mistaken premise.
+// The two rows are the same scope topic saved in two DIFFERENT PROJECTS —
+// `posts` and `projects` — thirty seconds apart. Line TWO already said which
+// was which. The resolver compared line ONE alone, declared a collision no
+// reader could have seen, and then:
+//
+//   (a) escalated the age twice even though neither step separated anything —
+//       violating this file's own "an escalation that buys nothing is handed
+//       back" rule, which it applied only at the END of the ladder;
+//   (b) printed `1271 min ago`, a number nobody writes and nobody reads;
+//   (c) restored a provenance token INTO the tail, so the topic — the one
+//       component the whole exercise was supposed to disambiguate — was
+//       clipped to its ten-character floor, leaving both rows reading the
+//       identical eleven characters they started with.
+//
+// The fixture below is those five rows, with the maintainer's hostname
+// replaced (this is a public repository). It is the real store's shape: one
+// machine, one harness on three rows and another on two, and a scope topic
+// that genuinely appears twice.
+{
+  const PHOTO_NOW = new Date('2026-09-02T14:06:00');
+  const ago = (s) => new Date(PHOTO_NOW.getTime() - s * 1000).toISOString();
+  const P = (o) => ({ machine: 'alices-macbook-pro-9f3c1a', ageSource: 'agent',
+    isThisMachine: false, isThisHost: true, ...o });
+  // 76,260 and 76,290 seconds: twenty-one hours old, thirty seconds apart, and
+  // both inside the SAME MINUTE — which is what made the old minute escalation
+  // buy literally nothing and print 1271 on both rows.
+  const TWIN_A = 76260, TWIN_B = 76290;
+  const photoScopes = () => [
+    P({ project: 'projects', scope: 'session-2026-09-02-audit-and-plan', harness: 'claude-code',
+      writtenAt: ago(30), writtenAgeSeconds: 30,
+      headline: 'Shared Brain e2e PASSED end to end on two machines' }),
+    P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
+      writtenAt: ago(TWIN_A), writtenAgeSeconds: TWIN_A,
+      headline: 'Brand-building and social engine drafted' }),
+    P({ project: 'projects', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
+      writtenAt: ago(TWIN_B), writtenAgeSeconds: TWIN_B,
+      headline: 'Global Curator skill and the posting cadence' }),
+    P({ project: 'projects', scope: 'session-2026-09-01-menubar-widget-design', harness: 'claude-code',
+      model: 'opus-4-6', writtenAt: ago(75600), writtenAgeSeconds: 75600,
+      headline: 'SESSION COMPLETE — widget shipped' }),
+    P({ project: 'projects', scope: 'session-2026-08-31-native-prep-and-release-process', harness: 'claude-code',
+      model: 'opus-4-6', writtenAt: ago(140400), writtenAgeSeconds: 140400,
+      headline: 'FOUR RELEASES SHIPPED (v3.31-v3.34)' }),
+  ];
+  const photo = model.buildTrayModel(
+    { ok: true, total: 5, scopes: photoScopes(), brief: null, remote: null, warnings: [], pulse: null },
+    { now: PHOTO_NOW });
+
+  eq(photo.rows.length, 5, 'CONTROL — all five photographed rows were built, so nothing below is vacuous');
+  const twins = photo.rows.filter((r) => r.scope.includes('brand-building'));
+  eq(twins.length, 2, 'CONTROL — and the two same-topic rows are both present');
+  ok(new Set(twins.map((r) => r.project)).size === 2,
+    'CONTROL — they are two different PROJECTS, which is the fact line two carries and line one never could');
+
+  // THE HEADLINE ASSERTION: the rendered lines, in full, as strings.
+  eq(twins.map((r) => r.label),
+    ['brand-building-social-engine · 21 hr ago', 'brand-building-social-engine · 21 hr ago'],
+    'both rows read `brand-building-social-engine · 21 hr ago` — the whole topic, an age a person reads');
+  ok(twins[0].sublabel !== twins[1].sublabel,
+    '…and line TWO tells them apart, which is why line one was never in trouble');
+  ok(twins.some((r) => /\bposts\b/.test(r.sublabel)) && twins.some((r) => /\bprojects\b/.test(r.sublabel)),
+    '…by naming the two projects, which is the fact the reader actually needs');
+
+  // ANTI-VACUITY. If the resolver still compared line one alone it would see a
+  // collision here, because line one alone IS identical on these two rows.
+  eq(twins[0].label, twins[1].label,
+    'CONTROL — line one alone really is identical on both rows, so the pair comparison is doing real work');
+
+  ok(twins.every((r) => r.agePrecision === null),
+    'neither row was escalated at all — nothing about them collides once the whole row is read');
+  ok(twins.every((r) => r.labelProvenance === null),
+    '…and no provenance token was restored to line one, which is what clipped the topic in the photograph');
+  ok(twins.every((r) => !/Antigravity/.test(r.label)),
+    '…so `— Antigravity` is nowhere on line one');
+  ok(twins.every((r) => !/…/.test(r.label)),
+    '…and neither topic is clipped at all: the budget was never spent on a token that bought nothing');
+
+  // AND THE NUMBER FROM THE PHOTOGRAPH IS UNREACHABLE, ANYWHERE ON THE MENU.
+  const everyLine = photo.rows.map((r) => r.label + ' ' + (r.sublabel || '')).join(' | ');
+  ok(!/1271 min/.test(everyLine), 'the photographed `1271 min ago` appears on no line of this menu');
+  ok(!/\b\d{3,} min ago\b/.test(everyLine),
+    '…nor does any other three-digit minute count, which is the class the photograph belonged to');
+
+  // ── THE CEILING ON THE MINUTE FLOOR, DRIVEN DIRECTLY ──────────────────
+  eq(model.MINUTE_PRECISION_MAX_MINUTES, 120,
+    'the minute floor stops at two hours — past that a minute count is arithmetic, not a time');
+  eq(model.formatAge(7139, 'minute'), '118 min ago',
+    'CONTROL — under the ceiling the minute floor still does its job, so the assertions below are not vacuous');
+  eq(model.formatAge(7199, 'minute'), '119 min ago', '…right up to the last minute below it');
+  eq(model.formatAge(7200, 'minute'), '2 hr ago', 'and at the ceiling it becomes hours');
+  eq(model.formatAge(76260, 'minute'), '21 hr ago',
+    'so the photograph\'s own age, asked for in minutes, answers in hours');
+  // THE DEGRADATION IS TO THE HOUR FLOOR, NOT TO THE UNFLOORED LADDER — so a
+  // finer precision can never produce a COARSER reading than the rung below it.
+  eq(model.formatAge(200000, 'minute'), '55 hr ago',
+    'a two-day-old row under a MINUTE floor still reads in hours, never `2 days ago` — the ladder stays monotonic');
+  eq(model.formatAge(200000, 'hour'), '55 hr ago', '…identical to the hour floor, which is what "degrades to" means');
+  eq(model.formatAge(200000), '2 days ago',
+    'CONTROL — with no floor at all the ordinary ladder still says days, so the two above are a real difference');
+  eq(model.formatAge(3000), '50 min ago', 'CONTROL — and the one-argument ladder is untouched by any of this');
+
+  // ── AND WHEN EVERY RUNG BUYS NOTHING, THE WHOLE ESCALATION IS HANDED BACK ──
+  //
+  // The same two saves, this time in ONE project with ONE headline: now the
+  // rows really are indistinguishable, so the resolver has a genuine problem.
+  // It walks the ladder, finds that neither `hour` nor `minute` tells them
+  // apart — twenty-one hours old and thirty seconds apart — and puts the
+  // precision back exactly where it found it before falling through. A row
+  // reading `1271 min ago` beside four rows reading in hours would be width
+  // spent on a distinction that FAILED.
+  const twinsOneProject = model.buildTrayModel({
+    ok: true, total: 2, scopes: [
+      P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
+        writtenAt: ago(TWIN_A), writtenAgeSeconds: TWIN_A, headline: 'same sentence on both rows' }),
+      P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
+        writtenAt: ago(TWIN_B), writtenAgeSeconds: TWIN_B, headline: 'same sentence on both rows' }),
+    ], brief: null, remote: null, warnings: [], pulse: null,
+  }, { now: PHOTO_NOW });
+  eq(twinsOneProject.rows.length, 2, 'CONTROL — the indistinguishable pair was built');
+  eq(twinsOneProject.rows[0].sublabel, twinsOneProject.rows[1].sublabel,
+    'CONTROL — and line two is identical too, so this pair is a REAL collision, unlike the photographed one');
+  ok(twinsOneProject.rows.every((r) => r.agePrecision === null),
+    'the escalation was handed back whole — no rung separated them, so none was kept');
+  ok(twinsOneProject.rows.every((r) => / 21 hr ago$/.test(r.label)),
+    '…leaving both rows reading the same hours every other row on the menu reads');
+  ok(twinsOneProject.rows.every((r) => !/min ago/.test(r.label)),
+    '…and neither of them reads in minutes');
+
+  // THE PROVENANCE, WHEN IT DOES COME BACK, IS APPENDED — NEVER CHARGED TO
+  // THE TOPIC. This is the third of the photograph's three defects.
+  ok(twinsOneProject.rows.every((r) => r.labelProvenance !== null),
+    'with the ladder exhausted the provenance token returns to line one, which is the last resort and is reached');
+  ok(twinsOneProject.rows.every((r) => r.label.startsWith('brand-building-social-engine')),
+    '…and the TOPIC IS INTACT: the token is appended after the topic\'s budget, not taken out of it');
+  ok(twinsOneProject.rows.every((r) => !/^brand-buil…/.test(r.label)),
+    `…so no row reads the photographed \`brand-buil…\`, the ${model.TOPIC_MIN_CHARS}-character floor the old tail arithmetic drove it to`);
+  ok(twinsOneProject.rows.every((r) => r.toolTip.includes('brand-building-social-engine')
+    && r.toolTip.includes('Antigravity')),
+    'and everything on that line is still in the tooltip, which is the absolute rule of every lever in this file');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

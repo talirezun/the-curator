@@ -415,6 +415,20 @@ export const LIVE_WINDOW_SECONDS = 120;
 export const AGE_PRECISIONS = [null, 'hour', 'minute'];
 
 /**
+ * The largest minute count the `'minute'` floor will print.
+ *
+ * Two hours, because that is where a minute count stops being read as a time
+ * and starts being read as a number: `119 min ago` is late this morning,
+ * `1271 min ago` is arithmetic homework. The photograph that produced this
+ * release carried exactly that string on two rows at once.
+ *
+ * It is a CEILING ON THE FLOOR and not a second ladder: past it, `formatAge`
+ * falls to the `'hour'` floor, which is the rung immediately above and is
+ * already defined here.
+ */
+export const MINUTE_PRECISION_MAX_MINUTES = 120;
+
+/**
  * Relative age from a whole-second count.
  *
  * ── THE DEFAULT ARM IS A VERBATIM COPY, AND IT MUST STAY ONE ───────────────
@@ -437,7 +451,22 @@ export const AGE_PRECISIONS = [null, 'hour', 'minute'];
  *
  *   undefined  the ordinary ladder            "1 day ago"
  *   'hour'     never coarser than hours       "34 hr ago"
- *   'minute'   never coarser than minutes     "2041 min ago"
+ *   'minute'   never coarser than minutes     "62 min ago"
+ *
+ * ── AND THE MINUTE FLOOR HAS A CEILING, BECAUSE 1266 IS NOT A READING ──────
+ *
+ * The photographed menu read `1271 min ago`. That is a number nobody writes and
+ * nobody reads: at a glance it is indistinguishable from a bug, and the reader
+ * has to divide by sixty to learn the thing the row exists to tell them. A
+ * floor that is allowed to run unbounded stops being a finer reading of the
+ * same fact and becomes an unreadable one.
+ *
+ * So `'minute'` holds only while minutes still READ as minutes — under
+ * `MINUTE_PRECISION_MAX_MINUTES` — and above that it degrades to `'hour'`,
+ * which is the next rung of this same ladder rather than a second opinion. The
+ * degradation is to a FLOOR and not to the ordinary ladder, so the answer never
+ * gets COARSER than hours either: a two-day-old row under a minute floor reads
+ * `48 hr ago`, never `2 days ago`, and the escalation stays monotonic.
  *
  * It is the SAME FACT at a finer resolution, never a different fact, and it is
  * reached only from `resolveCollisions` — where two rows would otherwise render
@@ -450,10 +479,14 @@ export function formatAge(seconds, precision) {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 60) return 'just now';
   const m = Math.floor(seconds / 60);
-  if (precision === 'minute') return m + ' min ago';
+  // The minute floor holds only while a minute count still reads as one. Past
+  // the ceiling it becomes the HOUR floor — the next rung up, never the
+  // unfloored ladder, so the reading can still not get coarser than hours.
+  const floor = precision === 'minute' && m >= MINUTE_PRECISION_MAX_MINUTES ? 'hour' : precision;
+  if (floor === 'minute') return m + ' min ago';
   if (m < 60) return m + ' min ago';
   const h = Math.floor(m / 60);
-  if (precision === 'hour') return h + ' hr ago';
+  if (floor === 'hour') return h + ' hr ago';
   if (h < 24) return h + ' hr ago';
   const d = Math.floor(h / 24);
   if (d < 7) return d + ' day' + (d === 1 ? '' : 's') + ' ago';
@@ -1435,13 +1468,29 @@ export function buildTrayModel(summary, opts = {}) {
   // `provenance` survives as a parameter for exactly ONE caller: the collision
   // resolver below, which restores a token to line one when two rows would
   // otherwise render identically. It is null on every ordinary row.
+  //
+  // ── AND WHEN IT IS NOT NULL, IT IS APPENDED — NEVER CHARGED TO THE TOPIC ──
+  //
+  // The photographed menu read `brand-buil… — Antigravity · 1271 min ago`: the
+  // resolver restored a provenance token, the token was built INTO the tail, and
+  // the topic was handed what was left — which was its ten-character floor. So
+  // the one component the collision was supposed to disambiguate was the
+  // component the disambiguation destroyed, and both rows still read the same
+  // eleven characters.
+  //
+  // The topic is therefore sized against the AGE ALONE. A provenance token is
+  // appended after that budget, and it is allowed to push the row past the width
+  // target, because a row that has reached this branch is a row that would
+  // otherwise be a DUPLICATE — and a slightly wide row that says something is
+  // worth more than a narrow one that says nothing. It is reached only when the
+  // whole ladder below has been exhausted.
   const composeLabel = (s, age, provenance, precision, budget = ROW_LABEL_CHARS) => {
-    const tail = (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s), precision);
+    const tail = ' · ' + ageText(age, sourceOf(s), precision);
     const scp = str(s.scope) || '(unnamed)';
     const topic = scopeLabels.get(scp) || scp;
     const room = budget - tail.length;
     const head = topic.length <= room ? topic : (clip(topic, Math.max(TOPIC_MIN_CHARS, room)) || topic);
-    return head + tail;
+    return head + (provenance ? ' — ' + provenance : '') + tail;
   };
 
   /**
@@ -1589,10 +1638,13 @@ export function buildTrayModel(summary, opts = {}) {
   //  2. If they are DIFFERENT computers, the machine label is restored exactly
   //     as before. That is not really a collision to be worked around — the
   //     machine IS the distinguishing fact, and it is the news.
-  //  3. If the same computer saved twice within one MINUTE, escalation runs out
-  //     and the folder names come back. Two saves that close genuinely need
-  //     another discriminator, and at that point the folder name is the
-  //     least-bad one available.
+  //  3. If NO rung of the ladder separates them — the same computer saving
+  //     twice inside one minute, or twice inside one hour at an age where the
+  //     minute floor has already hit its ceiling — the escalation is handed
+  //     back whole and the folder names come back. Two saves that close
+  //     genuinely need another discriminator, and at that point the folder name
+  //     is the least-bad one available. It is APPENDED to line one rather than
+  //     charged to the topic's budget; see `composeLabel`.
   //
   // The loop re-groups after every step because separating one pair can move a
   // row into collision with a third; it stops when nothing collides or when no
@@ -1603,12 +1655,32 @@ export function buildTrayModel(summary, opts = {}) {
   // This is the same rule `shortScopeNames` applies to prefixes, one level up,
   // and it is reachable in ordinary use: one scope worked on from two machines
   // whose two ages round to the same words is not exotic, it is a handoff.
+  // ── AND IT IS DECIDED OVER THE WHOLE ROW, NOT OVER LINE ONE ───────────
+  //
+  // A menu row is TWO lines, and v3.42.0 moved every provenance token onto the
+  // second one. So two rows whose line one matches are not necessarily two rows
+  // a reader cannot tell apart — the photograph shows one scope topic saved in
+  // two different PROJECTS, and line two already said `posts` on one and
+  // `projects` on the other. The resolver compared line one alone, declared a
+  // collision that a reader could not have seen, escalated the age until it read
+  // `1271 min ago`, and then put a machine name back on line one — three
+  // disfigurements in service of a problem that did not exist.
+  //
+  // The comparison is therefore the RENDERED PAIR. The sublabel is composed once
+  // here rather than per pass: it does not depend on the precision or on the
+  // provenance slot, so recomposing it inside the loop would be work that cannot
+  // change the answer.
+  const sublabelTexts = shown.map((s) => composeSublabel(s).text || '');
+  const rowKey = (i) => composeLabel(shownWithAge[i].s, shownWithAge[i].age, provenances[i], precisions[i])
+    + '\u0000' + sublabelTexts[i];
+  const distinctIn = (idxs) => new Set(idxs.map(rowKey)).size;
+
   for (let pass = 0; pass < AGE_PRECISIONS.length + 2; pass++) {
     const groups = new Map();
-    shownWithAge.forEach(({ s, age }, i) => {
-      const l = composeLabel(s, age, provenances[i], precisions[i]);
-      if (!groups.has(l)) groups.set(l, []);
-      groups.get(l).push(i);
+    shownWithAge.forEach((_, i) => {
+      const k = rowKey(i);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
     });
     const colliding = [...groups.values()].filter((g) => g.length > 1);
     if (!colliding.length) break;
@@ -1617,19 +1689,29 @@ export function buildTrayModel(summary, opts = {}) {
     for (const idxs of colliding) {
       const oneComputer = new Set(idxs.map((i) => machineKey(shown[i]))).size === 1;
       if (oneComputer) {
-        const next = AGE_PRECISIONS[AGE_PRECISIONS.indexOf(precisions[idxs[0]]) + 1];
-        if (next !== undefined) {
-          for (const i of idxs) precisions[i] = next;
+        // ── EVERY STEP MUST BUY SOMETHING, AND EVERY STEP THAT DOES NOT IS
+        //    HANDED BACK ──────────────────────────────────────────────────
+        //
+        // v3.37.0 stated this rule and applied it only at the END of the
+        // ladder. So a step that separated nothing was still taken, the next
+        // pass took another, and two rows 30 seconds apart at 21 hours old were
+        // walked all the way to a minute count that read the same on both. The
+        // rule is now applied at EVERY step: walk the remaining ladder, keep the
+        // first rung that tells more rows apart than the rung below it, and if
+        // no rung on the whole ladder does, put the precision back exactly where
+        // it was before falling through to the provenance slot.
+        const before = precisions[idxs[0]];
+        const wasDistinct = distinctIn(idxs);
+        let bought = false;
+        for (let step = AGE_PRECISIONS.indexOf(before) + 1; step < AGE_PRECISIONS.length; step++) {
+          for (const i of idxs) precisions[i] = AGE_PRECISIONS[step];
+          if (distinctIn(idxs) > wasDistinct) { bought = true; break; }
+        }
+        if (bought) {
           progressed = true;
           continue;
         }
-        // Escalation exhausted: these rows are the same computer saving twice
-        // inside one minute. The finer age bought nothing, so it is HANDED
-        // BACK before falling through — leaving a row reading "60 min ago"
-        // when "1 hr ago" is what every other row says, and when the thing
-        // that actually separates them is about to be the folder name, would
-        // be paying width for a distinction that failed.
-        for (const i of idxs) precisions[i] = null;
+        for (const i of idxs) precisions[i] = before;
       }
       const machines = new Set(idxs.map((i) => str(shown[i].machine)));
       for (const i of idxs) {

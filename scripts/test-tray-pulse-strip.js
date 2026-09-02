@@ -912,8 +912,21 @@ section('§8 width compaction — three levers, each conditional and each revers
   const realRows = model.buildTrayModel(REAL_STORE, { now: NOW }).rows;
   ok(realRows.every((r) => !/alices-macbook-pro|9f3c1a/.test(r.label)),
     'and NO row names a machine folder — the two colliding rows are one laptop and are separated by a finer age');
-  ok(realRows.filter((r) => r.agePrecision === 'hour').length === 2,
-    'exactly the two colliding rows were escalated, and no others');
+  // REVERSED IN v3.43.0. On THIS store the two design-conformance rows carry
+  // DIFFERENT HEADLINES, so line two already tells them apart and there is
+  // nothing to resolve — escalating their age was work bought for a collision a
+  // reader could never have seen, which is exactly the photographed defect one
+  // size smaller. The rule "a real collision escalates the age rather than
+  // naming hardware" is unchanged and is asserted in §10 case A, whose two rows
+  // are identical on BOTH lines. Here the assertion is that nothing is
+  // escalated at all, plus the control that makes it non-vacuous.
+  eq(realRows.filter((r) => r.agePrecision !== null).length, 0,
+    'and NO row was escalated: every pair whose line one matches is separated on line two already');
+  ok(realRows.filter((r) => r.scope.includes('design-conformance')).length === 2,
+    'CONTROL — the two same-scope rows really are both shown, so the assertion above is not vacuous');
+  const dcSubs = realRows.filter((r) => r.scope.includes('design-conformance')).map((r) => r.sublabel);
+  ok(dcSubs[0] !== dcSubs[1],
+    'CONTROL — and their line TWO differs, which is the reason line one was never in trouble');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1073,8 +1086,21 @@ section('§10 the collision guard: compaction may never make two rows read alike
     row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 90000 }),
     row({ machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 90000 }),
   ]);
-  ok(mixed.rows[0].label !== mixed.rows[1].label, 'a local row and a remote row are distinguished with no work at all');
-  ok(/studio/.test(mixed.rows.find((r) => !r.isThisMachine).label), 'the remote one names its machine');
+  // REVERSED IN v3.43.0 — IN WHICH LINE IT READS, NOT IN WHAT IT SAYS. Both
+  // assertions were written when a collision was decided over LINE ONE alone,
+  // and line one was the only place a machine name could go. It is now decided
+  // over the whole rendered row, and v3.42.0 had already moved every provenance
+  // token to line two — so these two rows never collide in the first place: the
+  // machine name is on line two, on both of them, before anything is resolved.
+  // The RULE is unchanged and is what is asserted now: a local row and a remote
+  // row are told apart, and the remote one names its machine.
+  eq(mixed.rows[0].label, mixed.rows[1].label,
+    'their line ONE is identical — same scope, same age, and no provenance is restored to it');
+  ok(mixed.rows[0].sublabel !== mixed.rows[1].sublabel,
+    '…and yet a local row and a remote row are distinguished with no work at all, on line two');
+  ok(/studio/.test(mixed.rows.find((r) => !r.isThisMachine).sublabel), 'the remote one names its machine');
+  ok(mixed.rows.every((r) => !/studio|mac-9f3c1a/.test(r.label)),
+    '…and never on line one, which no amount of provenance may reach while line two still separates the rows');
   eq(mixed.rows.map((r) => r.agePrecision), [null, null], 'and neither age is touched');
 
   // ── C. THE UNRESOLVABLE CASE — same computer, inside one minute ────────
@@ -1128,7 +1154,21 @@ section('§10 the collision guard: compaction may never make two rows read alike
   }
   eq(model.formatAge(124066), '1 day ago', 'the default ladder is unchanged');
   eq(model.formatAge(124066, 'hour'), '34 hr ago', 'an hour floor never goes coarser than hours');
-  eq(model.formatAge(124066, 'minute'), '2067 min ago', 'a minute floor never goes coarser than minutes');
+  // REVERSED IN v3.43.0, DELIBERATELY. This assertion was correct when it was
+  // written and it is the defect the maintainer photographed: `2067 min ago` is
+  // the same string class as the `1271 min ago` his own menu printed on two
+  // rows at once. A minute count past two hours is not a finer reading of a
+  // time, it is arithmetic homework — so the minute floor now has a CEILING and
+  // degrades to the hour floor above it. The rule the old assertion was
+  // protecting — a floor never returns something COARSER than the rung it names
+  // — is unchanged and is asserted immediately below: this answers in HOURS,
+  // never in days.
+  eq(model.formatAge(124066, 'minute'), '34 hr ago',
+    'a minute floor past its ceiling answers in hours — `2067 min ago` is the photographed defect, not a finer reading');
+  eq(model.formatAge(124066, 'minute'), model.formatAge(124066, 'hour'),
+    '…by degrading to the HOUR floor exactly, which is the rung above it rather than the unfloored ladder');
+  eq(model.formatAge(7199, 'minute'), '119 min ago',
+    'CONTROL — below the ceiling the minute floor is untouched, so the reversal above is a ceiling and not a deletion');
   eq(model.formatAge(30, 'minute'), 'just now', 'but nothing below a minute is invented — "just now" survives every floor');
   eq(model.formatAge(-1, 'minute'), null, 'and an absent age stays absent at every precision');
   eq(model.ageText(124066, 'file', 'hour'), 'changed 34 hr ago',
