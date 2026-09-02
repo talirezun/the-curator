@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Software Update</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- ── The updater window (v3.41.0) ─────────────────────────────────────────
+     Loaded by `desktop/lib/update-window.js` into a 380×140-point
+     BrowserWindow the moment the user chooses Update from the menu bar. It is
+     a READER of `GET /api/config/update-progress`; it starts nothing, applies
+     nothing and cancels nothing. The argument is in views/update-window.js's
+     header.
+
+     ── WHY THIS LINKS THE TOKENS AND NOT shell.css ───────────────────────────
+     `shell.css` styles the application shell — the rail, the view frame, the
+     header — none of which exists here. The TOKENS are what carry the app's
+     look, and `tokens/base.css` alone gives this page the right background,
+     the right text colour and the right type; `[data-theme="light"]` in
+     tokens/color.css redefines every semantic alias, so the theme switch below
+     is three lines rather than a second palette.
+
+     ── AND WHY THE WINDOW-SPECIFIC CSS IS INLINE ─────────────────────────────
+     A `views/update-window.css` file would be a stylesheet that
+     `next/index.html` never links, which `scripts/test-css-tokens.js` §9
+     correctly reports as unreachable — that section exists because
+     `shared/progress-ring.css` shipped written, correct and never linked for a
+     whole release. Rather than add an exemption for a file that really is
+     reachable (just not from the shell), the twenty rules this page needs live
+     here, next to the only markup that uses them. Every colour is a token.
+
+     ── EVERY REFERENCE IS ROOT-ABSOLUTE ──────────────────────────────────────
+     Same rule `next/index.html` follows and `test-next-asset-paths.js` pins
+     there: this page is served from `/next/update-window.html` by the static
+     mount, and a relative ref that resolved differently under a future route
+     would 200 with the SPA shell rather than 404 — the v3.6.1 landmine.
+─────────────────────────────────────────────────────────────────────────── -->
+
+<link rel="stylesheet" href="/next/tokens/base.css">
+<link rel="stylesheet" href="/next/tokens/color.css">
+<link rel="stylesheet" href="/next/tokens/space.css">
+<link rel="stylesheet" href="/next/tokens/shape.css">
+<link rel="stylesheet" href="/next/tokens/motion.css">
+<link rel="stylesheet" href="/next/tokens/typography.css">
+<link rel="stylesheet" href="/next/tokens/fonts-local.css">
+<link rel="stylesheet" href="/next/shared/progress-ring.css">
+
+<style>
+  /* The window is fixed at 380×140pt and cannot be resized, so this is a
+     layout for exactly one size. `overflow-y: auto` is a safety net and not a
+     feature: it only appears if a future failure sentence is longer than every
+     one in the engine's table today. */
+  html, body { height: 100%; }
+  body {
+    background: var(--canvas);
+    overflow: hidden;
+    /* Nothing here is selectable text a user needs to copy, and a drag-select
+       inside a small chromeless-feeling window reads as a glitch. The failure
+       sentence is the exception and re-enables it below. */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .uw {
+    box-sizing: border-box;
+    height: 100%;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+  }
+
+  /* The ring block. `progressRingHtml` is already an inline-flex row of
+     svg + label + sublabel, so this only has to place it. */
+  .uw-ring { flex: none; }
+
+  /* Drawn only when there is NO ring — see renderUpdateWindow. */
+  .uw-headline {
+    font: var(--type-h3);
+    color: var(--text);
+  }
+
+  .uw-note {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--text-2);
+  }
+
+  .uw-hint {
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    color: var(--text-3);
+  }
+
+  /* A failure is the one thing a user may want to copy into a bug report. */
+  .uw-failed .uw-note,
+  .uw-failed .uw-hint,
+  .uw-lost .uw-note {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .uw-failed .uw-headline { color: var(--danger-text); }
+</style>
+</head>
+<body>
+
+<!-- The whole page. `views/update-window.js` replaces this element's innerHTML
+     on every poll; the placeholder below is what is on screen for the few
+     milliseconds before the first render, and it says the same thing the first
+     render will. -->
+<div id="uw-root">
+  <div class="uw uw-starting">
+    <div class="uw-headline">Starting the update</div>
+    <div class="uw-note">Waiting for The Curator to begin.</div>
+  </div>
+</div>
+
+<script type="module">
+  // The theme, from the same localStorage key the shell writes
+  // (`THEME_KEY = 'curator-next-theme'` in /next/app.js). Same origin, so this
+  // window inherits whatever the user chose in the app. Read defensively:
+  // storage can throw in a private context, and the fallback is the app's own
+  // unconditional default — dark at bare :root, with no [data-theme="dark"]
+  // block to need.
+  try {
+    const t = localStorage.getItem('curator-next-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch { /* the default theme is not worth an error */ }
+
+  import('/next/views/update-window.js')
+    .then((m) => { m.mountUpdateWindow(document); })
+    .catch(() => {
+      // The module failed to load, so nothing will ever update this page.
+      // Saying so is better than leaving "Starting the update" on screen
+      // forever — the update itself is unaffected, because this window drives
+      // none of it.
+      const root = document.getElementById('uw-root');
+      if (root) {
+        root.innerHTML =
+          '<div class="uw uw-lost">' +
+            '<div class="uw-headline">Can’t show the update’s progress</div>' +
+            '<div class="uw-note">This window couldn’t load. The update itself is unaffected — ' +
+            'The Curator restarts on its own when it finishes.</div>' +
+          '</div>';
+      }
+    });
+</script>
+
+</body>
+</html>

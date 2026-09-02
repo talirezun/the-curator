@@ -369,8 +369,11 @@ function failure({ staged = false, reason, error, hint = null, releasesPageUrl =
  * write-in-flight refusal.
  *
  * @param {string} baseUrl
- * @param {{applyOnly?: boolean, onLabel?: Function}} [opts]
+ * @param {{applyOnly?: boolean, onLabel?: Function, onProgress?: Function}} [opts]
  *        `onLabel` is called ONLY when the menu label actually changes.
+ *        `onProgress` is called for EVERY record, with the record itself — see
+ *        `emit()` below for why the two throttles differ. v3.41.0's updater
+ *        window is its one consumer.
  * @param {{fetchImpl?: Function}} [deps]
  * @returns {Promise<object>} never rejects
  */
@@ -397,21 +400,43 @@ async function runInstallInner(baseUrl, opts, deps) {
   }
 
   const rawLabel = typeof opts.onLabel === 'function' ? opts.onLabel : null;
+  const rawProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
   let lastLabel = null;
-  const label = (job) => {
+
+  /**
+   * One emission point for both sinks, and they are DELIBERATELY THROTTLED
+   * DIFFERENTLY.
+   *
+   * `onLabel` fires only when the menu item's whole string changes, because
+   * rebuilding the application menu is real work and the label carries a whole
+   * percent — about 101 rebuilds over a 140 MB download rather than 550.
+   *
+   * `onProgress` fires on EVERY record, unthrottled, because it is a raw
+   * feed for a caller that has its own idea of what "changed" means: v3.41.0's
+   * updater window turns it into a Dock progress bar, which it throttles by
+   * VALUE, and into a one-shot restart notification keyed on the phase
+   * transition — a transition a label-shaped throttle would hide whenever two
+   * neighbouring phases happened to render the same string. Throttling here
+   * would push a second policy onto every future consumer.
+   *
+   * Neither sink may break an update. Both are wrapped, the same rule the
+   * engine applies to its own `onProgress`.
+   */
+  const emit = (job) => {
+    if (rawProgress) {
+      try { rawProgress(job); } catch { /* a progress display is not load-bearing */ }
+    }
     if (!rawLabel) return;
     const next = updateMenuLabel(job);
     if (next === lastLabel) return;
     lastLabel = next;
-    // A caller's label callback must never be able to break an update — the
-    // same rule the engine applies to `onProgress`.
     try { rawLabel(next); } catch { /* the menu is not load-bearing */ }
   };
 
   let version = null;
 
   if (opts.applyOnly !== true) {
-    label({ phase: 'resolving' });
+    emit({ phase: 'resolving' });
 
     let res;
     try {
@@ -438,7 +463,7 @@ async function runInstallInner(baseUrl, opts, deps) {
       });
     }
 
-    const streamed = await readStagingStream(res.body, label);
+    const streamed = await readStagingStream(res.body, emit);
     if (streamed.error) {
       return failure({
         reason: streamed.error.reason || 'unknown',
@@ -457,7 +482,10 @@ async function runInstallInner(baseUrl, opts, deps) {
   }
 
   // ── The swap. ────────────────────────────────────────────────────────────
-  label({ phase: 'installing' });
+  // The version rides along so a consumer of `onProgress` does not have to keep
+  // its own copy of what the stream already told this function. `updateMenuLabel`
+  // reads neither field, so the menu label is byte-identical to v3.36.0's.
+  emit({ phase: 'installing', version });
 
   let applyRes;
   try {
@@ -519,7 +547,7 @@ async function readJsonBody(res) {
  * because a 140 MB download that dies because someone closed a window is a
  * worse outcome than one that finishes unwatched.
  */
-async function readStagingStream(body, label) {
+async function readStagingStream(body, emit) {
   const reader = body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -534,7 +562,7 @@ async function readStagingStream(body, label) {
       buf = rest;
       for (const ev of events) {
         if (ev.type === 'progress') {
-          label(ev.data);
+          emit(ev.data);
         } else if (ev.type === 'staged') {
           staged = true;
           version = typeof ev.data.version === 'string' ? ev.data.version : null;
