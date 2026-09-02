@@ -2259,7 +2259,12 @@
   font-variant-numeric: var(--numeric-tabular);
   white-space: nowrap;
 }
-.browse-table td.browse-num { font-family: var(--font-mono); font-size: var(--text-sm); }
+/* THE TEXT FACE, not mono. v3.44.0 moved every count and price in /next off
+   monospace, and the property a price column needs is alignment rather than a
+   face — supplied above by `tabular-nums` plus `text-align: right`. Keeping
+   this column in mono would leave the app's two price surfaces (this table and
+   the chat composer's menu) disagreeing about how a price is set. */
+.browse-table td.browse-num { font-size: var(--text-sm); }
 .browse-name b { font-weight: var(--weight-medium); color: var(--text); }
 .browse-name small {
   display: block;

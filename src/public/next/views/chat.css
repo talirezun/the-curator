@@ -1395,7 +1395,31 @@
   background: var(--attention-tint);
   color: var(--attention-text);
 }
-.chat-mm-price { font-size: var(--text-xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
+/* ── THE PRICE IS A COLUMN, SO IT IS RIGHT-ALIGNED AND MONOSPACED ────────
+   It used to be a full-width line of its own under the id, where tabular
+   numerals bought nothing — there is no second figure above or below to line
+   up with. It now ends the head row, pushed right by `margin-left: auto`, with
+   `tabular-nums` so the digits are of equal width and `text-align: right` so
+   the strings end on one edge regardless of how many digits each carries.
+
+   IT STAYS IN THE TEXT FACE. The router proposal asked for a mono column;
+   v3.44.0 moved every count and price in /next off mono onto the text face
+   (mono is kept for code and raw source, and a price is neither), and that
+   rule is pinned by scripts/test-next-composer-model.js. The property the
+   proposal was after is alignment, and alignment is what these three
+   declarations give — the face is not what makes a column.
+
+   `white-space: nowrap` because "$0.10 / $0.40" wrapping mid-price would put
+   the output figure under the input one and read as two models. */
+.chat-mm-price {
+  margin-left: auto;
+  padding-left: var(--space-5);
+  text-align: right;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
+}
 .chat-mm-rise { font-size: var(--text-2xs); color: var(--attention-text); }
 /* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
    model's whole measured `note`, which is now shown in full behind Settings'
