@@ -43,6 +43,7 @@ undocumented or the mirror is stale.
 | `typography.css` | **Yes** | `--font-scale` — below |
 | `motion.css` | **Yes** | The press vocabulary — below |
 | `fonts-local.css` | App-side only | No bundle counterpart |
+| `material.css` | App-side only | The material vocabulary — below |
 | everything else | No | Byte-identical |
 
 ### The text ramp (v3.25.0)
@@ -78,6 +79,73 @@ two byte-equivalent keyframes rather than becoming a third). The file also carri
 an in-file refusal block explaining why there is no `--t-select` — a proposed
 token that turned out byte-identical to the existing `--t-state`. Leave the
 refusal in place; it is the record of a decision, not dead prose.
+
+### `material.css` — the material vocabulary (this release)
+
+A **new file with no bundle counterpart**, linked after `color.css`,
+`shape.css` and `motion.css`. It exists because the system has never had a
+*material* vocabulary: no token for how a surface catches light, how an edge
+separates two planes, how a control reads as pressable, or how something that
+travels distance moves. Direction: **"Quiet System" — faithful AppKit at
+AppKit amplitude**, plus exactly one borrowed device (below).
+
+It is a **separate file rather than edits to `color.css` / `shape.css`**, and
+that is the point of it: those two stay diffable against the bundle. `color.css`
+already carries one approved deviation (the text ramp) and a second family
+inside it would destroy the "byte-identical apart from one recorded block"
+property this document depends on.
+
+**It introduces no second design system.** No new violet scale, no new neutral
+ramp, no new radius set, no new text-colour ramp. Two new hexes in the whole
+file, each with its measurement.
+
+**Three existing names are REDEFINED, and all three are measured defect fixes:**
+
+| Name | Was | Now | Why |
+|---|---|---|---|
+| `--accent-hover` (dark) | `--violet-400` | `--violet-500` | white on `#9D80F8` is **3.05:1** — the primary button's own label dropped below AA on hover. **No violet lighter than `--violet-500` (4.53:1) clears 4.5**, so hover on dark cannot be a lightening of the fill; the specular and the lift carry it instead. |
+| `--ring-focus` | `0 0 0 3px var(--accent-tint-strong)` | keyline + 0.85 halo | measured **1.26:1 dark / 1.24:1 light** — under the 3:1 floor. The one state that exists to be findable was the hardest thing on the page to find. Now 3.46 / 4.75. |
+| `--danger-fill` | *(did not exist)* | `#D83B50` dark | white on `--danger` `#EF5568` is **3.40:1**. `--danger` itself is untouched — it is a border and text colour in the tinted variant, where 3.40 never applied. |
+
+`--inset-hi` is **deliberately NOT redefined**, and that is the reusable
+reading: the token is correct for the light *raised surfaces* it was authored
+for and wrong only when landed on a saturated accent fill. The bug was the
+**pairing**, so the fix is on the pairing — `--gloss-specular` (0.18 light /
+0.22 dark, both composting to the same **1.44:1** perceived lift) supersedes it
+for new work and `--inset-hi` keeps its one existing consumer.
+
+**The one borrowed device, and the refusal that scopes it.** From the
+Liquid-Glass family the app takes the **two-line material edge** — a lit inner
+lip plus a dark outer separator — on chrome that floats over content (sidebar,
+rail, menu, sheet) and **never on a content surface**. Both lines are always
+drawn, because which one does the work *swaps by theme*: on dark the outer
+separator is 1.02:1 against a near-black canvas and the lip carries the edge;
+on light it inverts. **Refraction is refused on the record**: Electron 43 has
+no native Liquid Glass (electron#50415 is closed unmerged), CSS can only do
+`blur() saturate()` plus hand-placed gradients, and Apple has walked the
+material back twice since WWDC25 — toward darker edges and brighter speculars,
+which is a description of the gloss recipe rather than of refraction.
+
+**A finding this work produced about the palette itself, recorded because it
+constrains the next phase.** The light theme's type triad has almost no
+headroom: `--concept-600` measures **3.22:1 against pure white**, 0.22 over the
+1.4.11 floor. The domain list's type dots sit on the sidebar, so **any light
+sidebar plane darker than about `#F7F7FA` pushes that dot under 3:1** — the
+first attempt at a proper macOS grey sidebar (1.18:1) took it to 2.64 and
+`scripts/test-next-domain-dots.js` caught it. The light sidebar's separation is
+therefore carried entirely by the two-line edge, and its plane is pinned to the
+darkest value the triad allows. Lifting the light triad — the greens especially
+— would buy a real light plane, and that is a colour-system change with its own
+diff and its own approval.
+
+### `shared/switch.css` — the switch (this release)
+
+Also new, also with no bundle counterpart. macOS draws a two-value choice three
+ways and they are not interchangeable: a **switch** turns a facility on and off,
+a **checkbox** states a fact about a thing, and a **segmented control** picks one
+of N peer modes. The bundle models the second and the third; this is the first.
+Appearance (Light / Dark) stays segmented, because it is a mode pair and System
+Settings itself draws it that way.
 
 ## Things the app deliberately does not take from the bundle
 

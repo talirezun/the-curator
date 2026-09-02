@@ -1,0 +1,618 @@
+/* ── Material ────────────────────────────────────────────────────────────
+   THE MATERIAL VOCABULARY THE SYSTEM HAS NEVER HAD: how a surface catches
+   light, how an edge separates two planes, how a control reads as pressable,
+   and how something that travels distance moves.
+
+   Direction: "Quiet System" — faithful AppKit at AppKit amplitude — plus
+   exactly ONE borrowed device from the Liquid-Glass family: the TWO-LINE
+   MATERIAL EDGE (a lit inner lip plus a dark outer separator) on chrome that
+   floats over content. Never on a content surface. Refraction is refused on
+   the record; see docs/design-system-source.md.
+
+   THIS IS NOT A SECOND DESIGN SYSTEM. No new violet scale, no new neutral
+   ramp, no new radius set, no new text-colour ramp. Every colour rung named
+   below is one tokens/color.css already ships, referenced by name. The only
+   new hexes in the whole file are --danger-fill (#D83B50) and the two
+   material planes, and each carries its measurement.
+
+   ── WHY THIS FILE EXISTS RATHER THAN EDITS TO color.css / shape.css ──────
+   index.html documents tokens/*.css as copied byte-identical from the
+   design-system bundle. color.css already carries ONE approved deviation
+   (the text ramp, v3.25.0) with a published patch for the bundle. Adding a
+   second family of deviations inside it would make the "byte-identical apart
+   from one recorded block" property untrue. This file is ADDITIVE and linked
+   AFTER the others, so a reader can diff the bundle files unchanged.
+
+   ── LINK ORDER IS LOAD-BEARING, AND SO IS THE THEME PARITY BELOW ─────────
+   `:root` and `[data-theme="light"]` BOTH have specificity (0,1,0), so the
+   later declaration wins outright. color.css's light block is declared
+   BEFORE this file. Therefore ANY token this file defines at bare `:root`
+   that color.css also themes MUST be redefined here under
+   `[data-theme="light"]`, or this file's dark value silently leaks into the
+   light theme. That is not a style rule, it is a correctness rule, and
+   scripts/test-css-tokens.js §11 enforces it by parsing the two blocks of
+   THIS FILE SEPARATELY — sections 1-10 cannot see this, because their scan
+   treats a definition anywhere in the cascade as "defined", which is right
+   for the undefined-reference question and wrong for this one.
+
+   ── EVERY NUMBER BELOW IS PLAIN WCAG ARITHMETIC OVER THE SHIPPED VALUES ──
+   and is RECOMPUTED, not transcribed, by scripts/test-next-design-kit.js
+   from the values in this file. Where the design proposal's figure and the
+   recomputation disagree, the recomputation is written here and the
+   disagreement is named. Two disagreed:
+
+     · The proposal quotes the dark focus halo at 3.47:1. Recomputed: 3.46.
+       Rounding, and it does not change the verdict (floor 3.0).
+     · The proposal quotes the SHIPPED light focus ring at 1.47:1. That
+       figure was computed with alpha 0.24 — the DARK theme's
+       --accent-tint-strong. Light's is 0.14. The shipped light ring is
+       therefore 1.24:1, i.e. WORSE than the proposal claimed, not better.
+   ────────────────────────────────────────────────────────────────────── */
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   1 · SHAPE, GEOMETRY, HAIRLINE WIDTH   (theme-invariant)
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* macOS 26 moved every control toward a fuller curve, and --radius-md's
+     6px reads slightly mechanical against SF Text at 13px. 7px is one step,
+     not a redesign: --radius-md stays 6px for everything that is not a
+     control, so nothing that already ships moves unless it opts in. */
+  --radius-control: 7px;
+
+  /* For any in-app frame that draws a fake window (the onboarding mock, a
+     screenshot frame). macOS 12-25 clip a window at ~12px; macOS 26 clips a
+     window that has a toolbar or sidebar at ~20px, and Electron 43 cannot
+     ask for the larger one (electron/electron#47514 is open). Two names so
+     a magic number does not appear in three stylesheets. */
+  --radius-window:    12px;
+  --radius-window-26: 20px;
+
+  /* ── THE 0.5px HAIRLINE ───────────────────────────────────────────────
+     A 1px border on a 2x display is TWO device pixels — twice what AppKit
+     draws, which is why an Electron app's dividers read heavier than the
+     OS's at the same nominal width. `min-resolution: 2dppx` is the honest
+     gate: on a 1x display 0.5px would round to 0 or 1 unpredictably per
+     engine, so 1px stays there. Consumers write `var(--hairline-w)` where
+     they mean "the OS's divider", and plain `1px` where they mean a real
+     border a user is meant to read as an edge. */
+  --hairline-w: 1px;
+
+  /* ── HIT TARGET ───────────────────────────────────────────────────────
+     macOS's minimum control target is 20x20pt and its DEFAULT is 28x28pt
+     (contrast with iOS's 44). --control-sm already sits on 28. This name is
+     for the padding trick: a 15px glyph keeps its 15px, and an invisible
+     ::before expands the hit box to 28. Never grow the glyph to hit this. */
+  --hit-min: 28px;
+
+  /* ── SWITCH GEOMETRY ──────────────────────────────────────────────────
+     NSSwitch is 38x22pt with a 2pt track inset. Named rather than inlined
+     because the knob's travel is DERIVED from them
+     (translateX(--switch-w - --switch-h)); two hand-maintained copies of
+     one width is this repo's recorded drift shape. */
+  --switch-w:   38px;
+  --switch-h:   22px;
+  --switch-pad: 2px;
+
+  /* ── TABULAR FIGURES ──────────────────────────────────────────────────
+     Wherever digits must align down a column or must not reflow as they
+     tick: a counter, a percentage, a price, an age, a byte count. A NAME
+     rather than the literal because `font-variant-numeric` also takes
+     `oldstyle-nums`/`slashed-zero`, so a bare literal reads as one of a
+     family and gives no hint which. */
+  --numeric-tabular: tabular-nums;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   2 · TYPE — two rungs the ramp has no name for   (theme-invariant)
+
+   The app's ramp jumps 14 -> 16 -> 18 -> 22. macOS's own hierarchy has a
+   rung at 15 (a lead paragraph / a prominent row label) and one at 17
+   (a section heading inside a settings pane, below a 22px view title).
+   Without them, a section heading either borrows --text-lg (16px, which
+   reads as body) or --text-xl (18px, which competes with the view title).
+   Both scale with --font-scale exactly as the rest of the ramp does — a
+   fixed px here would silently opt these two rungs out of the user's own
+   text-size setting, which is the v3.18.0 defect wearing a new name.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --text-lead:    calc(15px * var(--font-scale));
+  --text-section: calc(17px * var(--font-scale));
+
+  --type-lead:    var(--weight-regular) var(--text-lead)/var(--leading-normal) var(--font-sans);
+  --type-section: var(--weight-semibold) var(--text-section)/var(--leading-snug) var(--font-sans);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   3 · MOTION — one curve, five durations, six composed pairings
+   Nothing existing is redefined. --ease-out, --ease-in-out, --dur-instant..
+   --dur-slower, --t-state, --t-enter, --t-layout, --t-press and the press
+   amplitudes all stay exactly as motion.css has them.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* --ease-out (0.20,0,0,1) is a SHORT-DISTANCE curve: correct at 80-180ms
+     and too eager past ~250ms — a sheet on it arrives with a visible stop.
+     --ease-emphasized has a long flat tail: it leaves quickly and settles
+     slowly, which is what an AppKit sheet, a popover and a view swap all
+     read as. ONE new curve, used only by things that TRAVEL. It is not
+     invented here; it is the curve published as the iOS drawer easing.
+
+     Calibration against Apple's own declarations rather than folklore:
+     NSAnimationContext defaults to 0.25s, and SwiftUI's `.default` has been
+     spring(response: 0.55, dampingFraction: 1.0) since macOS 14 — critically
+     damped, NO overshoot. This system does not bounce and this curve does
+     not either. */
+  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Hover-in and hover-out are not the same event. In should be quick
+     enough to feel like a response; out should be slow enough that crossing
+     a toolbar does not strobe. 110 in / 120 out is the smallest asymmetry
+     that reads, and 120 is the EXISTING --dur-fast, so the "out" half adds
+     no new number at all. */
+  --dur-hover-in: 110ms;
+
+  /* Distances the existing ramp has no rung for. --dur-slow (240ms) is a
+     LAYOUT duration, not a TRAVEL duration; a sheet on 240ms reads as a
+     popup, and a popover on 240ms reads as slow. */
+  --dur-popover:   160ms;
+  --dur-view:      220ms;
+  --dur-sheet-in:  340ms;
+  --dur-sheet-out: 260ms;   /* out is faster than in — dismissal must not linger */
+
+  /* The skeleton loop. A NAME rather than the 1.4s literal the design system
+     specifies inline, because it is a LOOP and not a transition: it is
+     deliberately NOT zeroed by the reduce block below — a 0s animation paints
+     its from-state forever, which for a shimmer means a permanent bright
+     band. Consumers carry `animation: none` instead, which is the shape
+     scripts/test-next-reduced-motion.js recognises. */
+  --dur-shimmer: 1.4s;
+
+  /* Composed pairings, same discipline as --t-state / --t-enter. */
+  --t-hover-in:  var(--dur-hover-in) var(--ease-out);
+  --t-hover-out: var(--dur-fast) var(--ease-out);
+  --t-popover:   var(--dur-popover) var(--ease-emphasized);
+  --t-view:      var(--dur-view) var(--ease-emphasized);
+  --t-sheet-in:  var(--dur-sheet-in) var(--ease-emphasized);
+  --t-sheet-out: var(--dur-sheet-out) var(--ease-emphasized);
+}
+
+/* motion.css's reduce block zeroes --dur-instant..--dur-slower. It cannot
+   reach names it does not know about, so the new durations are zeroed here.
+   The existing rule still applies and is NOT superseded: a 0ms ANIMATION
+   still paints its from-state for one frame, so every animating rule keeps
+   its own `animation: none` escape (scripts/test-next-reduced-motion.js
+   recognises that shape as coverage). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover-in: 0ms;
+    --dur-popover: 0ms;
+    --dur-view: 0ms;
+    --dur-sheet-in: 0ms;
+    --dur-sheet-out: 0ms;
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   4 · DARK  (bare :root, matching color.css's convention)
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+
+  /* ── 4a · ACCENT STATES ─────────────────────────────────────────────── */
+
+  /* [CHANGE] --accent-hover was var(--violet-400) #9D80F8.
+     White (--text-on-accent) on #9D80F8 measures 3.05:1 — FAILING the 4.5:1
+     text floor, so on dark the primary button's own label dropped below AA
+     the moment the pointer landed on it.
+
+     AND IT IS NOT FIXABLE BY PICKING A NICER VIOLET. #7C5AF5 itself is
+     4.53:1 — the ceiling. #9D80F8 is 3.05. There is no lighter rung that
+     clears 4.5. So readme.md's rule — "primary buttons go to --accent-hover
+     (lighter, not darker — on dark backgrounds lighter reads as closer)" —
+     is arithmetically incompatible with white label text on this brand
+     colour, and the RULE loses rather than the floor.
+
+     That constraint is what makes gloss STRUCTURAL here rather than
+     decorative: if the fill cannot move on hover, the specular and the lift
+     have to carry the state. The gloss was asked for on aesthetic grounds
+     and turns out to be the fix for a live accessibility defect.
+
+     NOTE FOR NON-FILL CONSUMERS: anything using a hovered accent as a TEXT
+     or ICON colour on a dark surface still wants the lighter rung, and it is
+     preserved under a name that says what it is for. */
+  --accent-hover:    var(--violet-500);
+  --accent-hover-fg: var(--violet-400);
+
+  /* [KEEP, restated for the parity rule above] --accent and --accent-active
+     are NOT redefined here; color.css owns them. */
+
+  /* ── 4b · EDGES ─────────────────────────────────────────────────────── */
+
+  /* [KEEP] --hairline rgba(255,255,255,0.06) — decorative, inside a surface.
+     Not redefined here; color.css owns it. */
+
+  /* A hairline that has to be SEEN on a raised surface rather than against
+     the canvas: the separator inside a menu, the lip of a material, the rule
+     under a section heading. Twice the existing hairline; still not a
+     border. */
+  --hairline-strong: rgba(255,255,255,0.11);
+
+  /* ── THE BOUNDARY OF A CONTROL WHOSE FILL CANNOT IDENTIFY IT ──────────
+     Secondary buttons, text fields, segmented tracks, popup buttons: their
+     FILL is within 1.06:1 of the page, so the border is the only thing that
+     says "control" and it carries WCAG 1.4.11's 3:1 on its own. --border
+     (#22222F) measures 1.20-1.29:1 against the surfaces it sits on — fine
+     for a decorative hairline inside a card, not fine for this job.
+
+     NO NEW HEX. This is --ink-400, a rung the neutral ramp already ships.
+     Measured #63637A against every surface a control rests on:
+       --surface-raised #10101A   3.24:1
+       --canvas         #08080E   3.42:1
+       --surface        #0C0C14   3.34:1
+       --surface-hover  #15151F   3.10:1
+       --surface-active #1B1B27   2.92:1   <- see below
+
+     Every RESTING and HOVERED state clears the floor. The PRESSED state dips
+     to 2.92 for the ~80ms a pointer is held, and that is STATED rather than
+     rounded up: --gloss-pressed adds an `inset 0 0 0 1px rgba(0,0,0,0.10)`
+     that darkens the inner edge over the same 80ms, so the boundary does not
+     become harder to find while it is under the finger. Raising the token to
+     clear 2.92 would push the RESTING edge to ~3.5:1 — a visibly drawn
+     border on every quiet control in the app, permanently, to fix a
+     transient state. That trade is refused.
+
+     Deliberately NOT applied to cards or list separators. A wireframe is not
+     the goal. */
+  --control-edge: var(--ink-400);
+
+  /* The same role where the control's own FILL already carries the 3:1 (a
+     filled accent button, a selected segment, a switch track). There the
+     edge is SHAPING, not identification, so it steps back rather than
+     shouting. */
+  --control-edge-quiet: var(--border-strong);
+
+  /* ── 4c · MATERIALS ───────────────────────────────────────────────────
+     FOUR roles, matching the four NSVisualEffectView materials this app can
+     plausibly claim: chrome, sidebar, menu, sheet. The design system's own
+     guide limits blur to two places and calls frosted-panels-everywhere "a
+     2021 tell"; that limit is respected — these exist so the places that DO
+     use a material all draw the SAME one instead of three hand-tuned rgba
+     values, which is exactly how the scrim came to have five copies
+     (v3.26.0).
+
+     --mat-sat is the part web approximations usually miss: AppKit's vibrancy
+     pulls COLOUR through the blur. Without the saturate() a backdrop-filter
+     is a grey smear.
+
+     ── HONEST LIMIT, STATED HERE RATHER THAN IMPLIED AWAY ────────────────
+     In this shell the rail and the sidebar are GRID COLUMNS with nothing
+     behind them but the body's own --canvas, so `backdrop-filter` has
+     nothing to sample and contributes no visible blur today. What produces
+     the plane is the ALPHA composite plus the two-line edge. The blur is
+     declared anyway because it costs nothing when there is nothing behind,
+     and it is what makes these tokens correct the day a surface genuinely
+     overlaps content (the menu and the sheet already do).
+
+     ── THE SIDEBAR IS A RECESSED PLANE, AND THE DIRECTION FLIPS BY THEME ──
+     "Recessed" is not "darker". In macOS DARK mode an NSVisualEffectView
+     sidebar reads LIGHTER than the content pane; in LIGHT mode it reads
+     GREYER. Both are "further from the light" — the ramp is what inverts,
+     not the idea. Measured, sidebar plane vs --canvas:
+       BEFORE (both planes at --surface / --canvas)   1.03:1 dark and light
+       AFTER  dark  rgba(21,21,31,0.92)   -> rgb(20,20,30)    1.09:1
+              light rgba(246,246,250,0.90) -> rgb(247,247,250)  1.03:1
+
+     ── AND THE LIGHT THEME GAINS NOTHING, WHICH IS A REAL FINDING RATHER
+        THAN A FAILURE TO TRY ────────────────────────────────────────────
+     The first attempt put light at rgba(230,230,238,0.90) — a 1.18:1 step,
+     a properly grey macOS sidebar. scripts/test-next-domain-dots.js caught
+     it, and it was right: the TYPE TRIAD has almost no headroom on light.
+     Measured against pure #FFFFFF, --concept-600 #5AA038 is 3.22:1 — 0.22
+     above the 1.4.11 floor — and the other two rungs are 3.47 and 3.58. So
+     ANY light plane darker than about #F7F7FA pushes the concept dot under
+     3:1, and at 1.18 it measured 2.64:1. The dots live in the sidebar (the
+     domain list) so they sit on exactly this plane.
+
+     The plane is therefore set to the DARKEST value that keeps every triad
+     rung over the floor, which turns out to be a 1.03:1 step — i.e. the
+     light sidebar's separation is carried ENTIRELY by the two-line edge,
+     and on light the edge's dark outer separator is the stronger of its two
+     lines (1.29:1) which is exactly the theme where that helps.
+     scripts/test-next-design-kit.js §7 asserts the cap by DERIVING it: it
+     checks the shipped plane clears the floor AND that one step darker
+     would not, so the value is pinned to the arithmetic rather than to a
+     number somebody typed.
+
+     THIS IS A CONSTRAINT ON THE PALETTE, NOT ON THE DESIGN. Lifting the
+     light triad — the greens especially — would buy a real light sidebar
+     plane. That is a colour-system change with its own diff and its own
+     approval, and it is recorded here rather than worked around.
+
+     DARK CANNOT GO MUCH FURTHER EITHER, and for an unrelated reason:
+     luminance is compressed at the bottom of the ramp, so the next rung up
+     (--ink-750 #1B1B27, 1.17:1) drops --control-edge on that plane to
+     2.92:1 — under the non-text floor for every bordered control the
+     sidebar holds. 1.09 is where those two constraints meet. */
+  --mat-blur: 24px;
+  --mat-sat:  1.8;
+  --mat-chrome:  rgba(12,12,20,0.72);
+  --mat-sidebar: rgba(21,21,31,0.92);
+  --mat-menu:    rgba(22,22,33,0.80);
+  --mat-sheet:   rgba(16,16,26,0.94);   /* a sheet is nearly opaque; it is a document, not a veil */
+  --mat-scrim:   rgba(3,3,7,0.56);
+
+  /* ── THE ONE BORROWED DEVICE: THE TWO-LINE MATERIAL EDGE ──────────────
+     A pane of material has a LIT INNER LIP and a DARK OUTER SEPARATOR. One
+     line reads as a div border; two read as a plane with thickness. It is
+     the cheapest thing in this file and the single change that most alters
+     whether a panel looks native, and it is the only part of the Liquid
+     Glass language that CSS can render honestly.
+
+     ALWAYS BOTH LINES, and the reason is measured: on DARK the outer
+     separator over --canvas is 1.02:1 (black on near-black is nothing) while
+     the inner lip is 1.32:1 against its own plane; on LIGHT it inverts — the
+     lip is 1.17:1 and the separator is 1.29:1. Ship one line and one theme
+     silently loses its edge entirely. */
+  --mat-edge-hi: rgba(255,255,255,0.10);
+  --mat-edge-lo: rgba(0,0,0,0.45);
+
+  /* Row states INSIDE a material pane are relative overlays, never absolute
+     fills. A fill picked against the canvas inverts on a plane that is
+     lighter than the canvas (which the dark sidebar now is), so a "hover"
+     would read as un-hover. Measured against the sidebar plane: hover
+     1.16:1, active 1.32:1. */
+  --mat-row-hover:  rgba(255,255,255,0.06);
+  --mat-row-active: rgba(255,255,255,0.10);
+
+  /* ── 4d · GLOSS ───────────────────────────────────────────────────────
+     THREE SEPARABLE DEVICES, so a control can take one, two or none:
+       FACE      a <=6% L* top-to-bottom gradient — a surface curving away
+                 from the light, NOT a "gradient button".
+       SPECULAR  a 1px inset top highlight — the lit edge.
+       SHADE     a 1px inset bottom plus a 1px contact shadow — the grounded
+                 edge. Without it the specular reads as a mistake.
+
+     Measured on --accent: face top #8566F6 -> bottom #7656E9, total dL* 5.6,
+     inside the <=6 budget. The specular at 0.22 composites to #997EF7 —
+     1.44:1 against the fill. Compare the LIGHT-theme defect this file fixes
+     (--gloss-specular-quiet's 0.90 landed on a saturated accent measures
+     5.63:1): two orders of visibility apart. A lit edge, not a drawn line.
+
+     WHO GETS GLOSS: filled buttons, a switch's ON track, a selected sidebar
+     pill, a selected segment, the popup button's chevron well.
+     WHO DOES NOT: ghost buttons, tinted buttons (danger, ai), chips, card
+     interiors, text fields. Gloss asserts "this is a raised object"; on
+     anything that is not one it is precisely what makes a kit look cheap.
+     A FIELD IS THE INVERSION — a sunken well — and that inversion is most of
+     what tells a user which control they can type in. */
+  --gloss-face:           linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.05) 100%);
+  --gloss-face-quiet:     linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 55%, rgba(0,0,0,0.03) 100%);
+  --gloss-specular:       inset 0 1px 0 rgba(255,255,255,0.22);
+  --gloss-specular-hi:    inset 0 1px 0 rgba(255,255,255,0.34);   /* hover */
+  --gloss-specular-quiet: inset 0 1px 0 rgba(255,255,255,0.07);
+  --gloss-shade:          inset 0 -1px 0 rgba(0,0,0,0.24);
+  --gloss-contact:        0 1px 1.5px rgba(0,0,0,0.40);
+  --gloss-pressed:        inset 0 1px 3px rgba(0,0,0,0.36), inset 0 0 0 1px rgba(0,0,0,0.10);
+
+  /* The sunken well. Named because it is the FIELD's half of the gloss
+     vocabulary and the kit inlined it as a literal in three places. */
+  --gloss-well:       inset 0 1px 2px rgba(0,0,0,0.18);
+  --gloss-well-quiet: inset 0 1px 2px rgba(0,0,0,0.16);
+
+  /* [KEEP] --inset-hi is NOT redefined. It is correct on DARK (1.09:1
+     against the accent — imperceptible, which is why nobody ever reported
+     it), and redefining a frozen bundle token to fix a LIGHT-theme pairing
+     is what shell.css already refused to do, in writing, for this exact
+     token. --gloss-specular supersedes it for new work. */
+
+  /* ── 4e · ELEVATION ───────────────────────────────────────────────────
+     Every existing shadow token is ONE shadow, and one blurry shadow reads
+     as web. AppKit draws TWO: a tight CONTACT shadow that says "sitting on",
+     and a wide, very soft AMBIENT one that says "above". These compose with
+     rather than replace --shadow-sm/md/lg/pop, which stay for their current
+     consumers — retiring those is a separate change with its own diff. */
+  --elev-1: 0 1px 1.5px rgba(0,0,0,0.40);
+  --elev-2: 0 1px 2px rgba(0,0,0,0.44),  0 6px 16px -6px rgba(0,0,0,0.55);
+  --elev-3: 0 2px 4px rgba(0,0,0,0.48),  0 16px 40px -12px rgba(0,0,0,0.68);
+  --elev-4: 0 4px 8px rgba(0,0,0,0.50),  0 32px 72px -20px rgba(0,0,0,0.76);
+
+  /* ── 4f · FOCUS ───────────────────────────────────────────────────────
+     [CHANGE] --ring-focus was `0 0 0 3px var(--accent-tint-strong)`.
+     rgba(124,90,245,0.24) over --canvas measures 1.26:1 — under the 3:1
+     non-text floor a focus indicator has to clear. The ONE control state
+     that exists to be findable was the hardest thing on the page to find.
+     (On LIGHT it is worse than previously recorded: --accent-tint-strong is
+     0.14 there, not 0.24, so the shipped light ring measures 1.24:1.)
+
+     AppKit's focus ring is a near-solid accent band separated from the
+     control by a keyline of the surrounding surface. Recomputed here: the
+     halo at 0.85 alpha is 3.46:1 on dark and 4.75:1 on light.
+
+     THE 1.5px KEYLINE IS LOAD-BEARING, not decoration: without it the halo
+     touches the control's own edge and the two colours blend into a fat
+     border rather than reading as a ring AROUND something. */
+  --ring-keyline: var(--canvas);
+  --ring-halo:    rgba(124,90,245,0.85);
+  --ring-focus:   0 0 0 1.5px var(--ring-keyline), 0 0 0 4px var(--ring-halo);
+
+  /* ── 4g · DESTRUCTIVE ─────────────────────────────────────────────────
+     The confirm dialog's primary action is destructive AND primary, so it is
+     the one place a FILLED red belongs. --danger #EF5568 cannot carry it:
+     white on it is 3.40:1, failing AA. #D83B50 is 4.51:1.
+
+     --danger ITSELF IS UNCHANGED. It is a BORDER and TEXT colour in the
+     system's tinted danger variant, where 3.40:1 never applied and the
+     4.5 floor is met by --danger-text against the surface. */
+  --danger-fill:   #D83B50;
+
+  /* The tinted variant's hover border, matching --accent-border's shape.
+     It did not exist; the three sites that wanted it each wrote
+     `var(--danger)` at full strength. */
+  --danger-border: rgba(239,85,104,0.42);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   5 · LIGHT
+
+   EVERY themed name above is redefined here. This is not tidiness: `:root`
+   and `[data-theme="light"]` tie on specificity and color.css's light block
+   is declared FIRST, so an omission here means this file's DARK value paints
+   the LIGHT theme. There is deliberately NO prefers-color-scheme query —
+   the shell always stamps data-theme both ways (app.js applyTheme), dark
+   lives at bare :root, and five other /next stylesheets carry the same
+   prohibition.
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-theme="light"] {
+
+  /* --accent-hover on LIGHT is --violet-500 and stays there: white on
+     #7C5AF5 is 4.53:1, which passes. D1 is a DARK-ONLY defect and the fix is
+     scoped to the theme that has it rather than flattened across both.
+     RESTATED RATHER THAN INHERITED, because of the cascade rule above — and
+     the consequence is worth saying out loud: on light the primary fill DOES
+     lighten on hover and on dark it does not, so the two themes differ by
+     one property. That is the honest output of the arithmetic. */
+  --accent-hover:    var(--violet-500);
+  --accent-hover-fg: var(--violet-500);
+
+  --hairline-strong: rgba(16,16,26,0.13);
+
+  /* Again NO NEW HEX — this is --ink-300 — and unlike the dark side it
+     clears the floor in ALL four states:
+       --surface        #FFFFFF   3.70:1
+       --canvas         #FBFBFD   3.58:1
+       --surface-hover  #F5F5F9   3.40:1
+       --surface-active #ECECF2   3.14:1
+     It is visibly heavier than a macOS push button's own edge, which sits
+     nearer 2:1. That is the cost of holding the floor, taken deliberately
+     rather than quietly rounded down. If it reads too strong in situ the
+     correct move is to give the control a FILL that carries the 3:1 itself
+     and drop back to --control-edge-quiet; never to lighten this below the
+     floor. */
+  --control-edge:       var(--ink-300);
+  --control-edge-quiet: var(--border-strong);
+
+  --mat-blur: 24px;
+  --mat-sat:  1.7;
+  --mat-chrome:  rgba(251,251,253,0.72);
+  --mat-sidebar: rgba(246,246,250,0.90);
+  --mat-menu:    rgba(255,255,255,0.80);
+  --mat-sheet:   rgba(255,255,255,0.96);
+  --mat-scrim:   rgba(20,20,31,0.22);
+  --mat-edge-hi: rgba(255,255,255,0.80);
+  --mat-edge-lo: rgba(16,16,26,0.12);
+  --mat-row-hover:  rgba(16,16,26,0.06);
+  --mat-row-active: rgba(16,16,26,0.10);
+
+  /* ── THE PHANTOM LINE, FIXED AT THE PAIRING ───────────────────────────
+     The specular is 0.18, NOT 0.90. Over --accent #6538E0, 0.90 composites
+     to #F0EBFC — 5.63:1 against the fill, i.e. a white line drawn across the
+     top of every primary button, which is the defect shell.css records at
+     length. 0.18 composites to #815CE6: 1.44:1, a lit edge you read as form.
+     Dark's 0.22 lands on the IDENTICAL 1.44:1, which is the whole argument
+     for two values rather than one — the same NUMBER produces wildly
+     different PERCEPTION over different fills.
+
+     --gloss-specular-quiet KEEPS 0.90 here, because on a near-white RAISED
+     SURFACE that is exactly the value the design system authored it for and
+     it is invisible there. Two jobs, two names: that separation IS the fix,
+     and it is why --inset-hi itself is left alone. */
+  --gloss-face:           linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.04) 100%);
+  --gloss-face-quiet:     linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(0,0,0,0.012) 55%, rgba(0,0,0,0.035) 100%);
+  --gloss-specular:       inset 0 1px 0 rgba(255,255,255,0.18);
+  --gloss-specular-hi:    inset 0 1px 0 rgba(255,255,255,0.26);
+  --gloss-specular-quiet: inset 0 1px 0 rgba(255,255,255,0.90);
+  --gloss-shade:          inset 0 -1px 0 rgba(0,0,0,0.10);
+  --gloss-contact:        0 1px 1px rgba(16,16,26,0.13);
+  --gloss-pressed:        inset 0 1px 3px rgba(16,16,26,0.22), inset 0 0 0 1px rgba(16,16,26,0.06);
+  --gloss-well:           inset 0 1px 2px rgba(16,16,26,0.12);
+  --gloss-well-quiet:     inset 0 1px 2px rgba(16,16,26,0.09);
+
+  --elev-1: 0 1px 1px rgba(16,16,26,0.10);
+  --elev-2: 0 1px 2px rgba(16,16,26,0.09), 0 6px 16px -6px rgba(16,16,26,0.14);
+  --elev-3: 0 2px 4px rgba(16,16,26,0.10), 0 16px 40px -12px rgba(16,16,26,0.20);
+  --elev-4: 0 4px 8px rgba(16,16,26,0.10), 0 32px 72px -20px rgba(16,16,26,0.24);
+
+  /* The keyline is --surface here rather than --canvas, because on light a
+     focused control almost always sits on a white card, and the keyline's
+     job is to match what is DIRECTLY under the ring. Halo measures 4.75:1
+     over --canvas and 4.87:1 over --surface. */
+  --ring-keyline: var(--surface);
+  --ring-halo:    rgba(101,56,224,0.85);
+  --ring-focus:   0 0 0 1.5px var(--ring-keyline), 0 0 0 4px var(--ring-halo);
+
+  /* --danger on light is --red-600 #C33345, which already carries white at
+     5.41:1, so light needs no separate fill value. ALIASED rather than
+     duplicated — a second copy of one hex is how a value drifts. */
+  --danger-fill:   var(--danger);
+  --danger-border: rgba(195,51,69,0.28);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   6 · ACCESSIBILITY DEGRADATION
+
+   The materials are the only thing in this file that can disappear under a
+   user setting, and they must degrade to something OPAQUE rather than to
+   something THINNER. This block is what makes it safe to use --mat-* at all.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Chromium maps macOS "Reduce transparency" to prefers-reduced-transparency.
+   Every material collapses to a SOLID tone — and the tone chosen is the one
+   the translucent value composites to over the canvas, so the sidebar's
+   measured 1.09 / 1.18 step against the content SURVIVES the setting rather
+   than flattening back to 1.03. The lit lip stays, because the lip is what
+   still says "this is a separate plane". */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --mat-blur: 0px;
+    --mat-sat:  1;
+    --mat-chrome:  #0D0D16;
+    --mat-sidebar: #14141E;
+    --mat-menu:    var(--surface-overlay);
+    --mat-sheet:   var(--surface-overlay);
+    --mat-scrim:   rgba(3,3,7,0.82);
+  }
+  [data-theme="light"] {
+    --mat-blur: 0px;
+    --mat-sat:  1;
+    --mat-chrome:  #FAFAFC;
+    --mat-sidebar: #F7F7FA;
+    --mat-menu:    var(--surface-overlay);
+    --mat-sheet:   var(--surface-overlay);
+    --mat-scrim:   rgba(20,20,31,0.40);
+  }
+}
+
+/* macOS "Increase contrast". Under it the gloss gradients go flat and the
+   edges harden — the same trade AppKit makes. Gloss is a luxury; a findable
+   edge is not. The focus halo goes SOLID accent (4.41:1 dark / 6.36:1 light
+   against --canvas), which is strictly stronger than the 0.85 composite. */
+@media (prefers-contrast: more) {
+  :root {
+    --gloss-face: none;
+    --gloss-face-quiet: none;
+    --gloss-specular: none;
+    --gloss-specular-hi: none;
+    --gloss-specular-quiet: none;
+    --gloss-shade: none;
+    --control-edge: var(--text-3);          /* #8F8FA5 — 5.98:1 vs --surface-raised */
+    --control-edge-quiet: var(--text-3);
+    --hairline-strong: rgba(255,255,255,0.24);
+    --ring-halo: var(--accent);
+  }
+  [data-theme="light"] {
+    --control-edge: var(--text-2);          /* #45455A — 9.33:1 vs #FFFFFF */
+    --control-edge-quiet: var(--text-2);
+    --hairline-strong: rgba(16,16,26,0.32);
+    --ring-halo: var(--accent);
+  }
+}
+
+/* The 0.5px hairline. Declared LAST of the shape block's concerns so it is
+   read beside the media query that is its whole point. */
+@media (min-resolution: 2dppx) {
+  :root { --hairline-w: 0.5px; }
+}

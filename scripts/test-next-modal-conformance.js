@@ -352,13 +352,34 @@ section('§3  RADIUS — "Modals 14px", stated three ways in the bundle');
 // border-radius: 14px explicitly. The composer was right and the modals
 // were wrong; both can be true.
 
-// The four CENTERED dialogs must be at --radius-xl.
-const CENTERED = ['cfd-card', 'sbw-card', 'mcpw-card', 'chat-browse'];
+/* ── THE FOUR SPLIT INTO TWO CENTRED DIALOGS AND TWO SHEETS ───────────────
+   `.sbw-card` and `.mcpw-card` were centred dialogs when this list was
+   written. The design pass moved both to SHEETS — app-modal FLOWS (several
+   steps, a form, work being committed to) come down from under the window's
+   own title bar on macOS, while a centred box is what an ALERT looks like.
+   The confirm dialog is an alert and stays one; `.chat-browse` is a picker
+   and stays one.
+
+   The assertions below are SPLIT rather than relaxed. Both shapes are still
+   fully graded — the sheets simply have a different correct answer for three
+   properties (radius, surface, shadow), and each of those is asserted, with
+   the alert's own answers left exactly as they were. A single list with the
+   sheets deleted from it would have been the relaxation; this is not that. */
+const CENTERED = ['cfd-card', 'chat-browse'];
+const SHEETS = ['sbw-card', 'mcpw-card'];
 for (const cls of CENTERED) {
   ok(declares(cls, 'border-radius', /var\(\s*--radius-xl\s*\)/),
     `.${cls} is at --radius-xl (14px)`);
   ok(!declares(cls, 'border-radius', /var\(\s*--radius-lg\s*\)/),
     `…and no longer at --radius-lg (10px), the CARD radius it used to carry`);
+}
+// A sheet is CONTINUOUS with the chrome it came from, so it rounds its
+// BOTTOM corners only and squares the two that meet the top of the window.
+for (const cls of SHEETS) {
+  ok(declares(cls, 'border-radius', /0\s+0\s+var\(\s*--radius-xl\s*\)\s+var\(\s*--radius-xl\s*\)/),
+    `.${cls} rounds its BOTTOM corners at --radius-xl and squares the top two — it hangs from the chrome`);
+  ok(declares(cls, 'margin', /0\s+auto/) && !declares(cls, 'margin', /^\s*auto\s*;?\s*$/),
+    `…and is horizontally centred but TOP-ANCHORED (margin: 0 auto, not auto)`);
 }
 
 // THE DRAWER IS DELIBERATELY EXCLUDED, and this asserts the exclusion so a
@@ -420,6 +441,15 @@ section('§5  SHADOW — a modal floats, and the token carries the theme');
 // DARK shadow rendered verbatim in the light theme, the same class of
 // defect as v3.25.0's Sync rail badge. shape.css defines a real light
 // value for --shadow-lg and --shadow-pop; a literal cannot have one.
+// A SHEET floats on --elev-4, the material layer's own top rung, and carries
+// the two-line material edge instead of a border (graded in
+// test-next-design-kit.js §9, which owns that device's scope rule).
+for (const cls of SHEETS) {
+  ok(declares(cls, 'box-shadow', /var\(\s*--elev-4\s*\)/),
+    `.${cls} floats on --elev-4, the sheet rung of the elevation scale`);
+  ok(!declares(cls, 'box-shadow', /rgba?\(/),
+    `…and on no hardcoded rgba shadow, which would render its dark value in light theme`);
+}
 for (const cls of CENTERED) {
   ok(declares(cls, 'box-shadow', /var\(\s*--shadow-(lg|pop)\s*\)/),
     `.${cls} floats on a shadow TOKEN (--shadow-lg or --shadow-pop), so it themes`);
@@ -448,6 +478,23 @@ section('§6  SURFACE — a modal must be readable in LIGHT, where elevation is 
 // problem: in light it is #FFFFFF against a #FBFBFD canvas. But the margin
 // is 1.02:1, so the separation is genuinely carried by the BORDER and the
 // SCRIM, and both are asserted rather than assumed.
+/* THE SHEETS ARE GRADED HERE TOO, ON THEIR OWN ANSWER, so splitting the list
+   above did not quietly drop them out of this section. `--mat-sheet` is
+   rgba(255,255,255,0.96) in light against a #FBFBFD canvas — an even THINNER
+   margin than --surface-overlay's 1.02:1 — so the separation has to be
+   carried by something else, and for a sheet that is the two-line material
+   edge plus the scrim, both asserted. A sheet declaring the material without
+   the backdrop-filter would be a flat fill wearing a material's name. */
+for (const cls of SHEETS) {
+  ok(declares(cls, 'background', /var\(\s*--mat-sheet\s*\)/),
+    `.${cls} is on the --mat-sheet material`);
+  ok(declares(cls, 'backdrop-filter', /blur\(var\(--mat-blur\)\)\s*saturate\(var\(--mat-sat\)\)/),
+    `…with the blur and saturate that make it a plane rather than a flat fill`);
+  ok(declares(cls, 'box-shadow', /--mat-edge-hi/) && declares(cls, 'box-shadow', /--mat-edge-lo/),
+    `…and BOTH material edge lines, which is what separates it in light where the fill cannot`);
+  ok(declares(cls, 'border', /none/),
+    `…and no 1px border, because the two-line edge is the boundary and drawing both is a groove`);
+}
 for (const cls of CENTERED) {
   ok(declares(cls, 'background', /var\(\s*--surface-overlay\s*\)/),
     `.${cls} is on --surface-overlay`);

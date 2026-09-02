@@ -439,7 +439,15 @@ for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
 // Every var() resolves. An undefined one is invisible until someone reads the
 // rendered page — which is exactly how --text-dim shipped.
 {
-  const tokenCss = ['color', 'space', 'shape', 'typography', 'motion']
+  // `base` and `material` JOIN THIS LIST, and the omission was not cosmetic:
+  // tokens/material.css is where the whole material/gloss/elevation family is
+  // declared (--mat-row-*, --elev-*, --hairline*, --hit-min, --numeric-
+  // tabular), so a view adopting any of them was reported as referencing an
+  // undefined token. The list is what this assertion asserts, and it was
+  // silently short — the same shape the design-kit suite records for its own
+  // file list. Enumerated rather than globbed so ADDING a token file is a
+  // deliberate edit here too.
+  const tokenCss = ['base', 'color', 'space', 'shape', 'typography', 'motion', 'material']
     .map((n) => read('tokens/' + n + '.css')).join('\n');
   const shell = read('shell.css');
   for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {

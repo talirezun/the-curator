@@ -1828,6 +1828,169 @@ const CHAT_CSS = 'src/public/next/views/chat.css';
     `views/chat.css: ${(frozenByFile.get(CHAT_CSS) || []).length}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+section('11. tokens/material.css defines every THEMED name in BOTH themes');
+// ─────────────────────────────────────────────────────────────────────────
+// WHY THIS IS A CORRECTNESS CHECK AND NOT A STYLE ONE. `:root` and
+// `[data-theme="light"]` BOTH have specificity (0,1,0), so the LATER
+// declaration wins outright. tokens/color.css's light block is declared
+// BEFORE tokens/material.css, so a themed name that material.css defines at
+// bare `:root` and does NOT restate under `[data-theme="light"]` paints its
+// DARK value onto the LIGHT theme — silently, with the page still rendering,
+// which is the whole class of defect this suite exists for.
+//
+// Sections 1-10 above cannot see it: extractDefinitions() is a flat scan and
+// treats a definition ANYWHERE in the cascade as "defined", which is exactly
+// right for the undefined-reference question and exactly wrong for this one.
+// So this section parses the two blocks SEPARATELY.
+{
+  const materialRel = 'src/public/next/tokens/material.css';
+  const materialRaw = readFileSync(path.join(ROOT, materialRel), 'utf8');
+  // cleanCss() first, and that is load-bearing: material.css's own prose
+  // contains the literal string `[data-theme="light"]` (it explains this very
+  // rule), so a bare indexOf on the raw text finds the wrong block.
+  const materialClean = cleanCss(materialRaw);
+
+  // @media blocks are degradations (reduced transparency, increased contrast,
+  // 2dppx) and are excluded — they redefine a handful of names on purpose and
+  // grading them here would report the fallback as a parity failure.
+  function dropAtRules(css) {
+    let out = '', i = 0;
+    while (i < css.length) {
+      const at = css.indexOf('@media', i);
+      if (at < 0) { out += css.slice(i); break; }
+      out += css.slice(i, at);
+      let j = css.indexOf('{', at);
+      if (j < 0) break;
+      let depth = 1; j++;
+      while (j < css.length && depth > 0) {
+        if (css[j] === '{') depth++;
+        else if (css[j] === '}') depth--;
+        j++;
+      }
+      i = j;
+    }
+    return out;
+  }
+  const body = dropAtRules(materialClean);
+  const lightAt = body.indexOf('[data-theme=');
+  ok(lightAt > 0, 'material.css has a real [data-theme="light"] block (not just a mention inside a comment)');
+  ok(materialRaw.indexOf('[data-theme="light"]') < lightAt,
+    'anti-vacuity: the RAW file mentions that selector in prose EARLIER than the real block — a check that skipped cleanCss() would read the wrong table');
+  ok(!/prefers-color-scheme/.test(materialClean),
+    'and there is no prefers-color-scheme query — the shell always stamps data-theme, dark lives at bare :root, and five other /next stylesheets carry the same prohibition');
+
+  const decls = (src) => {
+    const m = new Map();
+    for (const d of src.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) m.set(d[1], d[2].trim());
+    return m;
+  };
+  const darkDecls = decls(body.slice(0, lightAt));
+  const lightDecls = decls(body.slice(lightAt));
+
+  // "Themed" = anything whose VALUE is a colour, a gradient or a shadow, or
+  // an alias into a colour family. Geometry (--radius-control, --switch-w),
+  // motion (--ease-emphasized, --dur-view) and type (--text-section) are
+  // theme-invariant by design and must NOT be restated.
+  //
+  // TWO REFINEMENTS THE FIRST DRAFT NEEDED, AND BOTH ARE THE SAME MISTAKE:
+  // classifying by the SHAPE of a value rather than by what it composes to.
+  //   · --ring-focus's value is `0 0 0 1.5px var(--ring-keyline), …` — no
+  //     colour in sight, yet both of the names it reads ARE themed, so it is.
+  //     Any value that reads a themed name is itself themed.
+  //   · --mat-blur (24px) and --mat-sat (1.8 / 1.7) are bare numbers and are
+  //     STILL theme-varying: the light material is less saturated, because
+  //     the vibrancy boost that reads as "Mac material" over a dark backdrop
+  //     reads as a colour cast over a near-white one. They are named
+  //     explicitly rather than pattern-matched, because there is no shape a
+  //     scanner could read that distinguishes them from a radius.
+  const THEMED_BY_NAME = new Set(['--mat-blur', '--mat-sat']);
+  //   · a COMPOSED TYPE ROLE (--type-lead, --type-section) is a `font`
+  //     shorthand naming --text-*, and `text` is in the colour-family list
+  //     below, so it read as themed. A value that names a FONT FAMILY is a
+  //     type composite and never a colour, which is the cheapest true
+  //     discriminator and does not need a third by-name list.
+  const isTypeRole = (v) => /var\(--font-(sans|mono)\)/.test(v);
+  const isThemed = (v, name) =>
+    THEMED_BY_NAME.has(name) ||
+    (!isTypeRole(v) &&
+    (/#[0-9a-f]{3,8}\b|rgba?\(|linear-gradient|\binset\b/i.test(v) ||
+    /var\(--(violet|ink|red|teal|entity|concept|summary|accent|text|surface|canvas|border|danger|hairline|ring|mat|gloss|elev|control-edge)/.test(v)));
+
+  const themed = [...darkDecls.keys()].filter((k) => isThemed(darkDecls.get(k), k));
+  const invariant = [...darkDecls.keys()].filter((k) => !isThemed(darkDecls.get(k), k));
+  const missing = themed.filter((k) => !lightDecls.has(k));
+  const strayInvariant = invariant.filter((k) => lightDecls.has(k));
+
+  ok(themed.length >= 25, `${themed.length} themed names are declared at :root in material.css`);
+  ok(invariant.length >= 10, `and ${invariant.length} theme-invariant ones (geometry, motion, type) that must NOT be restated`);
+  ok(missing.length === 0,
+    missing.length === 0
+      ? 'every themed name is RESTATED under [data-theme="light"] — none can leak its dark value into the light theme'
+      : 'themed names whose DARK value would paint the LIGHT theme: ' + missing.join(', '));
+  ok(strayInvariant.length === 0,
+    strayInvariant.length === 0
+      ? 'and no theme-invariant name is restated for no reason'
+      : 'invariant names needlessly duplicated in the light block: ' + strayInvariant.join(', '));
+
+  // Anti-vacuity, both directions: the classifier must be able to sort a real
+  // pair, and the parity check must be able to report a real miss.
+  ok(isThemed('rgba(0,0,0,0.24)', '--x') && isThemed('var(--ink-400)', '--x')
+     && isThemed('inset 0 1px 0 rgba(255,255,255,0.22)', '--x')
+     && isThemed('0 0 0 4px var(--ring-halo)', '--x'),
+    'anti-vacuity: the classifier calls an rgba, an ink alias, an inset shadow and a shadow READING a themed name all THEMED');
+  ok(!isThemed('7px', '--radius-control') && !isThemed('cubic-bezier(0.32, 0.72, 0, 1)', '--ease-emphasized')
+     && !isThemed('160ms', '--dur-popover')
+     && !isThemed('var(--weight-regular) var(--text-lead)/var(--leading-normal) var(--font-sans)', '--type-lead'),
+    'anti-vacuity: and calls a radius, a curve, a duration and a composed TYPE ROLE invariant — the last one names --text-*, so a colour-family scan alone would have called it themed');
+  ok(isThemed('24px', '--mat-blur') && !isThemed('24px', '--radius-window'),
+    'anti-vacuity: the same VALUE is themed under one name and not under another — proving the by-name list is consulted rather than decorative');
+  {
+    const fakeLight = new Map(lightDecls);
+    const victim = themed[0];
+    fakeLight.delete(victim);
+    ok(themed.filter((k) => !fakeLight.has(k)).length === 1,
+      `anti-vacuity: deleting one themed name from the light block IS reported (${victim})`);
+  }
+
+  // The three redefinitions are deliberate defect fixes and each must be
+  // present in BOTH blocks — a one-sided --ring-focus is the sharpest form of
+  // this bug, because the light theme would then carry the DARK keyline.
+  for (const n of ['--accent-hover', '--ring-focus', '--danger-fill']) {
+    ok(darkDecls.has(n) && lightDecls.has(n),
+      `${n} — a deliberate redefinition — is declared in both blocks`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('12. material.css is LINKED, and linked AFTER the files it corrects');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  // Section 9 already fails an unreachable stylesheet. This is the ORDER,
+  // which section 9 cannot see and which the parity rule above depends on:
+  // material.css redefines names color.css and shape.css also declare, and a
+  // redefinition that loads FIRST is simply overwritten.
+  const order = nextLocalCssFiles.map(nextHrefToRel);
+  const iMaterial = order.indexOf('tokens/material.css');
+  const iColor = order.indexOf('tokens/color.css');
+  const iShape = order.indexOf('tokens/shape.css');
+  const iShell = order.indexOf('shell.css');
+  ok(iMaterial >= 0, 'tokens/material.css is <link>ed from next/index.html');
+  ok(iColor >= 0 && iMaterial > iColor,
+    `and AFTER tokens/color.css (${iColor} -> ${iMaterial}) — it redefines --accent-hover, which color.css declares in both themes`);
+  ok(iShape >= 0 && iMaterial > iShape,
+    `and AFTER tokens/shape.css (${iShape} -> ${iMaterial}) — it redefines --ring-focus, which shape.css declares`);
+  ok(iShell >= 0 && iMaterial < iShell,
+    `and BEFORE shell.css (${iMaterial} -> ${iShell}) — the shell CONSUMES these names, so a token file after it would be a token file the shell cannot read at parse time`);
+
+  const iSwitch = order.indexOf('shared/switch.css');
+  ok(iSwitch >= 0 && iSwitch > iShell,
+    `shared/switch.css is linked (${iSwitch}) and after the shell, matching the four components already layered there`);
+  // Anti-vacuity: the ordering comparator must be able to see a violation.
+  ok(!(order.indexOf('tokens/base.css') > iShell),
+    'anti-vacuity: the same comparator reports tokens/base.css as EARLIER than the shell, so it is reading real positions rather than always answering yes');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

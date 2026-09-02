@@ -673,8 +673,15 @@ section('§8 — The strip answers the other three questions, and only when true
   ok('two tools sharing one handoff file is stated, loudly',
     /mem-save-line-loud/.test(collide) && /Two tools are writing/.test(collide), collide.slice(0, 1400));
   ok('...naming both tools', /claude-code and opencode/.test(collide));
-  ok('...and rendering the scope as a slug, the way every other slug on this screen reads',
-    /Two tools are writing <span class="mono">main<\/span>/.test(collide), collide.slice(0, 900));
+  // The class moved `mono` -> `mem-name` in the design pass, and the PROPERTY
+  // this asserts is unchanged: the scope is still marked up as a distinct
+  // token inside the sentence, still the way every other scope and machine
+  // name on this screen reads. What moved is HOW it is marked — colour and
+  // weight rather than a change of face mid-line — because those other slugs
+  // moved off the monospace face in the same pass. An assertion pinning
+  // `mono` here would now be pinning the ONE site that did not move.
+  ok('...and rendering the scope as a name, the way every other scope and machine on this screen reads',
+    /Two tools are writing <span class="mem-name">main<\/span>/.test(collide), collide.slice(0, 900));
   ok('...and naming the remedy, which is the user\'s to apply',
     /own scope/.test(collide));
   ok('CONTROL: no sharing, no line',

@@ -6,7 +6,12 @@
    "put every rule specific to your view's markup" in its own file) so a
    future edit to settings.css can never silently break sync.js. */
 
-.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+/* 26 -> --control-sm (28px). macOS's DEFAULT control target, and the change
+   settings.css's own copy of this rule already took in the design pass — all
+   four copies have to move together or the app has two sizes of small button
+   depending on which view you are looking at. Its BOX grew; the type and the
+   glyphs inside it did not. */
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 .theme-segmented {
   display: inline-flex;
@@ -22,7 +27,9 @@
   padding: 0 14px;
   border-radius: 5px;
   border: none;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-family: inherit;
   font-size: 12.5px;
   font-weight: var(--weight-medium);
@@ -94,6 +101,23 @@
      that row's marker rather than as the faintest thing on the screen. */
   background: var(--text-3);
 }
+/* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
+   The two setup INPUTS (a repo URL and a personal access token) and the
+   `<code class="sync-repo">` readout, because those are LITERALS a user
+   pastes or copies and character-level legibility is the whole point of the
+   face there.
+
+   Everything else lost it: a domain name, a changed-file list, a sync
+   timestamp, a pending count and the Shared Brain meta line are the app
+   REPORTING facts, and a whole panel of facts set in IBM Plex Mono is what
+   made this screen read as terminal output. The figures keep the one thing
+   the code face was actually buying — tabular digits, so a count and a
+   timestamp do not reflow the words beside them as they change. */
+.sync-last,
+.sync-pending-note,
+.sync-sb-meta,
+.sync-decision-files { font-variant-numeric: var(--numeric-tabular); }
+
 .sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* .sync-domain-state and .sync-domain-footnote styled a per-domain state
    column that could only ever render "—" (no endpoint exposes per-domain
@@ -291,7 +315,9 @@
   padding: 0;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
 }

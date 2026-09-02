@@ -14,14 +14,27 @@
    definition in the /next token universe (a hex fallback does NOT count).
    ══════════════════════════════════════════════════════════════════════ */
 
+/* ── A SHEET, FOR THE SAME REASON THE SHARED BRAIN WIZARD IS ONE ──────────
+   Three steps, a config file to paste, a verification round trip: an
+   app-modal FLOW, which on macOS comes down from under the window's own
+   title bar rather than floating in the middle of the screen. The full
+   argument, and the reason the top corners and the top border go, is written
+   once at `.sbw-scrim` in views/shared.css — this is the same treatment on
+   the same tokens, deliberately not re-argued.
+
+   `curator-sheet-in` is declared in tokens/motion.css, where every other
+   `curator-*` keyframe lives. It spent one pass in views/shared.css — a
+   stated compromise, because that pass did not own the token layer — and
+   moved here at the release merge exactly as that note said it should; both
+   references are by name and neither had to change. */
 .mcpw-scrim {
   position: fixed;
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 24px;
+  padding: 0 24px 24px;
   overflow-y: auto;
   /* The ONE scrim (shell.css). Was an inline rgba pair whose light half
      read 0.5; see shell.css for why the inlining existed and why it is
@@ -35,13 +48,21 @@
   width: min(660px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border);
-  /* "Modals 14px" — see views/shared.css's .cfd-card note. */
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  background: var(--mat-sheet);
+  -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  border: none;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  box-shadow:
+    inset 0 -1px 0 var(--mat-edge-lo), inset 0 -2px 0 var(--mat-edge-hi),
+    inset 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-lo),
+    var(--elev-4);
   padding: 26px 28px 24px;
-  margin: auto;
+  margin: 0 auto;
+  animation: curator-sheet-in var(--dur-sheet-in) var(--ease-emphasized);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mcpw-card { animation: none; }
 }
 
 /* The generic hide rule. Found in browser verification, not by reading:
@@ -74,11 +95,15 @@
      dark / 4.14 light — clears 3:1 with room, and the dim resting state is what
      the :hover step below is built on. */
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.mcpw-close:hover { background: var(--surface-hover); color: var(--text); }
-.mcpw-close:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+/* On the SHEET material, so the hover composites onto the plane rather than
+   replacing it — an opaque fill would stop the blur under the button. */
+.mcpw-close:hover { background: var(--mat-row-hover); color: var(--text); }
+.mcpw-close:active { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 
 /* ── Reduced motion: press ────────────────────────────────────────────────
    Travel off, colour step kept. The panel's own entrance already has its
@@ -214,7 +239,9 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-inset);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .mcpw-choice.mcpw-hidden { display: none; }
 .mcpw-choice:hover { border-color: var(--border-strong); }
@@ -359,7 +386,7 @@
 .mcpw-result-steps li { margin-bottom: 4px; }
 
 .mcpw-stderr { margin-top: 10px; font-size: var(--text-xs); }
-.mcpw-stderr summary { cursor: pointer; color: var(--text-2); }
+.mcpw-stderr summary { cursor: default; user-select: none; -webkit-user-select: none; color: var(--text-2); }
 .mcpw-stderr pre {
   margin: 8px 0 0;
   max-height: 160px;

@@ -89,13 +89,14 @@ function folderOfPath(p) {
   return (seg === 'entities' || seg === 'concepts' || seg === 'summaries') ? seg : null;
 }
 
-function typeDotStyle(folder) {
-  if (folder === 'entities') return 'background:var(--type-entity)';
-  if (folder === 'concepts') return 'background:var(--type-concept)';
-  if (folder === 'summaries') return 'background:var(--type-summary)';
-  return 'background:var(--border-strong)';
-}
-
+/* ── THE CITATION DOT'S COLOUR IS A CLASS, NOT AN INLINE STYLE ────────────
+   This was `style="background:var(--type-entity)"`. An inline style is
+   unreachable by every stylesheet and by every [data-theme] block — which is
+   precisely the defect views/domains.css records for its own six row dots,
+   where the DARK values were painted in LIGHT too because nothing could
+   override them. views/chat.css's light block darkens these three dots to
+   clear WCAG 1.4.11's 3:1 floor, and it can only do that if the colour is
+   carried by `.chat-chip-*` rather than stamped on the element. */
 function typeChipClass(folder) {
   if (folder === 'entities') return 'chat-chip-entity';
   if (folder === 'concepts') return 'chat-chip-concept';
@@ -1550,24 +1551,24 @@ function buildCompileOutcomeHtml(title, changes, warnings) {
       const sections = Array.isArray(c.sectionsChanged) && c.sectionsChanged.length
         ? ' in ' + c.sectionsChanged.map(escapeHtml).join(', ')
         : '';
-      detail = '<span class="chat-compile-change-detail">+<span class="mono">' + c.bulletsAdded + '</span> bullet' + (c.bulletsAdded === 1 ? '' : 's') + sections + '</span>';
+      detail = '<span class="chat-compile-change-detail">+<span class="chat-num">' + c.bulletsAdded + '</span> bullet' + (c.bulletsAdded === 1 ? '' : 's') + sections + '</span>';
     } else if (c.status === 'created') {
-      detail = '<span class="chat-compile-change-detail mono">' + formatBytesChat(c.bytesAfter) + '</span>';
+      detail = '<span class="chat-compile-change-detail">' + formatBytesChat(c.bytesAfter) + '</span>';
     } else if (c.status === 'updated') {
-      detail = '<span class="chat-compile-change-detail mono">' + formatBytesChat(c.bytesBefore) + ' → ' + formatBytesChat(c.bytesAfter) + '</span>';
+      detail = '<span class="chat-compile-change-detail">' + formatBytesChat(c.bytesBefore) + ' → ' + formatBytesChat(c.bytesAfter) + '</span>';
     }
-    return '<li><span class="chat-compile-change-path mono">' + escapeHtml(c.canonPath || '') + '</span>' + detail + '</li>';
+    return '<li><span class="chat-compile-change-path">' + escapeHtml(c.canonPath || '') + '</span>' + detail + '</li>';
   };
 
   const createdBlock = created.length ? (
     '<div class="chat-compile-change-section chat-compile-change-created">' +
-      '<div class="chat-compile-change-header">' + icon('plus', 13) + ' <span class="mono">' + created.length + '</span> new ' + (created.length === 1 ? 'page' : 'pages') + '</div>' +
+      '<div class="chat-compile-change-header">' + icon('plus', 13) + ' <span class="chat-num">' + created.length + '</span> new ' + (created.length === 1 ? 'page' : 'pages') + '</div>' +
       '<ul class="chat-compile-change-list">' + created.map(formatRecord).join('') + '</ul>' +
     '</div>'
   ) : '';
   const updatedBlock = updated.length ? (
     '<div class="chat-compile-change-section chat-compile-change-updated">' +
-      '<div class="chat-compile-change-header">' + icon('activity', 13) + ' <span class="mono">' + updated.length + '</span> ' + (updated.length === 1 ? 'page' : 'pages') + ' updated</div>' +
+      '<div class="chat-compile-change-header">' + icon('activity', 13) + ' <span class="chat-num">' + updated.length + '</span> ' + (updated.length === 1 ? 'page' : 'pages') + ' updated</div>' +
       '<ul class="chat-compile-change-list">' + updated.map(formatRecord).join('') + '</ul>' +
     '</div>'
   ) : '';
@@ -1575,7 +1576,7 @@ function buildCompileOutcomeHtml(title, changes, warnings) {
     ? '<div class="chat-compile-change-empty">No pages were written.</div>'
     : '';
   const unchangedNote = unchanged.length
-    ? '<div class="chat-compile-change-unchanged mono">' + unchanged.length + ' page' + (unchanged.length === 1 ? '' : 's') + ' already up to date</div>'
+    ? '<div class="chat-compile-change-unchanged">' + unchanged.length + ' page' + (unchanged.length === 1 ? '' : 's') + ' already up to date</div>'
     : '';
 
   const warningsHtml = (Array.isArray(warnings) && warnings.length)
@@ -2192,12 +2193,23 @@ function conversationRowHtml(c) {
       // under the pointer cannot be reached by keyboard at all (the sibling
       // delete button's `display:none` until :hover has exactly that
       // problem), and multi-select is unusable if you cannot find the way in.
-      '<input type="checkbox" class="cur-check cur-check-sm chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
-        (selected ? ' checked' : '') +
-        ' aria-label="Select ' + escapeHtml(title) + '">' +
+      // WRAPPED IN A LABEL PURELY TO GIVE THE 13x13 INPUT A REAL TARGET.
+      // `.cur-check` is an <input>, and Chrome renders no ::before or ::after
+      // on a replaced element — so the sanctioned "keep the glyph, grow the
+      // target with a transparent ::before" technique cannot reach it and
+      // shared/checkbox.css records that. A wrapping <label> is the only
+      // thing that can: clicking anywhere in it toggles the input and fires
+      // the same `change` the handler below already listens for. The label
+      // is a SIBLING of .chat-conv-row-main, exactly as the bare input was,
+      // so it still never passes through the row's own select handler.
+      '<label class="chat-conv-check-hit">' +
+        '<input type="checkbox" class="cur-check cur-check-sm chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
+          (selected ? ' checked' : '') +
+          ' aria-label="Select ' + escapeHtml(title) + '">' +
+      '</label>' +
       '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
         '<div class="chat-conv-title">' + escapeHtml(title) + '</div>' +
-        '<div class="chat-conv-meta mono">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) + '</div>' +
+        '<div class="chat-conv-meta">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) + '</div>' +
       '</div>' +
       '<button class="chat-conv-delete" data-conv-delete="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title || '') + '" title="Delete conversation" aria-label="Delete conversation">' +
         icon('trash', 13) +
@@ -2246,7 +2258,7 @@ function bulkBarHtml() {
     '<div class="chat-bulk-bar">' +
       '<label class="chat-bulk-all">' +
         '<input type="checkbox" class="cur-check cur-check-sm" id="chat-bulk-all"' + (allChecked ? ' checked' : '') + ' aria-label="Select all conversations">' +
-        '<span class="mono">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
+        '<span class="chat-num">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
       '</label>' +
       (n > 0
         ? '<button type="button" class="chat-bulk-link" id="chat-bulk-clear">Clear</button>' +
@@ -2512,7 +2524,7 @@ function renderMain(token) {
         '<div class="chat-scope-pills">' + scopePills + '</div>' +
         '<div class="chat-scope-spacer"></div>' +
         renderCompileButtonHtml() +
-        '<span class="chat-scope-count mono">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
+        '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
       '</div>' +
       '<div class="chat-thread" id="chat-thread"></div>' +
       renderComposerHtml(active) +
@@ -2638,7 +2650,7 @@ function renderComposerHtml(active) {
           // exactly one code path that ever builds these two controls.
           '<div class="chat-composer-pickers" id="chat-composer-pickers"></div>' +
           '<div class="chat-composer-spacer"></div>' +
-          '<span class="chat-cost-hint mono">cost varies with response length</span>' +
+          '<span class="chat-cost-hint">cost varies with response length</span>' +
           composerPrimaryButtonHtml(state.sending) +
         '</div>' +
       '</div>' +
@@ -4543,7 +4555,7 @@ function renderModelRowBodyHtml(provider, entry, opts) {
       badges.join('') +
     '</span>' +
     '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
-    '<span class="chat-mm-price mono">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
+    '<span class="chat-mm-price">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
     (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
     (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '')
   );
@@ -5010,7 +5022,7 @@ function renderBrowseBodyHtml() {
     ? all.length + ' models'
     : rows.length + ' of ' + all.length + ' models';
 
-  return '<div class="chat-browse-count mono" role="status">' + escapeHtml(count) + '</div>' + body;
+  return '<div class="chat-browse-count" role="status">' + escapeHtml(count) + '</div>' + body;
 }
 
 function renderBrowseFiltersHtml() {
@@ -5587,8 +5599,9 @@ function renderThreadOnly(token, opts) {
     const chips = citations.map(c => {
       const folder = folderOfPath(c);
       return (
-        '<button class="chat-cite-chip ' + typeChipClass(folder) + '" data-cite="' + escapeHtml(c) + '">' +
-          '<span class="chat-type-dot" style="' + typeDotStyle(folder) + '"></span>' + escapeHtml(c) +
+        '<button class="chat-cite-chip ' + typeChipClass(folder) + '" data-cite="' + escapeHtml(c) + '"' +
+          ' title="' + escapeHtml(c) + '">' +
+          '<span class="chat-type-dot"></span><span>' + escapeHtml(c) + '</span>' +
         '</button>'
       );
     }).join('');

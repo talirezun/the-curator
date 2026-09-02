@@ -366,19 +366,68 @@ for (const [file, cls] of named) {
 // §2 — Defect 1: the phantom line, suppressed in light, KEPT on dark
 // ─────────────────────────────────────────────────────────────────────────
 
-section('§2 — .btn-primary: --inset-hi kept on dark, suppressed in light');
+/* THESE TWO ASSERTIONS WERE INVERTED BY THE MATERIAL PASS, AND THE REASON
+   MATTERS MORE THAN THE DIFF.
+
+   What they used to pin was the ONLY fix available at the time: `--inset-hi`
+   kept on dark (where compositing white-at-0.05 over --accent reads 1.05:1,
+   i.e. nothing), and `box-shadow: none` in light (where white-at-0.90 over the
+   same fill reads 4.00:1 — the reported phantom line). That second half is a
+   THEME-SCOPED DELETION: light's primary button was given no top edge at all,
+   because the only value available to it was wrong for that surface.
+
+   The material pass supplies a second value. --gloss-specular is 0.22 on dark
+   and 0.18 on light, and both composite to the IDENTICAL 1.44:1 against their
+   own fill — tuned to equal PERCEIVED lift rather than equal alpha, which is
+   the whole argument for two values under one name. So light now gets the same
+   lit edge dark gets rather than getting nothing, and the suppression must be
+   GONE. Asserting `box-shadow: none` still present would now be asserting the
+   defect: a light primary button flat against its own hover state.
+
+   `--inset-hi` itself is still not redefined, and tokens/shape.css is still
+   asserted byte-identical below — the original finding stands that the token
+   was correct for the raised light surfaces it was authored for and the bug
+   was the PAIRING. The pairing is what changed. */
+section('§2 — .btn-primary: the gloss trio, and the light-theme suppression retired');
 
 const primaryRules = rulesFor('btn-primary', 'shell.css');
 const primaryBase = primaryRules.find(r => /^\.btn-primary$/.test(r.selector));
 ok(!!primaryBase, '.btn-primary base rule exists in shell.css');
-ok(!!primaryBase && /box-shadow\s*:\s*var\(--inset-hi\)/.test(primaryBase.body),
-  'dark keeps the design system\'s inset highlight (box-shadow: var(--inset-hi))');
+
+/* The three devices are asserted SEPARATELY rather than as one string match,
+   because they are separable by design — the specular is the lit top edge, the
+   shade is the body gradient's dark foot, the contact is the 1px shadow that
+   seats the button on its surface — and losing any one of them is a distinct
+   visual regression that a whole-declaration regex would report as the same
+   failure. */
+const primaryShadow = primaryBase ? (/box-shadow\s*:\s*([^;}]+)/.exec(primaryBase.body) || [])[1] : null;
+ok(primaryShadow !== null, `.btn-primary declares a box-shadow (${primaryShadow})`);
+for (const device of ['--gloss-specular', '--gloss-shade', '--gloss-contact']) {
+  ok(!!primaryShadow && new RegExp(`var\\(\\s*${device}\\s*\\)`).test(primaryShadow),
+    `.btn-primary's box-shadow carries var(${device})`);
+}
+ok(!!primaryShadow && !/var\(\s*--inset-hi\s*\)/.test(primaryShadow),
+  '.btn-primary no longer consumes --inset-hi — the token is untouched, the PAIRING is what was fixed');
 
 const lightSuppress = primaryRules.filter(r =>
   /\[data-theme\s*=\s*["']light["']\]/.test(r.selector) &&
   /box-shadow\s*:\s*none/.test(r.body));
-ok(lightSuppress.length >= 1,
-  '[data-theme="light"] .btn-primary sets box-shadow: none — the white top line is gone');
+ok(lightSuppress.length === 0,
+  'the [data-theme="light"] .btn-primary { box-shadow: none } suppression is GONE — light gets the specular, not a deletion');
+/* ANTI-VACUITY. `lightSuppress.length === 0` is also what a broken rule
+   collector returns, and this repo has shipped exactly that (a suite reporting
+   both themes identical because its selector match landed inside a comment).
+   So the same predicate is run over a PLANTED rule and must find it. */
+{
+  const planted = [{ selector: '[data-theme="light"] .btn-primary', body: 'box-shadow: none;' },
+                   { selector: '.btn-primary', body: 'background-color: var(--accent);' }];
+  const found = planted.filter(r =>
+    /\[data-theme\s*=\s*["']light["']\]/.test(r.selector) &&
+    /box-shadow\s*:\s*none/.test(r.body));
+  ok(found.length === 1, 'control: the same predicate FINDS a planted light-theme suppression (so 0 above is a reading, not blindness)');
+  ok(rulesFor('btn-primary', 'shell.css').length > 1,
+    `control: rulesFor really collects .btn-primary rules (${rulesFor('btn-primary', 'shell.css').length} of them), so its light-scoped subset being empty is a finding`);
+}
 
 // The shell always stamps data-theme both ways, so a media query here would be
 // both redundant and against four other /next stylesheets' stated rule.

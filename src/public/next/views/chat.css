@@ -49,11 +49,20 @@
   min-height: 24px;
   padding: 2px 4px 4px;
 }
+/* ── THE LABEL IS THE CHECKBOX'S ONLY POSSIBLE HIT BOX ────────────────────
+   `.cur-check` is 13x13 and an <input>, which Chrome renders no ::before or
+   ::after on — so the sanctioned transparent-::before technique cannot be
+   applied to it and shared/checkbox.css says so. The <label> around it is
+   the target, and this view owns two of them. Giving the label --hit-min of
+   height makes the 13px box hittable without growing the box itself. */
 .chat-bulk-all {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  min-height: var(--hit-min);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-2xs);
   color: var(--text-3);
   margin-right: auto;
@@ -63,7 +72,9 @@
   background: transparent;
   border: none;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-2xs);
   color: var(--text-3);
 }
@@ -78,7 +89,9 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-2xs);
   color: var(--danger-text);
   transition: background var(--t-state), border-color var(--t-state), transform var(--t-press);
@@ -88,6 +101,14 @@
    tint and this deletes N conversations at once. Same refusal as
    `.btn-danger`, `.chat-conv-delete` and `.ing-queue-file-remove`. */
 .chat-bulk-delete:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
+/* Same technique, same reason: a 20px strip control that deletes N
+   conversations at once had a 20px target. The visible chip is unchanged. */
+.chat-bulk-delete { position: relative; }
+.chat-bulk-delete::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 20px) / -2);
+}
 
 .chat-bulk-notice {
   font-size: var(--text-2xs);
@@ -117,8 +138,16 @@
   padding-right: 4px;
   transition: background var(--t-state), transform var(--t-press);
 }
-.chat-conv-row:hover { background: var(--surface-hover); }
-.chat-conv-row.selected { background: var(--surface-active); }
+/* ── ROWS ON THE SIDEBAR TAKE THE ALPHA OVERLAY, NOT AN ABSOLUTE SURFACE ──
+   `.sidebar` is a MATERIAL: a translucent plane with blur and saturate over
+   whatever the window sits on. Painting `--surface-hover` on it replaces the
+   material for the width of the row — the blur stops, the plane's own tint
+   stops, and the hover reads as a hole rather than as a lit row. `--mat-row-
+   hover` / `--mat-row-active` are the alpha overlays that COMPOSITE onto the
+   plane instead, which is what AppKit does and what shell.css's own
+   `.settings-nav-row` already adopted. Same change, same reason. */
+.chat-conv-row:hover { background: var(--mat-row-hover); }
+.chat-conv-row.selected { background: var(--mat-row-active); }
 /* Always visible — see conversationRowHtml's comment: a hover-only control
    is not reachable by keyboard, and multi-select with no visible way in is
    not a feature. Muted until it is checked or hovered so a sidebar of
@@ -133,15 +162,31 @@
    `transition` is re-declared because the component transitions
    background-color and border-color, and shorthand-overwriting it here
    would drop those. */
+/* The label that carries the checkbox's pointer target (see the wrapper's
+   own note in chat.js). It paints nothing: the tick is still the component's,
+   and the only thing this adds is 28x28 of hittable area around a 13x13 box.
+   `flex: none` so it never absorbs the row's free space and starts swallowing
+   clicks that belong to the title beside it. */
+.chat-conv-check-hit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hit-min);
+  height: var(--hit-min);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
 .chat-conv-check {
-  margin-left: 6px;
+  margin-left: 0;
   opacity: 0.45;
   transition: opacity var(--t-state), background-color var(--t-state), border-color var(--t-state);
 }
 .chat-conv-check:checked,
 .chat-conv-check:focus-visible,
 .chat-conv-row:hover .chat-conv-check { opacity: 1; }
-.chat-conv-row.active { background: var(--surface-active); }
+.chat-conv-row.active { background: var(--mat-row-active); }
 /* Press. The clickable element is the `.chat-conv-row-main` child (a
    role="button" div), but the painted surface is this ROW, so the press has
    to land here — a transform on the child would slide the label out of a
@@ -155,7 +200,7 @@
 
    Background steps to the same token `.selected`/`.active` already use, so
    pressing an already-open conversation changes nothing but the nudge. */
-.chat-conv-row:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.chat-conv-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
 /* ── The accent edge, declared on the BASE rule at scaleY(0) ──────────────
    Identical structural fix to views/settings.css's `.settings-nav-row`, and
    for the identical reason: a `::before` generated by `.active` does not
@@ -180,7 +225,7 @@
   flex: 1;
   min-width: 0;
   padding: 8px 10px 8px 8px;
-  cursor: pointer;
+  cursor: default;
 }
 .chat-conv-row.active .chat-conv-title { font-weight: var(--weight-medium); color: var(--text); }
 .chat-conv-title {
@@ -194,6 +239,7 @@
   font-size: var(--text-2xs);
   color: var(--text-3);
   margin-top: 1px;
+  font-variant-numeric: var(--numeric-tabular);
 }
 /* ── THE ROW-LEVEL DELETE: A BARE BASKET, NOT A BUTTON ───────────────────
    Reported as "this should be only the delete basket, the icon, nothing else.
@@ -262,6 +308,18 @@
 }
 .chat-conv-row:hover .chat-conv-delete,
 .chat-conv-row:focus-within .chat-conv-delete { display: inline-flex; }
+/* ── THE GLYPH STAYS 24x24; THE POINTER TARGET REACHES --hit-min ──────────
+   The comment above argues at length for the 24px amplitude and it stands.
+   What it did not settle is the TARGET, which was also 24 — under macOS's
+   28pt default for a control that DELETES a conversation. `position:
+   relative` is already set by the flex row's own layout needs, so it is
+   declared here explicitly rather than relied on. */
+.chat-conv-delete { position: relative; }
+.chat-conv-delete::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 24px) / -2);
+}
 .chat-conv-delete:hover { background: var(--danger-tint); color: var(--danger-text); }
 /* 24x24 icon amplitude, and NO background step — the hover is already the
    danger tint and nothing stronger exists in that family. Same refusal as
@@ -346,11 +404,16 @@
   flex: none;
 }
 .chat-scope-pills { display: flex; gap: 6px; flex: none; }
+/* ── 26 -> --hit-min (28px) ───────────────────────────────────────────────
+   macOS's DEFAULT control target is 28x28pt. These two are the scope bar's
+   only controls and the ones a user hits most often on this view, and they
+   were the smallest. The BOX grew; nothing inside it did — same type, same
+   dot, same padding ratio. */
 .chat-scope-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: var(--hit-min);
   padding: 0 10px 0 8px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
@@ -358,12 +421,20 @@
   color: var(--text-2);
   font: var(--type-body-sm);
   white-space: nowrap;
-  /* `cursor: pointer` was MISSING. This is a real `<button data-scope-domain>`
-     that switches the chat's domain — the most consequential control on the
-     view's own toolbar — and it rendered the default arrow, so it did not
-     read as clickable at all. Found while adding the press state: a control
-     with no press AND no pointer cursor is indistinguishable from a label. */
-  cursor: pointer;
+  /* ── THE CURSOR ARGUMENT, REVERSED ON PURPOSE ─────────────────────────
+     This rule used to read "`cursor: pointer` was MISSING… a control with no
+     press AND no pointer cursor is indistinguishable from a label." The
+     diagnosis was right and the remedy was the web's, not the platform's.
+     No AppKit control shows a hand — not a push button, not a segment, not a
+     sidebar row — so the hand was never what would have made this read as
+     clickable. The PRESS was, and it is here (below), together with the
+     hover fill and the pill's own border. `cursor: default` + `user-select`
+     is now the shell's rule for every control (see shell.css's `.btn`), and
+     a scope pill is chrome: its label is a domain name the app supplies,
+     not text the user wrote and may want to copy out of the toolbar. */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .chat-scope-pill:hover { background: var(--surface-hover); }
@@ -385,6 +456,7 @@
   flex: none;
   font-size: var(--text-xs);
   color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
 }
 
 /* ── Thread ───────────────────────────────────────────────────────────── */
@@ -461,7 +533,9 @@
   border: 0;
   background: none;
   color: var(--text-2);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline dotted;
   text-underline-offset: 2px;
   transition: color var(--dur-fast, 80ms) var(--ease-out, ease);
@@ -657,9 +731,17 @@
   color: var(--text);
   margin: 4px 0 10px;
 }
+/* ── A WIKILINK AND A CITATION ARE NAMES, NOT CODE ────────────────────────
+   Both were `var(--font-mono)`. A `[[wikilink]]` inside a sentence is the
+   name of a page the user wrote, and setting it in code type breaks the
+   line's rhythm in the middle of prose — the reader's eye stops at a change
+   of face that carries no meaning. They keep their TINT and their marker,
+   which is what actually says "this is a link"; only the face changes. The
+   size bump from 0.92em/0.82em to 0.94em/0.88em is because the text face at
+   the same em reads optically smaller than the mono one it replaces (IBM
+   Plex Mono's x-height is the larger of the two). */
 .chat-wikilink {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.94em;
   color: var(--accent-text);
   background: var(--accent-tint);
   padding: 1px 5px;
@@ -669,10 +751,11 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-family: var(--font-mono);
-  font-size: 0.82em;
+  font-size: 0.88em;
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   border-bottom: 1px dotted var(--border-strong);
 }
 .chat-citation-tag:hover { color: var(--text-2); }
@@ -734,24 +817,103 @@
   gap: 7px;
   margin-top: 10px;
 }
+/* ── THE CITATION CHIP: THE DOT CARRIES THE TYPE, THE LABEL CARRIES THE TEXT
+   Two things were wrong with this control and they had the same root.
+
+   (1) IT WAS SET IN CODE TYPE. A chip naming `summaries/how-i-built-an-ai-
+   powered-vacation-mcp-search-tool.md` in IBM Plex Mono is the single
+   loudest thing on the chat view, and a thread can carry twenty of them.
+   Measured across views/chat.css before this pass: 662 monospace glyph runs
+   against 284 in the text face. Mono is for CODE and RAW SOURCE — `.chat-
+   answer code`, `.chat-answer pre` and the reader's own blocks keep it. A
+   wiki slug is a NAME, not code, and it reads as one in the text face.
+
+   (2) ITS LABEL FAILED AA ON LIGHT. The label took the type colour on the
+   matching type tint. Recomputed from the shipped tokens over the real
+   backdrop (the tint composited on `--canvas`):
+       entity 3.02 · concept 2.82 · summary 3.11   — floor 4.5:1 (1.4.3)
+   Dark was never in question (7.5-8.0). The fix is NOT a darker type colour
+   for the label: it is the control-kit's own chip, where the TYPE IS THE DOT
+   and the label is neutral text. `--text-2` measures 8.09 dark / 7.26 light
+   on these tints, so the label clears AA in both themes with room, and the
+   type is still legible at a glance because it is a coloured mark rather
+   than coloured text.
+
+   THE DOT IS THEN A NON-TEXT INDICATOR and takes 1.4.11's 3:1 floor. On
+   light the shipped `--type-*` rungs measure 3.01 / 2.80 / 3.11 against the
+   worst backdrop each can land on, so concept fails and entity/summary pass
+   by a hair. Rather than adding a fourth set of literals to a file whose
+   colour-literal baseline is ZERO, the light dot is DERIVED from the token
+   with `color-mix`: at 90% the three measure 3.63 / 3.39 / 3.73 — over the
+   floor with margin, visibly the same hues, and they move automatically if
+   the palette ever does. Dark is untouched at 100%. */
 .chat-cite-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
-  padding: 0 9px 0 7px;
+  /* --hit-min (28px). Was 24px: the chip is a real <button> that opens the
+     page, and it was the smallest pointer target on the view. The GLYPH did
+     not grow — only the box did. */
+  height: var(--hit-min);
+  padding: 0 11px 0 9px;
   border-radius: var(--radius-full);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  /* THE TINT STAYS; only the LABEL stopped taking the type colour. The tint
+     is what makes a chip read as a chip at a glance and it costs nothing in
+     contrast, whereas a neutral fill would be white-on-near-white on light
+     and would need a 3:1 border on twenty chips to be findable at all.
+     `--text-2` measures 8.09:1 dark / 7.26:1 light on these tints. */
+  background: var(--surface-raised);
+  /* No gloss and no border. A chip is a tinted marker, not a raised object —
+     the kit withholds the face/specular/shade trio from every tinted control
+     for exactly this reason, and gives its own `.chip` no edge either. */
   border: none;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  max-width: 100%;
+  min-width: 0;
+  /* box-shadow, not border-color: the hover overlay below is a box-shadow
+     and the chip has no border at all, so transitioning border-color would
+     animate nothing while the thing that actually moves snapped. */
+  transition: box-shadow var(--t-state), transform var(--t-press);
 }
-.chat-chip-entity  { background: var(--type-entity-tint);  color: var(--type-entity); }
-.chat-chip-concept { background: var(--type-concept-tint); color: var(--type-concept); }
-.chat-chip-summary { background: var(--type-summary-tint); color: var(--type-summary); }
-.chat-chip-plain   { background: var(--surface-raised); color: var(--text-2); cursor: default; }
+.chat-chip-entity  { background: var(--type-entity-tint); }
+.chat-chip-concept { background: var(--type-concept-tint); }
+.chat-chip-summary { background: var(--type-summary-tint); }
+/* Hover COMPOSITES over the chip's own tint rather than replacing it, so the
+   type stays readable under the pointer and the step goes the right way in
+   both themes — `--mat-row-hover` is a white overlay on dark and an ink one
+   on light. A `filter: brightness()` would have darkened the dark theme,
+   which is backwards. The inset spread is the standard way to paint an
+   overlay without a second element. */
+.chat-cite-chip:hover { box-shadow: inset 0 0 0 999px var(--mat-row-hover); }
+.chat-cite-chip:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
+/* The label truncates rather than wrapping the chip to two lines; the full
+   slug stays in the title attribute the renderer already sets. */
+.chat-cite-chip > span:not(.chat-type-dot) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* `.chat-chip-plain` is a citation with no resolved type. It is NOT
+   clickable, so it keeps the flat treatment and gains no press. */
+.chat-chip-plain { color: var(--text-3); }
+.chat-chip-plain:hover { box-shadow: none; }
+.chat-chip-plain:active { transform: none; }
 
 .chat-type-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.chat-chip-entity  .chat-type-dot { background: var(--type-entity); }
+.chat-chip-concept .chat-type-dot { background: var(--type-concept); }
+.chat-chip-summary .chat-type-dot { background: var(--type-summary); }
+/* A citation whose folder we could not classify. It gets a mark rather than
+   nothing, so the row stays aligned, but no type colour is asserted. */
+.chat-chip-plain .chat-type-dot { background: var(--border-strong); }
+[data-theme="light"] .chat-chip-entity  .chat-type-dot { background: color-mix(in srgb, var(--type-entity) 90%, black); }
+[data-theme="light"] .chat-chip-concept .chat-type-dot { background: color-mix(in srgb, var(--type-concept) 90%, black); }
+[data-theme="light"] .chat-chip-summary .chat-type-dot { background: color-mix(in srgb, var(--type-summary) 90%, black); }
 
 /* ── The waiting state ────────────────────────────────────────────────────
    A WRAPPER AND NOTHING MORE. Everything visible inside it — the ring, its
@@ -880,7 +1042,9 @@
   background: none;
   border: none;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: var(--weight-medium) var(--text-2xs)/1.4 var(--font-mono);
   letter-spacing: var(--track-eyebrow);
   color: var(--text-2);
@@ -977,12 +1141,38 @@
 
 /* ── Composer ─────────────────────────────────────────────────────────── */
 
+/* ── THE COMPOSER FLOATS OVER THE THREAD; IT DOES NOT CUT IT OFF ──────────
+   This was an opaque `--canvas` band pinned to the bottom of the scroll
+   container. Scrolling a long answer, the last line of text did not fade or
+   pass behind anything — it VANISHED at a hard horizontal edge, because a
+   solid fill sat on top of it. Every scrolling surface on macOS resolves
+   this the same way: the content dissolves into the chrome.
+
+   The fill is now a gradient that runs from fully transparent at the top of
+   the strip to solid `--canvas` well before the composer itself, so text
+   scrolling under it fades out over ~28px instead of being clipped. The
+   composer keeps a real opaque background of its own, so nothing shows
+   through the box a user is typing into — the fade is the STRIP's job, the
+   opacity is the BOX's.
+
+   `--elev-1` + the specular lip are what then say the box is in front. Both
+   are the kit's own tokens for a raised content surface (`.cur-group` uses
+   the same pair); the gloss FACE and shade are deliberately withheld,
+   because a text field is the inversion of a raised object and gets a well,
+   not a dome. */
 .chat-composer-wrap {
   position: sticky;
   bottom: 0;
   z-index: 3;
-  background: var(--canvas);
-  padding: 10px 0 20px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--canvas) 28px,
+    var(--canvas) 100%);
+  /* The top padding IS the fade's runway: the gradient reaches solid at 28px
+     and the composer box starts there, so the ramp is fully visible instead
+     of being covered by the box after 10px. Was 10px. */
+  padding: 28px 0 20px;
   margin-top: auto;
 }
 .chat-composer {
@@ -991,10 +1181,16 @@
   border-radius: var(--radius-xl);
   border: 1px solid var(--border);
   background: var(--surface-raised);
+  box-shadow: var(--gloss-specular-quiet), var(--elev-1);
   padding: 12px 12px 10px;
-  transition: border-color var(--t-state);
+  transition: border-color var(--t-state), box-shadow var(--t-state);
 }
-.chat-composer:focus-within { border-color: var(--accent-border); }
+/* Focus takes the accent border AND the elevation step, so the composer
+   lifts when it is the thing you are talking to. */
+.chat-composer:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: var(--gloss-specular-quiet), var(--elev-2);
+}
 
 .chat-input {
   width: 100%;
@@ -1199,7 +1395,7 @@
   background: var(--attention-tint);
   color: var(--attention-text);
 }
-.chat-mm-price { font-size: var(--text-xs); color: var(--text-2); }
+.chat-mm-price { font-size: var(--text-xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 .chat-mm-rise { font-size: var(--text-2xs); color: var(--attention-text); }
 /* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
    model's whole measured `note`, which is now shown in full behind Settings'
@@ -1290,7 +1486,7 @@
 /* A citation chip is only clickable in the chat THREAD, where renderThread()
    wires a delegated handler onto it. Neither reader wires one, so inside the
    reader the chip must not advertise a click that does nothing. */
-.reader-body-text .chat-citation-tag { cursor: default; }
+.reader-body-text .chat-citation-tag { cursor: default; user-select: none; -webkit-user-select: none; }
 
 /* ── Compile to Wiki button (scope bar) ───────────────────────────────── */
 
@@ -1298,7 +1494,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: var(--hit-min);
   padding: 0 11px;
   border-radius: var(--radius-full);
   border: 1px solid var(--accent-border);
@@ -1380,12 +1576,15 @@
 .chat-compile-change-created .chat-compile-change-header { color: var(--success-text); }
 .chat-compile-change-updated .chat-compile-change-header { color: var(--accent-text); }
 .chat-compile-change-list { list-style: none; padding: 0; margin: 0; }
+/* The list of pages a compile wrote. Was set in code type end to end; it is
+   a list of NAMES with a byte figure beside each, so the face is the text
+   one and only the FIGURES take tabular digits — which is what actually
+   makes the right-hand column line up, and is why the mono was there. */
 .chat-compile-change-list li {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-family: var(--font-mono);
   font-size: var(--text-sm);
   padding: 3px 0;
   color: var(--text-2);
@@ -1400,7 +1599,15 @@
   min-width: 4ch;
   color: var(--accent-text);
 }
-.chat-compile-change-detail { color: var(--text-3); font-size: var(--text-xs); white-space: nowrap; flex-shrink: 0; }
+.chat-compile-change-detail {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+  /* The byte figures. Tabular so the right column aligns down the list —
+     which is the one thing the monospace face was buying, kept without it. */
+  font-variant-numeric: var(--numeric-tabular);
+}
 .chat-compile-change-empty { color: var(--text-3); font-size: var(--text-sm); font-style: italic; }
 .chat-compile-change-unchanged { color: var(--text-3); font-size: var(--text-xs); margin-top: 4px; }
 
@@ -1538,7 +1745,9 @@
   color: var(--text-2);
   font-family: inherit;
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .chat-reask-btn:hover { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
@@ -1616,7 +1825,9 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-2);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .chat-browse-close:hover { background: var(--surface-hover); color: var(--text); }
@@ -1648,7 +1859,9 @@
   color: var(--text-2);
   font-family: inherit;
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .chat-browse-chip:hover { border-color: var(--border-strong); color: var(--text); }
@@ -1665,13 +1878,13 @@
 }
 
 .chat-browse-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px 12px; }
-.chat-browse-count { padding: 4px 6px 8px; font-size: var(--text-2xs); color: var(--text-2); }
+.chat-browse-count { padding: 4px 6px 8px; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 .chat-browse-ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 
 /* One row = the pick button + the star button, SIBLINGS. See
    renderModelMenuHtml for why the star is not nested inside the option. */
 .chat-browse-row { display: flex; align-items: flex-start; gap: 4px; }
-.chat-browse-pick { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.chat-browse-pick { flex: 1 1 auto; min-width: 0; cursor: default; user-select: none; -webkit-user-select: none; }
 .chat-browse-pick:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 .chat-browse-pick[aria-current="true"] { background: var(--accent-tint); }
 
@@ -1696,7 +1909,9 @@
      ON glyph is FILLED (`fill: currentColor`) where the OFF one is an outline,
      and `aria-pressed` carries the state non-visually regardless. */
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: color var(--t-state), background var(--t-state);
 }
 .chat-mm-star:hover { background: var(--surface-hover); color: var(--text); }
@@ -1720,7 +1935,9 @@
   color: var(--text);
   font-family: inherit;
   font-size: var(--text-sm);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .chat-browse-clear:hover { background: var(--surface-hover); border-color: var(--border-strong); }
@@ -1747,6 +1964,13 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-reask-btn, .chat-browse-chip, .chat-mm-star { transition: none; }
 }
+
+/* ── DIGITS THAT MOVE ─────────────────────────────────────────────────────
+   A count that ticks (3 selected -> 4 selected) reflows the words beside it
+   when its glyphs are proportional, because a proportional `1` is narrower
+   than a `4`. This is the only thing the `mono` class was buying at those
+   call sites, and it is bought here without changing the face. */
+.chat-num { font-variant-numeric: var(--numeric-tabular); }
 
 /* ── Reduced motion: this view's press states ─────────────────────────────
    TWO DIFFERENT DECISIONS, deliberately.
@@ -1775,6 +1999,7 @@
   .chat-browse-chip:active,
   .chat-browse-clear:active,
   .chat-browse-close:active,
-  .chat-bulk-delete:active { transform: none; }
+  .chat-bulk-delete:active,
+  .chat-cite-chip:active { transform: none; }
   .chat-conv-row::before { transition: none; }
 }

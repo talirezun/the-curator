@@ -406,8 +406,8 @@ function renderSidebar(token) {
         return (
           '<div class="sb-conn-row">' +
             '<span class="sb-conn-dot' + (c.read_only ? ' sb-conn-dot-readonly' : '') + '"></span>' +
-            '<span class="sb-conn-name mono">' + escapeHtml(c.label || '(unnamed)') + '</span>' +
-            '<span class="sb-conn-state mono">' + escapeHtml(stateLabel) + '</span>' +
+            '<span class="sb-conn-name">' + escapeHtml(c.label || '(unnamed)') + '</span>' +
+            '<span class="sb-conn-state">' + escapeHtml(stateLabel) + '</span>' +
           '</div>'
         );
       }).join('') +
@@ -577,19 +577,19 @@ function renderCard(conn) {
       '</div>' +
 
       '<div class="sb-card-stats">' +
-        '<span><span class="sb-card-stat-label">Last pushed</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_push_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last pulled</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Domains</span><span class="mono">' + escapeHtml(domainsLabel) + '</span></span>' +
+        '<span><span class="sb-card-stat-label">Last pushed</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_push_at, 'never')) + '</span></span>' +
+        '<span><span class="sb-card-stat-label">Last pulled</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) + '</span></span>' +
+        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) + '</span></span>' +
+        '<span><span class="sb-card-stat-label">Domains</span><span class="sb-name">' + escapeHtml(domainsLabel) + '</span></span>' +
         '<span><span class="sb-card-stat-label">Data handling</span><span>' + escapeHtml(dataHandlingLabel) + '</span></span>' +
       '</div>' +
 
       (!readOnly && (pendingCount > 0 || retryCount > 0)
         ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
           '<span>' +
-            (pendingCount > 0 ? '<span class="mono">' + pendingCount + '</span> page' + (pendingCount === 1 ? '' : 's') + ' ready to push' : '') +
+            (pendingCount > 0 ? '<span class="sb-num">' + pendingCount + '</span> page' + (pendingCount === 1 ? '' : 's') + ' ready to push' : '') +
             (pendingCount > 0 && retryCount > 0 ? ' · ' : '') +
-            (retryCount > 0 ? '<span class="mono">' + retryCount + '</span> queued for automatic retry' : '') +
+            (retryCount > 0 ? '<span class="sb-num">' + retryCount + '</span> queued for automatic retry' : '') +
           '</span>' +
           '<span class="sb-card-pending-note">(no cost estimate available for Shared Brain pushes yet)</span>' +
         '</div>'
@@ -597,13 +597,13 @@ function renderCard(conn) {
 
       (pushBusyDomain
         ? '<div class="sb-card-busy-note">' + icon('alertTriangle', 13) +
-          '<span>A write (' + escapeHtml(getDomainWriteLabel(pushBusyDomain) || 'write') + ') is already running for <span class="mono">' +
+          '<span>A write (' + escapeHtml(getDomainWriteLabel(pushBusyDomain) || 'write') + ') is already running for <span class="sb-name">' +
           escapeHtml(pushBusyDomain) + '</span> — Push is disabled until it finishes.</span></div>'
         : '') +
 
       (mirrorBusy
         ? '<div class="sb-card-busy-note">' + icon('alertTriangle', 13) +
-          '<span>A write (' + escapeHtml(getDomainWriteLabel(mirrorDomain) || 'write') + ') is already running for <span class="mono">' +
+          '<span>A write (' + escapeHtml(getDomainWriteLabel(mirrorDomain) || 'write') + ') is already running for <span class="sb-name">' +
           escapeHtml(mirrorDomain) + '</span> — Pull and Synthesize are disabled until it finishes.</span></div>'
         : '') +
 
@@ -617,14 +617,14 @@ function renderCard(conn) {
 
       (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' : '') +
 
-      (mirrorDomain ? '<p class="sb-card-note">Pulled content appears as the read-only domain <span class="mono">' + escapeHtml(mirrorDomain) + '</span> in the Domains tab.</p>' : '') +
+      (mirrorDomain ? '<p class="sb-card-note">Pulled content appears as the read-only domain <span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> in the Domains tab.</p>' : '') +
 
       '<div class="sb-card-footer">' +
         '<span class="sb-fellow-pill mono">fellow ' + escapeHtml(fellowShort) + '…</span>' +
         (card.leaveConfirmOpen
           ? '<div class="sb-confirm-inline">' +
               '<span>Leave this Shared Brain? Your local wiki files stay exactly as they are, including the read-only ' +
-              (mirrorDomain ? '<span class="mono">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
+              (mirrorDomain ? '<span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
               ' — only the sync connection is removed from this machine. This does not remove you as a GitHub ' +
               'collaborator on the repo; ask the admin for that. You can rejoin any time with a new invite token.</span>' +
               '<div class="sb-confirm-actions">' +
@@ -712,8 +712,8 @@ function renderPushConfirm(conn, busy) {
   const pendingCount = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
   return (
     '<div class="sb-confirm-inline sb-confirm-block">' +
-      '<span>Push will scan <span class="mono">' + escapeHtml(domains) + '</span> for pages changed since your last push ' +
-      '(currently <span class="mono">' + pendingCount + '</span> pending), summarise each with your configured AI provider ' +
+      '<span>Push will scan <span class="sb-name">' + escapeHtml(domains) + '</span> for pages changed since your last push ' +
+      '(currently <span class="sb-num">' + pendingCount + '</span> pending), summarise each with your configured AI provider ' +
       '— this spends API credits, and Shared Brain pushes don’t have a cost estimate yet — then send the summaries to the ' +
       'shared repository. Nothing has been sent yet.</span>' +
       '<div class="sb-confirm-actions">' +
@@ -744,8 +744,8 @@ function renderSkips(conn, card) {
   const busy = !!card.acting;
   return (
     '<details class="sb-card-skips"' + (open ? ' open' : '') + ' data-sb-skips="' + escapeHtml(conn.id) + '">' +
-      '<summary>' + icon('alertTriangle', 13) + ' <span class="mono">' + skips.length + '</span> page' + (skips.length === 1 ? '' : 's') + ' skipped after repeated failures</summary>' +
-      '<ul class="sb-card-skips-list mono">' + skips.map((p) => '<li>' + escapeHtml(p) + '</li>').join('') + '</ul>' +
+      '<summary>' + icon('alertTriangle', 13) + ' <span class="sb-num">' + skips.length + '</span> page' + (skips.length === 1 ? '' : 's') + ' skipped after repeated failures</summary>' +
+      '<ul class="sb-card-skips-list">' + skips.map((p) => '<li>' + escapeHtml(p) + '</li>').join('') + '</ul>' +
       '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="unskip"' + (busy ? ' disabled' : '') + '>' +
         (card.acting === 'unskip' ? 'Re-queuing…' : 'Retry these pages on next push') +
       '</button>' +
@@ -770,7 +770,7 @@ function renderCohort(conn, card) {
     const self = c.selfFellowId ? members.find((m) => m.fellow_id === c.selfFellowId) : null;
     const selfPages = self ? (self.pages || 0) : 0;
     const attributionText = total > 0
-      ? '<span class="mono">' + selfPages + ' of ' + total + '</span> pages (<span class="mono">' + Math.round((selfPages / total) * 100) + '%</span>)'
+      ? '<span class="sb-num">' + selfPages + ' of ' + total + '</span> pages (<span class="sb-num">' + Math.round((selfPages / total) * 100) + '%</span>)'
       : 'no contributions yet';
 
     let mirrorLine;
@@ -779,13 +779,13 @@ function renderCohort(conn, card) {
     } else if (c.mirrorStats === 'not-pulled') {
       mirrorLine = 'not pulled yet';
     } else if (c.mirrorStats && typeof c.mirrorStats.pageCount === 'number') {
-      mirrorLine = '<span class="mono">' + c.mirrorStats.pageCount + '</span> pages (as of your last pull)';
+      mirrorLine = '<span class="sb-num">' + c.mirrorStats.pageCount + '</span> pages (as of your last pull)';
     } else {
       mirrorLine = 'not available';
     }
 
     networkBody =
-      '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Contributors</span><span class="mono">' + members.length + '</span></div>' +
+      '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Contributors</span><span class="sb-num">' + members.length + '</span></div>' +
       '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Your attribution</span><span>' + attributionText + '</span></div>' +
       '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Shared pages</span><span>' + mirrorLine + '</span></div>';
   }
@@ -795,7 +795,7 @@ function renderCohort(conn, card) {
       '<summary>Cohort &amp; sharing details</summary>' +
       '<div class="sb-card-cohort-body">' +
         networkBody +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Disconnect and re-join to change the selection.</div>' +
+        '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Use <b>Leave this Shared Brain</b> at the bottom of this card, then re-join with a fresh invite, to change the selection.</div>' +
         '<div class="sb-card-cohort-row sb-card-cohort-note">No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.</div>' +
         '<div class="sb-card-cohort-row sb-card-cohort-note">Exporting your Shared Brain data — coming soon.</div>' +
       '</div>' +
@@ -1277,7 +1277,7 @@ function renderRevokeOutcomeHtml(outcome) {
 
   const c = outcome.counts || {};
   const countsRow = (c.contributionsDeleted !== null && c.contributionsDeleted !== undefined)
-    ? '<div class="sb-outcome-counts mono">' +
+    ? '<div class="sb-outcome-counts">' +
         escapeHtml(c.contributionsDeleted + ' contribution' + (c.contributionsDeleted === 1 ? '' : 's') + ' deleted · ' +
           c.pagesDeleted + ' page' + (c.pagesDeleted === 1 ? '' : 's') + ' removed · ' + c.pagesRebuilt + ' rebuilt') +
       '</div>'
@@ -1286,7 +1286,7 @@ function renderRevokeOutcomeHtml(outcome) {
   const linesHtml = outcome.lines && outcome.lines.length
     ? '<ul class="sb-outcome-lines">' + outcome.lines.map((l) =>
         '<li><span class="sb-outcome-line-label">' + escapeHtml(l.label) + '</span>' +
-        (l.detail ? '<span class="sb-outcome-line-detail mono">' + escapeHtml(l.detail) + '</span>' : '') + '</li>'
+        (l.detail ? '<span class="sb-outcome-line-detail">' + escapeHtml(l.detail) + '</span>' : '') + '</li>'
       ).join('') + '</ul>'
     : '';
 
@@ -1592,7 +1592,7 @@ function renderRevokePanel(conn, card, busy, mirrorBusy) {
           (card.revokeSelectedFellowId === mem.fellow_id ? ' checked' : '') + ' data-sb-member="' + escapeHtml(mem.fellow_id) + '">' +
         '<span class="sb-member-text">' +
           '<span class="sb-member-who">' + escapeHtml(who) + (isSelf ? '<span class="sb-member-self">YOU</span>' : '') + '</span>' +
-          '<span class="sb-member-meta mono">' + escapeHtml(meta) + '</span>' +
+          '<span class="sb-member-meta">' + escapeHtml(meta) + '</span>' +
         '</span>' +
       '</label>'
     );

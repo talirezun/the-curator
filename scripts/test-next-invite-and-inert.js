@@ -564,8 +564,25 @@ for (const [name, body] of Object.entries({
     'control: the unbuilt-claim detector FIRES on a planted string');
 }
 ok(src.shared.includes('Exporting your Shared Brain data — coming soon.'), 'shared: the export note reworded to "coming soon"');
-ok(src.shared.includes('Disconnect and re-join to change the selection.'),
-  'shared: the domain-selection note now tells the user what to actually DO instead of naming the build');
+/* ── THE NOTE NAMED AN ACTION THE SHELL DOES NOT OFFER ────────────────────
+   This assertion's own label is "tells the user what to actually DO", and the
+   string it pinned failed that test: the shell has no control called
+   Disconnect on a Shared Brain card. It has `Leave this Shared Brain`, wired
+   to DELETE /api/sharedbrain/:id behind the same two-step inline confirm
+   Personal Sync's Disconnect uses. So a user following this sentence went
+   looking for a button that is not there, and the guard certified it.
+
+   The assertion now pins BOTH halves of the property, and the second half is
+   the one that was missing: the note names an action, AND the action it names
+   exists in this file as a real control label. That second check is what
+   makes this measure the thing its label claims. */
+ok(src.shared.includes('Use <b>Leave this Shared Brain</b> at the bottom of this card, then re-join'),
+  'shared: the domain-selection note tells the user what to actually DO');
+ok(src.shared.includes('>Leave this Shared Brain</button>'),
+  '...and the control it names is a real button in this view, not a label that only exists in the sentence');
+// Control: the second check must be able to fail.
+ok(!'<button>Disconnect</button>'.includes('>Leave this Shared Brain</button>'),
+  'control: the control-exists detector does NOT match a differently-labelled button');
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

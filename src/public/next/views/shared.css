@@ -5,7 +5,34 @@
    every rule specific to your view's markup" in its own file, so an edit
    to another view's CSS can never silently change this one. */
 
-.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+/* 26 -> --control-sm (28px). macOS's DEFAULT control target, and the change
+   settings.css's own copy of this rule already took in the design pass — all
+   four copies have to move together or the app has two sizes of small button
+   depending on which view you are looking at. Its BOX grew; the type and the
+   glyphs inside it did not. */
+/* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
+   Exactly five things, and every one is a LITERAL rather than a fact: the
+   repository URL, the truncated fellow id, the admin and invite tokens shown
+   once for copying, the two revoke inputs, and the confirmation string the
+   user has to retype character for character. On that last one the code face
+   is doing real work — it is the control where a slip is SUPPOSED to be
+   caught.
+
+   Everything else lost it. Timestamps, page counts, percentages, contributor
+   totals, domain names and connection states are the app reporting facts, and
+   a card full of facts set in IBM Plex Mono reads as a log rather than as a
+   status panel. The figures keep the one property the code face was buying —
+   tabular digits, so a count that changes does not reflow its own sentence. */
+.sb-num { font-variant-numeric: var(--numeric-tabular); }
+/* A domain or connection name quoted inside a sentence. Emphasised by colour
+   and weight rather than a change of face mid-line — same decision as
+   views/ingest.css's `.ing-name` and views/memory.css's `.mem-name`. */
+.sb-name { color: var(--text); font-weight: var(--weight-medium); }
+.sb-outcome-counts,
+.sb-outcome-line-detail,
+.sb-member-meta { font-variant-numeric: var(--numeric-tabular); }
+
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 .settings-hint-text {
   margin: 0;
@@ -221,7 +248,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--danger-tint);
 }
 .sb-card-skips summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--danger-text);
   display: flex;
@@ -249,7 +278,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-cohort summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--text-2);
   font-weight: var(--weight-medium);
@@ -298,7 +329,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   padding: 0;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
 }
@@ -321,7 +354,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-admin summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--text-2);
   font-weight: var(--weight-medium);
@@ -451,9 +486,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
   gap: 9px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
-.sb-member-row:hover { background: var(--surface-hover); }
+/* This row sits inside a card on the content plane, so an opaque surface is
+   correct here — but the overlay composites identically on an opaque bottom
+   and keeps every row family in the app on one idiom. */
+.sb-member-row:hover { background: var(--mat-row-hover); }
 .sb-member-row.selected { background: var(--danger-tint); }
 .sb-member-row input { margin-top: 3px; flex: none; accent-color: var(--danger); }
 .sb-member-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -578,7 +618,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--text); }
 .sb-outcome-notice-ok { color: var(--text-2); }
 
-.sb-outcome-raw summary { cursor: pointer; font-size: var(--text-2xs); color: var(--text-2); }
+.sb-outcome-raw summary { cursor: default; user-select: none; -webkit-user-select: none; font-size: var(--text-2xs); color: var(--text-2); }
 .sb-outcome-summary {
   margin: 7px 0 0;
   font-size: var(--text-xs);
@@ -597,14 +637,43 @@ a.sb-card-repo:hover { color: var(--text-link); }
    two can never collide even though both live in this one CSS file.
    ══════════════════════════════════════════════════════════════════════ */
 
+/* ── THIS IS A SHEET NOW, NOT A CENTRED DIALOG ────────────────────────────
+   The setup wizard is an APP-MODAL FLOW: several steps, a form, work the
+   user is committing to. On macOS that is a SHEET — it comes down from under
+   the window's own title bar and stays attached to the window it belongs to,
+   which is what says "this belongs to THIS window and you are inside it".
+   A floating centred box is what an ALERT looks like, and the app has one of
+   those already (shell.css's confirm dialog), which is exactly why using the
+   same shape for both left them indistinguishable.
+
+   FOUR THINGS CHANGE AND NOTHING ELSE DOES. The scrim aligns to the top
+   instead of the centre; the card loses its top corners and its top border,
+   because a sheet is CONTINUOUS with the chrome it emerged from rather than
+   a separate object; the fill becomes `--mat-sheet` (nearly opaque — a sheet
+   is a document, not a veil) with the two-line material edge and `--elev-4`;
+   and it travels on `--ease-emphasized`, which leaves quickly and settles
+   slowly, over `--dur-sheet-in`. Dismissal is BYTE-IDENTICAL: the same close
+   button, the same scrim click, the same Escape handler in the JS — none of
+   which this file touches.
+
+   `--dur-sheet-in` is 0ms under prefers-reduced-motion, and the rule still
+   carries its own `animation: none` escape below, because a 0ms animation
+   paints its from-state for one frame.
+
+   The `curator-sheet-in` keyframe itself lives in tokens/motion.css, beside
+   every other `curator-*` keyframe. It was declared here when the sheets
+   landed only because that pass did not own the token layer. */
+
 .sbw-scrim {
   position: fixed;
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: center;
+  /* flex-start, not center: a sheet hangs from the top of the window. */
+  align-items: flex-start;
   justify-content: center;
-  padding: 24px;
+  /* No top padding — the sheet is flush with the chrome it came from. */
+  padding: 0 24px 24px;
   overflow-y: auto;
   /* The ONE scrim (shell.css). Was an inline rgba pair whose light half
      read 0.5; see shell.css for why the inlining existed and why it is
@@ -618,18 +687,28 @@ a.sb-card-repo:hover { color: var(--text-link); }
   width: min(640px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border);
-  /* "Modals 14px" — see the .cfd-card note. */
-  border-radius: var(--radius-xl);
-  /* Was a hardcoded `0 24px 60px -20px rgba(0,0,0,0.55)`: a DARK shadow
-     rendered verbatim in light theme, the same class of defect as
-     v3.25.0's Sync rail badge. --shadow-lg is what Modal.jsx specifies,
-     it is what .cfd-card and .mcpw-card already use, and shape.css
-     carries a real light-theme value for it. */
-  box-shadow: var(--shadow-lg);
+  /* The sheet MATERIAL, with the blur and saturate that make it a plane
+     rather than a flat fill. */
+  background: var(--mat-sheet);
+  -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  /* No top border: the sheet is continuous with the chrome above it. */
+  border: none;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  /* BOTH material edges, on the three sides that exist. One line reads as a
+     div border; two read as a plane with thickness — and the pair is not
+     optional, because on dark the outer separator carries the edge and on
+     light the inner lip does. `--elev-4` is the sheet rung. */
+  box-shadow:
+    inset 0 -1px 0 var(--mat-edge-lo), inset 0 -2px 0 var(--mat-edge-hi),
+    inset 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-lo),
+    var(--elev-4);
   padding: 26px 28px 24px;
-  margin: auto;
+  margin: 0 auto;
+  animation: curator-sheet-in var(--dur-sheet-in) var(--ease-emphasized);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sbw-card { animation: none; }
 }
 
 .sbw-close {
@@ -645,13 +724,17 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border: none;
   background: none;
   color: var(--text-2);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.sbw-close:hover { background: var(--surface-hover); color: var(--text); }
+/* The wizard's close button sits on the SHEET material, where an opaque
+   fill would stop the blur behind it. Alpha overlay, as everywhere else. */
+.sbw-close:hover { background: var(--mat-row-hover); color: var(--text); }
 /* `:not([disabled])` — this button IS disabled mid-save (see the note below),
    and a control refusing a click must not acknowledge one. */
-.sbw-close:active:not([disabled]) { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+.sbw-close:active:not([disabled]) { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 /* M3 fix (shared-brain-wizard.js setSaveChromeDisabled): disabled while a
    save is in flight, so it visually matches the Save/Back buttons rather
    than looking clickable while its click handler silently no-ops. */
@@ -768,7 +851,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
    carries it); `margin-top` stays, because a 16px box top-aligned against a
    --text-sm line needs the optical nudge onto the cap height, and the
    component deliberately does not guess a line-height it cannot see. */
-.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: pointer; }
+/* ── THE LABEL IS THE CHECKBOX'S ONLY POSSIBLE HIT BOX ────────────────────
+   `.cur-check` is 13x13 and an <input>, on which Chrome renders no ::before —
+   so the "keep the glyph, grow the target" technique cannot reach it and
+   shared/checkbox.css records that. The wrapping <label> is the target, and
+   `--hit-min` of height is what makes a 13px box hittable at macOS's default
+   control size. `align-items: flex-start` is kept: these labels wrap to
+   several lines of terms, and the tick belongs beside the FIRST line. */
+.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; min-height: var(--hit-min); font-size: var(--text-sm); color: var(--text); cursor: default; user-select: none; -webkit-user-select: none; }
 .sbw-checkbox-label .cur-check { margin-top: 2px; }
 
 /* ── Status / validation line ─────────────────────────────────────────── */
@@ -867,7 +957,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-inset);
-  cursor: pointer;
+  cursor: default;
 }
 .sbw-dht-card:hover { border-color: var(--border-strong); }
 .sbw-dht-card:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
@@ -890,7 +980,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sbw-domain-checkboxes .sbw-checkbox-label { padding: 4px 4px; border-radius: 5px; }
-.sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--surface-hover); }
+.sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--mat-row-hover); }
 
 /* ── Step 5: review + consent ────────────────────────────────────────── */
 

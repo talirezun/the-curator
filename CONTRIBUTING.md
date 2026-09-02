@@ -182,14 +182,11 @@ premise the whole bundle-detection design rests on — that a shipped tree
 contains a tracked `domains/.gitkeep` but never a `.git` directory (see
 [docs/architecture.md § Where user data lives](docs/architecture.md#where-user-data-lives-srcbrainpathsjs)
 for why that premise sank an earlier detection design).
-`test-frontend-null-safety.js` (**63 assertions**) was a dependency-free
-scanner that verified
+`test-frontend-null-safety.js` (**63 assertions**) is a dependency-free
+scanner that verifies
 every top-level-equivalent `getElementById`/`querySelector` dereference in
-`app.js` was `?.`-guarded or provably narrowed; deleted alongside `app.js`
-in v3.41.0, with no successor — `src/public/next/app.js` carries the same
-load-time-failure risk today with no equivalent guard over it (see
-[docs/architecture.md § Frontend binding hardening](docs/architecture.md)).
-See [§ Writing a good test](#writing-a-good-test) below for the design lesson it
+`app.js` is `?.`-guarded or provably narrowed; see
+[§ Writing a good test](#writing-a-good-test) below for the design lesson it
 exists to demonstrate.
 
 **Two OFFLINE suites cover the batch-ingest queue** (Track 3 —
@@ -232,13 +229,7 @@ across six batches whose items randomly succeed, fail, or rate-limit,
 asserting that every file always lands in exactly one terminal bucket no
 matter what sequence of control actions hit it.
 
-**Historical — `test-ingest-queue-frontend.js` and the `app.js` it tested were
-both deleted in v3.41.0; kept as a record of what the H1/H2 audit fixes
-below were, not as current coverage.** `/next`'s own ingest-view frontend
-(destination sidebar, drop zone, budget input, queue-mode gating) is now
-covered by `scripts/test-next-ingest-view.js` (358 offline assertions), which
-is not a line-for-line port of this suite. `test-ingest-queue-frontend.js`
-(**225 offline assertions**) covered the
+`test-ingest-queue-frontend.js` (**225 offline assertions**) covers the
 `src/public/app.js` side — extracted via the same `new Function` pattern as
 `test-chat-compile-card.js`. Beyond the original coverage — the single-file
 flow is provably byte-unchanged when only one file is selected,
@@ -318,44 +309,39 @@ contract, the MCP tool's binary refusal against a real binary fixture,
 case is classified, never fetched — fetching an LLM-authored, sync-delivered
 string would be an SSRF primitive).
 
-**`test-raw-source-ui.js` was deleted alongside `app.js` in v3.41.0.** Its
-successor, `scripts/test-next-raw-source.js` (**185 offline assertions**),
-covers the pure
-`describeRawSource()`/`renderReaderSourceHtml()` functions in
-`src/public/next/app.js`, extracted the same way — every backend `reason`
-maps to the
+`test-raw-source-ui.js` (**59 offline assertions**) covers the pure
+`describeRawSource()`/`renderWikiSourceHtml()` functions in `src/public/app.js`
+extracted via the same `new Function` pattern as `test-chat-compile-card.js`
+and the batch-queue frontend suites — every backend `reason` maps to the
 right UI state, an unrecognised reason degrades to rendering nothing rather
 than something confidently wrong, the `external-source` URL renders as inert
 escaped text (never a link, never fetched, and the request is gated to
 `summaries/` paths so it never fires on every entity/concept page open), and
-no code path ever references `absPath` — the server never sends one for the
+`app.js` never references `absPath` — the server never sends one for the
 client to leak.
 
-**A suite that is deliberately temporary must be deleted, not adapted, once
-its reason for existing is gone — and that is exactly what happened here.**
-`src/public/next/**` was a parallel redesign frontend served at `/next` (see
+**A new OFFLINE suite is deliberately temporary and must be deleted, not
+adapted, once its reason for existing is gone.** `src/public/next/**` is a
+parallel redesign frontend served at `/next` (see
 [docs/architecture.md § The redesigned shell](docs/architecture.md#the-redesigned-shell-srcpublicnext--the-primary-frontend-since-v390)
-for what it is and why it exists) alongside `src/public/app.js`, until the
-latter was retired outright in v3.41.0.
+for what it is and why it exists) that will eventually replace
+`src/public/app.js` outright. In the meantime,
 `src/public/next/shared/ingest-queue-logic.js` holds 13 pure batch-ingest
-helper functions that were copied byte-identically from `app.js`, because a
-batch-queue bug fixed only in the shipping app would otherwise have silently
-re-shipped to `/next` while both existed. `test-next-ingest-logic-drift.js`
-(**OFFLINE**) enforced
-that byte-identity: it did not run or evaluate the functions, it extracted
-each one's source text from both files with a plain regex and string-compared
+helper functions copied byte-identically from `app.js`, because a batch-queue
+bug fixed only in the shipping app would otherwise silently re-ship to
+`/next` at cutover. `test-next-ingest-logic-drift.js` (**OFFLINE**) enforces
+that byte-identity: it does not run or evaluate the functions, it extracts
+each one's source text from both files with a plain regex and string-compares
 it — a behavioral test can pass while two copies diverge in a way that only
 matters for an untested input; a source comparison cannot miss any textual
-difference. It also independently scanned `ingest-queue-logic.js`'s own
-top-level declarations and checked the set matched a hardcoded name list
-exactly, so a 14th helper added without updating that list would also fail.
-**Its own header instructed deleting the file and its `OFFLINE` entry in
-[scripts/run-tests.js](scripts/run-tests.js) once `app.js` was gone — never
-repointing it at some other pair of files or turning it into a coverage test
-for the survivor — and v3.41.0's retirement did exactly that.** The
-comparison it performed is meaningless with only one copy left, so there is
-no successor suite: `ingest-queue-logic.js` in `next/` is now the only copy
-of these helpers (see [docs/architecture.md](docs/architecture.md)).
+difference. It also independently scans `ingest-queue-logic.js`'s own
+top-level declarations and checks the set matches a hardcoded name list
+exactly, so a 14th helper added without updating that list also fails.
+**When `/next` becomes `/` and `app.js` is deleted at cutover, this test's
+own header instructs deleting the file and its `OFFLINE` entry in
+[scripts/run-tests.js](scripts/run-tests.js) — never repointing it at some
+other pair of files or turning it into a coverage test for the survivor.**
+The comparison it performs is meaningless once there is only one copy left.
 
 **A new OFFLINE suite pins the write-registry guard on `/api/config`, `/api/sync/setup`, and domain-rename** — `test-route-write-guards.js`. These routes (API-key save/disconnect/switch, the knowledge-folder path, sync setup, domain rename) mutate state that a running ingest reads live (`getDomainsDir()` and `getProviderInfo()` both resolve fresh on every call), so changing them mid-ingest can split a document's pages across two folders or finish it on a different model. Every "the guard fires" assertion is paired with a "the guard does NOT fire while idle" assertion against the same route — a guard that always blocks is exactly as broken as one that never does, and only the negative half tells those two apart. A dedicated section also pins the routes deliberately left **unguarded** (`POST /api/config/default-domain` — it only selects which domain an unnamed MCP write assumes, and can't affect a write already in flight), so a future blanket sweep shows up as a failing assertion rather than shipping silently. It spins up the real router in-process against isolated tempdirs (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`, set before any app module is imported) and never calls `POST /api/config/update` or exercises `POST /pick-folder` outside its refused state, for the same reasons any suite in this repo avoids them (see the sections above).
 

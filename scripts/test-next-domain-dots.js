@@ -90,12 +90,34 @@ const DOMAINS_JS = path.join(ROOT, 'src/public/next/views/domains.js');
 const DOMAINS_CSS = path.join(ROOT, 'src/public/next/views/domains.css');
 const SHELL_CSS = path.join(ROOT, 'src/public/next/shell.css');
 const COLOR_CSS = path.join(ROOT, 'src/public/next/tokens/color.css');
+/* tokens/material.css is read TOO, and it is not optional. The `.sidebar` /
+   `.rail` planes moved off `--surface` onto `--mat-sidebar`, which is declared
+   only here — so a table built from color.css alone resolves the one backdrop
+   that matters to NULL and the whole of §5 silently stops grading the
+   commonest row state. Concatenated in LINK ORDER (index.html loads material
+   after color, same (0,1,0) specificity) so a redefinition here wins exactly
+   as it does in the browser. `topLevelRules` skips every `@`-prelude block, so
+   the reduced-transparency and increased-contrast degradations are excluded:
+   grading the shipped design against its fallback would grade the fallback. */
+const MATERIAL_CSS = path.join(ROOT, 'src/public/next/tokens/material.css');
 
 const jsRaw = readFileSync(DOMAINS_JS, 'utf8');
 const js = stripComments(jsRaw);
 const domainsCss = readFileSync(DOMAINS_CSS, 'utf8');
 const shellCss = readFileSync(SHELL_CSS, 'utf8');
 const colorCss = readFileSync(COLOR_CSS, 'utf8');
+const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
+/* views/domains.css JOINS THE TOKEN TABLE, and that is a real widening of
+   what this suite reads rather than a convenience. The three derived rungs
+   this file has always carried as literals (`#16768C`/`#438126`/`#925E13`)
+   are now declared ONCE as `--dm-ink-entity`/`-concept`/`-summary` and
+   referenced by both the row dots below AND `.dm-stat-value`, because two
+   rules needing one colour is what a name is for. A table built from the
+   tokens/ files alone resolves those three to NULL and §5 stops grading the
+   three dots it exists for — so the view's own custom properties are read
+   too, concatenated LAST because index.html links views/ after tokens/ and
+   `:root` in a view file therefore wins the same tie in the browser. */
+const tokenCss = `${colorCss}\n${materialCss}\n${domainsCss}`;
 
 let passed = 0, failed = 0;
 const ok = (cond, label) => { if (cond) { passed++; console.log(`  ✓ ${label}`); } else { failed++; console.log(`  ✗ ${label}`); } };
@@ -237,6 +259,71 @@ function resolveColor(value, primary, base, seen = new Set()) {
   return parseHex(v) ? v.toUpperCase() : null;
 }
 
+/** Parses `#rgb`, `#rrggbb`, `rgb()` and `rgba()` into {r,g,b,a}. Returns null
+ *  on anything else — a gradient, a keyword, an unresolved var. Never a guess. */
+function parseRgba(value) {
+  const v = String(value == null ? '' : value).trim();
+  const hex = parseHex(v);
+  if (hex) return { r: hex[0], g: hex[1], b: hex[2], a: 1 };
+  const m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)\s*)?\)$/i.exec(v);
+  if (!m) return null;
+  return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
+}
+
+/** Source-over composite of a translucent `top` onto an OPAQUE `bottom`,
+ *  returned as an uppercase hex. Channels are rounded, because a rounded 8-bit
+ *  channel is what the compositor actually writes. */
+function compositeOver(top, bottom) {
+  const ch = (t, b) => Math.round(t * top.a + b * (1 - top.a));
+  const to2 = (n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
+  return `#${to2(ch(top.r, bottom.r))}${to2(ch(top.g, bottom.g))}${to2(ch(top.b, bottom.b))}`.toUpperCase();
+}
+
+/**
+ * Resolve a BACKDROP to the opaque hex a pixel actually ends up.
+ *
+ * THE MATERIAL MODEL, stated so it can be argued with. `.sidebar` and `.rail`
+ * paint `var(--mat-sidebar)`, which is a TRANSLUCENT rgba over a
+ * `backdrop-filter: blur() saturate()`. `resolveColor` correctly refuses it,
+ * and refusing is the right default — but here the composite is knowable
+ * rather than guessed, for the reason shell.css states at `.rail`: these are
+ * grid COLUMNS with nothing behind them but the body's own canvas, so the
+ * filter has nothing to sample. A blur of a flat field is that flat field, and
+ * `saturate()` of a near-achromatic field leaves it near-achromatic. So the
+ * plane is the alpha composite over `--canvas`, which is what this computes.
+ *
+ * If chrome is ever moved to OVERLAP content, this model stops holding and the
+ * honest fix is to fail here rather than to composite over the wrong bottom.
+ *
+ * `bottomHex` NAMES THAT BOTTOM, and it is not optional decoration. A row's
+ * hover and selected fills are now `--mat-row-hover` / `--mat-row-active` —
+ * alpha overlays that composite onto the SIDEBAR PLANE, which is itself a
+ * composite over `--canvas`. Compositing them straight onto `--canvas`
+ * instead skips a layer and reports a contrast the screen never shows. The
+ * default stays `--canvas` so the plane itself resolves as before.
+ */
+function resolveSurface(value, primary, base, bottomHex = null) {
+  const direct = resolveColor(value, primary, base);
+  if (direct) return direct;
+  // Walk the var() chain by hand so a translucent terminal value survives.
+  let v = String(value == null ? '' : value).trim();
+  const seen = new Set();
+  for (let hops = 0; hops < 12; hops++) {
+    const m = /^var\(\s*(--[a-z0-9-]+)\s*(?:,[^)]*)?\)$/i.exec(v);
+    if (!m) break;
+    if (seen.has(m[1])) return null;
+    seen.add(m[1]);
+    const next = primary.get(m[1]) ?? base.get(m[1]);
+    if (next == null) return null;
+    v = String(next).trim();
+  }
+  const top = parseRgba(v);
+  if (!top || top.a >= 1) return null;
+  const bottom = parseRgba(bottomHex || resolveColor('var(--canvas)', primary, base));
+  if (!bottom) return null;
+  return compositeOver(top, bottom);
+}
+
 // ── §1 helper controls ─────────────────────────────────────────────────────
 section('§1 The helpers are controlled before any of their output is believed');
 eq(r2(contrast('#123456', '#123456')), 1, 'contrast(identical pair) === 1.00');
@@ -246,11 +333,15 @@ eq(r2(deltaE2000('#3FBFD8', '#3FBFD8')), 0, 'deltaE2000(identical pair) === 0.00
 eq(r2(deltaE2000('#FFFFFF', '#000000')), 100, 'deltaE2000(white, black) === 100.00');
 ok(parseHex('not-a-colour') === null, 'parseHex refuses a non-hex value (null, never a guess)');
 ok(parseHex('rgba(0,0,0,0.5)') === null, 'parseHex refuses a translucent value rather than treating it as opaque');
+eq(compositeOver({ r: 255, g: 255, b: 255, a: 0.5 }, { r: 0, g: 0, b: 0, a: 1 }), '#808080', 'compositeOver(50% white, black) === #808080');
+eq(compositeOver({ r: 17, g: 34, b: 51, a: 1 }, { r: 255, g: 255, b: 255, a: 1 }), '#112233', 'compositeOver(opaque top, anything) === the top');
+ok(parseRgba('rgba(21,21,31,0.92)').a === 0.92 && parseRgba('#112233').r === 17, 'parseRgba reads both rgba() and #rrggbb');
+ok(parseRgba('linear-gradient(red, blue)') === null, 'parseRgba refuses a gradient (null, never a guess)');
 
 // ── §2 the two theme maps ──────────────────────────────────────────────────
-section('§2 tokens/color.css yields two genuinely different theme maps');
-const DARK_TOKENS = tokenMap(colorCss, ':root');
-const LIGHT_TOKENS = tokenMap(colorCss, '[data-theme="light"]');
+section('§2 tokens/color.css + tokens/material.css yield two genuinely different theme maps');
+const DARK_TOKENS = tokenMap(tokenCss, ':root');
+const LIGHT_TOKENS = tokenMap(tokenCss, '[data-theme="light"]');
 ok(DARK_TOKENS.size > 40, `:root declares ${DARK_TOKENS.size} custom properties`);
 ok(LIGHT_TOKENS.size > 20, `[data-theme="light"] declares ${LIGHT_TOKENS.size} custom properties`);
 {
@@ -263,6 +354,15 @@ ok(LIGHT_TOKENS.size > 20, `[data-theme="light"] declares ${LIGHT_TOKENS.size} c
   ok(differing.length > 10, `${differing.length} of them hold DIFFERENT values — the light block is real, not a comment match`);
   eq(resolveColor('var(--surface)', DARK_TOKENS, DARK_TOKENS), '#0C0C14', '--surface resolves dark');
   eq(resolveColor('var(--surface)', LIGHT_TOKENS, DARK_TOKENS), '#FFFFFF', '--surface resolves light');
+  // ANTI-VACUITY on the concatenation itself: if material.css silently stopped
+  // being read, every figure below would still compute — against the OLD
+  // backdrop — and this suite would pass while grading a surface the app no
+  // longer paints. So the material table is asserted present and themed.
+  ok(DARK_TOKENS.has('--mat-sidebar'), 'the material table is really in the map (--mat-sidebar is present at :root)');
+  ok(LIGHT_TOKENS.has('--mat-sidebar'), '--mat-sidebar is redefined in the light block too');
+  ok(DARK_TOKENS.get('--mat-sidebar') !== LIGHT_TOKENS.get('--mat-sidebar'), 'and the two values genuinely differ');
+  ok(resolveColor('var(--mat-sidebar)', DARK_TOKENS, DARK_TOKENS) === null,
+    'resolveColor still REFUSES --mat-sidebar (it is translucent) — so the composite below is doing real work, not duplicating it');
 }
 
 // ── §3 no inline colour anywhere in views/domains.js ───────────────────────
@@ -333,11 +433,23 @@ section('§5 Every dot clears the 3:1 non-text floor, both themes, every row sta
 /**
  * THE BACKDROP MODEL, stated so it can be argued with:
  *   · `.dm-row` paints `transparent`, so an ordinary row's backdrop is the
- *     nearest painted ancestor — `.sidebar`, which paints `--surface`.
- *   · `.dm-row:hover`   paints `--surface-hover`.
- *   · `.dm-row.active`  paints `--surface-active`  ← the worst case, and the
+ *     nearest painted ancestor — `.sidebar`, which since the material pass
+ *     paints the TRANSLUCENT `--mat-sidebar` rather than the opaque
+ *     `--surface`. `resolveSurface` composites it over `--canvas`; the
+ *     justification for that bottom is on the helper.
+ *   · `.dm-row:hover`   paints `--mat-row-hover`.
+ *   · `.dm-row.active`  paints `--mat-row-active`  ← the worst case, and the
  *     one an arithmetic check against `--surface` alone would miss (2.17 vs
  *     the 1.85 a browser reads on the selected row).
+ *
+ * THE LAST TWO WERE `--surface-hover` / `--surface-active` UNTIL THE MATERIAL
+ * PASS. An opaque fill on a translucent plane replaces the material for the
+ * width of the row — the blur stops and the hover reads as a hole rather than
+ * as a lit row — so both moved onto the alpha overlays AppKit uses, which
+ * composite ONTO the plane instead of covering it. That is why they are now
+ * resolved with the sidebar plane as their bottom rather than the canvas:
+ * skipping that layer would report a ratio the screen never shows.
+ *
  * All three are READ OFF DISK below rather than hardcoded, so a change to any
  * of those rules moves this check with it.
  */
@@ -351,7 +463,12 @@ const BACKDROP_TOKENS = [];
   const activeBg = declFor(domainsCss, '.dm-row.active', 'background');
   ok(hoverBg !== null, `.dm-row:hover background read from disk (${hoverBg})`);
   ok(activeBg !== null, `.dm-row.active background read from disk (${activeBg})`);
-  BACKDROP_TOKENS.push(['row on sidebar', sidebarBg], ['row hovered', hoverBg], ['row SELECTED', activeBg]);
+  // The third element is the BOTTOM to composite onto: null means `--canvas`
+  // (correct for the plane itself), `sidebarBg` means "onto the plane".
+  BACKDROP_TOKENS.push(
+    ['row on sidebar', sidebarBg, null],
+    ['row hovered', hoverBg, sidebarBg],
+    ['row SELECTED', activeBg, sidebarBg]);
 }
 
 const FLOOR_NON_TEXT = 3.0;
@@ -372,8 +489,9 @@ for (const theme of THEMES) {
 for (const theme of THEMES) {
   eq(resolvedSlots[theme.name].length, slotCount, `${theme.name}: all ${slotCount} slots resolved`);
   for (const { cls, hex } of resolvedSlots[theme.name]) {
-    for (const [label, token] of BACKDROP_TOKENS) {
-      const bg = resolveColor(token, theme.tokens, DARK_TOKENS);
+    for (const [label, token, bottomTok] of BACKDROP_TOKENS) {
+      const bottom = bottomTok ? resolveSurface(bottomTok, theme.tokens, DARK_TOKENS) : null;
+      const bg = resolveSurface(token, theme.tokens, DARK_TOKENS, bottom);
       ok(bg !== null, `${theme.name}: backdrop "${label}" resolves (${token} -> ${bg})`);
       if (!bg) continue;
       const cr = contrast(hex, bg);
@@ -388,8 +506,10 @@ for (const theme of THEMES) {
   const worst = (name) => {
     let lo = Infinity, at = '';
     for (const { cls, hex } of resolvedSlots[name]) {
-      for (const [label, token] of BACKDROP_TOKENS) {
-        const bg = resolveColor(token, name === 'dark' ? DARK_TOKENS : LIGHT_TOKENS, DARK_TOKENS);
+      for (const [label, token, bottomTok] of BACKDROP_TOKENS) {
+        const T = name === 'dark' ? DARK_TOKENS : LIGHT_TOKENS;
+        const bottom = bottomTok ? resolveSurface(bottomTok, T, DARK_TOKENS) : null;
+        const bg = resolveSurface(token, T, DARK_TOKENS, bottom);
         if (!bg) continue;
         const cr = contrast(hex, bg);
         if (cr < lo) { lo = cr; at = `.${cls} on ${label}`; }
@@ -398,8 +518,66 @@ for (const theme of THEMES) {
     return { lo: r2(lo), at };
   };
   const wLight = worst('light'), wDark = worst('dark');
-  eq(wLight.lo, 3.44, `light: worst dot reads 3.44 (${wLight.at})`);
-  eq(wDark.lo, 6.77, `dark: worst dot reads 6.77 (${wDark.at}) — unchanged by this fix`);
+  /* ── BOTH RATCHETS MOVED, AND THE MOVE IS A FINDING, NOT A RELAXATION ────
+     They were 3.44 (light) and 6.77 (dark), both measured against an OPAQUE
+     `--surface-active` on the selected row. That fill was replaced by
+     `--mat-row-active`, the alpha overlay AppKit uses, because an opaque fill
+     on a translucent plane stops the blur for the width of the row and reads
+     as a hole rather than as a lit row.
+
+     An overlay by definition moves the selected row FURTHER from the plane
+     than a hand-picked surface colour did — +10% white on dark, +10% ink on
+     light — and every one of these dots is a MID-TONE, so both directions
+     cost contrast. Recomputed against the real stack (overlay over plane over
+     canvas, rather than overlay over canvas, which skipped a layer):
+         dark   6.77 -> 5.49      light  3.44 -> 3.07
+     Both still clear WCAG 1.4.11's 3:1 floor for a non-text indicator, which
+     is the requirement. THE LIGHT MARGIN IS 0.07 AND IT IS WRITTEN DOWN
+     RATHER THAN ROUNDED AWAY: the worst reading is `.dm-row-dot-4`
+     (`--teal-600`) on a selected row, and the palette has no `--teal-700` to
+     step it to. If a future palette edit needs headroom here, that missing
+     rung is where it comes from — not from this number.
+
+     The floors below are re-derived from the readings above, and they are
+     still floors: the ratchet reports drift while it passes, these two fail. */
+  eq(wLight.lo, 3.07, `light: worst dot reads 3.07 (${wLight.at}) — was 3.44 on the opaque --surface-active`);
+  eq(wDark.lo, 5.49, `dark: worst dot reads 5.49 (${wDark.at}) — was 6.77 on the opaque --surface-active`);
+  ok(wDark.lo >= 5.4, `dark: worst dot ${wDark.lo} still clears 5.4`);
+  ok(wLight.lo >= 3.0, `light: worst dot ${wLight.lo} still clears WCAG 1.4.11's 3:1 floor for a non-text indicator`);
+}
+{
+  /* AN INDEPENDENT CHECK ON THE COMPOSITE MODEL ITSELF.
+     material.css's reduced-transparency block collapses each material to "the
+     tone the translucent value composites to over the canvas" — a value a
+     human typed by hand, in a block `topLevelRules` skips and this suite has
+     therefore never read. It is arrived at by a completely different route
+     from `resolveSurface`'s arithmetic, so if the two agree, the model is
+     confirmed by something other than its own author. If someone later edits
+     one and not the other, this is the assertion that says so. */
+  const opaqueFallback = (themeSel) => {
+    const src = stripCssComments(materialCss);
+    const at = src.indexOf('@media (prefers-reduced-transparency: reduce)');
+    if (at < 0) return null;
+    let depth = 0, end = -1;
+    for (let j = src.indexOf('{', at); j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) { end = j; break; } }
+    }
+    if (end < 0) return null;
+    const block = src.slice(at, end);
+    const selAt = block.indexOf(themeSel);
+    if (selAt < 0) return null;
+    const m = /--mat-sidebar\s*:\s*(#[0-9a-fA-F]{6})/.exec(block.slice(selAt));
+    return m ? m[1].toUpperCase() : null;
+  };
+  const fbDark = opaqueFallback(':root');
+  const fbLight = opaqueFallback('[data-theme="light"]');
+  ok(fbDark !== null && fbLight !== null, `the reduced-transparency fallbacks were found (${fbDark} / ${fbLight})`);
+  eq(resolveSurface('var(--mat-sidebar)', DARK_TOKENS, DARK_TOKENS), fbDark,
+    'dark: the composite of --mat-sidebar over --canvas equals the hand-typed opaque fallback');
+  eq(resolveSurface('var(--mat-sidebar)', LIGHT_TOKENS, DARK_TOKENS), fbLight,
+    'light: the composite of --mat-sidebar over --canvas equals the hand-typed opaque fallback');
+  ok(fbDark !== fbLight, 'and the two fallbacks differ, so the agreement above is not two nulls or one constant');
 }
 
 // ── §6 separability ────────────────────────────────────────────────────────
@@ -649,6 +827,22 @@ section('§8 POSITIVE CONTROLS — every detector is watched failing');
     '§7b detector FIRES on a planted sans font-family for a mono-carrying class');
   ok(declFor('.dm-issue-main { font-size: 11px; }', '.dm-issue-main', 'font-family') === null,
     '§7b detector does NOT fire on a rule with no font-family (so its firing above is a finding)');
+
+{
+  // §5's BACKDROP resolver, watched failing. It must return null — not a
+  // guess — on anything it cannot honestly composite, because a null is what
+  // turns into a reported ✗ upstream, and a guess would turn into a green
+  // reading of a surface nobody measured.
+  const fake = new Map([['--mat-sidebar', 'linear-gradient(#111, #222)'], ['--canvas', '#0C0C14']]);
+  ok(resolveSurface('var(--mat-sidebar)', fake, fake) === null,
+    '§5 detector: resolveSurface REFUSES a gradient backdrop rather than guessing');
+  const noCanvas = new Map([['--mat-sidebar', 'rgba(21,21,31,0.92)']]);
+  ok(resolveSurface('var(--mat-sidebar)', noCanvas, noCanvas) === null,
+    '§5 detector: resolveSurface REFUSES a translucent plane whose --canvas it cannot resolve');
+  const good = new Map([['--mat-sidebar', 'rgba(21,21,31,0.92)'], ['--canvas', '#0C0C14']]);
+  eq(resolveSurface('var(--mat-sidebar)', good, good), '#14141E',
+    '§5 detector: and it DOES resolve the well-formed pair (so the two nulls above are findings, not blindness)');
+}
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

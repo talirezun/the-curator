@@ -1040,7 +1040,7 @@ function renderSidebar(token) {
         '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
         '<span class="mem-row-main">' +
           '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
-          '<span class="mem-row-meta mono">' + escapeHtml(projectMetaLine(p)) + '</span>' +
+          '<span class="mem-row-meta">' + escapeHtml(projectMetaLine(p)) + '</span>' +
         '</span>' +
       '</button>'
     );
@@ -1399,7 +1399,7 @@ function renderSaveStatus(read, d) {
   for (const s of scopes.filter((x) => x && x.harnessShared === true).slice(0, 3)) {
     const who = (s.harnesses || []).slice(0, 4).map((h) => escapeHtml(h)).join(' and ');
     lines.push(saveLine('alertTriangle', 'loud',
-      '<b>Two tools are writing <span class="mono">' + escapeHtml(s.scope) + '</span>.</b> '
+      '<b>Two tools are writing <span class="mem-name">' + escapeHtml(s.scope) + '</span>.</b> '
       + (who ? who + ' have ' : 'They have ')
       + 'both saved into the same handoff file, and a save overwrites — so each one has replaced the '
       + 'other’s. The journal below keeps both trails. Give each tool its own scope and they stop colliding.',
@@ -1414,9 +1414,9 @@ function renderSaveStatus(read, d) {
     const samePair = newest.scope === shownScope && newest.machine === shownMachine;
     if (!samePair && there !== null && (here === null || there < here - 60)) {
       lines.push(saveLine('', '',
-        'Newer state in this project: <span class="mono">' + escapeHtml(newest.scope) + '</span>'
+        'Newer state in this project: <span class="mem-name">' + escapeHtml(newest.scope) + '</span>'
         + (newest.machine && newest.machine !== shownMachine
-          ? ' on <span class="mono">' + escapeHtml(newest.machine) + '</span>' : '')
+          ? ' on <span class="mem-name">' + escapeHtml(newest.machine) + '</span>' : '')
         + ' — ' + escapeHtml(formatAge(there) || 'unknown age') + '.', true));
     }
   }
@@ -1585,7 +1585,7 @@ function renderEmptyProject(unlistedEntries) {
       // the caller and this is the one interpolated value in the sentence.
       renderDescription('No agent has written a handoff here. Ask an agent connected through ' +
         '<span class="mono">my-curator</span> to save its working state for ' +
-        '<span class="mono">' + escapeHtml(state.activeProject) +
+        '<span class="mem-name">' + escapeHtml(state.activeProject) +
         '</span> at the end of a session, and it will show up here.', { html: true }) +
     '</div>'
   );
@@ -1636,7 +1636,7 @@ function renderScopeControls(scopes) {
         renderListboxHtml(scopeCfg) + '</span>'
     : (state.scope
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
-          '<span class="mem-ctl-static mono">' + escapeHtml(state.scope) + '</span></span>'
+          '<span class="mem-ctl-static">' + escapeHtml(state.scope) + '</span></span>'
         : '');
 
   // "WHICH OF THESE IS MINE?" — on a feature whose whole premise is
@@ -1683,7 +1683,7 @@ function renderScopeControls(scopes) {
         renderListboxHtml(machineCfg) + '</span>'
     : (d && d.machine
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
-          '<span class="mem-ctl-static mono">' + escapeHtml(d.machine) +
+          '<span class="mem-ctl-static">' + escapeHtml(d.machine) +
           (selectedIsMine ? MINE : '') + '</span></span>'
         : '');
 
@@ -1833,7 +1833,7 @@ function renderBrief(read, openIt) {
     '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
         '<span>Standing brief</span>' +
-        '<span class="mem-fold-meta mono"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
+        '<span class="mem-fold-meta"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
           escapeHtml(age || 'updated') + '</span></summary>' +
       '<div class="mem-fold-body">' +
         (b.truncated ? '<div class="mem-note">' + icon('alertTriangle', 13) +
@@ -1942,11 +1942,11 @@ function renderJournal() {
       : '';
     return (
       '<li class="mem-j-row">' +
-        '<div class="mem-j-when mono"' + (e.at ? ' title="' + escapeHtml(e.at) + '"' : '') + '>' +
+        '<div class="mem-j-when"' + (e.at ? ' title="' + escapeHtml(e.at) + '"' : '') + '>' +
           escapeHtml(e.at ? e.at.slice(0, 16).replace('T', ' ') : 'unknown') + '</div>' +
         '<div class="mem-j-body">' +
           '<div class="mem-j-headline">' + escapeHtml(e.headline || '(no headline)') + '</div>' +
-          (meta ? '<div class="mem-j-meta mono">' + meta + '</div>' : '') +
+          (meta ? '<div class="mem-j-meta">' + meta + '</div>' : '') +
           rej +
         '</div>' +
       '</li>'
@@ -2000,7 +2000,7 @@ function renderJournal() {
     '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
         '<span>Session journal</span>' +
-        '<span class="mem-fold-meta mono">' + escapeHtml(String(j.returned)) + '</span></summary>' +
+        '<span class="mem-fold-meta">' + escapeHtml(String(j.returned)) + '</span></summary>' +
       '<div class="mem-fold-body">' +
         // The journal is APPEND-ONLY history, newest first, and any entry
         // MAY HAVE BEEN SUPERSEDED — a blocker named in an old headline can

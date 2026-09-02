@@ -124,12 +124,18 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: inherit;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.dm-row:hover { background: var(--surface-hover); }
-.dm-row.active { background: var(--surface-active); color: var(--text); }
+/* Rows on the sidebar MATERIAL take the alpha overlay, never an absolute
+   surface colour — an opaque fill stops the blur for the width of the row and
+   reads as a hole punched in the plane. Same change as views/chat.css's
+   conversation rows and shell.css's `.settings-nav-row`. */
+.dm-row:hover { background: var(--mat-row-hover); }
+.dm-row.active { background: var(--mat-row-active); color: var(--text); }
 .dm-row.active .dm-row-name { font-weight: var(--weight-medium); }
 /* Press. A row in a vertical stack nudges along the axis it does NOT scroll
    in — a 1px vertical shift inside a 2px-gap list reads as the list breathing
@@ -141,7 +147,7 @@
    the length of the hold is honest, and pressing an ALREADY-selected row then
    changes nothing at all — the transform carries it — instead of appearing to
    deselect. Declared after `.active` because the two tie on specificity. */
-.dm-row:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.dm-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
 
 .dm-row-dot {
   flex: none;
@@ -200,9 +206,30 @@
 .dm-row-dot-5 { background: var(--red-400); }
 .dm-row-dot-6 { background: var(--ink-200); }
 
-[data-theme="light"] .dm-row-dot-1 { background: #16768C; }  /* entity-600 -> one ramp step */
-[data-theme="light"] .dm-row-dot-2 { background: #438126; }  /* concept-600 -> one ramp step */
-[data-theme="light"] .dm-row-dot-3 { background: #925E13; }  /* summary-600 -> one ramp step */
+/* ── THE THREE DERIVED RUNGS ARE NOW NAMED, BECAUSE TWO THINGS NEED THEM ──
+   These literals were written for the ROW DOTS. `.dm-stat-value` needs the
+   same three values for the same reason (see its own note below), and the
+   answer to "two rules need one colour" is a name, not a second copy of the
+   literal — views/chat.css's colour-literal baseline is ZERO and this file's
+   is EIGHT, a number the design-kit suite allows only to SHRINK.
+
+   Declared under `[data-theme="light"]` only. In DARK the type triad's own
+   -500 rungs already clear both floors with room (dot 6.77-8.20, stat text
+   8.78-9.37), so the names simply alias the tokens there and no dark value
+   moves by a byte. */
+:root {
+  --dm-ink-entity:  var(--type-entity);
+  --dm-ink-concept: var(--type-concept);
+  --dm-ink-summary: var(--type-summary);
+}
+[data-theme="light"] {
+  --dm-ink-entity:  #16768C;  /* entity-600 -> one ramp step */
+  --dm-ink-concept: #438126;  /* concept-600 -> one ramp step */
+  --dm-ink-summary: #925E13;  /* summary-600 -> one ramp step */
+}
+[data-theme="light"] .dm-row-dot-1 { background: var(--dm-ink-entity); }
+[data-theme="light"] .dm-row-dot-2 { background: var(--dm-ink-concept); }
+[data-theme="light"] .dm-row-dot-3 { background: var(--dm-ink-summary); }
 [data-theme="light"] .dm-row-dot-4 { background: var(--teal-600); }
 [data-theme="light"] .dm-row-dot-5 { background: var(--red-600); }
 [data-theme="light"] .dm-row-dot-6 { background: var(--ink-400); }
@@ -304,21 +331,64 @@
   gap: 10px;
   margin-bottom: 24px;
 }
+/* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
+   ONE thing: `.dm-path-eyebrow`, and it keeps it because an EYEBROW is a
+   mono idiom in this design system (`--type-eyebrow` is defined as a mono
+   token in tokens/typography.css), not because a path is code.
+
+   The other 31 monospace spans this view emitted are gone. They were doing
+   two different jobs under one name — a COUNT was in mono so it would not
+   reflow as it changed, which is tabular figures; a NAME (a wiki slug, a
+   folder path, a domain) was in mono out of habit, and on a screen that is
+   almost entirely counts and slugs that is what made the whole view read as
+   terminal output. The counts keep the property that mattered. */
+.dm-num,
+.dm-row-meta,
+.dm-chip-count,
+.dm-browse-tab-count,
+.dm-quick-cost,
+.dm-plan-detail,
+.dm-group-pill,
+.dm-issue-more { font-variant-numeric: var(--numeric-tabular); }
+/* A slug, a folder or a path named inside a sentence. Emphasised by colour
+   and weight rather than by a change of face mid-line — the same decision as
+   views/ingest.css's `.ing-name` and views/memory.css's `.mem-name`. */
+.dm-name { color: var(--text); font-weight: var(--weight-medium); }
+
 .dm-stat-card {
-  padding: 14px;
+  /* 14 -> --space-8 (16px), on the 4pt grid. */
+  padding: var(--space-8);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface);
+  /* A card is CONTENT, not chrome, so it takes elevation and a hairline and
+     never the two-line material edge — the same pair `.cur-group` uses. */
+  box-shadow: var(--elev-1);
 }
 .dm-stat-value {
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
   color: var(--text);
   margin-top: 4px;
+  /* Four counts sitting in a row of equal-width cards. Tabular figures so
+     `3,416` and `2,717` occupy the same width and the four numbers line up
+     down the row instead of drifting with their digits. */
+  font-variant-numeric: var(--numeric-tabular);
 }
-.dm-stat-entity  { color: var(--type-entity); }
-.dm-stat-concept { color: var(--type-concept); }
-.dm-stat-summary { color: var(--type-summary); }
+/* ── THESE ARE TEXT, AND ON LIGHT THEY FAILED AA ──────────────────────────
+   The three type counts took the raw `--type-*` token. Recomputed from the
+   shipped tokens against the card's own `--surface` (#FFFFFF on light):
+       entity 3.47 · concept 3.22 · summary 3.58   — floor 4.5:1 (1.4.3)
+   These are the biggest numerals on the view and the whole reason the card
+   exists, rendered under the body-text floor for every light-theme user.
+   The row dots below this view's sidebar had the identical problem and it
+   was solved by stepping one rung darker; the SAME three values fix this,
+   which is why they are now named rather than copied:
+       entity 5.24 · concept 4.77 · summary 5.48
+   DARK is byte-identical to before (8.95 / 9.37 / 8.78). */
+.dm-stat-entity  { color: var(--dm-ink-entity); }
+.dm-stat-concept { color: var(--dm-ink-concept); }
+.dm-stat-summary { color: var(--dm-ink-summary); }
 .dm-stat-other   { color: var(--text-2); }
 
 /* ── Health card ──────────────────────────────────────────────────────── */
@@ -400,6 +470,10 @@
   gap: 8px;
   margin-bottom: 14px;
 }
+/* A health readout, NOT a control: it is a <span> with no handler, which is
+   why its 25px height is not a hit-target finding. It loses the code face for
+   the same reason everything else here did — `Broken links 0` is a sentence
+   with a number in it — and keeps tabular digits on the number itself. */
 .dm-chip {
   display: inline-flex;
   align-items: center;
@@ -407,7 +481,7 @@
   height: 25px;
   padding: 0 10px;
   border-radius: var(--radius-full);
-  font: var(--type-mono);
+  font: var(--type-body-sm);
   font-size: var(--text-2xs);
   border: 1px solid transparent;
 }
@@ -496,7 +570,9 @@
   border: 1px solid var(--accent-border);
   background: var(--surface);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), transform var(--t-press);
 }
 .dm-quick-btn:hover:not(:disabled) { background: var(--surface-hover); }
@@ -602,7 +678,9 @@
   align-items: center;
   gap: 8px;
   padding: 10px 2px;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   list-style: none;
 }
 .dm-group-summary::-webkit-details-marker { display: none; }
@@ -627,10 +705,13 @@
   padding: 1px 8px;
 }
 
+/* 26 -> --control-sm (28px). A real <button class="btn btn-secondary"> that
+   applies every fix in a category at once, and it was the smallest pointer
+   target on the health panel. The BOX grew; the type did not. */
 .dm-group-fixall-btn {
   margin-left: auto;
-  height: 26px;
-  padding: 0 9px;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
   font-size: var(--text-xs);
 }
 
@@ -665,11 +746,14 @@
   color: var(--text-2);
   padding-top: 4px;
 }
+/* 22 -> --control-sm (28px). These two sit at the right-hand end of a health
+   row and were the smallest real buttons in the app — 56x22 measured in a
+   rendered page. Their type is unchanged; only the box grew. */
 .dm-dismiss-btn,
 .dm-restore-btn {
   flex: none;
-  height: 22px;
-  padding: 0 8px;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
   font-size: var(--text-2xs);
 }
 
@@ -764,7 +848,9 @@
   background: var(--surface);
   color: var(--text-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: inherit;
   transition: border-color var(--t-state), background var(--t-state);
 }
@@ -1003,7 +1089,9 @@
   border-radius: var(--radius-full);
   background: var(--surface-inset);
   color: var(--text-2);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: inherit;
   font-size: var(--text-2xs);
   transition: background var(--t-state), color var(--t-state);
@@ -1033,7 +1121,9 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: inherit;
   transition: background var(--t-state), transform var(--t-press);
 }
@@ -1190,7 +1280,9 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 4px 10px;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--t-press);
 }
 .reader-source-reveal:hover:not(:disabled) {
