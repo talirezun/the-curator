@@ -3305,6 +3305,7 @@ never worse.
       "error": null,
       "listed": 11,
       "rejectedUnoffered": null,
+      "suppressed": { "movingAlias": 0, "belowChatFloor": 0 },
       "models": [
         { "id": "claude-fable-5-1", "label": "Claude Fable 5.1",
           "contextLength": 1000000, "created": "2026-08-28T00:00:00Z",
@@ -3322,6 +3323,13 @@ never worse.
   A failing provider carries `error`; a disconnected one carries `connected: false` and no error.
 - `firstSeen` is **sticky**: an id already known keeps the date it was first observed across
   refreshes. Restamping everything with today's date would make every id look new forever.
+- `suppressed` — `{ movingAlias, belowChatFloor }`, ids dropped because the app would refuse them
+  anyway: a `*-latest` moving alias (the offer factory refuses those by name) or a window under the
+  32,768-token admission floor. **Counted, never silently dropped** — `listed − models.length`
+  is fully accounted for by these two numbers plus what the app already has a record of. Measured
+  live on 2026-09-02: Gemini listed 38, of which 31 were unrecorded and 6 of those unactionable
+  (3 aliases, 3 text-to-speech models at 8,192 tokens). An **unknown** context length never
+  suppresses: unknown is not small, and over-reporting is the safe direction.
 - **Anthropic and Gemini** report any listed id the app has no record of, where "record" means
   `OFFERABLE_MODELS` ∪ `AWAITING_MEASUREMENT` ∪ the provider default ∪ its fallback chain — so a
   model somebody already looked at and deliberately deferred is not re-raised every day.

@@ -114,6 +114,50 @@ export function knownModelIds(provider) {
   return out;
 }
 
+/**
+ * Drop ids this app would REFUSE anyway, and count what was dropped.
+ *
+ * ── FOUND BY RUNNING IT AGAINST THE REAL PROVIDERS ─────────────────────────
+ *
+ * A first version reported 31 "new" Gemini ids. Most were unactionable:
+ * `gemini-flash-latest`, `gemini-pro-latest` and `gemini-flash-lite-latest` are
+ * MOVING ALIASES — `looksLikeMovingAlias` refuses them by name at the offer
+ * factory, so nobody could ever add one — and several were text-to-speech
+ * models publishing an 8,192-token window, which cannot hold a chat turn, let
+ * alone an ingest. A discovery feed whose entries mostly cannot be acted on is
+ * a feed nobody reads, and this one has exactly one job: making a genuinely new
+ * model impossible to miss.
+ *
+ * ── THE TWO FILTERS ARE THE APP'S OWN RULES, NOT NEW OPINIONS ──────────────
+ *
+ *   moving alias      `llm.js`'s exported `looksLikeMovingAlias`, the same
+ *                     predicate the offer factory refuses on. Not a copy.
+ *   below chat floor  the eligibility module's ADMISSION floor — the lowest
+ *                     lane. A model under it cannot serve any lane, so
+ *                     nominating it would be nominating something the filter
+ *                     would reject on arrival.
+ *
+ * NOTHING IS HIDDEN SILENTLY. Both counts are returned as `suppressed`, so a
+ * reader can see that 26 ids were dropped and why, rather than wondering where
+ * the difference between `listed` and `models.length` went. An UNKNOWN context
+ * length never suppresses: unknown is not small, and the fail-safe direction
+ * here is over-reporting.
+ */
+function suppressUnactionable(models) {
+  const isAlias = llmModule.__testing && llmModule.__testing.looksLikeMovingAlias;
+  const floor = eligibilityModule.APP_CONTEXT_FLOOR_ADMISSION_TOKENS;
+  let movingAlias = 0, belowChatFloor = 0;
+  const kept = [];
+  for (const m of models) {
+    if (typeof isAlias === 'function' && isAlias(m.id)) { movingAlias++; continue; }
+    if (Number.isFinite(floor) && Number.isFinite(m.contextLength) && m.contextLength < floor) {
+      belowChatFloor++; continue;
+    }
+    kept.push(m);
+  }
+  return { kept, suppressed: { movingAlias, belowChatFloor } };
+}
+
 /** A bounded, newline-free rendering of a thrown error, safe to put on the wire. */
 function errText(err) {
   const raw = (err && err.message) ? String(err.message) : String(err);
@@ -340,6 +384,7 @@ export async function getNewModels(opts = {}) {
       providers[provider] = {
         connected: false, checked: false, error: null,
         models: [], listed: null, rejectedUnoffered: null,
+        suppressed: { movingAlias: 0, belowChatFloor: 0 },
       };
       continue;
     }
@@ -349,29 +394,33 @@ export async function getNewModels(opts = {}) {
         .map(m => [m.id, m.firstSeen]),
     );
     try {
-      let found, listed = null, rejectedUnoffered = null;
+      let raw, listed = null, rejectedUnoffered = null;
       if (provider === 'anthropic') {
         const all = await fetchAnthropicModels(key, opts);
         listed = all.length;
         const known = knownModelIds('anthropic');
-        found = all.filter(m => !known.has(m.id));
+        raw = all.filter(m => !known.has(m.id));
       } else if (provider === 'gemini') {
         const all = await fetchGeminiModels(key, opts);
         listed = all.length;
         const known = knownModelIds('gemini');
-        found = all.filter(m => !known.has(m.id));
+        raw = all.filter(m => !known.has(m.id));
       } else {
         const r = await fetchOpenRouterDiscoveries(key, opts);
-        found = r.models;
+        raw = r.models;
         listed = r.listed;
         rejectedUnoffered = r.rejectedUnoffered;
       }
+      const { kept: found, suppressed } = suppressUnactionable(raw);
       providers[provider] = {
         connected: true,
         checked: true,
         error: null,
         listed,
         rejectedUnoffered,
+        // What was dropped as unactionable, and why — never a silent difference
+        // between `listed` and `models.length`. See suppressUnactionable.
+        suppressed,
         // STICKY firstSeen — see this file's docblock. An id already in the
         // cache keeps the date it was first observed; only a genuinely new id
         // gets today's.
@@ -385,6 +434,7 @@ export async function getNewModels(opts = {}) {
       providers[provider] = {
         connected: true, checked: false, error: errText(err),
         models: [], listed: null, rejectedUnoffered: null,
+        suppressed: { movingAlias: 0, belowChatFloor: 0 },
       };
     }
   }

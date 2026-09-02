@@ -853,7 +853,54 @@ section('§7d. The cache serves a fresh answer without a fetch, and refuses to s
   ok(undated.needed === true, 'an undated cache is stale — an unknown age cannot be asserted to be young');
 }
 
-section('§7e. Discovery never offers anything');
+section('§7e. Unactionable ids are suppressed — and COUNTED, never silently dropped');
+{
+  // ── FOUND BY RUNNING IT AGAINST THE REAL PROVIDERS ───────────────────────
+  // The first live run reported 31 "new" Gemini ids, of which six could never be
+  // acted on: three `*-latest` MOVING ALIASES that the offer factory refuses by
+  // name, and three models publishing a window too small to hold a chat turn.
+  // A feed whose entries mostly cannot be acted on is a feed nobody reads.
+  discovery.__clearDiscoveryCache();
+  const NOISY = {
+    models: [
+      { name: 'models/gemini-flash-latest', displayName: 'Latest',
+        inputTokenLimit: 1048576, supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-2.5-flash-preview-tts', displayName: 'TTS',
+        inputTokenLimit: 8192, supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-9.9-real', displayName: 'Real',
+        inputTokenLimit: 1048576, supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-9.8-no-window', displayName: 'Unknown window',
+        supportedGenerationMethods: ['generateContent'] },
+    ],
+  };
+  const r = await discovery.getNewModels({
+    force: true, now: new Date('2026-09-02T00:00:00Z'),
+    keys: { geminiApiKey: 'x', anthropicApiKey: '', openrouterApiKey: '' },
+    fetchImpl: fakeFetch([['generativelanguage', NOISY]]),
+  });
+  const g = r.providers.gemini;
+  const ids = g.models.map(m => m.id);
+  eq(g.listed, 4, 'all four ids were listed by the provider');
+  ok(!ids.includes('gemini-flash-latest'),
+    'a `*-latest` MOVING ALIAS is suppressed — the offer factory refuses it by name, so nobody could act on it');
+  eq(g.suppressed.movingAlias, 1, '…and counted');
+  ok(!ids.includes('gemini-2.5-flash-preview-tts'),
+    'a model below the 32,768 chat floor is suppressed — it cannot serve any lane');
+  eq(g.suppressed.belowChatFloor, 1, '…and counted');
+  ok(ids.includes('gemini-9.9-real'),
+    '⟨ANTI-VACUITY⟩ …while a genuinely actionable id survives, so the filters are not a blanket');
+  ok(ids.includes('gemini-9.8-no-window'),
+    'a model whose window the provider does not publish is KEPT — unknown is not small, and over-reporting is the safe direction');
+  eq(g.models.length, 2, 'two of four survive');
+  eq(g.listed - g.models.length, g.suppressed.movingAlias + g.suppressed.belowChatFloor,
+    'the arithmetic closes: every id between `listed` and `models` is accounted for by a stated reason');
+  // The suppression uses the APP's own predicates, not a private copy.
+  ok(llm.__testing.looksLikeMovingAlias('gemini-flash-latest') === true
+     && llm.__testing.looksLikeMovingAlias('gemini-9.9-real') === false,
+    '⟨PREMISE⟩ the alias verdict comes from llm.js\'s own exported predicate, which discriminates these two');
+}
+
+section('§7f. Discovery never offers anything');
 {
   const before = llm.listOfferableModels('anthropic').map(e => e.id).join(',');
   await discovery.getNewModels({
