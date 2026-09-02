@@ -61,7 +61,40 @@ import { LocalFolderStorageAdapter } from '../src/brain/sharedbrain-local-adapte
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const PORT = 3334;
+// ── The port is ALLOCATED, never hardcoded ──────────────────────────────
+//
+// This suite pinned 3334. A fixed port collides with a second run of itself
+// (an interrupted run's child outlives its parent and keeps the socket), and
+// with anything else a developer happens to have on that number — and the
+// failure reads as "server failed to come up", which is a lie about the
+// cause.
+//
+// PORT=0 IN THE CHILD IS NOT USABLE HERE, and that is worth recording rather
+// than rediscovering. src/server.js builds ALLOWED_HOSTS from the REQUESTED
+// PORT value, so a child told PORT=0 accepts only `Host: localhost:0`; every
+// request this suite makes to the port the OS actually assigned would be
+// answered 403 by the v3.0.2 Host-header guard. The child also announces
+// `http://localhost:0`, so the real port is never printed for a parent to
+// read back. scripts/test-first-run-domains.js gets away with PORT=0 only
+// because it never issues an HTTP request — it watches stdout.
+//
+// So the PARENT asks the OS for a free port, closes the listener, and hands
+// the concrete number to the child. The window between close and the child's
+// bind is a genuine race; src/server.js retries EADDRINUSE (MAX_BIND_RETRIES)
+// and waitForReady() polls for 5s, so a lost race costs a retry, not a red.
+async function allocatePort() {
+  const net = await import('node:net');
+  return await new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+const PORT = await allocatePort();
 const BASE = `http://localhost:${PORT}/api/sharedbrain`;
 
 // ── Harness ─────────────────────────────────────────────────────────────
