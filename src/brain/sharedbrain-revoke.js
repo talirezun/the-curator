@@ -42,7 +42,7 @@
  *     as a separate admin procedure for absolute-erasure scenarios.
  */
 
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomUUID, randomBytes, timingSafeEqual } from 'crypto';
 import { createStorageAdapter } from './sharedbrain-storage-factory.js';
 // v3.6.2: IMPORTED, never re-implemented. `scrubPaths` is the absolute-path
 // scrubber added in v3.3.0 for the ingest queue's HTTP surface. Its bare-pass
@@ -839,13 +839,63 @@ export async function revokeContributor(connection, opts = {}) {
 }
 
 /**
- * Hash an admin token for the audit trail. We log only the hash so
- * even reading the audit log doesn't reveal who triggered the revoke
- * (only which admin instance — admins should use distinct tokens).
+ * Hash an admin token for the audit trail — SALTED, per record (v3.43.0).
+ *
+ * `state/revocations.jsonl` lives in the shared repo and is readable by every
+ * contributor. Until v3.43.0 this wrote a bare `sha256:<hex>` of the admin
+ * token, which is an OFFLINE VERIFICATION ORACLE: anyone holding the file can
+ * test candidate tokens at the speed of one hash each. Against the 160-bit
+ * token `generateAdminToken` mints that is academic, but `validateConnection`
+ * accepts ANY single-line 16–200 character string, so a hand-set or
+ * hand-migrated admin token — "cohort-admin-2026", say — was recoverable from
+ * a file the suspected leaker can read. That token is the sole gate on
+ * revoking any contributor.
+ *
+ * FORMAT: `sha256:<saltHex>:<digestHex>` where digest = sha256(saltHex + ':' +
+ * token). The salt is 16 random bytes, fresh PER RECORD, and stored beside the
+ * digest, so:
+ *   - the audit stays VERIFIABLE — an admin holding the token recomputes the
+ *     digest with the record's own salt (verifyAdminTokenHash below, which is
+ *     exported so "verifiable" is executable rather than prose);
+ *   - precomputation and cross-record correlation both die with it.
+ *
+ * COST, STATED: a per-record salt means two revocations by the same admin no
+ * longer produce the same string, so the old docblock's "which admin instance"
+ * correlation is GONE. That is a deliberate trade and the weaker property was
+ * the one worth losing: correlating revocations to one admin is a privacy leak
+ * of its own, and the audit's job is that the erasure happened and was
+ * authorised — which verification still answers.
+ *
+ * The `sha256:` prefix is kept so existing readers (and the live suite's
+ * "never the raw token" assertion) keep working, and verifyAdminTokenHash
+ * still accepts the legacy two-part form so pre-v3.43.0 records stay checkable.
  */
 export function hashAdminToken(token) {
   if (typeof token !== 'string' || !token) return null;
-  return 'sha256:' + createHash('sha256').update(token).digest('hex');
+  const salt = randomBytes(16).toString('hex');
+  return `sha256:${salt}:${createHash('sha256').update(salt + ':' + token).digest('hex')}`;
+}
+
+/**
+ * Verify a stored `by_admin_token_hash` against a candidate token. Accepts
+ * both the salted form and the legacy unsalted one. Constant-time on the
+ * digest comparison — the value being checked is a credential.
+ */
+export function verifyAdminTokenHash(token, stored) {
+  if (typeof token !== 'string' || !token) return false;
+  if (typeof stored !== 'string' || !stored.startsWith('sha256:')) return false;
+  const parts = stored.split(':');
+  let expected;
+  if (parts.length === 3) {
+    expected = createHash('sha256').update(parts[1] + ':' + token).digest('hex');
+  } else if (parts.length === 2) {
+    expected = createHash('sha256').update(token).digest('hex'); // pre-v3.43.0
+  } else {
+    return false;
+  }
+  const a = Buffer.from(parts[parts.length - 1], 'hex');
+  const b = Buffer.from(expected, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export const __testing = {

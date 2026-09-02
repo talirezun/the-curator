@@ -67,6 +67,14 @@ const MAX_CONTRADICTION_PAIRS_PER_PAGE = 10;
 const SKEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Ceiling on `processed_ids` in state.last-synthesis. 5,000 UUID strings is
+ * ~190 KB of JSON — comfortably inside the GitHub adapter's 1 MB file limit
+ * with room for the rest of the record, and far above any real cohort's
+ * in-window traffic, so the cap is a backstop rather than a working limit.
+ */
+const MAX_PROCESSED_IDS = 5000;
+
+/**
  * Server-side caps applied to fellow-supplied strings at the synthesis trust
  * boundary (v3.0.3). Slightly above the delta module's client-side caps —
  * the client caps are courtesy; these are the enforcement.
@@ -203,6 +211,24 @@ export function extractProvenanceContributors(content) {
  *
  * @param {Array<{fellowId, payload}>} contributions
  */
+/**
+ * The ONLY page paths synthesis will write: one of the three canonical wiki
+ * folders, one slug-shaped filename, `.md`. No traversal, no nesting, no
+ * absolute path, no leading dot, no length a storage backend will refuse.
+ *
+ * The 120-char filename cap is generous against every slug the app itself
+ * produces and well under any filesystem or GitHub limit; it exists so a
+ * crafted 4,000-character name cannot be the thing that fails the write.
+ */
+const SAFE_DELTA_PATH_RE = /^(entities|concepts|summaries)\/[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.md$/;
+
+export function isSafeDeltaPath(p) {
+  if (typeof p !== 'string' || !SAFE_DELTA_PATH_RE.test(p)) return false;
+  // Belt and braces: the character class above cannot produce "..", but the
+  // check is cheap and this is the field that decides where we write.
+  return !p.includes('..');
+}
+
 export function groupDeltasByPage(contributions) {
   const grouped = new Map();
   for (const { fellowId, payload } of contributions) {
@@ -217,6 +243,29 @@ export function groupDeltasByPage(contributions) {
     }
     for (const delta of payload.deltas) {
       if (!delta || typeof delta.path !== 'string') continue;
+      // ── TRUST BOUNDARY: the PATH, not just the text (v3.43.0) ──────────
+      //
+      // Every string INSIDE a delta already passes sanitizeFellowText /
+      // isSafeLinkSlug. `delta.path` did not, and it is the field that decides
+      // where synthesis WRITES. A contributor with repo write access hand-
+      // crafts the payload, so a path like `../../../etc/x.md`, an empty
+      // string, a 400-segment path, or one over the backend's byte limits
+      // reaches adapter.writePage — which throws. The throw is caught per page
+      // and marks the page FAILED, and a failed page keeps its submissions
+      // UNPROCESSED, and unprocessed submissions PIN THE WATERMARK BACK
+      // (invariant 2 below). So one unwritable path wedges the collective's
+      // synthesis for everyone, on every future run, until an admin finds and
+      // deletes the file by hand — a denial of service costing one commit.
+      //
+      // Dropping the delta instead is both safe and already accounted for:
+      // the processed-submission comment below states that "deltas with
+      // invalid paths contribute nothing, so they don't block processing",
+      // which was true only for a non-string path until this guard made it
+      // true for an unwritable one.
+      if (!isSafeDeltaPath(delta.path)) {
+        console.error(`[sharedbrain-synthesis] refused delta path "${String(delta.path).slice(0, 120)}" from ${contributorId} — not a canonical wiki page path`);
+        continue;
+      }
       const arr = grouped.get(delta.path) || [];
       arr.push({ delta, contributorId });
       grouped.set(delta.path, arr);
@@ -900,11 +949,21 @@ export async function runLocalSynthesis(connection, opts = {}) {
   // older than the window (excluded by the since-filter forever) or deleted
   // — safe to drop, which keeps the set bounded to one skew-window.
   const listedIds = new Set(listed.map(c => c.submissionId));
-  const newProcessedIds = [
+  // De-duplicated and BOUNDED (v3.43.0). The set-intersection above keeps this
+  // to roughly one skew-window's worth of ids in normal operation, but that is
+  // a property of the ADAPTER's listing, not of this code: `foreignIds` is
+  // appended unconditionally every run and never intersected with anything, so
+  // a cohort whose repo accumulates contributions for other shared domains
+  // grows this array without limit — and it is written into
+  // state.last-synthesis, which every contributor downloads on every pull, and
+  // which a GitHub backend refuses outright past 1 MB. Newest-wins on
+  // overflow: the oldest ids are the ones the since-window has already
+  // excluded, so dropping them cannot resurrect a contribution.
+  const newProcessedIds = [...new Set([
     ...[...processedIds].filter(id => listedIds.has(id)),
     ...nowProcessed.map(c => c.submissionId),
     ...foreignIds,
-  ];
+  ])].slice(-MAX_PROCESSED_IDS);
 
   try {
     const runNumber = (prevState && typeof prevState.run_number === 'number') ? prevState.run_number + 1 : 1;
@@ -964,4 +1023,6 @@ export const __testing = {
   defaultShortenId,
   resolveContradiction,
   rebuildIndex,
+  MAX_PROCESSED_IDS,
+  SAFE_DELTA_PATH_RE,
 };

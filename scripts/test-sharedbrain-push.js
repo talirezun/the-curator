@@ -519,12 +519,19 @@ const dPush1 = await pushDomain(connD, 'work-ai', {
 assert(dPush1.ok, 'partial push still returns ok=true (Decision 3)');
 assertEq(dPush1.pushed, 0, 'no deltas pushed');
 assertEq(dPush1.skipped, 2, 'both pages skipped');
+// v3.43.0 — THE KEY SPACE CHANGED, THE PROPERTY DID NOT. pending_retry and
+// permanent_skip live on the CONNECTION, which may contribute from several
+// domains, so their keys are now `<domain>/<folder>/<file>.md`. Unqualified
+// keys made two domains share one strike counter, and made a multi-domain
+// push overwrite the other domain's queue wholesale. These assertions are
+// re-expressed in the new key space rather than relaxed: same pages, same
+// counts, same transitions.
 assertEq(
   Object.keys(dPush1.pending_retry).sort(),
-  ['entities/x.md', 'entities/y.md'],
+  ['work-ai/entities/x.md', 'work-ai/entities/y.md'],
   'both failed pages in pending_retry'
 );
-assertEq(dPush1.pending_retry['entities/x.md'], 1, 'attempt count = 1 after first failure');
+assertEq(dPush1.pending_retry['work-ai/entities/x.md'], 1, 'attempt count = 1 after first failure');
 
 // Run two more times to hit MAX_RETRY_ATTEMPTS (3)
 await pushDomain(connections[connD.id], 'work-ai', { llmFn: throwAllLLM, domainsDir: fellowD_DomainsDir, patchFn });
@@ -533,7 +540,7 @@ const dPush3 = await pushDomain(connections[connD.id], 'work-ai', { llmFn: throw
 // On the 3rd failure (newCount === MAX_RETRY_ATTEMPTS), pages move to permanent_skip.
 assertEq(
   dPush3.permanent_skip.sort(),
-  ['entities/x.md', 'entities/y.md'],
+  ['work-ai/entities/x.md', 'work-ai/entities/y.md'],
   'after 3 failures, pages move to permanent_skip'
 );
 assertEq(dPush3.pending_retry, {}, 'pending_retry cleared when pages go to permanent_skip');
@@ -992,12 +999,16 @@ if (gitAvailable) {
     assert(!(rfRel in push1Prompts), 'the unreadable page never reached the LLM on push 1');
 
     // (1) QUEUED — the mechanism.
-    assert(Object.prototype.hasOwnProperty.call(patched.pending_retry || {}, rfRel),
+    // v3.43.0: connection-level queue keys are domain-qualified — see the
+    // note at the §8 assertions. `rfRel` is the bare page path this push was
+    // scanning, so the key it lands under is `notes/<rfRel>`.
+    const rfKey = `notes/${rfRel}`;
+    assert(Object.prototype.hasOwnProperty.call(patched.pending_retry || {}, rfKey),
       'a page whose readFile failed is QUEUED into pending_retry (not silently dropped)',
       `pending_retry was ${JSON.stringify(patched.pending_retry)}`);
-    assertEq((patched.pending_retry || {})[rfRel], 0,
+    assertEq((patched.pending_retry || {})[rfKey], 0,
       'a read failure does NOT advance the permanent-skip strike counter');
-    assert(!(patched.permanent_skip || []).includes(rfRel),
+    assert(!(patched.permanent_skip || []).includes(rfKey),
       'a read failure never marks a page permanent_skip');
 
     // (2) WARNED — console.error is not a user surface.
@@ -1072,10 +1083,14 @@ if (gitAvailable) {
       .filter(c => c.submissionId === covPush.submission_id)
       .flatMap(c => (c.payload.deltas || []).map(d => d.path))
   );
+  // v3.43.0: strip the `<domain>/` qualifier so this set is comparable with
+  // `covChanged`, which is bare page paths. Stripping is done by exact prefix
+  // — anything NOT belonging to this domain would survive unstripped and then
+  // fail to match, which is the right direction for a coverage check.
   const queued = new Set([
     ...Object.keys(covPatched.pending_retry || {}),
     ...(covPatched.permanent_skip || []),
-  ]);
+  ].map(k => (k.startsWith('coverage/') ? k.slice('coverage/'.length) : k)));
 
   const untracked = covChanged.filter(p => !contributed.has(p) && !queued.has(p));
   assertEq(untracked, [],

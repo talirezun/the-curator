@@ -98,8 +98,9 @@ router.post('/', upload.single('file'), async (req, res) => {
     if (await isDomainReadonly(domain)) {
       return res.status(400).json({
         error: `Domain "${domain}" is a read-only Shared Brain mirror — it is updated by ` +
-               `"Pull updates" in the Sync tab, and direct writes would be overwritten on the next pull. ` +
-               `Ingest into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+               `"Pull updates" in the Shared Brain view, and direct writes would be overwritten on the next ` +
+               `pull. Ingest into your personal opted-in domain instead, then push contributions from the ` +
+               `Shared Brain view.`,
       });
     }
 

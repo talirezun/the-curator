@@ -40,7 +40,7 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 
 1. **Shared Brain** rail view → your connection card → **Admin controls — admin token & contributor revocation**
 2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
-3. Paste your **admin token** (the `sbat_…` credential shown once at brain setup — see §9; if your connection predates v3.0.5, click **Generate token** in the same **Admin controls** disclosure first — see §9).
+3. Paste your **admin token** — the `sbat_…` credential shown once at brain setup (see §9). **If you do not have it, you cannot revoke, and there is no button that will issue you a new one.** Since v3.43.0 the rotate endpoint requires the CURRENT token; a connection holding no admin token is refused with `403 no_admin_token`. Re-run the brain-setup wizard to issue and save a fresh one.
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
 5. Click **Permanently revoke this contributor**. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
 
@@ -94,7 +94,7 @@ curl -X POST $CURATOR/api/sharedbrain/<connection_id>/revoke \
 
 Where:
 - `<connection_id>` — your own Shared Brain connection ID. Find it via `GET /api/sharedbrain/list`.
-- `<your-admin-token>` — the `sbat_…` token shown once at brain setup (v3.0.5+) or provisioned via **Admin controls → Admin token → Generate token** / `POST /api/sharedbrain/<id>/admin-token/rotate`. The revoke endpoint refuses with 403 if it doesn't match the token stored on the connection.
+- `<your-admin-token>` — the `sbat_…` token shown once at brain setup. Since v3.43.0 there is no way to provision one from a running app: `/admin-token/rotate` requires the CURRENT token and refuses a connection that has none (see §9). The revoke endpoint refuses with 403 if the supplied token doesn't match the one stored on the connection.
 - `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). v3.0.5+: get it from `GET /api/sharedbrain/<id>/members` (or the card's revoke panel); older fallbacks: their Provenance short-id, or ask them to read it off their connection card. The directory shows a name for any contributor whose stored payloads carry one, and the **8-character short fellow-ID** otherwise. **The v3.6.2 `attribute_by_name` gate is forward-looking only and changes nothing about this directory on an existing cohort** — it is built by reading every contribution payload ever stored, and pre-v3.6.2 pushes wrote the name unconditionally, so those names are still listed until the contributions are revoked. On a cohort started after v3.6.2, only contributors who opted in will show a name. Either way: if the person you are looking for shows only a short-ID, ask the data subject to read their Fellow ID off their own connection card — a subject identifying themselves is the correct flow for an Article 17 request anyway.
 - `confirmation` — literal string `"REVOKE-<contributor-uuid-to-revoke>"` (the FULL UUID). The brittle confirmation is a GitHub-style accident-prevention gate.
 
@@ -195,16 +195,20 @@ half-done. Two more things to know:
   near the end of the run, so an aborted attempt leaves the log looking as if it
   never happened. Record it yourself from the API response.
 
-> **Where you can actually see these fields today.** They are on the wire —
-> `curl` the endpoint, or read them from any client you write. The **in-app**
-> revoke panel reads only `payload.message` from the SSE `error` frame and
-> prints it after an `Error: ` prefix; it never touches `payload.result`, so
-> none of the per-category fields reach the screen. The string you see happens
-> to equal `summary` because `revokeContributor` assigns the same text to both
-> `error` and `summary` — a coincidence of two assignments, not the card
-> reading `summary`. That is not a loss of information (the text is built from
-> every recorded failure and names each one), but if you want the
-> machine-readable object, use the API rather than the card.
+> **Where you can see these fields.** All of them are on the wire, and — since
+> the `/next` shell became the only shell in **v3.41.0** — the in-app revoke
+> panel reads the structured object rather than the prose. It absorbs the SSE
+> stream to the end (the route emits a result-less terminal frame *before* the
+> one carrying `result`, so a reader that stopped at the first would get the
+> prose and none of the fields), then renders `erasure_complete`,
+> `marker_active` / `marker_cleared`, one row per entry in
+> `contributions_failed` and `pages_failed`, and the `digest_failed`,
+> `pages_rebuild_failed`, `state_reset_failed` and `audit_failed` flags. The
+> headline tone comes from those fields, never from the summary string.
+>
+> **The paragraph this replaces described the OLD shell**, which read only
+> `payload.message` off the error frame. That shell was deleted in v3.41.0; the
+> claim had been false since the `/next` admin panel shipped.
 
 ### What revoke actually does
 
@@ -212,7 +216,7 @@ half-done. Two more things to know:
 2. Deletes `digests/<fellow_id>/latest.json` (the per-fellow synthesis cache — it holds *their* facts, so a failure here is an erasure failure). Recorded in `digest_failed`.
 3. Lists every collective page and scans it. Pages that mention the revoked fellow's short ID in their Provenance section are deleted; per-page failures are recorded in `pages_failed`. **If the page list itself cannot be read the revocation ABORTS** (v3.6.2) — an unreadable listing means we do not know *what* to erase, which is an unattempted erasure, not a partial one. It does not proceed to the rebuild and does not clear the in-progress marker.
 4. Resets the `state.last-synthesis` meta key — stored at **`meta/state/last-synthesis.json`** in the repo — and re-runs synthesis from scratch. Since v3.0.6 the reset writes the full zero-state (`watermark: null`, empty `processed_ids`, `run_number: 0`), not just an epoch timestamp, so no stale processed-id list can cause surviving contributions to be skipped. Deleted pages get rebuilt **only if** other contributors still have submissions for them; otherwise they stay deleted (Article 17 erasure).
-5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + `rebuild_ok` + sha256-hashed admin token. Since **v3.6.2** the line also carries `erasure_complete` plus the failure summary: **counts** for `contributions_failed`, `pages_failed` and `pages_rebuild_failed`, and **booleans** for `digest_failed` and `state_reset_failed` (note these last two are `{error}` objects in the API result but plain booleans in the log — the log deliberately drops the error text). An erasure audit trail that recorded only successes was not an audit trail. Counts and booleans only: still no real names, no contribution content, and no provider error text (that detail stays in the API response you are reading, not in the permanent log). **A run that aborts before this step writes no line at all** — see *Aborts* above.
+5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + `rebuild_ok` + the salted admin-token hash (§9). Since v3.43.0 the append is recomputed from the file's live content inside the write-retry loop; before that a SHA conflict silently re-sent the stale content and discarded a concurrent admin's entry. Since **v3.6.2** the line also carries `erasure_complete` plus the failure summary: **counts** for `contributions_failed`, `pages_failed` and `pages_rebuild_failed`, and **booleans** for `digest_failed` and `state_reset_failed` (note these last two are `{error}` objects in the API result but plain booleans in the log — the log deliberately drops the error text). An erasure audit trail that recorded only successes was not an audit trail. Counts and booleans only: still no real names, no contribution content, and no provider error text (that detail stays in the API response you are reading, not in the permanent log). **A run that aborts before this step writes no line at all** — see *Aborts* above.
 
 The operation is irreversible. If the revoked contributor's local wiki is also gone, the data cannot be reconstructed from shared storage.
 
@@ -459,15 +463,36 @@ A contributor tried to use MCP write tools (`compile_to_wiki`, `fix_wiki_issue`)
 
 The `admin_token` is the one privileged credential in your Shared Brain. It gates the revoke endpoint.
 
-**Provisioning (v3.0.5+):**
+**Provisioning:**
 - **New brains** — the admin wizard generates a `sbat_…` token (160 bits of entropy) and shows it **once** on step 2, next to the invite token. It's stored on your connection when you finish the wizard; save the plaintext in your password manager immediately.
-- **Existing connections** (created before v3.0.5) — **Shared Brain** rail view → connection card → **Admin controls — admin token & contributor revocation** → **Generate token**. Shown once, same rules.
-- **Rotation** — connection card → **Admin controls — admin token & contributor revocation** → **Rotate token** (or `POST /api/sharedbrain/:id/admin-token/rotate`). The old token stops working immediately; the new one is returned/shown once.
+- **Existing connections created before v3.0.5** — re-run the brain-setup wizard against the same repo and shared domain. It mints a fresh admin token and saves it with the connection.
+- **Rotation** — connection card → **Admin controls — admin token & contributor revocation** → **Rotate token**, or `POST /api/sharedbrain/:id/admin-token/rotate` with `{"admin_token": "<your CURRENT sbat_… token>"}`. The old token stops working immediately; the new one is returned once and never again.
+
+> **v3.43.0 CLOSED A HOLE HERE, and the old text described it as a feature.**
+> Until v3.43.0 this endpoint issued a token to **any** connection that asked,
+> with no proof of possession — that was the "Generate token" path the bullet
+> above used to recommend. A live end-to-end run showed a plain contributor
+> using it to mint an admin token and then revoke the cohort admin. It now
+> refuses three ways, all `403` with a machine-readable `code`:
+>
+> | `code` | Meaning |
+> |---|---|
+> | `no_admin_token` | This connection stores no admin token. Nothing to rotate; nothing will be issued. |
+> | `admin_token_required` | No token in the request body. |
+> | `admin_token_mismatch` | A token was supplied and it is not this connection's. |
+>
+> **The cost is real and is not hidden:** an admin who has genuinely lost their
+> token cannot recover it from a running app. Re-run the brain-setup wizard.
+>
+> **Only ONE membership per brain.** Since v3.43.0, saving a second connection
+> to the same `(repo, shared_domain)` is refused. Two memberships meant two
+> `fellow_id`s for one person, so an Article 17 revoke of either would erase
+> half their contributions while reporting a complete erasure.
 
 **Handling rules:**
 - **Keep it secret.** Don't share it with contributors — it is NOT the invite token. Don't commit it anywhere.
 - The Curator stores it locally in `.sharedbrain-config.json` (0600, atomic writes) and masks it in every listing.
-- **Hash before logging.** The Curator itself only ever logs a sha256 hash of the admin_token (in `state/revocations.jsonl`). Don't log raw tokens yourself.
+- **Hash before logging.** The Curator itself only ever logs a hash of the admin_token (in `state/revocations.jsonl`), and since v3.43.0 that hash is **salted per record** — `sha256:<salt>:<digest>`. That file lives in the shared repo and every contributor can read it, so an unsalted digest was an offline oracle against any admin token weak enough to guess. You can still verify a record if you hold the token: recompute `sha256(salt + ":" + token)` using the salt in that same line. Don't log raw tokens yourself.
 
 ---
 

@@ -398,7 +398,28 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
    * because file already exists when we didn't pass one) by refetching the
    * latest sha and retrying exactly once.
    */
-  async _writeWithRetry(repoPath, content, message) {
+  /**
+   * @param {string} repoPath
+   * @param {string|null} content   final content; null when `recompose` supplies it
+   * @param {string} message
+   * @param {Function} [recompose]  (currentRemoteContent|null) => string
+   *
+   * ── WHY `recompose` EXISTS (v3.43.0) ──────────────────────────────────
+   *
+   * A plain content string is correct for a REPLACEMENT write, and wrong for
+   * an APPEND. `appendAudit` used to read the file, build `existing + line`,
+   * and hand that fixed string here. On a SHA conflict this loop refetched the
+   * SHA — and re-PUT the SAME stale string, silently discarding whatever the
+   * other writer had appended in between. Two admins revoking at once, or one
+   * admin on two machines, lost a GDPR erasure record while both calls
+   * reported success. An audit log that drops entries under concurrency is not
+   * an audit log.
+   *
+   * With `recompose`, the content is rebuilt from the content that was ACTUALLY
+   * read — both for the first attempt and after every conflict — so an append
+   * is applied to the winner's version rather than over it.
+   */
+  async _writeWithRetry(repoPath, content, message, recompose = null) {
     let attempt = 0;
     let sha = null;
 
@@ -413,6 +434,7 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
       throw err;
     });
     sha = existing ? existing.sha : null;
+    if (recompose) content = recompose(existing ? existing.content : null);
 
     // Skip-write optimisation: if the content is byte-identical, do nothing.
     // GitHub would create an empty-diff commit which clutters history.
@@ -440,6 +462,10 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
         // the conflict and now (unlikely but possible), sha goes back to null.
         const refreshed = await this._apiGetContents(repoPath).catch(() => null);
         sha = refreshed ? refreshed.sha : null;
+        // Rebuild from what is REALLY on the remote now — see the docblock.
+        // Must happen before the identity check below, or an append would be
+        // compared against the pre-conflict string.
+        if (recompose) content = recompose(refreshed ? refreshed.content : null);
         // If the content is now identical to remote, treat as success.
         if (refreshed && refreshed.content === content) {
           return { unchanged: true };
@@ -779,15 +805,16 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
       throw new GitHubAdapterError('SHARED_BRAIN_UNSAFE_PATH', `appendAudit: unsafe path "${relPath}"`);
     }
 
-    // Read existing content (404 → empty), append the new JSONL line, write back.
-    // SHA-based concurrency via _writeWithRetry handles concurrent admin actions.
+    // The append is expressed as a FUNCTION of the remote content, not as a
+    // pre-computed string, so _writeWithRetry re-applies it to whatever it
+    // actually read — on the first attempt and again after every SHA conflict.
+    // The old shape (read here, hand down a fixed string) silently overwrote a
+    // concurrent writer's entry; see _writeWithRetry's docblock.
     const line = JSON.stringify(record) + '\n';
-    const existing = await this._apiGetContents(safe).catch(err => {
-      if (err && err.code === 'SHARED_BRAIN_NOT_FOUND') return null;
-      throw err;
-    });
-    const newContent = (existing ? existing.content : '') + line;
-    await this._writeWithRetry(safe, newContent, `Shared Brain: audit log entry`);
+    await this._writeWithRetry(
+      safe, null, `Shared Brain: audit log entry`,
+      (current) => (current || '') + line,
+    );
   }
 }
 

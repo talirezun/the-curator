@@ -227,7 +227,15 @@ const echoLlm = async (_s, user) => {
 
   const result = await pushDomain(conn, 'work-ai', { domainsDir, llmFn: echoLlm, patchFn });
   assert(result.ok === true && result.pushed === 0, 'unedited skipped page is not pushed');
-  assert(result.permanent_skip.includes('concepts/stale.md'), 'unedited page stays in permanent_skip');
+  // v3.43.0: connection-level queue keys are DOMAIN-QUALIFIED, so the same
+  // page name in two contributing domains no longer shares one skip entry.
+  // The fixture above seeds the LEGACY unqualified key on purpose, so this
+  // assertion doubles as the migration pin: a legacy key naming a page that
+  // exists in the domain being pushed is claimed by it and re-qualified.
+  assert(result.permanent_skip.includes('work-ai/concepts/stale.md'),
+    'unedited page stays in permanent_skip (and its legacy key migrated to the qualified form)');
+  assert(!result.permanent_skip.includes('concepts/stale.md'),
+    'the legacy unqualified key is not ALSO left behind (migration replaces, never duplicates)');
 }
 
 section('2b. H5 — transient errors do not strike the counter');
@@ -255,9 +263,15 @@ section('2b. H5 — transient errors do not strike the counter');
     assert(r.ok === true, `outage push ${i + 1} still returns ok (partial-push contract)`);
     latest = { ...latest, ...connections[conn.id] };
   }
-  assert(!connections[conn.id].permanent_skip.includes('concepts/blipped.md'),
+  assert(!connections[conn.id].permanent_skip.includes('work-ai/concepts/blipped.md'),
     'page NOT permanent-skipped after 5 pushes through a 503 outage');
-  assert((connections[conn.id].pending_retry['concepts/blipped.md'] || 0) === 0,
+  // The key is read in the QUALIFIED space (v3.43.0). Written as two
+  // assertions rather than one `|| 0`: the old single check passed whether the
+  // counter was 0 OR the key was absent entirely, so after the key space moved
+  // it would have stayed green while measuring nothing at all.
+  assert(Object.prototype.hasOwnProperty.call(connections[conn.id].pending_retry, 'work-ai/concepts/blipped.md'),
+    'the blipped page IS queued for retry — so the strike-counter check below is not vacuous');
+  assert(connections[conn.id].pending_retry['work-ai/concepts/blipped.md'] === 0,
     'transient failures never advanced the strike counter');
 
   // Provider recovers → the page pushes normally.
@@ -278,7 +292,7 @@ section('2b. H5 — transient errors do not strike the counter');
     await pushDomain(latest, 'work-ai', { domainsDir, llmFn: badJson, patchFn });
     latest = { ...latest, ...connections[conn.id] };
   }
-  assert(connections[conn.id].permanent_skip.includes('concepts/broken.md'),
+  assert(connections[conn.id].permanent_skip.includes('work-ai/concepts/broken.md'),
     `genuinely-failing page permanent-skips after ${MAX_RETRY_ATTEMPTS} attempts (unchanged behaviour)`);
 }
 

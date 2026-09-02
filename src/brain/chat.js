@@ -1010,6 +1010,57 @@ function normalizeReportedUsage(u) {
   return out;
 }
 
+// ── EPHEMERAL CONVERSATIONS FOR READ-ONLY DOMAINS (v3.43.0) ───────────────
+//
+// A Shared Brain mirror (`shared-<slug>`) declares itself read-only in its own
+// CLAUDE.md, and every other write surface in this app honours that: ingest,
+// compile, Health and all five MCP mutators refuse it. Chat did not — sending
+// one message created `domains/shared-<slug>/conversations/<uuid>.json`, i.e.
+// the app writing into a folder it tells the user (and its own MCP) is not
+// writable. Proven live: the v3.42.0 end-to-end run left a conversation file
+// inside the admin instance's mirror.
+//
+// WHAT THIS IS NOT: a ban on chatting with a mirror. Asking the collective a
+// question is the single most useful thing a mirror is FOR, and refusing the
+// POST would delete that capability to fix a bookkeeping problem. Nor is it
+// "answer once and forget": dropping the transcript would silently cost the
+// model its multi-turn context — a degradation the user cannot see, which is
+// the failure class this project treats as worse than an error.
+//
+// So the turn is kept HERE, in process memory, for exactly as long as the
+// server runs. The chat behaves the way it always has; the only difference is
+// that the thread does not survive a restart, and the response says so
+// (`persisted: false`) instead of leaving the user to discover it.
+//
+// Bounded on both axes so a long session cannot grow without limit, and
+// insertion-ordered so eviction is genuine least-recently-WRITTEN (a Map keeps
+// insertion order, and deleting before re-setting moves the key to the end).
+const EPHEMERAL_MAX_CONVERSATIONS = 20;
+const EPHEMERAL_MAX_MESSAGES = 60;
+const _ephemeralConversations = new Map();
+
+function readEphemeral(domain, id) {
+  if (!id) return null;
+  return _ephemeralConversations.get(`${domain}::${id}`) || null;
+}
+
+function writeEphemeral(domain, conversation) {
+  const key = `${domain}::${conversation.id}`;
+  if (conversation.messages.length > EPHEMERAL_MAX_MESSAGES) {
+    conversation.messages = conversation.messages.slice(-EPHEMERAL_MAX_MESSAGES);
+  }
+  _ephemeralConversations.delete(key);       // re-insert at the end
+  _ephemeralConversations.set(key, conversation);
+  while (_ephemeralConversations.size > EPHEMERAL_MAX_CONVERSATIONS) {
+    _ephemeralConversations.delete(_ephemeralConversations.keys().next().value);
+  }
+}
+
+/** Test seam — drop every ephemeral thread. Never called in production. */
+export function __clearEphemeralConversations() {
+  _ephemeralConversations.clear();
+}
+
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
   const responseStyle = normalizeResponseStyle(opts.responseStyle);
   // ORDER IS LOAD-BEARING: the MODEL is resolved first and handed to the
@@ -1037,14 +1088,25 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   let conversation = null;
   let isNew = false;
 
+  // `persist: false` is set by the route for a read-only domain. It is the
+  // ONLY thing that routes this turn to the in-memory store above; a normal
+  // domain takes a byte-identical path to before.
+  const persist = opts.persist !== false;
+
   if (conversationId) {
-    conversation = await readConversation(domain, conversationId);
+    conversation = persist
+      ? await readConversation(domain, conversationId)
+      : readEphemeral(domain, conversationId);
   }
 
   if (!conversation) {
     isNew = true;
     conversation = {
-      id: randomUUID(),
+      // Keep the id the caller asked for when we have one, even though we
+      // could not find it: an ephemeral thread evicted by the cap must not
+      // start renaming itself under the client, which would silently split one
+      // visible transcript across two server-side threads.
+      id: (!persist && typeof conversationId === 'string' && conversationId) ? conversationId : randomUUID(),
       title: userMessage.length > 60 ? userMessage.slice(0, 57).trimEnd() + '…' : userMessage.trim(),
       createdAt: new Date().toISOString(),
       domain,
@@ -1232,7 +1294,8 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // That is a consumer concern and it is not an argument about this write.
   conversation.messages.push({ role: 'user', content: userMessage });
   conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage));
-  await writeConversation(domain, conversation);
+  if (persist) await writeConversation(domain, conversation);
+  else writeEphemeral(domain, conversation);
 
   return {
     conversationId: conversation.id,
@@ -1241,6 +1304,11 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     answer,
     citations: uniqueCitations,
     responseStyle,
+    // Present and TRUE on every ordinary turn, so a consumer reads one field
+    // rather than inferring persistence from the domain name. False means the
+    // thread lives only in this server process — see the ephemeral-store
+    // comment above for why that is the behaviour rather than a refusal.
+    persisted: persist,
     provider: chatProvider,   // null → global active provider was used
     // The model that ANSWERED — measured, never the request. Differs from
     // opts.model whenever the allow-list refused it or a fallback rung served

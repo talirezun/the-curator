@@ -1001,8 +1001,13 @@ ok(routes.includes("emit({ type: 'error', message: result.error || 'Revoke faile
   'PINNED: the route carries the structured result on the FAILURE frame too');
 ok(routes.includes('confirmation !== `REVOKE-${fellow_id}`'),
   'PINNED: the route requires the FULL-UUID confirmation literal');
-ok(routes.includes("res.status(403).json({ error: 'admin_token is required and must match the connection' })"),
-  'PINNED: an admin-token mismatch is a 403 — the non-SSE path the view handles');
+// v3.43.0: the SENTENCE is unchanged and still pinned — the view renders it —
+// but the frame now carries a machine-readable `code` beside it, because the
+// rotate route shares this gate and needs to distinguish "wrong token" from
+// "this connection has no admin token at all". Both halves are asserted, so a
+// future edit that drops either the wording or the code reds this.
+ok(routes.includes("res.status(403).json({ error: 'admin_token is required and must match the connection', code: gate.code })"),
+  'PINNED: an admin-token mismatch is a 403 carrying the unchanged sentence plus a code — the non-SSE path the view handles');
 ok(/short_id: c\.fellowId\.replace\(\/-\/g, ''\)\.slice\(0, 8\)/.test(sbBrain),
   'PINNED: short_id strips hyphens — so it can never be expanded back into a UUID by string surgery');
 ok(routes.includes('res.json({ ok: true, admin_token: token, rotated: !!conn.admin_token })'),

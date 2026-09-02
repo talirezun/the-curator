@@ -696,8 +696,8 @@ export async function assertDomainUsable(domain) {
   if (await isDomainReadonly(domain)) {
     throw statusErr(400,
       `Domain "${domain}" is a read-only Shared Brain mirror — it is updated by "Pull updates" in the ` +
-      `Sync tab, and direct writes would be overwritten on the next pull. Ingest into your personal ` +
-      `opted-in domain instead, then push contributions from the Sync tab.`
+      `Shared Brain view, and direct writes would be overwritten on the next pull. Ingest into your ` +
+      `personal opted-in domain instead, then push contributions from the Shared Brain view.`
     );
   }
 }

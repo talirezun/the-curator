@@ -5,7 +5,7 @@ import {
   readConversation,
   deleteConversation,
 } from '../brain/chat.js';
-import { assertKnownDomain } from '../brain/files.js';
+import { assertKnownDomain, isDomainReadonly } from '../brain/files.js';
 // IMPORTED, never re-implemented. isAbortError is llm.js's own classifier for
 // "the caller stopped this" (it tags `curatorAborted`, and also matches a raw
 // SDK `AbortError` we never got to translate). A second hand-written copy of a
@@ -265,6 +265,27 @@ router.post('/:domain', async (req, res) => {
     // check at this route would leave the other seven generateText entry points
     // open and create a second hand-maintained copy of the guard — the shape
     // that produced the v3.2.0 CRITICAL.
+    // ── READ-ONLY DOMAINS DO NOT GET A CONVERSATION FILE (v3.43.0) ────────
+    //
+    // A Shared Brain mirror declares `readonly: true` in its own CLAUDE.md,
+    // and every other write surface in the app honours it: ingest, compile,
+    // Health and all five MCP mutators refuse it. Chat was the one hole, and
+    // it wrote a real `conversations/<uuid>.json` into the mirror on the first
+    // message — the app writing into a folder it tells its own MCP is not
+    // writable. Found in the v3.42.0 live end-to-end run.
+    //
+    // Answering is still allowed, because asking the collective a question is
+    // what a mirror is FOR. Only the WRITE is withheld; the transcript is kept
+    // in the server's memory for the life of the process instead, so
+    // multi-turn context survives and `persisted: false` comes back on the
+    // wire (see sendMessage's ephemeral-store comment for the full argument).
+    //
+    // Resolved HERE, above flushHeaders, and read fresh per request: this is
+    // the same policy question isDomainReadonly answers for the other write
+    // surfaces, and a CLAUDE.md read that fails must still be able to reach
+    // the client as a real status code rather than mid-stream.
+    const persist = !(await isDomainReadonly(domain));
+
     // ── EVERY REFUSAL HAPPENS ABOVE THIS LINE ─────────────────────────────
     //
     // flushHeaders() commits us to `200 text/event-stream` irrevocably: after
@@ -290,7 +311,7 @@ router.post('/:domain', async (req, res) => {
     }
 
     const result = await sendMessage(domain, conversationId || null, message, {
-      responseStyle, provider, model, signal: controller.signal,
+      responseStyle, provider, model, signal: controller.signal, persist,
       // undefined on the JSON path, which generateText normalises to null — so
       // a non-streaming request takes a byte-identical path to before.
       //

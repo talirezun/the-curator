@@ -1617,11 +1617,40 @@ async function generateUniqueSlug(displayName, excludeSlug = null) {
   throw new Error('A domain with a very similar name already exists. Choose a more distinct name.');
 }
 
+/**
+ * The `shared-` prefix is RESERVED for Shared Brain mirrors, and this is the
+ * gate that makes that true rather than merely documented (v3.43.0).
+ *
+ * CLAUDE.md has called the namespace reserved since v3.0.2, and three places
+ * enforced it — pushDomain refuses a `shared-*` contributing domain,
+ * validateConnection refuses one in local_domains, and the MCP write tools
+ * refuse a readonly mirror. Domain CREATION did not, so a user could own
+ * `shared-articles` outright. A Shared Brain pull then computes its mirror
+ * slug as `shared-<shared_brain_slug>` from an UNSIGNED invite token and,
+ * before this release, adopted whatever it found there and pruned it.
+ *
+ * Both halves ship together: this stops the name being claimed, and
+ * ensureSharedDomainExists stops a pull writing into a folder it did not make.
+ * Either alone leaves a path in.
+ *
+ * The word "reserved" is load-bearing in the message — routes/domains.js maps
+ * it to a 400 rather than a 500.
+ */
+export function assertNotReservedDomainSlug(slug) {
+  if (typeof slug === 'string' && slug.toLowerCase().startsWith('shared-')) {
+    throw new Error(
+      'Domain names starting with "shared-" are reserved for Shared Brain mirrors, which the app ' +
+      'creates and overwrites on its own. Choose a different name.'
+    );
+  }
+}
+
 export async function createDomain(slug, displayName, description, template) {
   // Security guard
   if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\\') || slug.startsWith('.')) {
     throw new Error('Invalid domain name');
   }
+  assertNotReservedDomainSlug(slug);
 
   if (existsSync(domainPath(slug))) {
     throw new Error('Domain already exists');
@@ -1675,6 +1704,11 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
       throw new Error('Invalid domain name');
     }
   }
+  // Renaming INTO the reserved namespace is the same claim createDomain
+  // refuses, arriving by another door. Renaming a mirror OUT of it is fine and
+  // deliberately unguarded — that is how a user recovers a folder the app
+  // owns, and only `newSlug` is checked.
+  if (oldSlug !== newSlug) assertNotReservedDomainSlug(newSlug);
   if (!existsSync(domainPath(oldSlug))) throw new Error('Domain not found');
   if (oldSlug !== newSlug && existsSync(domainPath(newSlug))) throw new Error('A domain with that name already exists');
 

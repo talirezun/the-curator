@@ -240,6 +240,48 @@ function validateConnection(conn) {
   }
 }
 
+/**
+ * The identity of the BRAIN a connection points at — storage location plus the
+ * remote domain inside it. NOT the connection's own id, and deliberately not
+ * the fellow_id: two connections with different fellow_ids can name the same
+ * brain, and that is precisely the state this identity exists to refuse.
+ *
+ * Returns null when the record does not carry enough to name a brain (an
+ * unknown storage_type, a missing field) — the caller treats null as "cannot
+ * compare", never as "matches everything".
+ *
+ * Case-folded because GitHub owners and repo names are case-insensitive:
+ * `Owner/Repo` and `owner/repo` are one repository, and comparing them raw
+ * would let the same brain be joined twice by changing one letter's case.
+ * The BRANCH is deliberately excluded — two branches of one repo are still one
+ * collective for every purpose the storage layer has (contributions land under
+ * `contributions/<fellow_id>/` either way), and treating them as different
+ * brains would reopen the split this guard closes.
+ */
+export function connectionIdentity(conn) {
+  if (!conn || typeof conn !== 'object') return null;
+  const domain = typeof conn.shared_domain === 'string' ? conn.shared_domain.toLowerCase() : '';
+  if (!domain) return null;
+  if (conn.storage_type === 'github') {
+    const owner = typeof conn.github_repo_owner === 'string' ? conn.github_repo_owner.toLowerCase() : '';
+    const name  = typeof conn.github_repo_name  === 'string' ? conn.github_repo_name.toLowerCase()  : '';
+    if (!owner || !name) return null;
+    return `github:${owner}/${name}:${domain}`;
+  }
+  if (conn.storage_type === 'local') {
+    if (typeof conn.local_storage_path !== 'string' || !conn.local_storage_path) return null;
+    // path.resolve, not toLowerCase: macOS is usually case-insensitive but a
+    // case-SENSITIVE volume is a supported configuration, and folding here
+    // would refuse two genuinely different folders.
+    return `local:${path.resolve(conn.local_storage_path)}:${domain}`;
+  }
+  if (conn.storage_type === 'cloudflare-r2') {
+    if (typeof conn.endpoint !== 'string' || !conn.endpoint) return null;
+    return `cloudflare-r2:${conn.endpoint.toLowerCase().replace(/\/+$/, '')}:${domain}`;
+  }
+  return null;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -270,6 +312,34 @@ export function getSharedBrainWithToken(id) {
 export function saveSharedBrain(conn) {
   validateConnection(conn);
   const raw = readRaw();
+
+  // ── One brain, one membership (v3.43.0) ────────────────────────────────
+  //
+  // Joining the same (repo, shared_domain) twice mints a SECOND fellow_id for
+  // the same person. Everything downstream keys on fellow_id: contributions
+  // land under `contributions/<fellow_id>/`, the member directory lists two
+  // people where there is one, provenance attributes the same person under two
+  // short ids — and, worst, a GDPR revoke of one fellow_id erases HALF of that
+  // person's contributions while reporting a complete Article 17 erasure. That
+  // is a compliance claim the app cannot honour, so the duplicate is refused at
+  // the write boundary rather than reconciled afterwards.
+  //
+  // Scoped to a DIFFERENT connection id: re-saving the same connection (the
+  // wizard's own last step, every credential update, every rotate) must keep
+  // working, and that is asserted alongside the refusal.
+  const identity = connectionIdentity(conn);
+  if (identity) {
+    const clash = raw.connections.find(c => c.id !== conn.id && connectionIdentity(c) === identity);
+    if (clash) {
+      throw new Error(
+        `SharedBrain connection: this machine is already connected to that shared brain ` +
+        `(“${clash.label}”). Joining it twice would give you two contributor identities, ` +
+        `so half your contributions would survive an erasure request. Use the existing ` +
+        `connection, or remove it first if you need to re-join with new credentials.`
+      );
+    }
+  }
+
   const idx = raw.connections.findIndex(c => c.id === conn.id);
   if (idx === -1) {
     raw.connections.push(conn);
@@ -323,4 +393,4 @@ export function newUuid() {
 }
 
 // Test surface — internal validation helpers exposed for the battle-test script.
-export const __testing = { isUuid, maskTokens, validateConnection, TOKEN_FIELDS };
+export const __testing = { isUuid, maskTokens, validateConnection, TOKEN_FIELDS, connectionIdentity };

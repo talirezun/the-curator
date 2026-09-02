@@ -293,9 +293,27 @@ export function __setLogDirOverride(p) {
  * child spawned headlessly by Claude Desktop can also write here without
  * risking a permission prompt with nowhere to render.
  *
- *   __setLogDirOverride  → that (test seam)
- *   CURATOR_TEST_LOG_DIR → that (test seam, crosses process boundaries)
- *   otherwise            → ~/Library/Logs/The Curator
+ *   __setLogDirOverride            → that (test seam)
+ *   CURATOR_TEST_LOG_DIR           → that (test seam, crosses process boundaries)
+ *   an isolated USER-DATA dir      → <that>/logs      (v3.43.0)
+ *   otherwise                      → ~/Library/Logs/The Curator
+ *
+ * The third rung is the v3.43.0 addition and it closes a real leak. Every
+ * suite that spawns a server isolates with CURATOR_TEST_USER_DATA_DIR, whose
+ * documented job is "all four credential locations, and domains/ too" — but
+ * the log was not on that list, so two throwaway Shared Brain instances driven
+ * end to end wrote their whole run into the MAINTAINER'S OWN
+ * ~/Library/Logs/The Curator/curator.log, interleaved with his real app's. A
+ * test seam that isolates almost everything is worse than one that isolates
+ * nothing, because nobody checks the difference. Log lines are diagnostic
+ * exhaust rather than credentials, so the harm is contaminated diagnostics and
+ * a rotated-away real log, not a leak — which is exactly why it went unnoticed
+ * for four releases.
+ *
+ * Note the ordering: the two LOG-SPECIFIC seams still win, so a suite
+ * exercising the logger inside a fixture that already redirected user data can
+ * still point the log somewhere else. This rung only fills in what nothing
+ * else asked for.
  *
  * Pure resolver — never creates the directory. The logger module owns that,
  * lazily and best-effort, at write time (see its own docblock for why: a
@@ -306,6 +324,14 @@ export function getLogsDir() {
   if (_logDirOverride) return _logDirOverride;
   if (process.env.CURATOR_TEST_LOG_DIR) {
     return path.resolve(process.env.CURATOR_TEST_LOG_DIR);
+  }
+  // Read the user-data SEAMS directly rather than calling getUserDataDir():
+  // in a real install that getter returns APP_ROOT (repo) or Application
+  // Support (bundle), and this function deliberately does NOT fork on install
+  // mode. Only an explicitly ISOLATED user-data dir may pull the log with it.
+  if (_userDataDirOverride) return path.join(_userDataDirOverride, 'logs');
+  if (process.env.CURATOR_TEST_USER_DATA_DIR) {
+    return path.join(path.resolve(process.env.CURATOR_TEST_USER_DATA_DIR), 'logs');
   }
   return path.join(os.homedir(), 'Library', 'Logs', APP_LOGS_DIR_NAME);
 }

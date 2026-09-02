@@ -77,6 +77,111 @@ export function isTransientLlmError(message) {
 /** Folders within a domain's wiki/ that we consider for changed-page detection. */
 const WIKI_FOLDERS = ['entities', 'concepts', 'summaries'];
 
+// ── Retry / skip queue keys are DOMAIN-QUALIFIED (v3.43.0) ─────────────────
+//
+// `pending_retry` and `permanent_skip` live on the CONNECTION, and a connection
+// may contribute from several local domains. Until v3.43.0 both were keyed on
+// the page path alone — `entities/kestrel-array.md` — so two domains that each
+// hold a page of that name shared one strike counter and one skip entry. Two
+// distinct harms, and the second is silent data loss:
+//
+//   1. COLLISION. Domain A's failure marks domain B's identically-named page
+//      as skipped, and B's page is then never contributed while the UI shows
+//      one entry the user cannot attribute to either domain.
+//   2. WHOLESALE ERASURE. pushDomain wrote `pending_retry` and
+//      `permanent_skip` as complete REPLACEMENTS. In a multi-domain push the
+//      route loaded the connection ONCE, so domain B's write — computed from
+//      A's pre-push snapshot — deleted every entry A had just recorded. Those
+//      pages then fell out of both sets while `last_push_at` had advanced, so
+//      the NEXT push treated them as previously-contributed and DIFFED them:
+//      their whole body arrived as PRIOR VERSION, routed to `stable_facts`,
+//      which nothing reads. Content the user paid an LLM call for, gone with a
+//      green "Push complete".
+//
+// The key is now `<domain>/<folder>/<file>.md`. Legacy 2-segment keys are
+// migrated ON READ, and only into the domain currently being pushed, and only
+// when that page actually exists there — a legacy key naming a page this
+// domain does not have is left untouched for whichever domain owns it. That is
+// the conservative direction: a legacy key wrongly LEFT behind costs one
+// redundant contribution (absorbed by the collective's exact-string dedup),
+// while one wrongly CLAIMED would silently suppress another domain's page.
+
+/** True for a legacy, domain-unqualified queue key ("entities/foo.md"). */
+export function isLegacyQueueKey(key) {
+  if (typeof key !== 'string') return false;
+  const parts = key.split('/');
+  return parts.length === 2 && WIKI_FOLDERS.includes(parts[0]) && parts[1].endsWith('.md');
+}
+
+/**
+ * The domain a qualified queue key belongs to ("d/entities/foo.md" → "d"),
+ * or null when the key is legacy or unrecognised. Three segments with a wiki
+ * folder in the MIDDLE is the discriminator, so a domain literally named
+ * `entities` is still unambiguous: `entities/entities/foo.md` is qualified,
+ * `entities/foo.md` is legacy.
+ */
+export function queueKeyDomain(key) {
+  if (typeof key !== 'string') return null;
+  const parts = key.split('/');
+  if (parts.length === 3 && WIKI_FOLDERS.includes(parts[1]) && parts[2].endsWith('.md')) {
+    return parts[0];
+  }
+  return null;
+}
+
+/**
+ * Split a connection's queues into the part this domain owns (as bare page
+ * paths, which is what every line of pushDomain below works in) and the part
+ * belonging to other domains (as opaque keys, preserved verbatim).
+ *
+ * @param {object} connection
+ * @param {string} domainSlug
+ * @param {string} wikiDir       absolute path to this domain's wiki/ — used only
+ *                               to decide whether a LEGACY key belongs here
+ */
+export function splitQueues(connection, domainSlug, wikiDir) {
+  const ownRetry = {};
+  const foreignRetry = {};
+  const ownSkip = [];
+  const foreignSkip = [];
+
+  const claimsLegacy = (key) => existsSync(path.join(wikiDir, key));
+
+  for (const [key, n] of Object.entries((connection && connection.pending_retry) || {})) {
+    const d = queueKeyDomain(key);
+    if (d === domainSlug) ownRetry[key.slice(domainSlug.length + 1)] = n;
+    else if (d !== null) foreignRetry[key] = n;
+    else if (isLegacyQueueKey(key) && claimsLegacy(key)) ownRetry[key] = n;
+    else foreignRetry[key] = n;
+  }
+  for (const key of ((connection && connection.permanent_skip) || [])) {
+    if (typeof key !== 'string') continue;
+    const d = queueKeyDomain(key);
+    if (d === domainSlug) ownSkip.push(key.slice(domainSlug.length + 1));
+    else if (d !== null) foreignSkip.push(key);
+    else if (isLegacyQueueKey(key) && claimsLegacy(key)) ownSkip.push(key);
+    else foreignSkip.push(key);
+  }
+  return { ownRetry, ownSkip, foreignRetry, foreignSkip };
+}
+
+/**
+ * The inverse: re-qualify this domain's queues and MERGE them back over the
+ * entries other domains own. This is what makes a multi-domain push additive
+ * instead of destructive — every patch this module writes goes through it.
+ */
+export function mergeQueues(foreign, domainSlug, ownRetry, ownSkip) {
+  const pending_retry = { ...(foreign.foreignRetry || {}) };
+  for (const [p, n] of Object.entries(ownRetry || {})) {
+    pending_retry[`${domainSlug}/${p}`] = n;
+  }
+  const permanent_skip = [
+    ...(foreign.foreignSkip || []),
+    ...Array.from(ownSkip || []).map(p => `${domainSlug}/${p}`),
+  ];
+  return { pending_retry, permanent_skip };
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -434,7 +539,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     return {
       ok: false,
       error: `pushDomain: domain "${domainSlug}" is not in this connection's contribution list. ` +
-             `Add it to the connection's local_domains in the Sync tab settings before pushing.`,
+             `Add it to the connection's contributing domains in the Shared Brain view before pushing.`,
     };
   }
   // v3.0.2: the shared-* namespace is reserved for read-only mirror
@@ -477,17 +582,24 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   // collective's exact-string dedup absorbs it; a gap is not.
   const pushTimestamp = nowFn().toISOString();
 
-  const pendingRetry = { ...(connection.pending_retry || {}) };
-  const permanentSkip = new Set(connection.permanent_skip || []);
+  // v3.43.0: the queues are domain-qualified on the connection and projected
+  // down to bare page paths for the whole of this function. `queues` carries
+  // the OTHER domains' entries untouched; every patchFn call below merges this
+  // domain's result back over them rather than replacing the pair wholesale.
+  const queues = splitQueues(connection, domainSlug, wikiDir);
+  const queuePatch = (retry, skip) => mergeQueues(queues, domainSlug, retry, skip);
+
+  const pendingRetry = { ...queues.ownRetry };
+  const permanentSkip = new Set(queues.ownSkip);
 
   // Pages that are KNOWN never to have reached the collective: anything queued
-  // for retry or permanently skipped as of this push. Read straight off
-  // `connection` and frozen here because both structures above are mutated by
+  // for retry or permanently skipped as of this push. Read off the PROJECTED
+  // queues and frozen here because both structures above are mutated by
   // the un-skip loop below, and step 4 needs the PRE-scan membership.
   // Used only by the prior-content guard — see the comment there.
   const neverContributedPages = new Set([
-    ...Object.keys(connection.pending_retry || {}),
-    ...(connection.permanent_skip || []),
+    ...Object.keys(queues.ownRetry),
+    ...queues.ownSkip,
   ]);
 
   // v3.0.2: un-skip on edit. The permanent_skip warn message has
@@ -524,12 +636,12 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     }
     patchFn(connection.id, {
       last_push_at: pushTimestamp,
-      permanent_skip: Array.from(permanentSkip),
-      pending_retry: prunedRetry,
+      ...queuePatch(prunedRetry, permanentSkip),
     });
     return {
       ok: true, pushed: 0, skipped: 0,
-      permanent_skip: Array.from(permanentSkip),
+      // Qualified, for the same reason as the main return below.
+      permanent_skip: Array.from(permanentSkip).map(p => `${domainSlug}/${p}`),
       domain: domainSlug, submission_id: null,
     };
   }
@@ -679,10 +791,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
       // v3.0.3 (L3): persist this cycle's retry/skip bookkeeping even though
       // the push failed — do NOT advance last_push_at (the pages must
       // rescan next time).
-      patchFn(connection.id, {
-        pending_retry: newPendingRetry,
-        permanent_skip: Array.from(newPermanentSkip),
-      });
+      patchFn(connection.id, queuePatch(newPendingRetry, newPermanentSkip));
       return {
         ok: false,
         error: `pushDomain: storage adapter init failed: ${err.message}`,
@@ -718,10 +827,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
       // v3.0.3 (L3): as above — keep the retry bookkeeping, don't advance
       // last_push_at, so both the failed deltas and the strike counters
       // survive to the next push.
-      patchFn(connection.id, {
-        pending_retry: newPendingRetry,
-        permanent_skip: Array.from(newPermanentSkip),
-      });
+      patchFn(connection.id, queuePatch(newPendingRetry, newPermanentSkip));
       return {
         ok: false,
         error: `pushDomain: storage write failed: ${err.message}`,
@@ -736,8 +842,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   // ── 6. Update connection state ──────────────────────────────────────────
   patchFn(connection.id, {
     last_push_at: pushTimestamp,
-    pending_retry: newPendingRetry,
-    permanent_skip: Array.from(newPermanentSkip),
+    ...queuePatch(newPendingRetry, newPermanentSkip),
   });
 
   const summary = deltas.length === 0
@@ -747,12 +852,19 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
 
   onProgress('done', summary, { pushed: deltas.length, skipped: skippedCount });
 
+  // The two queue fields are returned in the CONNECTION's key space
+  // (domain-qualified), not the bare page paths this function works in: they
+  // name entries a caller may hand straight back to POST /:id/unskip, and an
+  // unqualified key would silently match nothing there.
+  const finalQueues = queuePatch(newPendingRetry, newPermanentSkip);
   return {
     ok: true,
     pushed: deltas.length,
     skipped: skippedCount,
-    permanent_skip: Array.from(newPermanentSkip),
-    pending_retry: newPendingRetry,
+    permanent_skip: finalQueues.permanent_skip.filter(k => k.startsWith(`${domainSlug}/`)),
+    pending_retry: Object.fromEntries(
+      Object.entries(finalQueues.pending_retry).filter(([k]) => k.startsWith(`${domainSlug}/`))
+    ),
     domain: domainSlug,
     submission_id: pushedSubmissionId,
   };
@@ -776,6 +888,25 @@ function resolveInsideBase(base, relative) {
     return null;
   }
   return resolved;
+}
+
+/**
+ * True only for a CLAUDE.md this module itself wrote for a mirror: frontmatter
+ * carrying BOTH `readonly: true` and `source: shared-brain`.
+ *
+ * Deliberately not `parseReadonlyFlag` from files.js alone — that answers
+ * "may the app write here", which several things could set. The question here
+ * is narrower and destructive: "is this a folder whose contents a remote
+ * collective owns, such that pruning it is correct?"
+ */
+export function isSharedBrainMirrorClaudeMd(content) {
+  if (typeof content !== 'string' || !content) return false;
+  const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!fm) return false;
+  const body = fm[1];
+  const readonly = /^[ \t]*readonly[ \t]*:[ \t]*["']?true["']?[ \t]*$/mi.test(body);
+  const source   = /^[ \t]*source[ \t]*:[ \t]*["']?shared-brain["']?[ \t]*$/mi.test(body);
+  return readonly && source;
 }
 
 /**
@@ -808,7 +939,40 @@ export async function ensureSharedDomainExists(localDomain, connection, domainsD
   const base = path.join(domainsDir, localDomain);
   const claudeMdPath = path.join(base, 'CLAUDE.md');
   if (existsSync(claudeMdPath)) {
-    return; // already initialised
+    // ── ADOPTION IS REFUSED (v3.43.0) ────────────────────────────────────
+    //
+    // This used to be a bare `return` — "already initialised" — and it was
+    // the last gate in front of a DESTRUCTIVE operation. pullCollective's
+    // step 7b prunes every .md under entities/, concepts/ and summaries/
+    // that the collective did not send, so adopting a domain that is not a
+    // mirror empties that user's wiki.
+    //
+    // The path to it is short and needs no filesystem access: the mirror slug
+    // is `shared-<shared_brain_slug>`, and `shared_brain_slug` comes out of an
+    // UNSIGNED, base64url invite token that anyone can craft. Send someone an
+    // invite naming `shared_brain_slug: "articles"`, wait for their first
+    // Pull, and `domains/shared-articles/` is emptied. (Reserving the
+    // `shared-` prefix at domain creation — done in this release too — closes
+    // the case where the victim owns the name legitimately; this closes the
+    // case where they own it because a previous, unrelated brain created it,
+    // and the case of any hand-made folder that happens to match.)
+    //
+    // The marker is the pair this function itself writes: `readonly: true`
+    // AND `source: shared-brain` in the frontmatter. Both are required —
+    // `readonly` alone is a flag other features may reasonably adopt, and
+    // `source` alone does not assert the domain is safe to overwrite.
+    let head = '';
+    try { head = await readFile(claudeMdPath, 'utf8'); } catch { head = ''; }
+    if (!isSharedBrainMirrorClaudeMd(head)) {
+      throw new Error(
+        `Refusing to pull into "${localDomain}": that domain already exists on this machine and is ` +
+        `NOT a Shared Brain mirror (its CLAUDE.md carries no "source: shared-brain" + "readonly: true" ` +
+        `marker). Pulling would delete every page in it that the collective does not have. If this really ` +
+        `is your own domain, rename it — or ask the brain's admin for an invite whose name does not ` +
+        `collide with it.`
+      );
+    }
+    return; // a genuine mirror — already initialised
   }
 
   await mkdir(path.join(base, 'wiki', 'entities'),  { recursive: true });
@@ -836,13 +1000,13 @@ export async function ensureSharedDomainExists(localDomain, connection, domainsD
     `# Shared Brain Mirror: ${labelText}`,
     '',
     'This domain is the local read-only mirror of a Shared Brain. It is updated by',
-    'the **Pull updates** button in the Sync tab — never by manual ingestion.',
+    'the **Pull updates** button in the app\'s Shared Brain view — never by manual ingestion.',
     '',
     '## How to contribute',
     '',
     'To add knowledge to this Shared Brain, edit pages in your **personal opted-in',
     `domain** (configured under this connection: \`${(connection.local_domains || []).join(', ') || '(none yet)'}\`). Then click`,
-    '**Push contributions** in the Sync tab. After the next synthesis, your',
+    '**Push contributions** in the Shared Brain view. After the next synthesis, your',
     'contributions will appear here on the next Pull.',
     '',
     'Direct edits to pages in this domain will be **overwritten** on the next pull.',
@@ -943,7 +1107,16 @@ export async function pullCollective(connection, opts = {}) {
     const domainsDir = opts.domainsDir || getDomainsDir();
 
     // ── 4. Ensure mirror domain exists ──────────────────────────────────
-    await ensureSharedDomainExists(localDomain, connection, domainsDir);
+    // v3.43.0: this now REFUSES an existing non-mirror domain rather than
+    // adopting it (see its docblock). Converted to the {ok:false} shape every
+    // other early exit in this function uses, so callers do not have to know
+    // that one step throws and the rest return.
+    try {
+      await ensureSharedDomainExists(localDomain, connection, domainsDir);
+    } catch (err) {
+      onProgress('warn', err.message);
+      return { ok: false, error: err.message, created: 0, updated: 0, skipped: 0, local_domain: localDomain };
+    }
 
     // ── 5. Read all collective pages ────────────────────────────────────
     let adapter;
@@ -1187,7 +1360,6 @@ export async function computePendingPages(connection, domainsDir) {
   const root = domainsDir || getDomainsDir();
   const sinceDate = connection.last_push_at ? new Date(connection.last_push_at) : null;
   if (sinceDate && isNaN(sinceDate.getTime())) return 0;
-  const skip = new Set(connection.permanent_skip || []);
   let total = 0;
   for (const d of (Array.isArray(connection.local_domains) ? connection.local_domains : [])) {
     if (typeof d !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(d)) continue;
@@ -1195,7 +1367,17 @@ export async function computePendingPages(connection, domainsDir) {
     const wikiDir = path.join(root, d, 'wiki');
     if (!existsSync(wikiDir)) continue;
     try {
-      const changed = await findChangedPages(wikiDir, sinceDate, connection.pending_retry || {});
+      // v3.43.0: project the connection's domain-qualified queues down to THIS
+      // domain's bare page paths — exactly what pushDomain does — so the badge
+      // counts the same pages the push would actually attempt. Reading the raw
+      // qualified maps here would union another domain's keys into this
+      // domain's retry set (they never exist on disk, so findChangedPages drops
+      // them) and would stop the skip set matching anything at all, which is
+      // the direction that OVER-counts: the badge would promise pages the push
+      // then refuses.
+      const { ownRetry, ownSkip } = splitQueues(connection, d, wikiDir);
+      const skip = new Set(ownSkip);
+      const changed = await findChangedPages(wikiDir, sinceDate, ownRetry);
       total += changed.filter(p => !skip.has(p)).length;
     } catch { /* unreadable domain → contribute 0 */ }
   }
