@@ -29,14 +29,16 @@
   max-width: 100%;
   height: var(--control-md);
   padding: 0 9px 0 11px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);   /* was a raw 6px */
   border: 1px solid var(--border);
   background: var(--surface-raised);
   color: var(--text);
   font-family: inherit;
   font-size: var(--text-md);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state);
 }
 .lb-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-hover); }
@@ -124,9 +126,29 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-pop);
+  /* ── THE MENU IS A MATERIAL, WHICH IS WHERE THE BORROWED EDGE BELONGS ────
+     A dropdown genuinely FLOATS OVER CONTENT — unlike a card or a settings
+     group — so it is one of the four surfaces that earns the two-line edge
+     and the blur. Here, unlike the rail, `backdrop-filter` has something
+     real to sample and the saturate() does visible work: AppKit's vibrancy
+     pulls COLOUR through the blur, and without the saturation boost a
+     backdrop-filter is a grey smear rather than a Mac material.
+
+     `border: 1px solid var(--border)` is REPLACED, not supplemented: a real
+     border plus a 1px outer shadow would draw two lines of the same
+     intention, and --shadow-pop already carried its own `0 0 0 1px`. The
+     three lines here are one intention each — outer separator, inner lit
+     lip, and the ambient/contact pair that says how far above the page it
+     is. Geometry is unchanged: the border was inside the border-box and the
+     outer shadow paints outside it, so the menu's own width and the JS that
+     positions it are untouched. */
+  background: var(--mat-menu);
+  -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  box-shadow:
+    0 0 0 1px var(--mat-edge-lo),
+    inset 0 1px 0 var(--mat-edge-hi),
+    var(--elev-3);
 }
 
 .lb-opt {
@@ -138,7 +160,7 @@
   color: var(--text);
   font-size: var(--text-md);
   line-height: var(--leading-snug);
-  cursor: pointer;
+  cursor: default;
   scroll-margin: 5px;
 }
 /* `.is-active` is the KEYBOARD position and `.is-selected` is the committed
@@ -147,8 +169,38 @@
    and what is still selected — collapsing them into one style is how a
    listbox stops being able to say "you have not committed this yet". */
 .lb-opt.is-active { background: var(--surface-hover); }
-.lb-opt.is-selected { background: var(--accent-tint); color: var(--accent-text); }
-.lb-opt.is-selected.is-active { background: var(--accent-tint-strong); }
+/* ── THE COMMITTED ROW IS A FILLED ACCENT PILL ───────────────────────────
+   macOS 11 replaced the full-bleed selection bar with an inset rounded pill
+   in the accent colour, and that is what a committed value in an AppKit menu
+   looks like. It was --accent-tint (a wash), which reads as "warm" rather
+   than as "this is the one", and on the new material backdrop a 0.14 tint is
+   very nearly the material itself.
+   It gets the gloss because a filled accent pill IS a raised object, by the
+   same rule that gives the primary button all three devices and gives the
+   ghost button none. --text-on-accent is white: 4.53:1 on dark, 6.57:1 on
+   light. --accent-text (a violet on a violet fill) could not have been used.
+   The .is-active / .is-selected distinction the note above calls load-bearing
+   SURVIVES and is now carried by two different devices rather than by two
+   strengths of one wash: keyboard position is a neutral highlight, committed
+   value is the accent pill plus its tick. */
+.lb-opt.is-selected {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  box-shadow: var(--gloss-specular), var(--gloss-shade);
+}
+/* Keyboard position ON the committed row. The fill does NOT move — it takes
+   the raised specular instead, which is the same language .btn-primary:hover
+   uses and for the same reason: on dark there is no violet lighter than
+   --violet-500 that keeps white text above 4.5:1, so a "brighter" state has
+   to be carried by the lit edge rather than by the colour. Darkening to
+   --accent-active would also read as PRESSED rather than as focused. */
+.lb-opt.is-selected.is-active { box-shadow: var(--gloss-specular-hi), var(--gloss-shade); }
+/* Everything inside the pill inherits the pill's own foreground. Without
+   this, the detail column keeps --text-2 (#BDBDD1 on dark) over an --accent
+   fill — 2.31:1, a legibility defect created BY the fill and invisible to any
+   scan that grades .lb-opt-detail against the surface it normally sits on.
+   `currentColor` rather than a second literal, so the two can never drift. */
+.lb-opt.is-selected .lb-opt-detail { color: currentColor; }
 /* A row, not a native control — it carries aria-disabled="true" and the
    click/keyboard guards in shared/listbox.js are what actually refuse it.
    `pointer-events: none` is therefore deliberately NOT set here: the JS

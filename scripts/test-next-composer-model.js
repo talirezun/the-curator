@@ -1111,7 +1111,12 @@ section('§5  Price honesty — the LIVE price is rendered, never the standard o
   // price — i.e. never inside the .chat-mm-price span.
   for (const { p, e } of promotedEntries) {
     const html = renderModelOptionHtml(p, e, null);
-    const m = /<span class="chat-mm-price mono">([\s\S]*?)<\/span>/.exec(html);
+    // The class list was `chat-mm-price mono` until the design pass moved
+    // every COUNT and PRICE in /next off the monospace face onto the text one
+    // (mono is kept for code and raw source; a price is neither). Matched on
+    // the price class ALONE now, so this assertion measures where the price
+    // is rather than what face it happens to be set in.
+    const m = /<span class="chat-mm-price"[^>]*>([\s\S]*?)<\/span>/.exec(html);
     ok(!!m, `${e.id}: a price span is present`);
     const priceText = m ? m[1] : '';
     ok(priceText.includes(escapeHtmlStub(formatPricePerM(e.input))),

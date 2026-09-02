@@ -1800,7 +1800,7 @@ function renderSidebar(token) {
         '<span class="dm-row-dot ' + domainDotClass(i) + '"></span>' +
         '<span class="dm-row-main">' +
           '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
-          '<span class="dm-row-meta mono">' + pagesText + '</span>' +
+          '<span class="dm-row-meta">' + pagesText + '</span>' +
         '</span>' +
         // ── TWO BADGES WHOSE MEANING WAS HOVER-ONLY ───────────────────
         // `RO` was a <span title="Read-only Shared Brain mirror">, and the
@@ -2035,17 +2035,17 @@ function renderStatCards(counts, pages) {
   const otherCount = counts.other || 0;
   return (
     '<div class="dm-stats-grid">' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">PAGES</div><div class="dm-stat-value mono">' + pages.toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">ENTITIES</div><div class="dm-stat-value mono dm-stat-entity">' + (counts.entities || 0).toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">CONCEPTS</div><div class="dm-stat-value mono dm-stat-concept">' + (counts.concepts || 0).toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">SUMMARIES</div><div class="dm-stat-value mono dm-stat-summary">' + (counts.summaries || 0).toLocaleString() + '</div></div>' +
+      '<div class="dm-stat-card"><div class="cur-eyebrow">PAGES</div><div class="dm-stat-value">' + pages.toLocaleString() + '</div></div>' +
+      '<div class="dm-stat-card"><div class="cur-eyebrow">ENTITIES</div><div class="dm-stat-value dm-stat-entity">' + (counts.entities || 0).toLocaleString() + '</div></div>' +
+      '<div class="dm-stat-card"><div class="cur-eyebrow">CONCEPTS</div><div class="dm-stat-value dm-stat-concept">' + (counts.concepts || 0).toLocaleString() + '</div></div>' +
+      '<div class="dm-stat-card"><div class="cur-eyebrow">SUMMARIES</div><div class="dm-stat-value dm-stat-summary">' + (counts.summaries || 0).toLocaleString() + '</div></div>' +
       // MEDIUM-2 fix: shown only when non-zero, so the common case (every
       // page fits entities/concepts/summaries) renders identically to
       // before — but when `other` IS non-zero it is never just dropped
       // (see the caller's comment): a fifth stat card, same shape as the
       // other three, not a footnote.
       (otherCount > 0
-        ? '<div class="dm-stat-card"><div class="cur-eyebrow">OTHER</div><div class="dm-stat-value mono dm-stat-other">' + otherCount.toLocaleString() + '</div></div>'
+        ? '<div class="dm-stat-card"><div class="cur-eyebrow">OTHER</div><div class="dm-stat-value dm-stat-other">' + otherCount.toLocaleString() + '</div></div>'
         : '') +
     '</div>'
   );
@@ -2178,7 +2178,7 @@ function renderBrowsePanel() {
   const tabs = BROWSE_FOLDERS.map((f) => {
     const n = f.key === 'all' ? b.entries.length : b.entries.filter((e) => e.folder === f.key).length;
     return '<button class="dm-browse-tab' + (b.folder === f.key ? ' active' : '') + '" data-browse-folder="' + f.key + '">' +
-      escapeHtml(f.label) + ' <span class="mono dm-browse-tab-count">' + n + '</span></button>';
+      escapeHtml(f.label) + ' <span class="dm-browse-tab-count">' + n + '</span></button>';
   }).join('');
 
   const rows = shown.map((e) => (
@@ -2495,7 +2495,7 @@ function renderHealthPanel(domain, readonly) {
   const chips = HEALTH_CATEGORIES.map((cat) => {
     const count = (report[cat.key] || []).length;
     const cls = count === 0 ? 'dm-chip-zero' : (cat.violet ? 'dm-chip-violet' : 'dm-chip-amber');
-    return '<span class="dm-chip ' + cls + '">' + escapeHtml(cat.label) + ' <span class="mono dm-chip-count">' + count + '</span></span>';
+    return '<span class="dm-chip ' + cls + '">' + escapeHtml(cat.label) + ' <span class="dm-chip-count">' + count + '</span></span>';
   }).join('');
 
   // ── THE READOUT ──────────────────────────────────────────────────────────
@@ -2778,7 +2778,7 @@ function quickAiButton(key, label, busy, crossMountBusy) {
       // its sparkles so the cost warning never disappears from the bar.
       (running ? buttonRingHtml() : icon('sparkles', 12)) +
       '<span class="dm-quick-label">' + escapeHtml(label2) + '</span>' +
-      (costText ? '<span class="mono dm-quick-cost">' + escapeHtml(costText) + '</span>' : '') +
+      (costText ? '<span class="dm-quick-cost">' + escapeHtml(costText) + '</span>' : '') +
     '</button>'
   );
 }
@@ -2815,12 +2815,12 @@ function renderPendingPlan(crossMountBusy) {
     '<div class="dm-plan-card">' +
       '<div class="dm-plan-title">Plan ready — nothing written yet</div>' +
       '<div class="dm-plan-summary">' + escapeHtml(summaryLine) + '</div>' +
-      '<div class="dm-plan-detail mono">' + escapeHtml(body) + '</div>' +
+      '<div class="dm-plan-detail">' + escapeHtml(body) + '</div>' +
       '<div class="dm-plan-actions">' +
         '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (busy ? ' disabled' : '') + '>' + (busy === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
         '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
       '</div>' +
-      (crossMountBusy ? '<div class="dm-plan-detail mono dm-quick-note-busy">An earlier operation on this domain is still running.</div>' : '') +
+      (crossMountBusy ? '<div class="dm-plan-detail dm-quick-note-busy">An earlier operation on this domain is still running.</div>' : '') +
     '</div>'
   );
 }
@@ -2863,7 +2863,7 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       'coming back on future scans. ' + GIT_UNDO_WARN + '</div>' +
       batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
-      (handledRows ? ('<div class="dm-plan-detail mono">Already handled in this scan:</div>' + handledRows) : '') +
+      (handledRows ? ('<div class="dm-plan-detail">Already handled in this scan:</div>' + handledRows) : '') +
     '</div>'
   );
 }
@@ -2975,13 +2975,13 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   // the same domain's files on disk and would still 409 against it.
   const disabled = busy || crossMountBusy;
   const rows = issues.slice(0, 50).map((issue) => renderIssueRow(cat.key, issue, readonly)).join('');
-  const more = issues.length > 50 ? '<div class="dm-issue-more mono">…and ' + (issues.length - 50) + ' more</div>' : '';
+  const more = issues.length > 50 ? '<div class="dm-issue-more">…and ' + (issues.length - 50) + ' more</div>' : '';
   return (
     '<details class="dm-group"' + (open ? ' open' : '') + ' data-group-key="' + cat.key + '">' +
       '<summary class="dm-group-summary">' +
         icon('chevronRight', 13) +
         '<span class="dm-group-label">' + escapeHtml(cat.label) + '</span>' +
-        '<span class="dm-group-pill mono">' + issues.length + '</span>' +
+        '<span class="dm-group-pill">' + issues.length + '</span>' +
         (canFixAll && fixAllCount > 0 ? (
           '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (disabled ? ' disabled' : '') + '>' +
             (busy ? 'Fixing…' : 'Fix all ' + fixAllCount) +
@@ -3064,7 +3064,7 @@ function renderDismissedGroup(count) {
       '<summary class="dm-group-summary">' +
         icon('chevronRight', 13) +
         '<span class="dm-group-label dm-dismissed-label">Dismissed</span>' +
-        '<span class="dm-group-pill mono">' + count + '</span>' +
+        '<span class="dm-group-pill">' + count + '</span>' +
       '</summary>' +
       '<div class="dm-group-body">' + body + '</div>' +
     '</details>'
