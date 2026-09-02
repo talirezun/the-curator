@@ -315,13 +315,40 @@
 }
 
 /* The affordance. A real button — never a `title=` on a span, which is
-   invisible to keyboard and to touch (v3.20.0 counted 11 of those). */
+   invisible to keyboard and to touch (v3.20.0 counted 11 of those).
+
+   ── AND ITS TARGET IS 28px, WHICH IT WAS NOT ────────────────────────────
+   MEASURED in the running app across every view: this button is 24x24 and
+   its pointer target was 24x24 too — no wrapper, no padding, nothing
+   growing it. It is the ONLY thing in its 844px header row a pointer can
+   aim at, and it appears on eleven surfaces (every view's header, plus the
+   update-recovery mark in Settings), so it is the most-repeated
+   under-target control in the app.
+
+   28px is --hit-min: macOS's DEFAULT control target, which this design pass
+   set as the floor and which shell.css's .reader-close and switch.css's
+   .cur-switch already reach by the same technique used here — keep the
+   glyph, grow the TARGET with a transparent ::before. Nothing paints, so
+   the 24px circle, its hover fill and its open-state ring are unchanged;
+   only what the pointer can hit moves.
+
+   The inset is DERIVED from --hit-min and the 24px box rather than typed as
+   -2px, so changing either keeps them consistent — the same form
+   .reader-close uses for its 26px glyph.
+
+   scripts/test-next-design-kit.js §11 did not see this, and the reason is
+   worth keeping: its scan covered three files, and shared/text.css was not
+   one of them. It now is. */
 .tx-vh-info {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
   align-self: center;
+  /* `relative` so the hit box below has something to anchor to. It paints
+     nothing and creates no stacking issue — the element has no children that
+     escape it and no z-index. */
+  position: relative;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -333,6 +360,13 @@
   transition: color var(--dur-fast, 80ms) var(--ease-out, ease),
               background var(--dur-fast, 80ms) var(--ease-out, ease),
               transform var(--t-press);
+}
+
+.tx-vh-info::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-min) - 24px) / -2);
+  border-radius: inherit;
 }
 
 .tx-vh-info:hover {

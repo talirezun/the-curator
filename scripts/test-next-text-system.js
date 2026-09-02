@@ -471,8 +471,20 @@ console.log('\n§8  text.css hygiene and REACHABILITY');
   ok(sizes.length > 0 && sizes.every((s) => /^--text-/.test(s)),
      'every font-size reads a --text-* ramp token (' + sizes.length + ' declarations)');
 
-  const tokenCss = ['color', 'space', 'shape', 'typography', 'motion']
-    .map((n) => read('tokens/' + n + '.css')).join('\n');
+  /* `material` joined this list when text.css first reached for --hit-min and
+     this check reported it undefined. It was not: the material pass added a
+     sixth token file and every hand-kept list of the other five became short
+     by one. THE LIST IS NOW DERIVED from index.html's own <link> tags, so a
+     seventh file cannot repeat it — the browser's token universe is exactly
+     the set of sheets the page loads, and reading that is strictly better
+     than remembering to add a name here.
+     tokens/fonts.css is deliberately NOT linked (it @imports Google Fonts);
+     reading the links rather than the directory keeps that true. */
+  const linked = [...read('index.html').matchAll(/href="\/next\/(tokens\/[a-z-]+\.css)"/g)].map((m) => m[1]);
+  ok(linked.length >= 6, `${linked.length} token sheets are linked by index.html: ${linked.map((f) => f.replace('tokens/', '')).join(', ')}`);
+  ok(linked.includes('tokens/material.css'),
+    'and tokens/material.css is one of them — the sheet this list was missing');
+  const tokenCss = linked.map((n) => read(n)).join('\n');
   const defined = new Set([...tokenCss.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
   for (const m of textCss.matchAll(/(--tx-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
   const used = [...textCss.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);

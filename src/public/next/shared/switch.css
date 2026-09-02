@@ -1,0 +1,172 @@
+/* ── The switch (NSSwitch) ───────────────────────────────────────────────
+   ONE control, `cur-switch`, and it is NOT a second checkbox.
+
+   ── WHY A SWITCH AND NOT A SEGMENTED PAIR ────────────────────────────────
+   macOS draws a two-value choice three different ways and they are not
+   interchangeable:
+     · SWITCH        turns a FACILITY on or off, takes effect immediately,
+                     and the label states the facility, not the values.
+     · CHECKBOX      states a fact about a thing — "measured only",
+                     "I consent". Plural checkboxes stack; switches do not.
+     · SEGMENTED     picks one of N MODES that are peers. Appearance
+                     (Light / Dark) is a mode pair, which is why System
+                     Settings itself draws it segmented and why this app's
+                     theme control stays segmented.
+   A segmented Off/On pair is the one shape macOS never uses, because it
+   spends two labels saying what one switch says with none.
+
+   ── WHY A <button role="switch"> AND NOT <input type="checkbox"> ─────────
+   Its whole job here is to POST a value and re-render from the server's
+   answer, so there is no form to submit and no checked state the browser
+   should own — the announced state must be the SERVER's, and a native
+   checkbox flips itself optimistically before the request has been made.
+   `role="switch"` + `aria-checked` is the state, and it is the same string
+   the CSS keys on, so the painted state and the announced state cannot
+   disagree. The cost is stated: a `<button>` has no `:checked`, so every
+   rule below reads `[aria-checked="true"]`.
+
+   Geometry, motion amplitudes, colours and the gloss all come from
+   tokens/material.css. Nothing here hardcodes a colour or a duration.
+   ────────────────────────────────────────────────────────────────────── */
+
+.cur-switch {
+  position: relative;
+  flex: none;
+  display: inline-block;
+  width: var(--switch-w);
+  height: var(--switch-h);
+  padding: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--control-edge-quiet);
+  background: var(--surface-sunken);
+  /* A switch OFF is a sunken well, exactly as a field is — the inversion of
+     the gloss, and the thing that says "nothing is happening here yet". */
+  box-shadow: var(--gloss-well-quiet);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  vertical-align: middle;
+  transition:
+    background-color var(--t-state),
+    border-color var(--t-state),
+    box-shadow var(--t-state);
+}
+
+/* ── THE 28px HIT BOX ────────────────────────────────────────────────────
+   The track is 22pt tall because NSSwitch is 22pt tall; macOS's DEFAULT
+   control target is 28x28. Growing the track to 28 would draw a switch that
+   is not a switch, so the TARGET grows and the GLYPH does not: a transparent
+   ::before bleeds 3px above and below. `inset` is used rather than
+   width/height so the box tracks the track's real size if --switch-h moves.
+   Nothing paints here, so it cannot change what the control looks like. */
+.cur-switch::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-min) - var(--switch-h)) / -2) 0;
+  border-radius: inherit;
+}
+
+.cur-switch-knob {
+  position: absolute;
+  top: var(--switch-pad);
+  left: var(--switch-pad);
+  /* 2px is the two 1px borders the track's box-sizing consumes. */
+  width: calc(var(--switch-h) - 2px - var(--switch-pad) * 2);
+  height: calc(var(--switch-h) - 2px - var(--switch-pad) * 2);
+  border-radius: var(--radius-full);
+  background: var(--ink-0);
+  box-shadow: var(--elev-1);
+  /* ── TWO CURVES IN ONE GESTURE, AND THIS IS THE DETAIL THAT SELLS IT ────
+     The knob TRAVELS, so it takes --ease-emphasized (long flat tail, leaves
+     quickly and settles). The track's colour does NOT travel — it crossfades
+     — so it takes the flat --ease-out on the rule above. That mismatch is
+     what a physical switch does, and it is why the control reads as an
+     object rather than as a div that changed colour. */
+  transition:
+    transform var(--dur-fast) var(--ease-emphasized),
+    width var(--t-press);
+}
+
+/* ON. The track is a filled accent and therefore gets the gloss: specular
+   for the lit top edge, shade for the grounded bottom. The border goes
+   transparent because the FILL now carries the 3:1 on its own — that is
+   exactly the --control-edge-quiet -> none step material.css describes. */
+.cur-switch[aria-checked="true"] {
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--gloss-specular), var(--gloss-shade);
+}
+.cur-switch[aria-checked="true"] .cur-switch-knob {
+  transform: translateX(calc(var(--switch-w) - var(--switch-h)));
+}
+
+/* The knob stretches under the finger rather than the whole control moving.
+   A switch is grabbed, not pushed, so --press-shift / --press-scale would be
+   the wrong vocabulary here; nothing in this file transforms on :active, so
+   scripts/test-next-press-motion.js's amplitude ratchet does not apply and
+   is not being routed around. */
+.cur-switch:not([disabled]):active .cur-switch-knob {
+  width: calc(var(--switch-h) - 2px - var(--switch-pad) * 2 + 4px);
+}
+
+.cur-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+.cur-switch[aria-checked="true"]:focus-visible {
+  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--ring-focus);
+}
+
+/* The system's ONE disabled value (shell.css --opacity-disabled), and NO
+   colour change — a disabled ON switch must still read as on. */
+.cur-switch[disabled] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* The label a switch sits beside. It is a plain row rather than a <label>
+   element because the control is a <button>, which `for=` cannot target;
+   the accessible name comes from aria-label / aria-labelledby on the button
+   itself. */
+.cur-switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.cur-switch-row > .cur-switch { margin-left: auto; }
+
+/* A DEPENDENT choice that only exists while the switch is on. It is indented
+   under the switch row, which is the whole of what says "this belongs to the
+   thing above". Disabled rather than hidden when the switch is off: hiding it
+   makes the row's height jump on every toggle, and a user who has never
+   turned the facility on would never learn the option exists.
+
+   ── THE ROW CARRIES NO OPACITY, AND THAT IS THE WHOLE OF THE RULE ────────
+   The obvious writing of this is `opacity: var(--opacity-disabled)` on the
+   row when its input is disabled. It is wrong, and it is wrong in exactly the
+   way v3.26.0 measured: the input inside ALREADY carries 0.45 from
+   shared/checkbox.css, nested opacities MULTIPLY, and the pair would
+   composite to an effective 0.2025 — dimmer than the 0.2475 that release
+   found on the provider rows and called a live defect. The system's own rule
+   is that a CONTROL gets --opacity-disabled and a CONTAINER de-emphasises
+   with COLOUR, where nothing multiplies. So only the label text moves. */
+.cur-switch-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: calc(var(--space-6) + var(--switch-w));
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.cur-switch-sub:has(> input[disabled]) > span { color: var(--text-faint); }
+
+/* Reduced motion: the knob stops travelling and the track still changes
+   colour, so the state is never lost — the same per-element judgement
+   shell.css records for its press transforms. The `width` easing goes with
+   it because a stretch IS travel. */
+@media (prefers-reduced-motion: reduce) {
+  .cur-switch,
+  .cur-switch-knob { transition: none; }
+}
