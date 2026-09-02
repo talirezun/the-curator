@@ -367,27 +367,31 @@ From the live catalogue, models are refused by construction rather than by judge
 - **No JSON mode at all.** Ingest asks for structured output. A model whose published parameters include no way to request it cannot serve the build lane, and the app will not pretend otherwise. (This is candidacy, not a guarantee — see below.)
 - **Router ids whose price is published as unknown.** An aggregator can offer meta-models that decide *at request time* which real model serves you, and whose price is therefore unknowable until after the call. Every cost surface in this app quotes a price **before** you choose. A model whose price cannot be stated before the call is incompatible with that, so it is refused rather than displayed with a blank.
 - **Moving aliases.** Some ids are pointers that resolve to whatever the vendor currently considers newest. Pinning one means what you picked can change underneath you with no signal — the exact silent-swap the app refuses one layer down by forbidding provider substitution on every request.
+- **Batch-only endpoints.** OpenRouter publishes a `<model>:batch` variant beside many models. It carries the same capability metadata as the model it shadows — same context, same output ceiling, same parameters — and answers every **synchronous** request with `404 "only available through the Batch API"`. The Curator makes only synchronous calls, so such a row is not slow or degraded, it is dead. Two things make it worth its own rule rather than a footnote: the batch variant is priced at roughly **half** its usable twin, and the picker sorts cheapest-first, so the dead rows cluster at the *top* of the list. Measured on a 2 September 2026 snapshot: **66 `:batch` records, 57 of which passed every other rule**, with the first one landing at position 8 and nine of them inside the top 40. The rule reads two independent signals — the exact final id segment `:batch`, and a display name ending in `" (batch)"` — and either alone refuses. It must not touch the twin: `google/gemini-2.5-flash-lite:batch` is refused while `google/gemini-2.5-flash-lite` stays eligible, because a rule that hid a working model would be worse than the defect it fixes. `:free`, a live and usable suffix, is deliberately untouched.
 - **An output ceiling below 24,576 tokens, or none published at all.** That figure is what the Phase-1 ingest outline actually requests; a model beneath it is structurally unable to serve one however well it scores on anything else. Real examples exist in the live catalogue at 4,000 and 7,372 tokens — both pass every other filter. "No ceiling published" and "a ceiling of zero" get **different reason codes**: the first is *the API did not say*, the second is *the API said no*, and collapsing the two is the fact-vs-absence bug this repo keeps finding.
 - **A context window below 200,000 tokens.** This is a **parity rule, not a round number**, and it is the one rule here that is policy rather than capability. `claude-haiku-4.5` — one of the app's own shipped defaults — publishes exactly 200,000, so the rule is *we will not offer an OpenRouter model that is worse on context than a model we already ship*. It costs something real and the cost is recorded rather than discovered later: the measured requirement is only about 110,000 tokens (prompt plus output floor), and the floor ejects the whole meta-llama family and `ibm-granite/granite-4.0-h-micro` at 131,000 — which is the app's own OpenRouter fallback rung and measured 9/9 clean. Granite survives as a **hand-measured static entry**; it simply cannot be admitted through the fetched path.
 - **A declared retirement date within 30 days.** `moonshotai/kimi-k2.5` passed every other rule and expired **three days** after the fetch. A risk flag is the right shape for a fact the user should weigh; it is the wrong shape for a model that will stop existing inside the release's own lifetime. ⚠ **This rule needs an injected clock and cannot read one itself** — see [Purity and the clock](#purity-and-the-clock) below.
 
 **Tiered (long-context) pricing is a fifth refusal, and only for the build lane.** Some models change their rate above a prompt-size threshold — one common case doubles both rates above 200,000 prompt tokens. The Curator's price model is a single `{input, output}` pair, and every consumer of it assumes one rate per model. A flat entry would therefore quote **half the real rate on exactly the largest ingests**, which is where a user spends most — and no ordering assertion would notice, because array order survives a doubling. Such a model is admitted **chat-only, structurally**: the factory refuses to build it as anything else. That is safe for the specific reason that chat's prompt is bounded and small — on the order of 20k tokens against a threshold an order of magnitude higher — so the flat rate quoted for chat is the rate actually billed. The build lane, the only lane that can cross a threshold, cannot reach these models at all.
 
-**A seventh rule exists and is OFF by default: text output.** A model whose declared output modalities exclude text raises a **high-severity risk flag** but is not rejected, because the field is frequently absent and treating "did not say" as "cannot" would eject models on silence. It can be switched to a rejection deliberately.
+**An eighth rule exists and is OFF by default: text output.** A model whose declared output modalities exclude text raises a **high-severity risk flag** but is not rejected, because the field is frequently absent and treating "did not say" as "cannot" would eject models on silence. It can be switched to a rejection deliberately.
 
-**What one measured run looked like (28 August 2026).** Each row is *models entering the rule* → *models leaving it*:
+**What one measured run looked like (2 September 2026).** Each row is *models entering the rule* → *models leaving it*. This snapshot is pinned in the repository as `scripts/test-fixtures/openrouter-catalogue-2026-09-02.json` and the whole cascade is re-run over it by `scripts/test-openrouter-batch-only.js`, so these figures are reproducible rather than remembered:
 
 | Rule | In | Out | Dropped |
 |---|---|---|---|
-| `json_mode` | 387 | 329 | 58 |
-| `knowable_price` | 329 | 327 | 2 |
-| `not_moving_alias` | 327 | 314 | 13 |
-| `output_ceiling` | 314 | 253 | 61 |
-| `context_window` | 253 | 194 | 59 |
-| `not_expiring` | 194 | 193 | 1 |
-| `text_output` | 193 | 193 | 0 |
+| `json_mode` | 421 | 362 | 59 |
+| `knowable_price` | 362 | 360 | 2 |
+| `not_moving_alias` | 360 | 346 | 14 |
+| `not_batch_only` | 346 | 282 | 64 |
+| `output_ceiling` | 282 | 221 | 61 |
+| `context_window` | 221 | 164 | 57 |
+| `not_expiring` | 164 | 162 | 2 |
+| `text_output` | 162 | 162 | 0 |
 
-193 eligible → **189 admitted**, with **2 superseded** (models the provider lists that The Curator has already hand-measured, so the measured entry is kept and the fetched copy dropped — reported separately so the arithmetic on screen adds up rather than looking as though the app refused its own defaults).
+162 eligible → **156 admitted**, with **4 superseded** (models the provider lists that The Curator has already hand-measured, so the measured entry is kept and the fetched copy dropped — reported separately so the arithmetic on screen adds up rather than looking as though the app refused its own defaults) and 2 refused by the spec mapper.
+
+**The `not_batch_only` row is the one to read twice.** Before that rule existed, this same snapshot produced **219 eligible and 218 rows in the picker, 57 of them dead** — a quarter of everything on offer, clustered near the top because they were priced at half their twins. The rule's stage drops 64 rather than 66 only because the cascade attributes each model to its *first* failing rule and two of the `:batch` records already fail `json_mode`. The earlier reading of the same funnel (28 August 2026, 387 records → 193 eligible → 189 admitted) is superseded by this one; the catalogue grew by 34 records in five days, which is itself the reason no absolute count here should be treated as durable.
 
 **What the filters narrow to, and what they do not decide.** They are a large reduction and still leave a large candidate set. The API narrows the field; it does not choose. That is the point of the next section.
 

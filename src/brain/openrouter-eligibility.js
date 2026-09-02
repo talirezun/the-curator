@@ -364,6 +364,7 @@ export const RULE_ORDER = Object.freeze([
   'json_mode',
   'knowable_price',
   'not_moving_alias',
+  'not_batch_only',
   'output_ceiling',
   'context_window',
   'not_expiring',
@@ -383,6 +384,15 @@ export const REASON_CODES = Object.freeze({
   ALIAS_TILDE_PREFIX: 'ALIAS_TILDE_PREFIX',
   ALIAS_LATEST_SUFFIX: 'ALIAS_LATEST_SUFFIX',
   ALIAS_TARGET_DECLARED: 'ALIAS_TARGET_DECLARED',
+  // rule: not_batch_only
+  /**
+   * The id (or the display name) marks a batch-only endpoint. Every synchronous
+   * call to one returns 404; The Curator makes only synchronous calls. One code
+   * for both signals, with `detail.signal` naming which fired — they are two
+   * readings of ONE fact ("this endpoint is batch-only"), unlike the alias codes,
+   * which name three genuinely different things a record can say about itself.
+   */
+  BATCH_ONLY_ENDPOINT: 'BATCH_ONLY_ENDPOINT',
   // rule: output_ceiling
   OUTPUT_CEILING_UNKNOWN: 'OUTPUT_CEILING_UNKNOWN',
   OUTPUT_CEILING_ZERO: 'OUTPUT_CEILING_ZERO',
@@ -978,7 +988,95 @@ export function checkNotMovingAlias(record) {
 }
 
 /**
- * Rule 4 — the published output ceiling must reach the app's floor.
+ * Rule 4 — the id must not name a BATCH-ONLY endpoint.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ─────────────────────────────────────────────
+ *
+ * OpenRouter publishes a `<model>:batch` variant beside many models. It is a
+ * real record with real metadata, and it answers every SYNCHRONOUS request with
+ * **HTTP 404, "only available through the Batch API"**. The Curator has no
+ * batch client: every call it makes is synchronous. So the row is dead on
+ * arrival — not slow, not degraded, not risky. Dead.
+ *
+ * Measured on the 2 Sep 2026 snapshot: **66 `:batch` records, 57 of which pass
+ * every other rule**. They are priced at HALF the twin they shadow and the
+ * picker sorts cheapest-first, so they cluster at the TOP of the list — the
+ * rows a user reaches for first.
+ *
+ * ── WHY NO EXISTING RULE CATCHES IT, AND WHY THAT IS NOT A GAP IN THEM ─────
+ *
+ * A `:batch` record differs from its usable twin in exactly THREE fields — `id`,
+ * `name` (a trailing `" (batch)"`) and `pricing`. Context, output ceiling,
+ * supported parameters, modalities and expiry are byte-identical. Every other
+ * rule in this module reads a CAPABILITY, and the capability metadata is
+ * genuinely the same; what differs is the TRANSPORT the endpoint requires, and
+ * nothing in the payload states that except the id and the name. So this is a
+ * SEPARATE fact — a transport constraint, not a capability one — and not a
+ * missing case in an existing rule.
+ *
+ * ── TWO SIGNALS, BOTH REJECTING, DELIBERATELY ─────────────────────────────
+ *
+ * Same shape as `not_moving_alias` above: each signal is checked and reported
+ * independently, and either one alone rejects.
+ *
+ *   - `id` ends in the exact segment `:batch`. This is the PRIMARY signal and
+ *     the one the 404 is keyed to.
+ *   - `name` ends in `" (batch)"` (case-insensitive). This is the CROSS-CHECK:
+ *     it fires on its own, so a record whose id convention changes while its
+ *     display name keeps the marker is still caught.
+ *
+ * On the measured snapshot the two agree on all 66 records and neither fires
+ * alone, so the second signal costs nothing TODAY and exists for the day the
+ * first stops being sufficient. `facts.idSuffix` / `facts.nameSuffix` report
+ * which fired, so a divergence is visible rather than absorbed.
+ *
+ * ── WHAT THIS MUST NOT DO ─────────────────────────────────────────────────
+ *
+ * It must not touch the TWIN. `google/gemini-2.5-flash-lite:batch` is refused;
+ * `google/gemini-2.5-flash-lite` stays eligible. A rule that rejected both
+ * would be worse than the defect it fixes — it would hide a working model,
+ * which this project's own rules forbid ("never hide a working one").
+ *
+ * It must not treat `:` as the marker. `:free` is a live, usable suffix on 5
+ * models in the snapshot; only the exact final segment `batch` qualifies.
+ *
+ * It must not match `batch` anywhere in the NAME. `" (batch)"` is anchored to
+ * the end of the string with its parentheses, because a model legitimately
+ * named for batching in some other sense would otherwise be ejected on a word.
+ */
+export function checkNotBatchOnly(record) {
+  const reasons = [];
+  const id = typeof record?.id === 'string' ? record.id : '';
+  const name = typeof record?.name === 'string' ? record.name : '';
+
+  // Exact final SEGMENT, not a substring: `:free` and any future suffix are
+  // untouched, and `:batch-preview` is not a batch-only id.
+  const idSuffix = /:batch$/.test(id);
+  // Anchored, with its parentheses, and trimmed because the catalogue has
+  // trailing whitespace in display names elsewhere.
+  const nameSuffix = /\(batch\)$/i.test(name.trim());
+
+  if (idSuffix) {
+    reasons.push(reason('not_batch_only', REASON_CODES.BATCH_ONLY_ENDPOINT,
+      'The :batch id names a batch-only endpoint. Every synchronous request to it returns 404 "only available through the Batch API", and The Curator makes only synchronous calls. Its twin without the suffix is the usable model.',
+      { signal: 'id-suffix' }));
+  }
+  if (nameSuffix) {
+    reasons.push(reason('not_batch_only', REASON_CODES.BATCH_ONLY_ENDPOINT,
+      'The display name ends in "(batch)", marking a batch-only endpoint. Checked independently of the id suffix so a change of id convention cannot let one through.',
+      { signal: 'name-suffix' }));
+  }
+
+  return {
+    pass: reasons.length === 0,
+    reasons,
+    risks: [],
+    facts: { idSuffix, nameSuffix },
+  };
+}
+
+/**
+ * Rule 5 — the published output ceiling must reach the app's floor.
  *
  * `top_provider.max_completion_tokens` is a REPRESENTATIVE value, not a floor.
  * `meta-llama/llama-3.3-70b-instruct` publishes 115,200 while 7 of its 13
@@ -1067,7 +1165,7 @@ export function checkOutputCeiling(record, opts) {
 }
 
 /**
- * Rule 5 — the context window must reach the app's floor.
+ * Rule 6 — the context window must reach the app's floor.
  *
  * ⚠ `context_length` is the MAX across providers, so it is OPTIMISTIC in
  * exactly the way `top_provider.max_completion_tokens` is optimistic. Nine live
@@ -1192,7 +1290,7 @@ export function checkContextWindow(record, opts) {
 }
 
 /**
- * Rule 6 — the model must not expire inside the planning horizon.
+ * Rule 7 — the model must not expire inside the planning horizon.
  *
  * ── WHY THIS REJECTS ────────────────────────────────────────────────────────
  *
@@ -1321,7 +1419,7 @@ export function checkNotExpiring(record, opts) {
 }
 
 /**
- * Rule 7 (opt-in) — the model must be able to emit text.
+ * Rule 8 (opt-in) — the model must be able to emit text.
  *
  * Off by default: no model in the live eligible set fails it, so switching it on
  * would change nothing today while adding a way to be wrong tomorrow. Always
@@ -1388,6 +1486,7 @@ export function evaluateModel(record, opts) {
     json_mode: checkJsonMode(record, o),
     knowable_price: checkKnowablePrice(record),
     not_moving_alias: checkNotMovingAlias(record),
+    not_batch_only: checkNotBatchOnly(record),
     output_ceiling: checkOutputCeiling(record, o),
     context_window: checkContextWindow(record, o),
     not_expiring: checkNotExpiring(record, o),
@@ -1463,6 +1562,7 @@ export function evaluateModel(record, opts) {
     facts: {
       jsonMode: checks.json_mode.facts,
       alias: checks.not_moving_alias.facts,
+      batchOnly: checks.not_batch_only.facts,
       outputCeiling: checks.output_ceiling.facts,
       context: checks.context_window.facts,
       expiry: checks.not_expiring.facts,

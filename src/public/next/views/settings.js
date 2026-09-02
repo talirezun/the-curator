@@ -261,11 +261,30 @@ const SECTION_INFO = {
 // marker. `local` keeps `--text-faint` deliberately: it is not an active
 // provider (see `available: false` below), so it is not part of the
 // provider-family palette and has never needed a dedicated hue.
+// ── `canQualify` — WHO HAS A "test it on my wiki" ROUTE ──────────────────
+// A column rather than an `id === 'openrouter'` test at the call site, which is
+// the rule this file states twice in its own words ("A LOOKUP, NEVER
+// `p.id === 'openrouter'`", "the v3.10.1 rule … it is what lets a second
+// provider with a fetchable catalogue land here with one added line") and then
+// broke once, in renderModelOption. It answers exactly one question: does
+// `POST /api/config/openrouter/qualify` exist for this provider — i.e. can a
+// user promote one of its unmeasured models into the build lane by measuring it?
+// Today only OpenRouter, because only OpenRouter ships an unmeasured catalogue;
+// Gemini and Anthropic offer hand-measured tables where there is nothing for a
+// user to measure. Absent ⇒ false ⇒ no button, which is the fail-safe direction:
+// the server would refuse a qualify call for any other provider anyway, and an
+// offered button whose only outcome is a 400 is worse than no button.
+// ⚠ `available` MUST STAY THE LAST FIELD ON EVERY ROW.
+// scripts/test-next-provider-colors-and-badge.js parses this table out of the
+// SOURCE with a regex anchored on `available: (true|false)\s*\}`, so a field
+// added after it makes that suite parse ZERO rows and fail with "found 0"
+// rather than with anything naming the cause. Found the hard way when
+// `canQualify` was first appended.
 const PROVIDER_ROWS = [
-  { id: 'gemini',     name: 'Gemini',      dot: 'var(--prov-gemini)',     available: true  },
-  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--prov-anthropic)',  available: true  },
-  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--prov-openrouter)', available: true  },
-  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',      available: false },
+  { id: 'gemini',     name: 'Gemini',      dot: 'var(--prov-gemini)',     canQualify: false, available: true  },
+  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--prov-anthropic)',  canQualify: false, available: true  },
+  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--prov-openrouter)', canQualify: true,  available: true  },
+  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',      canQualify: false, available: false },
 ];
 
 // ── Updates: the decision, as pure functions ─────────────────────────────
@@ -2898,6 +2917,10 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
     // and a refusal shown against the wrong provider's row is worse than one
     // shown nowhere — it names a model the user did not click.
     pickError: (errorText && errorAt === p.id + '::' + m.id) ? errorText : '',
+    // Same source as the shelf's — `getDefaultModel(<provider>)` off the wire.
+    // Per row, because this list mixes providers and a baseline from another
+    // provider would compare two things that never run the same job.
+    baselineModelId: (k && k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
   })).join('');
 
   return (
@@ -4133,6 +4156,33 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
     // renderModelOption's isDefault. A non-active provider's default is what it
     // WOULD use, which is not the same claim and must not read like one.
     inUseId: (k.activeProvider === p.id) ? defaultId : '',
+    // ── THE `cheapest` BADGE IS AN IDENTITY, NOT A POSITION ─────────────
+    // It used to be `index === 0` of the list actually rendered — which is the
+    // list AFTER `filterModels` and AFTER `orderModels`. So under *Most
+    // expensive first* the DEAREST row was badged `cheapest`, and under any
+    // search the cheapest SURVIVING row was badged as cheapest overall. A false
+    // price claim on a spending surface, reachable the moment a synced
+    // catalogue makes the filter bar appear (12 rows).
+    //
+    // Derived here from the UNFILTERED, UNSORTED delivered list, whose
+    // cheapest-first ordering is established server-side in
+    // `listOfferableModels` and asserted upstream — so the badge names one
+    // specific model and keeps naming it wherever that row lands. Sorting by
+    // price descending now puts the badge on the LAST row, which is the honest
+    // answer; filtering the cheapest model out removes the badge entirely
+    // rather than promoting the runner-up into a claim it cannot support.
+    //
+    // `renderBuildList` still passes `showCheapest: false` and passes no
+    // cheapestId — that list is a CONCATENATION of per-provider lists, where no
+    // single row is cheapest overall. Both guards are kept: one names the
+    // model, the other names the list where no model qualifies.
+    cheapestId: (Array.isArray(list) && list.length && list[0] && typeof list[0].id === 'string')
+      ? list[0].id : '',
+    // The id `getDefaultModel(<provider>)` resolved to, served as
+    // `models[provider]`. renderQualification quotes its measured latency as a
+    // scale marker beside the user's own result — see MEASURED_CALL_SECONDS for
+    // why this is looked up rather than typed into the sentence.
+    baselineModelId: (k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
   };
   // ── FILTER, THEN RENDER ────────────────────────────────────────────────
   // Applied to the DELIVERED list, so the lane grouping and every row below it
@@ -4280,12 +4330,15 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
  * field `isBuildLaneAllowed` reads server-side, so the two cannot disagree
  * about which group a model belongs in.
  *
- * ── THE INDEX PASSED DOWN IS THE ORIGINAL ONE ────────────────────────────
- * Load-bearing. `renderModelOption` badges `index === 0` as the cheapest, and
- * that claim is true only of the DELIVERED order (the route ships
- * cheapest-first). Re-numbering per group would badge the first row of each
- * group as cheapest — two "cheapest" markers, one of them false, on a screen
- * whose purpose is comparing spend. Pairs carry the original position.
+ * ── THE INDEX PASSED DOWN IS THE ORIGINAL ONE, AND IS NO LONGER LOAD-BEARING
+ * It used to be: `renderModelOption` badged `index === 0` as the cheapest, so
+ * re-numbering per group would have produced two "cheapest" markers, one of
+ * them false. That badge is now decided by IDENTITY against `ctx.cheapestId`,
+ * computed from the delivered list before any filter or sort — because
+ * position-in-the-rendered-list was ALSO wrong under "Most expensive first",
+ * which no amount of careful index-passing could fix. The original position is
+ * still carried rather than renumbered, so nothing downstream that reads it
+ * silently changes meaning; no badge depends on it.
  *
  * ── AND THE COLLAPSE IS ABOUT LENGTH, NOT ABOUT LANE ─────────────────────
  * The chat group folds into a <details> only when it is long enough to bury
@@ -4848,8 +4901,55 @@ function formatDuration(ms) {
  *    for the model this app ships. A user comparing those numbers can judge
  *    whether a 40-call ingest is worth it; an automatic rejection on a
  *    transient upstream slowdown would permanently disqualify a good model.
+ *  · THE BASELINE IS LOOKED UP BY MODEL ID, and vanishes rather than going
+ *    stale. See MEASURED_CALL_SECONDS below.
  */
-function renderQualification(qual, minRuns) {
+/**
+ * Mean seconds per outline call, by EXACT model id, from the live measurement
+ * pass recorded in `src/brain/openrouter-qualify.js`'s
+ * `QUALIFY_OBSERVED_CALL_SECONDS` docblock (2026-08-27, nine runs apiece
+ * against the real ingest outline prompt).
+ *
+ * ── WHY A TABLE AND NOT A CONSTANT ────────────────────────────────────────
+ * The one figure this panel needs — 53 s — used to be typed into the sentence
+ * that quotes it, with nothing tying it to the model it describes. A bump of
+ * `DEFAULTS.openrouter` would have left the panel confidently attributing one
+ * model's timing to another. Keyed by id, a bump either finds a measured value
+ * or finds nothing, and finding nothing removes the clause.
+ *
+ * ── WHAT IT MUST NOT BECOME ───────────────────────────────────────────────
+ * A RANKING. These are means from one session, on one corpus, over hosts that
+ * change; the panel prints one of them as a scale marker beside the user's own
+ * fresh measurement and draws no conclusion. Never sort by it, never label an
+ * entry fast or slow, and never add an unmeasured id with an estimate — an
+ * absent id is the honest state and the code handles it.
+ *
+ * ⚠ ADDING A MODEL HERE IS A CLAIM THAT SOMEBODY TIMED IT. If a future default
+ * is not in this list, leave it out; the sentence disappears and the user loses
+ * a comparison rather than being handed a false one.
+ */
+const MEASURED_CALL_SECONDS = {
+  'upstage/solar-pro4': 53,
+  'z-ai/glm-4.7': 38,
+  'z-ai/glm-5.3-flash': 289,
+  'deepseek/deepseek-v4-flash-0731': 382,
+};
+
+/**
+ * The measured mean for a model id, or null.
+ *
+ * Own-property check, not truthiness: `MEASURED_CALL_SECONDS['constructor']`
+ * resolves to a FUNCTION through the prototype chain, and a model id is a third
+ * party's string (v3.0.9's `normalizeResponseStyle` shape, and the same reason
+ * `qualIndex` builds a null-prototype object).
+ */
+function measuredCallSeconds(modelId) {
+  if (typeof modelId !== 'string' || !modelId) return null;
+  if (!Object.prototype.hasOwnProperty.call(MEASURED_CALL_SECONDS, modelId)) return null;
+  const v = MEASURED_CALL_SECONDS[modelId];
+  return Number.isFinite(v) ? v : null;
+}
+function renderQualification(qual, minRuns, baselineModelId) {
   if (!qual || typeof qual !== 'object') return '';
   const c = qual.counts || {};
   const num = v => (Number.isFinite(v) ? v : 0);
@@ -4864,10 +4964,24 @@ function renderQualification(qual, minRuns) {
         ? ' (range ' + qual.pages.min + '-' + qual.pages.max + ')' : ''));
   }
   if (qual.latencyMs && Number.isFinite(qual.latencyMs.mean)) {
-    // Named against the shipping default so the number means something without
-    // this function having to make a comparative CLAIM about it.
+    // ── THE BASELINE IS LOOKED UP, NOT TYPED ──────────────────────────────
+    // This read `'(the model this app ships averages about 53 s)'` — a literal
+    // untied to anything, in the one panel whose stated discipline is never
+    // stating an unmeasured figure. 53 s is `upstage/solar-pro4`'s measured mean.
+    // The moment `DEFAULTS.openrouter` is bumped, that sentence describes a
+    // model the app no longer ships, and nothing anywhere would have said so.
+    //
+    // Now it is keyed on the id the server resolved (`getDefaultModel(provider)`,
+    // delivered as `models[provider]`) and looked up in MEASURED_CALL_SECONDS.
+    // A bump therefore either changes the number or — for a model nobody has
+    // timed — DROPS THE CLAUSE, which is the fail-safe direction: no baseline
+    // is a smaller loss than a confident wrong one. The model is NAMED, because
+    // an anonymous "the model this app ships" is unfalsifiable to a reader.
+    const baseSecs = measuredCallSeconds(baselineModelId);
     lines.push('mean ' + formatDuration(qual.latencyMs.mean) + ' per call' +
-      ' (the model this app ships averages about 53 s)');
+      (baseSecs === null ? ''
+        : ' (' + baselineModelId + ', which builds your wiki today, averages about '
+          + baseSecs + ' s)'));
   }
   // MONEY IS TRI-STATE. A missing figure renders as nothing at all — never as
   // $0.00, which is the v3.15.0 defect where a fact and its absence were the
@@ -5147,10 +5261,15 @@ function renderModelOption(m, index, defaultId, ctx) {
   }
   if (isDefault) badges.push('<span class="model-badge model-badge-default">in use</span>');
   if (isSelected) badges.push('<span class="model-badge model-badge-chosen">your choice</span>');
-  // `showCheapest: false` suppresses it where "index 0" stops meaning cheapest
-  // — see renderBuildList for why a concatenation of per-provider lists cannot
-  // carry this badge honestly, and why re-sorting to recover it was refused.
-  if (index === 0 && c.showCheapest !== false) {
+  // ── BY IDENTITY, NEVER BY POSITION ─────────────────────────────────────
+  // `c.cheapestId` is computed from the DELIVERED list, before any filter or
+  // sort — see where it is set. The old `index === 0` test read the position in
+  // the list being RENDERED, so "Most expensive first" badged the dearest row
+  // as cheapest. `showCheapest: false` still suppresses it where no row in the
+  // list can be cheapest overall (see renderBuildList: a concatenation of
+  // per-provider lists cannot carry this badge honestly, and re-sorting to
+  // recover it was refused).
+  if (c.showCheapest !== false && c.cheapestId && m.id === c.cheapestId) {
     badges.push('<span class="model-badge model-badge-cheapest">cheapest</span>');
   }
 
@@ -5282,7 +5401,7 @@ function renderModelOption(m, index, defaultId, ctx) {
   // The user's own measurement, and the live panel if this is the row being
   // measured right now. Both live in the row BODY (behind the expand) except
   // while a probe is running, which renderModelOption's caller forces open.
-  const qualHtml = renderQualification(qual, c.minRuns) +
+  const qualHtml = renderQualification(qual, c.minRuns, c.baselineModelId) +
     ((c.qualify && c.qualify.modelId === m.id) ? renderQualifyPanel(c.qualify, c.minRuns) : '');
 
   // ── DENSITY: one row per model, its evidence one click inside ──────────
@@ -5452,7 +5571,17 @@ function renderModelOption(m, index, defaultId, ctx) {
     // the confirm panel it opens (renderQualifyPanel): the real run count, the
     // real character size of the prompt, the measured duration range, that it
     // is cancellable, and that it writes nothing.
-    const canMeasure = c.provider === 'openrouter' && lane === MODEL_LANES.CHAT_UNMEASURED;
+    // ── A TABLE LOOKUP, NEVER `c.provider === 'openrouter'` ───────────────
+    // This site was the bare comparison the same file forbids twice by name.
+    // It is not merely stylistic: a fourth provider with a fetchable, unmeasured
+    // catalogue would silently get NO route into the build lane — every one of
+    // its rows permanently stuck at "chat only" with no way for the user to
+    // change that, and nothing on screen saying why. `.find()` over the table
+    // means an unknown id resolves to `undefined` and the button is withheld,
+    // which is the same fail-safe direction the bare test had.
+    const provRow = PROVIDER_ROWS.find((r) => r.id === c.provider);
+    const canMeasure = !!(provRow && provRow.canQualify === true)
+      && lane === MODEL_LANES.CHAT_UNMEASURED;
     const measuring = !!(c.qualify && c.qualify.modelId === m.id);
     const measureBtn = canMeasure
       ? '<button type="button" class="btn btn-secondary btn-xs model-qualify-btn"' +

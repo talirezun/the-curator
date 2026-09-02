@@ -617,16 +617,45 @@ function liftConst(src, name) {
   if (!m) throw new Error(`liftConst: "${name}" not found in settings.js`);
   return m[0].trim().replace(/^export\s+/, '');
 }
+/**
+ * The same, for a const whose value is a multi-line OBJECT literal.
+ *
+ * `liftConst` above is deliberately one-line-only, and a `[^\n;]*` regex cannot
+ * be widened to cover an object without also swallowing whatever follows it.
+ * Brace-matched instead, which is the same technique `lift` uses for a function
+ * body. Lifted rather than re-declared here for the reason stated throughout
+ * this file: a copy in this suite keeps every assertion green after the module
+ * changes a value.
+ */
+function liftObjectConst(src, name) {
+  const re = new RegExp(`(?:^|\\n)(?:export\\s+)?const ${name} = \\{`);
+  const m = re.exec(src);
+  if (!m) throw new Error(`liftObjectConst: "${name}" not found in settings.js`);
+  const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+  let i = src.indexOf('{', m.index), depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) break; }
+  }
+  if (depth !== 0) throw new Error(`liftObjectConst: "${name}" never closed — the brace match desynced`);
+  return src.slice(start, i + 1).trim().replace(/^export\s+/, '') + ';';
+}
 let ui;
 try {
 ui = new Function('escapeHtml', 'formatIsoDay', 'formatUsdHonest',
   liftConst(settingsSrc, 'QUALIFY_CONFIRM_ID') + '\n' +
+  // The measured per-model latency baseline renderQualification quotes, and the
+  // own-property lookup that reads it. Both LIFTED: the table's values are what
+  // the rendered sentence prints, so a copy here would assert this file agrees
+  // with itself.
+  liftObjectConst(settingsSrc, 'MEASURED_CALL_SECONDS') + '\n' +
+  lift(settingsSrc, 'measuredCallSeconds') + '\n' +
   lift(settingsSrc, 'formatSyncedAt') + '\n' +
   lift(settingsSrc, 'formatTokenCount') + '\n' +
   lift(settingsSrc, 'formatDuration') + '\n' +
   lift(settingsSrc, 'renderQualification') + '\n' +
   lift(settingsSrc, 'renderQualifyPanel') + '\n' +
-  'return { renderQualification, renderQualifyPanel, formatDuration, QUALIFY_CONFIRM_ID };'
+  'return { renderQualification, renderQualifyPanel, formatDuration, QUALIFY_CONFIRM_ID, measuredCallSeconds, MEASURED_CALL_SECONDS };'
 )(
   str => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
   iso => String(iso).slice(0, 10),
@@ -638,6 +667,29 @@ ui = new Function('escapeHtml', 'formatIsoDay', 'formatUsdHonest',
     'silently never runs (' + (err && err.message) + ')');
   ui = { renderQualification: () => '', renderQualifyPanel: () => '', formatDuration: () => '' };
 }
+// ── AND THEY MUST CONSTRUCT *AND RUN* ────────────────────────────────────────
+// FOUND THE HARD WAY, 2026-09-02: the guard above catches a dependency missing
+// at CONSTRUCTION, and `new Function` resolves nothing at construction time — so
+// a helper the lift list forgot only throws when the function is CALLED, which
+// happened twelve lines below the guard and killed the run with a bare
+// ReferenceError. Construction is not the boundary; the first call is. This
+// smoke call moves the boundary to where it belongs, and it renders a record
+// carrying EVERY optional block (pages, latency, spend) so a dependency reached
+// only from one conditional branch is still exercised.
+try {
+  ui.renderQualification(Object.assign(record(), {
+    qualifies: true, stillOffered: true,
+    pages: { median: 23, min: 14, max: 36, n: 9 },
+    latencyMs: { mean: 41000, min: 38000, max: 44000, n: 9 },
+    spendUsd: 0.0687, spendComplete: true, spendIsLowerBound: false,
+    sourceName: 'report.md',
+  }), 9, 'upstage/solar-pro4');
+  ok(true, '§0 GUARD: the lifted view functions also RUN — every binding they reach resolves');
+} catch (err) {
+  ok(false, '§0 GUARD: a lifted view function CONSTRUCTED but threw when called — the lift list ' +
+    'is missing a dependency reached at call time (' + (err && err.message) + ')');
+  ui = { renderQualification: () => '', renderQualifyPanel: () => '', formatDuration: () => '' };
+}
 
 const cleanHtml = ui.renderQualification(Object.assign(record(), {
   qualifies: true, stillOffered: true,
@@ -645,7 +697,12 @@ const cleanHtml = ui.renderQualification(Object.assign(record(), {
   latencyMs: { mean: 41000, min: 38000, max: 44000, n: 9 },
   spendUsd: 0.0687, spendComplete: true, spendIsLowerBound: false,
   sourceName: 'report.md',
-}), 9);
+  // The BASELINE model id, third argument since 2026-09-02. It used to be a
+  // literal "about 53 s" inside the sentence, untied to any model — so a bump of
+  // DEFAULTS.openrouter would have left this panel attributing one model's
+  // timing to another. Passing the real shipping default here means the
+  // assertion below reads the same table the module does.
+}), 9, llm.getDefaultModel('openrouter'));
 
 // THE FORBIDDEN WORDS. This is the claim the feature may not make, and a grep
 // over rendered output is the only guard that survives a rewrite of the prose.
@@ -683,7 +740,22 @@ ok(/33%/.test(cleanHtml), '…and states the actual bound for 9 runs (~33%)');
 }
 // LATENCY IS A HEADLINE FACT.
 ok(/per call/.test(cleanHtml), 'latency is rendered as a first-class fact');
-ok(/53 s/.test(cleanHtml), '…beside the shipping default, so the reader can judge it');
+// …beside the shipping default. DERIVED from the module's own table, not
+// pinned: a literal 53 here would keep this green after DEFAULTS.openrouter
+// moved to a model with a different measured mean, which is the exact defect
+// the third argument exists to prevent.
+{
+  const shippedId = llm.getDefaultModel('openrouter');
+  const baseline = ui.measuredCallSeconds(shippedId);
+  ok(baseline !== null,
+    `CONTROL: the shipping OpenRouter default (${shippedId}) HAS a measured mean (${baseline} s), so the assertion below is not vacuous`);
+  ok(new RegExp('averages about ' + baseline + ' s').test(cleanHtml),
+    '…beside the shipping default, so the reader can judge it');
+  ok(cleanHtml.includes(shippedId),
+    '…and the baseline NAMES the model it belongs to, rather than an unfalsifiable "the model this app ships"');
+  ok(Object.prototype.hasOwnProperty.call(ui.MEASURED_CALL_SECONDS, shippedId),
+    '…read out of the module\'s own measured table, so a DEFAULTS bump to an untimed model drops the clause instead of lying');
+}
 ok(/23 pages/.test(cleanHtml), 'median pages planned is rendered');
 ok(/9 raw/.test(cleanHtml) && /0 unrepairable/.test(cleanHtml), 'the raw/repaired/unrepairable split is rendered');
 

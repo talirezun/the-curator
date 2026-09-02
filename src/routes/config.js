@@ -1889,6 +1889,76 @@ function qualifyPromptStatus(err) {
 }
 
 /**
+ * Store a finished qualification, EXCEPT where storing it would destroy better
+ * evidence than it carries.
+ *
+ * ── THE DEFECT ──────────────────────────────────────────────────────────────
+ *
+ * `runs` on this endpoint clamps to `[1, QUALIFY_DEFAULT_RUNS]`, the store keeps
+ * exactly ONE record per model id (`_localQualifications.set`), and
+ * `isPassingRecord` needs `runsCompleted >= QUALIFY_MIN_RUNS` — which is 9. So
+ * `{"runs": 3}` spent real money on a measurement that could never qualify AND
+ * OVERWROTE a stored 9-run pass, silently demoting a model out of the build
+ * lane. The user paid twice: once for the nine runs, once for the three that
+ * destroyed them.
+ *
+ * ── WHY THE GUARD IS HERE AND NOT A 400 ON `runs < QUALIFY_MIN_RUNS` ────────
+ *
+ * Refusing short runs would contradict the contract this feature is built on.
+ * `openrouter-qualify.js` states it in its own words: *"FEWER RUNS ARE RECORDED
+ * BUT QUALIFY NOTHING. A 2-run record is a real measurement of something (the
+ * plumbing works, the model answered) and is displayed honestly with its run
+ * count; it simply does not satisfy `isPassingRecord`."* A short run is a
+ * legitimate, cheaper thing to ask for. What is not legitimate is letting it
+ * erase a longer one.
+ *
+ * The precedent is thirty lines below, in this same handler, in the same words:
+ * a cancelled run is not stored because *"persisting it would overwrite a real
+ * earlier measurement with a stub — losing evidence the user already paid for"*.
+ * This is that rule applied to the case that reaches it through a body field
+ * rather than through a closed connection.
+ *
+ * ── THE RULE, AND WHAT IT DELIBERATELY DOES NOT BLOCK ───────────────────────
+ *
+ * A stored PASSING record is never replaced by one with FEWER completed runs.
+ * That is the whole rule, and it is stated in runs rather than in outcomes so
+ * that a full-length run showing a DEFECT still lands: **equal** run counts
+ * overwrite. Demotion on real evidence must stay possible — the asymmetry this
+ * feature rests on is that a false acceptance is worse than a false rejection,
+ * and blocking a 9-run defect report would invert it.
+ *
+ * A refused store is REPORTED, never silent: the `stored` field carries
+ * `{stored: false, reason}` and the SSE `stored` frame already forwards it, so
+ * the caller learns that its short run measured something and changed nothing.
+ */
+export function storeQualification(record) {
+  if (typeof llmModule.recordLocalQualification !== 'function') {
+    return { stored: false, reason: 'unavailable in this build' };
+  }
+  const existing = typeof llmModule.getLocalQualification === 'function'
+    ? llmModule.getLocalQualification(record && record.modelId)
+    : null;
+  const existingPasses = existing
+    && typeof llmModule.isPassingRecord === 'function'
+    && llmModule.isPassingRecord(existing);
+  if (existingPasses) {
+    const wasRuns = Number(existing.runsCompleted);
+    const nowRuns = Number(record && record.runsCompleted);
+    if (Number.isFinite(wasRuns) && Number.isFinite(nowRuns) && nowRuns < wasRuns) {
+      return {
+        stored: false,
+        reason: `kept the existing ${wasRuns}-run measurement, which qualifies this model; `
+              + `a ${nowRuns}-run test cannot qualify anything and would have replaced it. `
+              + `Run the full ${QUALIFY_MIN_RUNS}-run test to change the stored result.`,
+        keptExisting: true,
+        existingRuns: wasRuns,
+      };
+    }
+  }
+  return llmModule.recordLocalQualification(record);
+}
+
+/**
  * GET /api/config/openrouter/qualify/estimate?model=<id>&domain=<name>
  *
  * FREE. No network, no LLM, no spend — it assembles the real prompt from the
@@ -2018,9 +2088,7 @@ router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'),
     // for, to record that they changed their mind.
     let stored = null;
     if (!record.cancelled) {
-      stored = typeof llmModule.recordLocalQualification === 'function'
-        ? llmModule.recordLocalQualification(record)
-        : { stored: false, reason: 'unavailable in this build' };
+      stored = storeQualification(record);
     }
 
     if (!clientGone) {
