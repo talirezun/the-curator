@@ -88,15 +88,22 @@ function bareToolName(name) {
 // ── Cross-check against the real MCP tool list ------------------------------
 
 /**
- * Count the entries in mcp/tools/index.js's `tools` array by walking bracket
- * depth (the method check-doc-suite-counts.js uses), so a reformat does not
- * fool it.
+ * Read the REGISTERED tool NAMES out of mcp/tools/index.js.
  *
- * Returns {ok:true,count} or {ok:false,reason}. NEVER returns a silent zero:
- * "could not parse" is reported as loudly as a mismatch, because a check that
- * has quietly stopped checking is worse than no check.
+ * Names are not in index.js — it lists `{ definition: xDefinition, handler }`
+ * entries and imports each identifier from a sibling module — so this walks the
+ * array by bracket depth (a reformat cannot fool it), maps each identifier back
+ * to the file it was imported from, and reads that file's `name:` field.
+ *
+ * Counting entries was the old check and it was weaker in the way that matters:
+ * it could not see a RENAME, which is precisely the drift that makes a skill's
+ * `allowed-tools` line wrong while the count stays right.
+ *
+ * Returns {ok:true,names:Set} or {ok:false,reason}. NEVER returns a silent empty
+ * set: "could not parse" is reported as loudly as a mismatch, because a check
+ * that has quietly stopped checking is worse than no check.
  */
-function countMcpTools() {
+function readMcpToolNames() {
   const file = path.join(REPO, 'mcp', 'tools', 'index.js');
   let src;
   try { src = readFileSync(file, 'utf8'); }
@@ -115,10 +122,47 @@ function countMcpTools() {
   if (end === -1) return { ok: false, reason: 'the tools array never closed — bracket walk failed' };
 
   const span = src.slice(start, end);
-  const count = (span.match(/\{\s*definition:/g) || []).length;
-  if (count === 0) return { ok: false, reason: 'zero `{ definition:` entries found inside the array — the entry shape changed' };
-  return { ok: true, count };
+  const idents = [...span.matchAll(/\{\s*definition:\s*([A-Za-z0-9_$]+)/g)].map(m => m[1]);
+  if (!idents.length) return { ok: false, reason: 'zero `{ definition:` entries found inside the array — the entry shape changed' };
+
+  // identifier -> source module, from index.js's own import statements.
+  const from = new Map();
+  for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*'([^']+)'/g)) {
+    for (const raw of m[1].split(',')) {
+      const nm = raw.trim().split(/\s+as\s+/).pop().trim();
+      if (nm) from.set(nm, m[2]);
+    }
+  }
+
+  const names = new Set();
+  const cache = new Map();
+  for (const ident of idents) {
+    const rel = from.get(ident);
+    if (!rel) return { ok: false, reason: `\`${ident}\` is registered but not imported in index.js` };
+    const abs = path.join(REPO, 'mcp', 'tools', rel.replace(/^\.\//, ''));
+    if (!cache.has(abs)) {
+      try { cache.set(abs, readFileSync(abs, 'utf8')); }
+      catch { return { ok: false, reason: `could not read ${path.relative(REPO, abs)} (source of ${ident})` }; }
+    }
+    const mod = cache.get(abs);
+    const at = mod.indexOf(`${ident} = {`);
+    if (at === -1) return { ok: false, reason: `could not find the definition of \`${ident}\` in ${path.relative(REPO, abs)}` };
+    const nm = /name:\s*'([^']+)'/.exec(mod.slice(at, at + 4000));
+    if (!nm) return { ok: false, reason: `\`${ident}\` has no \`name:\` field — the definition shape changed` };
+    names.add(nm[1]);
+  }
+  return { ok: true, names };
 }
+
+/**
+ * Which skills claim to document the WHOLE MCP surface.
+ *
+ * my-curator does; curator-continuity deliberately declares a 7-tool subset, so
+ * "registered but not declared" is expected there and reporting it would train
+ * the reader to ignore this check. Declared-but-NOT-registered is a real defect
+ * for either skill and is always reported.
+ */
+const FULL_SURFACE_SKILLS = new Set(['my-curator']);
 
 // ── Rendering ---------------------------------------------------------------
 
@@ -128,7 +172,7 @@ tools under a namespaced name (Claude Code, for instance, shows \`mcp__my-curato
 If the tools you were given carry a prefix, match on the part after the final \`__\` and use them \
 exactly as this document describes.`;
 
-function renderHeader({ name, description, tools, sourceFiles, includeExamples }) {
+function renderHeader({ name, description, tools, sourceFiles, includeExamples, companions = [] }) {
   const quoted = [...description.matchAll(/"([^"]{2,90})"/g)].map(m => m[1]);
   const provenance = sourceFiles
     .map(f => `  ${f.rel}  sha256:${f.sha.slice(0, 16)}`)
@@ -147,7 +191,7 @@ ${provenance}
      Check drift: node skills/build.mjs ${name}${includeExamples ? ' --examples' : ''} --check <this file>
 -->
 
-# ${name} — operating instructions (always on)
+# ${name} — operating instructions
 
 You have The Curator's **my-curator** MCP server connected. What follows is not background
 reading; it is how you are expected to use those tools.
@@ -170,6 +214,10 @@ ${HOST_NOTE}
 
 **Tools it uses (${tools.length}):** ${tools.map(t => `\`${t}\``).join(', ')}.
 
+${companions.length
+  ? `Its on-demand companion ${companions.length === 1 ? 'file is' : 'files are'} appended below (${companions.map(c => c.file).join(', ')}), because this format has no way to load a file on demand. Read the playbook first; treat the appended sections as reference for when their case arises.`
+  : `Built with \`--core\`: the playbook's on-demand companion files are NOT included. Any link to a sibling \`.md\` in what follows refers to a file in the skill's own folder in The Curator repository (\`skills/${name}/\`) — if you cannot open it, say so rather than guessing what it said.`}
+
 If your host did not give you all of these, the missing ones are simply unavailable — work with the
 list you actually have rather than the list written here, and say so if the user asks for something
 that needs one you lack.
@@ -181,7 +229,44 @@ that needs one you lack.
 
 function sha256(s) { return createHash('sha256').update(s).digest('hex'); }
 
-function buildSkill(name, { includeExamples, format }) {
+/**
+ * The on-demand companion files a SKILL.md links to, in the order it links them.
+ *
+ * Discovered from the BODY rather than from a hardcoded list, so adding
+ * `shared-brain.md` to a skill folder and linking it is all it takes — there is
+ * no second place to remember. `examples.md` is excluded here because it has its
+ * own `--examples` flag and its own size argument.
+ */
+function companionFiles(name, body) {
+  const linked = [...body.matchAll(/\]\(([a-z0-9-]+\.md)\)/g)].map(m => m[1]);
+  const seen = new Set();
+  const out = [];
+  for (const file of linked) {
+    if (file === 'examples.md' || file === 'SKILL.md' || seen.has(file)) continue;
+    seen.add(file);
+    const abs = path.join(SKILLS_DIR, name, file);
+    if (!existsSync(abs)) {
+      throw new Error(
+        `skills/${name}/SKILL.md links to ${file}, which does not exist.\n` +
+        `Refusing to build: a generated playbook that tells an agent to open a missing file ` +
+        `is worse than one that never mentions it.`,
+      );
+    }
+    const raw = readFileSync(abs, 'utf8');
+    // Relative links between the companions and SKILL.md are dead once the two
+    // are one document; make them in-document pointers instead.
+    const text = raw
+      .replace(/\[SKILL\.md\]\(SKILL\.md\)/g, 'the playbook above')
+      .replace(/\]\(SKILL\.md\)/g, '](#)')
+      .replace(/\]\(([a-z0-9-]+)\.md\)/g, '] (below)');
+    out.push({ file, raw, text });
+  }
+  return out;
+}
+
+
+
+function buildSkill(name, { includeExamples, format, includeCompanions }) {
   const skillPath = path.join(SKILLS_DIR, name, 'SKILL.md');
   if (!existsSync(skillPath)) throw new Error(`no such skill: ${name} (looked in ${path.relative(REPO, skillPath)})`);
 
@@ -206,6 +291,22 @@ function buildSkill(name, { includeExamples, format }) {
   let out = '';
   let body = fm.body.replace(/^\s+/, '');
 
+  // COMPANION FILES.
+  //
+  // SKILL.md links its on-demand companions by RELATIVE PATH, which works in a
+  // host that loads a skill FOLDER. Here the output is one document and there is
+  // no on-demand loading mechanism at all, so those links point at files that
+  // are not there — and a model-read document telling an agent to open a file it
+  // cannot open is worse than a longer document. So they are appended by default
+  // and their links rewritten to in-document anchors.
+  //
+  // `--core` opts out for a size-conscious always-on install; the header then
+  // says so, and says where the companions live, rather than leaving dead links.
+  const companions = includeCompanions ? companionFiles(name, fm.body) : [];
+  for (const c of companions) {
+    sourceFiles.push({ rel: `skills/${name}/${c.file}`, sha: sha256(c.raw) });
+  }
+
   if (includeExamples) {
     const exPath = path.join(SKILLS_DIR, name, 'examples.md');
     if (existsSync(exPath)) {
@@ -220,9 +321,13 @@ function buildSkill(name, { includeExamples, format }) {
     }
   }
 
+  for (const c of companions) {
+    body += `\n\n---\n\n<!-- companion file: skills/${name}/${c.file} -->\n\n${c.text}`;
+  }
+
   if (format === 'body') return body.trimEnd() + '\n';
 
-  out = renderHeader({ name, description, tools, sourceFiles, includeExamples }) + body;
+  out = renderHeader({ name, description, tools, sourceFiles, includeExamples, companions }) + body;
   return out.trimEnd() + '\n';
 }
 
@@ -237,6 +342,8 @@ Skills: ${SKILLS.join(', ')}
 
 Options:
   --examples          also append the skill's worked examples (roughly doubles the size)
+  --core              OMIT the on-demand companion files (smaller output; their
+                      links then point at files this document does not contain)
   --format=agents     neutral header + playbook body            (default)
   --format=body       playbook body only, frontmatter stripped, nothing added
   -o, --out <path>    write to <path> instead of stdout
@@ -258,11 +365,12 @@ function main(argv) {
   if (args.includes('--list')) { SKILLS.forEach(s => console.log(s)); return 0; }
 
   let skill = null, out = null, checkPath = null;
-  let includeExamples = false, append = false, format = 'agents';
+  let includeExamples = false, append = false, format = 'agents', includeCompanions = true;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--examples') includeExamples = true;
+    else if (a === '--core') includeCompanions = false;
     else if (a === '--append') append = true;
     else if (a === '-o' || a === '--out') out = args[++i];
     else if (a === '--check') checkPath = args[++i];
@@ -277,21 +385,35 @@ function main(argv) {
   const targets = skill === 'all' ? SKILLS : [skill];
   if (targets.some(t => !SKILLS.includes(t))) { console.error(`Unknown skill "${skill}". Try --list.`); return 2; }
 
-  // Advisory cross-check: does the skills' declared tool list still match the code?
-  const inv = countMcpTools();
-  const declared = new Set();
-  for (const t of targets) {
-    const fm = splitFrontmatter(readFileSync(path.join(SKILLS_DIR, t, 'SKILL.md'), 'utf8'));
-    if (fm) (yamlScalar(fm.yaml, 'allowed-tools') || '').split(/\s+/).filter(Boolean).forEach(x => declared.add(bareToolName(x)));
-  }
+  // ADVISORY CROSS-CHECK, RUN FOR EVERY TARGET.
+  //
+  // It used to run only when the targets included my-curator, so building
+  // curator-continuity alone verified nothing at all — and that skill's
+  // `allowed-tools` line names seven tools that can rot exactly like any other.
+  // It also compared COUNTS, which cannot see a rename. Both are fixed here.
+  const inv = readMcpToolNames();
   if (!inv.ok) {
     console.error(`! tool-inventory cross-check COULD NOT RUN: ${inv.reason}. Treat the tool list below as unverified.`);
-  } else if (targets.includes('my-curator') && declared.size !== inv.count) {
-    console.error(`! the my-curator skill declares ${declared.size} tools; mcp/tools/index.js registers ${inv.count}. ` +
-      `One of them is stale — check before installing.`);
+  } else {
+    for (const t of targets) {
+      const fmT = splitFrontmatter(readFileSync(path.join(SKILLS_DIR, t, 'SKILL.md'), 'utf8'));
+      const declared = new Set((fmT ? (yamlScalar(fmT.yaml, 'allowed-tools') || '') : '').split(/\s+/).filter(Boolean).map(bareToolName));
+      const unknown = [...declared].filter(x => !inv.names.has(x));
+      if (unknown.length) {
+        console.error(`! the ${t} skill declares ${unknown.length} tool(s) mcp/tools/index.js does NOT register: ${unknown.join(', ')}. ` +
+          `The skill is stale — an agent told to call one of these will fail.`);
+      }
+      if (FULL_SURFACE_SKILLS.has(t)) {
+        const missing = [...inv.names].filter(x => !declared.has(x));
+        if (missing.length) {
+          console.error(`! the ${t} skill documents the whole MCP surface but omits ${missing.length} registered tool(s): ${missing.join(', ')}. ` +
+            `Add them to allowed-tools and to the tool reference, or the agent will not know they exist.`);
+        }
+      }
+    }
   }
 
-  let text = targets.map(t => buildSkill(t, { includeExamples, format })).join('\n\n');
+  let text = targets.map(t => buildSkill(t, { includeExamples, format, includeCompanions })).join('\n\n');
 
   const dest = out || checkPath;
   if (checkPath) {

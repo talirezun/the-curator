@@ -252,13 +252,13 @@ For each pair the scan returns: call `fix_wiki_issue` with `type='semanticDupe'`
 
 ## Example 5 — Contributing to a Shared Brain (Curator v3.0.0-beta.1+)
 
-The user is a contributor in a cohort and wants Claude to save research findings to the cohort's shared wiki.
+The user is a contributor in a cohort and wants you to save research findings to the cohort's shared wiki.
 
 > **User:** *"This is great. Save what we just discussed about context engineering — and put it in our shared brain, not my personal notes."*
 
-Claude has been chatting about context engineering with the user. There's a clear set of findings worth persisting. The user is asking for a contribution to a Shared Brain (signal: "our shared brain", "not my personal notes").
+You have been discussing context engineering with the user. There's a clear set of findings worth persisting. The user is asking for a contribution to a Shared Brain (signal: "our shared brain", "not my personal notes").
 
-**Step 1 — Identify the personal opted-in domain.** Per §3.3, Claude needs to know which personal domain feeds the shared brain. Call `list_domains`:
+**Step 1 — Identify the personal opted-in domain.** Per `shared-brain.md`, you need to know which personal domain feeds the shared brain. Call `list_domains`:
 
 ```
 list_domains()
@@ -266,22 +266,22 @@ list_domains()
 
 Returns: `['personal', 'work-ai', 'journal', 'shared-cohort']`.
 
-The `shared-cohort` is a mirror (read-only). The others are personal. Claude doesn't know which personal domain is opted in — that mapping lives in the user's `.sharedbrain-config.json`, not exposed via MCP. So Claude asks:
+The `shared-cohort` is a mirror (read-only). The others are personal. You cannot know which personal domain is opted in — that mapping lives in the user's `.sharedbrain-config.json`, which is not exposed via MCP. So ask:
 
-> **Claude:** *"You have three personal domains (`personal`, `work-ai`, `journal`) and one shared mirror (`shared-cohort`). Which personal domain is the one you opted into the cohort brain? Usually it's the one you were asked to contribute when you joined the cohort — for ML cohorts it's typically `work-ai`."*
+> **You:** *"You have three personal domains (`personal`, `work-ai`, `journal`) and one shared mirror (`shared-cohort`). Which personal domain is the one you opted into the cohort brain? Usually it's the one you were asked to contribute when you joined the cohort — for ML cohorts it's typically `work-ai`."*
 >
 > **User:** *"Yeah, `work-ai`."*
 
-**Step 2 — Inventory `work-ai` before composing.** Apply the §5 writing playbook:
+**Step 2 — Inventory `work-ai` before composing.** Apply the SKILL.md §5 writing playbook:
 
 ```
 get_index(domain="work-ai")
 ```
 
-Read the existing slugs. Claude sees `entities/anthropic.md` exists but `entities/context-engineering.md` doesn't, and `concepts/agentic-workflows.md` exists. So Claude will:
+Read the existing slugs. You see `entities/anthropic.md` exists, `concepts/agentic-workflows.md` exists, and there is no page for context engineering at all. Context engineering is an idea without a single owner, so per SKILL.md §2 it is a **concept**, not an entity. So you will:
 - Use `[[anthropic]]` (existing slug)
 - Use `[[agentic-workflows]]` (existing slug)
-- Create `[[context-engineering]]` as a new entity page via `additional_pages`
+- Create `[[context-engineering]]` as a new **concept** page via `additional_pages`
 
 **Step 3 — Compile to the PERSONAL domain (NOT the mirror).**
 
@@ -291,7 +291,7 @@ compile_to_wiki(
   title="Context Engineering — March 2026 review",
   summary_content="...",                          ← grounded links throughout
   additional_pages=[
-    {path: "entities/context-engineering.md", content: "..."}
+    {path: "concepts/context-engineering.md", content: "..."}
   ],
   broken_link_policy="keep"                       ← established domain, 'keep' is fine
 )
@@ -301,7 +301,7 @@ The response's `links` field shows `broken_count: 0` — all links grounded. ✓
 
 **Step 4 — Tell the user precisely how the contribution reaches the cohort.**
 
-> **Claude:** *"Saved to your `work-ai` domain: one summary + one new entity page (`context-engineering.md`). To make this appear in the cohort's shared brain:*
+> **You:** *"Saved to your `work-ai` domain: one summary + one new concept page (`concepts/context-engineering.md`). To make this appear in the cohort's shared brain:*
 >
 > *1. Open the Curator app → **Shared Brain** view in the left rail*
 > *2. On your cohort's connection card, click **Push contributions***
@@ -309,7 +309,7 @@ The response's `links` field shows `broken_count: 0` — all links grounded. ✓
 >
 > *I can't trigger the Push myself — there are no push/pull/synthesize MCP tools, and that is intentional rather than a gap. Anything else you want me to add to your `work-ai` domain before you push?"*
 
-The user clicks Push themselves. A week later when the admin synthesises, the contribution lands in every cohort member's `shared-cohort` mirror as a synthesised collective page with Claude attributed in the Provenance section (under the user's UUID or display name, per the cohort's attribution settings).
+The user clicks Push themselves. A week later when the admin synthesises, the contribution lands in every cohort member's `shared-cohort` mirror as a synthesised collective page, attributed in the Provenance section (under the user's UUID or display name, per the cohort's attribution settings).
 
 **Key moves**
 - Never compile to a `shared-*` mirror — those writes are refused at the tool level AND would be overwritten on next Pull.
@@ -361,8 +361,8 @@ When the user makes a request, ask:
 "I need the exact quote/figure, not a summary" → §4.1 escalation to get_raw_source (Example 6)
 "Save this to my <fresh> domain"          → §5 writing workflow, refuse mode (Example 2)
 "Save this to my <established> domain"    → §5 writing workflow, keep mode (Example 3)
-"Check / clean up / find problems in my wiki" → §6 maintenance workflow (Example 4)
-"Save this to our shared brain"           → §3.2/§3.3 indirect-write model (Example 5)
+"Check / clean up / find problems in my wiki" → §6 + maintenance.md (Example 4)
+"Save this to our shared brain"           → shared-brain.md indirect-write model (Example 5)
 ```
 
 If the request mixes patterns (e.g. *"Research X and save the conclusions"*), do them in order — research first, then ask the user to confirm before the write phase.

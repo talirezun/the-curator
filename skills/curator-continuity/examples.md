@@ -311,6 +311,134 @@ That last point is the reason for the whole standard. A handoff that only record
 
 ---
 
+## The standard for each field — BAD and GOOD
+
+SKILL.md §6 gives the shape and the cap for every field and carries the pair for
+`headline`. This is the pair for each of the others. Write to this standard; you should not
+need to open this file every save.
+
+### now_state
+
+Where things **are**, not what happened. The reader does not need your narrative; they need
+the current frame. Name the files and functions that are mid-change, and be explicit about
+anything left in a **half-finished** state — a partial edit that looks complete is the most
+expensive thing you can leave behind.
+
+```
+GOOD  The retry ladder in `refreshToken()` is complete and covered. `withAuth()`
+      still calls the old two-argument form at three call sites (list, detail,
+      export) — they compile because the second argument is defaulted, so
+      nothing errors and the retry silently never engages. Those three are the
+      whole remaining change.
+```
+
+That last sentence is the pattern to imitate: it names the mechanism by which the
+incompleteness is **invisible**.
+
+### next_steps
+
+Ordered, most important first (over-budget trimming drops from the end). Each one startable
+without asking a question.
+
+```
+BAD   continue the migration
+BAD   fix the failing tests
+GOOD  update the three `withAuth()` call sites in routes/list.js, routes/detail.js
+      and routes/export.js to the three-argument form
+GOOD  re-run `npm test` — 6 failures expected before this change, 0 after; any
+      other number means something else moved
+```
+
+### decisions
+
+**Negative constraints are the point.** Without a slot for them the next session cheerfully
+re-opens settled questions, which is the most expensive failure mode in handing work between
+sessions. Always carry the reason — a decision without its reason will not survive contact
+with a model that thinks it has a better idea.
+
+```
+BAD   we decided to use the adapter pattern
+GOOD  do not add a caching layer in front of the resolver — measured, the
+      resolver is 4ms and the cache invalidation surface is the whole graph;
+      this was considered and rejected on 2026-08-19
+```
+
+**A reversal is recorded as a supersede, with its reason. Never as a silent deletion.** If a
+decision no longer holds, the entry says so and says what changed. Deleting it means the next
+session has no idea the question was ever closed, and the one after that re-opens it from
+scratch.
+
+### observations
+
+Every point-in-time fact goes here, as an object:
+
+```
+observations: [
+  { statement: "84 offline suites green",
+    observedAt: "2026-08-28T09:14:00Z",
+    recheck:    "npm test" },
+  { statement: "main is at 3b0be7c, clean tree",
+    observedAt: "2026-08-28T09:10:00Z",
+    recheck:    "git log --oneline -1 && git status --porcelain" }
+]
+```
+
+The axis that matters is **current versus observed-at-a-moment**, not derivable versus
+authored. "84 suites green before my change" *is* derivable — and its entire value is pinning
+a **baseline** that re-deriving destroys. That is precisely why it belongs here rather than in
+prose.
+
+**Always supply `recheck`.** It is what turns a claim that will rot into a claim the next
+session can verify in one command, and SKILL.md §2 step 4 depends on it existing. A bare
+string is accepted — the save time is recorded as the observation time and a note tells you
+so — but you lose both the real observation moment and the re-check, so pass the object.
+
+`observedAt` and `observed_at` are both accepted (the tool maps the second onto the first, and
+`observedAt` wins if you send both). What is **not** interchangeable is the *value*: send an
+ISO-8601 timestamp. Anything the store cannot read is replaced by the save time — disclosed in
+`notes`, never silent.
+
+Never write a derivable fact into `now_state` as though it were permanently current. "The
+tests pass" belongs here with a timestamp; in prose it becomes a lie at the next commit.
+
+### traps
+
+**The single highest-value section.** Nothing wastes more of a future session's time than
+re-attempting a fix that already failed for a documented reason — and by default it *will*
+re-attempt it, because the failed approach is usually the obvious one.
+
+What, why it failed, and the **mechanism**:
+
+```
+BAD   tried caching, did not work
+BAD   the regex approach was a dead end
+GOOD  raising the timeout does not fix the flake — measured, the failure is a
+      claim held across an await, so it is a lock ordering problem and no
+      finite timeout closes it
+GOOD  do not parse the config with a regex; values can contain escaped newlines,
+      so a line-oriented match silently truncates at the first one and the
+      result still looks well-formed
+```
+
+Also record traps **you did not fall into but nearly did**, and dead ends that *looked*
+correct. The near-miss is often more valuable than the failure, because nothing in the code
+records that the wrong path was even considered.
+
+### open_questions
+
+Waiting on **what**, specifically. And keep two categories apart — **blocked pending a
+decision is not the same as tried and failed**, and merging them means the next session either
+re-attempts something settled or sits on something that only needed a yes:
+
+```
+GOOD  blocked on the user: should the export default to CSV or JSON — both are
+      implemented behind a flag, this is a product call, not a technical one
+GOOD  unknown: whether the upstream rate limit is per-key or per-IP; the docs
+      do not say and we have not measured it
+```
+
+---
+
 ## Quick decision tree
 
 ```
@@ -322,7 +450,8 @@ Session is opening, or the user says continue / resume / where were we
 
 A decision was settled / something failed / a baseline landed / ~10 tool calls
   → save_working_state, full picture, lists ordered most-important-first
-  → read `ok`, `notes`, `truncated` — do not assume it landed
+  → read `ok`, `notes_meaning`, `truncated` — do not assume it landed
+     (content loss → re-save shorter; a clipped headline needs no re-save)
 
 Context near 75-80%, or the user says save / we are stopping
   → save_working_state, then tell them the scope it went under

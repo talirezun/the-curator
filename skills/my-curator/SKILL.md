@@ -1,12 +1,22 @@
 ---
 name: my-curator
-description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and handles Shared Brain mirrors correctly (read-only locally; contributions go through the user's personal opted-in domain, then a Push from the app's Shared Brain view). Always calls list_domains and get_index before composing any write.
+description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "what do I know about X", "search my notes", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "remember this", "add this to my second brain", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and treats Shared Brain mirrors as read-only, routing contributions through the user's own opted-in domain. Always calls list_domains and get_index before composing any write.
 allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__get_working_state mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue mcp__my-curator__save_working_state
 ---
 
 # My Curator — second brain playbook
 
 This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 20 tools — 12 for reading (the wiki graph plus your own prior working state), and 8 in the health/authoring group, of which 5 actually mutate something (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`). This playbook tells you how to use them well, in the order that produces the best results.
+
+**Read the tool list you were actually given, not this paragraph.** Older Curator builds register fewer tools — `get_raw_source` needs v3.5.0+, and the two working-state tools need v3.17.0+, below which the count is 18. A tool that is absent is simply unavailable; everything else here still applies.
+
+**On-demand companions** — do not read them up front; open one when its case arises:
+
+| File | Open it when |
+|---|---|
+| [shared-brain.md](shared-brain.md) | a `shared-*` domain is involved, or the user mentions a cohort / team wiki |
+| [maintenance.md](maintenance.md) | you are actually making Health calls — the call shapes, the orphan recipe, the clean-up script |
+| [examples.md](examples.md) | you want a worked end-to-end dialogue |
 
 ## §1 — What the second brain is
 
@@ -41,7 +51,7 @@ concepts/agentic-workflows.md →  [[agentic-workflows]]
 summaries/<title>-<hash>.md   →  [[summaries/<title>-<hash>]]
 ```
 
-Slugs may also contain **interior dots** and underscores — `entities/claude-sonnet-3.5.md` → `[[claude-sonnet-3.5]]`, `entities/express.js.md` → `[[express.js]]`. Version numbers and hostnames are ordinary page names; do not strip or rewrite the dot when calling `get_node`, `get_backlinks`, `get_summary` or `get_raw_source`, and do not silently retarget one version to another. (A leading dot, a trailing dot, `..`, spaces and accented characters are refused — if a slug from `search_wiki` comes back as "Invalid slug", that is why, and the answer is to tell the user, not to guess a nearby slug.)
+**Dots can be READ but cannot be CREATED, and the asymmetry is real.** Pages with interior dots exist in real wikis — `entities/claude-sonnet-3.5.md` → `[[claude-sonnet-3.5]]`, `entities/express.js.md` → `[[express.js]]` — usually created by ingest. Every read tool accepts them: do not strip or rewrite the dot when calling `get_node`, `get_backlinks`, `get_summary` or `get_raw_source`, and never silently retarget one version to another. But `compile_to_wiki` validates an `additional_pages` slug against `^[a-z0-9][a-z0-9-]*$` — **hyphens and alphanumerics only** — so a dotted path is refused at the tool boundary with *"slug … must be lowercase alphanumeric with hyphens"*. If you need a page for `express.js` and it does not exist, create `express-js` and say what you did, or ask the user. Do not keep retrying the dotted form. (A leading dot, a trailing dot, `..`, spaces and accented characters are refused on **read** as well — if a slug from `search_wiki` comes back as "Invalid slug", that is why, and the answer is to tell the user, not to guess a nearby slug.)
 
 `[[wikilinks]]` use **bare slugs** (no folder prefix) for entities and concepts. Summaries are the **one exception** — they keep their `summaries/` prefix because they live in a sibling folder Obsidian needs for routing. So: `[[openai]]` not `[[entities/openai]]`. But: `[[summaries/foo]]` not `[[foo]]` for summaries.
 
@@ -54,97 +64,9 @@ Before you do anything, know which domain you're working in.
 3. **The user may have set a default domain** in the Curator app's Settings. If they did, MCP tools fall back to that automatically when you omit `domain`. But still confirm with the user when ambiguous.
 4. **Domains are siloed.** Don't try to write a link from one domain to a page in another. If the user wants cross-domain synthesis, that's a `search_cross_domain` reading task — not a writing task.
 
-### §3.1 — Shared Brain mirror domains (the read/write contract)
+### §3.1 — Shared Brain mirrors, in one paragraph
 
-Some domains in `list_domains` may be **Shared Brain mirrors** — named like `shared-<slug>` (e.g. `shared-cohort`, `shared-team`). These are local read-only copies of a collective wiki the user contributes to as part of a cohort, team, or research group (see [`docs/shared-brain-user-guide.md`](../../docs/shared-brain-user-guide.md) for the user-facing model).
-
-**Reading a mirror is unrestricted.** All twelve read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `get_raw_source`, `get_working_state`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
-
-**Writing to a mirror is refused.** All five *mutating* tools — `compile_to_wiki`, `fix_wiki_issue` (which is also where the `scan_semantic_duplicates` merge is applied, as `type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state` — check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
-
-> *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
-
-That text is quoted verbatim from the code, and its **last few words are stale**: since the v3.9.0 cutover, **Push contributions** lives in the **Shared Brain** rail view, not in Sync. The refusal itself is correct — only its closing signpost is out of date. If you relay this refusal to a user, say **Shared Brain**. (The old Sync-tab location survives in the `/old` escape-hatch shell, which is not where a current user is.)
-
-`scan_wiki_health`, `scan_semantic_duplicates` and `get_health_dismissed` are **not** guarded, and that is correct — they only read. Scanning a mirror to answer *"is the collective wiki healthy?"* is supported; it is applying a fix that is refused.
-
-### §3.2 — How to actually contribute to a Shared Brain via MCP
-
-The user CAN add to a shared brain through this skill — just **indirectly**. Here's the full flow and where MCP fits in:
-
-```
-What you (Claude via MCP) do        Where it happens     What it does
-─────────────────────────────       ──────────────       ────────────────────
-1. compile_to_wiki                  MCP                  Saves pages to the
-   target = PERSONAL                                     user's PERSONAL
-   opted-in domain                                       opted-in domain (e.g.
-   (NEVER shared-*)                                      'work-ai/'), not the
-                                                         mirror.
-
-2. Tell the user clearly:           Conversation         User now needs to
-   "Pages are in <domain>.                               complete the loop in
-   To push them to the                                   the Curator app.
-   cohort wiki, click
-   'Push contributions' in
-   the Shared Brain view."
-
-──────────────────────── steps below are NOT MCP-driven ────────────────────────
-
-3. (User) opens Curator             Curator app          The local LLM
-   Shared Brain view →                                   pre-processes the
-   clicks "Push contributions"                           changed pages into
-                                                         DeltaSummaries and
-                                                         uploads them to
-                                                         shared storage.
-
-4. (Admin) periodically runs        Curator app          Merge rules 1-5,
-   "Run synthesis"                                       contradiction
-                                                         resolution, Provenance
-                                                         section, etc.
-                                                         Rewrites the
-                                                         collective wiki.
-
-5. (Everyone) clicks                Curator app          The shared-<slug>/
-   "Pull updates"                                        mirror domain on each
-                                                         machine refreshes with
-                                                         the new synthesised
-                                                         pages.
-```
-
-**There are no push/pull/synthesize MCP tools — that has been true in every release so far.** Steps 3-5 only happen in the Curator app's **Shared Brain** view (they lived in the Sync tab before the v3.9.0 cutover). This is intentional: those operations consume LLM tokens (paid) and credentials (PAT); they should fire on explicit user action, not as a side-effect of "save this".
-
-### §3.3 — Dialogue scripts for common user requests
-
-When the user says one of these phrases, follow the matching script.
-
-#### "Save this to our shared brain" / "Add to the cohort wiki"
-
-1. **Identify the personal opted-in domain.** Call `list_domains` if you don't already know. Look for personal domains (NOT starting with `shared-`) — the user opted ONE of them into the shared brain. Typical names: `work-ai`, `work`, `cohort-contributions`, `research`. If multiple personal domains exist and it's unclear which feeds the shared brain, **ask the user**: *"You have personal domains `work-ai` and `research`. Which one feeds the shared brain you want me to contribute to?"*
-2. **Compile to that personal domain** using the full §5 writing playbook (get_index → ground links → compile_to_wiki).
-3. **Tell the user how the contribution reaches the cohort**: *"I've saved this to your `work-ai` domain. To make it appear in the shared brain for your cohort, open the Curator app's **Shared Brain** view and click **Push contributions**. The admin will then run synthesis (usually weekly) and everyone will see it on their next Pull."*
-
-#### "What does our cohort wiki / shared brain say about X?"
-
-This is a read on the mirror. Treat it like any other deep-research query on `shared-<slug>`:
-- `get_graph_overview(domain="shared-cohort")` for orientation
-- `search_wiki(domain="shared-cohort", query="X")` for retrieval
-- `get_node(domain="shared-cohort", slug="...")` for full content
-- All work normally. Cite specific slugs in your synthesis.
-
-If the user wants to compare what the SHARED brain says vs what their PERSONAL brain says, use `search_cross_domain` — it'll query both at once.
-
-#### "Check our shared brain for problems" / "Find broken links in the cohort wiki"
-
-This is a Health scan on the mirror. Scanning is allowed:
-- `scan_wiki_health(domain="shared-cohort")` works fine — returns the report.
-
-But **fixing is refused** (Health fix tools would write to the mirror). Tell the user:
-> *"Here's the scan: 12 broken links, 3 orphans. Fixing these directly would not propagate — the shared brain is rebuilt by synthesis from contributors' personal domains. To fix a broken link in the shared brain: ask the contributor whose personal page references that broken slug to update it, then push + synthesise. Or, if it's your own contribution that introduced the broken link, I can fix it in your `work-ai` domain right now — want me to?"*
-
-#### "Push my contributions" / "Run synthesis" / "Pull updates"
-
-These are not MCP operations, in any release. Tell the user:
-> *"Push, Pull, and Run synthesis live in the Curator app's **Shared Brain** view — they're not exposed via MCP. Open the app → Shared Brain → click the appropriate button. I can prepare the contribution by compiling to your personal domain first — want me to do that?"*
+Some domains in `list_domains` are **Shared Brain mirrors** — named `shared-<slug>` (e.g. `shared-cohort`). They are local **read-only** copies of a collective wiki. **Reading one is unrestricted**: all twelve read tools work normally, and answering *"what does our cohort wiki say about X?"* by traversing a mirror is exactly what it is for. **Writing to one is refused**: all five mutating tools check the domain's `CLAUDE.md` for `readonly: true` and return an error telling you to call the tool on the user's personal opted-in domain instead, then run **Push contributions** from the app's **Shared Brain** view. The pure scans — `scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed` — are not guarded, correctly, because they only read. **Whenever a `shared-*` domain is in play, open [shared-brain.md](shared-brain.md)** for the contribution flow, the verbatim refusal text and the dialogue scripts.
 
 ## §4 — Reading workflow (deep research)
 
@@ -196,7 +118,7 @@ This is the rule that produces ZERO broken links and ZERO duplicate pages. **Fol
 
 ### The playbook
 
-**Step 0 — Check the target isn't a Shared Brain mirror.** If the domain starts with `shared-`, STOP. Apply the §3.3 "Save this to our shared brain" script instead — redirect the write to the user's personal opted-in domain. Trying to write directly to a `shared-*` mirror will be refused with a clear error, but earlier rejection saves a round trip.
+**Step 0 — Check the target isn't a Shared Brain mirror.** If the domain starts with `shared-`, STOP and read [shared-brain.md](shared-brain.md) — redirect the write to the user's personal opted-in domain. A direct write to a `shared-*` mirror is refused with a clear error, but earlier rejection saves a round trip.
 
 **Step 1 — Confirm the domain.** Per §3.
 
@@ -232,13 +154,34 @@ After the call, inspect the `links` field in the response:
 "links": {
   "total": 12,
   "resolved": 10,        // exact match
-  "normalized": 1,       // variant auto-fixed (e.g. [[Claude]] → [[claude]])
+  "normalized": 1,       // variant auto-fixed (e.g. [[Curator]] → [[curator]])
   "broken": [...],       // these are the problem
   "broken_count": 1
 }
 ```
 
 If `broken_count > 0` and you used `'keep'`, decide: retry with corrections, or accept the broken link as a known TODO?
+
+### The hard caps on one call, and the trap in splitting
+
+`compile_to_wiki` validates before it writes anything, so an over-cap call costs you a round trip and produces nothing. **Every one of these is refused, not trimmed:**
+
+| Limit | Value | What counts |
+|---|---|---|
+| Pages per call | **10 total, including the summary** — so at most **9** `additional_pages` | `additional_pages.length + 1 > 10` is refused |
+| Bytes per page | **50 KB** | applies to `summary_content` and to each `additional_pages[].content`, measured as UTF-8 bytes |
+| `summary_content` length | **60,000 characters** | a second, separate check from the byte cap |
+| `title` length | **200 characters** | |
+| Reserved paths | `index`, `log`, and the files `index.md`, `log.md`, `CLAUDE.md` | app-managed; refused |
+| Folder | `entities/` or `concepts/` only, exactly `<folder>/<slug>.md` | `summaries/` is generated for you |
+
+**The trap: splitting one source across two calls with the same title creates TWO summary pages.** The idempotency slug is `<slugified title>-<today>-<4 hex of a hash>`, and that hash is taken over the title **plus** `summary_content` **plus** every `additional_pages` path and content. So part 2 of a split hashes differently from part 1, produces a different slug, and lands as a second summary page for what the user thinks of as one source — permanently, and the re-compile guard will not catch it because nothing collided.
+
+When a compile does not fit in ten pages, in order of preference:
+
+1. **Cut to the nine pages that matter.** A wiki page for every noun mentioned is not the goal; the graph is worth more when its nodes are.
+2. **Give each part a genuinely different title** — *"Q3 architecture review — part 1, storage"* / *"— part 2, transport"* — so the two summaries are honestly two summaries, and say so to the user.
+3. **Never** send the same title twice expecting the pages to merge. They do not.
 
 ### Step 6 — If you are UPDATING an existing page, read it first
 
@@ -260,9 +203,10 @@ So when a page in `additional_pages` already exists:
 
 Use `dry_run: true` when you are unsure. It shows which pages are creates and which are updates.
 
-### Idempotency
+### The two refusals you will actually meet
 
-`compile_to_wiki` refuses re-compiles when the title + content + date hash to the same slug. If the user asks to compile the same thing twice, the second call is refused with a clear message. To extend a previous compile, the user should add new content to their conversation first.
+- **Idempotency.** `compile_to_wiki` refuses a re-compile when title + content + date hash to the same slug: *"Already compiled to summaries/… Same content + title + date detected."* That is correct behaviour, not a bug. To extend a previous compile, add new content first — a changed corpus hashes to a new slug and proceeds normally.
+- **`conflict: 'file_lock'`.** *"Another process is writing to <domain> right now"* means the Curator app is mid-ingest or mid-compile on that domain and holds the file lock; the MCP server is a separate process and shares the lock through a `.write-lock` file. **Nothing was written and nothing was lost.** Wait a moment and retry the **identical** call — it is safe to repeat, because a call that wrote nothing did not move the idempotency hash. Do not edit the payload to "get past" it, and do not tell the user their save failed; tell them the app is busy. Only if it persists for many minutes is the lock plausibly stale (it expires after 30 minutes), and then the fix is theirs, not yours.
 
 ### Don'ts
 
@@ -278,103 +222,42 @@ When the user asks to "check my wiki" or "clean up", use the Health tools. There
 |---|---|---|
 | **Auto-fix without asking** | `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` *carrying a scanner-supplied* `suggestedTarget` | These have one clear right answer and remove no page. Call `fix_wiki_issue` for each, no confirmation needed. |
 | **Say what disappears, then fix** | `crossFolderDupes`, `hyphenVariants` | These are **not** cosmetic: they merge two pages and **DELETE one of them** (inbound links are repointed to the survivor). Name the page that will disappear before you call. You do not need a preview round-trip, but the user must not learn a page was deleted afterwards. |
-| **Confirm with user first** | `brokenLinks` *without* a scanner target; orphans (via `orphanLink` — see below) | Show the user, accept "fix" / "dismiss" / "leave for later", then act. See both rules below before you consider supplying a target yourself. |
+| **Confirm with user first** | `brokenLinks` *without* a scanner target; orphans (via `orphanLink`) | Show the user, accept "fix" / "dismiss" / "leave for later", then act. |
 | **ALWAYS preview, then confirm** | `semanticDupe` (destructive — deletes a file, rewrites links) | Call `fix_wiki_issue` with `preview: true` to get the diff plan; show the user; only on explicit confirmation call again with `preview: false`. |
 
-**`orphans` is NOT a `fix_wiki_issue` type.** It is a scan category and a `dismiss_wiki_issue` type, and those are the only two places the word is accepted. `fix_wiki_issue` takes exactly seven types — `brokenLinks`, `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `orphanLink`, `semanticDupe` — and passing `"orphans"` is rejected outright.
+Four rules that hold whatever you are fixing:
 
-`orphanLink` is the one fixable type whose issue you must **compose rather than pass through**, and it is worth knowing exactly why: the scanner emits an orphan as `{path, type, slug}`, but the fixer needs `{orphanSlug, targetSlug, description}`. Forwarding the scan object unchanged is refused, because the scanner cannot know which page *ought* to link to the orphan — only you and the user can.
+1. **Never invent a `suggestedTarget`.** Pass back the issue object `scan_wiki_health` gave you, unchanged. The scanner's `suggestedTarget` comes from deterministic slug normalisation; a target you reason your way to is a guess, and a wrong retarget writes a factually wrong link into **every** page that referenced it. Two traps that look convincing and are not — **version numbers** (`[[claude-sonnet-4.5]]` is not `claude-sonnet-3.5`; `[[q1-2025-results]]` is not `q1-2024-results`) and **negations** (`[[data-retained]]` is not `data-not-retained`; `[[sync-write]]` is not `async-write`).
+2. **Never read `fixed: 0` as "already fine".** Only `link-not-present` and `link-already-present` mean the issue was already resolved; every other `reason` means nothing was written and the issue is still there. Do not report a clean sweep on the strength of one.
+3. **`orphans` is a scan category and a dismissal type — it is not a `fix_wiki_issue` type.** `fix_wiki_issue` takes exactly seven types — `brokenLinks`, `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `orphanLink`, `semanticDupe` — and passing `"orphans"` is rejected outright. Every one of those is **pass the scan object through unchanged** except `orphanLink`, which you must **compose**: the scanner emits `{path, type, slug}` and the fixer needs `{orphanSlug, targetSlug, description}`, where `targetSlug` is your judgement and therefore needs the user's agreement first.
+4. **`scan_semantic_duplicates` costs money** (~$0.005–$0.03 per scan, it calls the LLM). Only run it when the user explicitly asks, and use `estimate_only: true` first to show the cost before committing.
 
-```
-scan gives you:   { path: "concepts/lonely.md", type: "concept", slug: "lonely" }
-the fixer needs:  { orphanSlug: "lonely", targetSlug: "<an existing page>", description: "<one clause>" }
-
-fix_wiki_issue(domain, type="orphanLink", issue={
-  orphanSlug:  "lonely",              # the scan entry's `slug`, verbatim
-  targetSlug:  "knowledge-graphs",    # an EXISTING entity or concept — never a summary, never itself
-  description: "a related idea",      # short prose for the bullet
-})
-```
-
-Because `targetSlug` is your judgement and not the scanner's, treat it exactly like an invented `suggestedTarget`: **propose it to the user and get agreement before calling.** It writes `- [[orphanSlug]] — description` into the target's Related section. If no existing page is a genuine home, say so and leave the orphan alone — the app's bulk **✨ Rescue orphans** flow (Domains → the domain → Wiki health → Quick maintenance) plans them in one batch and previews before writing.
-
-**Never invent a `suggestedTarget`.** Pass back the issue object `scan_wiki_health` gave you, unchanged. The scanner's `suggestedTarget` comes from deterministic slug normalisation; a target you reason your way to is a guess, and a wrong retarget writes a factually wrong link into **every** page that referenced it. Two traps that look convincing and are not:
-
-- **Version numbers.** `[[claude-sonnet-4.5]]` is not `claude-sonnet-3.5`. `[[q1-2025-results]]` is not `q1-2024-results`. These read as near-identical and are different things.
-- **Negations and opposites.** `[[data-retained]]` is not `data-not-retained`. `[[sync-write]]` is not `async-write`.
-
-A `suggestedTarget` you compose is rejected outright unless it names a page that exists — and even then it is your guess, not the scanner's. For a broken link with no scanner target, the right move is to say so and leave the link alone, or tell the user about the app's bulk **✨ Fix broken links** flow (Domains → the domain → Wiki health → Quick maintenance), which plans the whole domain, previews it, and applies its own version/polarity safety gate before writing.
-
-### The standard "clean up" dialogue
-
-```
-1. scan_wiki_health(domain)
-2. Loop the auto-fixable ones via fix_wiki_issue
-   — count a call as a success ONLY when it returns fixed: 1
-3. List the review-only ones; ask the user one by one (or in batch)
-4. For each user-approved fix → fix_wiki_issue
-   — brokenLinks / folderPrefixLinks / crossFolderDupes / hyphenVariants /
-     missingBacklinks: pass the scan object through unchanged
-   — an ORPHAN: type="orphanLink" with a composed
-     {orphanSlug, targetSlug, description}, target agreed with the user
-5. For each user dismissal → dismiss_wiki_issue (persists across scans + machines)
-   — this IS where type="orphans" is the correct value
-```
-
-**`type` is the scan CATEGORY, not a field on the issue.** `scan_wiki_health` returns issues grouped
-under `brokenLinks`, `orphans`, `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`,
-`missingBacklinks` — and the individual objects do **not** carry that name. (A `folderPrefixLinks`
-issue is just `{sourceFile, linkText}`; an `orphans` issue *does* have a `type` field, but it holds
-the page kind — `"entity"` / `"concept"` — which is not a fixable issue type.) Pass the key you
-found the issue under, and pass the issue object through unchanged:
-`fix_wiki_issue(domain, type="folderPrefixLinks", issue=<the object>)`.
-
-**The one exception is orphans**, per the block above: the scan category `orphans` is not a fixable
-type, and the fixable type `orphanLink` takes a different object. Every other category is
-pass-through.
-
-**Never read `fixed: 0` as "already fine".** It has several causes and the response tells you which
-one in a `reason` field, with the prose in `report`. Only `link-not-present` and
-`link-already-present` mean the issue really had already been resolved. Everything else —
-`target-not-found`, `orphan-fields-missing`, `no-suggested-target`, `orphan-not-found`, `self-link`,
-`slug-shape-invalid`, `source-file-not-found` — means **nothing was written and the issue is still
-there**; the `report` names the next action. Do not count such a call as a success, and do not
-report a clean sweep to the user on the strength of it.
-
-Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the user's machines. Items dismissed in a Claude Desktop conversation also disappear from the app's Wiki health panel; same store. Use `get_health_dismissed` to list previously skipped issues if the user asks.
-
-### Semantic-duplicate scanning is paid
-
-`scan_semantic_duplicates` calls the LLM with a small per-scan cost (~$0.005–$0.03). **Only run it when the user explicitly asks** — and use `estimate_only: true` first to show the cost before committing.
-
-### Health on Shared Brain mirror domains
-
-`scan_wiki_health` works fine on `shared-*` mirrors — you can show the user the report. But `fix_wiki_issue` is **refused** on mirrors: fixes wouldn't propagate to other contributors and would be overwritten on the next Pull. To resolve a Health issue in the shared brain, the contributor who introduced it must fix it in their personal opted-in domain, then Push + run synthesis. Tell the user this explicitly when their scan request targets a `shared-*` domain.
+**For the actual call shapes — the pass-through rule, the `orphanLink` recipe, the clean-up dialogue, dismissals, and Health on mirrors — open [maintenance.md](maintenance.md) before you start making Health calls.**
 
 ## §7 — Tool reference
 
-| Tool | Purpose | When | Works on `shared-*` mirror? |
-|---|---|---|---|
-| `list_domains` | List domains | Always when domain is unclear | Yes (lists mirrors too) |
-| `get_index` | Master page catalog | Always before any write | Yes |
-| `get_graph_overview` | Topology snapshot | First move on a research task | Yes |
-| `get_tags` | Tag inventory | Tag-driven cluster work | Yes |
-| `search_wiki` | Ranked search in one domain | Specific topic lookup | Yes |
-| `search_cross_domain` | Search across all domains | Cross-domain synthesis only (read) | Yes (treats mirrors as just another domain) |
-| `get_node` | Full page with frontmatter | Detail pull on a known slug | Yes |
-| `get_connected_nodes` | Neighborhood traversal | "How is X connected" | Yes |
-| `get_backlinks` | Incoming-link list | "Every source that mentions X" | Yes |
-| `get_summary` | Pull a summary page | When user references a specific source | Yes |
-| `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 | Yes (usually reports the file isn't on this machine, since raw sources never sync) |
-| `get_working_state` | Resume a previous session's handoff (brief, decisions, next steps, journal) | "carry on", "where did we leave off" — call first, before re-reading code | Yes (read-only) |
-| `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 | **No — refused.** Redirect to personal opted-in domain per §3.3 |
-| `scan_wiki_health` | Find structural issues | "Check my wiki" | Yes (read-only scan) |
-| `fix_wiki_issue` | Apply ONE Health fix | After scan, per issue | **No — refused.** Fixes don't propagate from mirrors |
-| `scan_semantic_duplicates` | AI duplicate detection | Opt-in, paid, user-initiated only | Yes (scan) but the merge path that would delete files is refused on mirrors |
-| `get_health_dismissed` | List previously dismissed | "What have I skipped?" | Yes (read-only) |
-| `dismiss_wiki_issue` | Permanently skip an issue | When user says "leave alone" | **No — refused** on mirrors |
-| `undismiss_wiki_issue` | Restore a dismissal | When user changes their mind | **No — refused** on mirrors |
-| `save_working_state` | Write this session's handoff for the next session to resume | Save early and often — after a decision settles, a trap is found, or a step completes | **No — refused.** Writes `domains/<project>/state/`, not the wiki, but the same mirror guard applies |
+| Tool | Purpose | When |
+|---|---|---|
+| `list_domains` | List domains | Always when domain is unclear |
+| `get_index` | Master page catalog | Always before any write |
+| `get_graph_overview` | Topology snapshot | First move on a research task |
+| `get_tags` | Tag inventory | Tag-driven cluster work |
+| `search_wiki` | Ranked search in one domain | Specific topic lookup |
+| `search_cross_domain` | Search across all domains | Cross-domain synthesis only (read) |
+| `get_node` | Full page with frontmatter | Detail pull on a known slug |
+| `get_connected_nodes` | Neighborhood traversal | "How is X connected" |
+| `get_backlinks` | Incoming-link list | "Every source that mentions X" |
+| `get_summary` | Pull a summary page | When user references a specific source |
+| `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 |
+| `get_working_state` | Resume a previous session's handoff (brief, decisions, next steps, journal) | "carry on", "where did we leave off" — call first, before re-reading code |
+| `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 |
+| `scan_wiki_health` | Find structural issues | "Check my wiki" |
+| `fix_wiki_issue` | Apply ONE Health fix | After scan, per issue |
+| `scan_semantic_duplicates` | AI duplicate detection | Opt-in, paid, user-initiated only |
+| `get_health_dismissed` | List previously dismissed | "What have I skipped?" |
+| `dismiss_wiki_issue` | Permanently skip an issue | When user says "leave alone" |
+| `undismiss_wiki_issue` | Restore a dismissal | When user changes their mind |
+| `save_working_state` | Write this session's handoff for the next session to resume | Save early and often — after a decision settles, a trap is found, or a step completes |
 
 > **The two working-state tools have their own playbook.** This skill covers the WIKI —
 > what knowledge to write and how to ground it. Carrying build state between sessions is a
@@ -394,16 +277,16 @@ A compact reminder of what NOT to do:
 2. **Don't create duplicate pages.** If `entities/openai.md` exists, your update goes to `[[openai]]` — never `[[OpenAI]]` or `[[open-ai]]`.
 3. **Don't write summaries via `additional_pages`.** Only entities/ and concepts/.
 4. **Don't compile identical content twice in a day.** Idempotency refusal is correct.
-5. **Don't try to link across domains.** Domains are siloed.
-6. **Don't use folder prefixes in wikilinks** for entities or concepts. `[[openai]]` not `[[entities/openai]]`. Summaries keep their prefix: `[[summaries/foo]]`.
-7. **Don't run `scan_semantic_duplicates` without the user asking.** It costs money.
-8. **Don't fix `semanticDupe` issues without `preview: true` first.** Destructive — deletes files.
-9. **Don't skip `get_index` on writes.** That's the #1 cause of broken links.
-10. **Don't compose first and check links after.** Ground links during composition by referring to the index.
-11. **Don't compile to a `shared-*` mirror.** Always redirect to the user's personal opted-in domain (§3.3). The mirror's writes don't propagate and would be overwritten on the next Pull.
-12. **Don't promise the user "I've added this to the shared brain"** when you've actually compiled to their personal domain. Be precise: *"Saved to your `work-ai` domain — it'll appear in the shared brain after you click **Push contributions** in the Shared Brain view and the admin runs synthesis."* The Push and synthesise steps aren't yours to do.
-13. **Don't try to call a "push" or "synthesize" MCP tool.** No release has ever had one. Those operations live in the Curator app's **Shared Brain** view. If the user asks you to push, tell them how to do it themselves.
-14. **Don't suggest fixing Health issues on a `shared-*` mirror.** Suggest the upstream fix (in the contributor's personal domain) and a Push + synthesise cycle.
+5. **Don't split one source across two calls under the same title.** You get two summary pages, not one — cut to nine pages or give each part its own title (§5).
+6. **Don't try to create a dotted slug.** Dots are readable, not creatable — use hyphens and say so (§2).
+7. **Don't try to link across domains.** Domains are siloed.
+8. **Don't use folder prefixes in wikilinks** for entities or concepts. `[[openai]]` not `[[entities/openai]]`. Summaries keep their prefix: `[[summaries/foo]]`.
+9. **Don't run `scan_semantic_duplicates` without the user asking.** It costs money.
+10. **Don't fix `semanticDupe` issues without `preview: true` first.** Destructive — deletes files.
+11. **Don't skip `get_index` on writes.** That's the #1 cause of broken links.
+12. **Don't compose first and check links after.** Ground links during composition by referring to the index.
+13. **Don't compile to a `shared-*` mirror**, and **don't tell the user you added something to the shared brain** when you compiled to their personal domain. See [shared-brain.md](shared-brain.md).
+14. **Don't treat `conflict: 'file_lock'` as a failure.** Nothing was written; wait and retry the identical call (§5).
 15. **Don't reach for `get_raw_source` as your default.** The wiki is compiled knowledge — answer from `get_node`/`get_summary` first, and escalate to the raw source only for verbatim quotes, exact figures, or a real gap in the summary (§4.1). Reaching for it by default turns a compiled second brain back into a retrieval-at-query-time system.
 16. **Don't treat "the original isn't on this machine" as an error.** Raw sources never sync — report the filename/date the tool gives you and move on.
 
@@ -419,27 +302,14 @@ Is the user READING the wiki?
 Is the user WRITING to the wiki?
   → §5 writing workflow
   → Steps: domain check → get_index → ground links → compile_to_wiki (refuse mode on fresh domains)
+  → 10 pages max INCLUDING the summary; one title = one summary page
 
 Is the user MAINTAINING the wiki?
-  → §6 maintenance workflow
+  → §6 maintenance workflow, then maintenance.md for the call shapes
   → scan_wiki_health → loop fix_wiki_issue (auto-fix simple, confirm risky, preview destructive)
+
+Is a shared-* domain involved?
+  → shared-brain.md — read freely, never write, redirect the contribution
 ```
 
 For sample dialogues that show end-to-end flows for each scenario, see [examples.md](examples.md).
-
----
-
-## §10 — Version compatibility
-
-**This skill targets Curator v3.0.0-beta.1 and later.** If you're working with The Curator, the following features are covered by this version of the skill:
-
-- The 20 MCP tools (12 read + 8 in the write group, of which 5 mutate — list in §7). Two of those are newer than the baseline; see the next two bullets. On an older Curator the tool simply won't appear in the list, and everything else here still applies — so check the list you were given rather than this paragraph.
-- `get_raw_source` and the compiled-first/verbatim-on-escalation rule (§4.1) — requires Curator v3.5.0 or later; on an earlier version this tool simply won't be in the list, and every other reading pattern in §4 still works
-- `get_working_state` / `save_working_state` — requires Curator v3.17.0 or later. Below that there is no working-state store at all, and the tool count is 18 rather than 20
-- Shared Brain mirror domains (`shared-*`) — §3.1 read/write contract, §3.2 indirect-write model, §3.3 dialogue scripts
-- Health on mirrors — scan allowed, fix refused (§6)
-- Two-primitives model — invite token (metadata) vs PAT (per-contributor identity)
-
-**Earlier Curator versions** (pre-v3.0.0-beta.1) didn't have Shared Brain at all. The mirror-domain logic still works — there simply won't be any `shared-*` domains to dispatch on. The skill is backward-compatible.
-
-**Updating to a newer skill version**: just re-run the install commands in `docs/mcp-user-guide.md` — they overwrite the existing files in `~/.claude/skills/my-curator/` (Claude Code) or replace the project knowledge upload (Claude Desktop). Re-installation doesn't restart any conversation — edits take effect mid-session.
