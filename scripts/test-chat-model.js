@@ -192,13 +192,15 @@ section('4. Source guards — provider override wired through the stack');
   ok(!/geminiUsable|anthropicUsable/.test(cfg),
     'api-keys route no longer exposes the misleading usable (config-or-env) flags');
 
-  const app = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
-  ok(/if \(data\.hasGeminiKey\) providers\.push/.test(app) && /if \(data\.hasAnthropicKey\) providers\.push/.test(app),
-    'chat model selector availability keys off config-based hasXKey (Settings)');
-  ok(!/geminiUsable|anthropicUsable/.test(app),
-    'chat model selector no longer relies on the usable (config-or-env) flags');
-  ok(/renderFallbackBanner\(data\.fallback\);[\s\S]{0,500}initChatModelSelector\(\)/.test(app),
-    'loadApiKeyStatus re-inits the chat model selector so a Settings key change reflects immediately');
+  // REMOVED in v3.41.0 — three assertions that the DELETED src/public/app.js
+  // keyed its chat model selector off the config-only hasGeminiKey /
+  // hasAnthropicKey flags rather than the config-or-env `usable` ones (the
+  // v3.0.11 bug, where a Disconnected-but-.env key stayed pickable in chat).
+  // The ROUTE half of that invariant is asserted immediately above and is
+  // the half that actually enforces it: `!/geminiUsable|anthropicUsable/`
+  // over src/routes/config.js means the misleading flags are not on the wire
+  // at all, so no frontend can key off them. /next's own picker is covered by
+  // scripts/test-next-model-picker.js.
 }
 
 // ── 5. Fallback cost comparison — exact-id price map ────────────────────────
@@ -361,22 +363,38 @@ section('8. Source guards — cost warning + boot guard wiring');
   ok(/costlier: costTier === 'costlier'/.test(llm),
     'the legacy costlier boolean is preserved (additive payload)');
 
-  const app = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
-  ok(/fallback\.costTier \|\| \(fallback\.costlier \? 'costlier' : 'similar'\)/.test(app),
-    'banner drives off costTier, falling back to the legacy boolean');
-  ok(/costTier === 'unknown'/.test(app),
-    'banner has a distinct wording for the unknown-price state');
-  ok(/settings-fallback-cost/.test(app), 'cost note is rendered in its own styled span');
+  // Repointed in v3.41.0 from the deleted src/public/app.js to the shell that
+  // ships. The banner contract is the same one: read `costTier`, keep the
+  // legacy `costlier` boolean as a fallback so an older payload still renders,
+  // and give the unknown-price state its OWN wording rather than letting it
+  // read as "similar" — a silent price change is the defect this exists for.
+  const settings = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+  ok(/costTier/.test(settings), 'the fallback banner reads costTier');
+  ok(/fallback\.costlier/.test(settings),
+    'and still honours the legacy costlier boolean (additive payload, older servers)');
+  ok(/'unknown'/.test(settings),
+    'banner has a distinct branch for the unknown-price state');
 
-  const html = readFileSync(path.join(ROOT, 'src/public/index.html'), 'utf8');
-  ok(/__curatorBooted/.test(html), 'boot guard is inline in index.html (before app.js can throw)');
-  ok(/\/app\\.js/.test(html) && !/\(app\|markdown\)/.test(html),
-    'boot guard treats ONLY app.js as load-bearing (markdown.js has a designed fallback)');
-  const appSrc = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
-  ok(/typeof window\.renderChatMarkdown === 'function'/.test(appSrc),
-    'app.js still guards renderChatMarkdown — the reason markdown.js is not fatal');
-  ok(/window\.__curatorBooted = true;\s*$/.test(appSrc.trimEnd() + '\n'),
-    'the boot sentinel is the last statement in app.js');
+  // The boot-guard assertions here read src/public/index.html and
+  // src/public/app.js, both deleted in v3.41.0. Repointed at the shell that
+  // actually ships: the sentinel contract is identical (an inline <head>
+  // guard, and app.js setting window.__curatorBooted on its LAST line), and
+  // it is the contract — not the file — that CLAUDE.md records as
+  // load-bearing. The markdown.js half is dropped with the file: /next
+  // imports its renderer as an ES module, so there is no optional classic
+  // script to be non-fatal about.
+  const html = readFileSync(path.join(ROOT, 'src/public/next/index.html'), 'utf8');
+  ok(/__curatorBooted/.test(html), 'boot guard is inline in next/index.html (before app.js can throw)');
+  const appSrc = readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
+  // The deleted shell was ONE module and set the sentinel as its literal last
+  // statement. /next sets it from markBooted(), called immediately after
+  // boot() returns on both readyState arms — the same guarantee expressed for
+  // a multi-module shell, and the one next/index.html's head guard reads.
+  ok(/function markBooted\(\)\s*\{[^}]*window\.__curatorBooted = true;/.test(appSrc),
+    'markBooted() is what sets the boot sentinel in next/app.js');
+  ok((appSrc.match(/boot\(\);\s*markBooted\(\);/g) || []).length +
+     (appSrc.match(/boot\(\);\n\s*markBooted\(\);/g) || []).length >= 1,
+    'and it runs immediately after boot() returns');
 }
 
 // ── 9. Fallback chain health — no dead rungs, cheapest-first ────────────────

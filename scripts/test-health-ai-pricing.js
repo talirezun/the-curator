@@ -55,7 +55,6 @@ const { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK } = llmTesting;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const HEALTH_AI_SRC = path.join(ROOT, 'src', 'brain', 'health-ai.js');
-const APP_JS_SRC = path.join(ROOT, 'src', 'public', 'app.js');
 const NEXT_DOMAINS_SRC = path.join(ROOT, 'src', 'public', 'next', 'views', 'domains.js');
 const AI_HEALTH_DOC = path.join(ROOT, 'docs', 'ai-health.md');
 
@@ -323,7 +322,6 @@ section('8. End-to-end — estimateBrokenLinkFix / estimateOrphanRescue / estima
 section('9. Doc-drift guard — costNote consumers exist and stale "not wired" claims are gone');
 {
   const healthAiSrc = readFileSync(HEALTH_AI_SRC, 'utf8');
-  const appJsSrc = readFileSync(APP_JS_SRC, 'utf8');
   const nextDomainsSrc = readFileSync(NEXT_DOMAINS_SRC, 'utf8');
   const doc = readFileSync(AI_HEALTH_DOC, 'utf8');
 
@@ -343,8 +341,10 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
   // an actual property access, not merely a comment mentioning the field
   // name (both files' explanatory comments legitimately say "costNote" too,
   // so this checks the ACCESS expressions the real implementations use).
-  ok(/obj\.costNote/.test(appJsSrc),
-    'app.js formatHealthCost() actually reads obj.costNote (not just mentions it in a comment)');
+  // Until v3.41.0 there were TWO consumers to check — src/public/app.js's
+  // formatHealthCost() and this one. That shell is deleted, so /next's
+  // costReadout() is the only renderer of this field left, and the only one
+  // this assertion can name.
   ok(/est\.costNote/.test(nextDomainsSrc),
     'next/views/domains.js costReadout() actually reads est.costNote (not just mentions it in a comment)');
 

@@ -1349,28 +1349,26 @@ console.log('\n=== 8. POST /api/sync/setup is guarded like its four siblings ===
     'sync/setup refusal does NOT carry a "success" field');
 
   // THE TRAP for this route, and the reason the action phrase is "set up sync".
-  // app.js's submitSyncSetup catch (app.js:4587) runs a network-down regex over
-  // ANY thrown message -- including a structured 409's error text -- and on a
-  // match REPLACES it with "The Curator server stopped responding during
-  // setup...". That regex carries a bare, unanchored "connection" alternative,
-  // which a natural phrasing like "change the repository connection" would trip,
-  // silently discarding the real refusal. Same class as the "cancelled" trap on
-  // /pick-folder: the guard fires and the user is told something false.
+  // The deleted shell's submitSyncSetup catch ran a network-down regex over ANY
+  // thrown message -- including a structured 409's error text -- and on a match
+  // REPLACED it with "The Curator server stopped responding during setup...".
+  // That regex carried a bare, unanchored "connection" alternative, which a
+  // natural phrasing like "change the repository connection" would trip,
+  // silently discarding the real refusal. This block EXTRACTED that regex from
+  // src/public/app.js and ran the live refusal text through it.
   //
-  // The regex is EXTRACTED FROM app.js rather than copied, so if that line is
-  // reworded this assertion follows it instead of quietly rotting.
-  const appJs = readFileSync(path.join(REPO_ROOT, 'src/public/app.js'), 'utf8');
-  const reLine = appJs.match(/const isNetworkDown = \/([^\n]+?)\/i\.test\(raw\)/);
-  assert(!!reLine, 'located app.js isNetworkDown regex (if RED, re-verify the sync-wizard trace)');
-  if (reLine) {
-    const netRe = new RegExp(reLine[1], 'i');
-    assert(!netRe.test((busy.body && busy.body.error) || ''),
-      'sync/setup refusal does NOT trip app.js network-down regex (else it is replaced by a false "server stopped responding" message)');
-    // Prove that assertion CAN fail -- a regex matching nothing would make it
-    // vacuously green.
-    assert(netRe.test('the connection was reset'),
-      '  (control) the extracted regex really does match a network-shaped message');
-  }
+  // v3.41.0 deleted that shell, and grepping src/public/next/ for the same
+  // rewrite found NOTHING: no isNetworkDown, no "stopped responding", no
+  // equivalent catch that substitutes its own sentence for a structured
+  // refusal. So the refusal below now reaches the user unmodified, and there
+  // is no consumer left to extract a regex from. The assertion is removed
+  // rather than reimplemented against a regex that exists nowhere.
+  //
+  // The property it protected is still worth stating, so it is stated as the
+  // fact that survives: the refusal text must not READ like a network failure,
+  // whatever any future frontend does with it.
+  assert(busy.body && !/stopped responding|network|timed out/i.test(busy.body.error || ''),
+    'sync/setup refusal does not read as a network failure (nothing rewrites it now, but nothing should want to)');
   release();
 }
 

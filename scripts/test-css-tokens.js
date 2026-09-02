@@ -720,146 +720,36 @@ section('0. Parser self-tests (synthetic CSS)');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// 1. Discover every LOCAL stylesheet the app actually loads
+// 1-4 (REMOVED in v3.41.0) — the shipping app's CSS universe
 // ─────────────────────────────────────────────────────────────────────────
-section('1. Discover local stylesheets loaded by index.html');
-
-const indexPath = path.join(ROOT, 'src/public/index.html');
-const indexHtml = readFileSync(indexPath, 'utf8');
-
-const disc1 = discoverStylesheetLinks(indexHtml);
-const localCssFiles = disc1.local;
-
-ok(disc1.styleTags.length > 0, 'index.html contains at least one <link rel="stylesheet"> tag');
-ok(localCssFiles.includes('styles.css'), 'styles.css is discovered as a local stylesheet');
-console.log(`  → local stylesheets found: ${localCssFiles.join(', ')}`);
-console.log(`  → external stylesheets skipped: ${disc1.externalCount} (e.g. Google Fonts — not this app's token surface)`);
-
-// ─────────────────────────────────────────────────────────────────────────
-// 2. Extract definitions + references from every local stylesheet
-// ─────────────────────────────────────────────────────────────────────────
-section('2. Extract definitions and references from the real app CSS');
-
-const publicDir = path.dirname(indexPath);
-const initialFiles1 = localCssFiles.map(href => ({
-  relPath: `src/public/${href}`,
-  absPath: path.join(publicDir, href),
-}));
-const expanded1 = expandWithImports(initialFiles1);
-const files = expanded1.files;
-if (expanded1.skippedExternalImports.length) {
-  console.log(`  → external @import target(s) skipped (not this app's token surface): ` +
-    expanded1.skippedExternalImports.map(s => `${s.target} (from ${s.from})`).join(', '));
-}
-const importedOnly1 = files.filter(f => !initialFiles1.some(i => i.absPath === f.absPath));
-if (importedOnly1.length) {
-  console.log(`  → additional local file(s) discovered via @import: ${importedOnly1.map(f => f.relPath).join(', ')}`);
-}
-// A real broken/typo'd @import in shipping CSS is a real bug worth failing
-// loudly on — expandWithImports no longer crashes on one (L5), but silently
-// swallowing it would just trade one failure mode for another.
-ok(expanded1.unreadableFiles.length === 0,
-  expanded1.unreadableFiles.length === 0
-    ? 'no @import target in the shipping app CSS failed to resolve to a readable file'
-    : `${expanded1.unreadableFiles.length} @import target(s) in the shipping app CSS could not be read: ` +
-      expanded1.unreadableFiles.map(u => `${u.relPath} (from ${u.from ?? 'index.html link'}) — ${u.error}`).join(', '));
-
-const globalDefs = new Set();
-const perFileData = [];
-
-for (const f of files) {
-  const raw = readFileSync(f.absPath, 'utf8');
-  const cleaned = cleanCss(raw);
-  const defs = extractDefinitions(cleaned);
-  const refs = extractReferences(cleaned);
-  const lineStarts = computeLineStarts(raw);
-  for (const name of defs.keys()) globalDefs.add(name);
-  perFileData.push({ ...f, raw, cleaned, defs, refs, lineStarts });
-}
-
-const totalDefs = globalDefs.size;
-const totalRefs = perFileData.reduce((n, f) => n + f.refs.length, 0);
-
-ok(totalDefs > 0, `found ${totalDefs} distinct custom-property definitions across ${files.length} file(s)`);
-ok(totalRefs > 0, `found ${totalRefs} total var() references across ${files.length} file(s)`);
-console.log(`  → defined tokens: ${[...globalDefs].sort().join(', ')}`);
-
-// ─────────────────────────────────────────────────────────────────────────
-// 3. Every referenced variable must be defined somewhere
-// ─────────────────────────────────────────────────────────────────────────
-section('3. Every var() reference resolves to a defined custom property');
-
-// Pre-existing, already-in-production issues (see file header for full
-// detail + provenance). Baselined by NAME so this suite stays green against
-// the current codebase without hiding them — every run still prints them.
-// A NEW undefined name (anything not in this exact list) is a hard failure.
-// `--font-mono` and `--text-1` are DELIBERATELY NOT here — they were the two
-// genuine no-fallback bugs and have been fixed in styles.css; section 3b
-// below locks that fix in with a dedicated regression assertion instead of
-// leaving them silently forgiven here.
-const KNOWN_ISSUES = new Set([
-  'text-primary',   // has a hex fallback; 2 refs
-  'text-secondary', // has a hex fallback; 3 refs
-  'surface-1',      // has a hex fallback; 1 ref
-]);
-ok(KNOWN_ISSUES.size === 3,
-  'baseline contains exactly the three remaining fallback-carrying names (not the two already-fixed ones)');
-
-const realOffenders = [];
-const knownOffenders = [];
-
-for (const f of perFileData) {
-  for (const ref of f.refs) {
-    if (globalDefs.has(ref.name)) continue; // defined somewhere — fine
-    const line = lineNumberFor(f.lineStarts, ref.index);
-    const declaration = f.raw.split('\n')[line - 1]?.trim() ?? '(unavailable)';
-    const entry = { file: f.relPath, line, name: ref.name, declaration };
-    if (KNOWN_ISSUES.has(ref.name)) knownOffenders.push(entry);
-    else realOffenders.push(entry);
-  }
-}
-
-if (knownOffenders.length > 0) {
-  console.log(`\n  ⚠ ${knownOffenders.length} pre-existing (baselined) undefined-variable reference(s) — not new, not failing this suite:`);
-  for (const o of knownOffenders) {
-    console.log(`      ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`);
-  }
-}
-
-ok(realOffenders.length === 0,
-  realOffenders.length === 0
-    ? 'no NEW undefined custom-property references found'
-    : `found ${realOffenders.length} NEW undefined custom-property reference(s):\n` +
-      realOffenders.map(o => `        ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`).join('\n')
-);
-
-// ─────────────────────────────────────────────────────────────────────────
-// 3b. Regression lock — the two FIXED no-fallback bugs must never come back
-// ─────────────────────────────────────────────────────────────────────────
-// `--font-mono` and `--text-1` were undefined-with-NO-fallback references —
-// the exact `--text-dim` silent-rendering-failure class — until styles.css
-// was corrected (`--font-mono` → `--mono`, `--text-1` → `--text`). They are
-// intentionally absent from KNOWN_ISSUES above, so without this explicit
-// check a reintroduction would just land in the generic "new undefined
-// variable" bucket in section 3. These two assertions name the exact
-// regression so a failure is unmistakable.
-const allRefs = perFileData.flatMap(f =>
-  f.refs.map(r => ({ ...r, file: f.relPath, lineStarts: f.lineStarts }))
-);
-const fontMonoRefs = allRefs.filter(r => r.name === 'font-mono');
-const text1Refs = allRefs.filter(r => r.name === 'text-1');
-
-ok(fontMonoRefs.length === 0,
-  fontMonoRefs.length === 0
-    ? 'REGRESSION GUARD: var(--font-mono) is not referenced anywhere (the real token is --mono; this was the v3.0.12-class no-fallback bug)'
-    : `REGRESSION: var(--font-mono) reintroduced at ${fontMonoRefs.map(r => `${r.file}:${lineNumberFor(r.lineStarts, r.index)}`).join(', ')} — the real token is --mono`
-);
-ok(text1Refs.length === 0,
-  text1Refs.length === 0
-    ? 'REGRESSION GUARD: var(--text-1) is not referenced anywhere (likely meant --text/--text-2; this was the v3.0.12-class no-fallback bug)'
-    : `REGRESSION: var(--text-1) reintroduced at ${text1Refs.map(r => `${r.file}:${lineNumberFor(r.lineStarts, r.index)}`).join(', ')} — likely meant --text/--text-2`
-);
-
+// Sections 1 to 4 scanned the PRE-REDESIGN shell: they discovered stylesheets
+// from src/public/index.html's <link> tags, collected every custom-property
+// definition across styles.css and its @imports, checked every var() in that
+// CSS against those definitions (with a three-name baseline and a regression
+// lock on --font-mono / --text-1), and finally scanned the inline
+// `style="color:var(--x)"` snippets built as string literals inside
+// src/public/app.js.
+//
+// v3.41.0 deleted all four of those files. The sections are removed rather
+// than repointed at /next, because a /next equivalent of every one of them
+// ALREADY EXISTS below and was written independently: §5 discovers, §6
+// extracts, §7 checks, §8 scans /next's CSS-in-JS. Repointing would have
+// produced a second copy of each, which is the two-surfaces drift this repo
+// keeps recording.
+//
+// Two things deliberately did NOT move with them:
+//   • The three baselined fallback-carrying names (--text-primary,
+//     --text-secondary, --surface-1) and the --font-mono / --text-1
+//     regression lock were facts about styles.css SPECIFICALLY. §7's own
+//     baseline is empty and stays empty; adding names to it to keep this
+//     suite green is forbidden by CLAUDE.md and would be exactly what
+//     copying them across amounts to.
+//   • Section 6b, which proved the two token universes were never unioned.
+//     With one universe left there is nothing to keep separate, and a
+//     separation check with one side missing cannot fail.
+//
+// Everything BELOW here is unchanged: §0 and §3c-§3f are parser self-tests
+// that belong to no universe, and §5 onward is the /next scan.
 // ─────────────────────────────────────────────────────────────────────────
 // 3c. Self-tests for scanning var(--x) references embedded in JS source
 //    (section 4 below applies this to the real src/public/app.js)
@@ -1320,45 +1210,6 @@ section('3f. Self-tests — walkJsFiles (recursive /next JS discovery)');
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 4. Inline var(--x) references embedded in src/public/app.js (CSS-in-JS)
-// ─────────────────────────────────────────────────────────────────────────
-// app.js builds a handful of inline `style="color:var(--x)"` HTML snippets
-// as JS string/template literals (status banners, the update-progress UI,
-// the markdown renderer's <hr> rule). These live entirely outside
-// styles.css's <link> discovery in section 1, so section 3 never sees them —
-// a token typo here would fail SILENTLY exactly like the --text-dim bug,
-// just in a JS file instead of a CSS one. We check them against the SAME
-// `globalDefs` set collected from the real stylesheets in section 2 (the
-// tokens app.js's inline styles rely on come from styles.css; app.js
-// defines none of its own).
-section('4. Inline var(--x) references in src/public/app.js (CSS-in-JS)');
-
-const appJsPath = path.join(ROOT, 'src/public/app.js');
-const appJsRaw = readFileSync(appJsPath, 'utf8');
-const appJsCleaned = stripLineComments(stripBlockComments(appJsRaw));
-const appJsRefs = extractReferences(appJsCleaned);
-const appJsLineStarts = computeLineStarts(appJsRaw);
-
-ok(appJsRefs.length > 0, `found ${appJsRefs.length} var() reference(s) in app.js`);
-
-const appJsRealOffenders = [];
-for (const ref of appJsRefs) {
-  if (globalDefs.has(ref.name)) continue;
-  const line = lineNumberFor(appJsLineStarts, ref.index);
-  const declaration = appJsRaw.split('\n')[line - 1]?.trim() ?? '(unavailable)';
-  appJsRealOffenders.push({ file: 'src/public/app.js', line, name: ref.name, declaration });
-}
-
-ok(appJsRealOffenders.length === 0,
-  appJsRealOffenders.length === 0
-    ? 'every var(--x) reference in app.js resolves to a token defined in styles.css'
-    : `found ${appJsRealOffenders.length} undefined custom-property reference(s) in app.js:\n` +
-      appJsRealOffenders.map(o => `        ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`).join('\n')
-);
-
-const appJsDistinctNames = [...new Set(appJsRefs.map(r => r.name))].sort();
-console.log(`  → app.js references ${appJsRefs.length} var() usage(s) across ${appJsDistinctNames.length} distinct token(s): ${appJsDistinctNames.join(', ')}`);
 
 // ─────────────────────────────────────────────────────────────────────────
 // 5. Discover every LOCAL stylesheet the /next shell actually loads
@@ -1448,40 +1299,21 @@ ok(nextTotalRefs > 0, `found ${nextTotalRefs} total var() references across ${ne
 console.log(`  → /next defined tokens (${nextTotalDefs}): ${[...nextGlobalDefs].sort().join(', ')}`);
 
 // ─────────────────────────────────────────────────────────────────────────
-// 6b. The /next token universe is NOT merged with the shipping app's
+// 6b (REMOVED in v3.41.0) — the two-universe separation check
 // ─────────────────────────────────────────────────────────────────────────
-// If the two universes were unioned, a var() genuinely undefined in one
-// could silently resolve via a same-named definition in the other —
-// defeating the point of scanning them at all. Rather than assert this
-// against hardcoded names (which would rot as either token set evolves),
-// find a name that is REALLY defined in exactly one universe at scan time
-// and confirm the two independently-built Sets agree; this can only pass
-// if the two scans stayed genuinely separate.
-section("6b. The /next token universe is NOT merged with the shipping app's");
-
-const oldOnlyName = [...globalDefs].find(n => !nextGlobalDefs.has(n));
-const nextOnlyName = [...nextGlobalDefs].find(n => !globalDefs.has(n));
-
-ok(!!oldOnlyName, `found a token defined ONLY in the shipping app (e.g. --${oldOnlyName}) to test separation against`);
-ok(!!nextOnlyName, `found a token defined ONLY in /next (e.g. --${nextOnlyName}) to test separation against`);
-ok(!!oldOnlyName && !nextGlobalDefs.has(oldOnlyName),
-  `--${oldOnlyName} (shipping-app-only) is correctly ABSENT from the /next definition set — the universes are not merged`);
-ok(!!nextOnlyName && !globalDefs.has(nextOnlyName),
-  `--${nextOnlyName} (/next-only) is correctly ABSENT from the shipping-app definition set — the universes are not merged`);
-
-// A concrete real-world case this separation protects, found while building
-// this section: /next's tokens/typography.css defines its OWN --font-mono
-// (a real font stack) and /next JS legitimately references it
-// (views/shared.js — checked in section 8). The SHIPPING app also once had
-// a var(--font-mono) bug (section 3b's regression guard) but its real token
-// is --mono — --font-mono is undefined there. Merge the two universes and
-// that distinction disappears; kept separate, each reference is checked
-// against only the definitions that actually apply to it.
-ok(nextGlobalDefs.has('font-mono'),
-  '--font-mono is a real, defined token in the /next universe (tokens/typography.css) — used legitimately by /next JS (views/shared.js)');
-ok(!globalDefs.has('font-mono'),
-  '--font-mono is NOT defined in the shipping-app universe (its real token is --mono) — proving the two universes must be checked separately, not unioned');
-
+// This section found a token defined in exactly one of the two universes and
+// asserted the other's Set did not have it, proving the two scans had stayed
+// genuinely separate rather than silently unioning (which would have let a
+// /next reference resolve against a shipping-app definition, and vice versa).
+// The shipping app's universe no longer exists, so there is one Set and
+// nothing to compare it against — the check could not fail if it ran.
+//
+// The concrete case it recorded is kept here because it explains why §7's
+// scan is scoped the way it is: /next's tokens/typography.css defines its own
+// --font-mono and /next JS references it legitimately, while the deleted
+// styles.css had no such token (its real one was --mono) and referencing
+// --font-mono there WAS a bug. One name, opposite verdicts, decided entirely
+// by which stylesheet set the reference was checked against.
 // ─────────────────────────────────────────────────────────────────────────
 // 7. Every var() reference in /next CSS resolves within the /next universe
 // ─────────────────────────────────────────────────────────────────────────

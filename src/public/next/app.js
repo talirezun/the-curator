@@ -2315,13 +2315,6 @@ import './views/settings.js';
 // not call any shell function at its own top level. It does not.
 import { maybeShowOnboarding } from './views/onboarding.js';
 
-// Also NOT a view, and the same shell-level shape as onboarding above: the
-// cutover notice is a one-time bar telling an EXISTING user that "/" now
-// serves this shell and that the previous interface is still at /old. Same
-// cyclic-evaluation constraint as every import above — it calls no shell
-// function at its own top level.
-import { maybeShowCutoverNotice } from './views/cutover-notice.js';
-
 // ── Keyboard ─────────────────────────────────────────────────────────────
 // Esc closes the reader — global shell state, handled directly here. The
 // composer's model/length picker is view-owned; its own Escape handling
@@ -2407,39 +2400,20 @@ function boot() {
   //   3. This try/catch, which contains anything the first two miss.
   // scripts/test-next-onboarding.js §6 pins reasons 1 and 3 mechanically.
   //
-  // ── CUTOVER: the two first-load surfaces are chained, never parallel ──
-  // maybeShowCutoverNotice() resolves TRUE iff it put the bar on screen, and
-  // the guidance check only runs when it did not. That is the SECOND of two
-  // independent layers keeping the two surfaces off the screen together; the
-  // first is that their predicates are logical complements over the same
-  // three facts (key / domain / page), so neither layer depends on the other
-  // being remembered. scripts/test-cutover.js proves the predicate half by
-  // executing BOTH modules' real functions over all eight fact combinations,
-  // and the ordering half from this call site.
+  // ── ONE first-load surface, since v3.41.0 ────────────────────────────
+  // This was a two-link CHAIN: the v3.9.0 cutover notice ran first and the
+  // guidance check only ran when the notice had NOT been shown, because the
+  // two bars must never share the screen. The notice existed to tell a
+  // pre-cutover user that "/" had changed and that the old interface was
+  // still at "/old"; v3.41.0 deleted that interface, so a bar whose only
+  // action is a link to it can no longer tell the truth, and the module is
+  // gone with it. The mutual-exclusion machinery goes with it too — there
+  // is nothing left to be mutually exclusive WITH.
   //
-  // The whole chain keeps the markBooted() safety property described above,
-  // by four independent mechanisms: Promise.resolve().then() converts even a
-  // synchronous throw from the first call into a rejection; neither function
-  // is awaited and boot() is still NOT async; both are declared `async`; and
-  // the .catch plus this try/catch absorb anything left. openBar() is the
-  // last thing maybeShowCutoverNotice() does, so a rejection here reliably
-  // means nothing was rendered — which is why the fall-through to onboarding
-  // in that case is safe rather than a way to get both.
-  // The guidance call keeps its own try/catch at the call site, unchanged and
-  // deliberately still written as one line: it is layer 3 of the three above,
-  // and scripts/test-next-onboarding.js §6 reads this exact shape.
-  const runGuidanceCheck = () => {
-    try { maybeShowOnboarding(); } catch (err) { console.error('[next] onboarding check failed', err); }
-  };
-
-  try {
-    Promise.resolve()
-      .then(() => maybeShowCutoverNotice())
-      .then((shownCutover) => { if (shownCutover !== true) runGuidanceCheck(); })
-      .catch((err) => { console.error('[next] first-load surfaces failed', err); });
-  } catch (err) {
-    console.error('[next] first-load surfaces failed', err);
-  }
+  // The call keeps the exact shape scripts/test-next-onboarding.js §6 reads,
+  // and for the reason argued directly above it: not awaited, boot() not
+  // async, and a one-line try/catch at the call site.
+  try { maybeShowOnboarding(); } catch (err) { console.error('[next] onboarding check failed', err); }
 }
 
 if (document.readyState === 'loading') {

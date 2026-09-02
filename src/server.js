@@ -111,25 +111,27 @@ app.use(express.json({ limit: '50mb' }));
 // `index: false` is load-bearing, not tidiness. express.static defaults to
 // `index: 'index.html'`, which means a request for "/" was answered by THIS
 // MOUNT, from src/public/index.html, and never reached the app.get('*')
-// catch-all below. Measured before the cutover: `GET /` returned the shipping
-// app's <title>The Curator</title> AND returned 200 even with `Host: evil.com`,
-// because this mount is registered ABOVE the Host-header guard.
+// catch-all below. Measured before the v3.9.0 cutover: `GET /` returned the
+// shipping app's <title>The Curator</title> AND returned 200 even with
+// `Host: evil.com`, because this mount is registered ABOVE the Host-header
+// guard.
 //
-// So flipping the catch-all alone would NOT have moved "/" to the new shell —
-// the old app would have kept serving at "/" with three route-level guards all
-// reporting success. Turning the index off makes the route table the single
-// place that decides which HTML shell a path gets, instead of the answer
-// depending on which middleware happened to match first.
+// v3.41.0 deleted src/public/index.html along with the rest of the
+// pre-redesign shell, so there is no longer a file here for the index option
+// to find — but the option STAYS FALSE, because the property being protected
+// is "the route table is the single place that decides which HTML shell a
+// path gets", not "the old file is absent". Dropping a new index.html into
+// src/public/ must not be able to silently take "/" back from the catch-all.
 //
 // Two consequences, both deliberate:
-//   - "/" now resolves through the catch-all, which sits BELOW the Host and
-//     Origin guards, so it is covered by them for the first time. Strictly a
-//     tightening; every real browser sends a loopback Host.
+//   - "/" resolves through the catch-all, which sits BELOW the Host and
+//     Origin guards, so it is covered by them. Strictly a tightening; every
+//     real browser sends a loopback Host.
 //   - Directory REDIRECTS are a separate option and stay on, so a bare "/next"
 //     still 301s to "/next/" exactly as before; the explicit route below then
 //     answers it (previously this mount's index option did).
-// Asset requests (/app.js, /next/tokens/color.css, ...) are unaffected: they
-// name a file, so the index option never applied to them.
+// Asset requests (/next/app.js, /next/tokens/color.css, ...) are unaffected:
+// they name a file, so the index option never applied to them.
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // ── Cross-origin guard (v3.0.1-beta.20) ───────────────────────────────────────
@@ -303,46 +305,40 @@ app.post('/api/restart', (_req, res) => {
   }, 200);
 });
 
-// ═══ THE CUTOVER (v3.9.0) ════════════════════════════════════════════════════
-// "/" and the SPA catch-all now serve the REDESIGNED shell
-// (src/public/next/index.html). The shipping frontend is NOT removed — it
-// stays reachable at "/old" for 2-3 releases, and every one of its files
-// (src/public/{app,markdown}.js, index.html, styles.css) is byte-untouched.
+// ═══ THE CUTOVER (v3.9.0) — COMPLETED (v3.41.0) ══════════════════════════════
+// "/" and the SPA catch-all serve the REDESIGNED shell
+// (src/public/next/index.html). v3.9.0 kept the pre-redesign frontend alive at
+// "/old" "for 2-3 releases"; thirty releases later src/public/{app,markdown}.js,
+// index.html and styles.css are DELETED — 614 KB that every install downloaded
+// and no route served.
 //
-// The two shells resolve their assets DIFFERENTLY, and that difference is what
-// makes the path shapes below load-bearing:
+// All of next/index.html's refs are ROOT-ABSOLUTE and /next/-prefixed
+// (test-next-asset-paths.js pins this; v3.6.1 made them so precisely for the
+// cutover), so it loads the same /next/app.js no matter which path served the
+// HTML: "/", "/next/" and a deep SPA path are interchangeable.
 //
-//   next/index.html  — all 18 refs are ROOT-ABSOLUTE and /next/-prefixed
-//                      (test-next-asset-paths.js pins this; v3.6.1 made them
-//                      so precisely for today). It therefore loads the same
-//                      /next/app.js no matter which path served the HTML, so
-//                      "/", "/next/" and a deep SPA path are interchangeable.
+// "/old" REDIRECTS to "/" rather than 404ing, and the choice is deliberate:
+//   • Without an explicit route, "/old" would fall through to the catch-all
+//     and be answered by the /next shell at 200 — the app WOULD work, but the
+//     URL bar would keep reading "/old" forever, so a bookmark from the
+//     pre-cutover era never self-corrects and every future reader has to
+//     re-derive why that path renders the new app.
+//   • A 404 breaks a bookmark that a working app is sitting behind. There is
+//     nothing to recover at "/old" and nothing lost by landing the user at
+//     "/" — it is the same application, reading the same files on disk.
+//   • 302, NOT 301. A permanently-cached redirect on a path we intend to
+//     delete outright has no recovery story; a temporary one can simply stop
+//     being registered.
 //
-//   public/index.html — refs are BARE-RELATIVE (src="app.js"). Those resolve
-//                      against the DIRECTORY of the URL that served the page.
-//                      At "/old" the directory is "/", so src="app.js" →
-//                      "/app.js", which the static mount serves. At "/old/"
-//                      the directory is "/old/", so it would request
-//                      "/old/app.js" — no such file — which the catch-all
-//                      would answer with the NEXT shell's HTML at 200
-//                      text/html, and the browser would parse HTML as
-//                      JavaScript. That is the v3.6.1 landmine in mirror
-//                      image, so "/old/" is REDIRECTED to "/old" rather than
-//                      served. 302, not 301: a permanently-cached redirect on
-//                      a path we intend to retire is not worth the recovery
-//                      story.
-//
-// The trailing-slash test is INSIDE one handler, on req.path, and not a
-// second `app.get('/old/')` route. Express's router is non-strict by default,
-// so a '/old/' route ALSO matches '/old' — a separate route therefore caught
-// both and redirected '/old' to itself. Reproduced live before this shape:
-// `GET /old` answered 302 -> /old, an endless loop where the shipping app
-// used to be. Making the router strict would have fixed it too and is the
-// wrong trade: `strict` is app-wide and would change matching for every
-// existing route.
-app.get('/old', (req, res) => {
-  if (req.path !== '/old') return res.redirect(302, '/old');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// The trailing-slash form is handled by this ONE handler's own path list, not
+// by a second `app.get('/old/')` route. Express's router is non-strict by
+// default, so a '/old/' route ALSO matches '/old'; when v3.9.0 tried that, the
+// separate route caught both and redirected '/old' to itself — reproduced live
+// as an endless 302 loop. Both forms now name the same destination ("/"), which
+// is a different path from either of them, so no self-redirect is expressible
+// here at all.
+app.get(['/old', '/old/'], (req, res) => {
+  res.redirect(302, '/');
 });
 
 // /next keeps working — bookmarks, muscle memory, and every link written

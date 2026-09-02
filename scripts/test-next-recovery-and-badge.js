@@ -107,7 +107,12 @@ const indexCode = assertStrippedSane(stripComments(nextIndex), 'next/index.html'
   'window.__curatorBooted',
 ]);
 const serverCode = assertStrippedSane(stripComments(serverJs), 'server.js', [
-  "app.get('/old'",
+  // Was "app.get('/old'" until v3.41.0, when that route became
+  // app.get(['/old', '/old/'], …) — a redirect to "/" rather than a second
+  // shell. Anchored on the catch-all instead, which is structural, outlives
+  // any particular escape-hatch path, and (unlike the /old route) is not
+  // itself asserted anywhere in this file.
+  "app.get('*'",
 ]);
 
 let passed = 0, failed = 0;
@@ -226,7 +231,7 @@ const { syncPendingFromStatus, syncBadgeMarkup, syncBadgeTitle } = sandbox;
 console.log('test-next-recovery-and-badge.js — /next boot-recovery copy + rail sync badge\n');
 
 // ════════════════════════════════════════════════════════════════════════
-section('§1  Boot-recovery panel — the escape hatch is /old, never "/"');
+section('§1  Boot-recovery panel — no URL is offered, because none works');
 // ════════════════════════════════════════════════════════════════════════
 
 const steps = extractRecoverySteps();
@@ -240,22 +245,27 @@ const recovery = [
 ok(steps.length >= 2, `two recovery steps extracted from index.html (got ${steps.length})`);
 ok(fallback.length > 40, 'catch-fallback string extracted from index.html');
 
-// §1b — POSITIVE: both strings name the escape hatch that actually works.
-for (const [label, text] of recovery) {
-  ok(/\/old\b/.test(text), `${label} names /old`);
-}
-
-// §1c — NEGATIVE, and specific enough that it cannot pass vacuously.
-// Post-cutover "/" IS this shell, so "go back to /" is a loop that returns
-// the user to the broken page. Every URL-shaped token in the recovery copy
-// must be exactly "/old" — asserted by set equality, and paired with a
-// non-empty check so an empty token set can never satisfy it.
+// §1b/§1c — WHAT CHANGED IN v3.41.0, AND WHY THE POLARITY FLIPPED.
+// Both strings used to be REQUIRED to name /old, and every URL-shaped token
+// in them was required to be exactly "/old" — because "/" IS this shell, so
+// "go back to /" is a loop that returns the user to the broken page, and
+// /old was the one path that led somewhere else that worked.
+//
+// That second shell is deleted and "/old" now 302s to "/", so naming it
+// would offer the user the loop by a longer route. There is no working URL
+// left to offer, so the copy offers none, and the assertion becomes: the
+// recovery copy contains NO URL-shaped token at all.
+//
+// The vacuity risk is the mirror image of the old one and is handled the
+// same way — with a control proving urlTokens() still finds tokens when they
+// are there, so "no tokens" is a measurement rather than a broken matcher.
 for (const [label, text] of recovery) {
   const tokens = urlTokens(text);
-  ok(tokens.length > 0, `${label} contains at least one URL token (vacuity guard)`);
-  const bad = tokens.filter((t) => t !== '/old');
-  ok(bad.length === 0, `${label} points ONLY at /old (offending tokens: ${JSON.stringify(bad)})`);
+  ok(tokens.length === 0,
+    `${label} offers no URL — every path leads back to the page that failed (found: ${JSON.stringify(tokens)})`);
 }
+ok(urlTokens('open the app at /old or /next now').length === 2,
+  'CONTROL: urlTokens still finds URL tokens when they are present (so the assertions above are a measurement)');
 
 // §1d — the preview-era framing is gone. "the shipping app" is now this
 // shell, so the phrase actively misdirects.
@@ -266,8 +276,8 @@ for (const [label, text] of recovery) {
 ok(!/\(preview\)/i.test(indexCode), 'no "(preview)" left anywhere in the boot-guard code');
 
 // §1e — leads with the action, not with an apology.
-ok(/^(Reload|Open)\b/.test(steps[0]), `first step opens with an action (got "${steps[0].slice(0, 24)}…")`);
-ok(/^Open\b/.test(steps[1]), `second step opens with an action (got "${steps[1].slice(0, 24)}…")`);
+ok(/^(Reload|Open|Quit)\b/.test(steps[0]), `first step opens with an action (got "${steps[0].slice(0, 24)}…")`);
+ok(/^(Open|Quit|Reload)\b/.test(steps[1]), `second step opens with an action (got "${steps[1].slice(0, 24)}…")`);
 ok(/^The Curator could not finish loading\./.test(fallback), 'fallback leads with what happened, then the action');
 
 // §1f — THE GUARD ITSELF WAS NOT WEAKENED while its copy was edited.

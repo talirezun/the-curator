@@ -1584,13 +1584,20 @@ section('21. Warning classification against the real app.js buckets');
   }
   const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
 
-  // Guard the mirror itself: if app.js's trigger list drifts, fail loudly.
-  const appSrc = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
-  const fn = appSrc.slice(appSrc.indexOf('function classifyIngestEntry'),
-                          appSrc.indexOf('function renderIngestWarnings'));
+  // Guard the mirror itself: if the frontend's trigger list drifts, fail
+  // loudly. Repointed in v3.41.0 from the deleted src/public/app.js to
+  // src/public/next/views/ingest.js, which carries the SAME
+  // classifyIngestEntry with the same trigger strings and bucket semantics
+  // (its own header says so). The mirror below is unchanged — it was always
+  // a copy of this logic, and the copy it must stay faithful to is now the
+  // one that ships.
+  const appSrc = readFileSync(path.join(ROOT, 'src/public/next/views/ingest.js'), 'utf8');
+  const fnStart = appSrc.indexOf('function classifyIngestEntry');
+  ok(fnStart !== -1, 'classifyIngestEntry located in next/views/ingest.js (a missing one would make every check below vacuous)');
+  const fn = appSrc.slice(fnStart, fnStart + 4000);
   for (const trigger of ['keeping both', "don't resolve", 'do not resolve', 'stub page', 'truncated to',
                          'briefer than the rest']) {
-    ok(fn.includes(trigger), `app.js still keys on "${trigger}" (the mirror above stays faithful)`);
+    ok(fn.includes(trigger), `next/views/ingest.js still keys on "${trigger}" (the mirror above stays faithful)`);
   }
 
   const CONCISE = 'The AI\'s first attempt at "concepts/x.md" came back unusable, so The Curator asked '

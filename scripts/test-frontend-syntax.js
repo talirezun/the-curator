@@ -110,11 +110,16 @@ section('2. Every shipped frontend .js parses');
   ok(files.length >= 15,
     `enumerated from disk, not a hardcoded list (found ${files.length} files)`);
 
-  // The two shells must both be represented, or the walk is reaching only part
-  // of what ships: /next is served at / since v3.9.0, /old is the escape hatch.
+  // The shell must be represented, or the walk is reaching only part of what
+  // ships. This used to assert BOTH shells; v3.41.0 deleted the pre-redesign
+  // one (src/public/app.js and friends), so the second assertion is replaced
+  // by its inverse rather than dropped — a file re-added there would be
+  // shipped, parsed by no gate that knows what it is, and served at the root
+  // where next/index.html's boot sentinel could be satisfied by it.
   const rel = files.map((f) => path.relative(ROOT, f));
   ok(rel.some((f) => f.startsWith('src/public/next/')), 'the /next shell is covered');
-  ok(rel.some((f) => f === 'src/public/app.js'), 'the frozen /old shell is covered');
+  ok(!rel.some((f) => f === 'src/public/app.js'),
+    'the retired pre-redesign bundle is NOT back on disk at src/public/app.js');
 
   // The specific file that shipped broken, named so a regression is unmissable.
   ok(rel.includes('src/public/next/views/settings.js'),
