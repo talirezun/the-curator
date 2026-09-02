@@ -7,7 +7,7 @@ single source of context on The Curator: every capability, what each one is *for
 scenarios it was built to serve, the honest history, and an explicit account of what it does
 **not** do. It describes capability, not implementation — there is no code in it.
 
-*Current as of **v3.40.0**. Where a number moves between releases — model prices, model
+*Current as of **v3.45.0**. Where a number moves between releases — model prices, model
 catalogues, tool counts — it is marked as a reading taken at a moment rather than a constant.*
 
 ---
@@ -80,7 +80,7 @@ belongs on.
 
 | | |
 |---|---|
-| **Shape** | A local web application. It runs a small server on your own machine and you open it in a browser at `localhost`. On a Mac there is also a downloadable desktop application that carries its own runtime and needs no Terminal. |
+| **Shape** | A local web application. It runs a small server on your own machine and you open it in a browser at `localhost`. On a Mac there is also a downloadable desktop application that carries its own runtime, needs no Terminal, and installs its own updates — since `v3.42.0` behind a **Software Update** window that shows the same five named steps and the same byte counts the Settings panel shows, with a progress bar on the Dock icon while it downloads and one notification at the moment it restarts. |
 | **Where your knowledge lives** | Plain markdown files, in a folder you chose, on your disk. There is no database, no proprietary format, and no export step — the files are already the deliverable. |
 | **How you read it outside the app** | Any text editor. Obsidian in particular renders the `[[wikilink]]` graph visually, with entities, concepts and summaries auto-coloured. |
 | **What powers the AI** | Your own API key with **Google Gemini**, **Anthropic** or **OpenRouter**. Any one of the three is enough. |
@@ -418,6 +418,8 @@ read-only mirror domain** on their own machine.
 | **What comes back** | A read-only mirror domain, readable from the app, from chat, from Obsidian and over MCP. Members cannot edit the collective directly — a direct write would neither reach anyone else nor survive the next pull. Changes always originate in your own opted-in domain. |
 | **Roles** | Exactly one **admin** per brain (who is also a contributor) and N **contributors**. The contributor path is the one almost everyone takes. |
 | **Identity and access** | Two primitives, and confusing them is the commonest setup mistake. An **invite token** carries metadata only — it is a label, safe to send over any channel, and grants nothing. Each contributor's **own GitHub access token** is their identity and the actual authentication. Access is gated by repository collaborator status, which is also what makes paid access workable with no code. A third credential, shown once, authorises revocation. |
+| **Making that token, which is the step that stops cohorts** | It must be a **fine-grained** GitHub token, and the setup step now names the two fields people get wrong. The **resource owner** must be the account or organisation that owns the cohort's repository — the wizard prints that owner's name, taken from the invite, because GitHub defaults the field to your personal account and the repository then simply does not appear in the next picker, with no error, looking exactly like a collaborator invitation that never arrived. And **expiry** is stated in plain words: GitHub's default is 30 days, on that day pushes stop with no notice from GitHub and none inside the app, so pick the longest expiry allowed and put the date in a calendar. A **Check token** button beside the field asks for the verdict on demand, and a connection card carries **Check now** for the same question later — the card never holds the token itself. |
+| **Rotating the revocation credential** | Requires the current one. There is no route that will issue you a fresh admin credential because you lost it: nothing on a member's machine distinguishes an admin from a contributor, so a route that provisioned one on request would hand any contributor the power to erase the cohort. An admin without it re-runs the brain-setup wizard. |
 | **Why per-person tokens** | One shared token would make every contribution look like the admin's, would make revoking one person mean revoking everyone, and would put the whole brain behind a single leak. |
 | **Synthesis** | Not a file merge. A model resolves conflicting formulations between contributors, drops broken cross-person links, enriches sparse pages, attributes provenance and rebuilds the collective index. The admin runs it periodically. |
 | **Attribution** | Collective pages **always** show a shortened pseudonymous identifier and **never a name**, with no setting involved. Putting your display name on your *contribution records* is a separate checkbox that is **off by default** — and it is forward-looking in both directions, so ticking it later does not retroactively name old pushes and unticking it does not remove names already published. |
@@ -427,20 +429,63 @@ read-only mirror domain** on their own machine.
 **Reach for it when** several people are reading in the same area and the reading is currently
 scattered across their laptops.
 
+**It has now been driven end to end, once, and that run is worth reading.** At `v3.43.0` two
+isolated installs — an admin and a member, each with its own folder and its own key — ran the
+whole flow against a throwaway private repository: the setup wizard, an invite, joining with a
+personal access token, pushes with cost confirms, a synthesis that turned **2 contributions into
+16 collective pages in 61 seconds**, read-only mirrors pulled on both sides carrying a short
+pseudonymous identifier and no name, and a typed erasure that removed every page and fact the
+member had contributed, visible on the member's next pull. Seventeen steps passed for under five
+cents. The eighteenth was a deliberate escalation attempt and **it succeeded**: the contributor
+minted a revocation credential and deleted the collective. That is the defect the rotation rule
+above closes, and it is recorded here rather than summarised away, because it is the strongest
+evidence there is for the difference between *tested* and *driven by a person*.
+
 **Status and stated limits.** It is an **opt-in beta**, off until you enable it, and the
 remaining gate to general availability — a structured pilot with a real cohort — has not
 started. Named limits: **there is no EU-resident deployment** — the shipped storage backend can
 reach only one API host, so every working shared brain stores its data in the United States,
 and the intended answer is a second backend that has not shipped. Deleting a page in your own
 domain does **not** remove it from the collective. Contributions accumulate; pruning is
-deferred.
+deferred. And **the "read-only member" tier is a flag the member's own copy of the app declares
+about itself**, not a permission GitHub enforces — it is what makes a free or lower tier easy to
+run, and it is an honour system, so it must never be described as an access control.
 
 ### 4.9 Provider and model choice, with cost shown as fact
 
 **What it is.** Three providers ship: **Google Gemini**, **Anthropic** and **OpenRouter**. You
-supply a key for whichever you want; saving a key makes that provider active, and the word
-*active* beside a row is always the truth. A hand-measured catalogue of models is offered, each
-row showing its price, its output ceiling and its measured behaviour.
+supply a key for whichever you want. A hand-measured catalogue of models is offered, each row
+showing its price, its output ceiling and its measured behaviour.
+
+**Saving a key no longer moves your bill, and that is a change (`v3.45.0`).** From `v2.4.2` to
+`v3.44.0` the last key you saved became the provider that built your wiki — so
+pasting a key to try one model in chat silently moved every future ingest onto a different
+vendor at a different price, chosen by nobody. The docs already called it the likeliest surprise
+in the whole screen. Now:
+
+- **The first key you connect takes the build lane**, because there is nothing to displace.
+- **Every later key save leaves the lane where it is**, and the app says so rather than doing it
+  quietly.
+- **Choosing which model builds your wiki is the only thing that moves it afterwards** — one
+  gesture, on the screen whose whole subject is that question, and it sets the provider and the
+  model together so a choice cannot land somewhere it does not govern.
+- **Disconnecting the provider that was building** hands the lane to the **cheapest measured**
+  provider you still have connected, and the response names which and why.
+
+The cost of that is one extra click for someone who pasted a key *in order to* switch — taken
+knowingly, because the silent version moved the bill without asking.
+
+**The provider screen reads as four numbered steps**, and no step is ever hidden: **1 · Connect a
+provider** (one row each, status in plain words — *Connected* or *Not connected*, never a jargon
+word in a code face); **2 · What builds your wiki** (one model, named, with three facts beside
+it — what it costs, what the measurement found, and who measured it — a sentence saying *why*
+this one is running, and a **cheapest measured** line with a one-click way to take it);
+**3 · Chat** (a statement and a readout, not a second control, because chat is chosen per message
+in the composer); **4 · All models** (collapsed: the whole catalogue with live filter counts,
+price bands, search, and a *worth testing for this job* shortlist that is a filter with a
+sentence attached and never a ranking). With no key connected, blocks 2, 3 and 4 say what they
+are waiting for rather than disappearing — a numbered flow that silently loses steps stops
+reading as a sequence.
 
 **Two jobs, not one setting.** This is the organising idea.
 
@@ -456,18 +501,56 @@ change what your next ingest costs.
 **How the catalogue is built.** Around nineteen models are hand-measured against the app's own
 real ingest prompt, nine runs each, on five criteria — price, maximum output tokens, hidden
 reasoning tokens, structured-output reliability, and how much of a document the model's outline
-actually covers. An OpenRouter key additionally reaches roughly two hundred models for **chat**,
-which are offered but marked **not measured** — explicitly *not* "bad". You can also run the
-nine-run measurement yourself against your own wiki; the confirmation leads with **time**, not
-money, because that is the binding cost.
+actually covers. An OpenRouter key additionally reaches a much larger list for **chat**, offered
+but marked **not measured** — explicitly *not* "bad". You can also run the nine-run measurement
+yourself against your own wiki; the confirmation leads with **time**, not money, because that is
+the binding cost.
+
+**How big a model has to be is now derived from what the app actually needs, per lane
+(`v3.45.0`).** There used to be one context-window threshold for everything, set by parity with a
+model the project happened to ship. It was simultaneously too high for chat and wrong for
+building, and it ejected the app's own OpenRouter safety-net model. The two lanes now carry
+their own numbers, and both are arithmetic over the app's own budgets rather than a preference:
+**chat admits anything from 32,768 tokens up**, because a chat turn's page budget, catalogue and
+answer come to roughly 26,000; **building wants 131,072**, because one outline call holds an
+80,000-character source plus the index and slug inventory — about 85,000 tokens — plus 24,576 of
+output, and 131,072 is that plus headroom. Only the chat number is a **gate**. The build number
+is a **facet**: it labels a row rather than rejecting it, because a floor for one job must never
+hide models from the other. Measured over the same pinned catalogue snapshot of **421 records**,
+the old single threshold admitted **162**; the per-lane rule admits **218** for chat, of which
+**201** can build.
+
+**A quarter of the old picker was dead rows, and they are gone.** OpenRouter publishes `:batch`
+variants of its models — identical records differing in id, name and a price about half their
+usable twin's — that answer **404 on every call this app makes**. Priced low and sorted
+cheapest-first, they had reached the top of the list. **57 of the 421** were of that kind; they
+are now refused as a class, and the count line says how many ids are hidden and why rather than
+letting the list be quietly shorter than the vendor's.
+
+**The hand-typed tables are now held to the same rules.** The models the app ships by name, and
+the fallback rungs behind them, used to bypass the filter entirely — which is how a safety-net
+model came to fail the app's own threshold with nobody noticing. Every one is now checked, and
+anything short must carry an **explicit, named exemption with its reason**. There is exactly one:
+a fallback model whose published window is **72 tokens** under the build number while clearing
+the *measured* requirement by more than twenty thousand. The disagreement is written down rather
+than resolved by lowering a derived number to fit one favourite.
+
+**And the app can now check its own catalogue against reality, for free.** A *what is new since
+we last looked* check asks each connected provider for its own list, compares it against what the
+app has a record of, and **reports — it never offers**, because adding a model requires a
+measurement, which is a human act. It counts what it suppresses rather than dropping it silently:
+on its first live run one provider listed 38 ids, of which 25 were genuinely unrecorded and 6
+were suppressed as moving aliases or speech models far under the chat floor. It also confirmed a
+real gap it was built to find — one model that is invisible through its own vendor's key while
+being reachable through OpenRouter.
 
 **What it refuses to do here** is as informative as what it does:
 
 - It **refuses to promote an unmeasured model into the build lane**, in code rather than by
   label.
 - It **refuses to offer** models with no structured-output mode, routers priced only after the
-  call, moving aliases, output ceilings or context windows below its thresholds, and models
-  retiring within a month.
+  call, moving aliases, endpoints that answer 404 on every call it makes, output ceilings or
+  context windows below its derived floors, and models retiring within a month.
 - It **refuses to change the build model mid-ingest** — a half-and-half document and wrong cost
   arithmetic are worse than waiting.
 - It **refuses to rank a "best" model**, because measurement did not support one: one model
@@ -475,7 +558,7 @@ money, because that is the binding cost.
 - It **never uses the word "verified"** about a model, because nine clean runs are still
   consistent with a meaningful failure rate.
 
-**Readings taken at v3.40.0** — these are the defaults, and they move:
+**Readings taken at v3.45.0** — these are the defaults, and they move:
 
 | Provider | Default model | Free tier | Price (per 1M tokens) |
 |---|---|---|---|
@@ -518,7 +601,7 @@ the pinned model disappears, the next one is used and the app tells you which on
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
 reads your markdown directly and **does not need the web app to be running**.
 
-**Twenty tools ship** (a reading taken at v3.40.0; the authoritative list is the server's own
+**Twenty tools ship** (a reading taken at v3.45.0; the authoritative list is the server's own
 tool registration). Twelve read; eight sit in the write block, of which **five actually change
 anything on disk**:
 
@@ -547,6 +630,13 @@ knowledge folder. Read-only Shared Brain mirrors refuse every mutating tool, whi
 scan-only ones still work. Mutating tools stand down while the app has an ingest or compile in
 flight. Every write is recorded in a local, machine-private audit log that is never synced.
 
+**And a save now tells the agent the truth about itself.** The answer to *did that save keep
+everything?* has five distinct verdicts, each with its own sentence, and the one that matters is
+the difference between *part of your handoff was not stored* and *your handoff was stored in full
+and only its one-line headline was shortened*. Until `v3.40.0` the bridge raised the same alarm
+for both — on real sessions most saves clip the headline, so most saves were telling the agent to
+throw away its context and write everything again.
+
 **One deliberate design choice worth knowing.** Retrieving the original source document behind
 a summary is framed as an *escalation*, not a first move — composing every answer from raw text
 would quietly turn the product back into the retrieval-at-query-time pattern it exists to
@@ -574,7 +664,7 @@ is why swapping shells costs nothing.
 | | |
 |---|---|
 | **No Terminal** | Download, drag to Applications, open. |
-| **Self-update** | Five named steps, with real byte counts and an honest *size unknown* rather than a bar sitting at zero. It picks the newest release that actually carries an installer, chosen by version number; verifies the download's length against the published size and its checksum against the digest GitHub publishes on the asset; then stages, and only a further click swaps. Navigating away does not cancel it — but there is also no cancel. An ingest started mid-download parks the update at *ready* rather than being truncated. |
+| **Self-update** | Five named steps, with real byte counts and an honest *size unknown* rather than a bar sitting at zero. It picks the newest release that actually carries an installer, chosen by version number; verifies the download's length against the published size and its checksum against the digest GitHub publishes on the asset; then stages, and only a further click swaps. Navigating away does not cancel it — but there is also no cancel. An ingest started mid-download parks the update at *ready* rather than being truncated. **Both doors now show the same thing.** Starting an update from the menu bar used to put its only progress in a menu item's own label — and the menu closes the moment the dialog opens, so from the user's side nothing at all happened until the app restarted. Since `v3.42.0` a **Software Update** window opens instead, reading the same job record the Settings panel reads, with a Dock progress bar and one notification at the restart. It has no buttons: it shows what is happening and starts, finishes and cancels nothing. |
 | **A native folder picker** | For pointing it at a knowledge folder you already have. |
 | **The menu bar icon** | See §6. |
 
@@ -589,10 +679,16 @@ is why swapping shells costs nothing.
   prove Apple vouches for them** — on an ad-hoc bundle, signature verification is an integrity
   check, not an authenticity one — which is why the published digest and transport security are
   load-bearing and why the app never claims Apple checked anything.
-- **No automated run has ever replaced a real installed application.** The swap is proven
-  against a real signed bundle in a test folder, and it is two renames of neighbouring folders
-  on one disk so a **half-replaced application is not a state that can exist** — either the old
-  one is complete or the new one is. But the first real update is the first real test.
+- **The whole path has now run for real, twice.** At `v3.41.0` the maintainer chose *Check for
+  Updates* on a real machine and the dialog, download, digest verification, staging, swap and
+  restart all completed, with no Gatekeeper prompt — and again on the release after it. What that
+  run also showed is the defect above: the menu-bar door was silent from the click to the
+  restart. The swap itself remains two renames of neighbouring folders on one disk, so a
+  **half-replaced application is not a state that can exist** — either the old one is complete or
+  the new one is.
+- **The Software Update window itself has still not been seen on a real machine.** The updates
+  that ran were performed by the code of the release *before* it shipped, so its first showing is
+  a future update. Nothing in it has ever run under the desktop runtime.
 - **Updating is in-app; going back is not.** There is no in-app rollback, and only releases
   that carry a download can be reinstalled by hand.
 
@@ -774,27 +870,74 @@ document is rendered in one place only.
 | | |
 |---|---|
 | **1. The headline answer** | *"Last save · 44 min ago"* — first, at full contrast, because it is the question the whole feature exists for |
-| **2. Where that save was** | the project and work-stream |
+| **2. Which tool and which model** wrote it | `claude-code · opus-4`. It used to repeat the project and work-stream, which the first row already shows a few pixels below; *which agent, and which model* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ***Save pulse*** | a section header |
-| **2b. The save pulse** | a small drawn strip covering the last seven days, plus a sentence saying what it adds up to |
+| **2b. The save pulse** | a small drawn timeline of the last seven days, plus a sentence saying what it adds up to |
 | ***Recent scopes*** | a section header |
-| **3. Up to five rows** | newest first, flat rather than grouped, each with a recency dot |
-| **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total |
-| **4. Notices, only when true** | handoffs waiting on GitHub from another computer; two agent tools colliding on one work-stream |
+| **3. Up to five rows** | newest first, flat rather than grouped, each with a recency mark and a submenu |
+| **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
+| **4. Notices, only when true** | handoffs waiting on GitHub from another computer; **another computer having saved after this one**; two agent tools colliding on one work-stream |
 | **5. Actions** | Open Agent memory · Open The Curator · Settings |
 | **6. A freshness stamp** | *"Updated 14:32"* — when the reading itself was last drawn |
 | **7. Quit** | |
 
-**How to read a row.** `project · work-stream — who · when`, and underneath, the agent's own
-one-line summary of what it did. The `who` column does double duty on purpose: for a save from
-**this** computer it shows the **agent tool** (`claude-code`, `opencode`, `cursor`), because
-the machine name would be identical on every row and tell you nothing; for a save from
-**another** computer it shows the **machine**, because that is the news.
+### How to read a row — and why it was rebuilt
+
+Every row is two lines. **Line one is `work-stream · when`, and nothing else is ever allowed onto
+it.** Line two carries who wrote it, then the agent's own one-line summary of what it did.
+
+**That ordering is a fix, and the fix came from a photograph.** The maintainer sent a screenshot
+of the shipped widget in which rows read `project… — alices-macbook-pro·9f3c · 18 hr ago`: the
+work-stream name — the one informative word, the thing you opened the menu to read — had been cut
+to eight characters, while a twenty-two-character computer name survived whole. Everything after
+the identity had been composed at full length first and the identity got the remainder. Measured
+over the same rows, the widest line came down from **46 characters to 35**, and no work-stream
+name is cut at all.
+
+Line two can carry up to six things and each appears **only while it distinguishes something** —
+the tool unless every visible row shows the same one, the computer only on a row from elsewhere,
+the project only when more than one project has state, the model unless they all used the same
+one, plus two that are never dropped because both are warnings about whether context survived:
+*handoff trimmed*, and the handover mark showing the baton passing from one tool to another. When
+even line two will not hold everything, tokens are dropped **whole, lowest priority first**,
+because `son…` is not a shorter `sonnet-4`, it is a different word. **Nothing a cut removed
+becomes unreachable:** hover the row and you get all of it.
+
+*Handoff trimmed* appears for exactly one of the five save verdicts — the one where part of the
+handoff was genuinely not stored. A save whose one-line summary was shortened while the handoff
+itself was written in full is **silent here**, because reporting those two with one alarm is the
+defect the memory layer spent a release removing.
 
 The `when` column says which clock it came from: a plain *"4 min ago"* is the agent's own
 recorded time; *"changed 4 min ago"* is the file's timestamp on this disk (which, for a handoff
 that arrived over sync, is when it landed rather than when it was written); *"time unknown"* is
-its own answer and is never shown as *"just now"*.
+its own answer, is never shown as *"just now"*, and sorts to the bottom rather than the top.
+
+**One laptop counts as one computer even when your Mac has renamed itself.** macOS re-derives a
+hostname from the network, so a machine that has moved between Wi-Fi networks can leave two
+folders on disk that are the same computer. Rows are matched on the **installation** identity as
+well as the name, so those collapse into one instead of inventing hardware you do not own — and
+when two rows would otherwise read identically, their ages are shown more finely (*34 hr* and
+*36 hr* rather than two rows both saying *1 day*) instead of falling back to raw folder names.
+
+### What a row can do
+
+Each row has a **submenu** with four items — **Open in The Curator**, **Copy resume prompt**,
+**Copy handoff as Markdown**, and **Reveal current.md in Finder**.
+
+The two Copy items exist because a menu cannot open a work-stream: clicking a row lands on the
+*project*, and the work-stream picker inside the app has no address a menu can dial. The
+clipboard is the route the menu does have, and it is usually the more useful one, because what
+you want at that moment is to hand the work-stream to an agent rather than to look at it. They
+serve two different agents: the **resume prompt** is a short instruction for an agent that can
+reach your knowledge itself, naming the project, the work-stream, the bridge tool to call and the
+file path to fall back on; the **handoff as Markdown** is the documents themselves, for an
+assistant that can reach neither. It is deliberately not capped a second time — the store already
+bounds what it holds, and a smaller cap here would quietly cut a document you asked for in full.
+Both say, in the same words, which half you are meant to obey: the handoff is recorded data to
+verify, the standing brief is your own instruction and is followed. And the handoff is read
+through the store rather than off the disk, so the same escaping that protects a handoff arriving
+over sync also protects a paste.
 
 ### The colours encode recency — not quality
 
@@ -802,30 +945,39 @@ its own answer and is never shown as *"just now"*.
 old.** Nothing in the widget ranks a green row above a grey one, and nothing treats a quiet
 week as a bad week.
 
+**It is a clock draining**, and each mark sits inside a faint ring — the clock's face, the whole
+that the filled part is a fraction *of*.
+
 | Mark | Colour | It means |
 |---|---|---|
-| ● filled disc | green | Being written right now — within the last 2 minutes |
-| ◯ large ring | green | Saved within the last half hour |
-| ◦ medium ring | amber | Saved earlier today — half an hour to 12 hours ago |
-| · small ring | grey | Saved in the last week |
-| ▪ tiny filled dot | grey | Older than a week |
+| ● a full disc | teal | Being written right now — within the last 2 minutes |
+| ◕ three quarters filled | teal | Saved within the last half hour |
+| ◑ half filled | amber | Saved earlier today — half an hour to 12 hours ago |
+| ◔ a quarter filled | grey | Saved in the last week |
+| ◉ empty, with a small centre dot | grey | Older than a week |
 | *(nothing)* | — | No save time is known for this work-stream |
 
-**Five marks, three colours, on purpose.** Green covers both *right now* and *the last half
-hour*, because a menu opened by hand essentially never lands inside the two-minute live window
-— a green reserved for that alone would spend the strongest colour in the set on the state you
-never see. Half an hour is the point at which a handoff stops being in your head, which is what
-the colour is actually being asked about. At the other end, three days ago and three weeks ago
-call for the same thing from you, so a third shade between them would be a distinction with no
-consequence.
+**The draining clock replaced a disc and three rings** that differed by half a point of radius —
+**one screen pixel** between three of the five states, a ladder that existed in the arithmetic
+and not on the screen. A quarter of a circle is a difference you can see in a thumbnail. The ring
+around each mark came straight out of the first photograph of the menu, in which a quarter with
+nothing around it did not read as a quarter of anything; it read as a sliver.
 
-**Colour is never the only signal.** Green and amber are the classic hard pair for the
-commonest kinds of colour vision deficiency, so the five marks are also a strictly decreasing
-ladder of *how much ink is on the screen*, and the one state that changes what you do next —
-something is being written **right now** — is the only large filled disc. The whole ladder
-reads with the colour removed, and the exact age is printed in words on the same row. Every
-colour that ships is checked against a contrast floor for non-text indicators rather than being
-eyeballed.
+**Five marks, three colours, on purpose.** The strongest colour covers both *right now* and *the
+last half hour*, because a menu opened by hand essentially never lands inside the two-minute live
+window — a colour reserved for that alone would spend the strongest ink in the set on the state
+you never see. Half an hour is the point at which a handoff stops being in your head, which is
+what the colour is actually being asked about. At the other end, three days ago and three weeks
+ago call for the same thing from you, so a third shade between them would be a distinction with
+no consequence.
+
+**Colour is never the only signal.** Teal and amber are the classic hard pair for the commonest
+kinds of colour vision deficiency, so the five marks are also a strictly decreasing ladder of
+*how much ink is on the screen* — **78, 61, 44, 27 and 22 square points** — and the one state
+that changes what you do next, something is being written **right now**, is the only complete
+disc. The whole ladder reads with the colour removed, which is exactly how the automated checks
+read it, and the exact age is printed in words on the same row. Every colour that ships is
+checked against a contrast floor for non-text indicators rather than being eyeballed.
 
 **A row with no known save time gets no mark at all.** *We do not know when this was saved* and
 *this was saved a long time ago* are different claims, and drawing the second when only the
@@ -833,26 +985,45 @@ first is true would be inventing a fact.
 
 ### The save pulse — and what it is not
 
-One drawn strip of **14 marks, one per twelve hours, covering the last seven days**, oldest on
-the left, with a sentence beside it.
+One drawn strip covering **the last seven days at twelve hours per cell**, oldest on the left,
+with a sentence beside it. It is a **timeline**, not a row of blobs, and that is what makes it
+readable.
 
 | Mark | What it means |
 |---|---|
-| A tall green bar | Saves landed in that twelve-hour block; darker green means more saves |
-| A low grey stub | That twelve hours **existed and nothing was saved** — a quiet evening |
-| A grey hairline on the baseline | **Your store did not exist yet** — not "quiet", *unknown* |
+| A **solid baseline** running the width | Your store **existed** for that stretch |
+| A **dotted baseline** | Your store **did not exist yet** — not "quiet", *unknown* |
+| A **violet bar** standing on the baseline | Saves landed in that twelve hours. **The taller the bar, the more saves** — the ladder is 1, 2–3, 4–6, 7–12, 13 or more |
+| An **amber cap** on a bar | **A different agent tool took over** inside that twelve hours — the one mark that answers *did the baton get passed cleanly* |
+
+Below the baseline there is one tick per day, with today's drawn double width so the last day is
+findable without counting. And the sentence gains **`· N tools`** only when more than one agent
+tool wrote inside the week — one tool is silent because it distinguishes nothing, and *zero* is
+silent because it is an absence rather than a measurement of none.
+
+**Putting the count in the height is a reversal, and it is worth saying why.** The previous strip
+refused to, on the ground that a rising and falling column reads as a productivity graph. That
+ground is real and it still holds — but the version that shipped put the identical number into a
+five-step **colour ramp** instead, which at three points wide is illegible, and which saturated
+at five saves while real twelve-hour cells hold three to eighteen. The result was a solid green
+fence in the maintainer's photograph: every active cell the same. The count is now drawn where it
+can be read, and the productivity misreading is defeated by **structure** rather than by refusal
+— the baseline and the day ticks make the picture a timeline, and the label says *saves* and
+never *activity* or *progress*.
 
 *Nothing happened* and *we have no idea* are opposite claims, and drawing them the same way
-would be lying about half the strip. The sentence beside it never claims more than the picture
-supports: *"7 days · 41 saves"* means a full week was covered; *"4 days known · 41 saves"* means
-your store is younger than the window; *"at least 41 saves"* means one journal held more history
-than could be read and the number is a floor; *"nothing recorded yet"* is deliberately not
-worded as an empty week.
+would be lying about half the strip — which is not an edge case, since a store three days old
+spends half its width on "did not exist yet". The difference is **solid versus dotted**, a
+texture rather than a shade, drawn in the same ink so it survives being read with no colour at
+all. The sentence beside it never claims more than the picture supports: *"7 days · 41 saves"*
+means a full week was covered; *"4 days known · 41 saves"* means your store is younger than the
+window; *"at least 41 saves"* means one journal held more history than could be read and the
+number is a floor; *"nothing recorded yet"* is deliberately not worded as an empty week.
 
-> **What the darkness is NOT.** It measures **how often your agents check in**. It is not a
+> **What the height is NOT.** It measures **how often your agents check in**. It is not a
 > measure of how much they got done and must never be read as one. An agent told to save early
 > and often — which is exactly what The Curator's own continuity instructions ask for —
-> produces far more marks than one told to save twice at the end. A dark bar means a different
+> produces far more marks than one told to save twice at the end. A tall bar means a different
 > **capture habit**, not a better day's work. That is why the label says *saves* and never
 > *activity* or *progress*.
 
@@ -878,12 +1049,23 @@ rejected.
 ### What is not proven about it
 
 The project is explicit here rather than quiet. The row model, the menu template, the mode
-transitions, the strip's artwork and the dots' geometry are all produced and checked by
-executing the real code, and the finished build has been driven through the real macOS
-menu-building interface — but **nobody has yet photographed the finished menu**, and several
-rendering assumptions (how macOS tints the icon, whether section headers draw as headers on
-older macOS versions, whether the hover event fires) remain unproven. Treat the first launch
-with it enabled as the first real look.
+transitions, the strip's artwork and the marks' geometry are all produced and checked by
+executing the real code — and **the menu has now been photographed once**, in light appearance,
+on 2026-09-02, by putting the real thing in a real menu bar. That settled a great deal: the
+section headers draw, the small second line under each row draws, the submenu arrow draws, the
+colour images are drawn as authored, and the menu measures **363.5 points wide**.
+
+It also found three defects that nothing but looking could have found — a pulse reading cut short
+by a width budget that had never subtracted the menu's own fixed chrome, a quarter mark that read
+as a sliver, and a width model wrong by 78 points. All three are fixed, and **the corrected menu
+has not been photographed again**: three later attempts returned black frames with no error. So
+the fixes are proven by decoded pixels and arithmetic rather than by a second picture.
+
+Still unseen: the **dark** palette, the empty-store menu, the truncation states, how the menu bar
+icon is tinted, whether the hover tooltip fires, whether the section headers degrade gracefully
+on macOS 13, and whether **Copy** actually lands on the clipboard while the menu is dismissing —
+the row submenus have never been opened by a person. Treat your first launch with it enabled as a
+real test.
 
 Also: **"On, hide the Dock icon" does not currently hide the Dock icon.** The setting is
 accepted and remembered and behaves as plain *on*, because the system call that hides it has a
@@ -1007,9 +1189,12 @@ boundary — and an erasure path that actually erases.
 *A user has been building their wiki on one provider and wants to move to another — for cost,
 for capability, or because a model was retired underneath them.*
 
-They paste the new provider's key in Settings; saving it makes that provider active. The wiki
-does not care which model wrote which page — the pages are markdown, and the next ingest merges
-into them exactly as before. Chat is a separate lane with its own per-conversation model
+They paste the new provider's key in Settings, and then — this is the second step, and since
+`v3.45.0` it is a step rather than a side effect — they pick that provider's model under *What
+builds your wiki*. Saving the key alone connects it and leaves the build lane, and the bill,
+where they were; on a fresh install with no provider yet, the first key takes the lane by itself.
+The wiki does not care which model wrote which page — the pages are markdown, and the next ingest
+merges into them exactly as before. Chat is a separate lane with its own per-message model
 choice, so switching the wiki-building provider does not change what answers a chat message,
 and every answer names the model that produced it.
 
@@ -1042,6 +1227,12 @@ durable reference.
 | **The Mac application** | `v3.30.0`–`v3.31.0` | A packaged desktop app: a real signature class, a correct version identity, and a route for an existing user to reach their existing wiki. |
 | **Self-update** | `v3.33.0` | The app downloads, verifies and installs its own updates. |
 | **The menu bar icon** | `v3.35.0`–`v3.38.0` | A reader over the memory layer in the menu bar, then the redesign that turned it from a list into a widget. |
+| **A review, and its correctness half** | `v3.40.0` | Seven read-only audits folded into one report, then the defects that could lose or mislead: a cross-process lock that never excluded anything, a bridge cache that could not invalidate, and a save response that raised a false alarm about lost content. |
+| **The old interface retired** | `v3.41.0` | The pre-redesign shell was deleted thirty releases after "two to three", and taking it out found that 29 test guards had been certifying a page nobody was served. |
+| **The widget redesigned from a photograph** | `v3.42.0` | Rows led by the work-stream, a drained-clock recency mark, a timeline pulse, a submenu per row — plus a face for the updater, and the discovery that a quarter of the model picker was ids that answer 404. |
+| **Shared Brain driven end to end** | `v3.43.0` | The first human-shaped run of the collective layer, in which a contributor erased the admin in two clicks — and the data-loss paths no fixture could see. |
+| **The Mac look** | `v3.44.0` | Phase 1 of the native design pass: gloss, materials, a real switch, and four contrast defects that only rendering the thing could find. |
+| **The provider page as a page** | `v3.45.0` | Four numbered steps a first-time user can read top to bottom, context floors derived from what the app actually needs rather than from parity, and the end of a key save silently moving your bill. |
 
 Two things are worth saying about *how* it got here, because they explain the product's
 character. First, **most of the recent work came from the maintainer using it for real and
@@ -1058,6 +1249,7 @@ models and a wrong sentence changes what an agent tells a user.
 | **Chat modes *Dictate* and *Curate*** | Designed in full, **never built**. The chat ships *Discover* (ask) and *Compile* (write) only. |
 | **Automatic sync** | Researched, **not built**. Every sync operation happens because a human clicked something. The research concluded that automatic *push* is structurally incapable of destroying a local file while automatic *pull* is not, so the recommendation is opt-in push with pull left as a decision. |
 | **The menu bar popover panel** | The menu bar icon's Phase 1 — the icon and its native menu — shipped. The richer rendered panel is designed and **not built**. |
+| **A save-pulse lane per agent tool** | Designed and **not built** — it would answer *are these two tools taking turns?*, and a menu has nowhere to draw five legible lanes. |
 | **Hiding the Dock icon** | The setting is recognised and remembered, but currently behaves the same as plain *on*. |
 | **Local models** | The provider row exists in Settings and is marked unavailable. |
 | **Cross-domain wikilinks** | Not supported. Domains are siloed on disk; cross-domain reasoning happens at read time. |
@@ -1094,6 +1286,21 @@ is refused. **No web fetching**: a source recorded as a URL is stored as text an
 retrieved. And there is a per-source input cap, so a very long document is truncated with a
 visible warning rather than silently half-read. There is also no list anywhere in the app of
 files you previously ingested.
+
+**It does not rank models, and it will not tell you which is best.**
+Rows carry price, output ceiling, context window and what the measurement found; the one
+comparative label anywhere is *cheapest measured*, which is a fact. There is no *best*, no
+*recommended* and no star rating, because the measurement did not support one — a model that
+passed every structural check and was fast returned nothing usable in nine runs. Even the
+shortlist of models *worth testing for this job* is a filter with a sentence attached, composed
+only from facts already on the row. And the word *verified* is never used about a model, because
+nine clean runs are still consistent with a meaningful failure rate.
+
+**A chat inside a read-only Shared Brain mirror is not saved.**
+You can ask a collective mirror questions — that is much of what a mirror is for — but the thread
+lives only in memory for as long as the app is running, and the answer says so. Persisting it
+would write into a folder the next pull overwrites, and refusing to answer at all would remove
+the capability the mirror exists for.
 
 **It has no undo.**
 Not for a Health merge, not for deleting a domain, not for anything else. The recovery route is
@@ -1181,4 +1388,5 @@ seen working end to end" as different claims wherever the docs distinguish them.
 | How ingest works, stage by stage | [ingestion-pipeline.md](ingestion-pipeline.md) |
 | System design | [architecture.md](architecture.md) · [api-reference.md](api-reference.md) |
 | What is designed but not built | [roadmap-chat-modes.md](roadmap-chat-modes.md) · [roadmap-automatic-sync.md](roadmap-automatic-sync.md) · [roadmap-menubar-widget.md](roadmap-menubar-widget.md) |
+| An outside reading of the whole project, with its defects named | [audits/2026-09-02-six-area-review.md](audits/2026-09-02-six-area-review.md) — the current audit of record: framework, features, native Mac interface, skills, documentation and README, plus the plan taken from it |
 | Why the code is shaped the way it is | [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) |
