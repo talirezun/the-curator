@@ -926,6 +926,96 @@ section('12. renderBackgroundMode is EXECUTED, not scanned');
     'control: the three states render three DIFFERENT strings — the driver is executing the function, not returning a constant');
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+section('13. Segmented track — LIGHT gets a hairline, DARK is untouched');
+// ══════════════════════════════════════════════════════════════════════════
+{
+  // ── THE MAINTAINER'S REPORT, VERBATIM ────────────────────────────────────
+  // A screenshot of Settings -> General in light mode: the Appearance and
+  // Text size segmented controls "look strange in light mode; in dark the
+  // border around the buttons is not so visible, but in light the border
+  // looks like a mistake." v3.44.0 shipped ONE recipe for `.theme-segmented`
+  // in both themes — a --control-edge-quiet border plus --gloss-well-quiet's
+  // inset shadow — and only light complained, because AppKit's own
+  // NSSegmentedControl shows a barely-there tinted fill with no drawn
+  // outline in light, and a genuine well in dark.
+
+  // RAW (unresolved) values, not the alias chain — an identity check on
+  // WHICH token is aliased, not on what it eventually paints. `resolve()`
+  // would walk past --control-edge-quiet straight to a hex and could not
+  // tell the fixed recipe from the reverted one.
+  ok(D['--seg-track-edge'] === 'var(--control-edge-quiet)',
+    `DARK --seg-track-edge is UNCHANGED, still --control-edge-quiet (got ${D['--seg-track-edge']})`);
+  ok(D['--seg-track-inset'] === 'var(--gloss-well-quiet)',
+    `DARK --seg-track-inset is UNCHANGED, still --gloss-well-quiet (got ${D['--seg-track-inset']})`);
+  ok(L['--seg-track-edge'] === 'var(--hairline)',
+    `LIGHT --seg-track-edge is the hairline token, not --control-edge-quiet (got ${L['--seg-track-edge']})`);
+
+  // THE MUTATION NAMED IN THE FIX: reverting light back to the shared
+  // --control-edge-quiet border is exactly the regression the maintainer
+  // reported, and it is caught by the identity check above alone — no
+  // colour arithmetic needed to see that a track has gone back to boxed.
+
+  // The inset well-shadow softened WITH the border, and stayed the specific
+  // number the fix ships (<= 0.06 alpha) — quieter than the generic
+  // --gloss-well-quiet's own light value (0.09), which was tuned for the
+  // same near-black well dark uses.
+  const insetLDecl = L['--seg-track-inset'] || '';
+  const insetLAlpha = (insetLDecl.match(/rgba\([^)]*,\s*([\d.]+)\)/) || [])[1];
+  ok(insetLAlpha !== undefined && +insetLAlpha <= 0.06,
+    `LIGHT --seg-track-inset alpha is <= 0.06 (got ${insetLAlpha} from "${insetLDecl}")`);
+  ok(/rgba\(16,\s*16,\s*26,/.test(insetLDecl),
+    'and it uses the ink tint (16,16,26) every other light shadow in this file uses, not a new hue');
+
+  // ── THE 3:1 FLOOR, RECOMPUTED RATHER THAN ASSUMED ────────────────────────
+  // Neither theme's TRACK edge carries WCAG 1.4.11 on its own — verified
+  // below as the control, not skipped. The track edge is deliberately
+  // SHAPING (material.css's own words for --control-edge-quiet), because
+  // identification is carried by the SELECTED CHIP's shape instead: a
+  // raised --surface-raised fill lifted out of the well by --elev-1 and
+  // lit by --gloss-specular-quiet — the same "lit edge, not a drawn line"
+  // argument Section 6 makes for the specular, and how a real
+  // NSSegmentedControl reads too (a pill, not a flat colour step).
+  //
+  // What DOES need to clear the floor is that the design system still HAS
+  // an identification-grade token available for this pairing — the one
+  // Section 5 already proves clears 3:1 against --surface-raised, --canvas,
+  // --surface and --surface-hover — extended here to the track's own fill
+  // (--surface-sunken), in BOTH themes, so a future drawn boundary on the
+  // selected chip has a token ready that is provably compliant rather than
+  // guessed at.
+  const chipD = C(D, '--control-edge', '--surface-sunken');
+  const chipL = C(L, '--control-edge', '--surface-sunken');
+  ok(chipD >= NONTEXT_FLOOR, `dark: --control-edge vs --surface-sunken (the track fill) is ${chipD}:1 >= 3`);
+  ok(chipL >= NONTEXT_FLOOR, `light: --control-edge vs --surface-sunken (the track fill) is ${chipL}:1 >= 3`);
+
+  // Control, so the floor above cannot pass vacuously: the SHAPING edges
+  // this control actually draws (--seg-track-edge, resolved) do NOT clear
+  // it against the track's own fill — which is exactly why the recipe does
+  // not lean on them for identification, in either theme.
+  const quietD = C(D, '--seg-track-edge', '--surface-sunken');
+  const quietL = C(L, '--seg-track-edge', '--surface-sunken');
+  ok(quietD < NONTEXT_FLOOR && quietL < NONTEXT_FLOOR,
+    `control: the edges actually drawn measure ${quietD}:1 dark / ${quietL}:1 light against the track fill — under the floor, which is why the chip's shape carries identification, not the track's border`);
+
+  // ── INCREASE CONTRAST STILL REACHES THE LIGHT TRACK ──────────────────────
+  // --hairline is not itself boosted under prefers-contrast:more (it stays
+  // a decorative in-surface separator everywhere else it is used), so
+  // --seg-track-edge needed its OWN override there for light — dark needs
+  // none because it already aliases --control-edge-quiet, which the query
+  // already boosts. Read from the comment-stripped but @media-INTACT text
+  // — `materialClean` has every @media block DROPPED (that is what makes it
+  // safe to feed to parseTokenBlock for D/L), so it can never see this —
+  // or a deleted override would silently vanish rather than reding this.
+  const materialWithMedia = stripComments(materialCss);
+  const contrastAt = materialWithMedia.indexOf('@media (prefers-contrast: more)');
+  const contrastEnd = materialWithMedia.indexOf('@media (min-resolution', contrastAt);
+  const contrastMore = contrastAt < 0 ? '' : materialWithMedia.slice(contrastAt, contrastEnd < 0 ? undefined : contrastEnd);
+  const lightContrastBlock = contrastMore.slice(contrastMore.indexOf('[data-theme="light"]'));
+  ok(/--seg-track-edge:\s*var\(--control-edge-quiet\)/.test(lightContrastBlock),
+    'prefers-contrast:more re-points LIGHT --seg-track-edge at the now-boosted --control-edge-quiet, so Increase Contrast still hardens the track edge');
+}
+
 function walkCss(dir) {
   const out = [];
   for (const d of readdirSync(dir, { withFileTypes: true })) {
