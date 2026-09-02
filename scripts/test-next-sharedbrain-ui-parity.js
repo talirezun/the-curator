@@ -170,7 +170,37 @@ const sharedBox = new Function(
   `return { ${SHARED_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
 )();
 
+/** Brace-free sibling of extractFunction: lifts a top-level `const NAME = …;`
+ *  out of live source. Needed because panelStep3() now interpolates a real
+ *  constant (the PAT expiry warning), and a sandbox that redeclared it here
+ *  would be asserting against a copy of the copy — the exact shape this file
+ *  already refuses for functions. Scans with string/bracket awareness so a
+ *  ';' inside a quoted sentence cannot end the declaration early. */
+function extractConst(src, name, where) {
+  const m = new RegExp(`(?:^|\\n)const ${name}\\s*=`).exec(src);
+  if (!m) throw new Error(`extractConst: "${name}" not found in ${where}`);
+  const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+  let i = src.indexOf('=', start) + 1;
+  let depth = 0, quote = null;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ';' && depth === 0) { i++; break; }
+  }
+  const out = src.slice(start, i);
+  if (!out.endsWith(';')) throw new Error(`extractConst: "${name}" did not terminate in ${where}`);
+  return out;
+}
+
 // wizardShellHtml() composes every panel builder, so all of them are loaded.
+const WIZ_CONSTS = ['PAT_EXPIRY_WARNING'];
 const WIZ_FNS = [
   'freshState', 'isReadOnlyVerdict', 'wizardShellHtml',
   'panelStep1', 'panelStep2', 'panelStep3', 'panelStep4', 'panelStep5',
@@ -180,6 +210,7 @@ const wizBox = new Function(
   'let state = {};\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
+  WIZ_CONSTS.map((n) => extractConst(wizard, n, 'shared-brain-wizard.js')).join('\n') + '\n' +
   WIZ_FNS.map((n) => extractFunction(wizard, n, 'shared-brain-wizard.js')).join('\n\n') + '\n' +
   `return { ${WIZ_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
 )();
@@ -294,7 +325,14 @@ section('2. Phase 3 — the fifteen properties of the second deleted block');
   // `state.cards[id]` and resolves the DOM by ATTRIBUTE at write time.
   ok(/state\.cards/.test(sharedCode) && /function ensureCard\(/.test(sharedCode),
     'shared: there is a per-connection record store, keyed by connection id');
-  const reveal = bodyOf(sharedCode, 'revealRevokeOutcome');
+  // revealRevokeOutcome() now delegates to revealInCard(), which the
+  // shown-once admin-token reveal shares — so the property lives one hop
+  // down and is asserted THERE, plus the delegation itself. Asserting only
+  // the wrapper would go green on a wrapper that had stopped resolving by
+  // attribute at all.
+  ok(/revealInCard\(connId/.test(bodyOf(sharedCode, 'revealRevokeOutcome')),
+    'shared: the revoke reveal goes through the shared card-scoped lookup');
+  const reveal = bodyOf(sharedCode, 'revealInCard');
   ok(/data-conn-id="' \+ connId/.test(reveal) || /data-conn-id/.test(reveal),
     '…and the DOM is resolved by data-conn-id at write time, not from a captured node');
   ok(/document\.querySelector/.test(reveal),
@@ -375,8 +413,16 @@ section('2. Phase 3 — the fifteen properties of the second deleted block');
   ok(/Escape/.test(keydown), 'wizard: Escape is handled');
   ok(/Tab/.test(keydown) && /shiftKey/.test(keydown),
     '…and Tab/Shift-Tab are trapped');
-  ok(/isSaveBlocking\(\)/.test(keydown),
-    '…with Escape refused mid-save, so it cannot imply a cancellation that did not happen');
+  // The property is unchanged; the shape is not. Escape now asks
+  // requestDismiss(), which asks dismissDecision() with isSaveBlocking() as
+  // its saveInProgress arm — one function answers for Escape, the scrim, the
+  // Close (x) and both Cancels, so the four cannot disagree. Both hops are
+  // pinned, because asserting only the first would go green on a
+  // requestDismiss() that had quietly stopped consulting the save flag.
+  ok(/requestDismiss\(\)/.test(keydown),
+    '…with Escape routed through the single dismiss chokepoint rather than closing directly');
+  ok(/isSaveBlocking\(\)/.test(bodyOf(wizardCode, 'requestDismiss')),
+    '…and that chokepoint refuses mid-save, so Escape cannot imply a cancellation that did not happen');
   ok(/aria-current', 'step'/.test(goToStep) || /aria-current["']?, ?["']step/.test(goToStep),
     'wizard: the active progress pip carries aria-current="step"');
 

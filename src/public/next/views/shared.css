@@ -376,6 +376,30 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-admin-block-danger { border-color: var(--danger); }
 
 .sb-admin-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+
+/* The stored-token check. Its verdict has FOUR states and only one of them
+   is good news; two are amber because they are honestly inconclusive, and
+   the failure is the danger role because an expired token means this
+   connection has silently stopped working. */
+.sb-token-check { margin-bottom: var(--space-6); }
+.sb-token-check-verdict {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+  color: var(--text-2);
+}
+/* The words stay --text and the tone goes on the border and the fill —
+   --success-text measures 4.05 on --surface and 3.59 on its own tint in the
+   light theme, both under the 4.5 AA floor. That is a known, reported gap
+   (test-next-contrast-ratchet §8 counts every declaration that paints it as
+   text and refuses a new one), and this is the fix that suite names. */
+.sb-token-check-ok { color: var(--text); border-color: var(--success-text); background: var(--success-tint); }
+.sb-token-check-rejected { color: var(--danger-text); border-color: var(--danger-text); background: var(--danger-tint); }
+.sb-token-check-unknown { color: var(--text); border-color: var(--attention-text); background: var(--attention-tint); }
 .sb-admin-row-text { flex: 1; min-width: 220px; }
 .sb-admin-row-title {
   font-size: var(--text-sm);
@@ -751,6 +775,39 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-title { margin: 0 0 4px; font: var(--type-h2); color: var(--text); }
 .sbw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 
+/* "Step 3 of 5". The pip row shows position only to someone already
+   counting pips, and reads as nothing at all to a screen reader; this is
+   the same fact in words. --text-2 rather than --text-3: it is a wayfinding
+   fact, not a footnote. */
+.sbw-stepcount {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The discard guard ───────────────────────────────────────────────────
+   Raised by a dismiss gesture on a wizard the user has typed into. Amber,
+   not red: nothing has gone wrong and nothing is destroyed yet — it is the
+   attention role, which is exactly what --attention-* is for. It is chrome
+   above the panels, so it takes the same inset fill the status boxes do. */
+.sbw-discard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-8);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--attention-text);
+  border-radius: var(--radius-md);
+  background: var(--attention-tint);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.sbw-discard.sbw-hidden { display: none; }
+.sbw-discard-actions { display: flex; gap: var(--space-4); margin-left: auto; }
+
 /* ── Progress pips ────────────────────────────────────────────────────── */
 
 .sbw-progress {
@@ -804,7 +861,17 @@ a.sb-card-repo:hover { color: var(--text-link); }
    unchanged on screen; only the name it reaches for moved. */
 .sbw-panel { animation: curator-panel-in var(--dur-mid) var(--ease-out); }
 .sbw-panel.sbw-hidden { display: none; }
-.sbw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
+.sbw-panel h3 { margin: 0 0 var(--space-4); font: var(--type-h3); color: var(--text); }
+/* THE FOCUS RING ON A HEADING IS NOISE, and it was photographed as such on
+   step 2 of the admin wizard. goToStep() moves focus to the active panel's
+   <h3> on every step change — a tabindex="-1" announcement target, not
+   something anyone tabs to or operates — and Chrome's :focus-visible
+   heuristic paints it after a keyboard-driven Continue. Every control on
+   the panel keeps its own ring (see .sbw-input:focus and shell.css's
+   .btn); this suppresses the indicator only where there is nothing to
+   indicate. views/mcp-wizard.css makes the same exception for the same
+   element. */
+.sbw-panel h3:focus, .sbw-panel h3:focus-visible { outline: none; box-shadow: none; }
 @media (prefers-reduced-motion: reduce) {
   .sbw-panel { animation: none; }
 }
@@ -842,8 +909,12 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-size: var(--text-md);
 }
 .sbw-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
-.sbw-input-row { display: flex; align-items: center; gap: 8px; }
-.sbw-input-row .sbw-input { flex: 1; }
+.sbw-input-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+/* The field takes the slack; the toggle and Check token keep their own
+   width. `min-width` is what stops a three-control row from squeezing the
+   input to nothing before the row wraps. */
+.sbw-input-row .sbw-input { flex: 1 1 200px; min-width: 0; }
+.sbw-input-row .btn { flex: none; }
 .sbw-toggle-vis { width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center; padding: 0; }
 
 /* The box inside these labels is shared/checkbox.css's `.cur-check`; this
