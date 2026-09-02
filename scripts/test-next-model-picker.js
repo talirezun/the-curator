@@ -291,6 +291,10 @@ import {
   // literal would assert the fixture agrees with the fixture.
   setOpenRouterCatalogue,
   listOfferableModels,
+  // §48 (R7) drives "a DEFAULTS bump changes the sentence" from the REAL
+  // resolver rather than from a literal id, so bumping DEFAULTS.openrouter
+  // moves the assertion instead of leaving it describing a retired model.
+  getDefaultModel,
 } from '../src/brain/llm.js';
 // §39 mints its fetched-entry NOTE through the SHIPPING record-to-spec
 // function rather than typing one. The note is the thing under test — the
@@ -512,7 +516,13 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_RE
   // The confirm panel's id, for the same reason: §45 asserts the panel is
   // addressable so revealInMain can scroll to it, and a literal copied here
   // would keep that green after the module renamed it.
-  'QUALIFY_CONFIRM_ID'];
+  'QUALIFY_CONFIRM_ID',
+  // The measured per-model call-latency baseline renderQualification quotes.
+  // EXTRACTED, never re-declared here: §R7 asserts that the sentence follows
+  // the id `getDefaultModel(provider)` resolved to, and a local copy of the
+  // table would keep that green after the module changed a value or dropped
+  // the model the app actually ships.
+  'MEASURED_CALL_SECONDS'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -541,6 +551,10 @@ const RENDER_FN_NAMES = [
   // than crash — the v3.14.0 detector doing its job. formatDuration is the
   // helper renderQualification and renderQualifyPanel both call.
   'formatDuration', 'renderQualification', 'renderQualifyPanel',
+  // The own-property lookup renderQualification uses to find a baseline latency.
+  // Extracted rather than stubbed: its REFUSAL to resolve `constructor` through
+  // the prototype chain is one of the things §R7 drives.
+  'measuredCallSeconds',
   // v3.15.0. renderModelPicker DELEGATES to this when a keyed provider's
   // catalogue is empty — the OpenRouter state for this release. Omitting it
   // is what made this suite CRASH with a ReferenceError instead of failing;
@@ -811,6 +825,11 @@ const {
   buildModelFacts, inertPins, buildCandidates, chatModelCount,
   renderBuildCurrent, renderBuildList, renderBuildBlock, renderChatBlock,
   BUILD_PICK_ERROR_ID, QUALIFY_CONFIRM_ID, buildPickButtonId,
+  // ── The 2026-09-02 router-audit fixes (§48) ──────────────────────────────
+  // Both pulled from the sandbox rather than re-declared: MEASURED_CALL_SECONDS
+  // is the table whose VALUES the assertions quote, so a local copy would keep
+  // §48 green after the module changed one.
+  renderQualification, MEASURED_CALL_SECONDS, measuredCallSeconds,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -6757,6 +6776,271 @@ section('§45  THE LANE FOLD SURVIVES A REPAINT — a confirm inside a collapsed
 
   stubState.modelLaneOpen = {};
   stubState.qualify = null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§48  Three claims the picker was making that were not true');
+// ═════════════════════════════════════════════════════════════════════════
+// R4, R6 and R7 of the 2026-09-02 router audit. All three are on the same
+// screen and all three are the same shape: a value derived from the wrong
+// thing, which stays right until the user does something ordinary.
+{
+  // ── THE CORPUS: real fetched entries through the real admission path ────
+  const rec = (id, extra) => Object.assign({
+    id, name: 'ZZ ' + id,
+    pricing: { internal_reasoning: '0.000002' },
+    top_provider: { max_completion_tokens: 32768 },
+    supported_parameters: ['response_format', 'structured_outputs'],
+    reasoning: { default_enabled: true },
+  }, extra || {});
+  // Three prices, deliberately NOT in delivered order in this literal — the
+  // catalogue's own sort establishes the order, which is the thing under test.
+  // TWELVE of them, not three: MODEL_FILTER_MIN_ROWS is the point at which the
+  // sort control appears at all, so a smaller corpus would assert the badge's
+  // behaviour under a control the user could not have reached.
+  const FETCHED = [
+    rec('zzbadge/mid:x', { pricing: { prompt: '0.000002', completion: '0.000008' } }),
+    rec('zzbadge/dear:x', { pricing: { prompt: '0.000090', completion: '0.000400' } }),
+    rec('zzbadge/cheap:x', { pricing: { prompt: '0.000001', completion: '0.000002' } }),
+  ].concat(Array.from({ length: 10 }, (_, i) => rec('zzbadge/filler-' + i + ':x', {
+    pricing: { prompt: '0.0000' + (10 + i), completion: '0.0000' + (20 + i) },
+  })));
+  const mintedB = FETCHED.map((r) => openRouterRecordToSpec(r));
+  ok(mintedB.every((r) => r.ok === true),
+    `corpus: the shipping record-to-spec admitted all price fixtures (${mintedB.map((r) => (r.ok ? 'ok' : r.reason)).join(', ')})`);
+  const admB = setOpenRouterCatalogue(mintedB.map((r) => r.spec));
+  ok(admB.admitted === FETCHED.length,
+    `corpus: all ${FETCHED.length} reached the catalogue through the REAL admission path (${admB.admitted})`);
+  const LIVE = JSON.parse(JSON.stringify(listOfferableModels('openrouter')));
+  const idsInOrder = (html) => (html.match(/data-model-id="([^"]+)"/g) || [])
+    .map((m) => m.slice('data-model-id="'.length, -1));
+  const badgeCount = (html) => (html.match(/model-badge-cheapest/g) || []).length;
+
+  const KEYS = () => keysFor('openrouter', {
+    offerable: Object.assign({}, WIRE, { openrouter: LIVE }),
+  });
+  const CHEAPEST_ID = LIVE[0] && LIVE[0].id;
+  ok(typeof CHEAPEST_ID === 'string' && CHEAPEST_ID.length > 0,
+    `corpus: the delivered list leads with "${CHEAPEST_ID}" — the cheapest row by the server's own sort`);
+  ok(LIVE.length >= MODEL_FILTER_MIN_ROWS,
+    `corpus: ${LIVE.length} rows, at or above the ${MODEL_FILTER_MIN_ROWS}-row threshold where the sort control appears — the defect is REACHABLE`);
+
+  // ── R4. `cheapest` FOLLOWED THE POSITION, NOT THE MODEL ────────────────
+  {
+    stubState.modelFilter = { openrouter: { q: '', sort: 'cheapest', measuredOnly: false } };
+    const cheapHtml = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    const cheapIds = idsInOrder(cheapHtml);
+    ok(liFor(cheapHtml, CHEAPEST_ID).includes('model-badge-cheapest'),
+      'CONTROL: in the default view the cheapest model is badged cheapest');
+    ok(badgeCount(cheapHtml) === 1, 'CONTROL: …exactly once');
+
+    stubState.modelFilter = { openrouter: { q: '', sort: 'dearest', measuredOnly: false } };
+    const dearHtml = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    const dearIds = idsInOrder(dearHtml);
+    // Anti-vacuity: the order must actually have reversed, or every assertion
+    // below is about a list that never moved.
+    ok(dearIds.length === cheapIds.length && dearIds.join() !== cheapIds.join(),
+      `CONTROL: "Most expensive first" genuinely reordered the rendered rows (${dearIds.length} rows, different sequence)`);
+    ok(dearIds[0] !== cheapIds[0],
+      `CONTROL: …and a DIFFERENT model is now rendered first ("${dearIds[0]}" against "${cheapIds[0]}")`);
+
+    // THE DEFECT: the badge was `index === 0` of the rendered list, so this row
+    // — the DEAREST — carried it.
+    ok(!liFor(dearHtml, dearIds[0]).includes('model-badge-cheapest'),
+      'the row rendered FIRST under "Most expensive first" is NOT badged cheapest');
+    ok(liFor(dearHtml, CHEAPEST_ID).includes('model-badge-cheapest'),
+      '…the badge stays on the model that is actually cheapest, wherever it now sits');
+    ok(badgeCount(dearHtml) === 1,
+      'and there is still exactly one cheapest badge on the screen');
+
+    // A FILTER is the other half of the same defect: it renumbers the list too.
+    stubState.modelFilter = { openrouter: { q: 'zzbadge/dear', sort: 'cheapest', measuredOnly: false } };
+    const searchHtml = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    const searchIds = idsInOrder(searchHtml);
+    ok(searchIds.length > 0 && !searchIds.includes(CHEAPEST_ID),
+      `CONTROL: the search narrowed to ${searchIds.length} row(s) and excluded the cheapest model`);
+    ok(badgeCount(searchHtml) === 0,
+      'with the cheapest model filtered out, NO row claims to be cheapest — the runner-up is not promoted into a claim it cannot support');
+
+    // And a search that KEEPS the cheapest model keeps the badge on it.
+    stubState.modelFilter = { openrouter: { q: 'zzbadge', sort: 'dearest', measuredOnly: false } };
+    const bothHtml = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    if (idsInOrder(bothHtml).includes(CHEAPEST_ID)) {
+      ok(liFor(bothHtml, CHEAPEST_ID).includes('model-badge-cheapest'),
+        'a filter that KEEPS the cheapest model keeps its badge, even under a reversed sort');
+    }
+    stubState.modelFilter = null;
+
+    // The source no longer decides it by position. Scoped to the function, with
+    // a control proving the scan can see a positional test when one is there.
+    // stripComments FIRST: this very section's prose quotes `index === 0`, and a
+    // raw scan would match the explanation rather than the code.
+    const optSrc = stripComments(functionSource(settings, 'renderModelOption'));
+    ok(!/index\s*===\s*0/.test(optSrc),
+      'renderModelOption contains no `index === 0` test at all — the position cannot come back by accident');
+    ok(/cheapestId/.test(optSrc),
+      'CONTROL: …and it does read `cheapestId`, so the scan above is looking at the right function');
+  }
+
+  // ── R6. THE BARE PROVIDER COMPARISON THE FILE FORBIDS TWICE ────────────
+  {
+    stubState.modelFilter = null;
+    const orRow = PROVIDER_ROWS.find((r) => r.id === 'openrouter');
+    ok(!!orRow && orRow.canQualify === true,
+      'CONTROL: the provider table marks OpenRouter as having a qualify route');
+    ok(PROVIDER_ROWS.filter((r) => r.canQualify === true).length === 1,
+      'CONTROL: …and it is the only provider so marked today, so the negative arms below are real');
+
+    const withBtn = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    ok(withBtn.includes('model-qualify-btn'),
+      'an unmeasured OpenRouter row offers the "test it on my wiki" button');
+
+    // THE PROOF THAT IT IS A LOOKUP: flip the table entry and the button goes.
+    // A hardcoded `c.provider === 'openrouter'` would be unmoved by this.
+    orRow.canQualify = false;
+    const flipped = renderModelPicker(rowFor('openrouter'), KEYS(), true, false);
+    orRow.canQualify = true;
+    ok(!flipped.includes('model-qualify-btn'),
+      'flipping `canQualify` in the TABLE removes the button — the decision is a lookup, not an id comparison');
+    ok(renderModelPicker(rowFor('openrouter'), KEYS(), true, false).includes('model-qualify-btn'),
+      'CONTROL: …and restoring the table restores it, so the flip above was the cause');
+
+    // A provider absent from the table gets no button — the fail-safe direction.
+    ok(!PROVIDER_ROWS.some((r) => r.id === 'zznewprov'),
+      'CONTROL: "zznewprov" is genuinely absent from the provider table');
+    const unknown = renderModelPicker({ id: 'zznewprov', name: 'ZZ New', available: true },
+      keysFor('openrouter', { offerable: Object.assign({}, WIRE, { zznewprov: LIVE }) }), true, false);
+    ok(!unknown.includes('model-qualify-btn'),
+      'an UNKNOWN provider id resolves to no row and therefore no button — absent means no, never yes');
+
+    // Providers that ship only hand-measured tables must not offer it.
+    for (const prov of POPULATED) {
+      if (prov === 'openrouter') continue;
+      const row = PROVIDER_ROWS.find((r) => r.id === prov);
+      ok(!!row && row.canQualify !== true,
+        `"${prov}" is not marked qualifiable — nothing on its hand-measured table is for the user to measure`);
+      ok(!renderModelPicker(rowFor(prov), keysFor(prov), true, false).includes('model-qualify-btn'),
+        `…and its rendered section offers no qualify button`);
+    }
+
+    const optSrc = stripComments(functionSource(settings, 'renderModelOption'));
+    ok(!/provider\s*===\s*['"]openrouter['"]/.test(optSrc),
+      "renderModelOption no longer compares a provider id to the literal 'openrouter'");
+    ok(/PROVIDER_ROWS\.find/.test(optSrc),
+      'CONTROL: …it looks the provider up in PROVIDER_ROWS instead');
+  }
+
+  // ── R7. THE LATENCY BASELINE WAS A LITERAL UNTIED TO ANY MODEL ─────────
+  {
+    const QL = (over) => Object.assign({
+      modelId: 'zzbadge/mid:x', qualifies: false, outcome: 'NO_DEFECT_FOUND',
+      runsCompleted: 9, counts: { raw: 9, repaired: 0, unrepairable: 0, unusable: 0 },
+      latencyMs: { mean: 120000 }, spendUsd: 0,
+      domain: 'articles', sourceName: 'note.md', measuredAt: '2026-09-02T00:00:00.000Z',
+      stillOffered: true,
+    }, over || {});
+
+    // The lookup itself.
+    ok(measuredCallSeconds('upstage/solar-pro4') === 53,
+      'measuredCallSeconds finds the measured mean for a model that was timed');
+    ok(measuredCallSeconds('zz/never-timed') === null,
+      '…and returns null, not a guess, for one that was not');
+    ok(measuredCallSeconds('constructor') === null && measuredCallSeconds('__proto__') === null
+      && measuredCallSeconds('hasOwnProperty') === null,
+      '…and cannot be walked into Object.prototype by a model id a third party chose');
+    // ── AND THE OWN-PROPERTY CHECK IS LOAD-BEARING, NOT DECORATION ───────
+    // CHASED FROM A GREEN MUTATION: deleting the hasOwnProperty guard left the
+    // three assertions above still passing, because every real Object.prototype
+    // member is a FUNCTION and the trailing Number.isFinite already rejected it.
+    // The guard only earns its place against a prototype member that IS a finite
+    // number — so this plants one, which is the prototype-pollution shape this
+    // repo names (v3.0.9's normalizeResponseStyle) rather than a hypothetical.
+    {
+      const KEY = 'zzPollutedFiniteProbe';
+      Object.prototype[KEY] = 7; // eslint-disable-line no-extend-native
+      try {
+        // CONTROL FIRST: the pollution is real, and a naive lookup DOES find it.
+        ok(({})[KEY] === 7,
+          'CONTROL: the planted prototype property is visible through a bare lookup — the probe is real');
+        ok(!Object.prototype.hasOwnProperty.call(MEASURED_CALL_SECONDS, KEY),
+          'CONTROL: …and it is NOT an own property of the measured table');
+        ok(measuredCallSeconds(KEY) === null,
+          'a FINITE value planted on Object.prototype is still refused — the own-property check is what stops it, since Number.isFinite would accept a 7');
+      } finally {
+        delete Object.prototype[KEY];
+      }
+      ok(({})[KEY] === undefined, 'CONTROL: the probe cleaned up after itself');
+    }
+    ok(measuredCallSeconds('') === null && measuredCallSeconds(null) === null
+      && measuredCallSeconds(undefined) === null && measuredCallSeconds(42) === null,
+      '…and degrades to null on every non-id input rather than throwing');
+
+    // The sentence FOLLOWS the id it is handed.
+    const timed = renderQualification(QL(), 9, 'upstage/solar-pro4');
+    ok(/averages about 53 s/.test(timed) && timed.includes('upstage/solar-pro4'),
+      'the panel quotes the baseline AND names the model it belongs to');
+    ok(/mean [^<]*per call/.test(timed), 'CONTROL: …beside the user\'s own measured mean');
+
+    const untimed = renderQualification(QL(), 9, 'zz/some-future-default');
+    ok(!/averages about/.test(untimed),
+      'a baseline model nobody has timed DROPS the clause rather than inventing one');
+    ok(/mean [^<]*per call/.test(untimed),
+      '…while the user\'s own measurement still renders — only the comparison goes');
+    ok(!untimed.includes('53'),
+      '…and no stale 53 s survives anywhere in that output');
+    ok(renderQualification(QL(), 9, '') === renderQualification(QL(), 9, undefined),
+      'an absent baseline id behaves exactly like an untimed one');
+
+    // ── "A DEFAULTS BUMP CHANGES THE SENTENCE" ──────────────────────────
+    // The wire field `models[provider]` IS `getDefaultModel(provider)`, so a
+    // bump of DEFAULTS is expressed here as a different value in that field.
+    // Driven through the REAL picker, so the wiring from ctx to the sentence is
+    // exercised rather than assumed.
+    const withQual = (defaultId) => renderModelPicker(rowFor('openrouter'),
+      keysFor('openrouter', {
+        offerable: Object.assign({}, WIRE, { openrouter: LIVE }),
+        models: Object.assign({}, keysFor('openrouter').models, { openrouter: defaultId }),
+        qualifications: [QL()],
+        minRunsToQualify: 9,
+      }), true, false);
+
+    const shipped = getDefaultModel('openrouter');
+    ok(typeof shipped === 'string' && shipped.length > 0,
+      `CONTROL: llm.js resolves an OpenRouter default (${shipped}) — the arms below are not comparing two absences`);
+    ok(measuredCallSeconds(shipped) !== null,
+      `CONTROL: …and it IS in the measured table (${measuredCallSeconds(shipped)} s), so the clause is live today rather than permanently absent`);
+
+    const nowHtml = withQual(shipped);
+    ok(nowHtml.includes('averages about ' + measuredCallSeconds(shipped) + ' s'),
+      'rendered through the real picker, the panel quotes the CURRENT default\'s measured mean');
+    ok(nowHtml.includes(escapeHtml(shipped)),
+      '…naming that model, so the figure is falsifiable by a reader');
+
+    const bumpedHtml = withQual('zz/next-generation-default');
+    ok(!/averages about/.test(bumpedHtml),
+      'BUMPING the default to a model nobody has timed removes the clause — it does not keep describing the model the app no longer ships');
+    ok(bumpedHtml !== nowHtml,
+      '…so a DEFAULTS bump demonstrably changes the sentence');
+    ok(/mean [^<]*per call/.test(bumpedHtml),
+      '…and the user\'s own measurement is untouched by the bump');
+
+    const otherTimed = Object.keys(MEASURED_CALL_SECONDS).find((id) => id !== shipped);
+    ok(!!otherTimed, 'CONTROL: the table holds more than one entry, so the arm below is a real second value');
+    ok(withQual(otherTimed).includes('averages about ' + MEASURED_CALL_SECONDS[otherTimed] + ' s'),
+      'bumping to a DIFFERENT timed model quotes that model\'s number, not the old one');
+
+    // The literal is gone from the module.
+    const qualSrc = stripComments(functionSource(settings, 'renderQualification'));
+    ok(!/about 53 s/.test(qualSrc),
+      'the hardcoded "about 53 s" is no longer in renderQualification');
+    ok(!/the model this app ships/.test(qualSrc),
+      '…nor the unfalsifiable "the model this app ships" phrasing that carried it');
+    ok(/measuredCallSeconds\(/.test(qualSrc),
+      'CONTROL: …and the function does call the lookup, so the two scans above are looking at the right place');
+  }
+
+  setOpenRouterCatalogue([]);
+  stubState.modelFilter = null;
 }
 
 console.log('\n────────────────────────────────────────────────────────────');
