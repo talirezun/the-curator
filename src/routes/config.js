@@ -27,6 +27,10 @@ import { APP_ROOT } from '../brain/paths.js';
 import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { getDesktopHook } from '../brain/desktop-host.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
+// NAMESPACE import, the same degradation contract as `llmModule` above: a
+// not-yet-shipped export resolves to undefined and the route reports it, rather
+// than failing this file's load and taking every config endpoint down.
+import * as discoveryModule from '../brain/model-discovery.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
 import {
@@ -1029,8 +1033,21 @@ function isMeasured(provider, modelId) {
 function outlineNoteFor(entry) {
   if (!entry || typeof entry !== 'object') return null;
   const parts = [];
+  // ── THE MEDIAN IS PREFERRED; THE RANGE IS NOT A FALLBACK, IT IS THE OTHER ──
+  //    SHAPE THE MEASUREMENT COMES IN.
+  // FOUND BY TEST: a first version read `outlinePagesMedian` only and returned
+  // null for `gemini-2.5-flash-lite` — the app's own default — which records
+  // 18–20 pages as a LOW/HIGH pair and no median. Silently dropping a
+  // measurement the user paid for, on the build model's own summary line, is
+  // exactly the "computed honestly and dropped by a consumer" defect this repo
+  // keeps recording. `defineOfferableModel` requires both ends of a range or
+  // neither, so the pair is safe to render as one.
   if (Number.isInteger(entry.outlinePagesMedian) && entry.outlinePagesMedian > 0) {
     parts.push(`plans about ${entry.outlinePagesMedian} pages per source`);
+  } else if (Number.isInteger(entry.outlinePagesLow) && Number.isInteger(entry.outlinePagesHigh)) {
+    parts.push(entry.outlinePagesLow === entry.outlinePagesHigh
+      ? `plans about ${entry.outlinePagesLow} pages per source`
+      : `plans ${entry.outlinePagesLow}–${entry.outlinePagesHigh} pages per source`);
   }
   if (Number.isFinite(entry.medianLatencyMs) && entry.medianLatencyMs > 0) {
     parts.push(`about ${Math.round(entry.medianLatencyMs / 1000)}s per call`);
@@ -1067,19 +1084,54 @@ function outlineNoteFor(entry) {
  * happy case; the sentence then reads "the one you are already using" rather
  * than offering a switch to where the user already is.
  */
-function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
-  for (const { provider, entry } of connectedOffers(keys)) {
-    if (!isBuildLaneAllowed(provider, entry.id)) continue;
-    if (!isMeasured(provider, entry.id)) continue;
+/**
+ * The decision itself, as a PURE function over a price-ordered population.
+ *
+ * ── WHY IT IS SPLIT OUT (found by mutation) ────────────────────────────────
+ * Driven only through the shipped catalogue, BOTH filters below come back GREEN
+ * when deleted — not because they are wrong but because the shipped data cannot
+ * currently distinguish them: on every connected install the cheapest row
+ * happens to satisfy both. A guard that no reachable input can exercise is a
+ * guard nobody can prove. Taking the population as an ARGUMENT lets a suite
+ * drive the two cases the real catalogue does not contain (a cheapest row that
+ * is measured but chat-only; a cheapest row that could build but was never
+ * measured), so each filter is individually necessary against something.
+ *
+ * The predicates are injected for the same reason: a suite must be able to make
+ * one true and the other false on the SAME row.
+ */
+export function pickCheapestMeasuredBuild(offers, opts = {}) {
+  const canBuild = typeof opts.isBuild === 'function' ? opts.isBuild : () => false;
+  const measured = typeof opts.isMeasured === 'function' ? opts.isMeasured : () => false;
+  for (const { provider, entry } of (Array.isArray(offers) ? offers : [])) {
+    if (!entry || typeof entry !== 'object') continue;
+    // BOTH CONDITIONS, and neither is redundant in principle even where the
+    // shipped data cannot tell them apart today. "May build" is a lane verdict;
+    // "measured" is an epistemic one, and this project's standing rule is that a
+    // model may not be offered for a feature nobody has measured it against.
+    // A future lane that admitted an unmeasured model — the `local` provider is
+    // scaffolded — would make the second check the only thing standing between
+    // an unmeasured model and a sentence recommending it by price.
+    if (!canBuild(provider, entry.id)) continue;
+    if (!measured(provider, entry.id)) continue;
     return {
       model: entry.id,
       provider,
       priceIn: typeof entry.input === 'number' ? entry.input : null,
       priceOut: typeof entry.output === 'number' ? entry.output : null,
-      same: provider === currentProvider && entry.id === currentModel,
+      same: provider === opts.currentProvider && entry.id === opts.currentModel,
     };
   }
   return null;
+}
+
+function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
+  return pickCheapestMeasuredBuild(connectedOffers(keys), {
+    isBuild: isBuildLaneAllowed,
+    isMeasured,
+    currentProvider,
+    currentModel,
+  });
 }
 
 /** GET /api/config/api-keys — returns masked keys + active provider info */
@@ -1966,6 +2018,51 @@ router.post('/api-keys/build-model', guardConcurrent('change the AI model'), (re
  * than redaction — there is nothing to redact — and the suite asserts it by
  * spying on every outbound request.
  */
+/**
+ * GET /api/config/models/new — what your providers list that this app has never
+ * heard of.
+ *
+ * ── FREE, AND A FACT RATHER THAN AN ACTION ─────────────────────────────────
+ *
+ * Every provider endpoint behind this is a LIST endpoint: no tokens, no
+ * generation, no charge. Nothing here offers a model, and there is deliberately
+ * no companion POST that would: adding a model to the offer table requires a
+ * measurement, which is a human act. See `src/brain/model-discovery.js` for the
+ * full contract, including why `firstSeen` is sticky and why "not offered"
+ * means UNMEASURED rather than worse.
+ *
+ * A GET, not a POST, because it MUTATES NOTHING a user would notice — the only
+ * write is a cache sidecar, which is the same posture as the OpenRouter
+ * catalogue's own persistence. `?force=1` bypasses the 24-hour cache; it is
+ * still a read, so it stays a GET and is not behind `guardConcurrent` (a
+ * discovery check has no interaction with an ingest in flight, and blocking a
+ * free read during a long ingest would be an obstruction with no safety value).
+ *
+ * The response reports PER PROVIDER `connected` and `checked`, and both must be
+ * read: `checked: false` with an empty `models` array means WE COULD NOT ASK,
+ * which is not the same fact as "nothing new" and must never render as one.
+ */
+router.get('/models/new', async (req, res) => {
+  if (typeof discoveryModule.getNewModels !== 'function') {
+    return res.status(500).json({
+      error: 'The model discovery check is unavailable in this build. Restart The Curator, then try again.',
+    });
+  }
+  try {
+    const force = req.query && (req.query.force === '1' || req.query.force === 'true');
+    const out = await discoveryModule.getNewModels({ force });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    // A whole-check failure is rare — per-provider failures are already caught
+    // inside and reported as `checked: false`. Reaching here means the cache
+    // layer or the key read failed, which is a real 500 and not a provider
+    // problem, so the message says so rather than blaming the provider.
+    res.status(500).json({
+      error: `The model list could not be checked: ${scrubPaths(String(err && err.message ? err.message : err))}`,
+    });
+  }
+});
+
 router.post('/openrouter/sync', guardConcurrent('sync the OpenRouter model catalogue'), async (_req, res) => {
   try {
     const keys = getApiKeys();

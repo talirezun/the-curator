@@ -1899,13 +1899,20 @@ export function filterCatalogue(records, opts) {
     // `buildUnknown` is counted separately from `build` because a model whose
     // window we could not read is not a model we know is too small.
     //
-    // IT READS 0 IN THE SHIPPING CONFIGURATION, AND THAT IS NOT VACUOUS. With
-    // `contextFloorTokens` set (the default), an unknown window is REJECTED by
-    // the admission gate — CONTEXT_UNKNOWN, or an unknown endpoint counted as
-    // below floor — so it can never reach the eligible set. It becomes reachable
-    // the moment a caller disables the gate with `contextFloorTokens: null`, and
-    // the lane must then say "unknown" rather than quietly say "no". The suite
-    // drives exactly that configuration; a 0 here is a measurement of the
+    // IT READS 0 IN THE SHIPPING CONFIGURATION, AND THE ONE PATH THAT REACHES
+    // IT IS NARROW — narrower than a first draft of this comment claimed, which
+    // the suite caught. With `contextFloorTokens` set (the default), an unknown
+    // model-level window is CONTEXT_UNKNOWN and an unknown ENDPOINT counts as
+    // below floor, so neither can reach the eligible set. Disabling the gate
+    // alone is NOT enough either: a null model-level field still raises
+    // CONTEXT_UNKNOWN, which is a rejection the floor has nothing to do with.
+    //
+    // The reachable configuration is both together: PER-ENDPOINT data supplied
+    // in which at least one endpoint publishes no window, a readable model-level
+    // value (so no CONTEXT_UNKNOWN), and `contextFloorTokens: null` (so the
+    // below-floor-at-endpoint reason cannot fire either). Then `governing` is
+    // null with no reasons, and the lane must say UNKNOWN rather than quietly
+    // say no. The suite drives exactly that; a 0 here is a measurement of the
     // shipping config, not a field nothing can populate.
     lanes: {
       chat: eligible.length,

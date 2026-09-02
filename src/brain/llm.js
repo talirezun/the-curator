@@ -3317,6 +3317,15 @@ export function auditStaticOffers(opts) {
     );
   }
 
+  // TEST-ONLY SEAM, defaulted to the real registry and null in production — the
+  // same shape and rationale as `compile.js`'s `opts.generateText`. It exists
+  // because `exemptionsUnused` is UNFALSIFIABLE against the shipped registry:
+  // there is currently exactly one exemption and it is used, so a mutation
+  // deleting the whole detector still reports the same empty array. A guard that
+  // no reachable input can exercise is a guard nobody can prove.
+  const exemptions = (opts && opts.exemptions && typeof opts.exemptions === 'object')
+    ? opts.exemptions : STATIC_ELIGIBILITY_EXEMPTIONS;
+
   const rows = [];
   const seen = new Map();
   for (const provider of KNOWN_PROVIDERS) {
@@ -3326,8 +3335,7 @@ export function auditStaticOffers(opts) {
     // hand-typed table.
     for (const entry of (OFFERABLE_MODELS[provider] || [])) {
       const verdict = check(entry, opts);
-      const exemption = Object.hasOwn(STATIC_ELIGIBILITY_EXEMPTIONS, entry.id)
-        ? STATIC_ELIGIBILITY_EXEMPTIONS[entry.id] : null;
+      const exemption = Object.hasOwn(exemptions, entry.id) ? exemptions[entry.id] : null;
       const buildClaimed = entry.suitability !== 'chat-only';
       const row = {
         provider,
@@ -3351,8 +3359,7 @@ export function auditStaticOffers(opts) {
   for (const provider of KNOWN_PROVIDERS) {
     for (const modelId of (FALLBACK_CHAINS[provider] || [])) {
       const row = seen.get(`${provider}:${modelId}`) || null;
-      const exemption = Object.hasOwn(STATIC_ELIGIBILITY_EXEMPTIONS, modelId)
-        ? STATIC_ELIGIBILITY_EXEMPTIONS[modelId] : null;
+      const exemption = Object.hasOwn(exemptions, modelId) ? exemptions[modelId] : null;
       rungs.push({
         provider,
         id: modelId,
@@ -3381,7 +3388,7 @@ export function auditStaticOffers(opts) {
     // Exemptions listed but not needed by anything. A stale waiver is not
     // harmless: it is a standing permission for a rule to be broken by whatever
     // takes that id next.
-    exemptionsUnused: Object.keys(STATIC_ELIGIBILITY_EXEMPTIONS)
+    exemptionsUnused: Object.keys(exemptions)
       .filter(id => ![...rows, ...rungs].some(r => r.id === id && r.exemption !== null)),
   };
 }
