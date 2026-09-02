@@ -2430,8 +2430,30 @@ section('20. Two PUBLISHED facts — optional, additive, and never derived');
   // ── 20a. ADDITIVE: every hand-typed entry carries them as UNKNOWN ──────
   ok(ALL.every(({ e }) => Object.hasOwn(e, 'createdUnixSec') && Object.hasOwn(e, 'contextLength')),
     'both fields are present on every entry, so no consumer has to test for their existence');
-  ok(ALL.every(({ e }) => e.createdUnixSec === null && e.contextLength === null),
-    'and every hand-typed entry carries NULL for both — nobody typed a release date into a measurement table');
+  // ── `contextLength` IS NOW POPULATED ON EVERY HAND-TYPED ENTRY (v3.45.0) ──
+  // This assertion used to require BOTH fields to be null, and that half of it
+  // is now false by design: every static entry carries the provider's own
+  // published input window, fetched from that provider's list endpoint on
+  // 2026-09-02 (Gemini `inputTokenLimit`, Anthropic `max_input_tokens`,
+  // OpenRouter `top_provider.context_length` — the provenance block above
+  // OFFERABLE_MODELS names each). Until then these were the ONLY offers in the
+  // app with no context figure — i.e. exactly the models that can BE the build
+  // model — so a context chip on the picker would have been blank on the rows
+  // that matter, and `checkStaticEntry` could not classify them into lanes.
+  //
+  // `createdUnixSec` is STILL null on every one, and the original reasoning
+  // stands for it unchanged: a hand-measured table records what we measured, and
+  // it is not a release calendar. The two fields are asserted separately now
+  // precisely because they no longer share an answer.
+  ok(ALL.every(({ e }) => e.createdUnixSec === null),
+    'no hand-typed entry carries a release date — a measurement table is not a release calendar');
+  ok(ALL.every(({ e }) => Number.isInteger(e.contextLength) && e.contextLength > 0),
+    'every hand-typed entry carries a POSITIVE INTEGER context window, read from its provider');
+  // A context window that is not a plausible size is the failure this invites:
+  // a value in the hundreds would be a units error (chars for tokens), and one
+  // above 10M is not a window any provider publishes.
+  ok(ALL.every(({ e }) => e.contextLength >= 100000 && e.contextLength <= 10000000),
+    '…and every value is a plausible token window (1e5–1e7), so a units slip cannot pass as a size');
   ok(!ALL.some(({ e }) => e.createdUnixSec === 0 || e.contextLength === 0),
     'NEVER 0. A zero date is 1970-01-01 and a zero context is a zero-token window; both rank as real, terrible values instead of as unknown');
   ok(!ALL.some(({ e }) => e.createdUnixSec === undefined || e.contextLength === undefined),

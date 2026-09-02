@@ -190,41 +190,95 @@
 export const APP_OUTPUT_FLOOR_TOKENS = 24576;
 
 /**
- * Minimum published context window, in tokens.
+ * ── THE CONTEXT FLOORS ARE PER LANE, AND BOTH ARE DERIVED ───────────────────
  *
- * ── WHERE 200,000 COMES FROM. It is a PARITY RULE, not a round number. ───────
+ * There is no single "is this model big enough" question, because the app runs
+ * two working sets of very different size through the same catalogue. One floor
+ * for both was a PARITY RULE — "not worse on context than `claude-haiku-4-5`,
+ * which OpenRouter publishes at 200,000" — and parity to a model we happen to
+ * ship is not a measurement of what anything needs. It was simultaneously TOO
+ * HIGH for the build lane (which needs ~110,000) and far too high for chat
+ * (which needs ~26,000), and it ejected the app's OWN OpenRouter fallback rung.
  *
- * `claude-haiku-4-5` is the app's shipped Anthropic default (`DEFAULTS.anthropic`
- * in src/brain/llm.js). OpenRouter's catalogue publishes it as:
+ * Both values below are DERIVED FROM THE APP'S OWN BUDGETS, and the derivation
+ * is the point: each is stated here so the next reader can check the arithmetic
+ * rather than inherit a number.
  *
- *     anthropic/claude-haiku-4.5   context_length 200000   max_completion_tokens 64000
+ * ── BUILD LANE — 131,072 ────────────────────────────────────────────────────
  *
- * The rule that follows: **we will not offer an OpenRouter model that is worse
- * on context than a model we already ship as a default.** If 200k is good
- * enough for Haiku 4.5, it is the floor; anything below it would be a
- * capability regression against something the user can already select.
+ * Ingest, Wiki Health and Compile. The measured working set:
  *
- * More is better — a million-token window matters on a large second brain — but
- * 200k is the line below which we do not go.
+ *     TEXT_CAP (src/brain/ingest.js)              80,000 chars of source
+ *     + index.md + the slug inventory
+ *     = the real outline prompt, measured        ~341,005 chars ≈ 85,000 tokens
+ *                                                 (APP_INGEST_PROMPT_TOKENS_APPROX)
+ *     + MULTI_PHASE_OUTLINE_TOKENS                 24,576 tokens of output
+ *     ------------------------------------------------------------------
+ *     = 109,576 tokens the model must hold at once
  *
- * ── WHY THIS IS HARDCODED AND NOT DERIVED AT RUNTIME ────────────────────────
+ * 131,072 is that requirement plus ~19.6% headroom, and it is also the first
+ * real tier boundary above it — the live catalogue clusters at 32,768 / 131,072
+ * / 200,000 / 262,144 / 1,048,576, so a floor between tiers would admit exactly
+ * the same set while looking arbitrary.
  *
- * Deriving it from the Anthropic capability table would couple the OpenRouter
- * filter to the Anthropic catalogue: a future Anthropic edit would silently move
- * the OpenRouter eligible set, which is a failure mode nobody asked for. The
- * derivation is written down here instead, and the value stays INJECTED via
- * `opts.contextFloorTokens` so it can be revisited deliberately.
+ * ── CHAT LANE — 32,768 ──────────────────────────────────────────────────────
  *
- * ── HONEST NOTE ON WHAT THIS FLOOR COSTS ────────────────────────────────────
+ *     CONTENT_BUDGET_CHARS (src/brain/chat.js)     60,000 chars
+ *     + CATALOGUE_BUDGET_CHARS                     12,000 chars
+ *     = 72,000 chars ≈ 18,000 tokens
+ *     + the 8,192-token output request             ≈ 26,000 tokens
  *
- * It is a parity policy, not a measurement of what the app needs. The measured
- * requirement is roughly `promptTokens + outputFloor` ≈ 110,000. At 200,000 the
- * floor ejects the entire meta-llama family and `ibm-granite/granite-4.0-h-micro`
- * (131,000) — which is the app's current sole OpenRouter fallback rung and
- * measured 9/9 clean. That is a deliberate policy trade, and it is recorded here
- * rather than discovered later.
+ * 32,768 is the tier boundary immediately above that.
+ *
+ * ── WHICH ONE IS THE GATE ───────────────────────────────────────────────────
+ *
+ * `contextFloorTokens` — the CHAT floor — is the ADMISSION gate, because the
+ * chat lane is the one every catalogue entry is admitted into (a fetched entry
+ * is `chat-only` by construction; see `defineOfferableModel`'s `opts.dynamic`
+ * refusal in llm.js). A model that cannot hold a chat turn cannot serve any
+ * lane and is genuinely ineligible.
+ *
+ * `buildContextFloorTokens` is NOT a second gate. It is a FACET: it decides
+ * `lanes.build` on the result and rejects nothing. That distinction is the
+ * whole shape of this change — "context above the chat floor" is a property a
+ * consumer filters on, not a reason to hide a model. Making it a second
+ * rejection would re-create the single-floor defect one level down: a model
+ * perfectly good for chat would vanish from the chat picker because it is small
+ * for ingest.
+ *
+ * ── WHAT THE CHANGE COSTS, MEASURED ─────────────────────────────────────────
+ *
+ * On the pinned 2026-09-02 snapshot (421 records), with every other rule held,
+ * eligibility by floor: 32,768 → 289 · 131,072 → 261 · 200,000 → 219 ·
+ * 262,144 → 188 · 1,048,576 → 109. The exact per-lane counts this module
+ * produces are asserted in `test-router-lanes.js` against that fixture.
+ *
+ * ── WHY BOTH ARE HARDCODED AND NOT IMPORTED ─────────────────────────────────
+ *
+ * This module is deliberately import-free so it can be unit-tested offline and
+ * so churn in ingest.js/chat.js/llm.js cannot break it. Importing the budgets
+ * would also mean an unrelated edit to a chat constant silently moved which
+ * OpenRouter models a user may spend money through. `test-router-lanes.js`
+ * asserts the mirrored constants still agree with their sources.
  */
-export const APP_CONTEXT_FLOOR_TOKENS = 200000;
+export const APP_CONTEXT_FLOOR_BUILD_TOKENS = 131072;
+
+/** @see APP_CONTEXT_FLOOR_BUILD_TOKENS — the chat working set, ~26,000 tokens. */
+export const APP_CONTEXT_FLOOR_CHAT_TOKENS = 32768;
+
+/**
+ * The ADMISSION floor: the lowest lane's floor, and therefore the only context
+ * value that can REJECT a model. Named separately from the two lane constants
+ * so a reader of `DEFAULT_ELIGIBILITY_OPTS` can see which question is being
+ * asked. Deliberately NOT called `APP_CONTEXT_FLOOR_TOKENS` (the pre-v3.45.0
+ * single-floor name), because a stale importer resolving that name to a value
+ * would silently keep gating at a floor that no longer exists — an absent
+ * export is a loud `undefined`, which is the fail-safe direction.
+ */
+export const APP_CONTEXT_FLOOR_ADMISSION_TOKENS = APP_CONTEXT_FLOOR_CHAT_TOKENS;
+
+/** The two lanes a context window can qualify for. Order is display order. */
+export const LANES = Object.freeze(['chat', 'build']);
 
 /**
  * Approximate token count of the app's REAL ingest outline prompt.
@@ -240,8 +294,19 @@ export const APP_INGEST_PROMPT_TOKENS_APPROX = 85000;
 export const DEFAULT_ELIGIBILITY_OPTS = Object.freeze({
   /** Minimum published output ceiling, in tokens. */
   outputFloorTokens: APP_OUTPUT_FLOOR_TOKENS,
-  /** Minimum published context window, in tokens. */
-  contextFloorTokens: APP_CONTEXT_FLOOR_TOKENS,
+  /**
+   * Minimum published context window, in tokens — the ADMISSION gate. This is
+   * the CHAT floor: the lowest lane, so it is the only context value that
+   * rejects. See APP_CONTEXT_FLOOR_BUILD_TOKENS for why.
+   */
+  contextFloorTokens: APP_CONTEXT_FLOOR_ADMISSION_TOKENS,
+  /**
+   * The BUILD lane's floor. A FACET, never a gate: it sets `lanes.build` on the
+   * result and contributes no rejection reason. A caller that wants build-only
+   * eligibility filters on `lanes.build`; it must not raise this into
+   * `contextFloorTokens`, which would hide chat-capable models from chat.
+   */
+  buildContextFloorTokens: APP_CONTEXT_FLOOR_BUILD_TOKENS,
   /** Prompt size used to resolve `min_prompt_tokens` pricing tiers. */
   promptTokens: APP_INGEST_PROMPT_TOKENS_APPROX,
   /**
@@ -1255,16 +1320,46 @@ export function checkContextWindow(record, opts) {
 
   if (contextLength !== null && topProviderContextLength !== null
       && contextLength !== topProviderContextLength) {
-    // 'high' when the two fields STRADDLE the floor — there, the choice of field
+    // 'high' when the two fields STRADDLE A FLOOR — there, the choice of field
     // decides the verdict, so the reader is one config change from a different
-    // eligible set. Otherwise the spread is real but not verdict-bearing.
-    const straddles = floor !== null
-      && (contextLength >= floor) !== (topProviderContextLength >= floor);
+    // answer. Otherwise the spread is real but not verdict-bearing.
+    //
+    // BOTH FLOORS COUNT, since v3.45.0. Straddling the ADMISSION floor decides
+    // whether the model is offered at all; straddling the BUILD floor decides
+    // whether it may run the user's ingest. Testing only the admission floor
+    // would have downgraded exactly the case this release created — a model
+    // whose two published figures disagree about whether it can build a wiki —
+    // to 'medium', which is the severity for a spread that changes nothing.
+    // `thedrummer/unslopnemo-12b` is that case: 1,024,000 against 32,768, one
+    // build-eligible and one not.
+    const straddlesAt = (f) => f !== null
+      && (contextLength >= f) !== (topProviderContextLength >= f);
+    const straddles = straddlesAt(floor) || straddlesAt(finiteNumberOrNull(o.buildContextFloorTokens));
     risks.push(risk(RISK_CODES.CONTEXT_FIELD_DISAGREEMENT,
       `context_length (${contextLength}) and top_provider.context_length (${topProviderContextLength}) disagree; the headline figure is the maximum across providers and neither field is a floor.`,
       straddles ? 'high' : 'medium',
       { contextLength, topProviderContextLength, straddlesFloor: straddles, governingField: fieldUsed }));
   }
+
+  // ── THE BUILD LANE IS A FACET AND IS COMPUTED FROM THE SAME GOVERNING VALUE
+  // Same number, same basis, same endpoint-worst-case rule as the gate — so a
+  // model can never be admitted on the endpoint floor and lane-classified on
+  // the optimistic model-level summary. `null` means UNKNOWN, never false: a
+  // context we could not read is not evidence of a small one, and every caller
+  // must decide for itself what to do with "we could not check" (see the module
+  // docblock's rule that it must never be served as "we checked").
+  const buildFloor = finiteNumberOrNull(o.buildContextFloorTokens);
+  const clears = (f) => {
+    if (f === null) return true;              // no floor configured = nothing to fail
+    if (governing === null) return null;      // unknown, not small
+    return governing >= f;
+  };
+  const lanes = Object.freeze({
+    // The chat lane IS the admission gate, so it restates this check's own
+    // verdict rather than re-deriving it — one comparison, one answer.
+    chat: reasons.length === 0,
+    build: reasons.length === 0 ? clears(buildFloor) : false,
+  });
 
   return {
     pass: reasons.length === 0,
@@ -1285,6 +1380,8 @@ export function checkContextWindow(record, opts) {
       endpointsBelowFloor,
       endpointUnknown,
       floor,
+      buildFloor,
+      lanes,
     },
   };
 }
@@ -1452,6 +1549,166 @@ export function checkTextOutput(record, opts) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE HAND-TYPED TABLES GO THROUGH THE SAME RULES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The rules a HAND-TYPED offer entry is held to, and — just as importantly —
+ * the ones it cannot be, each with the reason.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ *
+ * `OFFERABLE_MODELS` and `FALLBACK_CHAINS` in llm.js were EXEMPT from the
+ * filter that governs every fetched model. That asymmetry was not a policy, it
+ * was a structural gap, and it had already produced a live inconsistency: the
+ * app's sole OpenRouter fallback rung failed the app's own context floor and
+ * survived only because nothing ran it through. A rung picks FOR the user,
+ * silently, on the day their model dies — the LAST place a rule should be
+ * optional.
+ *
+ * ── WHAT IS APPLIED (four rules, on the entry's own published facts) ────────
+ *
+ *   not_moving_alias   decidable from the id alone.
+ *   not_batch_only     decidable from the id alone.
+ *   output_ceiling     the entry's `maxOutput`, against the same output floor.
+ *   context_window     the entry's `contextLength`, against the same lane
+ *                      floors — so a hand-typed model and a fetched one are
+ *                      classified into lanes by ONE comparison, not two.
+ *
+ * These run through the SAME `check*` functions the catalogue path uses, on a
+ * minimal record built by FIELD MAPPING (`maxOutput` -> `top_provider.
+ * max_completion_tokens`, `contextLength` -> `top_provider.context_length`).
+ * The mapping is a rename of the same fact, never a fabrication: no value is
+ * invented, and a field the entry does not carry stays absent, so the rule sees
+ * "unknown" and says so.
+ *
+ * ── WHAT IS NOT APPLIED, AND WHY REFUSING TO IS THE HONEST ANSWER ──────────
+ *
+ *   json_mode      interrogates OpenRouter's `supported_parameters` — metadata
+ *                  a first-party provider does not publish in that form. A
+ *                  static entry instead carries `jsonRaw`, a DIRECT measurement
+ *                  of the same property against this repo's real ingest prompt,
+ *                  which is strictly stronger evidence than a capability flag.
+ *                  Synthesising `supported_parameters` from `jsonRaw` to make
+ *                  the rule "apply" would be fabricating provider metadata to
+ *                  satisfy a checkbox.
+ *   knowable_price parses OpenRouter's per-token price STRINGS. The equivalent
+ *                  requirement is enforced upstream and harder:
+ *                  `defineOfferableModel` refuses to build an entry with no
+ *                  price posture at all. A cheap membership check is applied
+ *                  below so the property is asserted here too, rather than
+ *                  merely delegated.
+ *   not_expiring   needs a published `expiration_date`. No provider we hand-
+ *                  type publishes one; absence would evaluate as "no expiry",
+ *                  i.e. a rule that cannot fail, which this module's own
+ *                  docblock rules out.
+ *   text_output    needs `architecture.output_modalities`. Same reason, and it
+ *                  is off by default even for fetched models.
+ *
+ * `notApplied` is RETURNED rather than merely commented, so a caller (and the
+ * suite) can assert the exact list instead of trusting this paragraph.
+ *
+ * @param {{id:string, maxOutput?:number, contextLength?:number|null,
+ *          free?:boolean, input?:number, output?:number}} entry
+ * @param {object} [opts]  the same options object the catalogue path uses
+ * @returns {{id:string|null, pass:boolean, lanes:{chat:boolean,build:boolean|null},
+ *            reasons:Array, risks:Array, applied:string[], notApplied:Array,
+ *            facts:object}}
+ */
+export const STATIC_RULES_APPLIED = Object.freeze([
+  'not_moving_alias', 'not_batch_only', 'output_ceiling', 'context_window',
+]);
+
+export const STATIC_RULES_NOT_APPLIED = Object.freeze([
+  Object.freeze({ rule: 'json_mode', reason: 'A hand-typed entry carries `jsonRaw`, a direct measurement against the real ingest prompt, in place of OpenRouter\'s `supported_parameters` metadata. The measurement is stronger; synthesising the metadata from it would be fabrication.' }),
+  Object.freeze({ rule: 'knowable_price', reason: 'Parses OpenRouter\'s per-token price strings. `defineOfferableModel` already refuses an entry with no price posture; a membership equivalent is asserted here.' }),
+  Object.freeze({ rule: 'not_expiring', reason: 'Needs a published `expiration_date`, which no hand-typed provider publishes. Absence would make the rule unfailable.' }),
+  Object.freeze({ rule: 'text_output', reason: 'Needs `architecture.output_modalities`; off by default even for fetched models.' }),
+]);
+
+export function checkStaticEntry(entry, opts) {
+  const o = mergeOpts(opts);
+  const reasons = [], risks = [];
+
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return {
+      id: null,
+      pass: false,
+      lanes: { chat: false, build: false },
+      reasons: [reason('json_mode', REASON_CODES.RECORD_MALFORMED,
+        'The static entry is not an object and could not be evaluated.')],
+      risks: [],
+      applied: [...STATIC_RULES_APPLIED],
+      notApplied: [...STATIC_RULES_NOT_APPLIED],
+      facts: {},
+    };
+  }
+
+  const id = typeof entry.id === 'string' && entry.id.length > 0 ? entry.id : null;
+  const ctx = finiteNumberOrNull(entry.contextLength);
+  const cap = finiteNumberOrNull(entry.maxOutput);
+
+  // FIELD MAPPING, NOT FABRICATION: a key is included only when the entry
+  // actually carries the fact. An absent `contextLength` therefore reaches
+  // `checkContextWindow` as `undefined` and is reported CONTEXT_UNKNOWN, which
+  // is exactly what it is.
+  const record = {
+    id: id === null ? undefined : id,
+    ...(ctx !== null ? { context_length: ctx } : {}),
+    top_provider: {
+      ...(ctx !== null ? { context_length: ctx } : {}),
+      ...(cap !== null ? { max_completion_tokens: cap } : {}),
+    },
+  };
+
+  const checks = {
+    not_moving_alias: checkNotMovingAlias(record),
+    not_batch_only: checkNotBatchOnly(record),
+    output_ceiling: checkOutputCeiling(record, o),
+    context_window: checkContextWindow(record, o),
+  };
+  for (const rule of STATIC_RULES_APPLIED) {
+    reasons.push(...checks[rule].reasons);
+    risks.push(...checks[rule].risks);
+  }
+
+  // The knowable-price equivalent, by MEMBERSHIP rather than by parsing: free
+  // is a class, and a paid entry must carry two finite numbers. `free` and a
+  // price are mutually exclusive by `defineOfferableModel`'s own contract.
+  const priced = Number.isFinite(entry.input) && Number.isFinite(entry.output);
+  if (entry.free !== true && !priced) {
+    reasons.push(reason('knowable_price', REASON_CODES.PRICE_UNKNOWABLE,
+      'The entry is neither `free: true` nor carries a finite input and output price, so what it costs cannot be stated.'));
+  }
+
+  if (id === null) {
+    reasons.unshift(reason('json_mode', REASON_CODES.RECORD_MALFORMED,
+      'The static entry has no string id.'));
+  }
+
+  const pass = reasons.length === 0;
+  return {
+    id,
+    pass,
+    lanes: {
+      chat: pass,
+      build: pass ? checks.context_window.facts.lanes.build : false,
+    },
+    reasons,
+    risks,
+    applied: [...STATIC_RULES_APPLIED],
+    notApplied: [...STATIC_RULES_NOT_APPLIED],
+    facts: {
+      context: checks.context_window.facts,
+      outputCeiling: checks.output_ceiling.facts,
+      alias: checks.not_moving_alias.facts,
+      batchOnly: checks.not_batch_only.facts,
+      priced: entry.free === true ? 'free' : (priced ? 'priced' : null),
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1554,9 +1811,23 @@ export function evaluateModel(record, opts) {
       'medium'));
   }
 
+  // ── LANES: which of the app's two working sets this model can hold ────────
+  // `eligible` answers admission (every rule, gated at the CHAT context floor).
+  // `lanes` refines that ONE axis — context — and nothing else, so a model that
+  // fails JSON mode is in no lane whatever its window. `lanes.build === null`
+  // means the window is unknown, which is not the same as too small; a consumer
+  // that treats null as false is making a decision, and should say so.
+  const eligible = reasons.length === 0;
+  const ctxLanes = checks.context_window.facts.lanes;
+  const lanes = Object.freeze({
+    chat: eligible,
+    build: eligible ? ctxLanes.build : false,
+  });
+
   return {
     id,
-    eligible: reasons.length === 0,
+    eligible,
+    lanes,
     reasons,
     riskFlags,
     facts: {
@@ -1613,14 +1884,38 @@ export function filterCatalogue(records, opts) {
     remaining -= lost.length;
   }
 
+  const eligible = evaluated.filter(ev => ev.eligible);
+
   return {
     total: evaluated.length,
-    eligible: evaluated.filter(ev => ev.eligible),
+    eligible,
     rejected: evaluated.filter(ev => !ev.eligible),
     funnel,
+    // ── PER-LANE COUNTS, AND WHY `build` IS NOT IN THE FUNNEL ────────────────
+    // The funnel's stages COMPOSE (each stage's `out` is the next's `in`), which
+    // is what makes "where did my models go" answerable. The build lane rejects
+    // nothing, so a funnel stage for it would report a loss that never happened.
+    // It is reported here instead, as a partition of the eligible set.
+    // `buildUnknown` is counted separately from `build` because a model whose
+    // window we could not read is not a model we know is too small.
+    //
+    // IT READS 0 IN THE SHIPPING CONFIGURATION, AND THAT IS NOT VACUOUS. With
+    // `contextFloorTokens` set (the default), an unknown window is REJECTED by
+    // the admission gate — CONTEXT_UNKNOWN, or an unknown endpoint counted as
+    // below floor — so it can never reach the eligible set. It becomes reachable
+    // the moment a caller disables the gate with `contextFloorTokens: null`, and
+    // the lane must then say "unknown" rather than quietly say "no". The suite
+    // drives exactly that configuration; a 0 here is a measurement of the
+    // shipping config, not a field nothing can populate.
+    lanes: {
+      chat: eligible.length,
+      build: eligible.filter(ev => ev.lanes.build === true).length,
+      buildUnknown: eligible.filter(ev => ev.lanes.build === null).length,
+    },
     opts: {
       outputFloorTokens: o.outputFloorTokens,
       contextFloorTokens: o.contextFloorTokens,
+      buildContextFloorTokens: o.buildContextFloorTokens,
       promptTokens: o.promptTokens,
       contextField: o.contextField,
       expiryHorizonDays: o.expiryHorizonDays,

@@ -5458,10 +5458,29 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   // ctx and maxOut deliberately DIFFERENT per row, and ordered so that ranking
   // by maxOutput gives a DIFFERENT answer than ranking by contextLength — which
   // is what makes the substitution mutation detectable rather than a coin flip.
+  // ── A FOURTH RECORD, ADDED IN v3.45.0, THAT PUBLISHES NO CONTEXT WINDOW ───
+  // The `largest-context` unranked block USED to be supplied by the static
+  // table, which published neither fact. Every static entry now carries its
+  // provider's own context window (see the provenance block above
+  // OFFERABLE_MODELS), so that source of unsized rows is gone — and without a
+  // replacement every "unranked rows trail, and the block is non-empty" check
+  // here would pass vacuously over an empty block, which is worse than failing.
+  // The adapter OMITS `contextLength` when `top_provider.context_length` is
+  // absent, so this row is unsized through the REAL mapper rather than by having
+  // a null poked into it. It still carries a DATE, so the `newest` block is
+  // unaffected and the two sorts keep DIFFERENT unranked sets — which is what
+  // makes "one sort never reads the other sort's field" falsifiable.
+  const unsizedRec = {
+    id: 'zzsort/no-context:x', name: 'ZZ no-context', created: REC_2025,
+    pricing: { prompt: '0.0000005', completion: '0.000002' },
+    top_provider: { max_completion_tokens: 8192 },
+    supported_parameters: ['response_format', 'structured_outputs'],
+  };
   const RECORDS = [
     rec('zzsort/old-huge:x', REC_2024, 1000000, 8192),
     rec('zzsort/new-small:x', REC_2026, 32768, 100000),
     rec('zzsort/mid-medium:x', REC_2025, 200000, 16384),
+    unsizedRec,
   ];
   const mintedAll = RECORDS.map((r) => openRouterRecordToSpec(r));
   ok(mintedAll.every((r) => r.ok === true),
@@ -5523,8 +5542,12 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
     ok(statics.length >= 19, `control: ${statics.length} hand-measured entries built — the module loaded`);
     ok(statics.every((e) => Object.hasOwn(e, 'createdUnixSec') && e.createdUnixSec === null),
       'EVERY hand-typed entry carries `createdUnixSec: null` — the field is additive and absent means unpublished');
-    ok(statics.every((e) => Object.hasOwn(e, 'contextLength') && e.contextLength === null),
-      'and `contextLength: null` — a table of measurements is not a release calendar or a spec sheet');
+    // REVERSED FOR `contextLength` IN v3.45.0: every hand-typed entry now
+    // carries its provider's own published input window (see the provenance
+    // block above OFFERABLE_MODELS in llm.js). `createdUnixSec` is unchanged and
+    // still null everywhere — a measurement table is not a release calendar.
+    ok(statics.every((e) => Object.hasOwn(e, 'contextLength') && Number.isInteger(e.contextLength) && e.contextLength > 0),
+      'and a POSITIVE INTEGER `contextLength` — read from the provider, on the rows that can actually be the build model');
     ok(statics.every((e) => e.createdUnixSec !== 0 && e.contextLength !== 0),
       'and NEITHER is 0 — a zero would rank as a real, terrible value rather than as unknown');
     // The units tripwire. A milliseconds value and a zero are both fabricated
@@ -5551,14 +5574,24 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
 
   // ── 23c. THE CORPUS — both halves, counted before anything is sorted ────
   const admittedN = setOpenRouterCatalogue(mintedAll.map((r) => r.spec));
-  ok(admittedN.admitted === 3, 'corpus: all three fetched specs admitted through the REAL runtime path');
+  ok(admittedN.admitted === 4, 'corpus: all four fetched specs admitted through the REAL runtime path');
   const fetched = listOfferableModels('openrouter').filter((e) => e.id.startsWith('zzsort/'));
   const staticRows = (WIRE.openrouter || []).concat(WIRE.gemini || []);
   const CORPUS = staticRows.concat(fetched);
-  ok(fetched.length === 3 && fetched.every((e) => Number.isFinite(e.createdUnixSec) && Number.isFinite(e.contextLength)),
-    `corpus: ${fetched.length} FETCHED rows, every one carrying BOTH facts`);
-  ok(staticRows.length >= 12 && staticRows.every((e) => e.createdUnixSec === null && e.contextLength === null),
-    `corpus: ${staticRows.length} STATIC rows, every one carrying NEITHER — the absence assertions below are non-vacuous BY CONSTRUCTION`);
+  // The two unranked blocks are now DIFFERENT SETS, and each is named so an
+  // assertion cannot silently point at an empty one:
+  //   `newest`          unranked = the static rows (no release date, unchanged)
+  //   `largest-context` unranked = the one fetched row publishing no window
+  const UNSIZED_ID = 'zzsort/no-context:x';
+  ok(fetched.length === 4 && fetched.every((e) => Number.isFinite(e.createdUnixSec)),
+    `corpus: ${fetched.length} FETCHED rows, every one carrying a DATE`);
+  ok(fetched.filter((e) => e.contextLength === null).length === 1
+     && fetched.find((e) => e.contextLength === null).id === UNSIZED_ID,
+    'corpus: exactly ONE fetched row publishes no context window — the largest-context unranked block');
+  ok(staticRows.length >= 12 && staticRows.every((e) => e.createdUnixSec === null),
+    `corpus: ${staticRows.length} STATIC rows, every one UNDATED — the newest-sort absence assertions are non-vacuous BY CONSTRUCTION`);
+  ok(staticRows.every((e) => Number.isInteger(e.contextLength) && e.contextLength > 0),
+    '…and every one SIZED since v3.45.0, which is why the unsized fetched row above had to be added');
   // Delivered order puts the undated static rows FIRST, which is the arrangement
   // a no-op comparator would preserve and pass on.
   ok(!!CORPUS[0] && CORPUS[0].createdUnixSec === null
@@ -5581,7 +5614,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
     // "assertion crashed and hid every assertion after it" shape. `idAt` turns
     // the same mutation into a named behavioural failure.
     const idAt = (arr, i) => (Array.isArray(arr) && arr[i] && typeof arr[i].id === 'string') ? arr[i].id : '(no such row)';
-    ok(dated.length === 3 && undated.length === staticRows.length, 'control: the split is the one the corpus was built for');
+    ok(dated.length === 4 && undated.length === staticRows.length, 'control: the split is the one the corpus was built for');
     ok(newest.slice(0, dated.length).every((m) => m.createdUnixSec !== null),
       'every DATED model comes first');
     ok(dated.every((m, i) => i === 0 || dated[i - 1].createdUnixSec >= m.createdUnixSec),
@@ -5600,16 +5633,42 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
     const sized = largest.filter((m) => m.contextLength !== null);
     ok(sized.every((m, i) => i === 0 || sized[i - 1].contextLength >= m.contextLength),
       'largest-context ranks by the published context window, descending');
-    ok(idAt(sized, 0) === 'zzsort/old-huge:x',
-      'the 1,000,000-token model leads');
-    // THE SUBSTITUTION MUTATION. maxOutput is present on EVERY row, so using it
-    // would make the unranked block vanish and the ranking look complete.
-    ok(idAt(sized, 0) !== idAt(largest.slice().sort((a, b) => (b.maxOutput || 0) - (a.maxOutput || 0)), 0),
-      'and it is NOT the model with the largest maxOutput — the OUTPUT ceiling is a different fact and is never substituted');
-    ok(largest.slice(-staticRows.length).every((m) => m.contextLength === null),
+    // DERIVED FROM THE CORPUS, not pinned to an id. It used to name
+    // `zzsort/old-huge:x` (1,000,000), which stopped leading in v3.45.0 when the
+    // static rows gained real context windows and one of them published
+    // 1,048,576. Pinning the id would have made this a fixture fact; computing
+    // the maximum makes it a claim about the SORT, which is what is under test.
+    const maxCtx = Math.max(...sized.map((m) => m.contextLength));
+    ok(!!sized[0] && sized[0].contextLength === maxCtx,
+      `the largest published window leads (${maxCtx} tokens)`);
+    // ── THE SUBSTITUTION MUTATION, MEASURED ON THE PAIR BUILT FOR IT ────────
+    // maxOutput is present on EVERY row, so ranking by it would look complete
+    // and would empty the unranked block (caught above). This checks the ORDER
+    // as well, on the two fetched rows whose two figures are deliberately
+    // OPPOSED: old-huge is 1,000,000 ctx / 8,192 out, new-small is 32,768 ctx /
+    // 100,000 out. Ranking by the wrong field reverses exactly this pair.
+    //
+    // RESTRICTED TO THAT PAIR SINCE v3.45.0, and the reason is a corpus fact
+    // worth stating rather than hiding: the static table's largest-context entry
+    // (minimax-m3:free at 1,048,576) ALSO carries the largest maxOutput
+    // (943,718), so a whole-corpus "leader differs" claim became FALSE — not
+    // because the sort changed, but because the real data has no such
+    // separation. Asserting it anyway would have meant weakening the fixture to
+    // protect a sentence.
+    const posOf = (id) => largest.findIndex((m) => m.id === id);
+    ok(posOf('zzsort/old-huge:x') >= 0 && posOf('zzsort/new-small:x') >= 0,
+      '⟨PREMISE⟩ both rows of the opposed pair are present in the sorted output');
+    ok(posOf('zzsort/old-huge:x') < posOf('zzsort/new-small:x'),
+      'the 1,000,000-context row outranks the 100,000-OUTPUT row — the OUTPUT ceiling is a different fact and is never substituted');
+    const byOutput = largest.slice().sort((a, b) => (b.maxOutput || 0) - (a.maxOutput || 0));
+    const oPos = (id) => byOutput.findIndex((m) => m.id === id);
+    ok(oPos('zzsort/old-huge:x') > oPos('zzsort/new-small:x'),
+      '⟨ANTI-VACUITY⟩ ranking that same pair by maxOutput REVERSES it, so the assertion above can fail');
+    const unsized = largest.filter((m) => m.contextLength === null);
+    ok(unsized.length === 1 && idAt(unsized, 0) === UNSIZED_ID,
+      'control: the unranked block is NON-EMPTY and is the one row publishing no window, so the assertion below is not vacuous');
+    ok(largest.slice(-unsized.length).every((m) => m.contextLength === null),
       'every model with no published context window trails, unranked — never ranked at 0 and never at its output ceiling');
-    ok(largest.filter((m) => m.contextLength === null).length === staticRows.length,
-      'control: the unranked block is NON-EMPTY, so the assertion above is not vacuous');
 
     // Ordering is non-destructive and never throws on hostile input.
     ok(CORPUS[0] === staticRows[0], 'ordering leaves the input array untouched');

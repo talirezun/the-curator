@@ -977,6 +977,111 @@ export function isBuildLaneAllowed(provider, modelId, offerableTable) {
   return entry.suitability !== 'chat-only';
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PROVIDERS PAGE'S DERIVED FACTS — COMPUTED HERE, NEVER IN THE CLIENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every offer the user can currently reach, as `{provider, entry}` pairs, in
+ * ONE cheapest-first order across all connected providers.
+ *
+ * KEY-GATED THE SAME CONFIG-ONLY WAY AS `offerable` (`keys.*ApiKey`, never
+ * `getEffectiveKey`/.env — the v3.0.13 rule), so every count and every
+ * "cheapest" claim below describes exactly the list the user is being shown.
+ *
+ * SORTED WITH llm.js's OWN `compareOfferablePrice`. The obvious alternative —
+ * comparing `.input` here — is the null-coercion trap that function was written
+ * to close: a free entry prices as `null`, which coerces to 0 in arithmetic and
+ * silently "works" until the day a free model is not actually cheapest.
+ */
+function connectedOffers(keys) {
+  const out = [];
+  const gate = { gemini: keys.geminiApiKey, anthropic: keys.anthropicApiKey, openrouter: keys.openrouterApiKey };
+  for (const provider of KNOWN_PROVIDERS_FALLBACK) {
+    if (!gate[provider]) continue;
+    for (const entry of offerableFor(provider)) out.push({ provider, entry });
+  }
+  if (typeof llmModule.compareOfferablePrice === 'function') {
+    out.sort((a, b) => llmModule.compareOfferablePrice(a.entry, b.entry));
+  }
+  return out;
+}
+
+/** Has anyone measured this model against the real ingest prompt? */
+function isMeasured(provider, modelId) {
+  return typeof llmModule.measurementProvenance === 'function'
+    && llmModule.measurementProvenance(provider, modelId) !== null;
+}
+
+/**
+ * The one-line measured summary of a build model, or null when nothing was
+ * measured.
+ *
+ * COMPOSED SERVER-SIDE, from the FIELDS `defineOfferableModel` promoted out of
+ * prose (`outlinePagesMedian`, `medianLatencyMs`) — never by regexing a number
+ * back out of `note`, which fails silently the day someone rewords a sentence
+ * and fails by producing a NUMBER rather than an error.
+ *
+ * AN ABSENT FIELD OMITS ITS CLAUSE. It never renders "0 pages" or "0s", which
+ * would state a measurement nobody took. Both absent returns null, so a client
+ * renders nothing rather than an empty fragment.
+ */
+function outlineNoteFor(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const parts = [];
+  if (Number.isInteger(entry.outlinePagesMedian) && entry.outlinePagesMedian > 0) {
+    parts.push(`plans about ${entry.outlinePagesMedian} pages per source`);
+  }
+  if (Number.isFinite(entry.medianLatencyMs) && entry.medianLatencyMs > 0) {
+    parts.push(`about ${Math.round(entry.medianLatencyMs / 1000)}s per call`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * The cheapest model, among the providers the user has CONNECTED, that has been
+ * measured and may build a wiki.
+ *
+ * ── THIS MUST BE SERVER-SIDE, AND THAT IS NOT A STYLE PREFERENCE ────────────
+ * `renderBuildList`'s docblock refuses a client-side cross-provider price
+ * comparator in as many words: it would be a second opinion about a MONEY fact,
+ * and it would have to decide for itself what `null` means for a free model.
+ * The route already owns `resolveModelPrice` and `isFreeModel` through llm.js,
+ * so the answer is computed once, here, beside the price it is derived from.
+ *
+ * ── IT IS DERIVED FROM THE UNFILTERED, PRICE-ORDERED LIST ───────────────────
+ * `connectedOffers` is the WHOLE population in cheapest-first order — not a
+ * display list, not a facet-filtered list, and never "index 0 of whatever the
+ * user is currently sorting by". That distinction is the exact defect the
+ * router audit found in the client's `cheapest` badge, which read index 0 of an
+ * already-sorted-and-filtered array and therefore badged the DEAREST row as
+ * cheapest under "most expensive first". Two filters apply and both are
+ * PROPERTIES OF THE MODEL, never of the view: it must be able to build, and
+ * somebody must have measured it.
+ *
+ * `priceIn`/`priceOut` are `null` for a FREE model — free is a price we know
+ * exactly, and it has no per-token figure to quote. A client must render that
+ * as free, never as "unpriced" and never as $0.00.
+ *
+ * `same: true` means it IS the model already in force, which is the common and
+ * happy case; the sentence then reads "the one you are already using" rather
+ * than offering a switch to where the user already is.
+ */
+function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
+  for (const { provider, entry } of connectedOffers(keys)) {
+    if (!isBuildLaneAllowed(provider, entry.id)) continue;
+    if (!isMeasured(provider, entry.id)) continue;
+    return {
+      model: entry.id,
+      provider,
+      priceIn: typeof entry.input === 'number' ? entry.input : null,
+      priceOut: typeof entry.output === 'number' ? entry.output : null,
+      same: provider === currentProvider && entry.id === currentModel,
+    };
+  }
+  return null;
+}
+
 /** GET /api/config/api-keys — returns masked keys + active provider info */
 router.get('/api-keys', (_req, res) => {
   const keys = getApiKeys();
@@ -1026,6 +1131,19 @@ router.get('/api-keys', (_req, res) => {
     hasGeminiKey:     !!keys.geminiApiKey,
     hasAnthropicKey:  !!keys.anthropicApiKey,
     hasOpenrouterKey: !!keys.openrouterApiKey,
+    // ── PER-PROVIDER `connected`, KEYED BY PROVIDER NAME ─────────────────────
+    // The SAME three booleans as hasXKey, in a shape a client can iterate over
+    // a provider list with instead of hand-writing three field names. Two field
+    // names for one fact is normally this repo's named defect — it is accepted
+    // here on one condition, asserted by the suite: they are DERIVED FROM ONE
+    // EXPRESSION each, in one place, so they cannot disagree. The hasXKey names
+    // are pinned by an older contract and cannot be removed (see above); a
+    // provider added later would otherwise need a fourth hand-written name.
+    connected: {
+      gemini:     !!keys.geminiApiKey,
+      anthropic:  !!keys.anthropicApiKey,
+      openrouter: !!keys.openrouterApiKey,
+    },
     activeProvider:  provider?.provider || null,
     activeModel:     provider?.model || null,
     // Current default model id per provider, so the chat model selector's label
@@ -1134,6 +1252,90 @@ router.get('/api-keys', (_req, res) => {
           : null,
       };
     })(),
+    // ── `build` — THE PROVIDERS PAGE'S BLOCK 2, WHOLE ────────────────────────
+    //
+    // ADDITIVE BESIDE `buildModel` ABOVE, WHICH IS UNCHANGED. Two objects about
+    // one subject is normally this repo's named defect, so the split is stated:
+    // `buildModel` is a SHIPPED contract with existing consumers and its own
+    // fields (`selectedHonoured`, `measuredBy`); `build` is what the Providers
+    // page needs to render one block without a second request or a second
+    // derivation. Both read the SAME resolved `provider` — the very object
+    // ingest, Health and Compile run through — so neither can disagree with the
+    // engine or with the other about WHICH model is in force. When the two
+    // consumers converge, one goes; until then the overlap is deliberate.
+    //
+    // `source` gains a FOURTH value the older field cannot express: 'fallback',
+    // when the pinned model was refused by the provider and the chain walked to
+    // something else. That is the one case where the model in force is not the
+    // model anybody chose, and it ranks FIRST because it overrides all three
+    // others as a description of what is actually being billed.
+    build: (() => {
+      const p = provider?.provider || null;
+      if (!p) return null;
+      const model = provider?.model || null;
+      const selected = getSelectedModel(p);
+      const envModel = (process.env.LLM_MODEL && p === getActiveProvider())
+        ? process.env.LLM_MODEL : null;
+      const fb = typeof llmModule.getFallbackStatus === 'function' ? llmModule.getFallbackStatus() : null;
+      const onFallback = !!fb && fb.provider === p && fb.usingModel === model;
+      const entry = offerableFor(p).find(e => e && e.id === model) || null;
+      return {
+        model,
+        provider: p,
+        source: onFallback ? 'fallback' : (envModel ? 'env' : (selected ? 'selected' : 'default')),
+        // The facts a user makes a spending decision from, all read off the
+        // catalogue entry — never re-typed, never inferred from a family name.
+        // Every one is null when the entry does not carry it: absent means
+        // UNMEASURED or UNPUBLISHED, and a zero would state a measurement.
+        facts: {
+          contextLength: entry && Number.isInteger(entry.contextLength) ? entry.contextLength : null,
+          priceIn: entry && typeof entry.input === 'number' ? entry.input : null,
+          priceOut: entry && typeof entry.output === 'number' ? entry.output : null,
+          measured: isMeasured(p, model),
+          thinks: entry && typeof entry.thinks === 'boolean' ? entry.thinks : null,
+          outlineNote: outlineNoteFor(entry),
+        },
+        cheapestMeasured: cheapestMeasuredBuild(keys, p, model),
+      };
+    })(),
+    // ── FACET COUNTS FOR THE "BROWSE EVERY MODEL" SHELF ──────────────────────
+    // Counted over the SAME key-gated population `offerable` serialises, so a
+    // count and the list beneath it can never disagree. Each is a property of
+    // the models, never of a view: no sort, no filter and no cap is applied
+    // first — reporting a CAP as a MEASUREMENT is this repo's own twice-shipped
+    // defect (v3.35.0's `distinctScopeCount`, v3.37.0's tray rows).
+    //
+    // `batchHidden` is deliberately NOT a count of anything in that population —
+    // those ids were rejected before admission and are not offers. It comes from
+    // the last sync's own funnel and is `null` when unknown (an OpenRouter
+    // catalogue persisted by an older build carries no funnel). Null must render
+    // as unknown: a 0 would assert that no batch-only id was found, which was
+    // false for 64 of them on the 2026-09-02 catalogue.
+    catalogueCounts: (() => {
+      const offers = connectedOffers(keys);
+      const meta = keys.openrouterApiKey && typeof llmModule.getOpenRouterCatalogueMeta === 'function'
+        ? llmModule.getOpenRouterCatalogueMeta() : null;
+      return {
+        total: offers.length,
+        canBuild: offers.filter(o => isBuildLaneAllowed(o.provider, o.entry.id)).length,
+        measured: offers.filter(o => isMeasured(o.provider, o.entry.id)).length,
+        free: offers.filter(o => o.entry.free === true).length,
+        batchHidden: meta && Number.isFinite(meta.batchHidden) ? meta.batchHidden : null,
+      };
+    })(),
+    // ── CHAT: WHAT A NEW THREAD STARTS ON, AND HOW MUCH IT CAN REACH ─────────
+    // `startsOn` is the resolved provider/model — the same pair that answers if
+    // the user sends a message without touching the composer's picker — so this
+    // is a READOUT of the engine's own answer, not a second derivation of the
+    // precedence ladder. `count` is every model pickable in chat, which is the
+    // whole connected population: chat has no build-lane gate, deliberately
+    // (nothing is at stake in an answer but the cost of that answer).
+    chat: {
+      startsOn: provider?.provider
+        ? { model: provider.model || null, provider: provider.provider }
+        : null,
+      count: connectedOffers(keys).length,
+    },
     // Provenance for the OpenRouter half of `offerable` above — when the live
     // catalogue was fetched and how many entries it holds. Deliberately NOT a
     // second catalogue surface: the models themselves stay in `offerable`, and
@@ -1246,7 +1448,8 @@ router.post('/api-keys', guardConcurrent('save API keys'), (req, res) => {
     // providerCanBuild is INJECTED, not computed in brain/config.js — that file
     // may not import llm.js (standing no-cycle invariant), and WITHOUT this
     // argument setApiKeys activates NOTHING by design. Never drop it.
-    const { skippedActivation } = setApiKeys(update, { canActivate: providerCanBuild });
+    const { skippedActivation, activationDeferred, activationPolicy } =
+      setApiKeys(update, { canActivate: providerCanBuild });
     let provider = null;
     try { provider = getProviderInfo(); } catch {}
     res.json({
@@ -1254,6 +1457,16 @@ router.post('/api-keys', guardConcurrent('save API keys'), (req, res) => {
       activeProvider: provider?.provider || null,
       activeModel:    provider?.model || null,
       skippedActivation,
+      // ADDITIVE (v3.45.0). A key that saved fine and deliberately did NOT take
+      // the build lane, because one is already set — the Option B policy working
+      // as intended. Kept OUT of `skippedActivation`, which means "could not be
+      // activated" and renders as a warning: a working policy announced as a
+      // warning on every second key save teaches users to ignore the array that
+      // carries the real failure. `activationPolicy` is reported ALWAYS so a
+      // client can tell a deferring build from an older always-switching one
+      // without inferring it from behaviour.
+      activationDeferred,
+      activationPolicy,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1298,7 +1511,36 @@ router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (r
   const { provider } = req.body || {};
   if (!knownProvider(provider)) return badProvider(res);
   try {
-    clearApiKey(provider, { canActivate: providerCanBuild });
+    // `rank` (v3.45.0, Option B) orders the survivors CHEAPEST-MEASURED-FIRST
+    // rather than by PROVIDER_ORDER. Disconnecting the active provider is the
+    // one moment the build lane moves without the user choosing where to, so the
+    // destination should be decided by price rather than by position in a
+    // hardcoded array. INJECTED for the same no-cycle reason as
+    // `providerCanBuild`: brain/config.js may not import llm.js.
+    //
+    // FAIL-SAFE BY CONSTRUCTION: clearApiKey verifies the returned array is the
+    // same SET before using it, so a rank that throws or drops a candidate falls
+    // back to PROVIDER_ORDER and can never hand the lane to nobody.
+    const disconnect = clearApiKey(provider, {
+      canActivate: providerCanBuild,
+      rank: (candidates) => {
+        const keys = getApiKeys();
+        // The cheapest measured build model per surviving provider, taken from
+        // the SAME unfiltered price-ordered list the "cheapest measured" line on
+        // the Providers page reads — one producer, so the sentence the user was
+        // shown and the provider they end up on cannot disagree.
+        const rankOf = new Map(candidates.map(p => [p, Number.POSITIVE_INFINITY]));
+        connectedOffers(keys).forEach(({ provider: p, entry }, i) => {
+          if (!rankOf.has(p) || rankOf.get(p) !== Number.POSITIVE_INFINITY) return;
+          if (!isBuildLaneAllowed(p, entry.id) || !isMeasured(p, entry.id)) return;
+          rankOf.set(p, i);
+        });
+        // A stable sort over the ORIGINAL order, so providers with no measured
+        // build model keep their PROVIDER_ORDER positions at the back rather
+        // than being reshuffled arbitrarily among themselves.
+        return [...candidates].sort((a, b) => rankOf.get(a) - rankOf.get(b));
+      },
+    });
     let info = null;
     // This catch became REACHABLE-WITH-KEYS-CONFIGURED the moment the guard
     // above was supplied: when every remaining candidate is refused,
@@ -1312,6 +1554,18 @@ router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (r
       ok: true,
       activeProvider: info?.provider || null,
       activeModel:    info?.model || null,
+      // ── ADDITIVE (v3.45.0): SAY THAT THE BUILD LANE MOVED, AND WHERE TO ────
+      // Disconnecting one provider can silently change which provider every
+      // subsequent ingest, Health scan and Compile is billed to. It always could;
+      // what was missing was any way for the screen to say so. `reason` names the
+      // rule that decided it — 'cheapest_measured' when price ordering actually
+      // ran and governed, 'first_connected' when it did not (a single candidate
+      // needs no ordering), 'all_refused'/'none_left' when nobody inherited.
+      // Reported straight from clearApiKey's own report, which re-reads the
+      // config rather than echoing what it believes it wrote.
+      buildLaneMoved: !!disconnect && disconnect.wasActive,
+      previousActive: disconnect ? disconnect.previousActive : null,
+      reason: disconnect ? disconnect.reason : null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
