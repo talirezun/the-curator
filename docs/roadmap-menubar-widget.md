@@ -97,7 +97,7 @@ the app is read-only over working state by design, and it must stay that way.
 | A **per-row submenu** — Open in The Curator · Copy resume prompt · Copy handoff as Markdown · Reveal current.md in Finder | `desktop/lib/tray-menu.js`, `desktop/lib/resume-prompt.js`, `src/brain/tray-summary.js` (`getHandoffMarkdown`) | **Built.** Not in any section below; see deviation 10 |
 | **`previousHarness`** and **`saveHarnesses`** on the index row, and **`harnessChanges`** / **`harnessCount`** on the pulse | `src/brain/working-state.js`, `src/brain/tray-summary.js` | **Built.** Both opt-in behind `withSaveTimes`, so the MCP index payload is unchanged |
 | Two `type: 'header'` section captions — **Save pulse** and **Recent scopes** — replacing the two separators that sat in the same places | `desktop/lib/tray-menu.js` | **Built.** See deviation 9 |
-| A hard width budget — `MENU_WIDTH_POINTS` 260 spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** See deviation 9 |
+| A hard width budget — `MENU_WIDTH_POINTS` spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** The target is now the **measured 363.5 points** (measured from a 2× capture on 2026-09-02), not the 260 this row named while it was a guess. See deviations 9 and 11 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
 | The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
 | Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked |
@@ -342,6 +342,55 @@ serialises against `pull()` — both real work, neither in this change.
     deviation 9's work removed, reasserted by the fix meant to remove a
     different one. The id arm comes first and `isThisHost` marks an id as local.
 
+11. **The menu was photographed for the first time, and the photograph found
+    three things — one of them being that the width model had never been
+    right.** All three came from a single 2× capture of the redesigned menu on
+    2026-09-02, and none of them was reachable by any offline test.
+
+    - **The pulse row was cutting a fact.** It rendered
+      `5 days known · 55 saves…`. The producer had emitted
+      `5 days known · 55 saves · 2 tools` — 33 characters, complete and true —
+      and the width budget was 29, so `clipClauses` dropped a whole clause. Two
+      of that sentence's three clauses *are* its honesty caveats, on the one row
+      whose job is saying what the picture beside it does and does not cover.
+      `pulseLabelBudget()` is now the **larger** of the width allowance and the
+      producer's own longest reading, obtained by running `pulseLabel` rather
+      than composing the sentence a second time. The cost is stated rather than
+      hidden: the worst reading the producer can emit — 48 characters, every
+      caveat firing at once — would render at about **456 points**, wider than
+      the menu. On the maintainer's store it is 33 characters and about 358.
+    - **The draining clock's `cool` state read as a sliver.** A quarter-disc
+      with nothing around it is not a quarter of anything — a fraction needs a
+      whole to be a fraction *of* — and three of the five photographed rows
+      carried one. Every mark is now drawn inside a faint 1-point **face ring**
+      at 35% of its own alpha. `live`'s rim is invisible because its full disc
+      covers it, which is the correct reading of a full clock. The ink ladder
+      stays strictly decreasing and is now asserted from the **decoded alpha
+      channel** at both representations, not only from the geometry: 78.5 > 61.4
+      > 44.2 > 27.1 > 22.5 pt². The rim's own contrast is 1.50–2.32:1 and is
+      **reported, not floored** — it is the ground the sector is read against,
+      not a signal anyone is asked to detect, and the marks themselves are
+      unchanged at 3.79–6.43:1.
+    - **And the width model was wrong in two terms, both the same way.** The
+      menu measures **363.5 points** (727 device pixels at scale 2) against a
+      285-point target, because `MENU_CHROME_POINTS` was 36 where the measured
+      width a title never gets is **84.5** (14.5 of leading inset plus 70.0 of
+      trailing accessory column and padding), and `MENU_SUBLABEL_CHAR_POINTS`
+      was 5.0 where three rendered 46-character sublabels measured **5.54, 5.58
+      and 5.64**. Both errors ran in the direction that believed the menu
+      narrower than it is, which is why a budget computed from them still
+      produced a menu the maintainer called well proportioned. The corrected
+      constants **reproduce the 46-character sublabel cap that was actually
+      rendered** — three measured terms landing on a fourth measured fact — and
+      predict the widest row at 361.4 against the 363.5 photographed. Nothing
+      narrows: the row budget goes 35 → 40 and the plain budget 38 → 42, which
+      costs no width because the widest thing on a row is its sublabel and that
+      cap is unchanged. `MENU_CHAR_POINTS` stays **6.5**, now corroborated
+      rather than assumed: ink width over character count on nine rendered
+      labels ran 5.78 to 7.39, mean 6.33. `MENU_ICON_GAP_POINTS` is the one term
+      still assumed, because a photograph cannot separate the layout gap from
+      the following glyph's left side bearing.
+
 ### The height refusal, and why lifting it is not a reversal of the argument
 
 §1.5 refused to put the save count in the bar height, on the ground that a
@@ -379,15 +428,23 @@ measuring the GPU process (§2.7 rec 2), **still not measured**.
 
 ### What has never been rendered, and this is the honest limit
 
-**Nothing in the redesigned menu has been photographed.** An earlier arrangement
-was driven through a real `Tray` and `Menu.buildFromTemplate` on one machine and
-`screencapture` returned a black frame; nothing since has been seen at all. Four
-things this revision adds are unproven in a way the earlier ones were not: that
-macOS draws a **submenu** on a tray menu item, that `clipboard.writeText` lands
-from a menu handler while the menu is dismissing, that `shell.showItemInFolder`
-opens on a path that may not exist, and that the small second line under each row
-draws (`sublabel` needs macOS 14.4, where `type: 'header'` needs 14 — that floor
-is now stated in the user documentation rather than implied).
+**The redesigned menu HAS now been photographed, once — and every number above
+that says "measured" comes from that one capture.** A throwaway probe built the
+real template through the real modules on a real `Tray`, popped the menu and
+captured it at 2× on 2026-09-02. It settled far more than it was aimed at:
+macOS draws the **submenu**, the `type: 'header'` captions render as section
+headers, the small second line under each row draws, the colour images are
+drawn as authored, and Electron scales a menu icon **not at all** — the strip
+measured 55.0 points against its declared `widthPoints: 55`, which is what makes
+the width arithmetic in deviation 11 a measurement rather than an inference.
+
+**What that photograph did NOT settle.** That `clipboard.writeText` lands from a
+menu handler while the menu is dismissing, that `shell.showItemInFolder` opens
+on a path that may not exist, that `mouse-enter` fires, and how any of it looks
+on a Mac below macOS 14 (`type: 'header'` needs 14, `sublabel` needs 14.4 — that
+floor is stated in the user documentation rather than implied). It is also **one
+capture, in light appearance, of one fixture**: the dark palette, the empty-store
+menu and the truncation states have still never been seen.
 
 **And the older statement, which still holds.** `new Tray()` has never been
 called by any test. What is proven is data: the row model, the menu template, the 3×3 mode

@@ -58,13 +58,43 @@
  * removed:
  *
  *   live    full disc,  r 5.0pt      78.5pt² of ink
- *   warm    ¾ disc,     r 5.0pt      58.9
- *   today   ½ disc,     r 5.0pt      39.3
- *   cool    ¼ disc,     r 5.0pt      19.6
- *   cold    filled dot, r 2.0pt      12.6
+ *   warm    ¾ disc  + rim            61.4
+ *   today   ½ disc  + rim            44.2
+ *   cool    ¼ disc  + rim            27.1
+ *   cold    r 2.0 dot + rim          22.5
  *
- * Strictly decreasing, and the suite asserts it from the shipped geometry
- * rather than from this comment.
+ * Strictly decreasing, and the suite asserts it from the shipped geometry AND
+ * from the decoded alpha channel rather than from this comment.
+ *
+ * ── THE RIM, AND THE PHOTOGRAPH THAT PUT IT THERE ──────────────────────────
+ *
+ * The sector ladder shipped without one, and the first photograph of the menu
+ * showed what that costs: rows three, four and five carried a `cool` quarter —
+ * a wedge with no context around it — and it read as a sliver, not as a
+ * quarter of anything. A fraction needs a WHOLE to be a fraction of. On its
+ * own, a quarter-disc is just a small shape.
+ *
+ * So every mark is now drawn inside a faint full RIM at the face radius: a
+ * 1-point ring at 35% of the mark's own alpha. The clock face is always
+ * visible, and the sector reads as the part of it that is still filled.
+ *
+ * THREE PROPERTIES IT WAS REQUIRED NOT TO BREAK, and each is asserted:
+ *
+ *  - THE LADDER STAYS STRICTLY DECREASING. The rim is drawn at the same radius
+ *    for every state, so it adds ink in inverse proportion to how much of it
+ *    the sector already covers — most to `cold`, none at all to `live`, whose
+ *    full disc sits on top of it. That compresses the bottom of the ladder
+ *    (`cool` 19.6 -> 27.1 against `cold` 12.6 -> 22.5) without inverting it.
+ *  - `live` IS STILL THE ONLY FULL DISC. Its rim is invisible because the disc
+ *    covers it, which is the correct reading: a full clock has no visible face.
+ *  - COLOUR IS STILL NEVER THE SIGNAL. The rim is the same hue as the mark and
+ *    differs only in alpha, so the five silhouettes stay five silhouettes with
+ *    the palette discarded entirely.
+ *
+ * `cold` gets the rim too, and that is a decision rather than an oversight. It
+ * is the state a photograph showed as a 4-point dot floating in an empty box;
+ * inside the face it reads as a clock that has fully drained down to its hub,
+ * which is exactly what the state means.
  *
  * ── A DRAINING CLOCK, AND WHY IT REPLACED THE RINGS ────────────────────────
  *
@@ -103,7 +133,7 @@
  */
 
 import {
-  createCanvas, encodeRgbaPng, hexToRgb, paintShape,
+  coverage, createCanvas, encodeRgbaPng, hexToRgb, paintPixel,
 } from './rgba-png.js';
 
 /**
@@ -223,6 +253,41 @@ export const DOT_INK = {
 export const DOT_ORDER = ['live', 'warm', 'today', 'cool', 'cold'];
 
 /**
+ * The clock face: the radius every sector drains inside, and the radius the rim
+ * is drawn at for EVERY state including `cold`.
+ *
+ * It is a constant of its own rather than `DOT_INK.live.radius` because it is a
+ * different fact from any one state's ink: `cold` is drawn at r 2.0 and still
+ * gets its face at 5.0. The suite pins the four sector states' radii against it,
+ * so a state drawn at some other radius reds rather than quietly drawing its
+ * sector and its face on two different circles.
+ */
+export const FACE_RADIUS = 5.0;
+
+/**
+ * The rim's stroke, in points, drawn INWARD from `FACE_RADIUS`.
+ *
+ * One point, which is one device pixel at 1x and two at 2x. A hairline below
+ * that has no 1x rendering at all; anything above it starts competing with the
+ * sector for the eye, and the sector is the signal.
+ */
+export const RIM_POINTS = 1.0;
+
+/**
+ * How much of the mark's own alpha the rim carries.
+ *
+ * 35% — present enough to establish the face at 1x, subordinate enough that
+ * nobody mistakes the rim for the filled part. It is the SAME COLOUR as the
+ * mark and differs only in alpha, which is what keeps §2's contrast figures
+ * describing everything drawn: the rim cannot introduce a hue that was never
+ * measured. Its own composited contrast is far below the 3:1 non-text floor and
+ * is meant to be — the rim is scaffolding for reading the sector, not a signal
+ * anybody is asked to detect on its own, and the suite reports its ratio rather
+ * than holding it to a floor written for indicators.
+ */
+export const RIM_ALPHA = 0.35;
+
+/**
  * Buckets that are DELIBERATELY not drawn — a WRITTEN case, not an omission.
  *
  * `ageBucket()` returns `'unknown'` for a row with no usable clock, and it is
@@ -254,11 +319,29 @@ export function dotPalette(opts) {
 export function dotInkArea(bucket) {
   const ink = DOT_INK[bucket];
   if (!ink) return 0;
-  // A sector's area is its fraction of the whole disc, exactly. There is no
-  // approximation here and no rim to account for: the boundaries are two radii
-  // and an arc, and `paintShape` antialiases the arc without changing the area
-  // the geometry describes.
-  return ink.turns * Math.PI * ink.radius * ink.radius;
+  // A sector's area is its fraction of the whole disc, exactly: the boundaries
+  // are two radii and an arc, and `paintShape` antialiases the arc without
+  // changing the area the geometry describes.
+  const sector = ink.turns * Math.PI * ink.radius * ink.radius;
+
+  // ── AND THE RIM, WEIGHTED BY ITS ALPHA AND BY WHAT ALREADY COVERS IT ────
+  //
+  // The rim is an annulus at the face radius. Where the sector already fills
+  // it, it adds nothing — its pixels are opaque either way — so only the
+  // UNCOVERED part counts, and it counts at `RIM_ALPHA`, because ink area here
+  // means the alpha-weighted quantity the suite reads back out of the decoded
+  // channel, not the number of pixels touched.
+  //
+  // The overlap is exact rather than estimated: the sector covers `turns` of
+  // every ring it reaches, and it reaches the annulus only as far as its own
+  // radius goes — which for `cold` (r 2.0, inner rim edge 4.0) is not at all.
+  const inner = Math.max(0, FACE_RADIUS - RIM_POINTS);
+  const annulus = Math.PI * (FACE_RADIUS * FACE_RADIUS - inner * inner);
+  const reachOuter = Math.min(ink.radius, FACE_RADIUS);
+  const reachInner = Math.min(ink.radius, inner);
+  const covered = ink.turns * Math.PI
+    * (reachOuter * reachOuter - reachInner * reachInner);
+  return sector + RIM_ALPHA * Math.max(0, annulus - covered);
 }
 
 /**
@@ -285,7 +368,22 @@ function inSector(dx, dy, turns) {
   return !top && !right;                              // keep the bottom-left
 }
 
-/** The RGBA canvas for one bucket at one scale factor. */
+/**
+ * The RGBA canvas for one bucket at one scale factor.
+ *
+ * ── TWO SHAPES, ONE COLOUR, AND THE ALPHA IS THE MAXIMUM OF THEM ───────────
+ *
+ * `paintPixel` REPLACES rather than composites, and deliberately so — a
+ * blending rule in `rgba-png.js` would be an untested code path pretending to
+ * be a feature. Painting the rim and then the sector would therefore let the
+ * sector's own antialiased edge, at low coverage, overwrite the rim underneath
+ * it and cut a pale seam around every mark.
+ *
+ * So the two are resolved BEFORE anything is written: each pixel's alpha is the
+ * greater of its sector coverage and its rim coverage scaled by `RIM_ALPHA`.
+ * That is not compositing — one colour is written once per pixel — and it makes
+ * the drawing order irrelevant, which is the property a seam would break.
+ */
 export function dotCanvas(bucket, scale, palette) {
   const ink = DOT_INK[bucket];
   if (!ink) return null;
@@ -294,12 +392,27 @@ export function dotCanvas(bucket, scale, palette) {
 
   const c = (DOT_POINTS / 2) * s;
   const outer = ink.radius * s;
+  const face = FACE_RADIUS * s;
+  const faceInner = Math.max(0, FACE_RADIUS - RIM_POINTS) * s;
+  const rgb = hexToRgb(palette[ink.tone]);
 
-  paintShape(canvas, hexToRgb(palette[ink.tone]), (x, y) => {
+  const inMark = (x, y) => {
     const dx = x - c, dy = y - c;
     if (dx * dx + dy * dy > outer * outer) return false;
     return inSector(dx, dy, ink.turns);
-  });
+  };
+  const inRim = (x, y) => {
+    const dx = x - c, dy = y - c;
+    const d2 = dx * dx + dy * dy;
+    return d2 <= face * face && d2 >= faceInner * faceInner;
+  };
+
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const a = Math.max(coverage(x, y, inMark), coverage(x, y, inRim) * RIM_ALPHA);
+      if (a > 0) paintPixel(canvas, x, y, rgb, a);
+    }
+  }
 
   return canvas;
 }

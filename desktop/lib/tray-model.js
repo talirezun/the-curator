@@ -141,37 +141,90 @@ export const MAX_ROWS = 5;
 // the missing half — a number every label is measured against and clipped to,
 // so no arrangement of data can produce a 74-character row again.
 //
-// The target comes from the two surfaces he supplied as references: iStat
-// Menus' panels run about 270 points and Little Snitch's menu about 240. 260 is
-// between them, and the v3.37.0 menu measured on his own store is about 425.
+// The target came from the two surfaces he supplied as references: iStat
+// Menus' panels run about 270 points and Little Snitch's menu about 240.
 //
-// THE COMPONENTS, each an ASSUMPTION rather than a measurement, because nothing
-// here has ever been rendered and there is no width API in Electron or in
-// AppKit's maximum direction to ask:
+// ── AND THEN THE MENU WAS PHOTOGRAPHED, WHICH ENDED THE GUESSING ───────────
 //
-//   MENU_WIDTH_POINTS     285  the target for the whole item, edge to edge
-//   MENU_CHROME_POINTS     36  the leading state column plus trailing padding
-//   MENU_ICON_GAP_POINTS    4  the bearing between an icon and its title
+// Every number here used to be an ASSUMPTION, stated as one, because nothing
+// had ever been rendered and neither Electron nor AppKit's maximum direction
+// offers a width to ask for. The redesigned menu has now been built through a
+// real `Tray` and captured; the figures below are taken off that photograph,
+// MEASURED FROM A 2x CAPTURE ON 2026-09-02 (`probe-menu-wide.png`, 727 device
+// pixels of menu at scale 2).
+//
+// THE MEASUREMENT, in points from the menu's own left edge:
+//
+//   menu edge to edge                                        363.5
+//   leading inset (the strip image's left edge, and the        14.5
+//     left edge of every plain item's text)
+//   widest text ink (a row's 46-character sublabel)  ends at  293.5
+//   the submenu chevron                             ends at  347.5
+//   trailing inset after the accessory column                  16.0
+//
+// The strip image measured 55.0 points wide against `renderPulseStrip`'s
+// declared `widthPoints: 55` — so Electron really does draw a menu icon at 1:1,
+// and the leading inset above is a reading of a known quantity rather than an
+// inference.
+//
+// THE COMPONENTS AS THEY NOW STAND:
+//
+//   MENU_WIDTH_POINTS   363.5  MEASURED. The whole item, edge to edge.
+//   MENU_CHROME_POINTS   84.5  MEASURED. 14.5 leading inset + 70.0 of trailing
+//                              accessory column and padding (363.5 - 293.5),
+//                              which is the submenu chevron on a row, the ⌘Q
+//                              key equivalent on Quit, and the gap AppKit keeps
+//                              between the title column and that column. It is
+//                              ONE number because the photograph cannot
+//                              separate the gap from the column; what it can
+//                              measure exactly is how much width the title
+//                              never gets, which is what a budget needs.
+//   MENU_ICON_GAP_POINTS    4  STILL ASSUMED, and the only one. Ink-to-ink the
+//                              gap measured 7.0pt at the strip and 6.5pt at a
+//                              row dot — but that includes the following
+//                              glyph's left side bearing, which a photograph
+//                              cannot separate from the layout gap, so the
+//                              4-point assumption is left standing rather than
+//                              replaced with a number it cannot support.
 //   ROW_ICON_POINTS        13  the gutter a row's recency dot occupies
-//   MENU_CHAR_POINTS      6.5  the average glyph advance of the menu font
+//   MENU_CHAR_POINTS      6.5  CORROBORATED. Ink width over character count on
+//                              nine rendered labels ran 5.8 to 7.4 points per
+//                              character (mean 6.3): "installer-gate · 3 days
+//                              ago" 5.78, the pulse reading exactly 6.50,
+//                              "Open Agent Memory…" 7.39 — proportional text,
+//                              so the spread is the letters and not an error.
+//                              6.5 sits just above the mean and is kept.
+//   MENU_SUBLABEL_CHAR_POINTS
+//                        5.65  MEASURED, and it was WRONG at 5.0. Three rows'
+//                              46-character sublabels measured 255.0, 256.5 and
+//                              259.5 points of ink — 5.54 to 5.64 per glyph
+//                              against an assumed 5.0. That 13% error, times 46
+//                              characters, is 30 points of menu the old
+//                              arithmetic never charged for.
 //
-// `MENU_CHAR_POINTS` is pulse-strip.js's own stated assumption and is READ FROM
-// THERE rather than retyped, so the two files cannot disagree about the font.
-// It is the single largest source of error in everything below, which is why
+// `MENU_CHAR_POINTS` is pulse-strip.js's own number and is READ FROM THERE
+// rather than retyped, so the two files cannot disagree about the font. It is
+// still the largest source of error in everything below, which is why
 // `labelBudgetChars` takes it as a PARAMETER and the suite reports the budget
 // across the whole plausible range instead of asserting one number.
 //
-// ── 260 -> 285, AND THE REASON IS THAT 260 WAS SET BEFORE ANYTHING EXISTED ──
+// ── 285 -> 363.5, AND NO ROW LOSES A CHARACTER ─────────────────────────────
 //
-// 260 came from iStat Menus (~270) and Little Snitch (~240) and was chosen
-// BEFORE a single row had ever been drawn. What it was fixing was a 517-point
-// menu, and it fixed it: the shipped menu measures about 259 and the
-// maintainer's complaint about it is no longer width. 285 is 6% over his own
-// wider reference app and buys FOUR characters on every row — which is what
-// pays for the topic-first layout below, where line one carries the scope name
-// and the age and nothing may push either of them out.
-export const MENU_WIDTH_POINTS = 285;
-export const MENU_CHROME_POINTS = 36;
+// 285 was not a width the menu had; it was a width the arithmetic BELIEVED,
+// with two of its terms wrong in the same direction — chrome under by 48
+// points, the sublabel advance under by 13%. The photographed menu is 363.5,
+// and the visible result is the one the maintainer looked at and called well
+// proportioned, so what changes here is the model and not the menu.
+//
+// The corrected constants REPRODUCE the shipped sublabel cap exactly:
+// (363.5 - 84.5 - 17) / 5.65 = 46.4 -> 46, which is the number that was
+// rendered. That is the check on the whole decomposition — three independently
+// measured terms landing on the shipped answer — and it is asserted rather than
+// merely stated. Nothing narrows: the label budgets GROW (a row 35 -> 40, a
+// plain item 38 -> 42), which costs no width, because the widest thing on a row
+// is its sublabel and that cap is unchanged.
+export const MENU_WIDTH_POINTS = 363.5;
+export const MENU_CHROME_POINTS = 84.5;
 export const MENU_ICON_GAP_POINTS = 4;
 // ── 11 -> 13, AND IT IS THE MARK THAT NEEDED IT, NOT THE BOX ────────────────
 //
@@ -193,11 +246,19 @@ export const MENU_CHAR_POINTS = typeof pulseStrip.MENU_CHAR_POINTS === 'number'
  * budget in points buys MORE characters there — which is why the headline cap
  * below comes out larger than the row-label cap rather than smaller.
  *
- * Taken as 5.0pt against the label's 6.5, about the 11pt-versus-14pt ratio
- * AppKit uses. An assumption of exactly the same kind as the one above, stated
- * the same way, and wrong in the same direction if it is wrong at all.
+ * MEASURED, and it replaces an assumption that was wrong. It was taken as 5.0
+ * against the label's 6.5 — "about the 11pt-versus-14pt ratio AppKit uses" —
+ * and the photograph says otherwise: three rows whose sublabels were all
+ * clipped to exactly 46 characters measured 255.0, 256.5 and 259.5 points of
+ * ink, which is 5.54, 5.58 and 5.64 points per glyph. 5.65 is the widest of the
+ * three, because a budget that under-charges is the defect being fixed here.
+ *
+ * It is still smaller than the label advance, which is the property the layout
+ * depends on and the easiest one to get backwards: the same points buy MORE
+ * characters in the smaller face, which is why the headline cap comes out
+ * larger than the row-label cap.
  */
-export const MENU_SUBLABEL_CHAR_POINTS = 5.0;
+export const MENU_SUBLABEL_CHAR_POINTS = 5.65;
 
 /**
  * How many characters fit on one menu item, given what its icon costs.
@@ -216,6 +277,59 @@ export function labelBudgetChars(iconPoints = 0, charPoints = MENU_CHAR_POINTS) 
 
 /** An item with no icon: the headline, the commands, the notices, the stamp. */
 export const PLAIN_LABEL_CHARS = labelBudgetChars(0);
+
+/**
+ * The pulse row's budget, which is the ONE label on this menu that a width may
+ * not decide.
+ *
+ * ── THE DEFECT ────────────────────────────────────────────────────────────
+ *
+ * The photographed menu read `5 days known · 55 saves…`. Nothing was wrong with
+ * the reading: `pulseLabel` had emitted `5 days known · 55 saves · 2 tools`, 33
+ * characters, complete and true. The width budget at the time was 29, so
+ * `clipClauses` dropped `· 2 tools` — a whole fact, silently, off the one row
+ * whose entire job is to say honestly what the picture beside it does and does
+ * not cover. Two of that sentence's clauses ARE its honesty caveats; a budget
+ * that eats them is a budget that has inverted the item's purpose.
+ *
+ * ── THE FIX IS A FLOOR, NOT AN EXEMPTION ───────────────────────────────────
+ *
+ * Exempting the row from clipping entirely would leave nothing at all standing
+ * between an unexpected producer string and an unbounded menu item. Instead the
+ * budget is the LARGER of two numbers:
+ *
+ *   1. what the width arithmetic allows, given what the strip image costs, and
+ *   2. how long the producer's own longest reading actually is — obtained by
+ *      RUNNING `pulseLabel` over its widest branches (see `longestPulseLabel`),
+ *      never by composing the sentence a second time here.
+ *
+ * So no shape this producer is known to emit is ever cut, and `clipClauses`
+ * remains in place as the backstop for a shape it is not known to emit — where
+ * it still drops whole clauses, because `69 s…` reads as `69 seconds` and a
+ * clip that produces a DIFFERENT fact is worse than one that produces less.
+ *
+ * ── THE COST, STATED RATHER THAN DISCOVERED LATER ──────────────────────────
+ *
+ * At the measured constants the width arithmetic allows 33 characters, and the
+ * producer's longest reading is 48 — `the recent past · at least 9999 saves ·
+ * 99 tools`, every caveat firing at once with four digits of saves. Rendering
+ * that whole would make the pulse item about 455 points, roughly 25% wider than
+ * the photographed menu, and it would then be the widest item on it. That is
+ * the accepted price of never cutting a caveat, and it is a price paid only by
+ * a store that has genuinely earned every one of those clauses; on the
+ * maintainer's own store the reading is 33 characters and the item comes out at
+ * about 358 points — narrower than the menu around it, which is asserted rather
+ * than hoped.
+ *
+ * @param {number} stripWidthPoints  the picture's own width, from the renderer
+ * @returns {number} characters
+ */
+export function pulseLabelBudget(stripWidthPoints) {
+  const width = labelBudgetChars(stripWidthPoints);
+  const longest = typeof pulseStrip.longestPulseLabel === 'function'
+    ? stripPulseNoun(pulseStrip.longestPulseLabel()) : null;
+  return Math.max(width, typeof longest === 'string' ? longest.length : 0);
+}
 
 /**
  * A scope row. It carries a recency dot, so it has LESS text budget than a plain
@@ -1908,25 +2022,30 @@ export function buildTrayModel(summary, opts = {}) {
     // passed through untouched. If that module ever stops emitting the noun,
     // this is a no-op rather than a corruption.
     //
-    // ── AND THEN THE BUDGET, WHICH THE STRIP'S OWN GEOMETRY SETS ───────
+    // ── AND THEN THE BUDGET, WHICH IS THE ONE ON THIS MENU THAT THE WIDTH
+    //    DOES NOT GET TO DECIDE ──────────────────────────────────────────
     //
     // Electron does NO scaling on a menu icon, so the picture's width is spent
-    // before a single character is drawn, and the label gets whatever is left.
-    // Taken from `strip.widthPoints` and never from a constant here, because
-    // the drawing module owns that number and a second copy of it would be
-    // wrong the first time it changed — which it did: the strip folded from 28
-    // six-hour cells at 83pt to 14 twelve-hour ones at 55pt while this was
-    // being written, and this expression needed no edit.
+    // before a single character is drawn. `strip.widthPoints` is read from the
+    // spec and never from a constant here, because the drawing module owns that
+    // number and a second copy of it would be wrong the first time it changed —
+    // which it did: the strip folded from 28 six-hour cells at 83pt to 14
+    // twelve-hour ones at 55pt while this was being written, and this
+    // expression needed no edit.
     //
-    // At 55pt the reading gets 25 characters, and the longest form the producer
-    // emits — `4 days known · 69 saves`, the young-store case carrying its own
-    // honesty caveat — is 23. It fits WHOLE. At the previous 83pt it did not,
-    // and would have been cut back to `4 days known…`; the clause-boundary clip
-    // below is still the behaviour when a reading does overrun, and it is still
-    // the right one (see `clipClauses`), but it is no longer reached by any
-    // shape the producer is known to emit.
+    // ── REVISED, BECAUSE THE PHOTOGRAPH SHOWED IT CUTTING A CAVEAT ─────
+    //
+    // WAS: `labelBudgetChars(strip.widthPoints)` alone, with a comment claiming
+    // the clause clip "is no longer reached by any shape the producer is known
+    // to emit". It was reached on the first menu ever photographed: the reading
+    // was `5 days known · 55 saves · 2 tools` and the row rendered
+    // `5 days known · 55 saves…`. `pulseLabelBudget` takes the LARGER of the
+    // width allowance and the producer's own longest reading, so a caveat can
+    // no longer be the thing that does not fit. `clipClauses` stays as the
+    // backstop for a shape the producer is not known to emit, and it still cuts
+    // on a clause boundary, because `55 s…` reads as `55 seconds`.
     label: clipClauses(stripPulseNoun(_pulseLabel ? _pulseLabel(rawPulse) : null),
-      labelBudgetChars(strip.widthPoints)),
+      pulseLabelBudget(strip.widthPoints)),
     toolTip: _pulseToolTip ? _pulseToolTip(rawPulse) : null,
   } : null;
 

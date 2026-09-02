@@ -1260,12 +1260,45 @@ section('§14 the width budget — arithmetic, and what it is sensitive to');
 // tokens is a lever with no FLOOR — when what is left is long, the menu is still
 // wide. This section is the floor.
 //
-// EVERY NUMBER HERE RESTS ON `MENU_CHAR_POINTS`, which is an assumption about a
-// font nobody has measured, so nothing below asserts a single character count as
-// though it were a fact: the arithmetic is asserted, and the SENSITIVITY of the
-// answer across the plausible range is reported.
+// EVERY NUMBER HERE RESTS ON `MENU_CHAR_POINTS`, which is one average standing
+// in for a proportional font, so nothing below asserts a single character count
+// as though it were a fact: the arithmetic is asserted, and the SENSITIVITY of
+// the answer across the plausible range is reported.
+//
+// ── AND THE OTHER TERMS ARE NO LONGER ASSUMPTIONS ──────────────────────────
+//
+// The menu has been photographed. MEASURED FROM A 2x CAPTURE ON 2026-09-02:
+// 727 device pixels of menu at scale 2 is 363.5 points, the leading inset is
+// 14.5, and the widest text ink ends at 293.5 — so 84.5 points of every item is
+// width the title never gets. The old model said 36, and said the sublabel face
+// advanced 5.0 points per glyph when three rendered 46-character sublabels
+// measured 5.54, 5.58 and 5.64.
+//
+// Both errors ran the same way — the arithmetic believed the menu was narrower
+// than it is — which is why a budget computed from them still produced a menu
+// the maintainer called well proportioned: the model was wrong about the width
+// in a direction that happened to be safe. This section pins the corrected
+// decomposition against the ONE number the photograph fixes independently: the
+// sublabel cap that was actually rendered.
 {
   const B = model.labelBudgetChars;
+
+  // THE CHECK ON THE WHOLE DECOMPOSITION. Three separately measured terms —
+  // 363.5 total, 84.5 chrome, 5.65 per sublabel glyph — must reproduce the cap
+  // the photographed menu was already rendering at, 46 characters, or one of
+  // them is wrong. Nothing here is free to be adjusted to make it pass: the
+  // photograph fixes all four numbers.
+  eq(model.MAX_HEADLINE_CHARS, 46,
+    'the corrected constants reproduce the 46-character sublabel cap that was PHOTOGRAPHED — three measured terms landing on a fourth measured fact');
+  ok(model.MENU_WIDTH_POINTS > 360 && model.MENU_WIDTH_POINTS < 367,
+    `the target is the MEASURED width (${model.MENU_WIDTH_POINTS}pt), not a reference app's (~240–270) — this menu is what it is, and the model now says so`);
+  ok(model.MENU_CHROME_POINTS > 80,
+    `and the chrome is the measured ${model.MENU_CHROME_POINTS}pt of leading inset plus trailing accessory column, not the 36 that was assumed`);
+  // NO ROW LOSES A CHARACTER. The correction is to the model, not to the menu.
+  ok(model.ROW_LABEL_CHARS >= 35 && model.PLAIN_LABEL_CHARS >= 38 && model.MAX_HEADLINE_CHARS >= 46,
+    `every budget is at or above what shipped before the correction (row ${model.ROW_LABEL_CHARS} ≥ 35, plain ${model.PLAIN_LABEL_CHARS} ≥ 38, sublabel ${model.MAX_HEADLINE_CHARS} ≥ 46) — the menu does not narrow`);
+  ok(model.MENU_SUBLABEL_CHAR_POINTS > 5.5 && model.MENU_SUBLABEL_CHAR_POINTS < 5.7,
+    `the sublabel advance is the measured ${model.MENU_SUBLABEL_CHAR_POINTS}pt/glyph — the widest of three rendered rows, because a budget that under-charges is the defect`);
 
   // The formula, driven rather than restated.
   eq(B(0, 6.5), Math.floor((model.MENU_WIDTH_POINTS - model.MENU_CHROME_POINTS) / 6.5),
@@ -1311,6 +1344,33 @@ section('§14 the width budget — arithmetic, and what it is sensitive to');
     `CONTROL: the range genuinely moves the answer (${table[table.length - 1].row}–${table[0].row} characters), so quoting one number would be quoting an assumption`);
   ok(table.every((t) => t.row >= 24),
     'and even at the widest assumed glyph a row still holds a readable scope plus its age');
+
+  // ── THE MODEL PREDICTS THE PHOTOGRAPH, WHICH IS THE POINT OF FIXING IT ─
+  //
+  // A budget is only worth having if the width it predicts is the width that
+  // appears. Reconstructed forwards from the constants: chrome, the dot gutter
+  // and its bearing, and a sublabel at the cap in its own face.
+  const widestRow = model.MENU_CHROME_POINTS + model.ROW_ICON_POINTS + model.MENU_ICON_GAP_POINTS
+    + model.MAX_HEADLINE_CHARS * model.MENU_SUBLABEL_CHAR_POINTS;
+  console.log(`    predicted widest row ${widestRow.toFixed(1)}pt against a menu measured at 363.5pt`);
+  ok(Math.abs(widestRow - 363.5) < 6,
+    `the constants PREDICT the photographed menu to within ${Math.abs(widestRow - 363.5).toFixed(1)}pt — the old ones predicted 283 for a menu that measured 363.5`);
+
+  // ── AND THE PULSE ROW, WHOSE BUDGET IS DELIBERATELY NOT A WIDTH ───────
+  //
+  // On the maintainer's own store the reading is 33 characters, and that row is
+  // NARROWER than the menu around it — so the row that carries the picture is
+  // not what makes the menu wide. In the worst case the producer can emit it
+  // IS: 48 characters of every caveat at once puts the item past 450 points.
+  // That is the accepted price of never cutting a caveat, and it is reported
+  // here rather than discovered in a later photograph.
+  const pulseRow = (chars) => model.MENU_CHROME_POINTS + 55 + model.MENU_ICON_GAP_POINTS
+    + chars * model.MENU_CHAR_POINTS;
+  ok(pulseRow(33) < 363.5,
+    `the photographed pulse reading (33 chars) renders at about ${pulseRow(33).toFixed(0)}pt — inside the menu it sits in`);
+  console.log(`    worst-case pulse reading (${model.pulseLabelBudget(55)} chars) would render at about ${pulseRow(model.pulseLabelBudget(55)).toFixed(0)}pt — wider than the menu, and accepted`);
+  ok(pulseRow(model.pulseLabelBudget(55)) > 363.5,
+    'CONTROL: and the worst case really is wider than the menu, so that disclosure is a measurement rather than a formality');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1625,40 +1685,127 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   eq(clicks, ['memory', 'memory'],
     'both land on Agent Memory — the same destination as the headline, which is where the saves this strip counts are actually listed');
   ok(pulseItem.toolTip && pulseItem.toolTip.length > 20, 'the full reading, including everything the label budget dropped, is on its tooltip');
-  // ── THE READING FITS WHOLE AT THE STRIP'S REAL WIDTH ─────────────────
+  // ── THE READING IS NEVER THE THING THAT DOES NOT FIT ─────────────────
   //
-  // At the strip's earlier 83 points the label budget was 21 characters and the
-  // producer's longest form — the young-store case, which carries its own
-  // honesty caveat — is 23, so it was cut back to `4 days known…`. The strip
-  // folded to 55 points and the budget became 25. This asserts the ARITHMETIC
-  // rather than the outcome, so it stays honest if the strip changes again.
-  // ── REVISED, AND THE ANSWER MOVED: the reading grew a clause ─────────
+  // ── REVISED, AND THIS ONE WAS A REAL DEFECT ON A REAL SCREEN ─────────
   //
-  // WAS: the producer's longest form was `4 days known · 69 saves` (23) and the
-  // control was that the earlier 83-point strip did not leave room for it. At
-  // 285 points an 83-point strip leaves 24, so that control can no longer fail
-  // and would have passed vacuously for the rest of its life.
+  // WAS: `fits(ordinary)` against `!fits(youngest)`, with the young-store form
+  // asserted NOT to fit and presented as proof that "the budget is a real
+  // constraint and not decoration". It was a real constraint. It was
+  // constraining the wrong thing.
   //
-  // The real question also changed, because `· N tools` is a new clause and it
-  // is the LAST one — so it is the first thing `clipClauses` drops. Both cases
-  // are asserted rather than one being hidden behind the other.
+  // The first photograph of this menu — 2026-09-02 — shows the pulse row
+  // reading `5 days known · 55 saves…`. The producer had emitted
+  // `5 days known · 55 saves · 2 tools`, 33 characters, complete and true; the
+  // width budget was 29; `clipClauses` dropped a whole clause. Two of that
+  // sentence's three clauses ARE its honesty caveats, and it sits on the one
+  // row whose entire job is saying what the picture beside it does and does not
+  // cover. A budget that eats those has inverted the item.
+  //
+  // `pulseLabelBudget` is now the LARGER of the width allowance and the
+  // producer's own longest reading, obtained by RUNNING `pulseLabel` rather
+  // than composing the sentence a second time. So the assertions reverse: no
+  // form the producer can emit is clipped, and the control moves to a string
+  // the producer cannot emit, which is where a real backstop belongs.
   const ordinary = 'Save pulse · 7 days · 69 saves · 2 tools';
   const youngest = 'Save pulse · 4 days known · 69 saves · 2 tools';
-  const stripBudget = model.labelBudgetChars(55);
+  const stripBudget = model.pulseLabelBudget(55);
   const fits = (t) => model.stripPulseNoun(t).length <= stripBudget;
+  ok(stripBudget > model.labelBudgetChars(55),
+    `the pulse row's budget is ${stripBudget} characters, above the ${model.labelBudgetChars(55)} the width arithmetic alone allows — the width does not get to decide this one label`);
   ok(fits(ordinary),
-    `the ordinary reading with a tools clause (${model.stripPulseNoun(ordinary).length} chars) fits the ${stripBudget}-character budget a 55pt strip leaves`);
-  ok(!fits(youngest),
-    `CONTROL: the young-store form (${model.stripPulseNoun(youngest).length}) does NOT, so the budget is a real constraint and not decoration`);
-  // AND WHEN IT DOES NOT FIT, WHAT GOES IS A WHOLE CLAUSE. `69 s…` would be a
-  // DIFFERENT FACT — plausibly `69 seconds` — which is worse than less of one.
-  const clipped = model.clipClauses(model.stripPulseNoun(youngest), stripBudget);
+    `the ordinary reading with a tools clause (${model.stripPulseNoun(ordinary).length} chars) fits`);
+  ok(fits(youngest),
+    `and so does the young-store form (${model.stripPulseNoun(youngest).length}), which is the one the photograph showed being cut`);
+  // THE PHOTOGRAPHED STRING ITSELF, end to end through the real composition.
+  const photographed = 'Save pulse · 5 days known · 55 saves · 2 tools';
+  eq(model.clipClauses(model.stripPulseNoun(photographed), stripBudget),
+    '5 days known · 55 saves · 2 tools',
+    'THE DEFECT: the exact reading the photographed menu cut to `5 days known · 55 saves…` now renders WHOLE');
+  // AND THE BUDGET IS DERIVED FROM THE PRODUCER, not from a number typed here.
+  let pulseProducer = null;
+  try { pulseProducer = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js')); } catch { pulseProducer = null; }
+  if (typeof pulseProducer?.longestPulseLabel === 'function') {
+    const longest = pulseProducer.longestPulseLabel();
+    eq(stripBudget, Math.max(model.labelBudgetChars(55), model.stripPulseNoun(longest).length),
+      'and the budget IS that maximum, computed from the producer rather than pinned beside it');
+    ok(fits(longest),
+      `CONTROL: the longest reading the producer can emit at all (${model.stripPulseNoun(longest).length} chars) fits too, so nothing it can say is clippable`);
+  }
+  // ── AND END TO END, THROUGH THE REAL COMPOSITION ─────────────────────
+  //
+  // Everything above tests the budget and the clip as functions. The defect was
+  // at the CALL SITE — one expression choosing which budget to spend — so it is
+  // driven here through `buildTrayModel` with the photographed store's own
+  // pulse, and the assertion is the string that appeared in the photograph.
+  // Without this, swapping the call site back to `labelBudgetChars` would leave
+  // every assertion above green.
+  const photographedPulse = model.buildTrayModel(summary({
+    pulse: {
+      clock: 'agent', events: 55, harnessCount: 2, pairsTruncated: 0,
+      buckets: (() => { const b = new Array(28).fill(0); b[27] = 55; return b; })(),
+      bucketSeconds: 21600, windowSeconds: 604800,
+      coversWholeWindow: false, firstKnownBucket: 8,
+    },
+  }), {
+    now: NOW,
+    renderStrip: () => ({
+      buffer: Buffer.from([1]), buffer2x: Buffer.from([2]),
+      widthPoints: 55, heightPoints: 15, template: false,
+    }),
+  });
+  eq(photographedPulse.pulse && photographedPulse.pulse.label,
+    '5 days known · 55 saves · 2 tools',
+    'END TO END: the photographed store\'s reading reaches the model WHOLE');
+
+  // ── AND A READING THE WIDTH FIX ALONE WOULD STILL CUT ────────────────
+  //
+  // THE MUTATION THAT FOUND THIS. Swapping the call site back to
+  // `labelBudgetChars` came back GREEN against the fixture above, because the
+  // corrected width arithmetic allows 33 characters and the photographed
+  // reading is exactly 33 — it fits either way. So that fixture proves the
+  // WIDTH fix and says nothing at all about which budget the call site spends.
+  //
+  // The store below adds the producer's other honesty caveat — `pairsTruncated`
+  // > 0, meaning some (scope, machine) pairs were not read, so the count is a
+  // FLOOR — which is nine more characters. 41 against a width allowance of 33:
+  // the only fixture here that can tell the two budgets apart.
+  const flooredPulse = model.buildTrayModel(summary({
+    pulse: {
+      clock: 'agent', events: 55, harnessCount: 2, pairsTruncated: 1,
+      buckets: (() => { const b = new Array(28).fill(0); b[27] = 55; return b; })(),
+      bucketSeconds: 21600, windowSeconds: 604800,
+      coversWholeWindow: false, firstKnownBucket: 8,
+    },
+  }), {
+    now: NOW,
+    renderStrip: () => ({
+      buffer: Buffer.from([1]), buffer2x: Buffer.from([2]),
+      widthPoints: 55, heightPoints: 15, template: false,
+    }),
+  });
+  eq(flooredPulse.pulse && flooredPulse.pulse.label,
+    '5 days known · at least 55 saves · 2 tools',
+    'END TO END: a reading carrying BOTH caveats (41 chars) also reaches the model whole — the call site spends the pulse budget, not the width budget');
+  ok(41 > model.labelBudgetChars(55),
+    `CONTROL: that reading is 41 characters against a ${model.labelBudgetChars(55)}-character width allowance, so the assertion above genuinely distinguishes the two budgets`);
+
+  // ── THE BACKSTOP IS STILL THERE, AND STILL CLAUSE-SAFE ───────────────
+  //
+  // The control is now a string the producer CANNOT emit — six clauses — which
+  // is the only honest way to show the clip is live once every real form fits.
+  // `69 s…` would be a DIFFERENT FACT, plausibly `69 seconds`, which is worse
+  // than less of one, so what goes is a whole clause.
+  const oversized = 'Save pulse · 4 days known · at least 69 saves · 12 tools · 9 machines · 3 projects · and more';
+  ok(!fits(oversized),
+    `CONTROL: a ${model.stripPulseNoun(oversized).length}-character composition the producer has no branch for does NOT fit, so the clip below is doing work`);
+  const clipped = model.clipClauses(model.stripPulseNoun(oversized), stripBudget);
   ok(clipped.endsWith('…') && !/\d+ s…/.test(clipped),
     `…and it is cut on a clause boundary: "${clipped}"`);
-  ok(clipped.includes('4 days known'),
-    '…keeping the honesty caveat, which is the clause a reader most needs');
+  ok(clipped.includes('4 days known') && clipped.includes('at least 69 saves'),
+    '…keeping the honesty caveats, which are the clauses a reader most needs');
   eq(model.clipClauses(model.stripPulseNoun(ordinary), stripBudget), model.stripPulseNoun(ordinary),
-    '…while the form that DOES fit passes through the clause clip untouched');
+    '…while a form that DOES fit passes through the clause clip untouched');
 
   ok(!/^Save pulse/.test(pulseItem.label || ''),
     'the constant noun comes off the label, because the section header above it now carries that word');

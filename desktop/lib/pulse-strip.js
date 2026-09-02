@@ -785,6 +785,88 @@ function toolsClause(pulse) {
 }
 
 /**
+ * How many digits the two counted quantities are allowed before this module
+ * stops claiming to know how long its own sentence can get.
+ *
+ * ── WHY AN ALLOWANCE RATHER THAN A BOUND ───────────────────────────────────
+ *
+ * `events` is a count of journal lines inside a seven-day window, read from a
+ * 16 KB tail per (scope, machine) pair; `harnessCount` is a count of distinct
+ * agent tools. Neither is bounded by anything in this file, so a bound stated
+ * here would be a fiction. What CAN be stated is the range this module is
+ * willing to be measured against — four digits of saves and two of tools, which
+ * is 9,999 saves in a week from 99 different tools — and what happens beyond
+ * it, which is that the consumer's clause-boundary clip takes over and drops
+ * `· N tools` whole. That is a graceful outcome, not a failure, so the
+ * allowance is generous rather than defensive.
+ */
+export const PULSE_LABEL_DIGITS = { saves: 4, tools: 2 };
+
+/**
+ * The longest reading `pulseLabel` can produce — MEASURED by running it, not
+ * composed a second time from the same words.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ─────────────────────────────────────────────
+ *
+ * The photographed menu read `5 days known · 55 saves…`. The reading was
+ * complete — `5 days known · 55 saves · 2 tools`, 33 characters — and the
+ * consumer's width budget was 29, so a whole clause of a sentence whose entire
+ * job is honesty about the picture beside it was dropped, on the one row that
+ * carries the picture. The budget was wrong (see `MENU_WIDTH_POINTS` in
+ * tray-model.js) and is fixed there; this is the other half, so that the row's
+ * budget can be derived from what this module can actually SAY rather than from
+ * a width that happens to be enough today.
+ *
+ * ── WHY IT DRIVES `pulseLabel` INSTEAD OF CONCATENATING THE WORDS ──────────
+ *
+ * A second composition of `'at least ' + n + ' saves'` in this file would be a
+ * copy of the sentence that can drift from the sentence — the exact shape this
+ * repo keeps recording, most recently a suppression matching prose its own
+ * producer never emitted. So every candidate below is a PULSE, handed to the
+ * real function, and the longest string that comes back is the answer. Add a
+ * clause to `pulseLabel` and this grows on its own; reword one and it follows.
+ *
+ * The candidates are the label's own branches at their widest:
+ *   - the `windowText` fallback, `the recent past`, which is the longest period
+ *     this module can name (15 characters against `47 hours known`'s 14)
+ *   - the partial-window caveat, `N days known`
+ *   - the truncated-pairs caveat, `at least N saves`, which is nine characters
+ *     of floor
+ *   - `· N tools`, the last clause and therefore the first one a clip drops
+ *   - the two sentences that REPLACE the reading rather than qualifying it
+ *
+ * @returns {string} including the `Save pulse · ` noun the consumer strips.
+ */
+export function longestPulseLabel() {
+  const nines = (d) => Number('9'.repeat(Math.max(1, d)));
+  const saves = nines(PULSE_LABEL_DIGITS.saves);
+  const tools = nines(PULSE_LABEL_DIGITS.tools);
+  const base = {
+    clock: 'agent', buckets: new Array(28).fill(1), bucketSeconds: 21600,
+    events: saves, harnessCount: tools, firstKnownBucket: 0,
+  };
+  const candidates = [
+    // The window named by the fallback — no `windowSeconds`, so `windowText`
+    // has no span to render and says `the recent past`.
+    { ...base, coversWholeWindow: true, pairsTruncated: 1 },
+    // The partial-window caveat at its widest span, with the floor caveat too.
+    { ...base, windowSeconds: 604800, coversWholeWindow: false, pairsTruncated: 1 },
+    // Both caveats off — the ordinary reading, kept so this cannot silently
+    // become a function about caveats only.
+    { ...base, windowSeconds: 604800, coversWholeWindow: true, pairsTruncated: 0 },
+    // The two replacement sentences, which are not readings at all.
+    { ...base, clock: 'none' },
+    { ...base, windowSeconds: 604800, firstKnownBucket: 28 },
+  ];
+  let longest = '';
+  for (const c of candidates) {
+    const label = pulseLabel(c);
+    if (typeof label === 'string' && label.length > longest.length) longest = label;
+  }
+  return longest;
+}
+
+/**
  * The strip's tooltip: the legend, plus every field the label had to compress.
  *
  * Nothing the label drops may become unreachable — the same rule the row labels
@@ -844,14 +926,22 @@ export function pulseToolTip(pulse) {
 }
 
 /**
- * An ESTIMATE of the average advance of the system menu font, in points.
+ * The average advance of the system menu font, in points.
  *
- * STATED AS AN ASSUMPTION, because nothing here has ever been rendered: no menu
- * has been built, no font has been measured, and there is no width API in
- * Electron or in AppKit's maximum direction to ask. It exists so the suite can
- * check that the strip item does not become the widest thing in a menu whose
- * width is a standing concern — an argument carried out in numbers, which is
- * worth more than an argument carried out in adjectives, and less than a
- * measurement, which is not available.
+ * ── IT WAS AN ASSUMPTION AND IT IS NOW CORROBORATED ────────────────────────
+ *
+ * This was stated as an estimate because nothing had ever been rendered and
+ * there is no width API in Electron or in AppKit's maximum direction to ask.
+ * The menu has now been photographed, MEASURED FROM A 2x CAPTURE ON 2026-09-02,
+ * and the ink width of nine rendered labels divided by their character counts
+ * runs 5.78 to 7.39 points per character, mean 6.33 — the spread being the
+ * letters themselves, because the face is proportional. This module's own
+ * reading measured exactly 6.50.
+ *
+ * It stays at 6.5, a little above the mean, because a budget that
+ * under-charges for width is the defect this number exists to prevent. It is
+ * still a single average standing in for a proportional font, which is why
+ * `labelBudgetChars` in tray-model.js takes it as a PARAMETER and the suite
+ * reports the sensitivity across 5–7 rather than pinning one answer.
  */
 export const MENU_CHAR_POINTS = 6.5;

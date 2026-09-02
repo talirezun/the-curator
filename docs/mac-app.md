@@ -154,15 +154,17 @@ is in [architecture.md § The menu bar widget](architecture.md#the-menu-bar-widg
 
 > **Two limits, stated rather than glossed.**
 >
-> **The redesigned menu has never been photographed.** Every mark in it — the draining-clock
-> recency marks, the violet bars, the dotted baseline, the day ruler, the amber handover caps —
-> is generated and inspected pixel by pixel by the test suite, and its contrast is arithmetic
-> over those decoded pixels. What no test here can prove is anything that needs macOS: how it
-> tints the icon, whether it leaves the colour images alone, whether the two section headers draw
-> as headers on macOS 14 or degrade to dimmed captions below it, whether the small second line
-> under each row draws (it needs macOS 14.4), whether a **submenu** opens on a menu bar item at
-> all, whether **Copy** lands on the clipboard while the menu is dismissing, and whether the
-> hover event fires. (That a re-render *does* re-time the ages is proven by the tests; whether
+> **The redesigned menu has been photographed once, on 2026-09-02, in light appearance.** That
+> capture settled most of what needed macOS: the colour images are left alone, the two section
+> headers draw as headers, the small second line under each row draws, a **submenu** does open on
+> a menu bar item, and the menu is **363.5 points wide** (measured from a 2× capture). It also
+> found three defects, all fixed since — a pulse reading cut short by a width budget, a recency
+> mark too thin to read, and a width model wrong by 78 points — so **the arrangement you will see
+> has not itself been photographed.** Every mark in it is generated and inspected pixel by pixel
+> by the test suite, and its contrast is arithmetic over those decoded pixels. Still unproven:
+> how macOS tints the menu bar icon, how any of it looks in **dark** appearance, how the section
+> headers degrade below macOS 14 (the second line needs 14.4), whether **Copy** lands on the
+> clipboard while the menu is dismissing, and whether the hover event fires. (That a re-render *does* re-time the ages is proven by the tests; whether
 > macOS delivers the hover that triggers one is not.) Treat the first real launch with it
 > switched on as the first real test.
 >

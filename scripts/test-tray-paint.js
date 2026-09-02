@@ -623,8 +623,46 @@ section('§7 the recency dots: five buckets, three colours, one ink ladder');
     'LIVE is the only FULL disc at full size, so the one state that changes what you do next is separable by shape alone');
   ok(dots.DOT_ORDER.slice(0, 4).every((b, i, a) => i === 0 || dots.DOT_INK[b].turns < dots.DOT_INK[a[i - 1]].turns),
     'and the four sector states are a strictly draining clock, each a whole quadrant apart rather than half a point of radius');
-  ok(dots.dotInkArea('cold') < dots.dotInkArea('live') * 0.25,
-    `and COLD, which is also filled, is under a quarter of LIVE's area (${dots.dotInkArea('cold').toFixed(1)} against ${dots.dotInkArea('live').toFixed(1)})`);
+  // -- REVISED: 0.25 -> 0.30, AND THE RIM IS WHY -------------------------
+  //
+  // WAS: `cold < live * 0.25`, which held at 12.6 against 78.5 when a `cold`
+  // dot was drawn alone in an empty box. The first photograph of the menu
+  // showed what "alone in an empty box" costs — a quarter-disc read as a
+  // sliver rather than as a quarter of anything, because a fraction needs a
+  // whole to be a fraction OF — so every mark is now drawn inside a faint face
+  // ring. `cold` gains the most ink from it (its dot covers none of the rim)
+  // and `live` gains none at all (its disc covers all of it), which is exactly
+  // the direction that compresses this ratio: 22.5 against 78.5, or 0.286.
+  //
+  // The threshold moves rather than the assertion being dropped, because what
+  // it is protecting is unchanged: the coldest mark must stay unmistakable for
+  // the full disc. It is asserted alongside the strict monotonicity above and
+  // the decoded-alpha ladder in §8b, so a rim that swallowed the ladder would
+  // still red.
+  ok(dots.dotInkArea('cold') < dots.dotInkArea('live') * 0.30,
+    `and COLD, which is also filled, is under a third of LIVE's area (${dots.dotInkArea('cold').toFixed(1)} against ${dots.dotInkArea('live').toFixed(1)}, ratio ${(dots.dotInkArea('cold') / dots.dotInkArea('live')).toFixed(3)})`);
+  ok(dots.dotInkArea('cold') > dots.dotInkArea('live') * 0.20,
+    'CONTROL: and it is not arbitrarily small either — this pair of bounds brackets the shipped ratio, so a geometry change in EITHER direction reds');
+
+  // ── THE FACE RING — the mark the photograph asked for ─────────────────
+  //
+  // The rendered `cool` state was the finding: a quarter-wedge, 19.6pt² of ink
+  // with nothing around it, on three of the five rows. It read as damage. The
+  // rim gives the sector a whole to be a part of, and these are the properties
+  // it was required not to break.
+  eq(dots.FACE_RADIUS, 5.0, 'the clock face is r 5.0 — the radius the sectors drain inside');
+  eq(dots.DOT_ORDER.slice(0, 4).map((b) => dots.DOT_INK[b].radius), [5, 5, 5, 5],
+    'and all four SECTOR states are drawn at exactly that radius, so the sector and its face are one circle rather than two');
+  ok(dots.DOT_INK.cold.radius < dots.FACE_RADIUS - dots.RIM_POINTS,
+    `COLD's dot (r ${dots.DOT_INK.cold.radius}) sits entirely inside the rim's inner edge (r ${dots.FACE_RADIUS - dots.RIM_POINTS}), so it reads as a drained clock with a hub rather than as a smaller filled disc`);
+  ok(dots.RIM_POINTS >= 1, 'the rim is at least one point, so it has a rendering at 1x rather than none');
+  ok(dots.RIM_ALPHA > 0 && dots.RIM_ALPHA < 0.5,
+    `the rim carries ${(dots.RIM_ALPHA * 100).toFixed(0)}% of the mark's alpha — present enough to establish the face, subordinate enough that it is never mistaken for the filled part`);
+  eq(dots.dotInkArea('live'), Math.PI * 25,
+    'LIVE\'s area is the bare disc — its rim adds NOTHING, because the full disc already covers every pixel of it');
+  const rimGain = dots.DOT_ORDER.map((b) => dots.dotInkArea(b) - dots.DOT_INK[b].turns * Math.PI * dots.DOT_INK[b].radius ** 2);
+  ok(rimGain.every((v, i) => i === 0 || v > rimGain[i - 1]),
+    `and the rim's contribution GROWS as the sector shrinks (${rimGain.map((v) => v.toFixed(1)).join(' < ')} pt²) — it is the same ring on every state, so what varies is how much of it is still uncovered`);
 
   // -- REVERSED, AND THIS ONE IS A DELIBERATE WEAKENING OF THE PALETTE ---
   //
@@ -741,6 +779,78 @@ section('§8 the dots\' pixels, decoded, in both themes');
   ok(a.data.equals(b.data), 'CONTROL: the same bucket rendered twice is byte-identical, so the set comparison above can fail');
   const lightToday = png.decodePng(dots.renderRecencyDot('today', { dark: false }).buffer);
   ok(!a.data.equals(lightToday.data), 'and the two themes are genuinely different drawings');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8b the ink ladder READ BACK OUT of the alpha channel, and the rim\'s cost');
+//
+// `dotInkArea` is arithmetic over the shipped geometry, and arithmetic can be
+// right about a drawing that is wrong. This measures the ladder the way a
+// viewer meets it: the sum of the decoded alpha channel, which is the ink
+// actually on the canvas, at BOTH representations. If the rim were painting
+// over the sector, or the sector were cutting a seam through the rim, the two
+// numbers would part company here rather than in a comment.
+{
+  const inkOf = (buffer, scale) => {
+    const d = png.decodePng(buffer);
+    let sum = 0;
+    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) sum += pixel(d, x, y)[3] / 255;
+    return sum / (scale * scale);           // device pixels -> square POINTS
+  };
+
+  for (const dark of [false, true]) {
+    const theme = dark ? 'dark' : 'light';
+    const measured = [];
+    for (const b of dots.DOT_ORDER) {
+      const spec = dots.renderRecencyDot(b, { dark });
+      const at1 = inkOf(spec.buffer, 1), at2 = inkOf(spec.buffer2x, 2);
+      const claimed = dots.dotInkArea(b);
+      measured.push(at1);
+      // 3% of tolerance, which is antialiasing over a 13-point canvas and
+      // nothing else — a rim that failed to draw would be 25-45% low on the
+      // cold end, and a rim painted over the sector would be high.
+      ok(Math.abs(at1 - claimed) / claimed < 0.03 && Math.abs(at2 - claimed) / claimed < 0.03,
+        `${theme} ${b}: decoded ink is ${at1.toFixed(1)}pt² at 1x and ${at2.toFixed(1)}pt² at 2x against the ${claimed.toFixed(1)} the geometry claims`);
+    }
+    ok(measured.every((v, i) => i === 0 || v < measured[i - 1]),
+      `${theme}: and the ladder is STRICTLY decreasing in the decoded alpha channel (${measured.map((v) => v.toFixed(1)).join(' > ')} pt²) — the reading a viewer gets with the palette discarded`);
+  }
+
+  // ── THE CONTRAST, AND WHAT THE RIM DOES AND DOES NOT CHANGE ───────────
+  //
+  // THE RIM INTRODUCES NO COLOUR. It is the mark's own hue at a lower alpha, so
+  // §2's figures still describe every pixel drawn, and the marks themselves are
+  // untouched by this change — asserted rather than assumed, by recomputing
+  // them here from the shipped palette.
+  //
+  // Its OWN composited ratio is reported and is NOT held to the 3:1 floor, on
+  // purpose. 3:1 is WCAG 2.2 1.4.11, the floor for a graphic a viewer must be
+  // able to DETECT in order to get the information. Nobody is asked to detect
+  // the rim: it is the ground the sector is read against, and the sector — the
+  // signal — clears the floor by 4.1 to 6.4 times. A rim at 3:1 would be a
+  // second mark competing with the first.
+  const compose = (fg, bg, alpha) => fg.map((v, i) => Math.round(v * alpha + bg[i] * (1 - alpha)));
+  for (const theme of ['light', 'dark']) {
+    const band = rgba.MENU_BG_BAND[theme];
+    for (const tone of ['hot', 'mid', 'cold']) {
+      const fg = hex(dots.DOT_PALETTE[theme][tone]);
+      const solid = band.map((b) => contrast.contrastRatio(fg, hex(b)));
+      const rim = band.map((b) => contrast.contrastRatio(compose(fg, hex(b), dots.RIM_ALPHA), hex(b)));
+      ok(Math.min(...solid) >= rgba.CONTRAST_FLOOR_NON_TEXT,
+        `${theme} ${tone}: the MARK still clears the non-text floor across the whole band (worst ${contrast.round2(Math.min(...solid)).toFixed(2)}) — the rim changed no colour, only where ink is put`);
+      console.log(`    ${theme} ${tone.padEnd(5)} mark ${contrast.round2(Math.min(...solid)).toFixed(2)}:1 worst   rim ${rim.map((v) => contrast.round2(v).toFixed(2)).join(' / ')} (reported, not floored)`);
+      ok(Math.min(...rim) < Math.min(...solid),
+        `${theme} ${tone}: CONTROL — the rim really is quieter than the mark it frames, so this is scaffolding and not a second signal`);
+    }
+  }
+
+  // ANTI-VACUITY, THE THIRD ONE: a rim at full alpha would be a ring, not a
+  // face, and this proves the measurement above can tell the difference.
+  {
+    const fg = hex(dots.DOT_PALETTE.light.cold), bg = hex(rgba.MENU_BG.light);
+    ok(contrast.contrastRatio(compose(fg, bg, 1), bg) > contrast.contrastRatio(compose(fg, bg, dots.RIM_ALPHA), bg) * 2,
+      'CONTROL: the same composite at full alpha is more than twice the ratio, so the alpha term in that arithmetic is live');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -948,13 +1058,16 @@ section('§12 the merge, and the width budget it was bought with');
   ok(/per 12 hours/.test(strip.pulseToolTip(pulseFixture())),
     'and the legend says so, rather than quoting the producer\'s six');
 
-  // ── THE WIDTH ARITHMETIC, ACROSS ITS ASSUMPTIONS ──────────────────────
+  // ── THE WIDTH ARITHMETIC, AGAINST A MEASURED CHROME ───────────────────
   //
-  // Two assumed numbers: the menu's chrome and the font's average advance.
-  // The conclusion is checked over a range of both, because a conclusion that
-  // holds only at one assumed point is not a conclusion.
+  // -- REVISED: the chrome sweep was 16 / 24 / 32 and every one of those
+  // numbers was too small. The menu has now been photographed — MEASURED FROM
+  // A 2x CAPTURE ON 2026-09-02 — and the width a title never gets is 84.5
+  // points, not 36 and certainly not 16. The sweep therefore brackets the
+  // measurement instead of a guess, and the font advance stays a range because
+  // it is still one average standing in for a proportional face.
   const label = strip.pulseLabel(pulseFixture({ buckets: (() => { const b = new Array(28).fill(0); b[27] = 28; return b; })(), events: 28 }));
-  for (const chrome of [16, 24, 32]) {
+  for (const chrome of [60, 84.5, 100]) {
     for (const charPoints of [5.5, 6.5, 7.5]) {
       const total = chrome + 55 + label.length * charPoints;
       const was = chrome + 83 + label.length * charPoints;
@@ -962,10 +1075,43 @@ section('§12 the merge, and the width budget it was bought with');
         `at ${chrome}pt chrome and ${charPoints}pt/char the row is ~${total.toFixed(0)}pt, down from ~${was.toFixed(0)}pt — the strip is strictly cheaper than what it replaces`);
     }
   }
-  // And the honest half: the LABEL, not the picture, is what keeps the row over
-  // the target. Reported rather than hidden.
+  // And the honest half: the LABEL, not the picture, is what keeps the row
+  // wide. Reported rather than hidden, against the width the menu was measured
+  // at rather than against a target it never had.
   ok(label.length * 6.5 > 55 * 2,
-    `the label (${label.length} chars, ~${(label.length * 6.5).toFixed(0)}pt) is more than TWICE the picture — the overage against 260pt is in the sentence, not the icon`);
+    `the label (${label.length} chars, ~${(label.length * 6.5).toFixed(0)}pt) is more than TWICE the picture — the width of this row is in the sentence, not the icon`);
+
+  // ── THE PHOTOGRAPHED ROW, AND THE DEFECT IT SHOWED ────────────────────
+  //
+  // The menu's pulse row rendered `5 days known · 55 saves…`. Nothing was wrong
+  // with the reading: the producer had emitted all three clauses. The consumer
+  // clipped it, and the clause it dropped was a fact. This pins the producer's
+  // half — that the full reading is what comes out of this module — so the
+  // consumer-side fix in tray-model.js cannot be undone by a producer change
+  // without one of the two suites reddening.
+  const photographed = strip.pulseLabel(pulseFixture({
+    windowSeconds: 604800, bucketSeconds: 21600, coversWholeWindow: false,
+    firstKnownBucket: 8, harnessCount: 2, pairsTruncated: 0,
+    buckets: (() => { const b = new Array(28).fill(0); b[27] = 55; return b; })(), events: 55,
+  }));
+  eq(photographed, 'Save pulse · 5 days known · 55 saves · 2 tools',
+    'the store in the photograph produces all three clauses — the picture\'s span, the count, and how many tools wrote it');
+
+  // ── THE LONGEST THING THIS MODULE CAN SAY, MEASURED BY SAYING IT ──────
+  const longest = strip.longestPulseLabel();
+  ok(typeof longest === 'string' && longest.length > photographed.length,
+    `the longest reading it can emit is ${longest.length} characters: "${longest}"`);
+  ok(/at least/.test(longest) && /tools/.test(longest),
+    '…and it is the one where every caveat fires at once, which is precisely the reading a budget must not be allowed to eat');
+  // NOT a second composition of the sentence: every candidate is a PULSE handed
+  // to the real `pulseLabel`, so a reworded clause moves this number on its own.
+  for (const shape of [{}, { clock: 'none' }, { events: 0 }]) {
+    const l = strip.pulseLabel(pulseFixture({ ...shape }));
+    ok(typeof l !== 'string' || l.length <= longest.length,
+      `CONTROL: ${JSON.stringify(shape)} produces nothing longer, so the maximum really is a maximum`);
+  }
+  eq(strip.PULSE_LABEL_DIGITS, { saves: 4, tools: 2 },
+    'the digit allowance is stated rather than implied — beyond it the consumer\'s clause clip takes over, which drops `· N tools` whole');
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} ${passed} passed, ${failed} failed`);
