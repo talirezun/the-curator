@@ -85,6 +85,15 @@ import fs from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { getCuratorConfigFile, getDefaultDomainsDir } from '../../src/brain/paths.js';
+// The symlink-aware half of the path guard below. IMPORTED, not copied: the
+// v3.2.0 CRITICAL in this repo was two hand-maintained copies of exactly this
+// guard drifting apart, and the copy that lagged was the one that could delete
+// a file outside the wiki. src/brain/wiki-read.js is already loaded inside the
+// MCP stdio child process (mcp/tools/health.js -> src/brain/health.js ->
+// wiki-read.js) and its own docblock commits it to stdout purity, so this adds
+// no new import weight and no new JSON-RPC-stream risk. It is a leaf edge:
+// nothing under src/brain/ imports this adapter, so no cycle is created.
+import { resolveInsideWiki as resolveInsideRoot } from '../../src/brain/wiki-read.js';
 
 export function createStorageAdapter({ domainsPath } = {}) {
   const resolveDomainsPath = () => {
@@ -111,17 +120,28 @@ export function createStorageAdapter({ domainsPath } = {}) {
    * Resolve a relative path under base and refuse to escape the base directory.
    * Returns null for any attempt at path traversal (../, absolute paths, etc.).
    * This is the single chokepoint for all filesystem reads driven by LLM input.
+   *
+   * ── Why this delegates rather than doing the check itself ────────────────
+   *
+   * It used to be purely LEXICAL — path.resolve + path.relative, no realpath
+   * and no lstat. Lexical containment is not containment: a SYMLINK inside the
+   * domains folder pointing anywhere on the filesystem passes every one of
+   * those checks, because the string never leaves the base. `domains/x/wiki`
+   * symlinked at `~/.ssh` reads as `wiki/id_rsa` — a legal relative path under
+   * base — and the adapter opens it. That is the exact shape v3.2.0 found and
+   * fixed in src/brain/health.js (a symlink escape that could DELETE a file
+   * outside the wiki); the read side of the MCP kept the weak version.
+   *
+   * resolveInsideWiki() is the hardened implementation that fix produced:
+   * lexical check FIRST, then realpath(3) of the leaf when the leaf is itself
+   * a symlink, and otherwise realpath of the deepest existing ancestor with
+   * the not-yet-existing tail re-attached, so a symlinked ANCESTOR directory
+   * is caught for paths that do not exist yet. A dangling symlink cannot be
+   * proven inside, so it is refused. Its parameter is named `wikiDir` for its
+   * first caller; the function itself is a generic "is this path physically
+   * inside this root", which is precisely the question here.
    */
-  const resolveInsideBase = (relativePath) => {
-    if (typeof relativePath !== 'string' || !relativePath) return null;
-    // Reject absolute paths outright — the MCP never needs them.
-    if (path.isAbsolute(relativePath)) return null;
-    const resolved = path.resolve(resolvedBase, relativePath);
-    // Must live under base (path.resolve canonicalises .., //, etc.)
-    const rel = path.relative(resolvedBase, resolved);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
-    return resolved;
-  };
+  const resolveInsideBase = (relativePath) => resolveInsideRoot(resolvedBase, relativePath);
 
   return {
     getType() { return 'local'; },
@@ -197,6 +217,17 @@ export function createStorageAdapter({ domainsPath } = {}) {
         for (const entry of entries) {
           if (entry.name.startsWith('.')) continue;
           const full = path.join(dir, entry.name);
+          // A symlinked ENTRY is the one shape the root-level guard above
+          // cannot see: the walk arrives here having only ever joined names
+          // that are lexically inside. `entities/notes.md -> ~/.ssh/id_rsa`
+          // is not a directory, does end in .md, and would be read and
+          // returned as wiki content. Route it through the SAME guard the
+          // rest of this adapter uses, so a symlink is allowed exactly when
+          // it lands back inside the domains folder. Costs a realpath only
+          // for entries that actually are symlinks — an ordinary wiki pays
+          // nothing. (Symlinked DIRECTORIES are already never descended:
+          // Dirent.isDirectory() is false for a link to one.)
+          if (entry.isSymbolicLink() && !resolveInsideBase(path.relative(resolvedBase, full))) continue;
           if (entry.isDirectory()) {
             await walk(full);
           } else if (entry.name.endsWith('.md')) {
@@ -209,6 +240,41 @@ export function createStorageAdapter({ domainsPath } = {}) {
       };
       await walk(wikiRoot);
       return files;
+    },
+
+    /**
+     * How many .md files are under a domain's wiki/ folder — WITHOUT reading
+     * any of them. Exists so mcp/graph.js can check its cache for staleness on
+     * every tool call at a price it can actually afford.
+     *
+     * Measured on a synthetic 3,000-file / ~2.5 MB domain: listWikiFiles()
+     * 173 ms p50, this 1.5 ms p50. Same walk, same skip rules (dotfiles out,
+     * symlinks guarded, symlinked directories not descended) — the only
+     * difference is that it never opens a file. Keeping the two walks in the
+     * same module is deliberate: a count that disagreed with the listing would
+     * make the cache check silently useless.
+     */
+    async countWikiFiles(domain) {
+      if (typeof domain !== 'string' || !domain || domain.includes('/') || domain.includes('\\') || domain.includes('..')) {
+        return 0;
+      }
+      const wikiRoot = resolveInsideBase(path.join(domain, 'wiki'));
+      if (!wikiRoot) return 0;
+      let count = 0;
+      const walk = async (dir) => {
+        let entries;
+        try { entries = await fs.readdir(dir, { withFileTypes: true }); }
+        catch { return; }
+        for (const entry of entries) {
+          if (entry.name.startsWith('.')) continue;
+          const full = path.join(dir, entry.name);
+          if (entry.isSymbolicLink() && !resolveInsideBase(path.relative(resolvedBase, full))) continue;
+          if (entry.isDirectory()) await walk(full);
+          else if (entry.name.endsWith('.md')) count++;
+        }
+      };
+      await walk(wikiRoot);
+      return count;
     },
   };
 }

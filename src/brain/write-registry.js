@@ -20,7 +20,10 @@
  *      return 409 with a clear error.
  *   3. File-based lock under <domain>/.write-lock so the MCP server
  *      (separate child process spawned by Claude Desktop) can also
- *      respect the in-flight state.
+ *      respect the in-flight state. This is a REAL exclusive acquire
+ *      (link(2) against an existing name) as of the fix below — it was
+ *      `existsSync` followed by a rename for its whole life before that,
+ *      which double-granted. See acquireFileLock's docblock.
  *   4. Frontend disables the Update/Sync/Delete buttons while the
  *      ingest SSE stream is open (defense in depth — the user usually
  *      never sees the 409 because the click is impossible).
@@ -47,12 +50,27 @@
  * Not persistent. Restart wipes the in-memory map; the file lock under
  * <domain>/.write-lock has a TTL + PID staleness check so an orphaned lock
  * from a crashed process clears itself.
+ *
+ * ── What the file lock was NOT, until this fix ───────────────────────────
+ *
+ * It was described here and in docs/architecture.md as a cross-process lock,
+ * and it was not one. acquireFileLock() was `existsSync(lockFile)` followed
+ * by `writeFileAtomic(lockFile, ...)`, with a `catch` arm whose comment said
+ * it handled "another process wrote the lock in between". That arm was
+ * UNREACHABLE: writeFileAtomic ends in `rename(2)`, and rename over an
+ * existing regular file is a silent, successful replace on POSIX. So two
+ * processes that both passed the existsSync check both "acquired" the lock,
+ * and the second one's write simply overwrote the first one's record —
+ * leaving the first holder's release() unable to even recognise its own
+ * lock. Three separate call sites had already written the defect down as
+ * fact (ingest-queue.js, working-state.js, src/public/app.js) and routed
+ * around it. The acquire is now exclusive by construction — see below.
  */
 
 import { existsSync } from 'fs';
-import { writeFile, readFile, unlink, mkdir } from 'fs/promises';
+import { writeFile, readFile, unlink, mkdir, link } from 'fs/promises';
 import path from 'path';
-import { writeFileAtomic } from './atomic-write.js';
+import crypto from 'crypto';
 
 // ── In-memory registry ──────────────────────────────────────────────────
 
@@ -177,12 +195,38 @@ function lockPath(domainDir) {
  * lock. Stale locks (older than LOCK_STALE_MS or with a dead PID) are
  * silently cleared and the caller acquires the new lock.
  *
- * Designed for cross-process use — the web server and the MCP child
+ * Designed for cross-process use - the web server and the MCP child
  * process both call this. Within the same process the in-memory registry
  * is faster and authoritative; the file lock is the cross-process layer.
  *
+ * -- Why link(2) and not open('wx') --------------------------------------
+ *
+ * Either is a genuinely exclusive create - the kernel resolves the race,
+ * not us. `link(2)` is used because it publishes the lock's NAME and its
+ * CONTENT in the same instant: with open('wx') there is a window between
+ * the create and the write in which a second process reads a ZERO-BYTE
+ * lock file, fails to parse it, and - by this module's own long-standing
+ * "unparseable lock = stale" rule - deletes a lock that a live holder had
+ * just taken. So the payload is written to a per-caller tempfile first and
+ * the tempfile is then linked into place under the real name. EEXIST from
+ * link() means somebody already holds it.
+ *
+ * -- The one race that remains, stated rather than hidden ----------------
+ *
+ * Clearing a STALE lock is still unlink-then-retry, so two processes that
+ * simultaneously judge the SAME dead lock stale can both unlink, and the
+ * loser's unlink can remove the winner's brand-new lock. That is the same
+ * TOCTOU clearStaleLock() documents, and it cannot be closed without a
+ * lower-level primitive. It is narrowed the same way clearStaleLock
+ * narrows it - re-read immediately before the unlink and bail if the bytes
+ * changed - and it needs a lock that is ALREADY dead, so no live writer's
+ * data is at risk. The case the fix actually had to close is two live
+ * processes racing for a FREE lock, and link(2) closes that outright.
+ *
  * @param {string} domainDir  absolute path to <domainsDir>/<domain>/
- * @param {{ op?: string, ttlMs?: number }} [opts]
+ * @param {{ op?: string, ttlMs?: number, __onBeforeLink?: (attempt: number) => Promise<void> }} [opts]
+ *   `__onBeforeLink` is a TEST-ONLY seam - see the call site below. Production
+ *   callers never pass it.
  * @returns {Promise<(() => Promise<void>) | null>}
  */
 export async function acquireFileLock(domainDir, opts = {}) {
@@ -190,45 +234,67 @@ export async function acquireFileLock(domainDir, opts = {}) {
   const lockFile = lockPath(domainDir);
   await mkdir(domainDir, { recursive: true });
 
-  if (existsSync(lockFile)) {
-    let stale = false;
-    try {
-      const raw = await readFile(lockFile, 'utf8');
-      const data = JSON.parse(raw);
-      const age = Date.now() - (data.startedAt || 0);
-      if (age > LOCK_STALE_MS) {
-        stale = true;
-      } else if (typeof data.pid === 'number' && !isPidAlive(data.pid)) {
-        stale = true;
-      }
-    } catch {
-      stale = true;  // unparseable lock = stale
-    }
-    if (!stale) return null;
-    try { await unlink(lockFile); } catch { /* ignore */ }
-  }
-
-  const payload = {
+  // A nonce, not just the pid: after a lock of ours is judged stale and
+  // cleared by someone else, THIS process can legitimately hold the lock
+  // again under the same pid. Without the nonce the older release() token
+  // would happily delete the newer holder's lock.
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const payload = JSON.stringify({
     pid: process.pid,
     op,
     startedAt: Date.now(),
     hostname: process.env.HOSTNAME || 'unknown',
-  };
+    nonce,
+  }, null, 2);
+
+  const tmpPath = `${lockFile}.${process.pid}.${nonce}.tmp`;
   try {
-    await writeFileAtomic(lockFile, JSON.stringify(payload, null, 2), 'utf8');
-  } catch (err) {
-    // Race: another process wrote the lock in between our staleness check
-    // and our own write. Don't claim the lock.
-    return null;
+    await writeFile(tmpPath, payload, 'utf8');
+  } catch {
+    return null;   // cannot even stage the lock - never claim it
   }
+
+  let acquired = false;
+  try {
+    // Two attempts: the first can lose to an existing lock, and if that
+    // lock proves stale we clear it and try exactly once more. More
+    // attempts would only lengthen a spin against a live holder.
+    for (let attempt = 0; attempt < 2 && !acquired; attempt++) {
+      // TEST-ONLY seam: lets a suite interleave another acquirer at exactly
+      // the instant before the exclusive create. A no-op in production.
+      if (typeof opts.__onBeforeLink === 'function') {
+        try { await opts.__onBeforeLink(attempt); } catch { /* never let the seam break the acquire */ }
+      }
+      try {
+        await link(tmpPath, lockFile);   // EEXIST if anybody already holds it
+        acquired = true;
+        break;
+      } catch (err) {
+        if (err.code !== 'EEXIST') return null;   // ENOSPC, EPERM, ... - do not claim
+      }
+      if (attempt > 0) break;   // already retried once
+      // Not ours yet. Either it is dead and clearable, or it vanished under
+      // us because its holder released between our link() and this line —
+      // both are worth exactly one more attempt. Only a lock that is STILL
+      // THERE and NOT stale means somebody alive holds it.
+      const cleared = await clearStaleLock(domainDir);
+      if (!cleared && existsSync(lockFile)) return null;
+    }
+  } finally {
+    try { await unlink(tmpPath); } catch { /* best-effort */ }
+  }
+
+  if (!acquired) return null;
 
   return async function release() {
     // Best-effort: if another process took the lock (e.g. ours was deemed
-    // stale by the next caller), don't error out.
+    // stale by the next caller), don't error out - and, crucially, don't
+    // delete THEIR lock. The nonce is what makes that check exact.
     try {
       const raw = await readFile(lockFile, 'utf8');
       const data = JSON.parse(raw);
       if (data.pid !== process.pid) return;
+      if (data.nonce !== nonce) return;
       await unlink(lockFile);
     } catch { /* lock already gone */ }
   };

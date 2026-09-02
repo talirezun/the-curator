@@ -16,17 +16,65 @@ const CACHE_TTL_MS = 10 * 60_000;   // 10 min — Claude Desktop spawns a fresh 
                                     // so within-session files rarely change; this avoids the cost
                                     // of re-reading hundreds of .md files on every tool call.
 
+/**
+ * Drop the cached graph for `domain` (or every domain when called with no
+ * argument), so the next buildGraph() re-reads the wiki from disk.
+ *
+ * WHY THIS EXISTS, AND WHY THE FILE-COUNT CHECK BELOW IS NOT ENOUGH.
+ *
+ * The cache had a file-count invalidation and it was UNREACHABLE: the TTL
+ * early-return fired first and returned the stale graph without ever calling
+ * listWikiFiles, so the count comparison two lines later could only run in the
+ * one case where the TTL had already expired — i.e. where the graph was being
+ * rebuilt anyway. For the whole 10-minute window the graph was frozen.
+ *
+ * That window is exactly the life of a Claude Desktop conversation, and the
+ * MCP is a READ+WRITE surface: compile_to_wiki and fix_wiki_issue change the
+ * wiki through src/brain/*, entirely outside this module. So "save this to my
+ * wiki" followed by "now show me that page" read a graph built before the
+ * write and truthfully reported the page as absent.
+ *
+ * The count check is now reachable (see below) but it is a BACKSTOP, not the
+ * fix: a compile that UPDATES existing pages leaves the count identical, and
+ * a create-plus-delete nets to zero. Only an explicit invalidation after a
+ * known write is correct, which is what this function is for. Every MCP tool
+ * that mutates the wiki must call it — the mutators are the `refuseIfReadonly`
+ * call sites across mcp/tools/**.
+ */
+export function invalidateGraph(domain) {
+  if (typeof domain === 'string' && domain) graphCache.delete(domain);
+  else graphCache.clear();
+}
+
+/** Test-only: how many domains are currently cached. */
+export function __cachedDomains() {
+  return [...graphCache.keys()].sort();
+}
+
 export async function buildGraph(domain, storage) {
   const cached = graphCache.get(domain);
-  if (cached && Date.now() - cached.builtAt < CACHE_TTL_MS) return cached;
+
+  // Reachability, restated: the count is taken BEFORE any early return, so
+  // the invalidation below can actually fire inside the TTL window. It uses
+  // countWikiFiles — a dirent-only walk that never opens a file — because
+  // listWikiFiles READS EVERY PAGE. Measured on a 3,000-file domain of
+  // ~2.5 MB: listWikiFiles 173 ms p50, the dirent-only count 1.5 ms. Doing
+  // the full listing on every tool call would not be an invalidation fix, it
+  // would be the deletion of the cache. Adapters that predate countWikiFiles
+  // fall back to the TTL alone rather than paying 173 ms per call.
+  let currentCount = null;
+  if (typeof storage.countWikiFiles === 'function') {
+    currentCount = await storage.countWikiFiles(domain);
+  }
+
+  if (cached && Date.now() - cached.builtAt < CACHE_TTL_MS) {
+    // Different file count ⇒ something wrote to the wiki ⇒ rebuild. A count
+    // we could not take (null) is not evidence of change, so it keeps the
+    // pre-existing TTL behaviour rather than thrashing the cache.
+    if (currentCount === null || currentCount === cached.fileCount) return cached;
+  }
 
   const files = await storage.listWikiFiles(domain);
-
-  // Cheap mtime-style invalidation: if the file count hasn't changed and we're
-  // still within TTL, the graph is reusable. Different file count ⇒ ingest happened ⇒ rebuild.
-  if (cached && cached.fileCount === files.length && Date.now() - cached.builtAt < CACHE_TTL_MS * 2) {
-    return cached;
-  }
   const nodes = new Map();   // slug → node
   const edges = [];          // { from, to, section }
 

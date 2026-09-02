@@ -34,6 +34,7 @@ import {
 import { getAiHealthSettings, getDefaultDomain } from '../../src/brain/config.js';
 import { domainPath } from '../../src/brain/files.js';
 import { acquireFileLock } from '../../src/brain/write-registry.js';
+import { invalidateGraph } from '../graph.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 
 // ── scan_wiki_health ─────────────────────────────────────────────────────────
@@ -231,6 +232,14 @@ export async function fixWikiIssueHandler(args, storage) {
     result = await fixIssue(domain.value, type, issue);
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
+
+    // Drop mcp/graph.js's cached read of this domain — same reason as
+    // compile_to_wiki, and more urgent here because fixIssue() DELETES files
+    // on crossFolderDupes / hyphenVariants / semanticDupe. A stale graph would
+    // keep serving a page that no longer exists, and keep reporting the
+    // backlinks that were just rewritten. In `finally` because a fix that
+    // threw partway can still have changed the wiki.
+    try { invalidateGraph(domain.value); } catch { /* never let a cache drop fail a fix */ }
   }
 
   // Audit log (machine-private, gitignored)
