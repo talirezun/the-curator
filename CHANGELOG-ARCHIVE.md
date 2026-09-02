@@ -5,7 +5,7 @@
 > been reworded, shortened or summarised. `CLAUDE.md` is auto-loaded into every
 > session in this repo, and at ~183,000 tokens the changelog alone was spending
 > roughly a third of the context window before anyone typed a word. The newest
-> 5 releases stay in `CLAUDE.md`; these 149 live here.
+> 6 releases stay in `CLAUDE.md`; these 149 live here.
 
 **When to open this file.** Before you change anything with a history — a guard,
 a prompt, a fallback chain, a money path, a write path — search this file for
