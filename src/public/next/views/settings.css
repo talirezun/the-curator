@@ -56,7 +56,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 9px 11px;
+  padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-md);
   border: none;
   background: transparent;
@@ -120,7 +120,7 @@
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
 }
 .settings-version {
   flex: 1;
@@ -130,7 +130,7 @@
 }
 .settings-restart-flag {
   display: inline-block;
-  padding: 1px 5px;
+  padding: 1px var(--space-2);
   border-radius: var(--radius-full);
   background: var(--attention-tint);
   /* The WORD "restart", on its own tint: --attention-text measured 3.21 light.
@@ -146,12 +146,49 @@
 
 /* ── Section content shell ───────────────────────────────────────────── */
 
-.settings-section { display: flex; flex-direction: column; gap: 22px; }
+.settings-section { display: flex; flex-direction: column; gap: var(--space-12); }
 
 .settings-field-block {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--space-4);
+}
+
+/* ── .settings-field-block INSIDE AN INSET GROUP ──────────────────────────
+   The rows keep their own markup, their own ids and their own data-* hooks —
+   the group adds the card around them and the separator between them, and
+   nothing else. That is deliberate: converting the blocks themselves into
+   .cur-group-row markup would have rewritten every selector three test
+   suites and wireGlobalListeners depend on, to buy a class name.
+
+   .cur-group-fields is the STACKED variant (label over control), because all
+   three rows here hold a segmented control that already wraps to two lines at
+   the Largest text scale. A label-left/control-right row would put a wrapping
+   4-segment control in a right-hand column and reintroduce exactly the width
+   problem .fs-segmented exists to avoid.
+
+   THE SEPARATOR IS A ::before ON THE SECOND ROW ONWARDS, not a border-bottom
+   on every row: a border-bottom needs a :last-child exception, and the
+   exception is what gets forgotten when a row becomes conditional — which
+   renderBackgroundMode's already is (it renders nothing before the config GET
+   lands). `+` only selects a gap between two rows that both exist. */
+.cur-group-fields > .settings-field-block {
+  position: relative;
+  padding: var(--space-5) var(--space-6);
+}
+/* The separator is inset to the LABEL's x-offset, not to the card's edge —
+   the one detail that makes an inset group read as macOS rather than as a
+   table. It is written as a left offset on the ::before rather than as a
+   padded wrapper so a row background (if a view ever adds one) can still run
+   full-bleed, which is what AppKit does. */
+.cur-group-fields > .settings-field-block + .settings-field-block::before {
+  content: "";
+  position: absolute;
+  left: var(--space-6);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
 }
 .settings-field-label {
   font: var(--type-label);
@@ -187,13 +224,13 @@
 
 .settings-btn-row {
   display: flex;
-  gap: 9px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   margin-top: 4px;
 }
 
 .settings-inline-error {
-  padding: 11px 13px;
+  padding: var(--space-6) var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--danger-text);
   background: var(--danger-tint);
@@ -208,8 +245,8 @@
 .settings-write-busy-note {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 11px 13px;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -219,7 +256,7 @@
   color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  margin-bottom: 14px;
+  margin-bottom: var(--space-8);
 }
 .settings-write-busy-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
@@ -233,8 +270,8 @@
 .settings-activation-note {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 11px 13px;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -242,12 +279,12 @@
   color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  margin-bottom: 14px;
+  margin-bottom: var(--space-8);
 }
 .settings-activation-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 /* Column, so a save that skipped more than one provider reads as one line per
    provider instead of a single run-on paragraph. */
-.settings-activation-note-body { display: flex; flex-direction: column; gap: 5px; }
+.settings-activation-note-body { display: flex; flex-direction: column; gap: var(--space-2); }
 
 /* Defect 2 fix — "Needs re-connect" pill above a green self-test result read
    as a contradiction (they answer different questions; see renderMcp()'s own
@@ -261,30 +298,30 @@
 .settings-mcp-stale-note {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 11px 13px;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
   color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  margin-top: 10px;
+  margin-top: var(--space-4);
 }
 .settings-mcp-stale-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 .settings-note-row {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 12px 14px;
+  gap: var(--space-6);
+  padding: 12px var(--space-8);
   border-radius: 9px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-2);
   font-size: var(--text-sm);   /* was 12.5px — on the ramp so it scales */
   line-height: var(--leading-relaxed);
-  margin-top: 22px;
+  margin-top: var(--space-12);
 }
 /* SVG only. --text-3 is 4.15-4.38, under the 4.5 TEXT floor but over the 3:1
    graphic floor, so the chevrons and note icons in this file KEEP it — the same
@@ -308,7 +345,16 @@
 .settings-saved-note svg { color: var(--success-text); }
 
 /* ── Buttons — small variant used throughout Settings rows ─────────── */
-.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+/* WAS 26px, and it was the ONE interactive element in this view under the
+   28x28pt target macOS uses as its default control size (its minimum is
+   20x20; iOS's 44 does not apply to a pointer-driven Mac app). --control-sm
+   IS 28px, so this is the token catching up with the literal rather than a
+   new size entering the system. Two pixels, on the Settings sidebar's own
+   "Check for updates" button among others.
+   It cannot take the ::before hit-box trick the shell uses on .reader-close
+   and .cur-switch, because `.btn::before` is already spoken for by the gloss
+   face — so here the box genuinely grows. */
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 /* The one "spends tokens" action in this view (mirrors the sparkles
    convention from the Health panel spec — accent-tinted, never plain). */
@@ -318,12 +364,18 @@
   gap: 6px;
   height: var(--control-md);
   padding: 0 12px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
   border: 1px solid var(--accent-border);
   background: var(--accent-tint);
   color: var(--accent-text);
   font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
-  cursor: pointer;
+  /* No gloss, deliberately, and the same refusal shell.css records for
+     .btn-ai: the sparkle and the tint already say "this spends money", and a
+     lit, raised surface would make the one control in Settings that costs
+     real money the most inviting thing on the screen. */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .btn-ai-cost:hover { background: var(--accent-tint-strong); }
 
@@ -334,16 +386,37 @@
   align-self: flex-start;
   padding: 2px;
   gap: 2px;
-  border-radius: 7px;
-  background: var(--surface-inset);
-  border: 1px solid var(--border);
+  /* The track is the control's radius plus its own 2px inset, so the segments
+     and the track stay concentric instead of the track looking squarer than
+     the chips inside it. */
+  border-radius: calc(var(--radius-control) + 2px);
+  background: var(--surface-sunken);
+  /* THE TRACK IS SUNKEN AND THE SELECTED SEGMENT IS RAISED. That inversion is
+     the whole reading of an NSSegmentedControl: a well with one chip lifted
+     out of it. It was a flat --surface-inset box with a 1.2:1 --border, so
+     the only thing distinguishing "selected" was a slightly lighter fill.
+     --control-edge-quiet rather than --control-edge: the track is shaping,
+     not identification — the SEGMENTS are what a user aims at, and each
+     carries its own state. */
+  border: 1px solid var(--control-edge-quiet);
+  box-shadow: var(--gloss-well-quiet);
 }
 .theme-seg-btn {
   height: 28px;
+  /* NOT SNAPPED TO THE 4pt SCALE, and that is a refusal rather than an
+     oversight. 14 -> 16 widens every segment by 2px, and this file already
+     records that .fs-segmented and .bgmode-segmented exist ONLY because four
+     and three segments barely fit the 272px-constrained main column at the
+     Largest text scale — the trap being that picking "Largest" must not push
+     the control that picked it off screen. Nothing was rendered in this pass,
+     so a 2px-per-segment widening could not be checked at 1.18x and is not
+     being made blind. Same for .fs-seg-btn's 11px below. */
   padding: 0 14px;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   border: none;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-family: inherit;
   /* Was 12.5px. THIS ONE IS LOAD-BEARING for the Text size control, which
      reuses .theme-seg-btn: a fixed size there would leave the one control
@@ -358,9 +431,17 @@
      on --surface-inset — measured 4.33 dark / 3.87 light at --text-3.
      The active/inactive step survives: active is --text on --surface-raised. */
   color: var(--text-2);
-  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
+  transition: background var(--t-state), color var(--t-state), box-shadow var(--t-state), transform var(--t-press);
 }
-.theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
+/* The lifted chip: a quiet specular for the lit top edge and --elev-1 for the
+   contact shadow that says it is sitting ON the track rather than painted
+   into it. Two devices, not three — a face gradient on a 28px chip is below
+   the threshold where a <=6% L* ramp is readable as form. */
+.theme-seg-btn.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--gloss-specular-quiet), var(--elev-1);
+}
 /* Press. This class is declared in views/sync.css AND here at identical
    specificity, and settings.css is linked later so this copy wins (see the
    note above). The press is written ONCE, here, on the winning copy —
@@ -429,8 +510,8 @@
 .check-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--space-4);
+  padding: 8px var(--space-4);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
 }
@@ -454,18 +535,18 @@
 .cost-confirm {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--space-4);
+  padding: 12px var(--space-8);
   border-radius: var(--radius-md);
   border: 1px solid var(--accent-border);
   background: var(--accent-tint);
   color: var(--accent-text);
-  margin-top: 10px;
+  margin-top: var(--space-4);
 }
 .cost-confirm svg { flex: none; margin-top: 2px; }
 .cost-confirm-text { flex: 1; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--text-2); }
 .cost-confirm-text strong { color: var(--accent-text); }
-.cost-confirm-actions { display: flex; gap: 7px; flex: none; }
+.cost-confirm-actions { display: flex; gap: var(--space-4); flex: none; }
 
 /* ── Providers & keys ────────────────────────────────────────────────── */
 
@@ -477,8 +558,8 @@
 .provider-fallback-banner {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 12px 14px;
+  gap: var(--space-4);
+  padding: 12px var(--space-8);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -498,7 +579,7 @@
 }
 .provider-fallback-headline { overflow-wrap: anywhere; }
 .provider-fallback-headline code {
-  padding: 1px 5px;
+  padding: 1px var(--space-2);
   border-radius: 5px;
   background: var(--surface-inset);
   color: var(--text);
@@ -528,7 +609,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-4);
   font-size: var(--text-xs);
 }
 .provider-active-label { color: var(--text-2); }
@@ -544,7 +625,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 14px;
+  padding: var(--space-6) var(--space-8);
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -581,7 +662,7 @@
 .provider-key-field {
   flex: 1;
   min-width: 150px;
-  padding: 7px 10px;
+  padding: var(--space-4) var(--space-4);
   border-radius: 6px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
@@ -638,7 +719,7 @@
    states the outcome too — nothing depends on hue alone. */
 .provider-keytest {
   margin: -2px 0 2px;
-  padding: 8px 11px;
+  padding: 8px var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--surface-inset);
@@ -685,15 +766,36 @@
 }
 .provider-replace-input {
   flex: 1;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-focus);
+  /* Was a bespoke 30px — --control-md is 32, the height every other control
+     in this row already uses, so the replace field now lines up with the
+     Save/Cancel buttons beside it instead of sitting 2px short of them. */
+  height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-control);
+  /* ── A FIELD IS THE INVERSION OF A BUTTON, AND THAT IS THE WHOLE POINT ───
+     A button is RAISED — a face gradient, a lit top edge, a contact shadow.
+     A field is SUNKEN: an inset well and no specular at all. That inversion
+     is most of what tells a user which of two same-sized boxes they can type
+     in, and it is more reliable than any border colour, because it survives
+     both themes and a colour-blind reading unchanged.
+     --control-edge replaces --border-focus at REST: painting a resting field
+     in the focus colour spends the one signal that means "your keystrokes go
+     here" on a field that is merely present, and leaves focus with nothing
+     left to say. Focus now moves the border AND adds the ring. */
+  border: 1px solid var(--control-edge);
   background: var(--surface-inset);
+  box-shadow: var(--gloss-well);
   color: var(--text);
   font-size: var(--text-sm);
+  transition: border-color var(--t-state), box-shadow var(--t-state), background var(--t-state);
 }
-.provider-replace-input:focus { outline: none; box-shadow: var(--ring-focus); }
+.provider-replace-input:hover { border-color: var(--text-faint); }
+.provider-replace-input:focus {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--gloss-well-quiet), var(--ring-focus);
+}
 
 /* ── MCP bridge ──────────────────────────────────────────────────────── */
 
@@ -701,18 +803,18 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 14px;
+  padding: var(--space-6) var(--space-8);
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--surface);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-8);
   flex-wrap: wrap;
 }
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 9px 3px 7px;
+  gap: var(--space-4);
+  padding: 3px var(--space-4) 3px var(--space-4);
   border-radius: var(--radius-full);
   font: var(--type-mono);
   font-size: var(--text-2xs);
@@ -728,7 +830,7 @@
 .mcp-path-line { font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
 .mcp-config-snippet {
   margin-top: 12px;
-  padding: 12px 14px;
+  padding: 12px var(--space-8);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-inset);
@@ -783,10 +885,10 @@
 .settings-input-suffix {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   height: var(--control-md);
   max-width: 300px;
-  padding: 0 11px;
+  padding: 0 var(--space-6);
   border-radius: 6px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
@@ -808,14 +910,14 @@
 .storage-path-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 22px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-12);
   flex-wrap: wrap;
 }
 .storage-path {
   flex: 1;
   min-width: 240px;
-  padding: 9px 12px;
+  padding: var(--space-4) 12px;
   border-radius: 7px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
@@ -851,9 +953,9 @@
 .model-picker-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  padding: 10px 13px;
+  padding: var(--space-4) var(--space-6);
   cursor: pointer;
   list-style: none;
   color: var(--text-2);
@@ -898,7 +1000,7 @@
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
-  padding: 1px 7px;
+  padding: 1px var(--space-4);
   border-radius: 999px;
   border: 1px solid transparent;
 }
@@ -912,7 +1014,7 @@
   border-color: var(--border-subtle);
 }
 
-.model-picker-body { padding: 0 13px 13px; }
+.model-picker-body { padding: 0 var(--space-6) var(--space-6); }
 
 /* ── The keyed-but-empty catalogue (v3.15.0) ──────────────────────────────
    Reuses .model-picker's frame so it sits in the same place, at the same
@@ -921,13 +1023,13 @@
    .model-picker-summary sets `cursor: pointer`, which is the one thing that
    has to be undone here. */
 .model-picker-empty-head { cursor: default; }
-.model-picker-empty-body { margin: 0 13px 13px; }
+.model-picker-empty-body { margin: 0 var(--space-6) var(--space-6); }
 
 /* The one place the app states what a selection does and does not do.
    Amber rather than grey deliberately: it is a limitation, not a footnote. */
 .model-picker-scope {
-  margin: 0 0 10px;
-  padding: 8px 11px;
+  margin: 0 0 var(--space-4);
+  padding: 8px var(--space-6);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--surface-inset);
@@ -950,7 +1052,7 @@
 }
 .model-picker-scope strong { color: var(--text); font-weight: var(--weight-semibold); }
 .model-picker-scope code {
-  padding: 1px 5px;
+  padding: 1px var(--space-2);
   border-radius: 5px;
   background: var(--surface-inset);
   color: var(--text);
@@ -962,7 +1064,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--space-2);
 }
 /* The row and its pick control are SIBLINGS, not nested: the control must
    never live inside the row's <summary>, or clicking it would toggle the
@@ -1000,7 +1102,7 @@
   flex: none;
   display: flex;
   align-items: center;
-  padding: 7px 8px 7px 4px;
+  padding: var(--space-4) 8px var(--space-4) 4px;
 }
 .model-option-default { border-color: var(--success-text); background: var(--success-tint); }
 /* The user's own pick reads in the accent, deliberately NOT the success
@@ -1021,7 +1123,7 @@
 .model-pick-clear { margin-left: 4px; vertical-align: baseline; }
 /* Sits between the honesty line and the rows, inside the list the user just
    clicked in — the one surface guaranteed to be on screen at that moment. */
-.model-pick-error { margin-bottom: 9px; }
+.model-pick-error { margin-bottom: var(--space-4); }
 /* ── THE REFUSAL, IN THE ROW THE USER CLICKED ───────────────────────────────
    `flex-basis: 100%` is what puts it on its own line under the button rather
    than beside it. No bottom margin: it is the last child of the <li>, so the
@@ -1045,7 +1147,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 7px 10px;
+  padding: var(--space-4) var(--space-4);
   list-style: none;
   min-width: 0;
 }
@@ -1070,13 +1172,13 @@
 .model-row-line {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   min-width: 0;
 }
 /* The cost line is indented to the text column so it reads as belonging to
    the name above it rather than as a new item. */
-.model-row-cost { padding-left: 18px; }
+.model-row-cost { padding-left: var(--space-8); }
 
 /* ── The filter bar. Search is primary and takes the width; the sort and the
    measured toggle are compact companions. One row, wrapping on a narrow
@@ -1086,17 +1188,26 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-4);
 }
 .model-filter-q {
   flex: 1 1 200px;
   min-width: 0;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  padding: var(--space-2) var(--space-4);
+  /* Sunken, for the same reason as .provider-replace-input above. */
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  box-shadow: var(--gloss-well-quiet);
   color: var(--text);
   font: var(--type-body-sm);
+  transition: border-color var(--t-state), box-shadow var(--t-state), background var(--t-state);
+}
+.model-filter-q:focus {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--ring-focus);
 }
 /* The compact trigger for the model sort control (shared listbox). Sits in
    the wrapping filter ROW, whose align-items: center it inherits; it only
@@ -1105,7 +1216,7 @@
 .model-filter-sort {
   flex: 0 0 auto;
   height: auto;
-  padding: 5px 7px;
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-2);
@@ -1114,7 +1225,7 @@
 .model-filter-measured {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   flex: 0 0 auto;
   font-size: var(--text-xs);
   color: var(--text-2);
@@ -1129,7 +1240,7 @@
 /* An empty result SAYS SO and offers the way back. An unexplained empty list
    reads as "the feature is broken" — a misreading this repo has shipped. */
 .model-filter-empty {
-  padding: 14px 12px;
+  padding: var(--space-8) 12px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
   text-align: center;
@@ -1151,7 +1262,7 @@
    for why truncating a line that opens with a warning is the same defect as
    folding it. */
 .model-row-derived {
-  padding-left: 18px;
+  padding-left: var(--space-8);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
   color: var(--text-2);
@@ -1199,10 +1310,10 @@
 .model-promo { font-size: var(--text-2xs); color: var(--text); overflow-wrap: anywhere; }
 
 .model-row-body {
-  padding: 2px 10px 10px 28px;
+  padding: 2px var(--space-4) var(--space-4) 28px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .model-facts { font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
@@ -1232,8 +1343,8 @@
 .catalogue-sync {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 11px 13px;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-6);
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   background: var(--surface-sunken);
@@ -1292,7 +1403,7 @@
 }
 .catalogue-funnel-list {
   list-style: none;
-  margin: 5px 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -1300,7 +1411,7 @@
 }
 .catalogue-funnel-list li {
   display: flex;
-  gap: 9px;
+  gap: var(--space-4);
   justify-content: space-between;
   flex-wrap: wrap;
 }
@@ -1315,7 +1426,7 @@
 .model-lane-head {
   display: flex;
   align-items: baseline;
-  gap: 9px;
+  gap: var(--space-4);
   padding: 12px 3px 0;
 }
 .model-lane-title {
@@ -1350,8 +1461,8 @@
 .model-lane-fold-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 3px;
+  gap: var(--space-4);
+  padding: var(--space-4) 3px;
   cursor: pointer;
   list-style: none;
   color: var(--text-2);
@@ -1389,7 +1500,7 @@
 /* The free-routing open question. Same recessed paragraph frame as the scope
    line it sits beside; never the amber tint, which would read as a warning
    about a specific finding when the honest content is that there is none. */
-.model-picker-free-note { margin-top: 9px; }
+.model-picker-free-note { margin-top: var(--space-4); }
 /* "Loaded for this session only" — the refresh worked but could not be saved,
    so the models vanish on restart. Amber: this IS a finding about a thing that
    went wrong, unlike .catalogue-sync-note beside it, which states a rule. */
@@ -1415,14 +1526,14 @@
    row BODY. Recessed frame so the evidence never competes with the price and
    the badges on the row itself, which is where a spending decision is made. */
 .model-qual {
-  margin-top: 10px;
-  padding: 9px 11px;
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   background: var(--surface-sunken);
 }
-.model-qual-head { margin: 0 0 5px; font-weight: var(--weight-medium); }
-.model-qual-facts { margin: 0 0 5px; font-size: var(--text-sm); color: var(--text-2); }
+.model-qual-head { margin: 0 0 var(--space-2); font-weight: var(--weight-medium); }
+.model-qual-facts { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-2); }
 /* WHICH wiki and WHEN. Quiet, but never hidden: a measurement without its scope
    is a claim about the model, which it is not. */
 .model-qual-stamp { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
@@ -1448,7 +1559,7 @@
    not recessed. */
 .model-qual-time { margin: 6px 0 0; font-size: var(--text-md); } /* was 13px */
 .model-qual-cost { margin: 4px 0 0; font-size: var(--text-md); color: var(--text-2); }
-.model-qual-actions { display: flex; gap: 8px; margin-top: 9px; }
+.model-qual-actions { display: flex; gap: 8px; margin-top: var(--space-4); }
 
 /* The probe control sits beside the "chat only" state, never inside the row's
    <summary> — the v3.0.1-beta.18 hazard, where a control inside a summary
@@ -1469,8 +1580,8 @@
 .settings-job-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 18px;
+  gap: var(--space-4);
+  padding-top: var(--space-8);
   border-top: 1px solid var(--border);
 }
 .settings-job-title {
@@ -1494,7 +1605,7 @@
 }
 .settings-job-empty {
   margin: 0;
-  padding: 12px 13px;
+  padding: 12px var(--space-6);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md, 8px);
   font-size: var(--text-md);
@@ -1514,7 +1625,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 13px 14px;
+  padding: var(--space-6) var(--space-8);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-left: 3px solid var(--success-text);
@@ -1529,7 +1640,7 @@
 .build-current-head {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 .build-current-provider {
@@ -1571,7 +1682,7 @@
 .build-list-head {
   display: flex;
   align-items: baseline;
-  gap: 9px;
+  gap: var(--space-4);
   padding-top: 4px;
 }
 .build-list-title {
@@ -1586,8 +1697,8 @@
 .model-provider-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 1px 7px 1px 6px;
+  gap: var(--space-2);
+  padding: 1px var(--space-4) 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface-inset);
@@ -1655,7 +1766,7 @@
   color: var(--text-2);
   display: flex;
   align-items: flex-start;
-  gap: 5px;
+  gap: var(--space-2);
 }
 .model-row-derived-warn svg { flex: none; margin-top: 2px; color: var(--attention-text); }
 
@@ -1665,10 +1776,10 @@
 .settings-shelf-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   cursor: pointer;
   list-style: none;
-  padding-bottom: 10px;
+  padding-bottom: var(--space-4);
 }
 .settings-shelf-summary::-webkit-details-marker { display: none; }
 /* Chevron — graphic, keeps --text-3. */
@@ -1684,7 +1795,7 @@
   border-radius: var(--radius-sm, 5px);
 }
 .settings-shelf-count { font-size: var(--text-2xs); color: var(--text-2); margin-left: auto; }  /* 4.38 -> 8.09, measured */
-.settings-shelf-body { display: flex; flex-direction: column; gap: 10px; }
+.settings-shelf-body { display: flex; flex-direction: column; gap: var(--space-4); }
 /* A provider whose whole catalogue is already in the build list above. Stated
    rather than left as an empty section, which reads as a failed load. */
 .model-lane-all-above { margin: 0; }

@@ -36,6 +36,24 @@
      fonts-local.css for why and what replaces it. -->
 <link rel="stylesheet" href="/next/tokens/fonts-local.css">
 
+<!-- tokens/material.css — the material vocabulary (gloss, elevation pairs,
+     the four macOS materials, the two-line material edge, the corrected
+     focus ring, --control-edge, --radius-control, --ease-emphasized).
+     It is ADDITIVE and must load AFTER color.css and shape.css, because it
+     redefines exactly three existing names and each redefinition is a
+     measured defect fix: --accent-hover (white-on-hover was 3.05:1 on dark),
+     --ring-focus (1.26:1 dark / 1.24:1 light, under the 3:1 floor), and it
+     introduces --danger-fill because white on --danger is 3.40:1.
+
+     IT IS A SEPARATE FILE RATHER THAN EDITS TO color.css/shape.css so those
+     stay diffable against the design-system bundle — color.css already
+     carries one approved deviation (the v3.25.0 text ramp) and a second
+     family inside it would destroy that property. Load order is enforced by
+     scripts/test-css-tokens.js §11, because `:root` and `[data-theme]` tie
+     on specificity: linked BEFORE color.css, every dark value here would
+     silently paint the light theme. -->
+<link rel="stylesheet" href="/next/tokens/material.css">
+
 <link rel="stylesheet" href="/next/shell.css">
 
 <!-- Shared components — a cascade layer BETWEEN the shell and the views.
@@ -108,6 +126,16 @@
      the file is invisible to scripts/test-css-tokens.js §5, which discovers
      /next stylesheets only from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/checkbox.css">
+
+<!-- shared/switch.css — the ONE NSSwitch surface in /next, alongside the
+     checkbox rather than replacing it. The two are NOT interchangeable and
+     the distinction is macOS's own: a CHECKBOX states a fact about a thing
+     ("measured only", "I consent"), a SWITCH turns a FACILITY on and off and
+     takes effect immediately. Both idioms exist in System Settings on the
+     same pane. Linked here for the same reason as the four components above:
+     it owns the whole `cur-switch` prefix, and a view that adopts it must
+     not have to touch this file. -->
+<link rel="stylesheet" href="/next/shared/switch.css">
 
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.

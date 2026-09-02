@@ -506,14 +506,58 @@ textarea {
 
 /* ── Rail ────────────────────────────────────────────────────────────── */
 
+/* ── THE RAIL AND THE SIDEBAR ARE MATERIAL PLANES, NOT PANELS ─────────────
+   MEASURED BEFORE: both were `background: var(--surface)` against `.main`'s
+   `var(--canvas)`. #0C0C14 vs #08080E is 1.03:1 on dark, and #FFFFFF vs
+   #FBFBFD is 1.03:1 on light. Two thirds of the app's chrome was separated
+   from its content by a difference you cannot see, with a 1px --border
+   (1.20-1.29:1) doing all the work.
+
+   MEASURED AFTER: dark 1.09:1, light 1.18:1, plus the two-line edge.
+
+   ── THE DIRECTION FLIPS BY THEME, AND THAT IS macOS's OWN BEHAVIOUR ──────
+   "Recessed" is not "darker". An NSVisualEffectView sidebar reads LIGHTER
+   than the content pane in dark mode and GREYER in light mode; both are
+   "further from the light", and it is the ramp that inverts, not the idea.
+   --mat-sidebar is defined per theme in tokens/material.css and carries the
+   full arithmetic, including why dark stops at 1.09 (the next rung up drops
+   --control-edge on this plane to 2.92:1, under the non-text floor, for
+   every bordered control the sidebar holds).
+
+   ── THE TWO-LINE EDGE REPLACES `border-right` ────────────────────────────
+   `1px 0 0 var(--mat-edge-lo)` is the DARK OUTER SEPARATOR, painted 1px
+   outside into the neighbouring column; `inset -1px 0 0 var(--mat-edge-hi)`
+   is the LIT INNER LIP. One line reads as a div border; two read as a pane
+   with thickness. Both are always drawn, and the reason is measured: on dark
+   the outer separator is 1.02:1 against --canvas (black on near-black is
+   nothing) while the lip is 1.32:1 against its own plane; on LIGHT it
+   inverts — lip 1.17:1, separator 1.29:1. Ship one line and one theme
+   silently loses its edge.
+
+   Replacing the border with a shadow keeps the grid geometry byte-identical
+   (the border was inside the border-box; the outer line paints outside it),
+   so #app-shell's 60px / --app-sidebar-w columns and .reader-scrim's
+   `left: calc(60px + var(--app-sidebar-w))` are untouched.
+
+   ── THE BLUR IS DECLARED AND DOES NOTHING HERE, STATED RATHER THAN HIDDEN
+   These are grid COLUMNS with nothing behind them but the body's own canvas,
+   so `backdrop-filter` has nothing to sample. What produces the plane is the
+   alpha composite plus the edge. The filter is declared because it costs
+   nothing over a flat backdrop and is correct the day this chrome genuinely
+   overlaps content — which the menu and the sheet already do. */
 .rail {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  background: var(--mat-sidebar);
+  -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  box-shadow: 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-hi);
+  /* Chrome, not content — see the note on .btn. */
+  user-select: none;
+  -webkit-user-select: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 0 10px;
-  gap: 4px;
+  padding: var(--space-6) 0;   /* was 12px 0 10px — snapped to the 4pt scale */
+  gap: var(--space-2);
 }
 
 .rail-mark {
@@ -531,18 +575,27 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: var(--radius-lg);   /* was a raw 9px */
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
   flex: none;
   /* `transform` is in the list for the press state defined beside the button
      variants below; the amplitude and the reduced-motion decision live there
      so the whole press vocabulary reads in one place. */
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
-.rail-btn:hover { background: var(--surface-hover); color: var(--text-2); }
+/* ── ROW STATES ON A MATERIAL PLANE ARE RELATIVE OVERLAYS ────────────────
+   This was `var(--surface-hover)` (#15151F). The rail's plane is now
+   rgb(20,20,30) on dark — one point apart, so the hover would have VANISHED
+   the moment the plane moved, silently, with nothing failing. An absolute
+   fill picked against the canvas cannot survive a plane that is lighter than
+   the canvas, which the dark rail now is. --mat-row-hover is an overlay
+   (white 0.06 dark / ink 0.06 light), so it steps by the same amount on any
+   plane in either theme: measured 1.16:1 hover and 1.32:1 active against the
+   sidebar plane. */
+.rail-btn:hover { background: var(--mat-row-hover); color: var(--text-2); }
 .rail-btn.active {
   background: var(--accent-tint);
   color: var(--accent-text);
@@ -559,18 +612,19 @@ textarea {
 .rail-theme-toggle {
   width: 30px;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);   /* was a raw 7px — same value, now a token */
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-3);
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: default;
   margin-bottom: 2px;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
-.rail-theme-toggle:hover { background: var(--surface-hover); color: var(--text-2); border-color: var(--border); }
+/* Overlay, not an absolute fill — same reason as .rail-btn:hover above. */
+.rail-theme-toggle:hover { background: var(--mat-row-hover); color: var(--text-2); border-color: var(--border); }
 .rail-theme-toggle svg { width: 15px; height: 15px; }
 
 /* The Sync-pending count on the rail icon. This is a THEME-PARITY and
@@ -614,24 +668,45 @@ textarea {
   background: var(--attention);
   color: var(--violet-950);
   font: var(--weight-medium) var(--text-2xs)/15px var(--font-mono);
+  /* A count that ticks 9 -> 10 must not shift its own glyphs, and the pill is
+     min-width'd rather than fixed, so a proportional 1 would make the badge
+     visibly narrower for a whole class of values. */
+  font-variant-numeric: var(--numeric-tabular);
   text-align: center;
-  box-shadow: 0 0 0 2px var(--surface);
+  /* The ring punches the badge out of whatever is directly under it, which is
+     now the RAIL'S PLANE and no longer --surface — those were the same colour
+     before the rail became a material and are 1.09:1 apart after it. Using
+     --mat-sidebar keeps the ring matched to the plane by construction rather
+     than by two values happening to agree. */
+  box-shadow: 0 0 0 2px var(--mat-sidebar);
 }
 
 .rail-avatar {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: linear-gradient(140deg, #6538E0, #2596AE);
+  /* Was two raw hexes. They are --violet-600 and --entity-600 exactly, so
+     naming them changes no pixel and removes the last colour literal from
+     this file — the discipline scripts/test-next-design-kit.js §10 ratchets.
+     They are FIXED POINTS in the brand ramp (neither is redefined under
+     [data-theme="light"]), so one declaration still serves both themes,
+     which is why this is a rename and not a theming change. */
+  background: linear-gradient(140deg, var(--violet-600), var(--entity-600));
   margin-top: 4px;
   flex: none;
 }
 
 /* ── Contextual sidebar ─────────────────────────────────────────────── */
 
+/* The same material plane and the same two-line edge as the rail — see the
+   long note there. `user-select` is NOT set here: the sidebar carries
+   conversation titles, domain names and project names, which are content a
+   user may reasonably want to select and copy. */
 .sidebar {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  background: var(--mat-sidebar);
+  -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+  box-shadow: 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-hi);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -639,8 +714,8 @@ textarea {
 .sidebar-inner {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 14px;
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-6);   /* was 16px 14px */
 }
 
 .sidebar-title {
@@ -699,7 +774,7 @@ textarea {
 }
 
 .sidebar-note {
-  padding: 10px 11px;
+  padding: var(--space-4) var(--space-6);   /* was 10px 11px */
   border-radius: var(--radius-md);
   border: 1px dashed var(--border-strong);
   background: var(--surface-inset);
@@ -722,7 +797,7 @@ textarea {
 .main-inner {
   max-width: 900px;
   margin: 0 auto;
-  padding: 30px 28px 64px;
+  padding: var(--space-16) 28px var(--space-32);   /* was 30px 28px 64px */
 }
 
 /* ── View enter motion ───────────────────────────────────────────────────
@@ -927,25 +1002,26 @@ body.guide-docked .main {
   font: var(--type-h1);
   letter-spacing: var(--track-title);
   color: var(--text);
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-4);
 }
 
 .view-body {
   font: var(--type-body);
   color: var(--text-2);
   max-width: 68ch;
-  margin: 0 0 22px;
+  margin: 0 0 var(--space-12);   /* was 22px */
 }
 
 .empty-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
-  padding: 22px 24px;
+  gap: var(--space-4);
+  padding: var(--space-12);        /* was 22px 24px */
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--surface);
+  box-shadow: var(--elev-1);
 }
 .empty-card .empty-title {
   font: var(--type-h3);
@@ -981,8 +1057,8 @@ body.guide-docked .main {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
-  padding: 22px 24px;
+  gap: var(--space-4);
+  padding: var(--space-12);        /* was 22px 24px */
   border-radius: var(--radius-lg);
   border: 1px solid var(--danger);
   background: var(--danger-tint);
@@ -1002,7 +1078,7 @@ body.guide-docked .main {
   max-height: 160px;
   overflow: auto;
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-4) var(--space-6);   /* was 10px 12px */
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
   border: 1px solid var(--border-subtle);
@@ -1014,19 +1090,183 @@ body.guide-docked .main {
 
 /* .demo-row moved to views/chat.css — only the Chat stub renders it. */
 
+/* ═══════════════════════════════════════════════════════════════════════
+   THE INSET GROUPED LIST  (.cur-group)
+
+   macOS's settings idiom, and the reason Settings currently reads as a web
+   form: a stack of `<label>` + control pairs with a gap between them is a
+   FORM; a rounded card whose rows are separated by a hairline INSET to the
+   label's own x-offset is a macOS settings group. The difference is not
+   decoration — the inset separator is what says "these rows belong to each
+   other and this one does not", which a gap cannot say.
+
+   THE SEPARATOR IS A ::before ON THE SECOND ROW ONWARDS, not a
+   `border-bottom` on every row. A border-bottom needs a `:last-child`
+   exception, and the exception is what gets forgotten when a row is added
+   conditionally — which every row in Settings is. `+` selects the gap
+   between two rows that both exist, so a group that renders one row or five
+   is correct with no special case.
+
+   Rows are 40px MINIMUM, not fixed: --font-scale can push a two-line label
+   past 40, and a fixed height would clip it at the Largest setting. Label
+   left, control right, via `.cur-group-label { flex: 1 }`.
+
+   NOT A CARD. `.cur-group` carries --elev-1 and a --hairline border, never
+   the two-line material edge: the edge belongs to chrome that FLOATS OVER
+   content, and a settings group is content. That distinction is the whole
+   scope rule of the borrowed device and it is enforced by
+   scripts/test-next-design-kit.js.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.cur-group {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--elev-1);
+}
+.cur-group + .cur-group { margin-top: var(--space-8); }
+
+/* The group's own caption sits ABOVE the card, indented to the row padding,
+   which is what puts the label and the first row's label on one x-axis. */
+.cur-group-title {
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-sans);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 var(--space-2) var(--space-6);
+}
+
+.cur-group-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 40px;
+  padding: var(--space-3) var(--space-6);
+}
+.cur-group-row + .cur-group-row::before {
+  content: "";
+  position: absolute;
+  left: var(--space-6);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
+/* A row that STACKS its control under its label — a segmented control at the
+   Largest text scale, a field, a button row. Same separator, same padding;
+   only the axis changes, so the two shapes cannot drift apart in spacing. */
+.cur-group-row.cur-group-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+  padding-bottom: var(--space-5);
+}
+
+.cur-group-label { flex: 1; min-width: 0; }
+.cur-group-label > b {
+  display: block;
+  font: var(--weight-regular) var(--text-md)/1.35 var(--font-sans);
+  color: var(--text);
+}
+/* --text-2, not --text-3. This is the sentence that says what the control
+   does, and it is the only prose on the row; the third rung is for LABELS.
+   Same reasoning shell.css already records for .sidebar-hint and
+   .empty-card .empty-body, and NOT the reasoning that retired the
+   .cur-eyebrow override. */
+.cur-group-label > span {
+  display: block;
+  margin-top: var(--space-1);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+}
+.cur-group-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+/* A row whose control is a value rather than an affordance — a path, a
+   version, a count. Digits align because a column of them is the whole
+   reason a settings list is a list. */
+.cur-group-value {
+  font: var(--type-body-sm);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── SKELETON ROW ────────────────────────────────────────────────────────
+   `curator-shimmer` has been declared in tokens/motion.css since the tokens
+   landed and had ZERO consumers — a keyframe nothing animates, which is the
+   "built and unreachable" shape this repo keeps recording. This is its
+   consumer. It is a SHELL rule because a loading placeholder is the one
+   thing every view needs and no view owns.
+
+   The reduced-motion escape is the `animation: none` shape
+   scripts/test-next-reduced-motion.js recognises, and DISABLE is the right
+   call here rather than substitute: unlike the ingest ring, the skeleton is
+   not the only liveness cue in a multi-minute wait — the shapes themselves
+   already say "content is coming", and the loading gate holds them for a
+   400ms minimum so they cannot strobe. */
+.cur-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+}
+.cur-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--mat-row-active), transparent);
+  background-size: 200% 100%;
+  animation: curator-shimmer var(--dur-shimmer) var(--ease-in-out) infinite;
+}
+.cur-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-5) 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cur-skeleton::after { animation: none; }
+}
+
 /* ── Buttons (subset of the Button component's variants) ──────────────── */
 
+/* ── THE TWO NATIVE TELLS, AND THEY COST ONE LINE EACH ────────────────────
+   `cursor: default` and `user-select: none` are the cheapest things in this
+   whole redesign and, per the design research, worth more than the entire
+   gloss recipe.
+
+   THE HAND CURSOR BELONGS TO LINKS THAT LEAVE THE APP. No AppKit control
+   shows one — not a push button, not a segment, not a switch, not a sidebar
+   row. Nothing marks a desktop app as a web page faster than a pointing hand
+   over a button, and the app had `cursor: pointer` on every one of them.
+
+   `user-select: none` is the same argument from the other side: a button
+   label that turns blue and drag-selects when a click starts a pixel early
+   is a web page's behaviour, and it is what makes a double-click on a
+   toolbar feel wrong. It is applied to CHROME only — never to content, where
+   the ability to select and copy text is the whole point. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: var(--control-md);
-  padding: 0 13px;
-  gap: 6px;
+  /* was 13px — snapped to the 4pt scale. --space-6 is 12px. */
+  padding: 0 var(--space-6);
+  gap: var(--space-3);
   font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
   letter-spacing: var(--track-body);
-  border-radius: var(--radius-md);
-  cursor: pointer;
+  /* was --radius-md (6px). --radius-control is 7px: one step, applied to
+     controls only, so nothing that is not a control moves. */
+  border-radius: var(--radius-control);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   white-space: nowrap;
   /* ── NO .btn MAY EVER FALL THROUGH TO THE UA'S BUTTON CHROME ───────────
      `.btn` set layout and type but never background, colour or border, so a
@@ -1047,8 +1287,63 @@ body.guide-docked .main {
   background: transparent;
   color: var(--text);
   border: 1px solid transparent;
-  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
+  /* ── HOVER IN IS FASTER THAN HOVER OUT, AND THAT ASYMMETRY IS THE POINT ─
+     The base rule carries the OUT duration (--t-hover-out, 120ms = the
+     existing --dur-fast, so no new number enters here) and the :hover rule
+     below restates the same property list at --t-hover-in (110ms). A
+     transition declared on the hovered state governs entering it; the one on
+     the base state governs leaving it. In should feel like a response; out
+     should be slow enough that dragging the pointer across a toolbar full of
+     buttons does not strobe.
+     `box-shadow` joins the list because the gloss is now what carries hover
+     on dark — see --accent-hover in tokens/material.css. */
+  transition:
+    background-color var(--t-hover-out),
+    color var(--t-hover-out),
+    border-color var(--t-hover-out),
+    box-shadow var(--t-hover-out),
+    transform var(--t-press);
 }
+.btn:hover {
+  transition:
+    background-color var(--t-hover-in),
+    color var(--t-hover-in),
+    border-color var(--t-hover-in),
+    box-shadow var(--t-hover-in),
+    transform var(--t-press);
+}
+
+/* ── THE FACE GRADIENT IS A ::before, NOT A background-image ──────────────
+   So the FACE and the button's own background-COLOR stay independent: a
+   hover that changes the fill does not have to restate the gradient, and a
+   press can drop the face by animating one opacity rather than by swapping a
+   `background` shorthand that would also blow away the colour. Opacity 0 by
+   default, so a `.btn` with no variant (the UA-chrome baseline above) gets
+   nothing. Only the two RAISED variants opt in.
+   `pointer-events: none` is load-bearing here and is not the v3.26.0 defect
+   it resembles: that one cancelled a `cursor` on the control itself; this is
+   an inert decorative overlay covering the control, and without it every
+   click would land on the ::before instead of the button. */
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--gloss-face);
+  opacity: 0;
+  transition: opacity var(--t-hover-out);
+}
+.btn { position: relative; }
+.btn-primary::before,
+.btn-danger-solid::before { opacity: 1; }
+.btn-secondary::before { opacity: 1; background: var(--gloss-face-quiet); }
+/* Pressed inverts: the face goes away entirely, which is what makes the
+   inset well below read as the surface going IN rather than as a darker
+   button. */
+.btn-primary:active::before,
+.btn-secondary:active::before,
+.btn-danger-solid:active::before { opacity: 0; }
 /* ── PRESS ────────────────────────────────────────────────────────────────
    Was `translateY(0.5px)` — measured live in the running app at 0.4716px,
    i.e. sub-pixel at 1x, so on a standard display it either rounded away or
@@ -1086,20 +1381,49 @@ body.guide-docked .main {
    breaks the cursor for everyone else. */
 .btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
+/* ── SECONDARY — THE EDGE CARRIES THE 3:1, NOT THE FILL ───────────────────
+   `--border` (#22222F dark / #E2E2EA light) measures 1.20-1.29:1 against the
+   surfaces this button sits on. A secondary button's FILL is within 1.06:1
+   of the page, so the border is the ONLY thing that says "control" and it
+   carries WCAG 1.4.11 on its own — at 1.2:1 it was not carrying it.
+   --control-edge is --ink-400 / --ink-300, measured 3.24:1 dark and 3.70:1
+   light; tokens/material.css records the per-surface table and the one state
+   (dark :active, 2.92:1) that dips, and why raising the token further is the
+   worse trade.
+   Gloss: the QUIET face plus a quiet specular and a contact shadow. It is a
+   raised object, so it gets all three devices at a third of the amplitude. */
 .btn-secondary {
-  background: var(--surface-raised);
+  background-color: var(--surface-raised);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-edge);
+  box-shadow: var(--gloss-specular-quiet), var(--gloss-contact);
 }
-.btn-secondary:hover { background: var(--surface-hover); }
+.btn-secondary:hover {
+  background-color: var(--surface-hover);
+  box-shadow: var(--gloss-specular-quiet), var(--elev-2);
+}
 
+/* ── PRIMARY — ALL THREE GLOSS DEVICES, AND THE FILL NO LONGER MOVES ON DARK
+   `box-shadow: var(--inset-hi)` was here. It is replaced by the three-device
+   recipe, which fixes the light-theme "phantom line" AT THE PAIRING rather
+   than at the token: --gloss-specular is 0.18 white on light (1.44:1 against
+   the fill, a lit edge) where --inset-hi is 0.90 (5.63:1, a drawn white
+   line). --inset-hi itself is untouched and still correct for the light
+   RAISED SURFACES it was authored for.
+   HOVER RAISES THE SPECULAR AND LIFTS; on dark the FILL does not move at
+   all, because white on --violet-400 is 3.05:1 and no violet lighter than
+   --violet-500 (4.53:1) clears the 4.5 floor. That is the whole reason gloss
+   is structural here and not decoration — see --accent-hover. */
 .btn-primary {
-  background: var(--accent);
+  background-color: var(--accent);
   color: var(--text-on-accent);
   border: 1px solid transparent;
-  box-shadow: var(--inset-hi);
+  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--gloss-contact);
 }
-.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:hover {
+  background-color: var(--accent-hover);
+  box-shadow: var(--gloss-specular-hi), var(--gloss-shade), var(--elev-2);
+}
 
 /* ── THE PHANTOM LINE ACROSS THE TOP OF EVERY PRIMARY BUTTON ─────────────
    Reported as "an additional border on top of the button which I don't know
@@ -1147,7 +1471,23 @@ body.guide-docked .main {
    lives at bare :root, so `[data-theme="light"]` is complete and there must
    be no prefers-color-scheme query here — four other /next stylesheets carry
    the same prohibition. */
-[data-theme="light"] .btn-primary { box-shadow: none; }
+/* ── AND THE OVERRIDE IS NOW RETIRED, WHICH IS THE POINT ──────────────────
+   The rule that stood here was `[data-theme="light"] .btn-primary {
+   box-shadow: none }` — a THEME-SCOPED DELETION, i.e. the light theme's
+   primary button was given no top edge at all, because the only value
+   available to it was wrong. Everything above is still true; what has
+   changed is that there is now a second value.
+
+   --gloss-specular is 0.18 on light and 0.22 on dark, and both composite to
+   the IDENTICAL 1.44:1 against their own fill — tuned to equal PERCEIVED
+   lift rather than to equal alpha, which is the entire argument for two
+   values under one name. So the light theme gets the same lit edge the dark
+   theme gets, instead of getting nothing, and --inset-hi keeps its one
+   existing consumer and its authored meaning.
+
+   The note above is kept in full rather than trimmed to fit the fix: it is
+   the record of how a correct token and a correct component produced a
+   defect at their pairing, and that reading is the reusable part. */
 
 /* ── .btn-danger — the destructive confirm's button ──────────────────────
    THIS RULE'S ABSENCE WAS A LIVE DEFECT, not a tidiness gap.
@@ -1175,19 +1515,68 @@ body.guide-docked .main {
    `views/shared.css` keeps a deliberately STRONGER, filled treatment scoped
    to `.sb-revoke-go .btn-danger` (0,2,0 beats this rule's 0,1,0) for the
    GDPR revoke — that override stays and still wins. */
+/* NO GLOSS, DELIBERATELY. The design system's danger variant is a TINTED
+   OUTLINE, and a tinted outline is not a raised object. Gloss asserts
+   "this is a raised object"; putting it on anything that is not one is
+   precisely what makes a control kit look cheap. Only the press inversion is
+   added, below. */
 .btn-danger {
+  /* `background`, not `background-color`: this variant has no gloss face, so
+     there is no ::before whose gradient a shorthand would clobber — and
+     scripts/test-next-button-chrome.js pins the shorthand here as the record
+     that .btn-danger was once falling through to raw UA button chrome on the
+     one control in the app that DELETES data. Keeping the property it names
+     costs nothing and keeps that guard exact. */
   background: transparent;
   color: var(--danger-text);
   border: 1px solid var(--border);
 }
-.btn-danger:hover { background: var(--danger-tint); border-color: var(--danger); }
+.btn-danger:hover { background-color: var(--danger-tint); border-color: var(--danger); }
+
+/* ── DESTRUCTIVE, SOLID — for a confirm dialog's own primary action ───────
+   The one place a FILLED red belongs: where the destructive action IS the
+   primary one, and a tinted outline would be the quietest control in a
+   dialog whose whole job is to make you sure. Everywhere else the tinted
+   outline above is still correct and this variant must not be reached for.
+
+   THE FILL IS --danger-fill AND NOT --danger, and the difference is
+   measured: white on --danger #EF5568 is 3.40:1 and FAILS AA; #D83B50 is
+   4.51:1. --danger is unchanged — it is a border and text colour in the
+   tinted variant, where the 4.5 floor is met by --danger-text against the
+   surface and 3.40 never applied.
+
+   Hover and press move SATURATION and BRIGHTNESS rather than the hue,
+   because there is no second red rung in this system and minting one to
+   serve two states would be a token added to serve a hover. */
+.btn-danger-solid {
+  background-color: var(--danger-fill);
+  color: var(--text-on-accent);
+  border: 1px solid transparent;
+  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--gloss-contact);
+}
+.btn-danger-solid:hover {
+  box-shadow: var(--gloss-specular-hi), var(--gloss-shade), var(--elev-2);
+  filter: saturate(1.06);
+}
+
+/* ── AI — the tinted "this costs money" variant ───────────────────────────
+   NO GLOSS, same rule as danger. The sparkle plus the accent tint already
+   carry "this spends tokens"; a raised, lit surface would make the one
+   control in the app that costs real money look like the most inviting
+   thing on the screen. */
+.btn-ai {
+  background-color: var(--accent-tint);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-border);
+}
+.btn-ai:hover { background-color: var(--accent-tint-strong); }
 
 .btn-ghost {
-  background: transparent;
+  background-color: transparent;
   color: var(--text-2);
   border: 1px solid transparent;
 }
-.btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+.btn-ghost:hover { background-color: var(--surface-hover); color: var(--text); }
 
 /* ── Press, second half: the per-variant background step ──────────────────
    Below every variant's `:hover` on purpose — see the note on `.btn:active`.
@@ -1207,9 +1596,20 @@ body.guide-docked .main {
    a subset of `:hover`, so the hover treatment is already on screen and the
    transform lands on top of it. Stated so this reads as a decision rather
    than an omission. */
-.btn-primary:active { background: var(--accent-active); }
-.btn-secondary:active { background: var(--surface-active); }
-.btn-ghost:active { background: var(--surface-active); color: var(--text); }
+/* ── AND THE PRESS IS NOW AN INVERSION, NOT JUST A DARKER FILL ────────────
+   --gloss-pressed replaces the contact shadow with an INSET well and adds
+   `inset 0 0 0 1px rgba(0,0,0,0.10)`, which is load-bearing rather than
+   decorative: --control-edge dips to 2.92:1 against --surface-active on dark
+   for the ~80ms a pointer is held, and that inner darkening keeps the
+   boundary findable over the same 80ms. The face gradient is dropped to 0 by
+   the ::before rules above, so the surface reads as going IN.
+   .btn-danger still gets no background step, for the reason below. */
+.btn-primary:active { background-color: var(--accent-active); box-shadow: var(--gloss-pressed); }
+.btn-secondary:active { background-color: var(--surface-active); box-shadow: var(--gloss-pressed); }
+.btn-danger-solid:active { box-shadow: var(--gloss-pressed); filter: brightness(0.90); }
+.btn-danger:active { box-shadow: var(--gloss-pressed); }
+.btn-ai:active { background-color: var(--accent-tint-strong); box-shadow: var(--gloss-pressed); }
+.btn-ghost:active { background-color: var(--surface-active); color: var(--text); }
 
 /* ── Rail: pressing a section acknowledges it ─────────────────────────────
    The rail is what "clicking through the sections" means, and it did nothing
@@ -1240,10 +1640,10 @@ body.guide-docked .main {
    declaration for the same class in the same file is two copies of one value
    waiting to disagree. */
 .rail-btn:active { transform: scale(var(--press-scale-icon)); }
-.rail-btn:not(.active):active { background: var(--surface-active); }
+.rail-btn:not(.active):active { background: var(--mat-row-active); }
 .rail-btn.active:active { background: var(--accent-tint-strong); }
 
-.rail-theme-toggle:active { transform: scale(var(--press-scale-icon)); background: var(--surface-active); }
+.rail-theme-toggle:active { transform: scale(var(--press-scale-icon)); background: var(--mat-row-active); }
 
 /* `.reader-backlink-row`'s press is NOT here — it sits beside that row's own
    `:hover` further down, for the same cascade reason the button variants are
@@ -1370,10 +1770,20 @@ body.guide-docked .main {
   font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
   color: var(--text-3);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);   /* was a raw 5px — the same value */
   padding: 3px 6px;
 }
+/* ── A 26px GLYPH IN A 28px TARGET ───────────────────────────────────────
+   macOS's default control target is 28x28pt (its MINIMUM is 20x20; iOS's
+   44pt figure does not apply to a pointer-driven Mac app). This button was
+   26. Growing the box to 28 would change the header's optical rhythm and the
+   icon's own weight, so the TARGET grows and the GLYPH does not: a
+   transparent ::before bleeds 1px on every side. It paints nothing, so it
+   cannot change what the control looks like; `position: relative` is added
+   for it. The same technique is used on .cur-switch and is the reason no
+   interactive element in the shell is now under 28px in either dimension. */
 .reader-close {
+  position: relative;
   width: 26px;
   height: 26px;
   display: flex;
@@ -1383,8 +1793,14 @@ body.guide-docked .main {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
+}
+.reader-close::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-min) - 26px) / -2);
+  border-radius: inherit;
 }
 .reader-close:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border); }
 .reader-close:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
@@ -1393,7 +1809,7 @@ body.guide-docked .main {
 .reader-body {
   flex: 1;
   overflow-y: auto;
-  padding: 26px 28px 48px;
+  padding: var(--space-12) 28px var(--space-24);   /* was 26px 28px 48px */
 }
 .reader-body .reader-title {
   font: var(--type-h1);
@@ -1435,7 +1851,7 @@ body.guide-docked .main {
   padding: 6px 9px;
   margin-bottom: 12px;
 }
-.reader-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 18px; }
+.reader-tags { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0 var(--space-8); }
 .reader-tag-chip {
   display: inline-flex;
   align-items: center;
@@ -1444,7 +1860,7 @@ body.guide-docked .main {
   padding: 0 9px 0 7px;
   border-radius: var(--radius-full);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-2xs);   /* was a frozen 10.5px, below the ramp's own floor */
   border: none;
   cursor: default;
 }
@@ -1461,8 +1877,8 @@ body.guide-docked .main {
   font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
   letter-spacing: var(--track-eyebrow);
   color: var(--text-3);
-  margin: 22px 0 10px;
-  padding-top: 18px;
+  margin: var(--space-12) 0 var(--space-4);   /* was 22px 0 10px */
+  padding-top: var(--space-8);               /* was 18px */
   border-top: 1px solid var(--border);
 }
 .reader-empty-note { font: var(--type-body-sm); color: var(--text-3); }
@@ -1472,13 +1888,16 @@ body.guide-docked .main {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 8px;
+  /* min-height, not height: the slug can wrap at the Largest text scale and a
+     fixed 28 would clip it. 6/8 is the 4pt scale; the row was 7/8. */
+  min-height: var(--hit-min);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   background: transparent;
   border: none;
   color: var(--text-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   font: inherit;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
@@ -1487,7 +1906,7 @@ body.guide-docked .main {
    in, and steps one background further than hover. Declared after the hover
    deliberately: the two tie on specificity. */
 .reader-backlink-row:active { transform: translateX(var(--press-shift)); background: var(--surface-active); }
-.reader-backlink-slug { font-size: 12px; }
+.reader-backlink-slug { font-size: var(--text-sm); }   /* was a frozen 12px */
 
 /* ── Utility ─────────────────────────────────────────────────────────── */
 

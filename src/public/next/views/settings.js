@@ -1629,6 +1629,24 @@ function renderGeneral() {
 
   return (
     '<div class="settings-section" id="section-general">' +
+      // ── THE INSET GROUPED LIST, AND WHY THESE THREE ARE ONE GROUP ────────
+      // A stack of label+control pairs with a gap between them is a FORM; a
+      // rounded card whose rows are separated by a hairline inset to the
+      // label's own x-offset is a macOS settings group. The difference is not
+      // decoration: the separator says "these rows belong to each other and
+      // the ones below do not", which a gap cannot say.
+      //
+      // These three and no others. Appearance, Text size and Menu bar are all
+      // "how the app presents itself on this machine", they are all instant
+      // and reversible, and none of them spends money or writes to disk.
+      // System check and Software update are BELOW the group on purpose —
+      // each is a multi-state panel with progress, errors and its own result
+      // surface, and a row in a grouped list cannot hold one honestly.
+      //
+      // The rows keep .settings-field-block wholesale, so every id, every
+      // data-* hook and every test selector is byte-identical; the group only
+      // adds the card, the padding and the separators around them.
+      '<div class="cur-group cur-group-fields">' +
       // Appearance
       '<div class="settings-field-block">' +
         '<span class="settings-field-label">Appearance</span>' +
@@ -1652,6 +1670,7 @@ function renderGeneral() {
       // KIND of setting — where the app puts itself on this machine — and it
       // uses the same segmented control for the same reason.
       renderBackgroundMode() +
+      '</div>' +
 
       // System check
       '<div class="settings-field-block">' +
@@ -1819,7 +1838,32 @@ function renderBackgroundMode() {
   // with a guessed selection.
   const active = cfg && typeof cfg.backgroundMode === 'string' ? cfg.backgroundMode : null;
 
-  const buttons = modes ? modes.map((id) => {
+  // ── THE SHAPE IS CHOSEN FROM THE SERVER'S OWN MODE LIST ─────────────────
+  // macOS draws a facility you turn on as a SWITCH, and a dependent choice
+  // that only exists once it is on as a CHECKBOX underneath. It draws a
+  // segmented control for N peer MODES. This control is both at once: "is
+  // there a menu bar icon" is a facility, and "hide the Dock icon" is a
+  // dependent choice — which is exactly why three peer segments read oddly,
+  // with one option ("On, hide the Dock icon") carrying a sentence while its
+  // neighbours carry a word.
+  //
+  // The switch/checkbox pair is used ONLY when the server offers exactly the
+  // three modes this file has copy for. Any other list — a build that adds a
+  // mode, or removes one — falls back to the segmented control, which can
+  // render N options honestly. The alternative, hardcoding the pair, would
+  // make an unknown mode unreachable and invisible, which is the shape this
+  // repo keeps recording as "a feature that looks built and does nothing".
+  //
+  // EVERY CONTROL STILL CARRIES data-background-mode WITH A REAL SERVER MODE
+  // ID, so wireGlobalListeners' `querySelectorAll('[data-background-mode]')`
+  // -> POST(dataset.backgroundMode) is UNCHANGED. Each control only decides
+  // WHICH id it sends. That is what makes this a rendering change rather
+  // than a protocol change.
+  const PAIR_MODES = ['window', 'tray', 'tray-only'];
+  const usePair = !!modes && modes.length === PAIR_MODES.length
+    && PAIR_MODES.every((m) => modes.indexOf(m) !== -1);
+
+  const buttons = (!usePair && modes) ? modes.map((id) => {
     const [label] = BACKGROUND_MODE_LABELS[id] || [id];
     const on = id === active;
     return (
@@ -1829,6 +1873,37 @@ function renderBackgroundMode() {
         (state.backgroundModeSaving ? ' disabled' : '') + '>' + escapeHtml(label) + '</button>'
     );
   }).join('') : '';
+
+  // The switch sends the mode it will move TO, never the one it is in.
+  // Turning ON returns to 'tray' rather than to whichever on-mode was last
+  // used, because this render has no memory of that and guessing 'tray-only'
+  // would silently take a user's Dock icon away on a plain toggle.
+  const on = active !== null && active !== 'window';
+  const hideDock = active === 'tray-only';
+  const pair = usePair && active !== null
+    ? '<div class="cur-switch-row">' +
+        '<span class="settings-field-label" id="bgmode-switch-label">Show the menu bar icon</span>' +
+        '<button type="button" role="switch" class="cur-switch"' +
+          ' aria-checked="' + (on ? 'true' : 'false') + '"' +
+          ' aria-labelledby="bgmode-switch-label"' +
+          ' data-background-mode="' + (on ? 'window' : 'tray') + '"' +
+          (state.backgroundModeSaving ? ' disabled' : '') + '>' +
+          '<span class="cur-switch-knob"></span>' +
+        '</button>' +
+      '</div>' +
+      // A CHECKBOX and not a second switch: it states a fact about the icon
+      // that is now on, rather than turning a second facility on. It is
+      // disabled rather than hidden while the switch is off — hiding it would
+      // make the row's height jump on every toggle, and a user who has never
+      // turned the icon on would never learn the option exists.
+      '<label class="cur-switch-sub">' +
+        '<input type="checkbox" class="cur-check cur-check-sm"' +
+          ' data-background-mode="' + (hideDock ? 'tray' : 'tray-only') + '"' +
+          (hideDock ? ' checked' : '') +
+          (!on || state.backgroundModeSaving ? ' disabled' : '') + '>' +
+        '<span>Hide the Dock icon while it is showing</span>' +
+      '</label>'
+    : '';
 
   // What the CHOSEN option actually does, in visible text. A mode this build
   // has no copy for contributes nothing rather than an empty paragraph.
@@ -1841,6 +1916,7 @@ function renderBackgroundMode() {
       'agents have just saved, so you can glance at it without opening the app. Off by default — ' +
       'until an agent has written something there is nothing for it to show. This applies to the Mac ' +
       'app; a browser install has no menu bar presence.</p>' +
+      pair +
       (buttons
         ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="Menu bar">' + buttons + '</div>'
         : '') +
