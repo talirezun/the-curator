@@ -682,6 +682,94 @@ section('11. Nothing interactive in the owned files is under 28px');
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+section('12. renderBackgroundMode is EXECUTED, not scanned');
+// ══════════════════════════════════════════════════════════════════════════
+{
+  // ── WHY THIS IS DRIVEN RATHER THAN GREPPED ──────────────────────────────
+  // This is the one place the design pass changed BEHAVIOUR rather than
+  // paint: a tri-state segmented control became a switch plus a dependent
+  // checkbox. The wiring is untouched — wireGlobalListeners still does
+  // querySelectorAll('[data-background-mode]') and POSTs dataset value — so
+  // every control must still carry a REAL server mode id, and each must send
+  // the id it moves TO rather than the one it is in. A source scan cannot see
+  // any of that; it would prove the string exists and nothing about what it
+  // sends. v3.0.17 records exactly that failure ("a test that proves a line
+  // exists proves nothing about what it does").
+  //
+  // The function is extracted with its label table and evaluated with a fake
+  // `state` and a real escapeHtml, the same test-only-seam shape compile.js
+  // and ingestMultiPhase use.
+  const src = readFileSync(path.join(NEXT, 'views/settings.js'), 'utf8');
+  const start = src.indexOf('const BACKGROUND_MODE_LABELS');
+  const fnStart = src.indexOf('function renderBackgroundMode()');
+  const fnEnd = src.indexOf('\n}\n', fnStart) + 3;
+  ok(start > 0 && fnStart > start && fnEnd > fnStart, 'renderBackgroundMode and its label table extract cleanly');
+  const make = new Function('state', 'escapeHtml', src.slice(start, fnEnd) + '\nreturn renderBackgroundMode;');
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const THREE = ['window', 'tray', 'tray-only'];
+  const render = (cfg, saving) => make({ config: cfg, backgroundModeSaving: !!saving }, esc)();
+  const targets = (html) => [...html.matchAll(/data-background-mode="([^"]*)"/g)].map((m) => m[1]);
+
+  // 1. Before the config GET lands there is nothing honest to mark active, so
+  //    no control renders at all. Unchanged from the segmented version.
+  const none = render(null);
+  ok(!/role="switch"/.test(none) && !/theme-segmented/.test(none) && targets(none).length === 0,
+    'no config yet: renders its label and hint with NO control rather than a control with a guessed selection');
+
+  // 2/3/4. Each control sends the mode it moves TO.
+  const off = render({ backgroundModes: THREE, backgroundMode: 'window' });
+  ok(/aria-checked="false"/.test(off) && targets(off)[0] === 'tray',
+    'OFF: the switch is unchecked and sends `tray` — turning on returns to the mode that KEEPS the Dock icon, because this render has no memory of which on-mode was last used and guessing would silently take it away');
+  ok(/type="checkbox"[^>]*disabled|disabled[^>]*type="checkbox"/.test(off) || /<input[^>]*disabled/.test(off),
+    'OFF: the dependent checkbox is DISABLED rather than hidden — hiding it makes the row jump on every toggle, and a user who never turns the icon on would never learn the option exists');
+
+  const on = render({ backgroundModes: THREE, backgroundMode: 'tray' });
+  ok(/aria-checked="true"/.test(on) && targets(on)[0] === 'window' && targets(on)[1] === 'tray-only',
+    'ON: the switch sends `window` (off) and the checkbox sends `tray-only` (hide the Dock)');
+
+  const hidden = render({ backgroundModes: THREE, backgroundMode: 'tray-only' });
+  ok(/aria-checked="true"/.test(hidden) && targets(hidden)[0] === 'window' && targets(hidden)[1] === 'tray',
+    'ON + Dock hidden: the checkbox now sends `tray` — unchecking restores the Dock icon without turning the facility off');
+  // `<input ... checked>`, anchored to the INPUT. A bare /checked/ also matches
+  // `aria-checked="true"` on the switch beside it — a test that passes for the
+  // wrong reason, and it did, until this line was written properly.
+  const inputChecked = (h) => /<input\b[^>]*\schecked\b/.test(h);
+  ok(inputChecked(hidden) && !inputChecked(on) && !inputChecked(off),
+    'and ONLY that state renders the checkbox as checked');
+
+  // 5. Nothing may be clickable mid-save.
+  const saving = render({ backgroundModes: THREE, backgroundMode: 'tray' }, true);
+  ok((saving.match(/disabled/g) || []).length >= 2,
+    'while a save is in flight BOTH controls are disabled — a <button> and an <input> the browser then refuses to click');
+
+  // 6. THE FALLBACK, which is the assertion that keeps the pair from becoming
+  //    the "feature that looks built and silently does nothing" shape: a
+  //    server offering any other mode list must still render every mode.
+  const two = render({ backgroundModes: ['window', 'tray'], backgroundMode: 'window' });
+  ok(!/role="switch"/.test(two) && /theme-segmented/.test(two) && targets(two).join(',') === 'window,tray',
+    'an UNKNOWN mode list falls back to the segmented control and renders every mode the server offered — hardcoding the pair would make a new mode unreachable and invisible');
+
+  // 7. Every id emitted is one the server actually named. This is the
+  //    protocol assertion: the wiring POSTs dataset.backgroundMode verbatim.
+  for (const [name, html] of [['off', off], ['on', on], ['hidden', hidden], ['two', two]]) {
+    const bad = targets(html).filter((t) => !THREE.includes(t) && t !== 'window' && t !== 'tray');
+    ok(bad.length === 0, `${name}: every data-background-mode value is a real server mode id`);
+  }
+
+  // 8. Markup balance, because a stray tag here silently swallows the rest of
+  //    the section — and the pair added three nested elements.
+  for (const [name, html] of [['none', none], ['off', off], ['on', on], ['hidden', hidden], ['saving', saving], ['two', two]]) {
+    const open = (html.match(/<(div|button|label|span|p)\b/g) || []).length + (html.match(/<input\b/g) || []).length;
+    const close = (html.match(/<\/(div|button|label|span|p)>/g) || []).length + (html.match(/<input\b/g) || []).length;
+    ok(open === close, `${name}: markup is balanced (${open} open / ${close} close)`);
+  }
+
+  // Anti-vacuity: the driver must be able to see a difference at all.
+  ok(off !== on && on !== hidden,
+    'control: the three states render three DIFFERENT strings — the driver is executing the function, not returning a constant');
+}
+
 function walkCss(dir) {
   const out = [];
   for (const d of readdirSync(dir, { withFileTypes: true })) {
