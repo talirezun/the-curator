@@ -1047,25 +1047,13 @@ If you used The Curator before this release, this is the whole map:
 | **Sync** | **Sync**, in the rail *footer*. |
 | **Settings** | **Settings**, in the rail *footer*. |
 
-### The previous interface is still there, at `/old`
+### The previous interface is gone, as of v3.41.0
 
-The redesign is the primary interface, but the old seven-tab app has not been removed. In the browser install it is served at:
+Through v3.40.0, the old seven-tab app kept running alongside the redesign at `/old`. **v3.41.0 deleted it outright** — `index.html`, `app.js`, `styles.css` and `markdown.js` are no longer on disk, and `http://localhost:3333/old` now redirects straight back to `/`, the redesigned interface. There is no way to reach the previous interface any more, in the browser install or the Mac app.
 
-```
-http://localhost:3333/old
-```
+If you were relying on the old interface for OpenRouter's absence there, or for anything else — that distinction no longer applies, because there is only one interface now. Everything works exactly as it did before in the redesigned interface — same server, same files on disk, same wiki.
 
-It ships inside the Mac app too, but **in practice it is hard to reach there**: the app window has no address bar, so the only clickable route is the **Use the previous interface** link on the one-time notice below — and a brand-new app install never sees that notice, because it is shown only to people who used the old interface before. If you are on the Mac app, treat `/old` as unavailable and use the rail.
-
-Everything there works exactly as it did — same server, same files on disk, same wiki. Nothing was migrated or moved; the two interfaces are two views onto the same `domains/` folder, and you can use both.
-
-**With one stated exception: `/old` does not support OpenRouter.** Its files are frozen, so the third provider was never added there — it offers Gemini and Anthropic only. If OpenRouter is your only key, use the main interface. One knock-on is worth knowing about because it looks like a fault rather than a limit: `/old`'s first-run setup overlay only checks for the two original providers' keys, so an OpenRouter-only user landing there is shown setup instructions for a key they already have, in an overlay whose first step has no way to close or skip. It is one more reason `/old` is on its way out.
-
-The first time you open the app after updating, a one-time bar appears at the top saying **"The Curator has a new look."** with a **Use the previous interface** link and a **Got it** button. Dismissing it is permanent. (Brand-new installs never see it — there's nothing to be surprised by.)
-
-> **`/old` is temporary.** It's kept for two or three releases to give you a way back while you settle in, then it goes. Learn the rail; don't build a workflow that depends on `/old`.
->
-> **You do not need `/old` for anything.** Earlier drafts of this guide said applying an app update and the *Reveal in Finder* source bar still required it. Both work in the redesigned interface and have since v3.9.0 — those notes were written before the cutover and were wrong. If you find a page in this guide still sending you to `/old` for a feature, that is a documentation bug worth reporting.
+The one-time "The Curator has a new look." notice and its **Use the previous interface** link were part of the same deletion and no longer appear.
 
 ### Agent memory — what the screen shows
 
@@ -1806,7 +1794,7 @@ An unknown cost is always said out loud. The dialog will never render an unprice
 - **If the estimate itself fails**, the dialog still opens and tells you the cost could not be estimated. A broken estimate never silently spends your money, and it never disables a working feature either.
 - **A refusal never becomes a dialog.** If the conversation is too short, or you already compiled it, you get the explanation card straight away — you are not asked to authorise a spend that cannot happen.
 
-> **Not yet covered:** the legacy interface at `/old` still starts a compile with no estimate and no confirmation. Use the main interface for compiles.
+> Through v3.40.0, the legacy interface at `/old` started a compile with no estimate and no confirmation. That interface was deleted in v3.41.0, so the confirm dialog above is now the only path.
 
 **What gets written**
 
@@ -2808,9 +2796,9 @@ the new one is.
 > have never been rendered in a browser.** Treat your first update as the first real
 > test of it.
 
-> **If you are on the previous interface at `/old`,** there is no in-app update path
-> there — it still posts to the git updater, which the packaged app refuses. Use the
-> current interface.
+> Through v3.40.0, the previous interface at `/old` had no in-app update path — it
+> posted to the git updater, which the packaged app refused. That interface was
+> deleted in v3.41.0, so there is only one interface to update from now.
 
 > **Rosetta:** an arm64 build running under x64 emulation stays on x64. The app updates
 > like for like rather than silently migrating you to another chip's build behind a
@@ -3328,11 +3316,9 @@ Unlike the other two, an OpenRouter key can be **checked for free**: OpenRouter 
 
 The check reports three outcomes, and the middle one matters: a key can come back as **working but out of credit**. That is not a bad key — the key authenticated, the *account* is in arrears — and it is reported that way deliberately, because telling you the key was wrong would send you off to regenerate a perfectly good one. There is also a distinct *couldn't find out* result (OpenRouter unreachable or rate-limiting the check), which is a different fact from *this key is bad* and is never shown as one.
 
-#### One thing that won't work: the old interface
+#### One thing that no longer applies: the old interface
 
-The previous interface at [`/old`](#the-previous-interface-is-still-there-at-old) does **not** support OpenRouter. That's a stated limit, not a bug being worked on — its files are frozen. If OpenRouter is your only key, use the main interface.
-
-There's a knock-on worth knowing about, because it looks like a fault: `/old`'s first-run setup overlay only checks for Gemini and Anthropic keys, so an OpenRouter-only user landing there is shown setup instructions for a key they already have — and that overlay has no way to close or skip past its first step. It is one more reason `/old` is on its way out.
+Through v3.40.0, [the previous interface](#the-previous-interface-is-gone-as-of-v3410) at `/old` did **not** support OpenRouter — its files were frozen, so the third provider was never added there. That interface was deleted in v3.41.0, so there is only one interface now, and it supports OpenRouter.
 
 ### The two promotional prices
 
@@ -3355,7 +3341,6 @@ Also remember that a **thinks** model bills its invisible reasoning as output to
 ### What isn't available
 
 - **Promotion by refresh** — the fetched chat catalogue is large, but it is *unmeasured*, and a refresh can never move a model into the build lane. Promoting one is a deliberate act with nine real runs behind it: either we measure it and ship it, or [you measure it on your own wiki](#test-a-model-on-your-own-wiki). A local result is also confined to your machine — it does not travel with Sync, and it cannot overturn a finding of ours.
-- **OpenRouter in the old interface at `/old`** — not supported at all, deliberately.
 - **Local models** — not supported for The Curator's own calls. The **Local model** row in Settings is a placeholder marked *"not available in this build."* (You *can* point a local model at your wiki through the MCP bridge — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252) — but that is the model reading your wiki, not The Curator calling it.)
 - **OpenAI** — the same: a placeholder row, nothing to configure.
 - **Gemini Pro** — a deliberate omission rather than an oversight. It is a different price class again, and nothing on the list was found short of coverage.
@@ -3627,7 +3612,7 @@ You do not need to restart the app; the change applies as soon as you switch the
 
 That's the redesign — it became the primary interface in v3.9.0. Nothing was migrated and nothing moved on disk: same domains, same wiki, same settings, same folder. [§7](#7-finding-your-way-around) has a table mapping every old tab to where it is now.
 
-If you'd rather use the old one for a while, it's at **`http://localhost:3333/old`**. It is kept for two or three releases and then removed, so treat it as a bridge rather than a home.
+The old interface itself is gone as of v3.41.0 — see [§7](#the-previous-interface-is-gone-as-of-v3410). There is no fallback to switch to any more; learning the rail is the only path forward.
 
 **The app opens to a blank page, or a panel says "could not finish loading"**
 
@@ -3635,11 +3620,9 @@ Rare, but it can happen after an update if a file didn't download completely. In
 
 **Your knowledge is not affected.** Every wiki page is a plain markdown file on your disk; a startup failure in the browser interface cannot touch them, and you can open your domains folder in Obsidian or a text editor while the app is broken.
 
-Reload the page first — a partly-downloaded file usually fixes itself. If that keeps happening, the panel points you at the previous interface: in the browser install, open **`http://localhost:3333/old`**, which is a completely separate interface and will load even when this one won't. Then quit The Curator and relaunch (browser install: right-click the Dock icon → **Quit**; Mac app: `⌘Q`).
+Reload the page first — a partly-downloaded file usually fixes itself. If that keeps happening, quit The Curator and open it again — the server restarts and re-serves the app files (browser install: right-click the Dock icon → **Quit**; Mac app: `⌘Q`). If it still fails, report the error shown at the bottom of the panel.
 
-> **In the Mac app that escape hatch is not usable**, and the panel does not know it: the app window has no address bar to type `/old` into, and the panel names the address as text rather than offering a link. In the app, quit and reopen; if it keeps happening, reinstall from a fresh `.dmg`. Your markdown files are untouched either way — that is the part that matters, and it is true in both installs. If it still fails, reinstall — and please paste the technical detail from the panel into a [GitHub issue](https://github.com/talirezun/the-curator/issues) so it can be fixed for everyone.
-
-> The panel points you at `/old`, which is correct: it is a completely separate interface reading the same files, so it loads even when this one won't. (Earlier releases of that panel called itself "the preview shell" and sent you to `/` — the shell that had just failed. That was fixed in v3.9.0.)
+> **Through v3.40.0** this panel pointed you at the previous interface (`/old`) as a working fallback, because it was a completely separate set of files that would load even when the redesigned shell wouldn't. **v3.41.0 deleted that interface**, so the panel no longer offers it — sending a user to `/old` today would just redirect them back to `/`, the very page that failed to load, which is why that step was removed rather than left in place pointing at a loop.
 
 **"Updates" says there's a new version but no install button appears**
 

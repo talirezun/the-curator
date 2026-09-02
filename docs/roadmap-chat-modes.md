@@ -95,10 +95,11 @@ NEW:
   src/routes/dictate.js               — POST /api/dictate/note (SSE)
   docs/chat-modes.md (maybe)          — single-page deep-dive on the four modes
 
-MODIFIED:
-  src/public/index.html               — mode-switcher segmented control + page-picker for Curate
-  src/public/app.js                   — mode state machine + per-mode UI logic
-  src/public/styles.css               — mode-switcher styles
+MODIFIED (updated for v3.41.0's retirement of the pre-redesign shell — the
+only frontend now is src/public/next/**):
+  src/public/next/index.html          — mode-switcher segmented control + page-picker for Curate
+  src/public/next/views/chat.js       — mode state machine + per-mode UI logic
+  src/public/next/views/chat.css      — mode-switcher styles
   src/server.js                       — register dictate route
   src/routes/chat.js                  — optional curate-context support
   docs/user-guide.md §9               — describe all four modes

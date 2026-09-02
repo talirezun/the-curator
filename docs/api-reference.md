@@ -749,8 +749,9 @@ not in `listOfferableModels(provider)` degrades to `1` rather than throwing.
 **Spends money.** Streams Server-Sent Events (same primitive as
 `POST /api/ingest`). The `/next` frontend reaches this only after
 `GET /estimate` and a confirm dialog naming the cost. **That gate is in the
-client, not the server** — the frozen legacy frontend at `/old` still POSTs
-here directly with no estimate and no confirm.
+client, not the server** — through v3.40.0 the frozen legacy frontend at `/old`
+POSTed here directly with no estimate and no confirm; that frontend was deleted
+in v3.41.0, so `/next` is now the only client.
 
 **Request body**
 
@@ -2046,8 +2047,9 @@ download twice.
 **`confirmOverwrite` gates the only destructive path**, and is compared with strict
 `=== true` at both gates — never coerced, because `Boolean('false')` is `true`. Omit it
 and `pull` refuses with `pull-would-overwrite`, carrying the count and the file list.
-The consequence is deliberate: `/old`, a curl script, or any older client that does not
-send the field **cannot** reach the overwriting path.
+The consequence is deliberate: a curl script, or any older client that does not
+send the field, **cannot** reach the overwriting path (this protected the pre-redesign
+shell at `/old` too, before that shell was deleted in v3.41.0).
 
 There are **two** distinct `pull-would-overwrite` refusals, tagged by
 `details.source`: `measured` (the preflight assessment said so) and `checkout-refused`
@@ -2078,8 +2080,9 @@ credential file.
 `pull-would-overwrite`.
 
 > **A policy that applies to every one of these strings:** they name an **action and a
-> screen**, never a button label. Naming *"Merge — keep both"* would reproduce the
-> v3.32.0 defect on `/old`, which is frozen and has no merge control.
+> screen**, never a button label. Naming *"Merge — keep both"* would have reproduced the
+> v3.32.0 defect on `/old` (which, through v3.40.0, was frozen and had no merge control;
+> that shell was deleted in v3.41.0).
 
 ### POST /api/sync/push · /pull · /sync · DELETE /disconnect
 
@@ -2094,7 +2097,7 @@ origin would prefer a revision that provably lacks the user's newest work.
 
 ## Shared Brain endpoints (`v3.0.0-beta+`)
 
-Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the **Shared Brain** rail view (it lives in Settings in the `/old` frontend, where it moved from the Sync tab in v3.0.2).
+Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the **Shared Brain** rail view (through v3.40.0 it lived in Settings in the pre-redesign `/old` frontend, where it had moved from the Sync tab in v3.0.2; that frontend was deleted in v3.41.0).
 
 Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, message, ...meta}`) ending in `{type: "done", result: {...}}` or `{type: "error", message}`.
 
@@ -3029,23 +3032,25 @@ Returns masked API key status, the active provider, and the model-picker catalog
 - `activeProvider` / `activeModel` — the provider/model an LLM call would actually use right now
   (`null` if no usable key at all). Can differ from `hasXKey` when a key is `.env`-only.
 - `models` — **stays a map of plain STRINGS (or `null`), one per provider.** This is
-  load-bearing, not incidental: the `/old` frontend's chat model-selector dropdown
-  (`src/public/app.js`) renders `escHtml(models[p] || '')`, and `escHtml` begins with
-  `String(str)` — so if a value here were ever an object or array instead of a string, `/old`
-  would render the literal text `[object Object]` in that dropdown for every user still on the
-  pre-cutover UI. Do not fold `offerable` into this field or otherwise change its shape; add new
+  load-bearing, not incidental: through v3.40.0 the pre-redesign shell's chat model-selector
+  dropdown (`src/public/app.js`, deleted in v3.41.0) rendered `escHtml(models[p] || '')`, and
+  `escHtml` begins with `String(str)` — so if a value here were ever an object or array instead
+  of a string, that dropdown would have rendered the literal text `[object Object]` for every
+  user still on the pre-cutover UI. `/next`'s own consumers (`views/chat.js`, `views/settings.js`)
+  index `models[provider]` the same way, so the string-only contract still stands even with `/old`
+  gone. Do not fold `offerable` into this field or otherwise change its shape; add new
   data as a new key instead (which is exactly what `offerable` below does).
   - **A `null` value is legitimate** and means *this provider has no resolvable default model*.
     **No provider is `null` in the shipping configuration** — `openrouter` resolved to `null` until
     a model was measured for its build lane, and since this release it carries
     `upstage/solar-pro4`. The `null` case is documented because it is still reachable for any
     provider wired up before its models are measured, and because consumers must keep handling it.
-    This is safe for `/old` in both directions, and both halves were checked rather than assumed: `/old` never
-    enumerates this map (it builds its own provider list from the two original `hasXKey` fields and
-    only indexes `models[p]` for those), and the `|| ''` renders a `null` as empty rather than as
-    `[object Object]`. The invariant this protects is *never an object or array* — not *never null*.
-    **`/old` therefore does not offer OpenRouter at all**, which is the documented limit for this
-    release.
+    Through v3.40.0 this was safe for `/old` in both directions, and both halves were checked rather
+    than assumed: `/old` never enumerated this map (it built its own provider list from the two
+    original `hasXKey` fields and only indexed `models[p]` for those), and the `|| ''` rendered a
+    `null` as empty rather than as `[object Object]`. The invariant this protects is *never an
+    object or array* — not *never null*. **`/old` therefore never offered OpenRouter at all**,
+    which was the documented limit for that shell before it was deleted in v3.41.0.
 - `selectedModels` — the user's **explicit stored pick** per provider, or `null` where they have
   chosen nothing. Deliberately separate from `models`: `models` is what the app will actually *use*
   (and already reflects a stored pick), while this distinguishes *the user chose the default* from
@@ -3092,8 +3097,9 @@ each provider the app knows how to talk to. Adding a provider **appends** a key;
 re-orders or removes one.
 
 - `openrouterCatalogue` — provenance for the OpenRouter half of `offerable`: `{syncedAt, source,
-  count}`, or `null`. **Additive** (`/old` reads `models` and the `hasXKey` booleans and ignores
-  unknown fields). Key-gated exactly like `offerable`, so it is `null` without a saved OpenRouter
+  count}`, or `null`. **Additive** (through v3.40.0, `/old` read `models` and the `hasXKey`
+  booleans and ignored unknown fields; that shell was deleted in v3.41.0). Key-gated exactly like
+  `offerable`, so it is `null` without a saved OpenRouter
   key. `source` is `"network"` after a sync in this process, `"disk"` after a boot restore, and
   `null` when nothing has been loaded; `syncedAt` may be `null` on a restore from a file written
   without one. It answers *how fresh is that list* and nothing else — the models themselves stay in
@@ -3604,11 +3610,13 @@ a version string the comparator could not parse. With the string fallback in pla
 **exactly the six local-ahead cells and nothing else**, and `scripts/test-install-mode.js` §7b runs
 that comparison every time rather than leaving it as a claim.
 
-**Effect on the two frontends.** `/next` computes its own local-ahead guard in `classifyUpdate()`
-*before* it reads `updateAvailable`, so its rendering is unchanged in every case. `/old`
-(`src/public/app.js`) reads `data.updateAvailable` with no guard at all — so in the local-ahead state
-it previously showed "Update available" with a button that would downgrade the checkout, and now
-correctly shows nothing. That is the one user-visible difference in this endpoint, and it is the fix.
+**Effect on the two frontends (historical — `/old` was deleted in v3.41.0).** `/next` computes its
+own local-ahead guard in `classifyUpdate()` *before* it reads `updateAvailable`, so its rendering is
+unchanged in every case. Through v3.40.0, `/old` (`src/public/app.js`) read `data.updateAvailable`
+with no guard at all — so in the local-ahead state it previously showed "Update available" with a
+button that would downgrade the checkout, and after this fix correctly showed nothing. That was the
+one user-visible difference in this endpoint between the two frontends while both existed; `/next`
+is now the only client.
 
 `localAhead` is returned because `updateAvailable: false` now covers two different situations —
 *you are current* and *you are ahead of what is published* — and a client that cannot tell them
@@ -3966,14 +3974,17 @@ app is still running.
 
 ## Static files
 
-The server also serves the web UI from `src/public/` at the root path.
+The server serves the web UI from `src/public/` via `express.static(..., { index: false })`, plus
+a small number of explicit routes in `src/server.js`.
 
 | Path | Description |
 |------|-------------|
-| `GET /` | Single-page app (`index.html`) |
-| `GET /app.js` | Frontend JavaScript |
-| `GET /styles.css` | Stylesheet |
-| `GET /*` | Falls back to `index.html` for client-side routing |
+| `GET /` | Single-page app (`src/public/next/index.html`) — served by the catch-all, not the static mount, because `index: false` stops `express.static` from answering `/` itself |
+| `GET /next`, `GET /next/` | Same shell as `/`, kept as an alias |
+| `GET /old`, `GET /old/` | 302-redirects to `/` (v3.41.0) — the pre-redesign shell that used to live here (`index.html`, `app.js`, `styles.css`, `markdown.js`) was deleted |
+| `GET /next/app.js` | Frontend JavaScript (the shell) |
+| `GET /next/shell.css`, `GET /next/tokens/*`, `GET /next/views/*.css` | Stylesheets |
+| `GET /*` | Falls back to `src/public/next/index.html` for client-side routing |
 
 ---
 

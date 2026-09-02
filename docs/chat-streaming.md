@@ -83,9 +83,10 @@ JSON is the safe default, so anything ambiguous must land on it rather than on
 the branch that changes the content type out from under a caller who did not
 ask for it.
 
-Two named consumers depend on that: the `/old` escape-hatch shell
-(`src/public/app.js`) POSTs here and reads `await res.json()`, and
-`scripts/test-chat-cancel.js` does the same.
+`scripts/test-chat-cancel.js` depends on that: it POSTs here and reads
+`await res.json()`. (Through v3.40.0 the pre-redesign shell's `src/public/app.js`
+was a second consumer of the same non-streaming path; that shell was deleted
+in v3.41.0.)
 
 ### 3.2 Every refusal happens before the headers flush
 

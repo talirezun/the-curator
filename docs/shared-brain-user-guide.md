@@ -36,10 +36,11 @@ Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New in
 > — happens there. The **Sync** view covers Personal Sync only; it reports Shared
 > Brain activity but no longer hosts any of its controls.
 >
-> In the previous interface (still at `/old` for a release or two) the layout is
-> different: the enable toggle is in **Settings → Shared Brain (beta)** and the
-> day-to-day operations are a **"Shared Brains"** block in the **Sync** tab. If
-> you are following these steps at `/old`, translate accordingly.
+> The previous interface — where the enable toggle lived in **Settings → Shared
+> Brain (beta)** and day-to-day operations were a **"Shared Brains"** block in
+> the **Sync** tab — was deleted in v3.41.0 along with the rest of the
+> pre-redesign shell (`/old`, which now just redirects to `/`). There is only
+> one interface to follow these steps in now.
 
 Once enabled, the Shared Brain view shows two cards:
 
@@ -351,7 +352,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | Revoke a contributor (admin) | **Shared Brain** → connection card → **"Admin controls — admin token & contributor revocation"** (shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
 | Leave the brain on this machine | **Shared Brain** → connection card footer → **"Leave this Shared Brain"** (removes the connection only; your local files, including the read-only mirror, stay) |
 
-> At `/old` the same actions live in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else).
+> Through v3.40.0 the same actions lived in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else), in the pre-redesign shell at `/old`. That shell was deleted in v3.41.0.
 
 ## 7 — Terminology
 

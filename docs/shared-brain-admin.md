@@ -25,7 +25,7 @@ A Shared Brain needs two things for each contributor to be able to push: (1) the
 Steps:
 
 1. **Add them as a GitHub collaborator.** On the private repo: *Settings → Collaborators → Add people*, and have them accept the email invitation. Without this, their PAT — however valid — will get a `403`/`repository not found` on the first push.
-2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They paste it into the **Shared Brain** rail view → *📨 I have an invite token* → **Join** wizard. (At `/old` that block is in the Sync tab instead.)
+2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They paste it into the **Shared Brain** rail view → *📨 I have an invite token* → **Join** wizard. (Through v3.40.0, in the pre-redesign shell at `/old`, that block was in the Sync tab instead. That shell was deleted in v3.41.0.)
 3. **They create their own PAT** during the wizard (fine-grained, *Contents: Read and write* on the repo — or a classic token with `repo` scope). The wizard validates it live.
 
 The full step-by-step from the contributor's side is in [User Guide §2 — Contributor setup](shared-brain-user-guide.md#2--contributor-setup-join-an-existing-shared-brain). For your own initial brain creation, see [User Guide §3 — Admin setup](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain).

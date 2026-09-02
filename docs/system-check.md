@@ -17,7 +17,7 @@ It lives in **Settings → General → System check**.
 >
 > Rule of thumb: **System check = is the app working?** · **Wiki health = is my wiki clean?**
 >
-> (At `/old` these are a top-level **Health** tab and a Settings section named *Wiki Health — Scan Limits*.)
+> (Through v3.40.0 these were a top-level **Health** tab and a Settings section named *Wiki Health — Scan Limits*, in the pre-redesign shell at `/old`. That shell was deleted in v3.41.0.)
 
 ---
 

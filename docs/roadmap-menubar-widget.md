@@ -2151,8 +2151,9 @@ index does not carry — see §5.2.
 
 **Explicitly NOT changed:** `desktop/lib/quit-decision.js` (the decision is
 correct; only its call context changes), the **write** side of
-`src/brain/working-state.js` (the widget reads, never writes), `src/routes/memory.js`
-(no write endpoint, ever), and anything under `src/public/app.js` (`/old`).
+`src/brain/working-state.js` (the widget reads, never writes), and `src/routes/memory.js`
+(no write endpoint, ever). (`src/public/app.js` — the `/old` pre-redesign shell this
+line used to name — was deleted in v3.41.0 and is no longer in scope for anything.)
 
 ---
 

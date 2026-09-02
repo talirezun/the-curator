@@ -103,7 +103,7 @@ A frontier model can always get the full picture — it just has to ask in piece
 
 ## Setup (under 2 minutes)
 
-1. Open The Curator → **Settings** (rail footer) → **MCP bridge**. (At `/old` the section is in the Settings tab and headed *My Curator — Private MCP Bridge*.)
+1. Open The Curator → **Settings** (rail footer) → **MCP bridge**. (Through v3.40.0, in the pre-redesign shell at `/old`, the section was in the Settings tab and headed *My Curator — Private MCP Bridge*. That shell was deleted in v3.41.0.)
 2. Click **Copy snippet** — a JSON block is now in your clipboard.
 3. Click **Reveal in Finder** — Finder opens the folder containing `claude_desktop_config.json`.
 4. Open that file in any text editor (TextEdit, VS Code). If it doesn't exist, create one containing just `{}`.
