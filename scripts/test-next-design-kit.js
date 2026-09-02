@@ -490,9 +490,24 @@ section('9. The two-line material edge is on CHROME ONLY');
     for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       if (!/--mat-edge-(hi|lo)/.test(m[2])) continue;
       const sel = m[1].trim().replace(/\s+/g, ' ').split('\n').pop().trim();
+      const shadow = (/box-shadow\s*:\s*([^;}]+)/.exec(m[2]) || [])[1] || '';
+      // Split on commas that are not inside a function call, so
+      // `rgba(0,0,0,.4) 0 1px 2px` stays one layer.
+      const layers = []; let depth = 0, cur = '';
+      for (const ch of shadow) {
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) { layers.push(cur); cur = ''; } else cur += ch;
+      }
+      if (cur.trim()) layers.push(cur);
+      const layerFor = (tok) => layers.find((l) => l.includes(tok)) || null;
       users.push({
         file: path.relative(NEXT, f),
         sel,
+        layers: layers.map((l) => l.trim()),
+        hiLayer: layerFor('--mat-edge-hi'),
+        loLayer: layerFor('--mat-edge-lo'),
+        position: (/(?:^|;)\s*position\s*:\s*([a-z]+)/.exec(m[2]) || [])[1] || 'static',
         hasHi: /--mat-edge-hi/.test(m[2]),
         hasLo: /--mat-edge-lo/.test(m[2]),
         hasMatBg: /background:\s*var\(--mat-(chrome|sidebar|menu|sheet)\)/.test(m[2])
@@ -547,6 +562,100 @@ section('9. The two-line material edge is on CHROME ONLY');
     ok(half.filter((u) => !(u.hasHi && u.hasLo)).length === 1
        && bare.filter((u) => !u.hasMatBg).length === 1,
       'control: a one-line rule and a material-less rule are BOTH reported when offered — the two mutations that first came back green');
+  }
+
+  /* ── AND A DECLARED LINE IS NOT A PAINTED LINE ─────────────────────────
+     Everything above asks only whether both lines are DECLARED, and that is
+     exactly what let the outer separator ship invisible in every theme on
+     every one of these planes for a whole release.
+
+     MEASURED in the running app at 2x: the pixel column immediately outboard
+     of .rail and of .sidebar went straight from the lip to the neighbour's
+     background. Painting the neighbours transparent brought the separator
+     back at 1.33:1 against the plane; raising both on z-index brought both
+     separators back. The cause is paint order — #app-shell is a grid,
+     `.sidebar` follows `.rail` in DOM order and `.main` is `position:
+     relative`, so each neighbour's opaque background covers the gutter an
+     OUTER box-shadow paints into.
+
+     The rule is therefore NOT "always inset". `.lb-menu` is `position:
+     fixed`, genuinely floats, has no neighbour that can paint over it, and
+     keeps its outer separator correctly. What cannot be allowed is a plane
+     IN FLOW putting a load-bearing line outside its own box. */
+  {
+    const inFlow = users.filter((u) => u.position === 'static' || u.position === 'relative');
+    ok(inFlow.length >= 2, `${inFlow.length} edge-drawing rule(s) are IN FLOW (a neighbour can paint over their gutter)`);
+    const outside = inFlow.filter((u) => !(u.hiLayer && /\binset\b/.test(u.hiLayer))
+                                      || !(u.loLayer && /\binset\b/.test(u.loLayer)));
+    ok(outside.length === 0,
+      outside.length === 0
+        ? 'and every line they draw is `inset` — nothing load-bearing is painted into a neighbour\'s box'
+        : 'an in-flow plane paints an edge line OUTSIDE its own box, where the neighbour covers it: '
+          + outside.map((u) => `${u.file} ${u.sel}`).join(', '));
+
+    // ORDER. Reading outward from the plane the lip comes first and the dark
+    // separator sits outermost — the other way round is a dark line inboard
+    // of a light one, which reads as a groove rather than as a thickness.
+    // With two insets on the same edge the SMALLER offset wins the outermost
+    // pixel, so the separator must carry it.
+    const offsetOf = (layer) => { const m2 = /-(\d+)px/.exec(layer || ''); return m2 ? +m2[1] : null; };
+    for (const u of inFlow) {
+      const lo = offsetOf(u.loLayer), hi = offsetOf(u.hiLayer);
+      ok(lo !== null && hi !== null && lo < hi,
+        `${u.sel}: the separator sits OUTBOARD of the lip (lo at -${lo}px, lip at -${hi}px)`);
+    }
+
+    // A floating plane is deliberately exempt, and that exemption is asserted
+    // rather than assumed — if .lb-menu ever stops floating, it joins the rule.
+    const floating = users.filter((u) => u.position === 'fixed' || u.position === 'absolute');
+    ok(floating.length >= 1, `${floating.length} edge-drawing rule(s) float and keep an OUTER separator legitimately (${floating.map((u) => u.sel).join(', ')})`);
+
+    // ANTI-VACUITY: the detector must report the pre-fix declaration.
+    const preFix = [{ file: 'x', sel: '.rail', position: 'static',
+      loLayer: '1px 0 0 var(--mat-edge-lo)', hiLayer: ' inset -1px 0 0 var(--mat-edge-hi)' }];
+    ok(preFix.filter((u) => !(u.hiLayer && /\binset\b/.test(u.hiLayer))
+                         || !(u.loLayer && /\binset\b/.test(u.loLayer))).length === 1,
+      'control: the detector FIRES on the exact declaration that shipped — `1px 0 0 var(--mat-edge-lo)` outside, lip inset');
+    const bothInset = [{ loLayer: 'inset -1px 0 0 var(--mat-edge-lo)', hiLayer: ' inset -2px 0 0 var(--mat-edge-hi)' }];
+    ok(bothInset.filter((u) => !/\binset\b/.test(u.hiLayer) || !/\binset\b/.test(u.loLayer)).length === 0,
+      'control: and it stays quiet on the corrected pair (so its firing above is a finding, not blindness)');
+    // The layer splitter must survive an rgba(), which is what makes a naive
+    // `.split(',')` report four layers where there is one.
+    const splitProbe = (() => { const sh = 'rgba(0,0,0,0.45) 1px 0 0, inset -1px 0 0 rgba(255,255,255,0.1)';
+      const out = []; let d = 0, c = '';
+      for (const ch of sh) { if (ch === '(') d++; else if (ch === ')') d--;
+        if (ch === ',' && d === 0) { out.push(c); c = ''; } else c += ch; }
+      if (c.trim()) out.push(c); return out; })();
+    ok(splitProbe.length === 2, `control: the layer splitter reads 2 layers from a shadow containing two rgba()s, not ${'4'} (got ${splitProbe.length})`);
+  }
+
+  /* ── ROWS ON A MATERIAL PLANE TAKE AN ALPHA OVERLAY, NOT AN ABSOLUTE ────
+     --surface-hover is one rung off --surface and is correct for anything on
+     the CONTENT plane. The sidebar is no longer on the content plane, so a
+     row inside it that reads --surface-hover has a hover that does nothing:
+     measured with a real pointer at 1.03:1 dark and 1.01:1 light, and on dark
+     the hover colour is byte-for-byte --mat-sidebar's own declared value.
+     The overlays are alphas and therefore step by the same perceived amount
+     on any plane. This asserts the arithmetic rather than the token name. */
+  {
+    const planeOf2 = (th) => composite(toRgb(resolve(th, '--mat-sidebar')), toRgb(resolve(th, '--canvas')));
+    const settings = stripComments(readFileSync(path.join(NEXT, 'views/settings.css'), 'utf8'));
+    const navHover = /\.settings-nav-row:hover\s*\{([^}]*)\}/.exec(settings);
+    ok(navHover && /var\(--mat-row-hover\)/.test(navHover[1]),
+      '.settings-nav-row:hover takes the alpha overlay --mat-row-hover, not an absolute surface colour');
+    const FLOOR = 1.10;
+    for (const [name, th] of [['dark', D], ['light', L]]) {
+      const plane = planeOf2(th);
+      const hovered = composite(toRgb(resolve(th, '--mat-row-hover')), plane);
+      const got = r2(ratio(hovered, plane));
+      ok(got >= FLOOR, `${name}: the overlay steps ${got}:1 off the sidebar plane (floor ${FLOOR})`);
+      // ANTI-VACUITY, and it is the whole point: the value that SHIPPED must
+      // be reported as failing by this same comparator.
+      const old = toRgb(resolve(th, '--surface-hover'));
+      const wasNever = r2(ratio(old, plane));
+      ok(wasNever < FLOOR, `${name}: and --surface-hover on that same plane reads ${wasNever}:1 — below the floor, which is the defect`);
+      ok(got > wasNever, `${name}: the overlay is strictly the larger step (${got} > ${wasNever})`);
+    }
   }
 
   // And the inset group — the content-side counterpart — must take ELEVATION
@@ -608,7 +717,13 @@ section('11. Nothing interactive in the owned files is under 28px');
   // are accepted and both are here: grow the box (.btn-xs, 26 -> --control-sm)
   // or keep the glyph and grow the TARGET with a transparent ::before
   // (.reader-close, .cur-switch).
-  const owned = ['shell.css', 'shared/switch.css', 'views/settings.css'];
+  /* shared/text.css JOINED THIS LIST AFTER THE BROWSER FOUND WHAT IT HELD.
+     The scan covered three files, and `.tx-vh-info` — the header info button
+     on every one of eleven surfaces — was in a fourth. It measured 24x24 with
+     a 24x24 POINTER TARGET: no wrapper, no padding, nothing growing it, and
+     it is the only thing in its row a pointer can aim at. A scan's file list
+     is part of what it asserts, and this one was silently short. */
+  const owned = ['shell.css', 'shared/switch.css', 'views/settings.css', 'shared/text.css'];
 
   // ── WHAT COUNTS AS "A CONTROL", AND THE THREE THINGS DELIBERATELY EXCLUDED
   // The scan grades the element a pointer AIMS AT, which is neither of the
@@ -625,7 +740,10 @@ section('11. Nothing interactive in the owned files is under 28px');
   //     transparent ::before. That is the SANCTIONED technique, so a rule
   //     under 28 passes if and only if the same file declares
   //     `<selector>::before` reading --hit-min.
-  const CONTROL_TAIL = /^\.[a-z0-9-]*(btn|switch|toggle|close|seg|opt|tab|link|row)[a-z0-9-]*(:[a-z-]+(\([^)]*\))?)*$/i;
+  /* `info` joins the tail list for the same reason: `.tx-vh-info` is a real
+     <button> with a click handler, and the old pattern classified it as
+     not-a-control purely because of how it is named. */
+  const CONTROL_TAIL = /^\.[a-z0-9-]*(btn|switch|toggle|close|seg|opt|tab|link|row|info)[a-z0-9-]*(:[a-z-]+(\([^)]*\))?)*$/i;
   const isControl = (sel) => {
     const last = sel.split(/\s|>/).filter(Boolean).pop() || '';
     if (/dot|chip|badge|icon|mark|svg/i.test(last)) return false;
@@ -659,6 +777,30 @@ section('11. Nothing interactive in the owned files is under 28px');
   // The two hit boxes are real and DERIVED, not decorative.
   ok(/\.reader-close::before\s*\{[^}]*inset:\s*calc\(\(var\(--hit-min\) - 26px\) \/ -2\)/.test(bodies['shell.css']),
     '.reader-close keeps its 26px glyph and grows its target to --hit-min via a transparent ::before');
+  ok(/\.tx-vh-info::before\s*\{[^}]*inset:\s*calc\(\(var\(--hit-min\) - 24px\) \/ -2\)/.test(bodies['shared/text.css']),
+    '.tx-vh-info keeps its 24px glyph and grows its target to --hit-min via a transparent ::before');
+  ok(/\.tx-vh-info\s*\{[^}]*position:\s*relative/.test(bodies['shared/text.css']),
+    'and it is positioned, without which that ::before would anchor to some ancestor and grow the wrong box');
+
+  /* ── THE ONE UNDER-TARGET CONTROL LEFT, NAMED RATHER THAN SCANNED PAST ──
+     `.cur-check` is 13x13 and the sanctioned technique CANNOT be applied to
+     it: an <input> is a replaced element, and Chrome renders no ::before or
+     ::after on one. So its target can only be grown by the <label> around
+     it, and those labels are split across owners — `.cur-switch-sub` here,
+     `.chat-bulk-all` and `.chat-conv-checkbox` in views/chat.css.
+
+     Measured in the running app, the label IS the target and it is wide:
+     78x15 in chat, 768x19 in Settings. So this is a control that is short,
+     not one with no target — which is why it is recorded as a known figure
+     rather than treated as the same defect as a 24x24 button standing alone
+     in an 844px row. The assertion below pins the mechanism so the next
+     reader does not spend the afternoon trying `.cur-check::before`. */
+  {
+    const checkbox = stripComments(read('shared/checkbox.css'));
+    ok(!/\.cur-check::before/.test(checkbox),
+      '.cur-check declares NO ::before hit box — it is an <input>, which renders none (recorded, not fixed)');
+  }
+
   ok(/\.cur-switch::before\s*\{[^}]*var\(--hit-min\)/.test(bodies['shared/switch.css']),
     '.cur-switch keeps its 22pt NSSwitch track and does the same');
   ok(/--hit-min:\s*28px/.test(materialClean),

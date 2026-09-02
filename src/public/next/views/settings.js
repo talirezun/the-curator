@@ -1647,9 +1647,13 @@ function renderGeneral() {
       // data-* hook and every test selector is byte-identical; the group only
       // adds the card, the padding and the separators around them.
       '<div class="cur-group cur-group-fields">' +
-      // Appearance
+      // Appearance. The label sits in a `.cur-group-label` column and the
+      // control to its right — the kit's row axis. See the note in
+      // views/settings.css on why the stacked axis was reverted.
       '<div class="settings-field-block">' +
-        '<span class="settings-field-label">Appearance</span>' +
+        '<div class="cur-group-label">' +
+          '<span class="settings-field-label">Appearance</span>' +
+        '</div>' +
         '<div class="theme-segmented" role="group" aria-label="Theme">' +
           '<button type="button" class="theme-seg-btn' + (dark ? ' active' : '') + '" data-theme-choice="dark">Dark</button>' +
           '<button type="button" class="theme-seg-btn' + (!dark ? ' active' : '') + '" data-theme-choice="light">Light</button>' +
@@ -1764,11 +1768,13 @@ function renderTextSize() {
 
   return (
     '<div class="settings-field-block">' +
-      '<span class="settings-field-label">Text size</span>' +
-      '<p class="settings-hint-text">Scales every piece of text in the app. Larger is easier to read; ' +
-      'smaller fits more on screen. Icons, controls and the layout keep their size, so this trades ' +
-      'density for legibility rather than zooming the whole window — your browser’s own zoom still ' +
-      'does that. Saved in this browser, and it applies straight away.</p>' +
+      '<div class="cur-group-label">' +
+        '<span class="settings-field-label">Text size</span>' +
+        '<p class="settings-hint-text">Scales every piece of text in the app. Larger is easier to read; ' +
+        'smaller fits more on screen. Icons, controls and the layout keep their size, so this trades ' +
+        'density for legibility rather than zooming the whole window — your browser’s own zoom still ' +
+        'does that. Saved in this browser, and it applies straight away.</p>' +
+      '</div>' +
       '<div class="theme-segmented fs-segmented" role="group" aria-label="Text size">' + buttons + '</div>' +
     '</div>'
   );

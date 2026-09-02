@@ -64,9 +64,41 @@
   font-family: inherit;
   transition: background var(--t-state), transform var(--t-press);
 }
-.settings-nav-row:hover { background: var(--surface-hover); }
+/* ── THE HOVER IS AN ALPHA OVERLAY, NOT AN ABSOLUTE COLOUR ───────────────
+   This read `var(--surface-hover)` and DID NOTHING. Measured in the running
+   app with a real pointer, both themes:
+
+     dark   plane #14141E  ->  hover rgb(21,21,31)   = 1.03:1
+     light  plane #F7F7FA  ->  hover rgb(245,245,249) = 1.01:1
+
+   On dark the hover colour is BYTE-FOR-BYTE the sidebar plane's own declared
+   value (--mat-sidebar is rgba(21,21,31,0.92)), so hovering a row painted it
+   the same colour it already was, only opaque — a difference of one unit per
+   channel after compositing. On light the step is two units, and DARKER than
+   the plane in a theme where every other hover goes lighter.
+
+   NOTHING IS WRONG WITH --surface-hover. It is an ABSOLUTE colour authored
+   one rung off --surface, and it still steps correctly for anything sitting
+   on the content plane. This row does not: the material pass moved the
+   sidebar from --surface to --mat-sidebar, and an absolute hover colour
+   cannot follow a plane it was never told about. It is the same shape as the
+   --inset-hi defect this pass already fixed — a correct token landing on a
+   surface it was not authored for — and the fix is the same: change the
+   PAIRING, not the token.
+
+   --mat-row-hover / --mat-row-active are ALPHA OVERLAYS, so they step by the
+   same perceived amount on ANY plane and cannot be orphaned by a background
+   moving under them again. shell.css's .rail-btn:hover already uses them for
+   this exact reason. Recomputed on the plane this row actually sits on:
+   1.17:1 dark and 1.13:1 light, against 1.03 / 1.01.
+
+   THE SAME DEFECT IS LIVE IN FOUR VIEW STYLESHEETS THIS FILE DOES NOT OWN —
+   .chat-conv-row, .dm-row, .mem-row and .ing-dest-row all sit on the sidebar
+   plane and all still read var(--surface-hover). Measured at 1.00 dark and
+   1.009 light. Recorded here rather than reached into. */
+.settings-nav-row:hover { background: var(--mat-row-hover); }
 .settings-nav-row.active { background: var(--surface-active); }
-.settings-nav-row:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.settings-nav-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
 
 /* ── THE SELECTION EDGE, AND THE REAL REASON IT HARD-CUT ──────────────────
    The motion audit read this as a missing DURATION token and proposed a
@@ -161,11 +193,34 @@
    .cur-group-row markup would have rewritten every selector three test
    suites and wireGlobalListeners depend on, to buy a class name.
 
-   .cur-group-fields is the STACKED variant (label over control), because all
-   three rows here hold a segmented control that already wraps to two lines at
-   the Largest text scale. A label-left/control-right row would put a wrapping
-   4-segment control in a right-hand column and reintroduce exactly the width
-   problem .fs-segmented exists to avoid.
+   ── THE ROW AXIS, AND A PREMISE THAT DID NOT SURVIVE MEASUREMENT ─────────
+   This shipped as the STACKED variant (label over control) on the stated
+   grounds that "all three rows here hold a segmented control that already
+   wraps to two lines at the Largest text scale", so a right-hand column
+   would reintroduce the width problem .fs-segmented exists to avoid.
+
+   Measured in the running app at 1280x860, both scales:
+
+     Default (--font-scale 1)     Appearance seg 120x34   Text size seg 271x34
+     Largest (--font-scale 1.18)  Appearance seg 129x34   Text size seg 297x34
+
+   THE 4-SEGMENT CONTROL NEVER WRAPS. It is 34px — one line — at every scale,
+   because .fs-segmented already solved that. Forcing the label-left axis at
+   the Largest scale and re-measuring: the control stayed 297x34, nothing in
+   the group overflowed its card, the hint reflowed from 589px to 505px wide
+   at the SAME 82px height, and the two rows lost 27px each (Appearance
+   81 -> 54, Text size 171 -> 144). The stated cost is not there to pay.
+
+   The third row is a separate case and keeps the stacked axis: since the
+   material pass its control is a SWITCH, not a segmented control, and
+   .cur-switch-row is already label-left/switch-right across the full width,
+   with a dependent checkbox and a status line under it that no single row
+   can hold. So the axis is chosen per row by whether the row supplies a
+   `.cur-group-label` column — which is `:has()`, not a modifier class, so a
+   row cannot end up claiming one axis in the markup and the other in CSS.
+
+   `.cur-group-label` is shell.css's own class, defined with the kit and
+   until now never used by anything.
 
    THE SEPARATOR IS A ::before ON THE SECOND ROW ONWARDS, not a border-bottom
    on every row: a border-bottom needs a :last-child exception, and the
@@ -176,6 +231,27 @@
   position: relative;
   padding: var(--space-5) var(--space-6);
 }
+/* Label column left, control right — but ONLY for a row that actually offers
+   a label column. A row without one (Menu bar) is untouched and stays
+   stacked, with no modifier class to keep in sync. */
+.cur-group-fields > .settings-field-block:has(> .cur-group-label) {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-6);
+}
+.cur-group-fields > .settings-field-block > .cur-group-label {
+  flex: 1;
+  /* Without this a long hint paragraph refuses to shrink below its
+     max-content width and pushes the control off the card. */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* The control must not stretch to the label column's height, and must not be
+   squeezed by it: it is sized by its own content and centred against the
+   block it sits beside. */
+.cur-group-fields > .settings-field-block > .theme-segmented { flex: none; }
 /* The separator is inset to the LABEL's x-offset, not to the card's edge —
    the one detail that makes an inset group read as macOS rather than as a
    table. It is written as a left offset on the ::before rather than as a

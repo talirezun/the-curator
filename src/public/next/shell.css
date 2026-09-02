@@ -525,19 +525,52 @@ textarea {
    every bordered control the sidebar holds).
 
    ── THE TWO-LINE EDGE REPLACES `border-right` ────────────────────────────
-   `1px 0 0 var(--mat-edge-lo)` is the DARK OUTER SEPARATOR, painted 1px
-   outside into the neighbouring column; `inset -1px 0 0 var(--mat-edge-hi)`
-   is the LIT INNER LIP. One line reads as a div border; two read as a pane
-   with thickness. Both are always drawn, and the reason is measured: on dark
-   the outer separator is 1.02:1 against --canvas (black on near-black is
-   nothing) while the lip is 1.32:1 against its own plane; on LIGHT it
-   inverts — lip 1.17:1, separator 1.29:1. Ship one line and one theme
-   silently loses its edge.
+   --mat-edge-lo is the DARK OUTER SEPARATOR, --mat-edge-hi the LIT INNER
+   LIP. One line reads as a div border; two read as a pane with thickness.
+   Both are always drawn, and the reason is measured: on dark the separator
+   is 1.02:1 against --canvas (black on near-black is nothing) while the lip
+   is 1.32:1 against its own plane; on LIGHT it inverts, and there the
+   SEPARATOR is the stronger line. Ship one and one theme loses its edge.
 
-   Replacing the border with a shadow keeps the grid geometry byte-identical
-   (the border was inside the border-box; the outer line paints outside it),
-   so #app-shell's 60px / --app-sidebar-w columns and .reader-scrim's
-   `left: calc(60px + var(--app-sidebar-w))` are untouched.
+   ── BOTH LINES ARE `inset`, AND THAT IS THE WHOLE OF THE RULE ────────────
+   This shipped as `1px 0 0 var(--mat-edge-lo)` — an OUTER shadow, painted
+   1px outside into the neighbouring column. It was never once visible.
+
+   MEASURED, not reasoned: on light, at 2x, the pixel column immediately
+   right of each plane read (254,254,254) — the lip, 1.06:1 — and then went
+   straight to the neighbour's own background. The separator was absent from
+   BOTH edges in BOTH themes. Two experiments in the running app fixed the
+   cause. Painting the neighbours transparent made the sidebar's separator
+   appear at (222,222,225) — 1.33:1 against the plane, 1.30:1 against the
+   content, which is the 1.29 figure this note had been quoting all along.
+   Raising .rail and .sidebar on z-index brought BOTH separators back.
+
+   The cause is ordinary paint order, and it is structural rather than
+   incidental: #app-shell is a grid, `.sidebar` follows `.rail` in DOM order,
+   and `.main` is `position: relative`. An outer box-shadow paints in the
+   gutter — which is the neighbour's box — so the neighbour's own opaque
+   background covers it. On dark that cost nothing (the separator was 1.02
+   anyway); on LIGHT it cost the stronger of the two lines, leaving the
+   weaker one alone, which is the exact failure the paragraph above warns
+   about, arrived at by a different door.
+
+   So both lines are inset now. Read outward from the plane: `-2px` puts the
+   LIP one pixel in, `-1px` puts the SEPARATOR on the outermost pixel, and
+   the earlier shadow in the list paints on top — so the -1px separator wins
+   the outermost pixel and the -2px lip shows through beside it. Nothing can
+   occlude either, because an inset shadow is inside the element's own box.
+
+   `.lb-menu` keeps its OUTER separator and must: it is `position: fixed`
+   with `z-index: 60` and genuinely floats over everything, so there is no
+   neighbour to paint over it. The rule is not "always inset" — it is that a
+   plane WITH A PAINTING NEIGHBOUR cannot put anything load-bearing outside
+   its own box. scripts/test-next-design-kit.js §9 asserts exactly that,
+   because §9 as written could only see that both lines were DECLARED, which
+   is what let this ship.
+
+   Geometry is untouched either way: #app-shell's 60px / --app-sidebar-w
+   columns and .reader-scrim's `left: calc(60px + var(--app-sidebar-w))` do
+   not move, since a shadow — inset or not — takes part in no layout.
 
    ── THE BLUR IS DECLARED AND DOES NOTHING HERE, STATED RATHER THAN HIDDEN
    These are grid COLUMNS with nothing behind them but the body's own canvas,
@@ -549,7 +582,7 @@ textarea {
   background: var(--mat-sidebar);
   -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
   backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
-  box-shadow: 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-hi);
+  box-shadow: inset -1px 0 0 var(--mat-edge-lo), inset -2px 0 0 var(--mat-edge-hi);
   /* Chrome, not content — see the note on .btn. */
   user-select: none;
   -webkit-user-select: none;
@@ -706,7 +739,7 @@ textarea {
   background: var(--mat-sidebar);
   -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
   backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
-  box-shadow: 1px 0 0 var(--mat-edge-lo), inset -1px 0 0 var(--mat-edge-hi);
+  box-shadow: inset -1px 0 0 var(--mat-edge-lo), inset -2px 0 0 var(--mat-edge-hi);
   overflow-y: auto;
   overflow-x: hidden;
 }
