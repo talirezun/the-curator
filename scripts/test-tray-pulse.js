@@ -754,8 +754,8 @@ eq(FULL.firstKnownBucket, 0, 'so no leading cell is unknown');
 section('§8  One laptop, two folder names — the install-id identity fix');
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Measured on the maintainer's own store: `mac-17d23c` and
-// `talis-macbook-pro-17d23c` are ONE computer. macOS re-derived the hostname
+// Measured on the maintainer's own store: `mac-9f3c1a` and
+// `alices-macbook-pro-9f3c1a` are ONE computer. macOS re-derived the hostname
 // from DHCP and the folder name followed; working-state.js's D10 block records
 // the same pair. The tray compared the WHOLE slug, so half his own history was
 // rendered as a remote machine. The rule keys on the trailing installation id
@@ -769,7 +769,7 @@ ok(SELF_ID !== null, `and it carries a parseable installation id (${SELF_ID})`);
 {
   mkDomain('ident');
   // The SAME laptop under a renamed hostname: a different host slug, the same
-  // installation id. This is the maintainer's `mac-17d23c` case exactly.
+  // installation id. This is the maintainer's `mac-9f3c1a` case exactly.
   const RENAMED = `oldname-${SELF_ID}`;
   ok(RENAMED !== SELF, 'CONTROL: the renamed folder is a different STRING from this machine\'s own');
   // A genuinely different computer: a different host AND a different id.
@@ -840,12 +840,12 @@ ok(SELF_ID !== null, `and it carries a parseable installation id (${SELF_ID})`);
   eq(b.isThisMachine, true,
     'CONTROL: a degraded install still recognises its own EXACT folder name');
   eq(b.machineMatch, 'exact', 'and calls that an exact match');
-  const c = machineIdentity('renamed-17d23c', 'talis-macbook-pro-17d23c',
-    'talis-macbook-pro', anyRe, '17d23c');
+  const c = machineIdentity('renamed-9f3c1a', 'alices-macbook-pro-9f3c1a',
+    'alices-macbook-pro', anyRe, '9f3c1a');
   eq(c.isThisMachine, true, 'CONTROL: with an id on both sides the adoption still happens');
   eq(c.machineMatch, 'install-id', 'and is reported as an install-id match');
-  const d = machineIdentity('renamed-999999', 'talis-macbook-pro-17d23c',
-    'talis-macbook-pro', anyRe, '17d23c');
+  const d = machineIdentity('renamed-999999', 'alices-macbook-pro-9f3c1a',
+    'alices-macbook-pro', anyRe, '9f3c1a');
   eq(d.isThisMachine, false, 'CONTROL: a DIFFERENT id is not adopted');
 }
 

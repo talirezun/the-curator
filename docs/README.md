@@ -95,7 +95,7 @@ first group applies to all three.
 | [domains.md](domains.md) | Domains end-to-end — managing them, the CLAUDE.md schema, siloing model, custom templates. A domain is the container all three layers live in |
 | [sync.md](sync.md) | Personal Sync — GitHub backup of your wiki, chat history and working state across your own computers (wizard, token permissions, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
-| [system-check.md](system-check.md) | Settings → System Check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
+| [system-check.md](system-check.md) | Settings → General → System check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
 | [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, how it downloads and installs its own updates, and the optional menu bar icon) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
 
 **Layer 1 — your brain** (the personal wiki; knowledge accumulates)
@@ -140,6 +140,7 @@ first group applies to all three.
 | [design-system-text-ramp-patch.md](design-system-text-ramp-patch.md) | **The one place `tokens/color.css` intentionally differs from the shipped design-system bundle**, and the diff to apply to the bundle so the two re-converge. Six values: the three dim text rungs, per theme. Carries the before/after contrast measurements and the reason `--text-faint` is deliberately left under the text floor. Read it before "fixing" those tokens back to match the bundle |
 | [design-system-source.md](design-system-source.md) | Where the design-system MASTER lives (outside this repo), what the gitignored `the_curator_design_system/` mirror is for, and the deliberate divergences — the v3.25.0 text ramp, and the checkbox border that fails 3:1 as the bundle specifies it |
 | [audits/](audits/) | Historical audit reports per release (snapshots of the codebase quality at each version) |
+| [audits/2026-09-02-six-area-review.md](audits/2026-09-02-six-area-review.md) | **The current audit of record.** Six-area review at v3.39.0 — framework, features, native macOS UI, skills, documentation, README — plus the release plan and the decisions taken from it |
 
 ---
 

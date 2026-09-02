@@ -1662,8 +1662,8 @@ ok('refreshScopeList never moves the selection',
   const t0 = 1_000_000;
   const s = liveState({
     scope: 'memory-view', machine: null,                 // nothing chosen
-    detail: { scope: 'memory-view', machine: 'mac-17d23c', machines: [
-      { machine: 'mac-17d23c', ageSeconds: 4 * 3600 }],
+    detail: { scope: 'memory-view', machine: 'mac-9f3c1a', machines: [
+      { machine: 'mac-9f3c1a', ageSeconds: 4 * 3600 }],
       current: { present: true, text: 'FOUR HOURS OLD' }, journal: [] },
     detailFetchedAt: t0, scopesFetchedAt: t0,
   });

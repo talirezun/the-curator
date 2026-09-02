@@ -211,7 +211,7 @@ below, and the section below is left as it was written.
    capture cadence and never a better day's work.
 
 7. **One laptop was appearing as two computers, and the fix is not in any
-   section below.** `mac-17d23c` and `talis-macbook-pro-17d23c` are one machine
+   section below.** `mac-9f3c1a` and `alices-macbook-pro-9f3c1a` are one machine
    whose hostname flapped under DHCP — working-state.js's own D10 finding, and
    half the maintainer's own history. Rows now match on the **trailing
    installation id alone**, never the hostname half. When two rows for one scope

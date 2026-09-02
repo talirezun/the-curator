@@ -7,7 +7,7 @@ single source of context on The Curator: every capability, what each one is *for
 scenarios it was built to serve, the honest history, and an explicit account of what it does
 **not** do. It describes capability, not implementation — there is no code in it.
 
-*Current as of **v3.38.1**. Where a number moves between releases — model prices, model
+*Current as of **v3.40.0**. Where a number moves between releases — model prices, model
 catalogues, tool counts — it is marked as a reading taken at a moment rather than a constant.*
 
 ---
@@ -475,7 +475,7 @@ money, because that is the binding cost.
 - It **never uses the word "verified"** about a model, because nine clean runs are still
   consistent with a meaningful failure rate.
 
-**Readings taken at v3.38.1** — these are the defaults, and they move:
+**Readings taken at v3.40.0** — these are the defaults, and they move:
 
 | Provider | Default model | Free tier | Price (per 1M tokens) |
 |---|---|---|---|
@@ -518,7 +518,7 @@ the pinned model disappears, the next one is used and the app tells you which on
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
 reads your markdown directly and **does not need the web app to be running**.
 
-**Twenty tools ship** (a reading taken at v3.38.1; the authoritative list is the server's own
+**Twenty tools ship** (a reading taken at v3.40.0; the authoritative list is the server's own
 tool registration). Twelve read; eight sit in the write block, of which **five actually change
 anything on disk**:
 

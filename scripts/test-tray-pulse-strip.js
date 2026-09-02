@@ -164,21 +164,21 @@ function youngStore() {
 // numbers above are reproducible on any machine and touch no user data.
 function realStoreScopes() {
   const rows = [
-    ['session-2026-09-01-menubar-widget-design', 'talis-macbook-pro-17d23c', 828, 'RESEARCH DONE, NOTHING BUILT. Heartbeat is drawable in the menu as a per-row icon PNG, but per-machine series are FICTION on the real store.'],
-    ['session-2026-08-31-native-prep-and-release-process', 'talis-macbook-pro-17d23c', 43029, 'FOUR RELEASES SHIPPED (v3.31-v3.34). Mac app installs, updates itself in-app, sync data loss fixed.'],
-    ['session-2026-08-30-design-conformance-pre-native', 'talis-macbook-pro-17d23c', 124066, 'v3.25.0, v3.26.0, v3.27.0 all SHIPPED and pushed. ALL NINE design findings CLOSED.'],
-    ['session-2026-08-30-design-conformance-pre-native', 'mac-17d23c', 132529, '7 of 11 issues + ramp + machine-id fix MERGED. main 14 ahead UNPUSHED, 125/125 green.'],
-    ['session-2026-08-30-ingest-continuity-tables', 'talis-macbook-pro-17d23c', 138636, 'SESSION COMPLETE. v3.24.0/1/2 all shipped and tagged. CLAUDE.md 183k to 43k tokens.'],
-    ['session-2026-08-30-chat-streaming', 'talis-macbook-pro-17d23c', 160514, 'SHIPPED: v3.23.0 (chat streaming + thinking region + 5 UX fixes) and v3.23.1.'],
-    ['session-2026-08-30-chat-streaming', 'mac-17d23c', 175018, 'Wave 1: 2 of 3 landed (SSE reader, OpenRouter adapter). llm.js still running.'],
-    ['session-2026-08-29-ux-polish', 'mac-17d23c', 209028, 'FOUR releases shipped: v3.19.0 to v3.22.0. The floating text under every title is GONE.'],
+    ['session-2026-09-01-menubar-widget-design', 'alices-macbook-pro-9f3c1a', 828, 'RESEARCH DONE, NOTHING BUILT. Heartbeat is drawable in the menu as a per-row icon PNG, but per-machine series are FICTION on the real store.'],
+    ['session-2026-08-31-native-prep-and-release-process', 'alices-macbook-pro-9f3c1a', 43029, 'FOUR RELEASES SHIPPED (v3.31-v3.34). Mac app installs, updates itself in-app, sync data loss fixed.'],
+    ['session-2026-08-30-design-conformance-pre-native', 'alices-macbook-pro-9f3c1a', 124066, 'v3.25.0, v3.26.0, v3.27.0 all SHIPPED and pushed. ALL NINE design findings CLOSED.'],
+    ['session-2026-08-30-design-conformance-pre-native', 'mac-9f3c1a', 132529, '7 of 11 issues + ramp + machine-id fix MERGED. main 14 ahead UNPUSHED, 125/125 green.'],
+    ['session-2026-08-30-ingest-continuity-tables', 'alices-macbook-pro-9f3c1a', 138636, 'SESSION COMPLETE. v3.24.0/1/2 all shipped and tagged. CLAUDE.md 183k to 43k tokens.'],
+    ['session-2026-08-30-chat-streaming', 'alices-macbook-pro-9f3c1a', 160514, 'SHIPPED: v3.23.0 (chat streaming + thinking region + 5 UX fixes) and v3.23.1.'],
+    ['session-2026-08-30-chat-streaming', 'mac-9f3c1a', 175018, 'Wave 1: 2 of 3 landed (SSE reader, OpenRouter adapter). llm.js still running.'],
+    ['session-2026-08-29-ux-polish', 'mac-9f3c1a', 209028, 'FOUR releases shipped: v3.19.0 to v3.22.0. The floating text under every title is GONE.'],
   ];
   return rows.map(([scope, machine, age, headline]) => ({
     project: 'projects', scope, machine, harness: 'claude-code',
     // BOTH folders are this installation: they share the trailing install id
-    // `17d23c`, and the machine-identity fix now resolves them as one laptop.
+    // `9f3c1a`, and the machine-identity fix now resolves them as one laptop.
     // This is what the merged producer emits against his store.
-    isThisMachine: machine.endsWith('-17d23c'),
+    isThisMachine: machine.endsWith('-9f3c1a'),
     writtenAt: new Date(NOW.getTime() - age * 1000).toISOString(),
     writtenAgeSeconds: age, ageSource: 'agent', headline, harnessShared: false,
   }));
@@ -617,7 +617,7 @@ section('§7 the menu item: where it sits, that it is a statement, and its width
     ok: true, total: 1, pulse: youngStore(),
     scopes: [{
       project: 'projects', scope: 'session-2026-09-01-menubar-widget-design',
-      machine: 'mac-17d23c', harness: 'claude-code', isThisMachine: true,
+      machine: 'mac-9f3c1a', harness: 'claude-code', isThisMachine: true,
       writtenAgeSeconds: 800, ageSource: 'agent', headline: 'x'.repeat(200),
     }],
   };
@@ -690,7 +690,7 @@ section('§8 width compaction — three levers, each conditional and each revers
 // data says it distinguishes something.
 {
   const row = (over) => ({
-    project: 'projects', scope: 'session-alpha', machine: 'mac-17d23c',
+    project: 'projects', scope: 'session-alpha', machine: 'mac-9f3c1a',
     harness: 'claude-code', isThisMachine: true, ageSource: 'agent',
     writtenAgeSeconds: 600, headline: 'h', ...over,
   });
@@ -748,7 +748,7 @@ section('§8 width compaction — three levers, each conditional and each revers
   })]);
   ok(/studio/.test(remote.rows[1].label), 'a row from another machine ALWAYS names it');
   eq(remote.rows[1].showsProvenance, true, 'even while the local rows beside it show nothing');
-  ok(!/claude-code|mac-17d23c/.test(remote.rows[0].label),
+  ok(!/claude-code|mac-9f3c1a/.test(remote.rows[0].label),
     'so a row with no provenance means "from here" and a row with one means "from there"');
 
   // ── LEVER 4: the headline cap ──────────────────────────────────────────
@@ -782,7 +782,7 @@ section('§8 width compaction — three levers, each conditional and each revers
   // is the fix, asserted here against the full store rather than only against
   // the two-row fixture in §10.
   const realRows = model.buildTrayModel(REAL_STORE, { now: NOW }).rows;
-  ok(realRows.every((r) => !/talis-macbook-pro|17d23c/.test(r.label)),
+  ok(realRows.every((r) => !/alices-macbook-pro|9f3c1a/.test(r.label)),
     'and NO row names a machine folder — the two colliding rows are one laptop and are separated by a finer age');
   ok(realRows.filter((r) => r.agePrecision === 'hour').length === 2,
     'exactly the two colliding rows were escalated, and no others');
@@ -824,7 +824,7 @@ section('§9 nothing dropped from a label becomes unreachable');
     .map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join(' ')).join(' ');
   ok(!/install-id|machineMatch/.test(surfaced),
     'the diagnostic machineMatch field reaches no label, sublabel or tooltip');
-  ok(/mac-17d23c/.test(surfaced),
+  ok(/mac-9f3c1a/.test(surfaced),
     'CONTROL: other per-row fields DO reach a surface, so the scan above is looking at real rendered text');
 
   // A control: the tooltip is NOT simply the label repeated, and it really is
@@ -858,7 +858,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // ── A. THE MAINTAINER'S REAL CASE ──────────────────────────────────────
   //
   // One project, one scope, TWO machine folders sharing the trailing install id
-  // `17d23c` — one laptop whose hostname flapped under DHCP — and two ages that
+  // `9f3c1a` — one laptop whose hostname flapped under DHCP — and two ages that
   // both round to "1 day ago". This is transcribed from what the merged
   // producer and model actually rendered against his store.
   // The REAL scope name, not a short stand-in: it is the longest on his store
@@ -866,14 +866,14 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // width target rather than a test of a fixture that could never fail it.
   const REAL_SCOPE = 'session-2026-08-30-design-conformance-pre-native';
   const real = build([
-    row({ scope: REAL_SCOPE, machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 124066 }),
-    row({ scope: REAL_SCOPE, machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 132529 }),
+    row({ scope: REAL_SCOPE, machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 124066 }),
+    row({ scope: REAL_SCOPE, machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
   ]);
   eq(model.ageText(124066, 'agent'), model.ageText(132529, 'agent'),
     'the two ages really do render identically on the ordinary ladder — the collision is real, not manufactured');
   ok(real.rows[0].label !== real.rows[1].label, 'and yet the two labels differ');
   for (const r of real.rows) {
-    ok(!/talis|macbook|17d23c|\bmac\b/.test(r.label),
+    ok(!/talis|macbook|9f3c1a|\bmac\b/.test(r.label),
       `no machine name appears — ${JSON.stringify(r.label)}`);
     ok(r.label.length <= 56, `and the row is ${r.label.length} characters, inside the 56 target`);
     eq(r.agePrecision, 'hour', 'because the AGE was escalated to hours instead');
@@ -888,9 +888,9 @@ section('§10 the collision guard: compaction may never make two rows read alike
 
   // AND THE FOLDER NAME IS STILL REACHABLE. For this case the tooltip is the
   // ONLY place it appears anywhere, which is what makes the label safe to drop.
-  ok(real.rows.some((r) => r.toolTip.includes('talis-macbook-pro-17d23c')),
+  ok(real.rows.some((r) => r.toolTip.includes('alices-macbook-pro-9f3c1a')),
     'the full machine folder name survives in the tooltip — the only place it now appears');
-  ok(real.rows.some((r) => r.toolTip.includes('mac-17d23c')), 'and so does the other one');
+  ok(real.rows.some((r) => r.toolTip.includes('mac-9f3c1a')), 'and so does the other one');
   ok(real.rows.every((r) => r.toolTip.includes(REAL_SCOPE) && r.toolTip.includes('projects')),
     'along with everything else the compaction dropped');
 
@@ -898,8 +898,8 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // this, the assertions above would pass on an implementation that always
   // escalates — which would be a second, quieter defect.
   const apart = build([
-    row({ machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 300 }),
-    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 132529 }),
+    row({ machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 300 }),
+    row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
   ]);
   eq(apart.rows.map((r) => r.agePrecision), [null, null],
     'CONTROL: rows that do not collide stay on the ordinary ladder, the one the app\'s memory view renders');
@@ -942,7 +942,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // A local row and a remote row never collide in the first place, because a
   // machine label is never dropped. The ordinary shape of "two machines".
   const mixed = build([
-    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 90000 }),
+    row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 90000 }),
     row({ machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 90000 }),
   ]);
   ok(mixed.rows[0].label !== mixed.rows[1].label, 'a local row and a remote row are distinguished with no work at all');
@@ -951,12 +951,12 @@ section('§10 the collision guard: compaction may never make two rows read alike
 
   // ── C. THE UNRESOLVABLE CASE — same computer, inside one minute ────────
   const sameMinute = build([
-    row({ machine: 'talis-macbook-pro-17d23c', isThisMachine: true, writtenAgeSeconds: 3600 }),
-    row({ machine: 'mac-17d23c', isThisMachine: true, writtenAgeSeconds: 3600 }),
+    row({ machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 3600 }),
+    row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 3600 }),
   ]);
   ok(sameMinute.rows[0].label !== sameMinute.rows[1].label,
     'two saves from one computer inside one minute are still told apart');
-  ok(/talis-macbook-pro/.test(sameMinute.rows[0].label + sameMinute.rows[1].label)
+  ok(/alices-macbook-pro/.test(sameMinute.rows[0].label + sameMinute.rows[1].label)
     && /— mac ·/.test(sameMinute.rows[0].label + sameMinute.rows[1].label),
     'by the FOLDER NAMES, which is the last resort and the least-bad discriminator left');
   eq(sameMinute.rows.map((r) => r.agePrecision), [null, null],

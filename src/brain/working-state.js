@@ -450,8 +450,8 @@ export function slugSegment(input) {
 // ─────────────────────────────────────────────────────────────────────────
 export const INSTALL_ID_FILENAME = '.curator-install-id';
 // EXPORTED so a consumer can ask "do these two machine segments carry the SAME
-// installation id?" without writing a second copy of this shape. `mac-17d23c`
-// and `talis-macbook-pro-17d23c` are ONE laptop (see D10 below); the tray has
+// installation id?" without writing a second copy of this shape. `mac-9f3c1a`
+// and `alices-macbook-pro-9f3c1a` are ONE laptop (see D10 below); the tray has
 // to be able to say so, and a hand-rolled `/-[0-9a-f]+$/` beside it would be
 // free to drift from the id this module actually mints.
 export const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
@@ -462,11 +462,11 @@ export const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
 // hostname — resolved fresh on every call. Measured on the maintainer's own
 // disk: ONE machine owning TWO folders under one scope,
 //
-//     state/<scope>/mac-17d23c/                 and
-//     state/<scope>/talis-macbook-pro-17d23c/
+//     state/<scope>/mac-9f3c1a/                 and
+//     state/<scope>/alices-macbook-pro-9f3c1a/
 //
 // same installation id in both, so the id was doing its job and the hostname
-// was not. macOS re-derives the hostname from DHCP, so `Talis-MacBook-Pro`
+// was not. macOS re-derives the hostname from DHCP, so `Alices-MacBook-Pro`
 // and a bare `Mac` alternate as the machine moves between networks. Both
 // directions were observed, on two consecutive days.
 //

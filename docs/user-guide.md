@@ -843,7 +843,7 @@ Two things the widget gives you here:
 
 The practical use: **before you resume a work-stream, glance at the icon.** If the newest row for it names another machine, that machine wrote it more recently than you did, and pulling before you start is the difference between continuing and diverging.
 
-> **One laptop counts as one computer, even when your Mac has changed its own name.** macOS re-derives your machine's hostname from the network, so a laptop that has moved between Wi-Fi networks can end up with **two folders on disk** — `mac-…` and `talis-macbook-pro-…` — that are the same computer. The widget matches on the **installation** identity rather than the name, so those collapse into one row instead of inventing a second machine you do not own. Two genuinely different computers still get their own names, because there the machine **is** the news.
+> **One laptop counts as one computer, even when your Mac has changed its own name.** macOS re-derives your machine's hostname from the network, so a laptop that has moved between Wi-Fi networks can end up with **two folders on disk** — `mac-…` and `alices-macbook-pro-…` — that are the same computer. The widget matches on the **installation** identity rather than the name, so those collapse into one row instead of inventing a second machine you do not own. Two genuinely different computers still get their own names, because there the machine **is** the news.
 >
 > If two rows for one work-stream would otherwise read identically, the widget **shows their ages more precisely** — *"34 hr ago"* and *"36 hr ago"* instead of two rows both saying *"1 day ago"* — rather than falling back to those raw folder names. Same fact, read finer; no invented hardware.
 
@@ -1797,7 +1797,7 @@ The range is deliberately generous on the high side. Across eleven real measured
 | *"Estimated cost $X – $Y on [provider] "[model]"."* | Normal case. A published price is on file and the range applies. |
 | *"…is free to use, so this compile will not cost anything."* | You're on a genuinely free model. This is not the same as "$0.00". |
 | *"No published price is on file for … so the cost cannot be shown in dollars."* | The Curator doesn't know this model's price. **Your provider will still bill you.** |
-| *"No AI provider is configured…"* | No API key. There's nothing to compile with — add a key in **Settings → API Keys** first. |
+| *"No AI provider is configured…"* | No API key. There's nothing to compile with — add a key in **Settings → Providers & keys** first. |
 
 An unknown cost is always said out loud. The dialog will never render an unpriced or unknown compile as **$0.00**.
 

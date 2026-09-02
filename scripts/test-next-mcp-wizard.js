@@ -601,19 +601,22 @@ section('6. blockerFor() — the blocked panels, especially the corrupt one');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('7. The stale message covers all four causes (defect 4)');
+section('7. The stale message covers all five causes (defect 4)');
 // ═════════════════════════════════════════════════════════════════════════
 {
   const joined = STALE_CAUSES.join(' | ').toLowerCase();
-  ok(STALE_CAUSES.length === 4, 'four causes are listed');
+  ok(STALE_CAUSES.length === 5, 'five causes are listed');
   ok(/knowledge folder/.test(joined), 'cause 1: the knowledge folder moved');
   ok(/curator itself was moved|reinstall/.test(joined), 'cause 2: the app directory moved');
   ok(/node/.test(joined) && /(nvm|homebrew)/.test(joined), 'cause 3: the Node binary path changed');
   ok(/by hand/.test(joined), 'cause 4: the entry was edited by hand');
+  ok(/two installations/.test(joined) && /repo checkout/.test(joined) && /installed app/.test(joined),
+    'cause 5: two installations on one computer (a repo checkout and the installed app), pointed at the other one');
 
   // The shipping copy said only the first, as a definite statement.
-  ok(joinCauses(STALE_CAUSES).endsWith('or the entry was edited by hand'),
-    'the four causes read as a finished list ("…, or …"), not a bare comma join');
+  ok(joinCauses(STALE_CAUSES).endsWith('the installation you actually use; the installed app’s entry follows ' +
+    'the knowledge folder and is rewritten on every start)'),
+    'the five causes read as a finished list ("…, or …"), not a bare comma join');
   ok(joinCauses(['a']) === 'a' && joinCauses(['a', 'b']) === 'a or b' && joinCauses([]) === '',
     'joinCauses handles 0/1/2 items without producing a dangling "or"');
 

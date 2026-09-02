@@ -262,7 +262,7 @@ and lists every machine under that scope. Save on the laptop, resume on the desk
 otherwise.** It said the store "degrades gracefully when a hostname changes", on the
 reasoning that a newest-machine read would still find the new folder. Measured, that is
 not graceful: it is precisely the orphaning the sentence promised to avoid. macOS
-re-derives the hostname from DHCP, so one laptop alternated between `Talis-MacBook-Pro`
+re-derives the hostname from DHCP, so one laptop alternated between `Alices-MacBook-Pro`
 and a bare `Mac` as it moved between networks, and — with the *same* install id in both —
 owned two folders under a single scope. The visible symptom was the Agent-memory view
 sitting four hours out of date beside a save twelve minutes old. The worse one was

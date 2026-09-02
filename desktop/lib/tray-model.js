@@ -976,7 +976,7 @@ export function buildTrayModel(summary, opts = {}) {
   //   "projects · "        11 chars on every row — one project has state
   //   "session-"            8 chars on every scope name
   //   "2026-08-30-"        11 more, and the row already carries an age
-  //   "talis-macbook-pro"  17 chars of machine on every row, for one computer
+  //   "alices-macbook-pro"  17 chars of machine on every row, for one computer
   //   "claude-code"        11 chars — the harness on 65 of 65 journal lines
   //
   // NONE of these is deleted unconditionally. Each is dropped only while the
@@ -1137,7 +1137,7 @@ export function buildTrayModel(summary, opts = {}) {
   // colliding rows sat in different folders. Driven against the maintainer's
   // real store it produced exactly this:
   //
-  //   2026-08-30-design-conformance-pre-native — talis-macbook-pro · 1 day ago
+  //   2026-08-30-design-conformance-pre-native — alices-macbook-pro · 1 day ago
   //   2026-08-30-design-conformance-pre-native — mac · 1 day ago
   //
   // Those two folders are ONE LAPTOP whose hostname flapped under DHCP. So the

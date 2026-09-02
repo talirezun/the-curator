@@ -1535,13 +1535,13 @@ section('28. D10 — the machine folder must not FLAP when the hostname does');
   // existed: ONE physical machine owned TWO state folders under a single
   // scope,
   //
-  //     state/session-2026-08-30-chat-streaming/mac-17d23c/               08:30
-  //     state/session-2026-08-30-chat-streaming/talis-macbook-pro-17d23c/ 11:41
+  //     state/session-2026-08-30-chat-streaming/mac-9f3c1a/               08:30
+  //     state/session-2026-08-30-chat-streaming/alices-macbook-pro-9f3c1a/ 11:41
   //
-  // with the SAME installation id `17d23c` in both — which is the proof that
+  // with the SAME installation id `9f3c1a` in both — which is the proof that
   // the id was stable and the HOSTNAME was not. `hostSlug()` was resolved
   // fresh on every call and macOS re-derives the hostname from DHCP, so
-  // `Talis-MacBook-Pro.local` and a bare `Mac` alternated as the machine
+  // `Alices-MacBook-Pro.local` and a bare `Mac` alternated as the machine
   // moved between networks. Both directions were observed, on both days.
   //
   // TWO HARMS, and the second is the worse one:
@@ -1571,10 +1571,10 @@ section('28. D10 — the machine folder must not FLAP when the hostname does');
   WS.__resetInstallIdCache();
 
   // ── THE REPRODUCTION. One installation, two hostnames, one folder. ──────
-  WS.__setHostnameForTest('Talis-MacBook-Pro.local');
+  WS.__setHostnameForTest('Alices-MacBook-Pro.local');
   const first = machineId();
   const flapId = installId();
-  assert(first === `talis-macbook-pro-${flapId}`,
+  assert(first === `alices-macbook-pro-${flapId}`,
     'fixture: the first hostname composes the folder exactly the way it always did', first);
 
   WS.__setHostnameForTest('Mac');
@@ -1610,7 +1610,7 @@ section('28. D10 — the machine folder must not FLAP when the hostname does');
     'the remembered name is NOT inside domains/, which would re-create the collision');
 
   // ── END TO END, through the real store and the real filesystem ──────────
-  WS.__setHostnameForTest('Talis-MacBook-Pro.local');
+  WS.__setHostnameForTest('Alices-MacBook-Pro.local');
   WS.__resetInstallIdCache();
   const s1 = await saveWorkingState(P, { scope: 'flapscope', headline: 'before the flap', nowState: 'a' });
   WS.__setHostnameForTest('Mac');
@@ -1711,7 +1711,7 @@ section('29. D11 — an identity file that appears LATER must be adopted');
   // reason this section exists, so it is written down here rather than lost.
   //
   // WHAT WAS OBSERVED on the maintainer's disk: two folders again for one
-  // scope, `mac-17d23c` and `talis-macbook-pro-17d23c`, with a correct
+  // scope, `mac-9f3c1a` and `alices-macbook-pro-9f3c1a`, with a correct
   // `.curator-machine-id` sitting beside them holding the talis name.
   //
   // WHAT IT WAS NOT: a durable NEGATIVE cache in `persistedMachineId`. That
@@ -1765,23 +1765,23 @@ section('29. D11 — an identity file that appears LATER must be adopted');
   //    which is the entire point.
   rmSync(lateMachineFile, { recursive: true, force: true });
   rmSync(lateIdFile, { recursive: true, force: true });
-  writeFileSync(lateIdFile, '17d23c\n');
-  writeFileSync(lateMachineFile, 'talis-macbook-pro-17d23c\n');
+  writeFileSync(lateIdFile, '9f3c1a\n');
+  writeFileSync(lateMachineFile, 'alices-macbook-pro-9f3c1a\n');
   assert(hostSlug() === 'mac',
     'corpus non-vacuous: the hostname still resolves to something DIFFERENT from the file',
     hostSlug());
 
-  assert(installId() === '17d23c',
+  assert(installId() === '9f3c1a',
     'THE SIBLING FIX: a cached-null install id is re-attempted once a file appears',
     String(installId()));
   assert(WS.installIdAvailable() === true,
     'so the guard reports itself ARMED again instead of false for the life of the process');
 
   const late = machineId();
-  assert(late === 'talis-macbook-pro-17d23c',
+  assert(late === 'alices-macbook-pro-9f3c1a',
     'THE FIX: a long-lived process ADOPTS the name that appeared, instead of keeping its own',
     `${early} -> ${late}`);
-  assert(peek29(lateMachineFile) === 'talis-macbook-pro-17d23c',
+  assert(peek29(lateMachineFile) === 'alices-macbook-pro-9f3c1a',
     'and does NOT clobber the name another process wrote down first',
     peek29(lateMachineFile));
 

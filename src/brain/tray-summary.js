@@ -477,8 +477,8 @@ function orderKey(clock) {
 export function machineIdentity(machine, self, host, hostRe, selfInstallId) {
   const exact = machine === self;
   // ── ONE LAPTOP, TWO FOLDER NAMES — and the user was being shown two
-  //    computers. MEASURED on the maintainer's own store: `mac-17d23c` and
-  //    `talis-macbook-pro-17d23c` are the same machine, because macOS
+  //    computers. MEASURED on the maintainer's own store: `mac-9f3c1a` and
+  //    `alices-macbook-pro-9f3c1a` are the same machine, because macOS
   //    re-derives the hostname from DHCP and the folder name followed it. That
   //    is working-state.js's own D10 finding; D10 fixed the GO-FORWARD case by
   //    remembering the folder name instead of recomputing it, but the split it
@@ -522,7 +522,7 @@ export function machineIdentity(machine, self, host, hostRe, selfInstallId) {
  * about the length bounds.
  *
  * `lastIndexOf` and not a split: a hostname may contain hyphens
- * (`talis-macbook-pro`), and only the final segment is ever the id. `i <= 0`
+ * (`alices-macbook-pro`), and only the final segment is ever the id. `i <= 0`
  * rejects both "no hyphen at all" and a leading hyphen, so a bare hostname
  * yields null and can never match anything.
  */

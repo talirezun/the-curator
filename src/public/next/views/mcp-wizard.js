@@ -47,11 +47,14 @@
 //      confirmed success and otherwise surfaces the failure and reveals
 //      the payload for manual selection.
 //
-//   4. The stale-entry message covers all four causes. `stale` is a strict
+//   4. The stale-entry message covers all five causes. `stale` is a strict
 //      equality on command+args (src/routes/mcp.js), so it fires when the
 //      knowledge folder moved, when the NODE BINARY path changed (an nvm or
-//      Homebrew upgrade), when the app directory moved, or when the entry
-//      was hand-edited. The shipping copy names only the first.
+//      Homebrew upgrade), when the app directory moved, when the entry was
+//      hand-edited, or when the client is pointed at the OTHER of two
+//      installations on one computer (a repo checkout and the installed
+//      app each write their own config; the fix is to switch the client to
+//      the one actually in use). The shipping copy names only the first.
 //
 //   5. Self-test failures get a next step. describeSelfTest() classifies
 //      the outcome and returns concrete actions; the branch that used to
@@ -466,12 +469,16 @@ function describeSelfTest(r) {
   };
 }
 
-// Defect 4 — true for all four things `stale` actually detects.
+// Defect 4 — true for all five things `stale` actually detects.
 const STALE_CAUSES = [
   'your knowledge folder moved',
   'The Curator itself was moved or reinstalled',
   'your Node install changed (a Homebrew or nvm upgrade changes its path)',
   'the entry was edited by hand',
+  'you have two installations of The Curator on this computer — a repo checkout and the ' +
+    'installed app, each with its own configuration — and this client is pointed at the other ' +
+    'one (switch it to the installation you actually use; the installed app’s entry follows ' +
+    'the knowledge folder and is rewritten on every start)',
 ];
 
 // "a, b, c, or d" — a bare Array.join(', ') read as an unfinished list in
