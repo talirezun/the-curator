@@ -515,7 +515,21 @@ section('9. The two-line material edge is on CHROME ONLY');
       });
     }
   }
-  const ALLOWED = ['.rail', '.sidebar', '.lb-menu'];
+  /* ── THE TWO SHEETS JOIN THIS LIST, AND THE LIST IS WHAT IT ASSERTS ──────
+     `.sbw-card` and `.mcpw-card` were centred dialogs on an opaque
+     `--surface-overlay` when this allowlist was written; the design pass
+     moved both to SHEETS — app-modal flows that come down from under the
+     window's own title bar — which is the definition of chrome floating over
+     content, and the scope rule this list encodes admits them by its own
+     terms rather than by exception.
+
+     THE LIST IS DELIBERATELY NOT WIDENED FURTHER. Two other panes were
+     considered and refused: `.obp-panel`, the first-run guidance card, which
+     takes the material but NOT the edge because shell.css reserves a strip
+     for it and it therefore floats over nothing; and `.cfd-card`, the confirm
+     dialog, which stays a centred alert on purpose — an alert and a sheet
+     saying the same thing is how the two stop meaning different things. */
+  const ALLOWED = ['.rail', '.sidebar', '.lb-menu', '.sbw-card', '.mcpw-card'];
   const stray = users.filter((u) => !ALLOWED.includes(u.sel));
   ok(users.length >= 3, `${users.length} rule(s) draw the two-line edge`);
 

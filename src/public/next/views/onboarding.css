@@ -87,10 +87,35 @@
   width: calc(var(--guide-dock-w) - 28px);
   max-width: 100%;
   box-sizing: border-box;
+  /* ── THIS PANEL IS DELIBERATELY NOT A SHEET ─────────────────────────────
+     The design pass moves the app's MODAL FLOWS to sheets, and the two
+     wizards took that treatment. This did not, and the refusal is the point:
+     ARCHITECTURE.md (R7) rejects a first-run wizard outright — guidance is
+     coach-marks over the real UI, never a modal that hides the thing it
+     describes, and it "must not block the composer". A sheet is app-modal by
+     construction. Turning this into one would reverse a decision this file's
+     own header spends forty lines defending, to make it match a pattern it
+     was specifically written not to be.
+
+     IT DOES NOT TAKE A MATERIAL EITHER, and that was tried and backed out
+     rather than assumed. A blurred `--mat-menu` plane with the two-line edge
+     is what a pane that FLOATS OVER content gets, and this one floats over
+     nothing: shell.css RESERVES a strip for it (`body.guide-docked .main`) so
+     content reflows out of the way, which is the whole fix this file's header
+     records. Applying the material anyway would be the borrowed device used
+     as decoration — the failure the design record names — and it would also
+     break scripts/test-next-onboarding.js's "no backdrop blur, that is modal
+     chrome" assertion, which is stating the same thing from the other side.
+
+     WHAT IT DOES TAKE is the ELEVATION, which is the part of the vocabulary
+     that applies: `--elev-3` is the raised-pane rung and it replaces
+     `--shadow-lg`, so this panel lifts on the same scale as everything else
+     the pass touched, and `--hairline` replaces `--border-strong` so its
+     boundary is the system's hairline rather than a heavier one-off. */
   background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--elev-3);
   padding: 14px 15px 13px;
 }
 
@@ -132,8 +157,9 @@
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.obp-dismiss:hover { background: var(--surface-hover); color: var(--text); }
-.obp-dismiss:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+/* On the panel's material, so the hover composites onto the plane. */
+.obp-dismiss:hover { background: var(--mat-row-hover); color: var(--text); }
+.obp-dismiss:active { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 /* Reduced motion: travel off, colour step kept. This is the only element in
    this file that moves, so the block is small; it is still written per
    element rather than as a sweep, because the right answer differs by

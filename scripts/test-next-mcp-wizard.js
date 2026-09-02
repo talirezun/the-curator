@@ -984,10 +984,26 @@ section('10. Seams — settings.js, index.html, CSS');
     .map(f => readFileSync(path.join(ROOT, 'src/public/next', f), 'utf8')).join('\n');
   const otherNextCss = stripComments(otherNextCssRaw);
   ok(!/\.mcpw-/.test(otherNextCss), 'no other /next stylesheet defines an .mcpw- rule');
-  // Positive control: the strip must be doing work here, or the assertion
-  // above is passing for the wrong reason on a future edit.
-  ok(/\.mcpw-/.test(otherNextCssRaw) && !/\.mcpw-/.test(otherNextCss),
-    'control: the raw text DOES name .mcpw- (in a comment) and the strip is what removes it — an unstripped scan would false-positive here');
+  /* Positive control: the strip must be doing work here, or the assertion
+     above is passing for the wrong reason on a future edit.
+
+     IT USED TO DEPEND ON ANOTHER FILE'S PROSE. The control asserted that
+     `otherNextCssRaw` really does contain `.mcpw-` — which was true only
+     because views/shared.css happened to carry a comment naming `.mcpw-card`
+     while explaining a shared shadow decision. The design pass rewrote that
+     rule, the sentence went with it, and the CONTROL went red while the
+     thing it controls was perfectly fine. A control that fails when an
+     unrelated file's comment is reworded is measuring the comment.
+
+     It now PLANTS its own probe, which is the same technique the link and
+     mermaid checks in this repo already use: a string that provably contains
+     the pattern in a comment and provably does not after stripping. The
+     scanner is the subject; the corpus is not. */
+  const probe = '/* a comment naming .mcpw-card */\n.some-real-rule { color: red; }';
+  ok(/\.mcpw-/.test(probe) && !/\.mcpw-/.test(stripComments(probe)),
+    'control: the strip removes a .mcpw- name that appears only in a comment — an unstripped scan would false-positive on it');
+  ok(/\.mcpw-/.test(stripComments('.mcpw-card { color: red; }')),
+    'control: …and it does NOT remove a real .mcpw- rule, so the assertion above can still fail');
   ok(/\.cfd-scrim/.test(otherNextCss),
     'control: …and the strip leaves real selectors in those files intact');
   ok(!/mcpw-/.test(settingsCode.replace(/mcp-wizard/g, '')), 'settings.js does not reach into the wizard’s own class namespace');
