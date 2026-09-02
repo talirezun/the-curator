@@ -1415,7 +1415,7 @@ function renderAdminToken(card, aff, busy, connId) {
           'including any other machine you administer this brain from.' +
           ' The new one is shown <strong>once</strong> and never again — have your password manager open before you continue.' +
         '</span>' +
-        '<input type="password" class="sb-revoke-input mono" id="sb-rotate-token-' + escapeHtml(connId || '') + '" ' +
+        '<input type="password" class="sb-revoke-input" id="sb-rotate-token-' + escapeHtml(connId || '') + '" ' +
           'placeholder="sbat_… (the current token)" autocomplete="off" spellcheck="false">' +
         '<p class="sb-admin-hint">Read the current token from your password manager. Rotation needs it — if it is lost, re-run the brain-setup wizard to issue a new one.</p>' +
         '<div class="sb-confirm-actions">' +
