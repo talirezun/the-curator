@@ -178,6 +178,14 @@ import { renderViewHeader } from '../shared/text.js';
 // already the deliberate one (rotation dropped, a 2.6s breath substituted).
 // See renderInAppUpdate() for the full argument.
 import { progressRingHtml } from '../shared/progress-ring.js';
+// The update's phase vocabulary, ring mapping and byte formatting. Shared with
+// `views/update-window.js` — the small window the menu-bar update path opens —
+// so the two surfaces cannot word one operation differently. See that module's
+// header for why it exists at all.
+import {
+  UPDATE_RING_STAGES, UPDATE_PHASE_COPY,
+  updateRingPosition, updateProgressSublabel,
+} from '../shared/update-phases.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -423,45 +431,13 @@ function classifyInstallerUpdate(check) {
 // progress and `POST /api/config/update/apply` finishes the job. This half
 // turns that stream into something a person can read.
 
-/** The five phases the server may report, in order. Duplicated from
- *  `UPDATE_PHASES` in src/routes/config.js rather than imported, for the same
- *  reason `compareSemver` is duplicated at the top of this file: this is
- *  browser ESM served to the client and that is a server route. The suite
- *  asserts the two lists are identical AND in the same order — which is the
- *  only thing that makes duplicating it safe. */
-const UPDATE_PHASE_ORDER = ['resolving', 'downloading', 'verifying', 'staging', 'installing'];
-
-/** The outer ring's segment names. SHORTER than the phase names: a five-
- *  segment ring is 48px across and the full sentence is already the ring's
- *  label, so these only have to be distinguishable from each other. */
-const UPDATE_RING_STAGES = ['Finding', 'Downloading', 'Checking', 'Preparing', 'Installing'];
-
-/**
- * One sentence per phase, in the user's terms rather than the engine's.
- *
- * `headline` is the state; `body` says what is happening to their machine.
- * The two that matter most are `verifying` and `staging`: both are fast and
- * neither reports sub-progress, so their ring segments sit EMPTY while they
- * run and the sentence is the only thing carrying the information. That is
- * deliberate — see updateRingPosition below.
- */
-const UPDATE_PHASE_COPY = {
-  resolving:   { headline: 'Preparing the update',  body: 'Finding the download for the new version.' },
-  // NOT "or sync". `isUpdateInProgress()` is what gates a start during an
-  // update, and it is checked by ingest, compile, Health and Shared Brain —
-  // NOT by sync, whose `guardConcurrent` tests `hasActiveWrites()` only, a
-  // flag the updater never sets. Naming sync here promised a hold the app
-  // does not apply.
-  downloading: { headline: 'Downloading',           body: 'The download keeps going if you switch to another screen. A new ingest won’t start until the update finishes.' },
-  // WHAT IS ACTUALLY CHECKED IS INTEGRITY, NOT APPLE'S BLESSING. The engine
-  // compares a sha256 against the digest GitHub publishes for the asset, plus
-  // the byte length, the staged bundle's version, and `codesign --verify`.
-  // Authenticity rests on that digest and on TLS to GitHub — nothing here can
-  // say Apple vouched for the build, so nothing here says so.
-  verifying:   { headline: 'Checking the download', body: 'Confirming the file arrived complete and unaltered, and that the app inside it is intact. Nothing has been replaced yet.' },
-  staging:     { headline: 'Preparing to install',  body: 'Unpacking the new version beside the one you are running. Nothing has been replaced yet.' },
-  installing:  { headline: 'Installing',            body: 'Putting the new version in place. The Curator restarts on its own, and this page reloads itself.' },
-};
+/** The five phases, the ring's segment names, the per-phase sentences, the
+ *  ring-position mapping and the byte formatting all MOVED to
+ *  `shared/update-phases.js` in v3.41.0, and are imported at the top of this
+ *  file. They were moved rather than copied because the menu-bar updater
+ *  window now draws the same ring from the same job record: a second copy of
+ *  this vocabulary is the two-surfaces drift v3.36.0 is a whole release about.
+ *  `updatesAreBusy` below stays here — it reads this view's own state. */
 
 /**
  * Is the Software-update block busy enough that "Check for updates" must be
@@ -486,84 +462,8 @@ function updatesAreBusy(s, inApp) {
   return gitBusy || appBusy;
 }
 
-/**
- * Map a job snapshot onto the progress ring's `{stage, stageProgress}`.
- *
- * ── THE HONESTY RULE, AND WHY AN EMPTY SEGMENT IS NOT A BUG ──────────────
- *
- * `stageProgress` is derived from the DOWNLOAD PERCENTAGE and from nothing
- * else, and only for the `downloading` phase. Every other phase returns 0, so
- * its segment stays visibly empty for as long as it runs.
- *
- * That is the point. `resolving`, `verifying` and `staging` report no
- * sub-progress because they genuinely have none — each is a single HTTP call,
- * a single hash, a single move. A bar creeping across them would be inventing
- * a duration nobody measured. progress-ring.js's own header states the same
- * rule from the other side ("a segment fills only when that stage genuinely
- * advances… that is CORRECT, not a bug to paper over"), and the orbit inside
- * the ring carries the liveness while a segment is honestly empty.
- *
- * A `downloading` phase with an UNKNOWN total (no `content-length`) also
- * returns 0 rather than a guess: `percent` is null there, and null is a
- * different fact from zero.
- */
-function updateRingPosition(job) {
-  const j = job || {};
-  const idx = UPDATE_PHASE_ORDER.indexOf(j.phase);
-  const stage = idx >= 0 ? idx : 0;
-  const pct = typeof j.percent === 'number' && isFinite(j.percent) ? j.percent : null;
-  const stageProgress = (j.phase === 'downloading' && pct !== null)
-    ? Math.max(0, Math.min(1, pct / 100))
-    : 0;
-  return { stage, stageProgress };
-}
 
-/**
- * Bytes → "136.4 MB". Binary units, one decimal, because that is what macOS
- * and every browser download shelf show — a user comparing the two should not
- * have to reconcile them.
- *
- * Returns null for anything that is not a real byte count, so a caller can
- * tell "no size reported" from "zero bytes" and say different things.
- */
-function formatBytes(n) {
-  if (typeof n !== 'number' || !isFinite(n) || n < 0) return null;
-  if (n < 1024) return n + ' B';
-  const units = ['KB', 'MB', 'GB'];
-  let v = n / 1024;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
-  // One decimal below 100, whole numbers above: "58.2 MB of 137 MB" reads as a
-  // download in progress, while "58.16 MB" reads as a measurement nobody asked
-  // for and "58 MB" stops moving for a second at a time on a slow connection —
-  // which is the thing a progress line exists to disprove.
-  return (v < 100 ? v.toFixed(1) : String(Math.round(v))) + ' ' + units[u];
-}
 
-/**
- * The monospace second line under the ring — the numbers.
- *
- * THREE OUTCOMES, NEVER COLLAPSED (this repo's rule that a fact and its
- * absence never share a presentation):
- *
- *   both counts known   "58.2 MB of 136.4 MB · 43%"
- *   total unknown       "58.2 MB downloaded · total size unknown"
- *   nothing reported    null — the caller renders no line at all, rather than
- *                       a reassuring "0 MB of 0 MB"
- *
- * The percentage appears only alongside the two numbers it is derived from, so
- * the line cannot contradict itself.
- */
-function updateProgressSublabel(job) {
-  const j = job || {};
-  if (j.phase !== 'downloading') return null;
-  const got = formatBytes(j.receivedBytes);
-  if (got === null) return null;
-  const total = formatBytes(j.totalBytes);
-  if (total === null) return got + ' downloaded · total size unknown';
-  const pct = typeof j.percent === 'number' && isFinite(j.percent) ? Math.round(j.percent) : null;
-  return got + ' of ' + total + (pct === null ? '' : ' · ' + pct + '%');
-}
 
 // ── Model lifecycle: the decision, as pure functions ─────────────────────
 // DOM-free and fetch-free for the same reason classifyUpdate() above is —

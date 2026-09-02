@@ -171,14 +171,21 @@ ok(desktopHost.getDesktopHook(configRoute.UPDATE_STAGE_HOOK) === null,
 // copied rather than imported — the same call `compareSemver` already makes in
 // that file. Copying is only safe if drift is impossible, which is this.
 {
-  const m = workSettingsSrc.match(/const UPDATE_PHASE_ORDER = \[([^\]]*)\]/);
-  ok(!!m, 'the client carries its own copy of the phase list');
-  const clientPhases = m ? m[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean) : [];
-  eq(clientPhases.join('|'), configRoute.UPDATE_PHASES.join('|'),
+  const phasesMod = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+  ok(Array.isArray(phasesMod.UPDATE_PHASE_ORDER), 'the client carries its own copy of the phase list');
+  eq(phasesMod.UPDATE_PHASE_ORDER.join('|'), configRoute.UPDATE_PHASES.join('|'),
     'and it is IDENTICAL to the server list, in the same order (order is load-bearing — it is the ring\'s segment order)');
-  const stages = (workSettingsSrc.match(/const UPDATE_RING_STAGES = \[([^\]]*)\]/) || [])[1] || '';
-  eq(stages.split(',').filter(s => s.trim()).length, configRoute.UPDATE_PHASES.length,
+  eq(phasesMod.UPDATE_RING_STAGES.length, configRoute.UPDATE_PHASES.length,
     'the ring has exactly one segment per phase — a segment with no phase could never fill');
+  // v3.41.0: the copy moved OUT of settings.js so the updater window could
+  // share it. Asserted here as well as in test-update-window.js, because this
+  // is the suite that owns the client half of the update and a settings.js
+  // that quietly grew a second private copy would satisfy every assertion
+  // above while drifting from the window.
+  ok(/from '\.\.\/shared\/update-phases\.js'/.test(workSettingsSrc),
+    'settings.js IMPORTS that shared module rather than carrying its own copy of the phase vocabulary');
+  ok(!/const UPDATE_PHASE_COPY\s*=/.test(workSettingsSrc),
+    'and no longer defines UPDATE_PHASE_COPY itself — one table, two surfaces');
 }
 
 // ── THE FAILURE MAPPER IS TOTAL, AND THE ENGINE OWNS ITS OWN COPY ─────────
@@ -721,13 +728,14 @@ function extractLocalFn(src, name) {
   const asyncAt = src.slice(Math.max(0, kwAt - 6), kwAt) === 'async ' ? kwAt - 6 : kwAt;
   return braceSlice(src, asyncAt);
 }
-const clientPure = new Function(`
-  ${(workSettingsSrc.match(/const UPDATE_PHASE_ORDER = \[[^\]]*\];/) || [''])[0]}
-  ${(workSettingsSrc.match(/const UPDATE_PHASE_COPY = \{[\s\S]*?\n\};/) || [''])[0]}
-  ${extractLocalFn(workSettingsSrc, 'updateRingPosition')}
-  ${extractLocalFn(workSettingsSrc, 'formatBytes')}
-  ${extractLocalFn(workSettingsSrc, 'updateProgressSublabel')}
-  return { updateRingPosition, formatBytes, updateProgressSublabel, UPDATE_PHASE_COPY, UPDATE_PHASE_ORDER };`)();
+// IMPORTED RATHER THAN EXTRACTED, since v3.41.0. These five lived inside
+// settings.js and were reached with regexes; they now live in
+// `src/public/next/shared/update-phases.js`, which settings.js imports and the
+// menu-bar updater window imports too — one vocabulary, two surfaces. Importing
+// the module is strictly better than extracting it: a regex that stops matching
+// splices an EMPTY STRING into the sandbox and fails naming the wrong thing,
+// which is precisely what a rename here used to do.
+const clientPure = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
 
 // ── THE HONESTY RULE ───────────────────────────────────────────────────────
 // A phase with no sub-progress must produce an EMPTY segment. This is the
@@ -892,23 +900,25 @@ section('§13  THE CALL SITE, not just the renderers');
 // is driven here, with the real progress-ring component.
 
 const { progressRingHtml } = await import(path.join(ROOT, 'src/public/next/shared/progress-ring.js'));
+// The three phase-vocabulary names and the two number helpers are INJECTED
+// from the real shared module (v3.41.0) rather than spliced out of settings.js
+// as source — the module is what settings.js imports at runtime, so this is the
+// same code the browser runs rather than a copy of its text.
 const mkStatus = (state, inAppUpdate, updaterAttached, busy = false) =>
-  new Function('escapeHtml', 'state', 'crossWriteBusy', 'inAppUpdate', 'updaterAttached', 'progressRingHtml', `
-    ${(workSettingsSrc.match(/const UPDATE_PHASE_ORDER = \[[^\]]*\];/) || [''])[0]}
-    ${(workSettingsSrc.match(/const UPDATE_RING_STAGES = \[[^\]]*\];/) || [''])[0]}
-    ${(workSettingsSrc.match(/const UPDATE_PHASE_COPY = \{[\s\S]*?\n\};/) || [''])[0]}
+  new Function('escapeHtml', 'state', 'crossWriteBusy', 'inAppUpdate', 'updaterAttached', 'progressRingHtml',
+    'UPDATE_PHASE_ORDER', 'UPDATE_RING_STAGES', 'UPDATE_PHASE_COPY',
+    'updateRingPosition', 'formatBytes', 'updateProgressSublabel', `
     ${extractLocalFn(workSettingsSrc, 'compareSemver')}
     ${extractLocalFn(workSettingsSrc, 'updateStyleOf')}
     ${extractLocalFn(workSettingsSrc, 'classifyInstallerUpdate')}
     ${extractLocalFn(workSettingsSrc, 'classifyUpdate')}
     ${extractLocalFn(workSettingsSrc, 'box')}
-    ${extractLocalFn(workSettingsSrc, 'updateRingPosition')}
-    ${extractLocalFn(workSettingsSrc, 'formatBytes')}
-    ${extractLocalFn(workSettingsSrc, 'updateProgressSublabel')}
     ${extractLocalFn(workSettingsSrc, 'renderInAppUpdate')}
     ${extractLocalFn(workSettingsSrc, 'renderInstallerUpdateStatus')}
     ${extractLocalFn(workSettingsSrc, 'renderUpdateStatus')}
-    return renderUpdateStatus;`)(escapeHtml, state, () => busy, inAppUpdate, updaterAttached, progressRingHtml);
+    return renderUpdateStatus;`)(escapeHtml, state, () => busy, inAppUpdate, updaterAttached, progressRingHtml,
+    clientPure.UPDATE_PHASE_ORDER, clientPure.UPDATE_RING_STAGES, clientPure.UPDATE_PHASE_COPY,
+    clientPure.updateRingPosition, clientPure.formatBytes, clientPure.updateProgressSublabel);
 
 const AVAILABLE = {
   current: '3.31.0', latest: '3.32.0', updateAvailable: true, updateStyle: 'download-installer',

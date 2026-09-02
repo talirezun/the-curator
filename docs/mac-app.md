@@ -215,7 +215,10 @@ You click **Check for updates** in the **Settings** view (reached from the left 
 ## Updating the packaged app
 
 **The app updates itself.** You do not go back to the Releases page — that is a
-first install only.
+first install only. There are two ways in and they run the same update:
+**Settings → General → Check for updates**, and **Check for Updates…** in the
+ menu, which since v3.41.0 opens a small **Software Update** window showing
+the same progress ([§ Updating from the menu bar](#updating-from-the-menu-bar)).
 
 A checkout replaces its own files (`git fetch` + `git reset --hard` + `npm install`
 + a restart). **A packaged app cannot**, and does not pretend to: it is read-only,
@@ -263,6 +266,35 @@ flowchart TD
    swap. It takes a few seconds.
 7. The app restarts into the new version and the page reloads itself. **There is
    no Gatekeeper warning to click through** — see below.
+
+### Updating from the menu bar
+
+There are two doors and they do the same thing. **Check for Updates…** in the
+ menu answers in a dialog; if you choose **Download and Install**, a small
+**Software Update** window opens and shows the same five steps, the same byte
+counts and the same sentences the Settings panel shows — because it is reading
+the same job record from the same place. The Dock icon carries a progress bar
+while the download runs, and macOS shows one notification at the moment the app
+restarts.
+
+A few things about that window, all of them deliberate:
+
+* **It has no buttons.** It shows what is happening; it does not start, finish or
+  cancel anything. The update itself is driven by the app, exactly as it is from
+  Settings.
+* **Closing it does not cancel the update** — there is no cancel anywhere, by
+  design (the download is a job, and the display is a view of it). Close it and
+  the update carries on; the menu item's own label keeps the count.
+* **It is not the only place to look.** Open Settings ▸ General mid-download and
+  the full progress ring is already there, because both surfaces read the same
+  job. You can watch it in either, or neither.
+* **If something fails**, the window closes and a dialog says what happened and
+  what was *not* changed — the same sentence the Settings panel would show.
+
+Before v3.41.0 this path showed nothing at all between the click and the restart.
+The menu item's label did move, but a menu you have to pull down to read is not a
+progress display, which is what the maintainer reported after the first real
+in-app update.
 
 **Starting a new ingest while the update runs is refused** with a clear message
 rather than being allowed to race the restart — both the single ingest and the

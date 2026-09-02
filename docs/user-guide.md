@@ -169,7 +169,7 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 | Platforms | macOS only | macOS, Windows, Linux |
 | Node.js | Bundled — nothing to install | You install it |
 | Where the UI appears | Its own window, with its own title bar | A tab at `http://localhost:3333` |
-| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu | Applied in place from **Settings**, or `git pull` |
+| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu — which since v3.41.0 opens its own small progress window | Applied in place from **Settings**, or `git pull` |
 | Your data lives in | `~/Library/Application Support/The Curator/` | Your install folder (default `~/the-curator/`) |
 | Status today | **Preview.** No Apple identity yet, so macOS asks you to allow it once — on the **first** install only | Mature, fully supported, and **not** being retired |
 
@@ -2801,12 +2801,30 @@ keeps working. The swap itself is two renames of neighbouring folders on the sam
 so "half-replaced" is not a state that can exist — either the old app is complete or
 the new one is.
 
+**Updating from the menu bar instead.** **The Curator → Check for Updates…** does the
+same update, and since **v3.41.0** it shows the same progress. Choose **Download and
+Install** in the dialog and a small **Software Update** window opens with the same
+five-step ring, the same byte counts and the same sentences as the panel above — it is
+reading the same job. The Dock icon carries a progress bar while the download runs, and
+macOS shows one notification when the app restarts.
+
+That window is a display and nothing else: it has no buttons, and **closing it does not
+cancel the update** (there is no cancel anywhere — see above). If you would rather watch
+it in the app, open Settings ▸ General mid-download and the full ring is already there,
+because both screens read the same job. If something fails, the window closes and a
+dialog gives the same named reason the panel would.
+
+Before v3.41.0, this route showed nothing between the click and the restart. The menu
+item's own label did move — it still does, and still says *"Downloading Update… 43%"* —
+but a menu you have to pull down to read is not a progress display.
+
 > **What has not been proven, stated rather than implied.** No automated run has ever
 > replaced a real installed application: the test suite swaps a real signed *fixture*
 > bundle in a temporary folder, and it genuinely replaces it, but the full download from
 > GitHub against a live release has not been exercised end to end, and **these screens
-> have never been rendered in a browser.** Treat your first update as the first real
-> test of it.
+> have never been rendered in a browser** — including the new Software Update window,
+> whose every decision is executed by the test suite while nothing has yet drawn it.
+> Treat your first update as the first real test of it.
 
 > **If you are on the previous interface at `/old`,** there is no in-app update path
 > there — it still posts to the git updater, which the packaged app refuses. Use the

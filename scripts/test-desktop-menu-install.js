@@ -639,6 +639,99 @@ section('§9 the menu is rebuilt ~100 times, not ~550');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§9b onProgress — the RAW feed, deliberately not throttled like the label');
+// ═══════════════════════════════════════════════════════════════════════════
+// v3.41.0's updater window consumes this. It is a second sink on the same
+// emission point with a DIFFERENT policy on purpose: the label collapses to a
+// whole percent because it rebuilds an application menu, while the sink is raw
+// because its consumer decides what "changed" means — the window throttles the
+// Dock bar by VALUE and fires a one-shot notification on a PHASE TRANSITION, a
+// transition a label-shaped throttle would hide whenever two neighbouring
+// phases happened to render the same string.
+//
+// The full behaviour of that consumer is in scripts/test-update-window.js.
+// What is asserted HERE is the contract this module owes it.
+{
+  const frames = [];
+  for (let i = 0; i < 24; i++) {
+    // Twelve distinct percents, each sent twice.
+    const pct = Math.floor(i / 2) * 8;
+    frames.push({ type: 'progress', data: { phase: 'downloading', receivedBytes: pct * 10, totalBytes: 1000, percent: pct } });
+  }
+  frames.push({ type: 'staged', data: { type: 'staged', version: '3.41.0' } });
+
+  const rec = recorder([
+    ['/api/config/update', { method: 'POST', fn: () => sseResponse(frames, { chunkSize: 64 }) }],
+    ['/api/config/update/apply', { method: 'POST', fn: () => jsonResponse(200, { ok: true }) }],
+  ]);
+  const labels = [];
+  const records = [];
+  const out = await client.runInstall('http://x', {
+    onLabel: (l) => labels.push(l),
+    onProgress: (j) => records.push(j),
+  }, { fetchImpl: rec.impl });
+
+  eq(out.ok, true, 'the run succeeds with both sinks attached');
+  eq(records.length, frames.length - 1 + 2,
+     `the SINK saw every record — ${frames.length - 1} from the stream plus the resolving and installing transitions`);
+  ok(labels.length < records.length,
+     `and the LABEL saw fewer (${labels.length} of ${records.length}) — the repeated percents collapse for the menu and not for the sink`);
+  eq(records[0].phase, 'resolving', 'the first record is the resolving transition, pushed before the POST');
+  eq(records[records.length - 1].phase, 'installing', 'and the last is the installing transition, pushed before the apply');
+  eq(records[records.length - 1].version, '3.41.0',
+     'THE VERSION RIDES ON THAT LAST RECORD — learnt from the stream\'s own `staged` event, so a consumer does not have to keep a second copy of it');
+  // The label must be BYTE-IDENTICAL with and without the sink attached. The
+  // installing record now carries an extra field, and `updateMenuLabel` must
+  // still ignore it.
+  const rec2 = recorder([
+    ['/api/config/update', { method: 'POST', fn: () => sseResponse(frames, { chunkSize: 64 }) }],
+    ['/api/config/update/apply', { method: 'POST', fn: () => jsonResponse(200, { ok: true }) }],
+  ]);
+  const labelsAlone = [];
+  await client.runInstall('http://x', { onLabel: (l) => labelsAlone.push(l) }, { fetchImpl: rec2.impl });
+  eq(labelsAlone, labels,
+     'the menu label sequence is IDENTICAL with and without a progress sink attached — adding this changed nothing the menu shows');
+  eq(labels[labels.length - 1], 'Installing Update…',
+     'CONTROL: including the last one, which is composed from the record that gained the version field');
+}
+{
+  // A THROWING SINK CANNOT BREAK AN UPDATE. Same rule the module already
+  // applies to `onLabel` ("the menu is not load-bearing"), and the update
+  // window is a strictly more cosmetic surface than the menu.
+  const rec = recorder([
+    ['/api/config/update', { method: 'POST', fn: () => sseResponse([
+      { type: 'progress', data: { phase: 'downloading', receivedBytes: 1, totalBytes: 2, percent: 50 } },
+      { type: 'staged', data: { type: 'staged', version: '3.41.0' } },
+    ]) }],
+    ['/api/config/update/apply', { method: 'POST', fn: () => jsonResponse(200, { ok: true }) }],
+  ]);
+  const labels = [];
+  const out = await client.runInstall('http://x', {
+    onProgress: () => { throw new Error('the window exploded'); },
+    onLabel: (l) => labels.push(l),
+  }, { fetchImpl: rec.impl });
+  eq(out.ok, true, 'a sink that throws on every record does not stop the install');
+  ok(labels.length > 0, 'and does not stop the MENU LABEL either — the two sinks are independent');
+  eq(rec.calls.map((c) => new URL(c.url).pathname), ['/api/config/update', '/api/config/update/apply'],
+     'the same two requests, in the same order, were still issued');
+}
+{
+  // And a caller that attaches ONLY the sink still gets it. The emission point
+  // was restructured to serve two sinks; a `if (!onLabel) return` left in the
+  // wrong place would silently drop the new one.
+  const rec = recorder([
+    ['/api/config/update', { method: 'POST', fn: () => sseResponse([
+      { type: 'progress', data: { phase: 'downloading', receivedBytes: 1, totalBytes: 2, percent: 50 } },
+      { type: 'staged', data: { type: 'staged', version: '3.41.0' } },
+    ]) }],
+    ['/api/config/update/apply', { method: 'POST', fn: () => jsonResponse(200, { ok: true }) }],
+  ]);
+  const records = [];
+  await client.runInstall('http://x', { onProgress: (j) => records.push(j) }, { fetchImpl: rec.impl });
+  eq(records.length, 3, 'with NO onLabel attached the sink still receives all three records');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§10 source discipline — no comparator, no path, no token');
 // ═══════════════════════════════════════════════════════════════════════════
 {
