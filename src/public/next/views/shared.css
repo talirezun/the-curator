@@ -10,6 +10,28 @@
    four copies have to move together or the app has two sizes of small button
    depending on which view you are looking at. Its BOX grew; the type and the
    glyphs inside it did not. */
+/* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
+   Exactly five things, and every one is a LITERAL rather than a fact: the
+   repository URL, the truncated fellow id, the admin and invite tokens shown
+   once for copying, the two revoke inputs, and the confirmation string the
+   user has to retype character for character. On that last one the code face
+   is doing real work — it is the control where a slip is SUPPOSED to be
+   caught.
+
+   Everything else lost it. Timestamps, page counts, percentages, contributor
+   totals, domain names and connection states are the app reporting facts, and
+   a card full of facts set in IBM Plex Mono reads as a log rather than as a
+   status panel. The figures keep the one property the code face was buying —
+   tabular digits, so a count that changes does not reflow its own sentence. */
+.sb-num { font-variant-numeric: var(--numeric-tabular); }
+/* A domain or connection name quoted inside a sentence. Emphasised by colour
+   and weight rather than a change of face mid-line — same decision as
+   views/ingest.css's `.ing-name` and views/memory.css's `.mem-name`. */
+.sb-name { color: var(--text); font-weight: var(--weight-medium); }
+.sb-outcome-counts,
+.sb-outcome-line-detail,
+.sb-member-meta { font-variant-numeric: var(--numeric-tabular); }
+
 .btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 .settings-hint-text {
@@ -468,7 +490,10 @@ a.sb-card-repo:hover { color: var(--text-link); }
   user-select: none;
   -webkit-user-select: none;
 }
-.sb-member-row:hover { background: var(--surface-hover); }
+/* This row sits inside a card on the content plane, so an opaque surface is
+   correct here — but the overlay composites identically on an opaque bottom
+   and keeps every row family in the app on one idiom. */
+.sb-member-row:hover { background: var(--mat-row-hover); }
 .sb-member-row.selected { background: var(--danger-tint); }
 .sb-member-row input { margin-top: 3px; flex: none; accent-color: var(--danger); }
 .sb-member-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -665,10 +690,12 @@ a.sb-card-repo:hover { color: var(--text-link); }
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.sbw-close:hover { background: var(--surface-hover); color: var(--text); }
+/* The wizard's close button sits on the SHEET material, where an opaque
+   fill would stop the blur behind it. Alpha overlay, as everywhere else. */
+.sbw-close:hover { background: var(--mat-row-hover); color: var(--text); }
 /* `:not([disabled])` — this button IS disabled mid-save (see the note below),
    and a control refusing a click must not acknowledge one. */
-.sbw-close:active:not([disabled]) { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+.sbw-close:active:not([disabled]) { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 /* M3 fix (shared-brain-wizard.js setSaveChromeDisabled): disabled while a
    save is in flight, so it visually matches the Save/Back buttons rather
    than looking clickable while its click handler silently no-ops. */
@@ -785,7 +812,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
    carries it); `margin-top` stays, because a 16px box top-aligned against a
    --text-sm line needs the optical nudge onto the cap height, and the
    component deliberately does not guess a line-height it cannot see. */
-.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: default; user-select: none; -webkit-user-select: none; }
+/* ── THE LABEL IS THE CHECKBOX'S ONLY POSSIBLE HIT BOX ────────────────────
+   `.cur-check` is 13x13 and an <input>, on which Chrome renders no ::before —
+   so the "keep the glyph, grow the target" technique cannot reach it and
+   shared/checkbox.css records that. The wrapping <label> is the target, and
+   `--hit-min` of height is what makes a 13px box hittable at macOS's default
+   control size. `align-items: flex-start` is kept: these labels wrap to
+   several lines of terms, and the tick belongs beside the FIRST line. */
+.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; min-height: var(--hit-min); font-size: var(--text-sm); color: var(--text); cursor: default; user-select: none; -webkit-user-select: none; }
 .sbw-checkbox-label .cur-check { margin-top: 2px; }
 
 /* ── Status / validation line ─────────────────────────────────────────── */
@@ -907,7 +941,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sbw-domain-checkboxes .sbw-checkbox-label { padding: 4px 4px; border-radius: 5px; }
-.sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--surface-hover); }
+.sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--mat-row-hover); }
 
 /* ── Step 5: review + consent ────────────────────────────────────────── */
 

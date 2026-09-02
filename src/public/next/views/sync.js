@@ -318,7 +318,7 @@ function renderSidebar(token) {
     ? state.domains.map((d) => (
         '<div class="sync-domain-row">' +
           '<span class="sync-domain-dot"></span>' +
-          '<span class="sync-domain-name mono">' + escapeHtml(d) + '</span>' +
+          '<span class="sync-domain-name">' + escapeHtml(d) + '</span>' +
         '</div>'
       )).join('')
     : '<div class="sidebar-note">No domains to back up yet.</div>';
@@ -520,7 +520,7 @@ function renderSetupDecision(f) {
         'repository\u2019s version. Pulling replaces them, and the version currently on this machine is not ' +
         'recoverable afterwards.</p>' +
         (d.sample && d.sample.length
-          ? '<ul class="sync-decision-files mono">' +
+          ? '<ul class="sync-decision-files">' +
               d.sample.map((x) => '<li>' + escapeHtml(x) + '</li>').join('') +
               (n > d.sample.length ? '<li class="sync-decision-more">\u2026and ' + (n - d.sample.length) + ' more</li>' : '') +
             '</ul>'
@@ -583,7 +583,7 @@ function renderConfigured(s) {
       '<div class="sync-status-top">' +
         '<span class="status-pill status-pill-ok"><span class="status-pill-dot"></span>Connected</span>' +
         '<code class="mono sync-repo">' + escapeHtml(s.repoUrl || '') + '</code>' +
-        '<span class="mono sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
+        '<span class="sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
       '</div>' +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
       // THE ALREADY-SPLIT INSTALL. setup()'s adoption closes the split for a
@@ -625,7 +625,7 @@ function renderConfigured(s) {
         '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
-        '<span class="sync-pending-note mono">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
+        '<span class="sync-pending-note">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
       '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
       (state.actionError ? '<div class="settings-inline-error" style="margin-top:8px">' + escapeHtml(state.actionError) + '</div>' : '') +
@@ -647,7 +647,7 @@ function renderSharedBrainRow() {
     '<div class="sync-sb-row">' +
       icon('users', 16) +
       '<span class="sync-sb-text">Shared Brain pushes are managed in <strong>Shared Brain</strong>. This tab only reports them.</span>' +
-      '<span class="mono sync-sb-meta">' + label + '</span>' +
+      '<span class="sync-sb-meta">' + label + '</span>' +
       '<button type="button" class="btn btn-ghost btn-xs" id="btn-sync-open-shared">Open</button>' +
     '</div>'
   );

@@ -46,8 +46,8 @@
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.mem-refresh:hover { background: var(--surface-hover); color: var(--text); }
-.mem-refresh:active { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
+.mem-refresh:hover { background: var(--mat-row-hover); color: var(--text); }
+.mem-refresh:active { background: var(--mat-row-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .mem-refresh:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
 .mem-row-list { display: flex; flex-direction: column; gap: 2px; }
@@ -69,7 +69,14 @@
   -webkit-user-select: none;
   transition: background var(--t-state), transform var(--t-press);
 }
-.mem-row:hover { background: var(--surface-hover); }
+/* Rows on the sidebar MATERIAL take the alpha overlay, never an opaque
+   surface — an opaque fill stops the blur for the width of the row. Same
+   change as views/chat.css and views/domains.css.
+
+   `.mem-row.active` below is NOT touched: it is accent-tinted, which is
+   STATE rather than the plane, and the whole point of that exception is that
+   it does not read as a lit row. */
+.mem-row:hover { background: var(--mat-row-hover); }
 .mem-row.active { background: var(--accent-tint); }
 /* Press, SPLIT on `.active` — and this row is why the split exists at all.
    Unlike every other row family in the tree, a selected `.mem-row` is
@@ -79,7 +86,7 @@
    neutral grey for as long as the pointer is held. Pressing the row you are
    already reading would read as leaving it. Selected therefore deepens its
    OWN tint instead. */
-.mem-row:not(.active):active { background: var(--surface-active); }
+.mem-row:not(.active):active { background: var(--mat-row-active); }
 .mem-row.active:active { background: var(--accent-tint-strong); }
 .mem-row:active { transform: translateX(var(--press-shift)); }
 .mem-row:focus-visible { outline: none; box-shadow: var(--ring-focus); }
@@ -129,6 +136,8 @@
    work made exactly this distinction, keeping the second rung for the one
    sentence a reader has and reserving the third for LABELS. Hierarchy is
    still carried by SIZE: this stays at --text-2xs under a --text-sm name. */
+/* Ages and entry counts, one per sidebar row. Tabular digits so `11 min
+   ago` and `20 hr ago` occupy the same width down the column. */
 .mem-row-meta {
   font-size: var(--text-2xs);
   color: var(--text-2);
@@ -187,13 +196,33 @@
 }
 .mem-project-name { font: var(--type-h3); color: var(--text); }
 
+/* ── THE SAVE-KIND PILL ───────────────────────────────────────────────────
+   v3.39.0's verdicts, and NOTHING about which verdict gets which pill moves
+   here: `incomplete` stays the attention-red one because it means content was
+   lost, `summary shortened` stays the quiet one because the handoff was
+   written in full. That split is the whole finding of that release and this
+   is a paint change.
+
+   What changes is the FACE. These pills say `incomplete` and `summary
+   shortened` — English words about the user's own data, not tokens — and they
+   were set in `--type-mono`, which on the one surface whose job is telling
+   the truth about state made a verdict look like a log line. The type is the
+   text face at the same size; the colour pairs below are untouched and are
+   still the measured ones. */
+/* A scope or machine name quoted inside a sentence. Emphasised by colour and
+   weight rather than by a change of face mid-line — see views/ingest.css's
+   `.ing-name` for the same decision and the same reasoning. The two things in
+   this view that ARE still monospace, `state/` and `my-curator`, are literals
+   a reader retypes; a scope name is data the app is reporting. */
+.mem-name { color: var(--text); font-weight: var(--weight-medium); }
+
 .mem-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-full);
-  font: var(--type-mono);
-  font-size: var(--text-2xs);
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-sans);
+  letter-spacing: var(--track-body);
 }
 /* THE LABELS ARE --text, AND THAT IS A MEASUREMENT, NOT A PREFERENCE.
    shared/text.js's FINDING 2: --attention-text ON --attention-tint measures
@@ -410,7 +439,7 @@
      --canvas. See the note on .mem-row-meta for why not --text-3. */
   color: var(--text-2);
 }
-.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); min-width: 0; overflow-wrap: anywhere; font-variant-numeric: var(--numeric-tabular); }
 /* A truncation disclosure sits beside the new "not addressable" note and
    states the same class of fact, so it is held to the same legibility. */
 .mem-ctl-note { font-size: var(--text-2xs); color: var(--text-2); }
@@ -628,7 +657,7 @@
 /* --text-2: 8.34 dark / 7.26 light on --surface. Same reasoning as
    .mem-row-meta — the entry count and the age are information, and
    --text-3 does not clear 4.5:1 on any surface in this file. */
-.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); }
+.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 .mem-fold-body { padding: 2px 16px 15px; }
 
 /* `.mem-quiet` IS GONE, and its removal is the point of this pass. It carried
@@ -662,13 +691,15 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 .mem-j-row:last-child { border-bottom: none; }
-.mem-j-when { flex: none; width: 108px; font-size: var(--text-2xs); color: var(--text-2); padding-top: 1px; }
+/* The journal's timestamp column. Fixed width AND tabular: the width is
+   what makes it a column, the figures are what make it line up inside one. */
+.mem-j-when { flex: none; width: 108px; font-size: var(--text-2xs); color: var(--text-2); padding-top: 1px; font-variant-numeric: var(--numeric-tabular); }
 .mem-j-body { flex: 1; min-width: 0; }
 .mem-j-headline { font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-snug); }
 /* When a save happened, and which harness/model made it: the same
    provenance the card states as .mem-doc-stamp / .mem-doc-who, so it is
    held to the same 4.5:1 floor rather than being quietly a third of it. */
-.mem-j-meta { margin-top: 2px; font-size: var(--text-2xs); color: var(--text-2); }
+.mem-j-meta { margin-top: 2px; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 /* The store produces THREE outcomes here — real loss, a deliberate replace,
    and ordinary normalisation (a value filled in and disclosed) — and the
    commonest by far is the third. `renderJournal` says which one happened in
