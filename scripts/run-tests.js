@@ -215,6 +215,7 @@ const LIVE_CI = [
   'test-chat-intent-live.js',     // v3.0.7 Tier 1: real Gemini/Anthropic — decision/analytical answers are focused, no dump
   'test-chat-style-live.js',      // Tier 2: real Gemini/Anthropic — concise < comprehensive, no dump, garbage→balanced
   'test-chat-model-live.js',      // per-chat provider override — routing + both providers answer
+  'test-openrouter-live.js',      // the third provider end-to-end: text, JSON via a real ingest, SSE streaming, refusal; cheapest measured model, ~$0.0002/run
   // v3.0.6 Phase 5 (plan 5.6) — the GITHUB_TEST_* workflow secrets are no
   // longer dead config; all three self-skip or self-degrade without them:
   'test-sharedbrain-github-live.js', // self-skips without GITHUB_TEST_*; unique slugs per run; exhaustive cleanup
@@ -443,7 +444,7 @@ if (!process.env.RUN_TESTS_LIVE_ONLY) {
 
 // Env vars that grant API/network access. Stripped from offline children.
 const CREDENTIAL_ENV = [
-  'GEMINI_API_KEY', 'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
   'GITHUB_TEST_REPO', 'GITHUB_TEST_PAT',
 ];
 
