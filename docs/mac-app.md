@@ -90,9 +90,10 @@ itself — you should not need the Releases page again. See
 
 The app can put a small icon in the macOS menu bar that answers one question without you
 opening anything: **has my agent actually saved, and how long ago?** Click it and you get the
-last save, a **save pulse** — a small drawn strip of the last seven days — up to five recent
-work-streams newest first under their own section headers, each carrying a coloured **recency
-dot**, and *Open Agent Memory · Open The Curator · Settings · Quit*.
+last save and which tool and model wrote it, a **save pulse** — a small drawn strip of the last
+seven days — up to five recent work-streams newest first under their own section headers, each
+carrying a **recency mark** and a four-item **submenu**, and *Open Agent Memory · Open The
+Curator · Settings · Quit*.
 
 **It is off by default, and that is not caution.** A fresh install has no agent memory, so an
 on-by-default icon's only possible content is *"No agent memory yet"* — the worst first
@@ -116,13 +117,24 @@ what makes an icon vanish behind the notch on a narrow screen. **Hovering** the 
 the headline plus the standing brief's age, without a click.
 
 **The menu draws its pictures in colour.** The save pulse is a still image redrawn each time
-you open the menu — **14 marks, one per twelve hours**, across the last seven days — and every
-row carries a small recency dot beside it. A menu item can carry an image; what it cannot carry
-is a *live* view, and a menu is frozen by macOS once it is open, so a ticking trace is not
-possible and was never attempted. How to read the strip, including why a mark for *"nothing
-happened"* and a mark for *"this store did not exist yet"* are different heights, is in
-[user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse); the dots are in
+you open the menu — **14 twelve-hour blocks across the last seven days, drawn as violet bars on
+a baseline**, with the baseline dotted where the store did not exist yet, one tick per day below
+it, and an amber cap on any block in which a different agent tool took over. Every row carries a
+**draining-clock** recency mark beside it: a full disc for *right now*, then three quarters, a
+half, a quarter, and a small dot for *older than a week*. A menu item can carry an image; what it
+cannot carry is a *live* view, and a menu is frozen by macOS once it is open, so a ticking trace
+is not possible and was never attempted. How to read the strip is in
+[user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse); the marks are in
 [§ The recency dot](user-guide.md#the-recency-dot).
+
+**Each row has a submenu**, because a menu cannot open a *work-stream* — clicking a row lands on
+the project, and the work-stream picker inside the app has no address the menu can dial. So the
+submenu offers the route the menu does have: **Open in The Curator**, **Copy resume prompt** (an
+instruction you paste into a fresh agent session), **Copy handoff as Markdown** (the standing
+brief and the handoff themselves, for an assistant that cannot reach your files), and **Reveal
+current.md in Finder**. The handoff is copied through the store's own read, so the markup
+escaping that applies to a file which arrived over sync applies to the clipboard too. See
+[user-guide.md § What a row can do](user-guide.md#what-a-row-can-do).
 
 **The menu's light or dark colours follow your SYSTEM appearance, not the app's own theme.**
 Those are genuinely different questions — the menu is drawn by macOS against the system menu
@@ -142,12 +154,15 @@ is in [architecture.md § The menu bar widget](architecture.md#the-menu-bar-widg
 
 > **Two limits, stated rather than glossed.**
 >
-> **No tray icon has ever been rendered on any machine.** The rows, the menu, the mode
-> switching, the icon's own pixels and the pulse strip's and dots' are all produced and checked
-> by the test suite, but nothing has yet put one in a real menu bar — so how macOS tints the
-> icon, whether it leaves the colour strip and dots alone, whether the two section headers draw
-> as headers on macOS 14 or degrade to dimmed captions below it, whether the second line of each
-> row draws, and whether the hover event fires at all are unproven. (That a re-render *does* re-time the ages is proven by the tests; whether
+> **The redesigned menu has never been photographed.** Every mark in it — the draining-clock
+> recency marks, the violet bars, the dotted baseline, the day ruler, the amber handover caps —
+> is generated and inspected pixel by pixel by the test suite, and its contrast is arithmetic
+> over those decoded pixels. What no test here can prove is anything that needs macOS: how it
+> tints the icon, whether it leaves the colour images alone, whether the two section headers draw
+> as headers on macOS 14 or degrade to dimmed captions below it, whether the small second line
+> under each row draws (it needs macOS 14.4), whether a **submenu** opens on a menu bar item at
+> all, whether **Copy** lands on the clipboard while the menu is dismissing, and whether the
+> hover event fires. (That a re-render *does* re-time the ages is proven by the tests; whether
 > macOS delivers the hover that triggers one is not.) Treat the first real launch with it
 > switched on as the first real test.
 >

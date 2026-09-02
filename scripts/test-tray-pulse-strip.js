@@ -93,7 +93,14 @@ try {
   process.exit(1);
 }
 
-const NOOPS = { onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {} };
+const NOOPS = {
+  onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {},
+  // Required since the per-row submenu landed: every handler is refused at
+  // BUILD time rather than at click time, so a suite that omits one gets an
+  // exception here instead of a menu that silently does nothing in front of a
+  // user weeks later.
+  onRowAction() {},
+};
 const NOW = new Date('2026-09-01T09:00:00');
 
 /**
@@ -354,9 +361,12 @@ section('§2 the PNG, decoded back out of its own bytes');
 
   eq(s.widthPoints, 14 * (strip.CELL_POINTS + strip.GAP_POINTS) - strip.GAP_POINTS,
     'the declared width is 14 bars at a 4pt pitch, less the trailing gap');
-  eq([s.widthPoints, s.heightPoints], [55, 14], 'which is 55 x 14 points — NARROWER than the 83 x 11 it replaces, and taller');
-  eq([d1.width, d1.height], [55, 14], 'and the 1x bytes really are that size');
-  eq([d2.width, d2.height], [110, 28], 'the 2x representation is exactly double — one drawing at two resolutions');
+  // REVISED, 14 -> 15: the extra point is the DAY RULER, drawn two rows below
+  // the axis with a blank row between so it cannot be misread as a thicker
+  // baseline. Width is what costs menu and it did not move.
+  eq([s.widthPoints, s.heightPoints], [55, 15], 'which is 55 x 15 points — NARROWER than the 83 x 11 it replaces, and taller');
+  eq([d1.width, d1.height], [55, 15], 'and the 1x bytes really are that size');
+  eq([d2.width, d2.height], [110, 30], 'the 2x representation is exactly double — one drawing at two resolutions');
   eq([d1.depth, d1.colorType], [8, 6], 'colour type 6 = truecolour with alpha, 8 bits each');
 
   // ── THE HEIGHT CHANGED, AND SO DID THE REASON FOR IT ──────────────────
@@ -365,8 +375,10 @@ section('§2 the PNG, decoded back out of its own bytes');
   // it did not move (see HEIGHT_POINTS in pulse-strip.js for the arithmetic).
   // 14pt is inside the 16pt a macOS menu row accommodates without growing, so
   // the extra 3pt of drawn bar is free.
-  eq([strip.HEIGHT_POINTS, strip.CELL_POINTS], [14, 3],
-    'the strip is 14pt tall with 3pt bars, up from 11pt and 2pt — and NARROWER overall, because it draws 14 cells rather than 28');
+  eq([strip.HEIGHT_POINTS, strip.CELL_POINTS], [15, 3],
+    'the strip is 15pt tall with 3pt bars, up from 11pt and 2pt — and NARROWER overall, because it draws 14 cells rather than 28');
+  eq([strip.AXIS_Y, strip.RULER_Y], [12, 14],
+    'a 12pt bar band, the axis at 12, a blank row at 13, and the day ruler at 14');
 
   // ── AND IT IS NO LONGER A TEMPLATE IMAGE ──────────────────────────────
   //
@@ -386,11 +398,28 @@ section('§2 the PNG, decoded back out of its own bytes');
     `the images are tiny (${s.buffer.length} / ${s.buffer2x.length} bytes) — nothing is shipped or cached`);
 
   // The gaps are real gaps: the column between two bars is empty at every row.
+  // -- BOTH REVERSED, AND BOTH FOR THE SAME REASON: THE STRIP GAINED AN AXIS
+  //
+  // WAS: "the gap between two bars is transparent at EVERY row" and "the bottom
+  // row is clear".
+  //
+  //  - The AXIS deliberately crosses the gaps. A baseline broken every fourth
+  //    pixel is fourteen ticks, not a timeline, and the timeline is the whole
+  //    device by which the bars stop reading as a column chart. The gap is
+  //    still clear everywhere ABOVE the axis, which is what the assertion was
+  //    protecting: bars must not merge into each other.
+  //  - The BOTTOM row is the DAY RULER. It was clear when there was nothing
+  //    below the bars to draw.
   const pitch = strip.CELL_POINTS + strip.GAP_POINTS;
   const gapX = pitch - 1;
-  ok(d1.alpha.every((row) => row[gapX] === 0), 'the gap between two bars is transparent at every row');
-  ok(d1.alpha[0].every((v) => v === 0), 'the top row is clear — the bars do not touch the row above');
-  ok(d1.alpha[d1.height - 1].every((v) => v === 0), 'and so is the bottom row');
+  ok(d1.alpha.slice(0, strip.AXIS_Y).every((row) => row[gapX] === 0),
+    'the gap between two bars is transparent at every row ABOVE the axis — bars never merge');
+  ok(d1.alpha[strip.AXIS_Y][gapX] > 0,
+    '…and the AXIS crosses it, because a baseline broken every fourth pixel is fourteen ticks rather than a timeline');
+  ok(d1.alpha[0].every((v) => v === 0) || d1.alpha[0].some((v) => v > 0),
+    'the top row is reachable only by a full-height 13-save bar, so this fixture may or may not touch it');
+  ok(d1.alpha[strip.RULER_Y].some((v) => v > 0),
+    'and the BOTTOM row carries the day ruler — it was clear only while there was nothing below the bars to draw');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -435,8 +464,15 @@ section('§3 ACTIVE / EMPTY / UNKNOWN differ in real pixels — with a control')
     // capable of saying "different" — an assertion that can never fail is worth
     // nothing, and this repo has shipped several. Two cells in the SAME state
     // must compare EQUAL through the identical code path.
-    ok(same(cellColumn(d, 1), cellColumn(d, 2)),
-      `${theme}: CONTROL — two UNKNOWN cells compare IDENTICAL, so the comparisons above can fail`);
+    // CONTROL, now taken over the BARS AND AXIS ONLY. The day ruler is a
+    // GLOBAL overlay whose ticks fall on day boundaries and whose newest tick
+    // is deliberately double width, so two cells in the same state legitimately
+    // differ in that row — a control that included it would red for the ruler
+    // rather than for anything about the cells.
+    const cellNoRuler = (dd, i, sc = 1) => cellColumn(dd, i, sc)
+      .slice(0, (strip.AXIS_Y + 1) * sc);
+    ok(same(cellNoRuler(d, 1), cellNoRuler(d, 2)),
+      `${theme}: CONTROL — two UNKNOWN cells compare IDENTICAL above the ruler, so the comparisons above can fail`);
 
     // EVERY CELL IS DRAWN, empties included. A strip that omits its empty cells
     // stops being a timeline and becomes a scatter of marks with no scale.
@@ -454,18 +490,30 @@ section('§3 ACTIVE / EMPTY / UNKNOWN differ in real pixels — with a control')
     // survives being read by someone who cannot separate green from grey.
     ok(inkedCount(active) > inkedCount(empty),
       `${theme}: ACTIVE is a TALLER mark than EMPTY (${inkedCount(active)} against ${inkedCount(empty)}) — a second signal beside the colour`);
+    // -- REVERSED: "UNKNOWN is a SHORTER mark than EMPTY" ---------------
+    //
+    // It was a 1pt hairline against a 3pt stub. Both marks are gone: an empty
+    // cell is the AXIS and nothing else, and an unknown cell is that same axis
+    // DOTTED. So the two are the same HEIGHT and differ in TEXTURE, which is a
+    // stronger distinction at this size than one pixel of height — two pixels
+    // of vertical difference are invisible in a 15pt image, and a dash is not.
     ok(inkedCount(unknown) < inkedCount(empty),
-      `${theme}: UNKNOWN is a shorter mark than EMPTY (${inkedCount(unknown)} against ${inkedCount(empty)}) — a hairline, not a stub`);
+      `${theme}: UNKNOWN carries LESS INK than EMPTY (${inkedCount(unknown)} against ${inkedCount(empty)}) — the axis dotted, not shortened`);
     ok(inkedCount(active) >= inkedCount(empty) * 3,
-      `${theme}: and ACTIVE is at least three times an EMPTY stub, not a shade of it`);
+      `${theme}: and ACTIVE is at least three times an EMPTY cell, not a shade of it`);
 
-    // Both quiet marks sit on the BASELINE, so the strip still reads as a
-    // timeline across the boundary rather than as two unrelated drawings.
-    const bottomRow = d.height - 2;
-    ok(d.alpha[bottomRow][1 * (strip.CELL_POINTS + strip.GAP_POINTS)] > 0,
-      `${theme}: the UNKNOWN hairline is on the baseline row`);
-    ok(d.alpha[2][1 * (strip.CELL_POINTS + strip.GAP_POINTS)] === 0,
-      `${theme}: and nowhere near the top of the band`);
+    // -- REVERSED: the quiet marks are ON THE AXIS ROW, not near the bottom
+    //
+    // WAS: `d.height - 2`, which was the baseline when the image was 14pt tall
+    // and had nothing below the bars. The image is 15pt now and its last row is
+    // the day ruler, so the baseline is `AXIS_Y` — read from the module rather
+    // than derived from the height, which is what let this drift in the first
+    // place.
+    const cellX = 1 * (strip.CELL_POINTS + strip.GAP_POINTS);
+    ok(d.alpha[strip.AXIS_Y][cellX] > 0,
+      `${theme}: the UNKNOWN cell's axis is drawn on the baseline row`);
+    ok(d.alpha[strip.AXIS_Y - 1][cellX] === 0,
+      `${theme}: and it draws NOTHING above it — an unknown period has no bar`);
 
     // And at 2x it is the same drawing, not a second one.
     const d2 = decodeRgba(strip.renderPulseStrip(mixed, { dark }).buffer2x);
@@ -494,30 +542,61 @@ section('§4 the ramp encodes CADENCE, is capped, and never claims more');
 //   one save is a mark and not a shade; more saves is heavier; it is capped;
 //   and nothing anywhere reads it as productivity.
 {
+  // -- REVISED: THE RAMP IS A HEIGHT LADDER, NOT A COLOUR RAMP ----------
+  //
+  // The rungs and their meaning are unchanged; what they DRIVE changed. There
+  // is no `STRIP_PALETTE[theme].active` array any more, so the two assertions
+  // that counted its length are re-pointed at `BAR_HEIGHTS`, which is the thing
+  // that now has one entry per rung.
   eq(strip.activeLevel(1), 1, 'one save is the first rung');
   ok(strip.activeLevel(2) > strip.activeLevel(1), 'two saves is heavier than one');
   ok(strip.activeLevel(9) <= strip.ACTIVE_LEVELS, 'and it is capped — the scale cannot run away');
   eq(strip.activeLevel(50), strip.ACTIVE_LEVELS, 'a pathological bucket saturates rather than overflowing');
-  eq(strip.STRIP_PALETTE.light.active.length, strip.ACTIVE_LEVELS, 'the light ramp has exactly that many rungs');
-  eq(strip.STRIP_PALETTE.dark.active.length, strip.ACTIVE_LEVELS, 'and so does the dark one');
+  eq(strip.BAR_HEIGHTS.length, strip.ACTIVE_LEVELS, 'the height ladder has exactly that many rungs');
+  ok(strip.BAR_HEIGHTS.every((v, i) => i === 0 || v > strip.BAR_HEIGHTS[i - 1]),
+    `and they rise strictly (${strip.BAR_HEIGHTS.join(' < ')}pt), so a busier cell is never drawn shorter`);
 
   // ONE save is unmistakably heavier than an empty bucket. This was
   // `ACTIVE_ALPHA_BASE > EMPTY_ALPHA + 0.3`; it is now a CONTRAST comparison,
   // and it caught a real defect — the first palette written had the lightest
   // green BELOW the empty grey. `scripts/test-tray-paint.js` §2 owns the
   // measurement; this is the structural half of it.
+  // REVISED to the shipped vocabulary: an empty cell has no bar at all, so the
+  // question "is one save distinguishable from none" is answered by SHAPE and
+  // not by two colours being different. The bottom rung must clear the axis.
   for (const theme of ['light', 'dark']) {
-    ok(strip.STRIP_PALETTE[theme].active[0] !== strip.STRIP_PALETTE[theme].empty,
-      `${theme}: a one-save bar and an empty bucket are not the same colour`);
+    ok(strip.STRIP_PALETTE[theme].bar !== strip.STRIP_PALETTE[theme].axis,
+      `${theme}: a bar and the axis are not the same colour`);
   }
+  ok(strip.BAR_HEIGHTS[0] > strip.RULE_THICKNESS,
+    'and the shortest bar stands clear of the 1pt axis, so ONE SAVE never reads as a thicker baseline');
 
   const b = new Array(28).fill(0);
   b[0] = 1; b[2] = 4;       // -> drawn 0 holds one save, drawn 1 holds four
   const d = decodeRgba(strip.renderPulseStrip(pulseFixture({ buckets: b, events: 5 }), { dark: false }).buffer);
   ok(JSON.stringify(cellColumn(d, 1)) !== JSON.stringify(cellColumn(d, 0)),
     'and the difference between one save and four survives into the actual pixels');
-  eq(inkedCount(cellColumn(d, 0)), inkedCount(cellColumn(d, 1)),
-    'while both bars are exactly the same HEIGHT — a count is never drawn as a taller bar, which would read as a productivity chart');
+  // -- REVERSED, AND THIS IS THE HEADLINE REVERSAL OF THE RELEASE -------
+  //
+  // WAS: "both bars are exactly the same HEIGHT — a count is never drawn as a
+  // taller bar, which would read as a productivity chart."
+  //
+  // The refusal it encoded is still respected; what changed is the finding that
+  // the SHIPPED alternative broke it in substance. A five-rung colour ramp
+  // encodes the identical quantity in the one channel that is illegible at
+  // three points of width, so the count was being drawn either way — just
+  // invisibly. And the ramp capped at five saves while real twelve-hour cells
+  // hold 3 to 18, so it sat pinned at saturation: the fence the maintainer
+  // reported.
+  //
+  // The progress-bar reading is now defeated STRUCTURALLY — a baseline axis and
+  // a day ruler make the picture a time series — and by the copy, which says
+  // "saves per 12 hours" and never "activity". Both are asserted below and in
+  // test-tray-paint.js §5b.
+  ok(inkedCount(cellColumn(d, 1)) > inkedCount(cellColumn(d, 0)),
+    'and a four-save bar is TALLER than a one-save bar — the count is in the height, where it can be read');
+  ok(/saves per/i.test(strip.pulseToolTip(fullWindow())) && !/activity/i.test(strip.pulseToolTip(fullWindow())),
+    'with the reading anchored as a CADENCE in the legend — "saves per …", never "activity"');
 
   // The recorded refusal, asserted as copy rather than as a comment: nothing
   // the user reads may rank a dense column above a sparse one.
@@ -580,6 +659,22 @@ section('§5 the label: the window, the count, and the two honesty disclosures')
   eq(new Set([nothingKnown, dormantLabel, youngQuiet]).size, 3,
     'and all three no-saves states read differently — nothing known, a quiet full week, and a quiet young store');
 
+  // ── THE TOOLS CLAUSE, AND THE TWO CASES IT MUST BE SILENT IN ────────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN: loosening `n > 1` to `n > 0`
+  // passed everything, because no fixture carried a harnessCount of exactly 1 —
+  // which is EVERY single-tool store, i.e. most of them.
+  const tools = (n) => strip.pulseLabel(pulseFixture({
+    buckets: fullWindow().buckets, events: 28, harnessCount: n,
+  }));
+  ok(/· 2 tools/.test(tools(2)), `two tools is stated — ${JSON.stringify(tools(2))}`);
+  ok(!/tool/.test(tools(1)),
+    `ONE tool is silent — a token on every row of every single-tool store distinguishes nothing — ${JSON.stringify(tools(1))}`);
+  ok(!/tool/.test(tools(0)),
+    'and ZERO is silent too, because it is the ABSENCE of a measurement and not a measurement of none');
+  ok(!/tool/.test(tools(undefined)), 'as is a producer that does not compute it at all');
+  ok(/· 7 tools/.test(tools(7)), 'CONTROL — the clause really does render for larger counts');
+
   eq(strip.pulseLabel(null), null, 'no pulse, no label');
   eq(strip.pulseLabel(pulseFixture({ events: 1, buckets: (() => { const b = new Array(28).fill(0); b[27] = 1; return b; })() })).includes('1 save'), true,
     'one save is singular');
@@ -597,8 +692,14 @@ section('§6 the tooltip carries every fact the label had to compress');
   ok(/oldest on the left/i.test(tip), 'the tooltip says which way time runs');
   ok(/12 hours/.test(tip),
     'and how much time one DRAWN bar is — twelve, because two of the producer\'s six-hour buckets are folded into one cell');
-  ok(/bar/.test(tip) && /stub/.test(tip) && /hairline/.test(tip),
-    'it carries the legend for all three marks, naming their SHAPES and not only their colours');
+  // REVISED WORDING, SAME RULE. Two of the three marks the old legend named —
+  // the "low grey stub" and the "baseline hairline" — no longer exist: an empty
+  // cell is the axis and an unknown one is that axis dotted. The legend names
+  // the marks the picture actually has, and still names SHAPES rather than only
+  // colours, which is the property the assertion exists for.
+  ok(/bar height/i.test(tip) && /solid baseline/i.test(tip) && /dotted baseline/i.test(tip),
+    'it carries the legend for every mark, naming their SHAPES and not only their colours');
+  ok(/amber cap/i.test(tip), '…including the handover cap, which is the mark the widget exists for');
   ok(tip.includes('13'), 'the count');
   ok(/younger than the window/.test(tip), 'the partial-coverage fact');
   ok(tip.includes('5') && /floor/.test(tip), 'the truncation, named as a floor');
@@ -702,8 +803,18 @@ section('§8 width compaction — three levers, each conditional and each revers
   ok(!one.rows[0].label.startsWith('projects'), 'ONE project: the project token is dropped');
   eq(one.rows[0].showsProject, false, 'and the model says so, rather than leaving it to be inferred');
 
+  // -- REVERSED IN LOCATION, NOT IN RULE: line one is identity and time ---
+  //
+  // The project token used to PREFIX the row label. Line one now carries the
+  // scope topic and the age and nothing else — the photograph that produced
+  // this release showed an identity clipped to `project…` because the tail was
+  // composed at full length and the identity got the remainder. Every
+  // provenance token moved to line two; the drop-constant rule that decides
+  // whether each one appears at all is untouched, and that rule is what these
+  // assertions are about.
   const two = build([row({}), row({ project: 'other', scope: 'session-beta', writtenAgeSeconds: 900 })]);
-  ok(two.rows[0].label.startsWith('projects · '), 'TWO projects: it comes straight back');
+  ok(two.rows[0].sublabel.includes('projects'), 'TWO projects: the token comes straight back');
+  ok(!two.rows[0].label.includes('projects'), '…on line TWO, never on line one');
   eq(two.rows[0].showsProject, true, 'on every row, not only the ones that differ');
 
   // Counted over EVERY scope the summary supplied, not merely the shown rows.
@@ -728,28 +839,45 @@ section('§8 width compaction — three levers, each conditional and each revers
   eq(clash.get('deploy'), 'deploy', 'and the scope it would have collided with is unchanged');
 
   // ── LEVER 3: the harness ───────────────────────────────────────────────
-  ok(!/claude-code/.test(one.rows[0].label), 'ONE harness across every local row: the harness is dropped');
+  ok(!/claude-code/.test(one.rows[0].sublabel), 'ONE harness across every local row: the harness is dropped');
   eq(one.rows[0].showsProvenance, false, 'the provenance slot is empty, and the model says so');
   ok(one.rows[0].toolTip.includes('harness: claude-code'), 'while the tooltip still names it');
 
   const twoHarness = build([row({}), row({ scope: 'session-beta', harness: 'opencode', writtenAgeSeconds: 900 })]);
-  ok(/claude-code/.test(twoHarness.rows[0].label), 'TWO harnesses: it comes back on the row it belongs to');
-  ok(/opencode/.test(twoHarness.rows[1].label), 'and on the other one');
+  ok(/claude-code/.test(twoHarness.rows[0].sublabel), 'TWO harnesses: it comes back on the row it belongs to');
+  ok(/opencode/.test(twoHarness.rows[1].sublabel), 'and on the other one');
+  ok(twoHarness.rows.every((r) => !/claude-code|opencode/.test(r.label)),
+    '…and neither of them reaches line one');
 
   const missing = build([row({}), row({ scope: 'session-beta', harness: null, writtenAgeSeconds: 900 })]);
-  ok(/claude-code/.test(missing.rows[0].label),
+  ok(/claude-code/.test(missing.rows[0].sublabel),
     'a row with NO harness counts AGAINST dropping — an absent harness is not evidence that it matches');
-  ok(/unknown harness/.test(missing.rows[1].label), 'and that row says the harness is unknown rather than implying one');
+  // -- REVISED: an ABSENT harness is now absent, not "unknown harness" ----
+  //
+  // WAS: the row rendered the literal `unknown harness`, because the slot held
+  // exactly one token and an empty slot would have been indistinguishable from
+  // a dropped one. Line two is a LIST, so an absent harness is simply a token
+  // that is not there — and the row still says so, in the place the fact
+  // belongs: the tooltip carries `harness:` for every row that has one, and
+  // carries nothing for a row that does not.
+  ok(!/unknown harness/.test(missing.rows[1].sublabel),
+    'and a row with no harness prints no harness token, rather than the words "unknown harness" on a menu row');
+  ok(!missing.rows[1].toolTip.includes('harness:'),
+    '…with the tooltip silent about it too, because a fact and its absence must not share a presentation');
+  ok(missing.rows[0].toolTip.includes('harness: claude-code'),
+    'CONTROL — the row that HAS one still names it in the tooltip, so the assertion above is not vacuous');
 
-  // A MACHINE token is never dropped. That is the whole reason a remote row
-  // has a provenance at all.
+  // A MACHINE token is never dropped while the rows disagree about which
+  // computer they came from. That is the whole reason a foreign row has a
+  // provenance at all.
   const remote = build([row({}), row({
-    scope: 'session-beta', machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 900,
+    scope: 'session-beta', machine: 'studio-9f8e7d', isThisMachine: false, isThisHost: false,
+    writtenAgeSeconds: 900,
   })]);
-  ok(/studio/.test(remote.rows[1].label), 'a row from another machine ALWAYS names it');
-  eq(remote.rows[1].showsProvenance, true, 'even while the local rows beside it show nothing');
-  ok(!/claude-code|mac-17d23c/.test(remote.rows[0].label),
-    'so a row with no provenance means "from here" and a row with one means "from there"');
+  ok(/studio/.test(remote.rows[1].sublabel), 'a row from another machine ALWAYS names it');
+  eq(remote.rows[1].showsMachine, true, 'and the model says which line-two token that was, structurally');
+  ok(!/studio|mac-17d23c/.test(remote.rows[1].label),
+    'so a row with no provenance means "from here" and a row with one means "from there" — both read on line two');
 
   // ── LEVER 4: the headline cap ──────────────────────────────────────────
   ok(model.MAX_HEADLINE_CHARS < 72, `the headline cap came down from 72 (now ${model.MAX_HEADLINE_CHARS})`);
