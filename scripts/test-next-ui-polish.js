@@ -190,7 +190,7 @@ try {
     extractFunction(settingsJs, 'renderProviderRow') + '\n' +
     'return { renderProviderRow, PROVIDER_ROWS };';
   const factory = new Function(
-    'escapeHtml', 'crossWriteTitle', 'state', 'icon',
+    'escapeHtml', 'crossWriteTitle', 'state', 'icon', 'providerConnected',
     body,
   );
   const built = factory(
@@ -198,6 +198,13 @@ try {
     (msg) => 'cross-write: ' + msg,
     stubState,
     iconStub,
+    // v3.45.0. The real `providerConnected` reads the route's `connected` map
+    // where the route sends one and degrades to the saved-key test where it
+    // does not. This suite's subject is the ICON, not the resolution, and its
+    // fixtures speak the saved-key dialect — so the degraded arm is reproduced
+    // here rather than extracted, and the resolution itself is driven for real
+    // in scripts/test-next-provider-rows.js, which extracts both functions.
+    (prov, k) => !!(k && k['has' + prov.id.charAt(0).toUpperCase() + prov.id.slice(1) + 'Key']),
   );
   renderProviderRow = built.renderProviderRow;
   ok(typeof renderProviderRow === 'function', 'renderProviderRow extracted as a function');
@@ -207,7 +214,7 @@ try {
   process.exit(1);
 }
 
-section('§2  Active row carries the icon; configured/not-set rows do not');
+section('§2  A CONNECTED row carries the icon; a not-connected row does not');
 
 const geminiRow = { id: 'gemini', name: 'Gemini', available: true, dot: '#000' };
 const baseKeys = (overrides) => Object.assign({
@@ -218,36 +225,59 @@ const baseKeys = (overrides) => Object.assign({
   activeProvider: 'gemini',
 }, overrides);
 
+// ── UPDATED DELIBERATELY (v3.45.0) ─────────────────────────────────
+// The row's status was one of THREE monospace words — `active` / `configured` /
+// `not set` — and the icon marked the first. Only one of the three was ever
+// about the credential: `active` meant "this provider builds your wiki", which
+// is now stated once, in block 2, with the price and the provenance beside it.
+// A credential row answers one question and now says so in two plain words:
+// Connected / Not connected, in the text face.
+//
+// THE PROPERTY THIS SECTION EXISTS FOR IS UNCHANGED and is what is asserted
+// below: the check mark is REINFORCEMENT, never a replacement for the word; it
+// comes FIRST, so the row reads "tick Connected" and not "Connected tick"; and
+// the negative state carries no glyph at all.
 {
-  const activeHtml = renderProviderRow(geminiRow, baseKeys({}), false);
-  ok(/provider-state-icon/.test(activeHtml), 'active row: .provider-state-icon is present');
-  ok(/data-icon="checkAlt"/.test(activeHtml), 'active row: the icon is checkAlt, not a placeholder or a different glyph');
-  ok(/provider-state-active/.test(activeHtml), 'active row: still carries provider-state-active (unchanged class)');
-  // The icon must come BEFORE the word, inside the same .provider-state span
-  // — verified structurally rather than by a loose "both substrings present"
-  // check, so a regression that moves the icon after the word (which would
-  // read "active✓" instead of "✓ active") is still caught.
-  const stateSpanInner = extractBalancedSpanInner(activeHtml, /<span class="mono provider-state[^"]*">/);
-  ok(stateSpanInner !== null, 'active row: the provider-state span itself is findable, nested spans and all');
-  ok(!!stateSpanInner && /^<span class="provider-state-icon"/.test(stateSpanInner), 'active row: the icon is the FIRST child of .provider-state, ahead of the word');
+  const connectedHtml = renderProviderRow(geminiRow, baseKeys({}), false);
+  ok(/provider-state-icon/.test(connectedHtml), 'connected row: .provider-state-icon is present');
+  ok(/data-icon="checkAlt"/.test(connectedHtml), 'connected row: the icon is checkAlt, not a placeholder or a different glyph');
+  ok(/provider-pill-on/.test(connectedHtml), 'connected row: carries the affirmative pill class');
+  // Structural, not a loose "both substrings present" check, so a regression
+  // that moves the icon after the word is still caught.
+  const stateSpanInner = extractBalancedSpanInner(connectedHtml, /<span class="provider-pill [^"]*">/);
+  ok(stateSpanInner !== null, 'connected row: the pill span itself is findable, nested spans and all');
+  ok(!!stateSpanInner && /^<span class="provider-state-icon"/.test(stateSpanInner), 'connected row: the icon is the FIRST child of the pill, ahead of the word');
   const stateSpanText = (stateSpanInner || '').replace(/<[^>]+>/g, '').trim();
-  ok(stateSpanText === 'active',
-    `active row: the literal word "active" is still present as real text (got "${stateSpanText}") — colour is reinforcement, not a replacement (accessibility requirement)`);
+  ok(stateSpanText === 'Connected',
+    `connected row: the word "Connected" is present as real text (got "${stateSpanText}") — colour and glyph are reinforcement, not a replacement (accessibility requirement)`);
+  // And the retired vocabulary is GONE rather than merely unused: a row still
+  // saying "configured" beside a pill saying "Connected" would be the
+  // two-words-for-one-fact defect this change removes, wearing a new class.
+  ok(!/>configured<|>not set<|>active</.test(connectedHtml),
+    'connected row: none of the three retired monospace words survives anywhere on it');
 }
 
 {
-  // hasKey true, not the active provider -> "configured", no icon.
-  const configuredHtml = renderProviderRow(geminiRow, baseKeys({ activeProvider: 'anthropic', hasAnthropicKey: true, anthropicApiKey: 'sk-ant-fixture' }), false);
-  ok(/provider-state-muted/.test(configuredHtml), 'configured row: uses provider-state-muted');
-  ok(!/provider-state-icon/.test(configuredHtml), 'configured row: NO icon — the check mark is reserved for "active"');
-  ok(/>configured</.test(configuredHtml), 'configured row: the word itself still reads "configured"');
+  // No key at all -> "Not connected", no icon. The provider that BUILDS the
+  // wiki is deliberately irrelevant here now, so this fixture no longer names
+  // one — that separation is the thing being asserted.
+  const notSetHtml = renderProviderRow(geminiRow, baseKeys({ hasGeminiKey: false, geminiApiKey: null }), false);
+  ok(!/provider-state-icon/.test(notSetHtml), 'not-connected row: NO icon');
+  ok(/provider-pill-off/.test(notSetHtml), 'not-connected row: carries the negative pill class');
+  ok(/>Not connected</.test(notSetHtml), 'not-connected row: the words themselves read "Not connected"');
 }
 
 {
-  // No key at all -> "not set", no icon.
-  const notSetHtml = renderProviderRow(geminiRow, baseKeys({ activeProvider: 'anthropic', hasGeminiKey: false, geminiApiKey: null }), false);
-  ok(!/provider-state-icon/.test(notSetHtml), '"not set" row: NO icon');
-  ok(/>not set</.test(notSetHtml), '"not set" row: the word itself still reads "not set"');
+  // A CONNECTED provider that is NOT the one building the wiki still reads
+  // "Connected": the row no longer holds an opinion about the build lane,
+  // which is the whole point of moving that decision into block 2.
+  const otherKeys = baseKeys({ activeProvider: 'anthropic', hasAnthropicKey: true, anthropicApiKey: 'sk-ant-fixture' });
+  ok(/>Connected</.test(renderProviderRow(geminiRow, otherKeys, false)),
+    'a connected provider that is not the build provider still reads "Connected"');
+  ok(!/data-set-active=/.test(renderProviderRow(geminiRow, otherKeys, false, { allowSetActive: false })),
+    'and with allowSetActive:false — how the page renders it — it offers no build-lane control at all');
+  ok(/data-set-active=/.test(renderProviderRow(geminiRow, otherKeys, false)),
+    'CONTROL: the default is still to OFFER it, so the degraded escape hatch is never lost by omission');
 }
 
 section('§3  settings.css — the WORD stays on the neutral ramp; the ICON alone carries the status colour');
@@ -258,11 +288,25 @@ section('§3  settings.css — the WORD stays on the neutral ramp; the ICON alon
 // A future edit re-introducing it on .provider-state-active would fail WCAG
 // exactly as before.
 {
-  const activeRule = /\.provider-state-active\s*\{([^}]*)\}/.exec(settingsCss);
-  ok(!!activeRule, '.provider-state-active rule exists');
+  // UPDATED (v3.45.0): `.provider-state-active` retired with the word it
+  // styled. The regression it guards against is REAL and unchanged —
+  // `--success-text` was tried as the WORD's colour once (3.79–4.05:1 in light,
+  // under the 4.5 TEXT floor) and reverted — so the guard follows the word to
+  // its new class rather than being deleted with the old one.
+  const activeRule = /\.provider-pill-on\s*\{([^}]*)\}/.exec(settingsCss);
+  ok(!!activeRule, '.provider-pill-on rule exists');
   const activeBody = activeRule ? activeRule[1] : '';
-  ok(/color:\s*var\(--text\)/.test(activeBody), '.provider-state-active: color is var(--text) — the neutral ramp, not a status colour');
-  ok(!/--success/.test(activeBody), '.provider-state-active: does NOT reference --success or --success-text — the reverted regression stays reverted');
+  ok(!/--success-text/.test(activeBody),
+    '.provider-pill-on: the WORD does not take --success-text — the reverted contrast regression stays reverted');
+  // The retired class is gone from the stylesheet — and the scan is on
+  // SELECTORS, not on the raw text, because the prose above .provider-pill-on
+  // legitimately explains which rule it inherited its contrast constraint from
+  // and a comment naming a dead class is not a dead rule.
+  const cssNoComments = settingsCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(!/\.provider-state-active/.test(cssNoComments),
+    'and the retired class is gone from the stylesheet, not left behind to be re-adopted');
+  ok(/\.provider-pill-on/.test(cssNoComments),
+    'CONTROL: the comment-stripped stylesheet still contains the class that replaced it — the strip is not eating the file');
 }
 {
   const iconRule = /\.provider-state-icon\s*\{([^}]*)\}/.exec(settingsCss);

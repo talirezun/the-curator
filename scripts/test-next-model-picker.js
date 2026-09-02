@@ -522,7 +522,15 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_RE
   // the id `getDefaultModel(provider)` resolved to, and a local copy of the
   // table would keep that green after the module changed a value or dropped
   // the model the app actually ships.
-  'MEASURED_CALL_SECONDS'];
+  'MEASURED_CALL_SECONDS',
+  // ── v3.45.0, the four-block Providers page ──────────────────────────────
+  // The browse table's filter scope key, its two facet tables and the build
+  // lane's working-set figure. EXTRACTED, never re-declared here: the facet
+  // ids ARE the contract between `modelFilterFor`'s normaliser and the buttons
+  // that set them, and a local copy would keep this suite green after the
+  // module renamed a facet and every button started resolving to the default.
+  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS',
+  'BUILD_WORKING_SET_TOKENS'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -608,6 +616,21 @@ const RENDER_FN_NAMES = [
   'renderBuildCurrent', 'renderBuildList', 'renderBuildBlock', 'renderChatBlock',
   // The pick button's id, from the module. §44 focuses BY it after a refusal.
   'buildPickButtonId',
+  // ── v3.45.0, the four-block Providers page ──────────────────────────────
+  // The payload readers for the new route fields (`connected`, `build`,
+  // `catalogueCounts`, `chat`), extracted rather than stubbed for the reason
+  // `buildModelFacts` already is: each one DEGRADES to the older payload, and
+  // a stub would make the degradation — the arm an older backend actually
+  // takes — untestable.
+  'providerConnected', 'buildLaneFacts', 'buildModelDisplayName',
+  'chatStartFacts', 'catalogueCountsOf', 'allCatalogueRows',
+  // The block wrapper and the three new block renderers. `renderProviders`
+  // delegates to them, so a stub would make every assertion driven through the
+  // real page vacuous — the rule §16 already states for renderProviderRow.
+  'settingsBlock', 'renderConnectBlock', 'renderAllModelsBlock',
+  // Block 4's table, its facet predicates and the "worth testing" shelf.
+  'renderModelBrowse', 'refreshCatalogueButton', 'browseFilter',
+  'browseLanePass', 'browseBandPass', 'worthTestingRows',
 ];
 
 /**
@@ -676,6 +699,11 @@ const RENDER_INJECTED_VALUES = {
   // as no-ops rather than removed from the scan.
   setModelFilter: () => {},
   render: () => {},
+  // Block 2's popup commits through this. Same reason as the two above: it is
+  // named only inside the cfg's onChange closure, which the render pass never
+  // invokes, but a name the static scanner cannot resolve is a ReferenceError
+  // waiting for the first real click.
+  onPickBuildModel: () => {},
 };
 const RENDER_INJECTED = Object.keys(RENDER_INJECTED_VALUES);
 
@@ -2578,8 +2606,47 @@ section('§13  The expanded/collapsed state survives a repaint');
   // listener no longer satisfies them.
   ok(/addEventListener\('toggle'/.test(settingsCode),
     'SOURCE GUARD: a toggle listener records the change (comment-stripped, so a `//` copy does not count)');
-  ok(!/addEventListener\('toggle'[\s\S]{0,400}?render\(myMountToken\)/.test(settingsCode),
+  // ── UPDATED (v3.45.0): PER-HANDLER, NOT PER-400-CHARACTERS ──────────────
+  // This was `addEventListener\('toggle'[\s\S]{0,400}?render\(myMountToken\)`,
+  // which measures PROXIMITY IN THE FILE rather than the property. Adding a
+  // fifth toggle listener (block 2's `Change…` disclosure) reddened it without
+  // any handler gaining a render call, because the next unrelated handler
+  // happened to move inside the window — and the same window makes the guard
+  // silently vacuous the moment a long comment separates a real offender from
+  // its listener. It now extracts each handler's OWN body by brace matching and
+  // asserts on that, which is the thing the sentence claims.
+  const toggleBodies = [];
+  {
+    const re = /addEventListener\('toggle',\s*\(\)\s*=>\s*\{/g;
+    let m;
+    while ((m = re.exec(settingsCode)) !== null) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      for (; i < settingsCode.length && depth > 0; i++) {
+        if (settingsCode[i] === '{') depth++;
+        else if (settingsCode[i] === '}') depth--;
+      }
+      toggleBodies.push(settingsCode.slice(m.index + m[0].length, i - 1));
+    }
+  }
+  ok(toggleBodies.length >= 4,
+    `SOURCE GUARD: the toggle handlers are found and delimited (found ${toggleBodies.length})`);
+  const rerendering = toggleBodies.filter((b) => /render\(myMountToken\)/.test(b));
+  ok(rerendering.length === 0,
     'SOURCE GUARD: and does NOT re-render — repainting would discard the DOM the user just opened');
+  // ANTI-VACUITY: the extractor really can see a render call inside a body.
+  // Without this, a regex that matched nothing would report the same green.
+  {
+    const fake = "x.addEventListener('toggle', () => { if (a) { b(); } render(myMountToken); });";
+    const re = /addEventListener\('toggle',\s*\(\)\s*=>\s*\{/g;
+    const m = re.exec(fake);
+    let depth = 1, i = m.index + m[0].length;
+    for (; i < fake.length && depth > 0; i++) {
+      if (fake[i] === '{') depth++; else if (fake[i] === '}') depth--;
+    }
+    ok(/render\(myMountToken\)/.test(fake.slice(m.index + m[0].length, i - 1)),
+      'CONTROL: the brace-matched extractor DOES catch a render() inside a nested-brace handler body');
+  }
 }
 // ═════════════════════════════════════════════════════════════════════════
 section('§14  The COLLAPSED header answers "what am I running?" without an expand (M8)');
@@ -6173,7 +6240,7 @@ section('§41  THE ATOMIC BUILD CHOICE — one act, and never optimistic');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
+section('§42  FOUR NUMBERED BLOCKS, read top to bottom, in order');
 // ═════════════════════════════════════════════════════════════════════════
 // Executed through the REAL renderProviders, never grepped: §16 records that
 // grepping a call site proves a line exists, not what it does.
@@ -6185,21 +6252,38 @@ section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
   stubState.modelShelfOpen = false;
   const html = renderProviders();
 
-  // ── THE ORDER IS THE ARGUMENT ──────────────────────────────────────────
-  // Indexed by the HEADING markup, not by the words: "Chat" also appears in the
-  // page lede, and matching that made the ordering assertion read 205 for a
+  // ── THE ORDER IS THE ARGUMENT, AND THE ORDER CHANGED ───────────────────
+  // ── UPDATED DELIBERATELY (v3.45.0) ─────────────────────────────────────
+  // This assertion used to require build < chat < Connections < shelf, and it
+  // was correct for the page it was written about. That page asked the user to
+  // choose a model BEFORE they owned a key: block 1 is the only block that can
+  // do anything at all on a fresh install, and it was third. The order is now
+  //     1 Connect a provider · 2 What builds your wiki · 3 Chat · 4 All models
+  // and the headings changed with it ("Connections" -> "Connect a provider",
+  // "This model builds your wiki" -> "What builds your wiki", "Every model, by
+  // provider" -> "All models").
+  //
+  // THIS IS THE ONE GUARD THAT WOULD OTHERWISE BE "FIXED" BY REVERTING THE
+  // CHANGE, so the reasoning is recorded here rather than in a commit message.
+  // It is still indexed by the HEADING markup and not by the words: "Chat"
+  // appears in three ledes, and matching the word made this read 205 for a
   // heading at 12,000 — a green-looking measurement of the wrong thing.
   const H = (t) => html.indexOf('<h2 class="settings-job-title">' + t + '</h2>');
-  const iBuild = H('This model builds your wiki');
+  const iConnect = H('Connect a provider');
+  const iBuild = H('What builds your wiki');
   const iChat = H('Chat');
-  const iKeys = H('Connections');
-  const iShelf = html.indexOf('<span class="settings-job-title">Every model, by provider</span>');
-  ok(iBuild !== -1, 'the build job is named');
-  ok(iChat !== -1, 'the chat job is named');
-  ok(iKeys !== -1, 'the keys are named as Connections');
-  ok(iShelf !== -1, 'the reference shelf is named');
-  ok(iBuild < iChat && iChat < iKeys && iKeys < iShelf,
-    'jobs first (build, then chat), then the plumbing, then the reference shelf');
+  const iShelf = H('All models');
+  ok(iConnect !== -1, 'block 1 names the thing to connect');
+  ok(iBuild !== -1, 'block 2 names what the money is spent on');
+  ok(iChat !== -1, 'block 3 names chat');
+  ok(iShelf !== -1, 'block 4 names the catalogue');
+  ok(iConnect < iBuild && iBuild < iChat && iChat < iShelf,
+    'the only block that can act on a fresh install comes FIRST, then the two jobs, then the catalogue');
+  // The numbers are rendered, and they are rendered in order — a numbered flow
+  // whose numbers do not ascend is worse than no numbers.
+  const nums = (html.match(/class="settings-block-num" aria-hidden="true">(\d)</g) || [])
+    .map((m) => m.slice(-2, -1));
+  ok(nums.join(',') === '1,2,3,4', `the four blocks are numbered 1..4 in order (got ${nums.join(',') || 'none'})`);
 
   // ── ONE CONTROL PER DECISION ───────────────────────────────────────────
   const buildBtns = (html.match(/data-build-model=/g) || []).length;
@@ -6209,13 +6293,18 @@ section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
     'and the older per-provider pick control ships NOWHERE — it can leave a choice inert');
 
   // The chat block states and points; it never duplicates the composer.
-  const chatBlock = html.slice(iChat, iKeys);
+  const chatBlock = html.slice(iChat, iShelf);
   ok(/composer/i.test(chatBlock), 'the chat block points at the composer');
   ok(!/data-build-model|data-pick-model|data-listbox|<select/.test(chatBlock),
     'the chat block carries no control at all');
 
   // ── PROVIDER IS A LABEL ON A ROW, NOT THE STRUCTURE ────────────────────
+  // NOTE the block-2 slice now ends at block 3, and block 2 holds a listbox
+  // (the model popup) where it previously held none. That is the deliberate
+  // third adoption recorded in scripts/test-next-listbox.js.
   const buildBlock = html.slice(iBuild, iChat);
+  ok(/data-listbox="build-model-lb"/.test(buildBlock),
+    'the everyday build control is the shared listbox, not a <select> and not a bare link');
   ok(/model-provider-chip/.test(buildBlock),
     'build rows carry a provider chip — provider is a label here, not a heading');
   // One list, not one per provider.
@@ -6223,10 +6312,13 @@ section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
     'the build choice is ONE list, across providers');
 
   // ── THE SHELF IS FOLDED, AND ITS STATE SURVIVES A REPAINT ──────────────
-  ok(/<details class="settings-job-block settings-shelf" data-model-shelf/.test(html),
+  // UPDATED (v3.45.0): the shelf is no longer itself a `.settings-job-block`
+  // — it sits INSIDE block 4, which is. The property under test is unchanged:
+  // collapsed by default, re-opened from state.
+  ok(/<details class="settings-shelf" data-model-shelf/.test(html),
     'the shelf is collapsed by default — it answers a question most users never ask');
   stubState.modelShelfOpen = true;
-  ok(/<details class="settings-job-block settings-shelf" open data-model-shelf/.test(renderProviders()),
+  ok(/<details class="settings-shelf" open data-model-shelf/.test(renderProviders()),
     'and re-opens from state, because render() replaces the section wholesale');
   stubState.modelShelfOpen = false;
 
@@ -6306,7 +6398,10 @@ section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
     okContains(html2, escapeHtml(providerLabel(prov)),
       'with no buildModel the block falls back to activeProvider/activeModel and names the provider');
     okContains(html2, escapeHtml(defaultModelFor(prov)), '…and the model');
-    ok(!/Nothing can build your wiki/i.test(html2),
+    // UPDATED (v3.45.0): the copy is now "Nothing builds your wiki yet." The
+    // PROPERTY is unchanged and is what this asserts — a working install must
+    // never be told it has nothing to build with.
+    ok(!/Nothing builds your wiki/i.test(html2),
       '…and does NOT claim nothing builds the wiki on a working install');
     // …and it claims correspondingly less: no provenance it was not told.
     ok(!/You chose this one|follows the app default|LLM_MODEL/.test(html2),
@@ -6315,8 +6410,26 @@ section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
     // The genuinely-empty case is still reported as empty.
     const none = Object.assign({}, keysFor(prov), { activeProvider: null, activeModel: null });
     delete none.buildModel;
-    ok(/Nothing can build your wiki/i.test(renderBuildCurrent(none, false)),
-      'CONTROL: with no provider at all, it DOES say nothing can build the wiki');
+    // ── UPDATED (v3.45.0): THE EMPTY STATE SPLIT IN TWO, AND THAT IS THE
+    // POINT. "I have a key and nothing measured behind it" and "I have no key"
+    // need DIFFERENT actions — measure something, versus connect something —
+    // and the old single sentence told the first user to go and get a key they
+    // already had. Both arms are asserted, and each must NOT say the other's
+    // sentence, or the split is decorative.
+    const keyedEmpty = renderBuildCurrent(none, false);
+    ok(/nothing behind it has been measured/i.test(keyedEmpty),
+      'CONTROL: a WORKING key with nothing measured says so — and names measuring as the action');
+    ok(!/Nothing builds your wiki/i.test(keyedEmpty),
+      '…and does not tell a user who has a key to go and connect one');
+
+    const noKey = Object.assign({}, none);
+    for (const f of ['hasGeminiKey', 'hasAnthropicKey', 'hasOpenrouterKey']) noKey[f] = false;
+    if (noKey.connected) noKey.connected = { gemini: false, anthropic: false, openrouter: false };
+    const bare = renderBuildCurrent(noKey, false);
+    ok(/Nothing builds your wiki/i.test(bare),
+      'CONTROL: with NO key at all, it DOES say nothing builds the wiki');
+    ok(/Connect a provider above/i.test(bare),
+      '…and names connecting as the action, which is the only one available');
   }
 
   // ── THE KEY ROWS ARE UNTOUCHED ─────────────────────────────────────────

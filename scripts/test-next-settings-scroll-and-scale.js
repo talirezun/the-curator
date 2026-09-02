@@ -685,10 +685,22 @@ ok(!/appearance:/.test(lbCss),
 // convention: two hand-maintained copies of one control is this repo's most
 // reliable failure shape, and it had already produced two copies of the
 // select chrome across two view stylesheets.
+// ── UPDATED 2 -> 5 (v3.45.0) ────────────────────────────────────────────
+// The Providers page was rebuilt as four numbered blocks and gained three more
+// listbox adoptions, each replacing something that was not a control:
+//   · `build-model-lb`     — block 2's popup, the everyday way to change the
+//                            model that builds the wiki (before this, the only
+//                            way was to scroll a ~19-row list);
+//   · `browse-provider-lb` — block 4's provider filter;
+//   · `browse-sort-lb`     — block 4's cross-provider sort.
+// The count stays PINNED rather than being loosened to `>= 2`, for the reason
+// stated above it: an unpinned count is how a second, hand-rolled copy of one
+// control gets added beside the shared one with nothing noticing. The
+// render->mount pairing below is what makes the number mean something.
 const rendered = settingsSrc.match(/renderListboxHtml\(/g) || [];
-ok(rendered.length === 2,
-  'both pickers (default domain + model sort) render the shared component (' +
-  rendered.length + ' found)');
+ok(rendered.length === 5,
+  'five pickers (default domain, per-provider sort, build model, browse provider, ' +
+  'browse sort) render the shared component (' + rendered.length + ' found)');
 ok(/import \{[^}]*renderListboxHtml[^}]*\} from '\.\.\/shared\/listbox\.js'/.test(settingsSrc),
   'from next/shared/listbox.js — not a local copy of it');
 
@@ -703,8 +715,13 @@ ok(/pendingListboxes\.length = 0;/.test(extractFunction(settingsSrc, 'renderMain
 const wireSrc = extractFunction(settingsSrc, 'wireGlobalListeners', 'views/settings.js');
 ok(/for \(const cfg of pendingListboxes\) mountListbox\(cfg\)/.test(wireSrc),
   'and wireGlobalListeners hydrates from the same objects');
-ok((settingsSrc.match(/pendingListboxes\.push\(/g) || []).length === 2,
-  'exactly two pushes — one per control, so neither is rendered without being mounted');
+const pushes = (settingsSrc.match(/pendingListboxes\.push\(/g) || []).length;
+ok(pushes === 5,
+  `exactly five pushes — one per control, so none is rendered without being mounted (${pushes} found)`);
+// THE PAIRING IS THE POINT, not either number on its own: a control rendered
+// without a push is dead markup, and a push without markup mounts onto nothing.
+ok(pushes === rendered.length,
+  'and the two counts MATCH — every rendered control is pushed for mounting, and vice versa');
 
 // ── THE REPAINT LEAK ────────────────────────────────────────────────────
 // Settings re-renders WHOLESALE via innerHTML. The component's menu is a

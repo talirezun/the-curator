@@ -374,19 +374,40 @@ section('7. Class-level: the /next tree actually consumes fallback + activeModel
   ok(buildBlockBody.includes('renderBuildCurrent('),
     'renderBuildBlock() CALLS renderBuildCurrent');
   const buildCurrentBody = extractFunction(settings, 'renderBuildCurrent');
-  ok(buildCurrentBody.includes('activeModelLine('),
-    'renderBuildCurrent() CALLS activeModelLine — so `activeModel` still has a reader, ' +
-    'on the degraded path a backend without `buildModel` takes');
-  ok(buildCurrentBody.includes('buildModelFacts('),
-    '…and reads the new derived buildModel field on the normal path');
+  // ── UPDATED (v3.45.0): THE CHAIN GAINED ONE LINK, AND IT IS NAMED ───────
+  // `renderBuildCurrent` used to read the payload itself. The route now sends
+  // a richer `build` record, so the three readers — `build`, the older
+  // `buildModel`, and the oldest `activeProvider`/`activeModel` pair — are
+  // resolved in ONE place, `buildLaneFacts`, in that precedence. This guard is
+  // re-pointed rather than relaxed: the property is unchanged, and it is that
+  // `activeModel` STILL HAS A READER reachable from the rendered section
+  // through a real call chain, or it is dead data again in a new coat.
+  ok(buildCurrentBody.includes('buildLaneFacts('),
+    'renderBuildCurrent() CALLS buildLaneFacts — the one place the three payload generations resolve');
+  const laneFactsBody = extractFunction(settings, 'buildLaneFacts');
+  ok(laneFactsBody.includes('activeModelLine('),
+    'buildLaneFacts() CALLS activeModelLine — so `activeModel` still has a reader, ' +
+    'on the degraded path a backend without `build` OR `buildModel` takes');
+  ok(laneFactsBody.includes('buildModelFacts('),
+    '…and buildModelFacts, so the middle generation still has one too');
+  ok(/\bk\.build\b/.test(laneFactsBody) || /raw\s*=\s*\(k && k\.build/.test(laneFactsBody),
+    '…and reads the NEW derived `build` record on the normal path');
 
   // Not behind a disclosure: a <details>/summary wrapper would technically
   // "read" the field while keeping a billing change one click away from
   // invisible.
+  // UPDATED (v3.45.0): the provider rows moved into `renderConnectBlock`, so
+  // the ordering is now banner-before-BLOCK-1 rather than banner-before-rows.
+  // That is a STRONGER statement, not a weaker one: block 1 is the first thing
+  // on the page, so the banner is above everything rather than above one list.
   const iBanner = providersBody.indexOf('renderFallbackBanner(');
-  const iRows = providersBody.indexOf('provider-row-list');
-  ok(iBanner !== -1 && iRows !== -1 && iBanner < iRows,
-    'the banner is emitted ABOVE the provider list, not appended below it');
+  const iConnect = providersBody.indexOf('renderConnectBlock(');
+  ok(iBanner !== -1 && iConnect !== -1 && iBanner < iConnect,
+    'the banner is emitted ABOVE block 1, and therefore above the whole page');
+  // And the rows really are in that block — otherwise the ordering above would
+  // be true of a function that renders nothing.
+  ok(extractFunction(settings, 'renderConnectBlock').includes('provider-row-list'),
+    'CONTROL: block 1 is what renders the provider rows, so the ordering above is about them');
   const bannerBody = extractFunction(settings, 'renderFallbackBanner');
   ok(!/<details|<summary/i.test(bannerBody),
     'the banner is not wrapped in a disclosure — a silent billing change must not be one click from invisible');

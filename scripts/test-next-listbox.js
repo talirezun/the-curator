@@ -383,7 +383,7 @@ ok(/export function closeAllListboxes/.test(lbJs),
   'reader but explicitly does NOT reach into view-owned popovers');
 
 // ═══════════════════════════════════════════════════════════════════════
-section('§5  The adoptions — ONE component, six call sites');
+section('§5  The adoptions — ONE component, eleven call sites');
 
 const VIEWS = path.join(NEXT, 'views');
 const viewFiles = readdirSync(VIEWS).filter((f) => f.endsWith('.js'));
@@ -405,7 +405,22 @@ ok(selectOffenders.length === 0,
   (selectOffenders.length ? ' — found: ' + selectOffenders.join(', ') : ''));
 
 // chat.js: the composer's MODEL picker and its LENGTH picker.
-const expectAdoptions = { 'memory.js': 2, 'ingest.js': 2, 'settings.js': 2, 'chat.js': 2 };
+//
+// ── settings.js 2 -> 5, UPDATED DELIBERATELY (v3.45.0) ────────────────────
+// The Providers page was rebuilt as four numbered blocks and gained THREE more
+// adoptions, each one replacing something that was not a control at all:
+//   · `build-model-lb`     — block 2's popup, the everyday way to change the
+//                            model that builds the wiki. Before this the only
+//                            way to change it was to scroll a ~19-row list.
+//   · `browse-provider-lb` — block 4's provider filter.
+//   · `browse-sort-lb`     — block 4's sort, across providers. (The existing
+//                            per-provider sort in `renderModelFilterBar` is
+//                            the second, unchanged, and the default-domain
+//                            picker in the MCP section is the third.)
+// The count is pinned rather than left open because an UNPINNED count is how a
+// hand-rolled menu gets added back beside the shared one without anything
+// noticing — which is the state chat.js was in when this file was written.
+const expectAdoptions = { 'memory.js': 2, 'ingest.js': 2, 'settings.js': 5, 'chat.js': 2 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -422,7 +437,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 8, `EIGHT adoptions across four views (found ${total})`);
+ok(total === 11, `ELEVEN adoptions across four views (found ${total})`);
 
 // The render -> wire handoff. This is the assertion that makes "one
 // component" mean something: markup and behaviour must come from ONE object.
