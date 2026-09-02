@@ -273,6 +273,19 @@
      shouting. */
   --control-edge-quiet: var(--border-strong);
 
+  /* ── THE SEGMENTED TRACK'S OWN EDGE, SPLIT FROM --control-edge-quiet ───
+     v3.44.0 gave `.theme-segmented` a `--control-edge-quiet` border plus
+     `--gloss-well-quiet`'s inset shadow in BOTH themes. On dark that reads
+     as the intended well; the maintainer's own screenshot of light called
+     the identical recipe "a mistake" — a boxed outline round the whole
+     control, where AppKit's own NSSegmentedControl shows a barely-there
+     tinted fill and no visible outline. DARK IS THE CONTROL: it keeps the
+     exact values it shipped with, by ALIAS rather than a second literal, so
+     the two cannot drift apart by editing one of them. Section 13 of
+     test-next-design-kit.js pins both halves of that unchanged-ness. */
+  --seg-track-edge:  var(--control-edge-quiet);
+  --seg-track-inset: var(--gloss-well-quiet);
+
   /* ── 4c · MATERIALS ───────────────────────────────────────────────────
      FOUR roles, matching the four NSVisualEffectView materials this app can
      plausibly claim: chrome, sidebar, menu, sheet. The design system's own
@@ -494,6 +507,31 @@
   --control-edge:       var(--ink-300);
   --control-edge-quiet: var(--border-strong);
 
+  /* ── THE FIX ITSELF: A HAIRLINE, NOT A BORDER ──────────────────────────
+     --control-edge-quiet here is --border-strong #C9C9D8 — 1.48:1 against
+     the track's own --surface-sunken #F3F3F7, well under any identification
+     floor, so it was never DOING 1.4.11's job on this control; it was only
+     drawing a box. --hairline (rgba(16,16,26,0.07)) is the token this file
+     already reserves for "decorative, inside a surface" separators — the
+     lip of a material, the rule under a heading — which is exactly the
+     register an NSSegmentedControl's track lives in. The inset well-shadow
+     drops with it, to 0.06 — quieter than the generic --gloss-well-quiet's
+     0.09, because that value was tuned for the same near-black well dark
+     uses and light's well is barely darker than its own canvas.
+
+     WHAT STILL CARRIES IDENTIFICATION: the selected segment's own recipe
+     (--surface-raised + --gloss-specular-quiet + --elev-1) is UNCHANGED —
+     it is a raised chip lifted out of the well, the same "lit edge, not a
+     drawn line" argument 4d's gloss section makes for the specular, and it
+     is what a real NSSegmentedControl relies on too: the pill, not a flat
+     colour step against its track. Section 13 of test-next-design-kit.js
+     proves the design system's own identification-grade token
+     (--control-edge, not this quiet one) WOULD clear 3:1 against the track
+     fill in both themes if a drawn boundary were ever needed — the shaping
+     edge below deliberately does not, which is why it never draws one. */
+  --seg-track-edge:  var(--hairline);
+  --seg-track-inset: inset 0 1px 2px rgba(16,16,26,0.06);
+
   --mat-blur: 24px;
   --mat-sat:  1.7;
   --mat-chrome:  rgba(251,251,253,0.72);
@@ -606,6 +644,14 @@
   [data-theme="light"] {
     --control-edge: var(--text-2);          /* #45455A — 9.33:1 vs #FFFFFF */
     --control-edge-quiet: var(--text-2);
+    /* LIGHT ONLY: --seg-track-edge aliases --hairline outside this query,
+       and --hairline is not itself boosted here (it stays a decorative
+       in-surface separator everywhere else). Re-pointed to the
+       now-boosted --control-edge-quiet so Increase Contrast still hardens
+       the segmented track's edge on light — dark needs no equivalent
+       line because its --seg-track-edge already aliases --control-edge-quiet
+       and inherits the :root override above for free. */
+    --seg-track-edge: var(--control-edge-quiet);
     --hairline-strong: rgba(16,16,26,0.32);
     --ring-halo: var(--accent);
   }

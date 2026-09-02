@@ -471,11 +471,19 @@
      the whole reading of an NSSegmentedControl: a well with one chip lifted
      out of it. It was a flat --surface-inset box with a 1.2:1 --border, so
      the only thing distinguishing "selected" was a slightly lighter fill.
-     --control-edge-quiet rather than --control-edge: the track is shaping,
-     not identification — the SEGMENTS are what a user aims at, and each
-     carries its own state. */
-  border: 1px solid var(--control-edge-quiet);
-  box-shadow: var(--gloss-well-quiet);
+     The track's own edge is SHAPING, not identification — the SEGMENTS are
+     what a user aims at, and each carries its own state.
+
+     --seg-track-edge / --seg-track-inset (tokens/material.css), not
+     --control-edge-quiet / --gloss-well-quiet directly: on light the
+     maintainer's own screenshot called the shared tokens "a mistake" — a
+     boxed outline round the whole control, where AppKit shows a
+     barely-there tinted fill and no visible outline. Dark is unchanged
+     (--seg-track-edge aliases --control-edge-quiet there, byte for byte);
+     light gets a hairline. ONE rule, both themes — no [data-theme]
+     override needed here because the difference lives in the tokens. */
+  border: 1px solid var(--seg-track-edge);
+  box-shadow: var(--seg-track-inset);
 }
 .theme-seg-btn {
   height: 28px;
