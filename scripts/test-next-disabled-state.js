@@ -408,15 +408,28 @@ ok(collectRules(PLANT_CURSOR).filter(r => selectsDisabled(r.selector) &&
  * directions are the same defect in the parser, and the strip is what closes
  * it. The assertions below pin the DIRECTION and the fact that the numbers
  * differ, not the exact figures, which move whenever a comment is edited.
+ *
+ * ── THE wrongCursor ROW MOVED TO 0/0, AND THAT IS WHY IT IS NOW SYNTHETIC ──
+ * The single raw-only cursor hit above was `.cur-check` in
+ * shared/checkbox.css — one rule, carrying `cursor: pointer`, under a comment
+ * whose prose happened to say `:disabled`. At the UI phase 1 release merge
+ * that rule became `cursor: default` (the hand cursor was the defect
+ * scripts/test-next-views-kit.js §11 had recorded), and this control went red
+ * reporting a comment-parsing problem that did not exist — the SAME failure
+ * its own note two paragraphs down describes, arriving from the opposite
+ * direction: not a real §3 defect reddening the control, but a real §3 FIX
+ * doing it.
+ *
+ * A control that needs a defect to survive in the tree is a control with an
+ * expiry date. That arm is therefore measured on a SYNTHETIC fixture of the
+ * exact shape instead, so it holds no matter how clean the real tree gets.
+ * This is NOT the synthetic attempt the first draft got wrong: that one
+ * planted a comment above a rule and expected a BODY-reading detector to see
+ * it. The selector-side drag IS this arm's mechanism, so a fixture reproduces
+ * it exactly. The real tree is still measured — the counts are printed, and
+ * the `rules`, `disabled` and provider arms still assert on it.
  */
-function parseTree(useStrip) {
-  const rules = [];
-  for (const file of CSS_FILES) {
-    const raw = readFileSync(file, 'utf8');
-    for (const r of collectRules(useStrip ? stripCssComments(raw) : raw)) {
-      rules.push({ ...r, file: path.relative(NEXT, file) });
-    }
-  }
+function measure(rules) {
   const dis = rules.filter(r => selectsDisabled(r.selector));
   const prov = rules.filter(r => /\.provider-row-unavailable\b/.test(r.selector));
   return {
@@ -427,6 +440,19 @@ function parseTree(useStrip) {
     providerWithOpacity: prov.filter(r => valueOf(r.body, 'opacity') !== null).length,
   };
 }
+function parseTree(useStrip) {
+  const rules = [];
+  for (const file of CSS_FILES) {
+    const raw = readFileSync(file, 'utf8');
+    for (const r of collectRules(useStrip ? stripCssComments(raw) : raw)) {
+      rules.push({ ...r, file: path.relative(NEXT, file) });
+    }
+  }
+  return measure(rules);
+}
+function parseText(css, useStrip) {
+  return measure(collectRules(useStrip ? stripCssComments(css) : css));
+}
 const S = parseTree(true);
 const R = parseTree(false);
 ok(R.rules > S.rules,
@@ -436,15 +462,35 @@ ok(R.rules > S.rules,
 ok(R.disabled > S.disabled,
    `without the strip, comments inflate the disabled-rule set (${S.disabled} → ${R.disabled}) — ` +
    'prose saying "disabled" above an unrelated rule folds into its selector');
-/* These two assert the DELTA, never the absolute. A first draft wrote
+/* These assert the DELTA, never the absolute. A first draft wrote
    `S.wrongCursor === 0 && R.wrongCursor > 0`, which also asserts the tree is
    clean — so a real §3 defect reddened this control as well, reporting a
    comment-parsing problem that did not exist. A control must measure the
    thing it controls for and nothing else, or it starts lying about which
-   guard failed. Found by running the mutations, not by re-reading it. */
-ok(R.wrongCursor > S.wrongCursor,
-   `§3 sees MORE cursor failures raw than stripped (${S.wrongCursor} → ${R.wrongCursor}) — the extra ` +
+   guard failed. Found by running the mutations, not by re-reading it.
+
+   The cursor arm is measured on the FIXTURE below rather than on the tree,
+   for the reason written at the top of this control: its one real specimen
+   was fixed, and an arm that needs a live defect expires. The fixture is the
+   specimen's exact shape — prose naming `:disabled` above a rule that is not
+   disabled and carries an ordinary cursor. */
+const CURSOR_FIXTURE =
+  '/* The `.cur-check` shape: this prose mentions :disabled, the rule below\n' +
+  '   is not disabled at all. */\n' +
+  '.zz-fixture-check { cursor: pointer; }\n';
+const FS_ = parseText(CURSOR_FIXTURE, true);
+const FR_ = parseText(CURSOR_FIXTURE, false);
+ok(FS_.wrongCursor === 0,
+   `stripped, the fixture's one rule is not a disabled rule at all, so §3 sees no cursor failure (${FS_.wrongCursor})`);
+ok(FR_.wrongCursor > FS_.wrongCursor,
+   `§3 sees MORE cursor failures raw than stripped (${FS_.wrongCursor} → ${FR_.wrongCursor}) — the extra ` +
    'one is a FALSE FAILURE on a rule dragged in by the comment above it');
+/* And the tree itself is reported rather than asserted on for this arm, so a
+   future rule of the same shape is visible in the output without being
+   required. */
+ok(R.wrongCursor >= S.wrongCursor,
+   `on the REAL tree the same arm reads ${S.wrongCursor} stripped / ${R.wrongCursor} raw — raw can only ` +
+   'ever be the larger, and both being 0 means the tree no longer carries a rule of that shape');
 ok(R.providerWithOpacity > S.providerWithOpacity,
    `§6 sees MORE provider-opacity hits raw than stripped (${S.providerWithOpacity} → ` +
    `${R.providerWithOpacity}) — because the comment explaining the compound fix QUOTES the opacity ` +

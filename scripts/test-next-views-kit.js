@@ -789,19 +789,48 @@ section('11. What §10 CANNOT see, pinned by name because a browser found it');
   ok(!/min-height:\s*var\(--hit-min\)/.test(declForBody(read('views/memory.css'), '.zz-not-a-real-selector')),
     'control: …and the pin above therefore fails on one, rather than matching an empty string');
 
-  /* ── AND THE THREE STILL-WRONG CONTROLS THIS PASS DOES NOT OWN ───────────
+  /* ── AND THE THREE FOUNDATION CONTROLS, NOW FIXED ───────────────────────
      The same rendered sweep found `cursor: pointer` on `.cur-check`
      (shared/checkbox.css), `.tx-vh-info` and `.tx-explainer-summary`
      (shared/text.css) — the hand cursor on a checkbox, on the info mark that
      appears on eleven surfaces, and on every explainer disclosure. All three
-     are in the foundation layer this pass does not own, so they are RECORDED
-     rather than fixed, and this assertion is what keeps the record honest: it
-     asserts they are STILL WRONG, so it goes red the day they are fixed and
-     the note has to be removed rather than left as a lie. */
+     were in the foundation layer THIS PASS did not own, so the assertion here
+     used to say `foreign.length === 2` — it asserted they were STILL WRONG,
+     so that it would go red the day they were fixed rather than sit as a lie.
+
+     They were fixed at the release merge, which is exactly the event that
+     assertion was built to force, so it is INVERTED rather than deleted: the
+     record becomes a guard. `.cur-check-label` was corrected in the same
+     sweep — it wraps `.cur-check`, so a hand cursor on the label put the hand
+     back over the checkbox by another door, and leaving it would have made a
+     file-level check impossible to state honestly.
+
+     `not-allowed` is deliberately NOT swept: it is a different statement (this
+     control exists and is refusing you) and is the idiom used throughout this
+     tree, in the views as well as here. */
   const foreign = ['shared/checkbox.css', 'shared/text.css']
     .filter((f) => /cursor:\s*pointer/.test(stripComments(read(f))));
-  ok(foreign.length === 2,
-    `RECORDED, NOT FIXED: ${foreign.join(' and ')} still set cursor: pointer (.cur-check, .tx-vh-info, .tx-explainer-summary) — foundation files this pass does not own`);
+  ok(foreign.length === 0,
+    foreign.length === 0
+      ? 'FIXED: no `cursor: pointer` survives in shared/checkbox.css or shared/text.css either'
+      : `${foreign.join(' and ')} still set cursor: pointer`);
+  // Replaced, not merely deleted — the same distinction §5 draws for the
+  // views. An absent `cursor` inherits, which on a <button> is not the arrow.
+  for (const [file, sel] of [['shared/checkbox.css', '.cur-check'],
+                             ['shared/checkbox.css', '.cur-check-label'],
+                             ['shared/text.css', '.tx-vh-info'],
+                             ['shared/text.css', '.tx-explainer-summary']]) {
+    ok(/cursor:\s*default/.test(declForBody(read(file), sel)),
+      `${sel} (${file}) declares \`cursor: default\` — the pointer was replaced, not dropped`);
+  }
+  // Control: the pin above can fail. A selector with no cursor at all must
+  // not read as a pass.
+  ok(!/cursor:\s*default/.test(declForBody(read('shared/text.css'), '.zz-no-such-control')),
+    'control: …and that pin fails on a selector that declares no cursor, so an absent rule cannot pass it');
+  // …and `not-allowed` survives, so the sweep did not flatten the disabled
+  // statement into the ordinary one.
+  ok(/cursor:\s*not-allowed/.test(stripComments(read('shared/checkbox.css'))),
+    '…while `cursor: not-allowed` is untouched — a refusal is a different statement from an ordinary control');
 }
 
 console.log('\n' + '─'.repeat(60));

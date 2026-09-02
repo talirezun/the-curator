@@ -201,7 +201,9 @@
   align-items: center;
   gap: 8px;
   padding: 10px 13px;
-  cursor: pointer;
+  /* Arrow, not hand: macOS draws the arrow over a disclosure control, and
+     the hand would read as a link out of the app. */
+  cursor: default;
   font-family: var(--font-sans);
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
@@ -356,7 +358,9 @@
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-2);
-  cursor: pointer;
+  /* Arrow, not hand — an info mark opens a popover in place; it is not a
+     link, and this mark appears on eleven surfaces. */
+  cursor: default;
   transition: color var(--dur-fast, 80ms) var(--ease-out, ease),
               background var(--dur-fast, 80ms) var(--ease-out, ease),
               transform var(--t-press);
