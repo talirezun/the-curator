@@ -415,7 +415,7 @@ The app uses an AI provider to read your documents and power chat. You need an A
 |---|---|---|
 | **Google Gemini** | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost, and the app's default. |
 | **Anthropic Claude** | No — paid only | Roughly 10× the Gemini bill for the same workload. |
-| **OpenRouter** | Some models are free, with a daily request cap | One key onto many vendors. **It can build your wiki**, on three hand-measured models, and its default is the cheapest route to that job of the three providers. Because saving its key also makes it the active provider, read [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) before you do. |
+| **OpenRouter** | Some models are free, with a daily request cap | One key onto many vendors. **It can build your wiki**, on three hand-measured models, and its default is the cheapest route to that job of the three providers. Saving its key **no longer** moves your build lane on its own (changed in v3.45.0 — it does so only if nothing is building yet); to actually build on it, pick one of its models under *What builds your wiki*. Read [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) first — its two lanes are the one place this gets subtle. |
 
 
 > ⚠️ **About "free" — read this before you commit to free-tier-only usage.**

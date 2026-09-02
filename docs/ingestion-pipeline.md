@@ -433,7 +433,7 @@ When the registry refuses, the frontend shows a friendly toast and the buttons a
 
 ## 7. Provider-specific behaviour
 
-The LLM dispatch lives in `src/brain/llm.js`. **Three providers can run an ingest** — Gemini, Anthropic and OpenRouter — and the differences between them are subtle but load-bearing. Which one runs is the *active* provider (the one whose key you saved most recently, or whichever you last set active); the chat composer's per-message model is a separate lane and never affects ingest.
+The LLM dispatch lives in `src/brain/llm.js`. **Three providers can run an ingest** — Gemini, Anthropic and OpenRouter — and the differences between them are subtle but load-bearing. Which one runs is the *active* provider — since v3.45.0 that is the provider of the model chosen under **What builds your wiki**, not whichever key was saved most recently (a key save takes the lane only when nothing is building yet); the chat composer's per-message model is a separate lane and never affects ingest.
 
 ### 7.1 — Google Gemini (default)
 
