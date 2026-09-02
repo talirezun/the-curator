@@ -103,8 +103,8 @@ Escape hatch, rarely the right answer: `git commit --no-verify`.
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (181 suites total — 160 OFFLINE
-+ 14 LIVE_CI + 7 LIVE_LOCAL — thousands of assertions). One command runs them
+The Curator has an extensive battle-test suite (182 suites total — 160 OFFLINE
++ 15 LIVE_CI + 7 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
 `OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the top of
@@ -444,6 +444,26 @@ also includes the three Shared Brain integration suites, so the
   prompts against every configured REAL provider (Gemini + Anthropic),
   through the GitHub adapter when the secrets are present (local adapter
   otherwise).
+
+`LIVE_CI` also carries the OpenRouter suite, which is the only one keyed on
+`OPENROUTER_API_KEY`:
+
+- `test-openrouter-live` — the third provider end-to-end on four real requests:
+  text mode, JSON mode through a real `ingestFile`, the SSE streaming path, and
+  a model id that does not exist. It runs on
+  `ibm-granite/granite-4.0-h-micro`, the cheapest HAND-MEASURED model in the
+  catalogue, and never syncs the runtime catalogue — so it cannot reach a model
+  nobody has measured. It also re-checks live what
+  `MODEL_PRICES_USD_PER_MTOK`'s own comment claims: the hand-typed rate
+  reproduces OpenRouter's reported bill to the last decimal. Measured spend
+  ~$0.00014 per run, printed at the end, and the suite fails if a run exceeds
+  one cent. **Unlike its siblings it does NOT read a key out of
+  `.curator-config.json`** — it isolates `CURATOR_TEST_USER_DATA_DIR` and
+  `CURATOR_TEST_DOMAINS_DIR` to tempdirs before importing a single app module
+  and asserts that isolation before spending anything, so the key must be in
+  the environment (or `.env`). That is deliberate: the alternative is moving the
+  maintainer's real config aside for the duration of a run, which is a
+  data-loss hazard the moment the runner SIGKILLs the suite on timeout.
 
 To run the GitHub-backed suites locally without minting a fine-grained PAT,
 the `gh` CLI token works (it has `repo` scope):
