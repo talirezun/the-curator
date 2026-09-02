@@ -1015,11 +1015,14 @@ router.get('/api-keys', (_req, res) => {
     // documented dev fallback; the per-chat selector is deliberately config-only.)
     //
     // hasGeminiKey / hasAnthropicKey MUST NOT be renamed or removed. The
-    // shipping /old frontend's first-run check reads exactly these two; their
-    // absence makes it believe no key is configured and re-fire the 4-step
-    // onboarding overlay — which has no Escape, no backdrop close, no X and no
-    // Skip on step 1 — on every load, for an already-configured user.
-    // hasOpenrouterKey is purely ADDITIVE beside them.
+    // shipping pre-redesign frontend's first-run check used to read exactly
+    // these two — that shell (reachable at /old, `src/public/app.js`) was
+    // deleted in v3.41.0 and /old now just redirects to / — but the field
+    // names stay pinned to what any client, present or future, would
+    // reasonably expect: their absence would make a first-run check believe
+    // no key is configured and re-fire onboarding for an already-configured
+    // user, which was the shape of the historical /old defect this guards
+    // against. hasOpenrouterKey is purely ADDITIVE beside them.
     hasGeminiKey:     !!keys.geminiApiKey,
     hasAnthropicKey:  !!keys.anthropicApiKey,
     hasOpenrouterKey: !!keys.openrouterApiKey,
@@ -1029,19 +1032,23 @@ router.get('/api-keys', (_req, res) => {
     // stays in sync with DEFAULTS automatically when we bump to a newer model.
     //
     // DELIBERATELY a { gemini: '<id>', anthropic: '<id>' } map of STRINGS ONLY —
-    // never touch this shape. The shipping /old frontend (src/public/app.js,
-    // `chat-dd-opt-desc` in the model-selector dropdown) renders it as
+    // never touch this shape. The shipping pre-redesign frontend (src/public/app.js,
+    // `chat-dd-opt-desc` in the model-selector dropdown) used to render it as
     // `escHtml(models[p] || '')`, and `escHtml` starts with `String(str)` — so
-    // an object or array here renders the literal text "[object Object]" in
-    // production for every user still on /old. The new offerable catalogue
-    // below is deliberately a SEPARATE, additive field for exactly this reason.
+    // an object or array here would have rendered the literal text
+    // "[object Object]" in production for every user on that shell. That shell
+    // (reachable at /old) was deleted in v3.41.0 and /old now just redirects
+    // to /, but the shape stays pinned for whatever client reads it next. The
+    // new offerable catalogue below is deliberately a SEPARATE, additive field
+    // for exactly this reason.
     //
     // v3.15.0: `openrouter` is added as a third STRING-OR-NULL entry. Two facts
-    // make that safe for /old, and both were checked rather than assumed:
-    // (a) /old never enumerates this map — it builds its own provider list from
-    //     hasGeminiKey/hasAnthropicKey and only ever indexes models[p] for those
-    //     two, so a third key is invisible there. /old therefore will not offer
-    //     OpenRouter at all, which is the documented limit for this release.
+    // made that safe for /old while it was still live, and both were checked
+    // rather than assumed:
+    // (a) /old never enumerated this map — it built its own provider list from
+    //     hasGeminiKey/hasAnthropicKey and only ever indexed models[p] for those
+    //     two, so a third key was invisible there. /old therefore would not have
+    //     offered OpenRouter at all, which was the documented limit at the time.
     // (b) the value it reads is `escHtml(models[p] || '')`, so a null would
     //     render as empty rather than "[object Object]". The invariant this
     //     comment protects is "never an object or array" — null is a legitimate
@@ -1132,9 +1139,11 @@ router.get('/api-keys', (_req, res) => {
     // second catalogue surface: the models themselves stay in `offerable`, and
     // this only answers "how fresh is that list", which the sync button needs in
     // order to say anything truthful about its own last run. Key-gated exactly
-    // like `offerable`, and ADDITIVE — `/old` reads `models` and the
-    // `hasXKey` booleans and ignores unknown fields (the v3.12.0 precedent that
-    // added `offerable` itself).
+    // like `offerable`, and ADDITIVE — the pre-redesign shell (deleted in
+    // v3.41.0; /old now redirects to /) used to read only `models` and the
+    // `hasXKey` booleans and ignore unknown fields (the v3.12.0 precedent that
+    // added `offerable` itself), a pattern kept here for whatever other client
+    // reads this response.
     openrouterCatalogue: keys.openrouterApiKey && typeof llmModule.getOpenRouterCatalogueMeta === 'function'
       ? llmModule.getOpenRouterCatalogueMeta()
       : null,
@@ -1157,8 +1166,9 @@ router.get('/api-keys', (_req, res) => {
     // this repo's named dead-data shape, in the direction where the user sees a
     // button that is guaranteed to 400.
     //
-    // Key-gated exactly like `offerable`, and ADDITIVE (the `/old` shell reads
-    // `models` plus the hasXKey booleans and ignores unknown fields).
+    // Key-gated exactly like `offerable`, and ADDITIVE (the pre-redesign shell,
+    // deleted in v3.41.0 — /old now redirects to / — used to read `models`
+    // plus the hasXKey booleans and ignore unknown fields).
     qualifications: keys.openrouterApiKey && typeof llmModule.listLocalQualifications === 'function'
       ? llmModule.listLocalQualifications().map(r => ({
           ...r,
@@ -2338,9 +2348,11 @@ export function compareSemver(a, b) {
  * `git reset --hard origin/main`: a DOWNGRADE, offered as an update.
  *
  * `/next` added a client-side guard for exactly this (`classifyUpdate`'s
- * 'local-ahead' arm). `/old` has NO guard at all — `src/public/app.js` reads
- * `data.updateAvailable` and offers the button. So the verdict is wrong at
- * source and only one of the two frontends papered over it.
+ * 'local-ahead' arm). The pre-redesign shell (`/old`, `src/public/app.js`,
+ * deleted in v3.41.0 — `/old` now just redirects to `/`) had NO guard at
+ * all — it read `data.updateAvailable` and offered the button. So the
+ * verdict was wrong at source and only one of the two frontends papered
+ * over it.
  *
  * ── Why the commit comparison is subordinated rather than kept ───────────
  *

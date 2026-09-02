@@ -148,10 +148,12 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     // branch, and it is compared with === true rather than coerced. A
     // truthy-string check would let `"false"` through, which is exactly the
     // shape v3.30.0 refused for `safeToQuit`. A client that does not send
-    // the field — /old, curl, an older frontend — therefore CANNOT overwrite
-    // anything; it gets the refusal instead. That is the point: /old's
-    // connect form is frozen and cannot be taught the new dialog, so the
-    // safety has to live on this side of the wire.
+    // the field — curl, an older frontend, the pre-redesign shell that used
+    // to be reachable at /old before it was deleted in v3.41.0 (/old now
+    // just redirects to /) — therefore CANNOT overwrite anything; it gets
+    // the refusal instead. That was always the point: a frozen connect form
+    // that cannot be taught a new dialog means the safety has to live on
+    // this side of the wire, and that still holds for any client today.
     const result = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
     res.json({ success: true, ...result, ...(await getStatus()) });
   } catch (err) {

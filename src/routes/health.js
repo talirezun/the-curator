@@ -513,11 +513,12 @@ router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
   //
   // Measured difference from those two, and the reason this is a message change
   // and not a behaviour change: an EMPTY collection is not reachable here from
-  // either frontend. /next re-derives the pair list at confirm time and shows
-  // "Nothing left to merge…" without issuing a request; /old freezes a list its
-  // own `highConfidencePairs()` guard has already proven non-empty. So this text
-  // is a backstop for scripted clients — which is exactly why it should read as
-  // English rather than as an internal assertion.
+  // the frontend. /next re-derives the pair list at confirm time and shows
+  // "Nothing left to merge…" without issuing a request; the pre-redesign shell
+  // (deleted in v3.41.0 — /old now just redirects to /) used to freeze a list
+  // its own `highConfidencePairs()` guard had already proven non-empty. So this
+  // text is a backstop for scripted clients — which is exactly why it should
+  // read as English rather than as an internal assertion.
   const rawPairs = (req.body && Array.isArray(req.body.pairs)) ? req.body.pairs : null;
   if (!rawPairs) {
     return res.status(400).json({ error: 'This request carried no pairs to merge. Scan for duplicates first, then merge.' });

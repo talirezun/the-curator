@@ -1056,10 +1056,17 @@ export function getReleaseRef() {
 //   • onboardingDismissed    — the app claims a fully set-up user has not set
 //     up.
 //   • installOrigin          — the app claims a native-app user came from the
-//     pre-cutover browser interface and offers them /old. See below; this one
-//     is not hypothetical, it is REPRODUCED.
+//     pre-cutover browser interface and offers them /old. That offering
+//     path (views/cutover-notice.js) was deleted in v3.41.0 along with the
+//     rest of the pre-redesign shell — /old now just 302-redirects to /, so
+//     this field's original consumer no longer exists. See below; this one
+//     was not hypothetical when it was fixed, it was REPRODUCED. The field
+//     is LEFT IN PLACE rather than removed, because dropping it would need
+//     a persisted-config migration, which is not this change.
 //   • cutoverNoticeDismissed — the app re-shows a one-time notice that was
-//     dismissed.
+//     dismissed. Same status as installOrigin above: the notice it gates
+//     (views/cutover-notice.js) is gone since v3.41.0, so this field is now
+//     dead weight kept only to avoid a config migration.
 //
 // Everything else in /next's localStorage is a per-device convenience whose
 // loss is VISIBLE on the first frame and one click to restore (theme, font
@@ -1112,12 +1119,14 @@ export function getReleaseRef() {
 //     worse than none". Making that field monotonic would have made a
 //     shipping button silently stop persisting. The distinction is real and
 //     narrow — an un-DISMISS is a thing the UI offers; an un-CONSENT is not,
-//     and views/cutover-notice.js's own header says it has "no explicit
-//     re-open path".
+//     and views/cutover-notice.js's own header said it had "no explicit
+//     re-open path" (that view was deleted in v3.41.0 along with the rest
+//     of the pre-redesign shell; /old now redirects to / instead of
+//     serving anything, so there is nothing left to re-open).
 //   • writeOnce: true  — recorded once and never re-decided, which is exactly
-//     what views/cutover-notice.js's provenance record already promises in
-//     its own header. Enforcing it here means the promise survives a client
-//     that forgets it.
+//     what views/cutover-notice.js's provenance record already promised in
+//     its own header, before that file was deleted in v3.41.0. Enforcing it
+//     here means the promise survives a client that forgets it.
 //
 // STATED RATHER THAN GLOSSED: for the fields whose `values` holds a SINGLE
 // literal, the monotonic branch in setUiState is REDUNDANT with the
@@ -1154,7 +1163,11 @@ export function uiStateSpec() {
  *
  * Anything unrecognised on disk — a value from a future version, a half-written
  * string, a key some other tool squatted on — reads as null rather than being
- * trusted, matching readOrigin()'s rule in views/cutover-notice.js.
+ * trusted, matching readOrigin()'s rule in views/cutover-notice.js — that
+ * view was deleted in v3.41.0 along with the rest of the pre-redesign
+ * shell (/old now redirects to / instead of serving anything), but the
+ * "unrecognised reads as null, never as trusted" rule it established is
+ * preserved here.
  */
 export function getUiState() {
   const cfg = readRaw();

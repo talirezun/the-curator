@@ -14,37 +14,27 @@
  * Run:
  *   node scripts/test-beta13-chat-live.js
  *
- * Requires GEMINI_API_KEY in env or .curator-config.json.
+ * Requires GEMINI_API_KEY in env or .env — self-skips (exit 0) with no
+ * network call when it is not available, the same convention every other
+ * LIVE suite in this repo uses (compare test-beta8-live-llm.js, this
+ * suite's closest sibling: same key, same dotenv/skip shape).
  *
  * Exits non-zero if any scenario fails both runs. The articles wiki is
  * untouched.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+dotenv.config(); // standalone script — .env keys aren't loaded via server.js here (v3.0.6)
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-
-// Pick up the user's API key from .curator-config.json if not in env.
+// Same contract every other LIVE suite uses for a missing API key: self-skip
+// exit 0, never a hard failure — a missing key is an environment fact, not a
+// test failure. (Deliberately env/.env only, not .curator-config.json: that
+// file's key wins over .env by design elsewhere in this app, which would
+// make this suite un-skippable on a configured dev machine even when the
+// caller explicitly wants to skip live network calls.)
 if (!process.env.GEMINI_API_KEY) {
-  const cfgPath = path.join(PROJECT_ROOT, '.curator-config.json');
-  if (existsSync(cfgPath)) {
-    try {
-      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
-      if (cfg.geminiApiKey) {
-        process.env.GEMINI_API_KEY = cfg.geminiApiKey;
-        console.log('[live test] Using GEMINI_API_KEY from .curator-config.json');
-      }
-    } catch { /* ignore */ }
-  }
-}
-
-if (!process.env.GEMINI_API_KEY) {
-  console.error('GEMINI_API_KEY not configured. Set it in .env or .curator-config.json.');
-  process.exit(2);
+  console.log('SKIPPED — GEMINI_API_KEY not set.');
+  process.exit(0);
 }
 
 let scenarioResults = [];

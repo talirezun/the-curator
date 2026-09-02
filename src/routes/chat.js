@@ -210,11 +210,13 @@ router.post('/:domain', async (req, res) => {
   //
   // Without `stream: true` in the body this route answers with `res.json(result)`
   // exactly as it always has — same object, same status, same everything. That
-  // is not politeness, it is a hard requirement with two named consumers:
-  // `/old` (src/public/app.js) POSTs here and reads `await res.json()`, and
-  // scripts/test-chat-cancel.js does the same across ~40 assertions. A route
-  // that only spoke SSE would break the escape-hatch shell and blind the suite
-  // that guards cancellation.
+  // is not politeness, it is a hard requirement: the pre-redesign shell
+  // (`/old`, `src/public/app.js`) used to POST here and read
+  // `await res.json()` — that shell was deleted in v3.41.0 and `/old` now
+  // just redirects to `/` — and scripts/test-chat-cancel.js still does the
+  // same across ~40 assertions today. A route that only spoke SSE would blind
+  // the suite that guards cancellation, and would break any other plain-JSON
+  // caller the same way the old shell would have broken.
   //
   // `=== true` and nothing looser. A string `"true"`, a `1`, or a truthy object
   // does NOT stream. The strictness is the point: the JSON path is the safe

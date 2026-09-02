@@ -322,13 +322,15 @@ function friendlyError(err) {
     // NAMES AN ACTION, NOT A PLACE. The previous wording was 'Click "Pull
     // only" first (under Advanced), then sync again' and that was its own
     // defect, found by a user who followed it into a data loss. "(under
-    // Advanced)" describes /old's layout — /next puts Push only / Pull only
-    // at the top level of the Sync view — and on the CONNECT screen neither
-    // control exists at all, so a user reading it there reached for the only
-    // other thing on the screen, which overwrote their files. setup() now
-    // raises its own connect-specific refusal ('remote-not-empty') before
-    // this branch can be reached from that screen; this wording is for the
-    // configured screen, where "pull first" is genuinely the next step.
+    // Advanced)" described the pre-redesign shell's layout (that shell,
+    // reachable at /old, was deleted in v3.41.0 — /old now just redirects
+    // to /) — /next puts Push only / Pull only at the top level of the Sync
+    // view — and on the CONNECT screen neither control exists at all, so a
+    // user reading it there reached for the only other thing on the screen,
+    // which overwrote their files. setup() now raises its own
+    // connect-specific refusal ('remote-not-empty') before this branch can
+    // be reached from that screen; this wording is for the configured
+    // screen, where "pull first" is genuinely the next step.
     return 'GitHub has changes you don\'t have locally. Pull first, then sync again.';
   }
   if (msg.includes('nothing to commit')) {
@@ -901,12 +903,14 @@ function refusal(code, message, details = {}) {
  * The wording that caused the incident was `Click "Pull only" first (under
  * Advanced)` — a sentence describing controls that were not in front of the
  * user. `/next` renders these refusals as its own decision panel with its own
- * button copy, so the strings here are only ever SEEN by `/old` and by
- * anything driving the API directly. `/old`'s connect form is frozen and has
+ * button copy, so the strings here are only ever seen by anything driving the
+ * API directly — the pre-redesign shell that used to be the other consumer
+ * (`/old`, `src/public/app.js`) was deleted in v3.41.0 and `/old` now just
+ * redirects to `/`. Historically that shell's connect form was frozen and had
  * only Push and Pull; telling a user on that screen to click "Merge — keep
- * both" would reproduce the exact defect one screen over. So they say what to
- * do and where the option lives, and leave the label to whichever surface is
- * actually rendering a button.
+ * both" would have reproduced the exact defect one screen over. So they say
+ * what to do and where the option lives, and leave the label to whichever
+ * surface is actually rendering a button.
  */
 export function syncRefusalOf(err) {
   if (!err || !err.curatorSyncCode) return null;
@@ -1900,8 +1904,9 @@ export async function pull() {
     pruned,
     // Folders this pull's merge emptied of tracked files but which still
     // hold something the user has not pushed. Reported rather than removed
-    // — see pruneGhostDomainDirs() rule 4. Additive on the wire: /old reads
-    // `pruned` only and is unaffected.
+    // — see pruneGhostDomainDirs() rule 4. Additive on the wire: the
+    // pre-redesign shell (deleted in v3.41.0; /old now redirects to /) used
+    // to read `pruned` only, so this field never affected it while it lived.
     prunedKept: keptLocalContent,
     details: pullOut,
   };

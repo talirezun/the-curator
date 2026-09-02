@@ -88,8 +88,10 @@ export function planRestart(caps = getCapabilities(), relaunchHook = getDesktopH
   }
   // The repo arm's body is transcribed here EXACTLY as the route has always
   // sent it. Adding `restartStyle: 'respawn-node'` here would be harmless to
-  // read and is still refused: /old's updater flow polls this endpoint's
-  // response, and "byte-identical" is a claim worth being able to make without
-  // an asterisk.
+  // read and is still refused: the pre-redesign shell's updater flow used to
+  // poll this endpoint's response (that shell, reachable at /old, was
+  // deleted in v3.41.0 — /old now just redirects to /), and "byte-identical"
+  // is a claim worth being able to make without an asterisk regardless of
+  // who is polling today.
   return { ok: true, style: 'respawn-node', body: { ok: true, restarting: true }, perform: null };
 }
