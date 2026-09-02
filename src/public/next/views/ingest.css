@@ -193,7 +193,14 @@
   color: var(--text-2);
 }
 
+/* The one way into the file picker that does not involve dragging. Measured
+   at 95x14 in a rendered page: the smallest target on the view, and the
+   fallback for anyone who cannot drag. Grown inline so the sentence it sits
+   in ("or browse your files") is not re-flowed by a block-level box. */
 .ing-browse-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
   color: var(--accent-text);
   cursor: default;
   user-select: none;

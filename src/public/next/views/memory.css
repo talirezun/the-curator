@@ -34,6 +34,13 @@
    a graphical boundary. */
 .mem-refresh {
   flex: none;
+  /* Measured at 51x16 in a rendered page — the padding alone never reached
+     macOS's 28pt default, and no `height` declaration existed for a source
+     scan to catch. The BOX grows; the type does not. The row it sits in is
+     baseline-aligned (see above), which the taller box does not disturb. */
+  min-height: var(--hit-min);
+  display: inline-flex;
+  align-items: center;
   padding: 2px 7px;
   border: none;
   border-radius: var(--radius-sm);
@@ -432,10 +439,18 @@
    it — the <select> is itself a flex item whose intrinsic minimum is its
    longest option, and machine ids are long and hex-suffixed. */
 .mem-ctl { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+/* ── A FIELD LABEL, NOT AN EYEBROW ────────────────────────────────────────
+   This took `--type-eyebrow`, which is a MONO token, but without the
+   uppercase and the tracking that make an eyebrow an eyebrow — so it
+   rendered "Scope" and "Machine" in sentence-case code type beside two
+   dropdowns. Found by rendering the page and counting the faces, not by
+   reading the rule. It is the label of a control, so it takes the text face
+   at the same size and colour; the eyebrows on this view (PROJECTS, CURRENT
+   HANDOFF) keep the mono idiom, which is what that token is for. */
 .mem-ctl-label {
   flex: none;
-  font: var(--type-eyebrow);
-  font-size: var(--text-2xs);
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-sans);
+  letter-spacing: var(--track-body);
   /* 2.31 dark / 2.26 light at --text-faint; 8.55 / 7.02 at --text-2, over
      --canvas. See the note on .mem-row-meta for why not --text-3. */
   color: var(--text-2);

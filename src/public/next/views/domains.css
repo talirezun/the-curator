@@ -746,11 +746,14 @@
   color: var(--text-2);
   padding-top: 4px;
 }
+/* 22 -> --control-sm (28px). These two sit at the right-hand end of a health
+   row and were the smallest real buttons in the app — 56x22 measured in a
+   rendered page. Their type is unchanged; only the box grew. */
 .dm-dismiss-btn,
 .dm-restore-btn {
   flex: none;
-  height: 22px;
-  padding: 0 8px;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
   font-size: var(--text-2xs);
 }
 

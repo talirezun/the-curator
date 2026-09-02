@@ -737,6 +737,73 @@ section('10. Nothing interactive in a view is under --hit-min');
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('11. What §10 CANNOT see, pinned by name because a browser found it');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  /* §10 reads `height: Npx` out of the stylesheet. That finds a control whose
+     box is declared and misses every control whose box is the SUM of its
+     padding, its line-height and its content — which a source scan cannot
+     compute and a layout engine computes for free.
+
+     SEVEN CONTROLS WERE UNDER macOS's 28pt DEFAULT AND §10 REPORTED NONE OF
+     THEM. Measured in a real browser at 1280x860, both themes:
+
+         .obp-dismiss        24x24   the only control that puts the guidance
+                                     panel away
+         .obp-go             95x26   its primary action
+         .dm-dismiss-btn     56x22   dismiss / restore on a health row — the
+         .dm-restore-btn             smallest real buttons in the app
+         .mem-refresh        51x16   no height declared at all; padding only
+         .ing-browse-link    95x14   the ONE way into the file picker that
+                                     does not involve dragging, i.e. the
+                                     fallback for anyone who cannot drag
+         .dm-group-fixall-btn 26     (this one §10 did catch)
+
+     They are pinned HERE, by name, rather than by teaching §10 to compute
+     layout — which it cannot do honestly from text. The next reader should
+     know that this list came from rendering the app, and that the scan above
+     is a floor rather than a proof. */
+  const PINNED = [
+    ['views/onboarding.css', '.obp-panel .obp-go', /height:\s*var\(--control-sm\)/],
+    ['views/onboarding.css', '.obp-dismiss', /position:\s*relative/],
+    ['views/domains.css', '.dm-dismiss-btn', /height:\s*var\(--control-sm\)/],
+    ['views/domains.css', '.dm-group-fixall-btn', /height:\s*var\(--control-sm\)/],
+    ['views/memory.css', '.mem-refresh', /min-height:\s*var\(--hit-min\)/],
+    ['views/ingest.css', '.ing-browse-link', /min-height:\s*var\(--hit-min\)/],
+  ];
+  const unpinned = [];
+  for (const [file, sel, re] of PINNED) {
+    if (!re.test(declForBody(read(file), sel))) unpinned.push(`${file} ${sel}`);
+  }
+  ok(unpinned.length === 0, unpinned.length === 0
+    ? `all ${PINNED.length} browser-found targets still reach --hit-min or --control-sm`
+    : 'browser-found targets that regressed: ' + unpinned.join(', '));
+  ok(/\.obp-dismiss::before\s*\{[^}]*inset:\s*calc\(\(var\(--hit-min\) - 24px\) \/ -2\)/
+    .test(stripComments(read('views/onboarding.css'))),
+    '.obp-dismiss keeps its 24px glyph and grows its TARGET with a derived ::before');
+  // Control: the pin can fail. A selector that does not exist must not read
+  // as a pass, which is what a bare `.test('')` would do for a truthy regex.
+  ok(declForBody(read('views/memory.css'), '.zz-not-a-real-selector') === '',
+    'control: declForBody returns nothing for a selector that does not exist, so an absent rule cannot pass a pin');
+  ok(!/min-height:\s*var\(--hit-min\)/.test(declForBody(read('views/memory.css'), '.zz-not-a-real-selector')),
+    'control: …and the pin above therefore fails on one, rather than matching an empty string');
+
+  /* ── AND THE THREE STILL-WRONG CONTROLS THIS PASS DOES NOT OWN ───────────
+     The same rendered sweep found `cursor: pointer` on `.cur-check`
+     (shared/checkbox.css), `.tx-vh-info` and `.tx-explainer-summary`
+     (shared/text.css) — the hand cursor on a checkbox, on the info mark that
+     appears on eleven surfaces, and on every explainer disclosure. All three
+     are in the foundation layer this pass does not own, so they are RECORDED
+     rather than fixed, and this assertion is what keeps the record honest: it
+     asserts they are STILL WRONG, so it goes red the day they are fixed and
+     the note has to be removed rather than left as a lie. */
+  const foreign = ['shared/checkbox.css', 'shared/text.css']
+    .filter((f) => /cursor:\s*pointer/.test(stripComments(read(f))));
+  ok(foreign.length === 2,
+    `RECORDED, NOT FIXED: ${foreign.join(' and ')} still set cursor: pointer (.cur-check, .tx-vh-info, .tx-explainer-summary) — foundation files this pass does not own`);
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ /next view-adoption assertions FAILED'); process.exit(1); }

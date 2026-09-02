@@ -158,6 +158,19 @@
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 /* On the panel's material, so the hover composites onto the plane. */
+/* ── THE GLYPH STAYS 24x24; THE TARGET REACHES --hit-min ─────────────────
+   The note above argues for the 24px amplitude and it stands. What it did
+   not settle is the TARGET, which was also 24 — under macOS's 28pt default,
+   on the only control that puts this panel away. Found by RENDERING, not by
+   the source scan: nothing here declares a height the scan could read, the
+   box is sized by its own 24px width/height pair and the offence only shows
+   up in a real layout. */
+.obp-dismiss { position: relative; }
+.obp-dismiss::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 24px) / -2);
+}
 .obp-dismiss:hover { background: var(--mat-row-hover); color: var(--text); }
 .obp-dismiss:active { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 /* Reduced motion: travel off, colour step kept. This is the only element in
@@ -210,7 +223,10 @@
      6.56. (.obp-mark-done below replaces the number with an aria-hidden check
      icon and keeps the success tone — see its own note.) */
   color: var(--text-2);
-  font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
+  /* A step NUMBER in a 20px disc. It was mono, which is a face for code; what
+     it needs is a figure that sits centred at any digit, which is tabular. */
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-sans);
+  font-variant-numeric: var(--numeric-tabular);
 }
 /* --success-text SURVIVES here, deliberately: the done state replaces the
    number with an aria-hidden check ICON, so this is a non-text graphic held to
@@ -250,11 +266,12 @@
    hand-duplicated in four separate view stylesheets, and depending on one
    of those copies for a surface that is not a view would be a fifth place
    the same value has to stay in step. */
+/* 26 -> --control-sm (28px), the same move .btn-xs took across four files. */
 .obp-panel .obp-go {
   flex: none;
   margin-top: 1px;
-  height: 26px;
-  padding: 0 9px;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
   font-size: var(--text-xs);
 }
 
