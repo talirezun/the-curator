@@ -532,14 +532,10 @@ section('4. copyOutcome() / runCopyAndAdvance() — a failed copy never advances
 section('5. describeSelfTest() — every branch has a next step');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  const okR = describeSelfTest({ ok: true, tool_count: 18, tool_names: ['list_domains'], domains: ['articles'], stderr: null });
+  const okR = describeSelfTest({ ok: true, tool_count: 18, tool_names: ['list_domains'], domains: ['articles'], domains_status: 'ok', stderr: null });
   ok(okR.tone === 'ok', 'a working bridge reports ok');
   ok(/18 tools/.test(okR.detail), 'and names the tool count it actually got back');
   ok(/1 domain\b/.test(okR.detail), 'and the domain count, singular');
-
-  const okNoDomains = describeSelfTest({ ok: true, tool_count: 18, domains: null });
-  ok(okNoDomains.tone === 'ok', 'no domains yet is still a pass');
-  ok(/expected on a brand-new install/i.test(okNoDomains.detail), 'and says so rather than looking like a fault');
 
   const zero = describeSelfTest({ ok: true, tool_count: 0 });
   ok(zero.tone === 'warn', 'ok:true with zero tools is a WARNING, not a pass');
@@ -574,6 +570,116 @@ section('5. describeSelfTest() — every branch has a next step');
     'whitespace-only stderr is treated as absent, not as an error detail');
   ok(!/started and then failed/i.test(describeSelfTest({ ok: false, stderr: '  ' }).headline),
     'and does not trigger the stderr branch');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('5b. describeSelfTest() reads domains_status — a MISSING folder and an EMPTY one are not one sentence');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// `ok: true` says the bridge speaks MCP; it says nothing about the knowledge
+// folder, and the route reports that separately as `domains_status`. Six
+// values are reachable — read them out of src/routes/mcp.js rather than
+// trusting this comment: ok | empty | missing_folder | unreadable | error |
+// no_response. `domains` is null for FIVE of them, so a branch that reads
+// only `Array.isArray(r.domains)` answers a missing folder with the same
+// reassuring sentence as an empty one. That was the shipped behaviour until
+// v3.41.0, and it sent a user whose folder had moved to go and debug the one
+// file that was fine.
+//
+// Every assertion here EXECUTES the real function. The headline assertion is
+// the pairwise-distinctness check at the end: it is the one that reds if two
+// statuses are ever collapsed back onto one string.
+{
+  const DIR = '/Users/x/Curator/domains';
+  const at = (status, extra) => describeSelfTest(Object.assign(
+    { ok: true, tool_count: 20, domains: null, domains_dir: DIR, domains_status: status }, extra || {}));
+
+  // ── missing_folder: the case the collapse hid ──────────────────────────
+  const missing = at('missing_folder', { domains_message: 'Curator domains folder not found at ' + DIR });
+  ok(missing.tone === 'warn', 'a missing knowledge folder is a WARNING, not a clean pass');
+  ok(/missing/i.test(missing.headline), 'and the headline says the folder is missing');
+  ok(missing.detail.includes(DIR), 'the detail names the folder that does not exist');
+  ok(!/brand-new install|no domains yet/i.test(missing.headline + ' ' + missing.detail + ' ' + missing.steps.join(' ')),
+    'and NEVER offers the fresh-install reassurance — that is the whole defect');
+  ok(/not a mistake in your Claude Desktop config/i.test(missing.steps.join(' ')),
+    'it explicitly stops the user debugging their Claude Desktop config');
+  ok(/Settings → Knowledge base/.test(missing.steps.join(' ')),
+    'and names the Settings section that actually holds the folder path');
+
+  // ── empty: a healthy fresh install, and it must still read as a pass ───
+  const empty = at('empty', { domains_message: 'No domains found in ' + DIR });
+  ok(empty.tone === 'ok', 'a folder that exists and holds no domains is still a PASS');
+  ok(/no domains/i.test(empty.detail), 'it says the folder was read and held nothing');
+  ok(empty.detail.includes(DIR), 'and names the folder it read');
+  ok(/Domains/.test(empty.steps.join(' ')), 'with the next step: create one in the Domains view');
+  ok(!/missing|does not exist/i.test(empty.headline + ' ' + empty.detail),
+    'and never claims the folder is missing');
+
+  // ── ok: domains present ───────────────────────────────────────────────
+  const good = at('ok', { domains: ['articles', 'projects'] });
+  ok(good.tone === 'ok' && /2 domains/.test(good.detail), 'domains present are counted');
+
+  // ── the three failure statuses land in the honest branch ──────────────
+  for (const s of ['unreadable', 'error', 'no_response']) {
+    const r = at(s, { domains_error: 'list_domains returned no readable text content' });
+    ok(r.tone === 'warn', `${s} is reported as a warning, not a clean pass`);
+    ok(/could not read your domains/i.test(r.headline), `${s} says the domains could not be read`);
+    ok(!/brand-new install/i.test(r.detail), `${s} does not borrow the fresh-install reassurance`);
+    ok(r.detail.includes('no readable text content'), `${s} carries the reason the route gave`);
+  }
+
+  // A status this build has never heard of must default into the HONEST
+  // branch. Defaulting into the cheerful one is how the collapse survived.
+  const future = at('some_status_added_later');
+  ok(future.tone === 'warn' && /could not read your domains/i.test(future.headline),
+    'an unrecognised future status defaults into the honest branch, not the cheerful one');
+
+  // A server older than this screen sends no status at all. It must not be
+  // answered with a claim the response cannot support in either direction.
+  const legacy = describeSelfTest({ ok: true, tool_count: 20, domains: null });
+  ok(legacy.tone === 'ok', 'a response with no domains_status at all is still a bridge pass');
+  ok(/does not report/i.test(legacy.detail),
+    'and says the server did not report the folder outcome, rather than inventing one');
+  ok(!/brand-new install/i.test(legacy.detail),
+    'it does not reassure about a folder it knows nothing about');
+  const legacyWithDomains = describeSelfTest({ ok: true, tool_count: 20, domains: ['articles'] });
+  ok(/1 domain\b/.test(legacyWithDomains.detail),
+    'and an old server that DID return a domain list is still counted');
+
+  // ── THE HEADLINE ASSERTION ────────────────────────────────────────────
+  // Every status the route can emit must render a DISTINCT sentence. This is
+  // what goes red if two of them are ever folded back together — which is the
+  // defect, not the absence of any particular word.
+  const STATUSES = ['ok', 'empty', 'missing_folder', 'unreadable', 'error', 'no_response'];
+  const rendered = new Map();
+  for (const s of STATUSES) {
+    const r = at(s, s === 'ok' ? { domains: ['articles'] } : {});
+    rendered.set(s, [r.tone, r.headline, r.detail, r.steps.join(' | ')].join(' ⏹ '));
+  }
+  // 'unreadable' | 'error' | 'no_response' are deliberately ONE branch — they
+  // are the same fact (the listing failed) with the same recovery, and the
+  // route's own `domains_error` is what distinguishes them on screen. So the
+  // distinctness requirement is over the four USER-FACING outcomes.
+  const OUTCOMES = ['ok', 'empty', 'missing_folder', 'unreadable'];
+  let collisions = 0;
+  for (let i = 0; i < OUTCOMES.length; i++) {
+    for (let j = i + 1; j < OUTCOMES.length; j++) {
+      if (rendered.get(OUTCOMES[i]) === rendered.get(OUTCOMES[j])) {
+        collisions++;
+        console.log(`      (collision: ${OUTCOMES[i]} renders identically to ${OUTCOMES[j]})`);
+      }
+    }
+  }
+  ok(collisions === 0, 'all four user-facing domains outcomes render DISTINCT copy');
+
+  // Control: the comparator can report a collision. Without this, a bug that
+  // made every rendering compare equal-to-nothing would pass the check above
+  // while proving nothing — this repo's own recorded "the check stopped
+  // reaching what it protects" shape.
+  ok(rendered.get('unreadable') === rendered.get('error'),
+    '(control) the comparator DOES report a match — the three failure statuses share one branch by design');
+  ok(new Set(rendered.values()).size === 4,
+    '(control) six statuses collapse to exactly four distinct renderings, no more and no fewer');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -527,32 +527,57 @@ section('§7  D2 — the honest result actually REACHES the user (frontend consu
 const wizardSrc = readFileSync(
   path.join(REPO_ROOT, 'src', 'public', 'next', 'views', 'mcp-wizard.js'), 'utf8');
 
-// ── A GAP THIS DELETION SURFACED, RECORDED RATHER THAN QUIETLY DROPPED ───
+// ── THE GAP THIS DELETION SURFACED, NOW CLOSED ───────────────────────────
 // Everything below used to read src/public/app.js. v3.41.0 deleted that
-// shell, and repointing the assertions at /next found that the D2 half does
-// not exist there: src/public/next/views/mcp-wizard.js NEVER READS
-// `domains_status`. Its describeSelfTest() branches on `ok`, `tool_count`,
+// shell, and repointing the assertions at /next found that the D2 half did
+// not exist there: src/public/next/views/mcp-wizard.js never read
+// `domains_status`. Its describeSelfTest() branched on `ok`, `tool_count`,
 // `error`, `stderr` and a null `domains` list — so a MISSING knowledge folder
-// and an EMPTY one reach the user as the same sentence, which is precisely
-// the harm D2 was built to remove.
+// and an EMPTY one reached the user as the same sentence, which is precisely
+// the harm D2 was built to remove. /next has been the only shell a user sees
+// since v3.9.0, so the consumer was absent for thirty releases while this
+// section reported green against the shell nobody was served.
 //
-// This is NOT a regression introduced here. /next has been the only shell a
-// user sees since v3.9.0, so the consumer has been absent for thirty
-// releases while this section reported green — it was reading the shell
-// nobody was served. That is this repo's named shape: a check that stopped
-// reaching the thing it protects, kept alive by the file it read still
-// existing on disk.
-//
-// So the gap is ASSERTED as a measured fact rather than deleted. It goes RED
-// the moment somebody wires a consumer up, which is the moment the real
-// assertions below it should come back — they are preserved verbatim in git
-// history at this file's pre-v3.41.0 revision, and the route-level checks in
-// §6 above still prove the honest statuses are PRODUCED.
-check('KNOWN GAP: /next mcp-wizard.js does not consume domains_status (route emits it; no UI renders it)',
-  !/domains_status/.test(wizardSrc));
-// Control: the probe really is reading the wizard and could see the field.
-check('  (control) the wizard source was read and does reference the self-test route',
-  /self-test/.test(wizardSrc) && wizardSrc.length > 1000);
+// It was wired up in the same release, so what stood here as a recorded gap
+// is now a positive assertion. This half is deliberately SHALLOW — that the
+// field is read at all, and that the sentences are not shared. The
+// BEHAVIOURAL proof, which executes describeSelfTest over every status the
+// route can emit and asserts the four user-facing outcomes render distinct
+// copy, lives in scripts/test-next-mcp-wizard.js §5b; §6 above proves the
+// route PRODUCES the statuses. This file's job is only that the two halves
+// are connected.
+// Scoped to describeSelfTest's own body, with COMMENTS STRIPPED. Both halves
+// were found by mutation: `const status = null;` — the consumer switched off
+// — left a whole-file regex GREEN, because this file's own explanation of the
+// defect contains the word `domains_status`. A guard satisfied by a comment
+// about the thing it guards is this repo's recorded "the check stopped
+// reaching what it protects" shape, arrived at here by the shortest road.
+const describeFn = functionBody(wizardSrc, 'function describeSelfTest(');
+check('frontend: /next describeSelfTest() was located',
+  typeof describeFn === 'string' && describeFn.length > 500);
+const describeCode = String(describeFn || '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+// Tripwire: the strip must not eat the code it is about to be asked about.
+check('  (control) the comment strip left real code behind',
+  /r\.tool_count/.test(describeCode) && /return \{/.test(describeCode));
+// …and that it genuinely REMOVED something, so a no-op strip can't make the
+// checks below pass for the wrong reason.
+check('  (control) …and it did remove commentary',
+  describeCode.length < String(describeFn || '').length * 0.8);
+
+check('frontend: describeSelfTest reads domains_status in CODE, not only in a comment',
+  /r\.domains_status/.test(describeCode));
+// The two statuses the collapse used to merge must each have their own arm.
+// This is the SEAM check only; the executed proof — every status the route
+// emits driven through the real function, with the four user-facing outcomes
+// asserted pairwise distinct — is scripts/test-next-mcp-wizard.js §5b.
+check('frontend: it branches on missing_folder specifically', /'missing_folder'/.test(describeCode));
+check('frontend: …and on empty separately', /'empty'/.test(describeCode));
+// The fresh-install reassurance was the sentence that was wrong for a missing
+// folder. The missing case must name itself.
+check('frontend: a missing folder is named as missing, not as a fresh install',
+  /knowledge folder is missing/i.test(describeCode));
 
 /** Slice a function body out of source by brace-matching from its signature. */
 function functionBody(src, signature) {

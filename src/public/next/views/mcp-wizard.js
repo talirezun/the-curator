@@ -411,16 +411,93 @@ function describeSelfTest(r) {
         stderr,
       };
     }
-    const domainsKnown = Array.isArray(r.domains);
-    const domainCount = domainsKnown ? r.domains.length : 0;
-    let detail = count + ' tools available.';
-    if (domainsKnown && domainCount > 0) detail += ' ' + domainCount + ' domain' + (domainCount === 1 ? '' : 's') + ' visible.';
-    else detail += ' No domains visible yet — that is expected on a brand-new install.';
+    // ── The knowledge folder is a SEPARATE question from the bridge ──────
+    // `ok` means only "the bridge speaks MCP" (initialize + tools/list). The
+    // route deliberately does not fold list_domains into that gate, because a
+    // brand-new user with zero domains is a healthy install. It reports the
+    // list_domains outcome alongside it as `domains_status`.
+    //
+    // Until v3.41.0 this branch read only `Array.isArray(r.domains)`, and
+    // `domains` is null for FIVE different statuses — so a knowledge folder
+    // that DOES NOT EXIST rendered as "expected on a brand-new install",
+    // word for word identical to a folder that exists and is empty. The user
+    // was reassured and then sent to debug their Claude Desktop config, which
+    // was the one thing that was fine. The field was emitted with no consumer
+    // for thirty releases; emitting it is not the fix, reading it is.
+    const status = typeof r.domains_status === 'string' ? r.domains_status : null;
+    const where = (typeof r.domains_dir === 'string' && r.domains_dir.trim())
+      ? r.domains_dir.trim()
+      : 'the configured knowledge folder';
+    // Child-derived text (a spawned process's stdout, already capped at 500
+    // chars by the route). Rendered through textContent like every other
+    // detail string — see renderSelfTest().
+    const why = (typeof r.domains_error === 'string' && r.domains_error.trim())
+      ? r.domains_error.trim()
+      : ((typeof r.domains_message === 'string' && r.domains_message.trim()) ? r.domains_message.trim() : '');
+    const tools = count + ' tools available.';
+
+    if (status === 'missing_folder') {
+      return {
+        tone: 'warn',
+        headline: 'The bridge works, but your knowledge folder is missing.',
+        detail: tools + ' Claude Desktop will connect and then see nothing at all, because ' +
+          where + ' does not exist.' + (why ? ' The bridge said: ' + why : ''),
+        steps: [
+          'This is not a mistake in your Claude Desktop config file — do not go looking for one there.',
+          'Open Settings → Knowledge base and point The Curator at the folder your knowledge actually lives in, or move the folder back.',
+          'Then run this test again.',
+        ],
+        stderr,
+      };
+    }
+
+    if (status === 'empty') {
+      return {
+        tone: 'ok',
+        headline: 'The bridge works.',
+        detail: tools + ' It read ' + where + ' and found no domains in it yet — normal on a fresh install.',
+        steps: ['Create a domain in the Domains view and Claude will see it on its next start.'],
+        stderr,
+      };
+    }
+
+    if (status === 'ok' || (status === null && Array.isArray(r.domains) && r.domains.length)) {
+      const n = Array.isArray(r.domains) ? r.domains.length : 0;
+      return {
+        tone: 'ok',
+        headline: 'The bridge works.',
+        detail: tools + (n ? ' ' + n + ' domain' + (n === 1 ? '' : 's') + ' visible.' : ''),
+        steps: [],
+        stderr,
+      };
+    }
+
+    if (status === null) {
+      // No `domains_status` at all — an older server than this screen. Say
+      // only what can be supported, and never the reassuring sentence: the
+      // whole point of the field is that this case cannot be told apart.
+      return {
+        tone: 'ok',
+        headline: 'The bridge works.',
+        detail: tools + ' This build of the server does not report whether it could read your domains.',
+        steps: [],
+        stderr,
+      };
+    }
+
+    // 'unreadable' | 'error' | 'no_response' — and any status a future route
+    // version adds. Defaulting into the honest branch is the safe direction:
+    // defaulting into the cheerful one is how the collapse above survived.
     return {
-      tone: 'ok',
-      headline: 'The bridge works.',
-      detail,
-      steps: [],
+      tone: 'warn',
+      headline: 'The bridge works, but it could not read your domains.',
+      detail: tools + ' Listing the domains in ' + where + ' failed, so Claude may see nothing.' +
+        (why ? ' The bridge said: ' + why : ''),
+      steps: [
+        'Check that ' + where + ' exists and that you can open it in Finder.',
+        'If the folder is right, check Settings → Updates — a half-applied update can leave the bridge unable to read it.',
+        'Then run this test again.',
+      ],
       stderr,
     };
   }

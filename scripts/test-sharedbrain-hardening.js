@@ -398,17 +398,22 @@ const src = rel => readFileSync(path.join(PROJECT_ROOT, rel), 'utf-8');
   const domainsRoute = src('src/routes/domains.js');
   assert(domainsRoute.includes('readonlyDomains'), 'GET /api/domains reports readonly mirrors');
 
-  // REMOVED in v3.41.0 — four source-PRESENCE assertions against
-  // src/public/app.js and src/public/index.html (readonly-mirror filtering in
-  // the ingest dropdown, the busy-state registration key, the Settings enable
-  // state, and the enable button's absence from the Sync tab). Both files are
-  // deleted. They are not repointed at /next: they asserted that an
-  // identifier appeared in a file, which CLAUDE.md names as the weakest
-  // shape a guard can take, and /next's own suites
-  // (test-next-sync-spin.js, test-next-sharedbrain-admin.js) drive the
-  // corresponding logic by executing it. The BACKEND half of each — the
-  // readonly-mirror refusals and the route-level gating — is asserted above
-  // and below this block and is untouched.
+  // MOVED in v3.41.0 — four source-PRESENCE assertions against
+  // src/public/{app.js,index.html} (readonly-mirror filtering in the ingest
+  // dropdown, the busy-state registration key, the Settings enable state, and
+  // the enable button's absence from the Sync tab). Both files are deleted.
+  //
+  // Their PROPERTIES are re-asserted against /next in
+  // scripts/test-next-sharedbrain-ui-parity.js §1 — three of the four
+  // survive, and the fourth (the enable control living in Settings) moved to
+  // the Shared Brain view's own off-state, which is a DOC divergence and not
+  // a defect: the invariant's operative half — that the control is not in
+  // the Sync tab — still holds and is now asserted positively.
+  //
+  // Kept out of this file on purpose: it owns the BACKEND half — the
+  // readonly-mirror refusals and the route-level gating, asserted above and
+  // below this block and untouched — and a frontend property asserted in two
+  // files is a second place for it to drift.
 }
 
 
@@ -937,19 +942,32 @@ section('21. Phase 3 source-level guards');
   assert(brain.includes('onWarn') && brain.includes('computePendingPages'),
     'brain layer wires adapter warnings + pending count');
 
-  // REMOVED in v3.41.0 — fifteen source-PRESENCE assertions against
+  // MOVED in v3.41.0 — fifteen source-PRESENCE assertions against
   // src/public/{app.js,index.html} covering the Phase 3 UI/UX items
-  // (M9-M16, H10, L12, L14, L16, L18). Both files are deleted. Same
-  // reasoning as the Phase 1 block above: these named identifiers in a
-  // frontend file rather than driving behaviour, and the shell they named is
-  // gone. The corresponding /next surfaces are exercised by
-  // scripts/test-next-sync-spin.js and scripts/test-next-sharedbrain-admin.js.
+  // (M9-M16, H10, L12, L14, L16, L18). Both files are deleted.
   //
-  // WORTH RECORDING RATHER THAN JUST DELETING: this block was green for
-  // thirty releases while reading a shell no user was served. Whether every
-  // one of M9-M16 has a /next counterpart at all was NOT established here —
-  // it is a source-scan question this file can no longer answer, and it is
-  // reported to the release as an open item rather than assumed closed.
+  // The open item this note used to record — whether every one of M9-M16 has
+  // a /next counterpart AT ALL — is now answered, in
+  // scripts/test-next-sharedbrain-ui-parity.js §2, property by property and
+  // by EXECUTING the /next functions wherever one exists to execute.
+  // Thirteen of the fifteen are present; the composed done-message, the
+  // never-synthesised label, the skipped-page re-queue and the read_only
+  // verdict are driven for real rather than name-checked.
+  //
+  // TWO ARE GENUINELY ABSENT, and both are refusals stated in /next's own
+  // source rather than oversights, so the parity suite pins them in BOTH
+  // directions — the refusal must hold, and the fact must still reach the
+  // user by its other route:
+  //   M14  the shell badge does not fold in Shared Brain pending_pages
+  //        (src/public/next/app.js: it would double the request count on
+  //        every refresh); the count is on the Shared Brain view instead.
+  //   ---  Compile is not hidden for a read-only mirror
+  //        (src/public/next/views/chat.js: the backend already refuses it
+  //        with a user-facing 400, and a second copy of the domain-readonly
+  //        rule in the view is a second place for the two to drift).
+  //
+  // WORTH KEEPING: this block was green for thirty releases while reading a
+  // shell no user was served.
 
   const ghAdapter = src('src/brain/sharedbrain-github-adapter.js');
   assert(ghAdapter.includes('_onWarn'), 'GitHub adapter carries the onWarn channel (M18)');
@@ -1056,13 +1074,30 @@ section('25. Phase 4 source-level guards');
   assert(routes.includes("post('/:id/admin-token/rotate'"), 'admin-token rotate endpoint registered (4.1)');
   assert(routes.includes('admin_token: generateAdminToken()'), 'generate-invite returns a fresh admin token (4.1)');
 
-  // REMOVED in v3.41.0 — ten source-PRESENCE assertions against
+  // MOVED in v3.41.0 — ten source-PRESENCE assertions against
   // src/public/{app.js,index.html} for the Phase 4 admin items (4.1-4.5).
-  // Both files are deleted; the same reasoning as the two blocks above
-  // applies. The admin-credential INVARIANTS these shadowed — the shown-once
-  // token, the masked listings, the storage-path-derived member identity —
-  // are enforced in src/brain and src/routes and are asserted directly above
-  // this block, which is where they belong.
+  // Both files are deleted. The admin-credential INVARIANTS these shadowed —
+  // the shown-once token, the masked listings, the storage-path-derived
+  // member identity — are enforced in src/brain and src/routes and are
+  // asserted directly above this block, which is where they belong.
+  //
+  // The FRONTEND properties are re-asserted against /next. Five of the ten
+  // were already driven behaviourally and are not duplicated: the full-UUID
+  // revoke literal and the typed short confirmation
+  // (scripts/test-next-sharedbrain-admin.js §2/§3/§8), the rotate affordance
+  // (§1/§8), and the invite re-display and data_handling_terms at save
+  // (scripts/test-next-invite-and-inert.js §2-§6). The remaining five —
+  // the generated token held across a Back, the shown-once step-2 block,
+  // the deliberate ABSENCE of a post-display list refresh, the terms
+  // default, and the synthesis confirm gate — are in
+  // scripts/test-next-sharedbrain-ui-parity.js §3, which also drives the
+  // card layer of the read_only Pull-only invariant the ten sat inside.
+  //
+  // Of the ten, only the Settings pill class (4.x, "btn primary pill") has
+  // no /next counterpart, and it should not get one: /next has no Settings
+  // Shared Brain button, and `pill` there names a STATUS pill, not a button
+  // variant. Carrying the class over would import a convention /next does
+  // not have.
 }
 
 // ═══ Result ════════════════════════════════════════════════════════════════
