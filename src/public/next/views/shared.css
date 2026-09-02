@@ -658,11 +658,11 @@ a.sb-card-repo:hover { color: var(--text-link); }
 
    `--dur-sheet-in` is 0ms under prefers-reduced-motion, and the rule still
    carries its own `animation: none` escape below, because a 0ms animation
-   paints its from-state for one frame. */
-@keyframes curator-sheet-in {
-  from { transform: translateY(-16px); opacity: 0; }
-  to   { transform: translateY(0);     opacity: 1; }
-}
+   paints its from-state for one frame.
+
+   The `curator-sheet-in` keyframe itself lives in tokens/motion.css, beside
+   every other `curator-*` keyframe. It was declared here when the sheets
+   landed only because that pass did not own the token layer. */
 
 .sbw-scrim {
   position: fixed;

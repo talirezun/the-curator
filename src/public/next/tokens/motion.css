@@ -95,3 +95,25 @@
   from { opacity: 0; transform: translateY(3px); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ── curator-sheet-in ─────────────────────────────────────────────────────
+   The sheet entrance, used by `.sbw-card` (views/shared.css) and
+   `.mcpw-card` (views/mcp-wizard.css). A sheet comes DOWN from under the
+   window's own chrome, so it travels on Y from -16px rather than fading in
+   place; the full argument for why those two wizards are sheets is written
+   once at `.sbw-scrim` in views/shared.css.
+
+   It lives HERE and not beside its consumers because keyframes are global
+   and this file is where every other `curator-*` keyframe is declared — a
+   second home for one of them is how a name drifts. It was declared in
+   views/shared.css when the sheets landed, purely because that pass did not
+   own this file; both consumers reference it by name and neither changed.
+
+   Consumers keep their own
+   `@media (prefers-reduced-motion: reduce) { … animation: none; }` escape:
+   the reduce block above zeroes `--dur-sheet-in`, and a 0ms animation still
+   paints its from-state for one frame. */
+@keyframes curator-sheet-in {
+  from { transform: translateY(-16px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}

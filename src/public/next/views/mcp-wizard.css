@@ -22,12 +22,11 @@
    once at `.sbw-scrim` in views/shared.css — this is the same treatment on
    the same tokens, deliberately not re-argued.
 
-   `curator-sheet-in` IS DECLARED IN views/shared.css, and that is a stated
-   compromise rather than an oversight: keyframes are global, tokens/motion.css
-   is where every other `curator-*` keyframe lives, and this pass does not own
-   that file. index.html links shared.css before this one, so the name
-   resolves; when the token layer next moves, the keyframe should move with
-   it and these two references stay valid unchanged. */
+   `curator-sheet-in` is declared in tokens/motion.css, where every other
+   `curator-*` keyframe lives. It spent one pass in views/shared.css — a
+   stated compromise, because that pass did not own the token layer — and
+   moved here at the release merge exactly as that note said it should; both
+   references are by name and neither had to change. */
 .mcpw-scrim {
   position: fixed;
   inset: 0;
