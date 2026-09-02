@@ -218,10 +218,14 @@ const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) =>
 const SECTION_INFO = {
   providers: {
     html: true,
-    text: 'There are two jobs here. <strong>One model builds your wiki</strong> — ingest, '
-        + 'Health scans and Compile all share it, and it has to be one somebody has measured '
-        + 'doing that job. <strong>Chat</strong> can use any model you have connected, and you '
-        + 'pick it per message.',
+    // UPDATED with the four-block page: the old text said "there are two jobs
+    // here", which was true of the previous layout and is now one number short
+    // of what the reader sees numbered down the page in front of them.
+    text: 'Four steps, in order. <strong>Connect a provider</strong>, then choose the <strong>one '
+        + 'model that builds your wiki</strong> — ingest, Health scans and Compile all share it, '
+        + 'and it has to be one somebody has measured doing that job. <strong>Chat</strong> can '
+        + 'use anything you have connected and you pick it per message, in the composer. The last '
+        + 'block is the whole catalogue, for looking things up.',
   },
   mcp: {
     html: true,
@@ -289,10 +293,10 @@ const SECTION_INFO = {
 // rather than with anything naming the cause. Found the hard way when
 // `canQualify` was first appended.
 const PROVIDER_ROWS = [
-  { id: 'gemini',     name: 'Gemini',      dot: 'var(--prov-gemini)',     canQualify: false, available: true  },
-  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--prov-anthropic)',  canQualify: false, available: true  },
-  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--prov-openrouter)', canQualify: true,  available: true  },
-  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',      canQualify: false, available: false },
+  { id: 'gemini',     name: 'Gemini',      dot: 'var(--prov-gemini)',     canQualify: false, vendor: 'Google',                    available: true  },
+  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--prov-anthropic)',  canQualify: false, vendor: 'Anthropic',                 available: true  },
+  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--prov-openrouter)', canQualify: true,  vendor: 'One key onto many vendors', available: true  },
+  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',      canQualify: false, vendor: 'Not built yet',             available: false },
 ];
 
 // ── Updates: the decision, as pure functions ─────────────────────────────
@@ -760,6 +764,14 @@ function freshState() {
     // gate fires whenever an ingest starts or finishes anywhere). A shelf that
     // snapped shut mid-read, for no visible reason, would look like a bug.
     modelShelfOpen: false,
+    // Block 2's `Change…` disclosure — the build-lane list. State-backed for
+    // the same reason the shelf is: this section repaints on things the user
+    // did not do, so a native <details open> would snap shut mid-read. It is
+    // ALSO forced open by renderBuildList whenever a refusal or an in-flight
+    // write belongs to a row inside it, and that override is deliberately not
+    // written back here — a forced-open disclosure is a temporary state of the
+    // page, not a preference the user expressed.
+    buildListOpen: false,
     // Which INDIVIDUAL model rows are expanded, by model id. Same reason as
     // modelPickerOpen above, one level down, and it was missing.
     //
@@ -2545,6 +2557,712 @@ function chatModelCount(k) {
   return n;
 }
 
+/**
+ * ── IS THIS PROVIDER CONNECTED? ────────────────────────────────────────────
+ *
+ * The route gains a per-provider `connected` boolean, which is the fact block 1
+ * renders as a word. It is READ, never re-derived, for the same reason
+ * `buildModelFacts` is: the server owns what "connected" means (a saved key
+ * today; a reachable base URL the day a local runtime lands) and a second
+ * client-side definition would be the copy that rots.
+ *
+ * THE DEGRADED PATH IS NOT AN ERROR. A backend that predates the field sends
+ * nothing, and `providerHasSavedKey` answers the same question from the same
+ * payload — it is what every surface on this screen used before. So an older
+ * backend renders correctly rather than reporting every provider as
+ * disconnected, which is the failure mode that would make the page useless
+ * against exactly the install least able to diagnose it.
+ */
+function providerConnected(p, k) {
+  const id = (p && typeof p.id === 'string') ? p.id : '';
+  const c = (k && k.connected && typeof k.connected === 'object') ? k.connected : null;
+  if (c && Object.hasOwn(c, id)) return c[id] === true;
+  return providerHasSavedKey(id, k);
+}
+
+/**
+ * ── THE BUILD LANE, AS ONE RECORD ──────────────────────────────────────────
+ *
+ * Prefers the route's new `build` object and degrades to the older
+ * `buildModel` + `offerable` pair, so this block renders the same page against
+ * both. Every field is validated: an unrecognised `source` becomes null rather
+ * than being defaulted, because inventing a provenance on a spending surface is
+ * worse than admitting we were not told (the rule `buildModelFacts` already
+ * states, applied to the wider record).
+ *
+ * `source` has FIVE user-visible outcomes and only four values, because
+ * `selected` splits on whether the pick is actually in force. That split is the
+ * one this screen exists to make: "you chose this" and "you chose something and
+ * it is not what is running" are different facts, and the second one is the
+ * only one with an action attached.
+ */
+function buildLaneFacts(k) {
+  const raw = (k && k.build && typeof k.build === 'object') ? k.build : null;
+  const legacy = buildModelFacts(k);
+  if (!raw) {
+    if (!legacy) {
+      // ── THE THIRD DEGRADATION, AND IT IS THE ONE THAT MATTERS MOST ──────
+      // `build` is new and `buildModel` is only one release older. A backend
+      // that predates BOTH still resolves a provider and a model perfectly
+      // well, and telling that user "nothing builds your wiki" would be a false
+      // statement about a working install — the exact failure this block exists
+      // to remove, arriving through a different door. `activeModelLine` reads
+      // the OLDEST pair (`activeProvider` + `activeModel`), which is the same
+      // value from the same resolution the newer fields derive from, so it
+      // cannot contradict them; it just carries less, and `source: null` makes
+      // the copy claim correspondingly less.
+      const a = activeModelLine(k);
+      if (!a || !a.show) return null;
+      return {
+        provider: (k && typeof k.activeProvider === 'string') ? k.activeProvider : '',
+        model: a.model,
+        source: null,
+        honoured: true,
+        measuredBy: null,
+        priceIn: null,
+        priceOut: null,
+        outlineNote: '',
+        thinks: false,
+        cheapest: null,
+        degraded: true,
+      };
+    }
+    return {
+      provider: legacy.provider,
+      model: legacy.model,
+      source: legacy.source,
+      honoured: legacy.honoured,
+      measuredBy: legacy.measuredBy,
+      priceIn: null,
+      priceOut: null,
+      outlineNote: '',
+      thinks: false,
+      cheapest: null,
+    };
+  }
+  const provider = typeof raw.provider === 'string' ? raw.provider : '';
+  const model = typeof raw.model === 'string' ? raw.model : '';
+  // A `build` record naming no model is not a record. Fall back to the older
+  // pair rather than rendering a headline with an empty name in it.
+  if (!provider || !model) {
+    return legacy ? {
+      provider: legacy.provider, model: legacy.model, source: legacy.source,
+      honoured: legacy.honoured, measuredBy: legacy.measuredBy,
+      priceIn: null, priceOut: null, outlineNote: '', thinks: false, cheapest: null,
+    } : null;
+  }
+  const SOURCES = ['default', 'selected', 'env', 'fallback'];
+  const source = SOURCES.includes(raw.source) ? raw.source : null;
+  const f = (raw.facts && typeof raw.facts === 'object') ? raw.facts : {};
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const ch = (raw.cheapestMeasured && typeof raw.cheapestMeasured === 'object')
+    ? raw.cheapestMeasured : null;
+  return {
+    provider,
+    model,
+    source,
+    // `=== true`, never truthiness — the route sends a real boolean and
+    // anything else is a wire anomaly that must not read as "your pick is in
+    // force". An ABSENT field reads as honoured, because a payload that names
+    // a model and says nothing about a pin is describing a model that is
+    // running.
+    //
+    // THERE IS NO `source === 'fallback' ? false` SPECIAL CASE, and its
+    // absence is deliberate. It was written, and a mutation flipping it to
+    // `true` came back GREEN: nothing on the fallback path reads `honoured` —
+    // both the copy and the warn treatment branch on the SOURCE — so it was a
+    // field agreeing with another field, which is the two-descriptions-of-one-
+    // fact shape this file keeps recording. `honoured` now means exactly
+    // `selectedHonoured` and nothing else.
+    honoured: Object.hasOwn(raw, 'selectedHonoured') ? raw.selectedHonoured === true : true,
+    measuredBy: (f.measured === 'curator' || f.measured === 'user') ? f.measured
+      : (f.measured === true ? 'curator' : null),
+    priceIn: num(f.priceIn),
+    priceOut: num(f.priceOut),
+    outlineNote: typeof f.outlineNote === 'string' ? f.outlineNote : '',
+    thinks: f.thinks === true,
+    cheapest: (ch && typeof ch.model === 'string' && ch.model) ? {
+      model: ch.model,
+      provider: typeof ch.provider === 'string' ? ch.provider : '',
+      priceIn: num(ch.priceIn),
+      priceOut: num(ch.priceOut),
+      // `same` is READ. Comparing ids here would be a second opinion about a
+      // money fact — the very comparator renderBuildList's docblock refuses —
+      // so an absent flag degrades to "we were not told", which renders the
+      // line without the swap offer rather than claiming a difference.
+      same: ch.same === true,
+    } : null,
+  };
+}
+
+/**
+ * ── THE FACET COUNTS ───────────────────────────────────────────────────────
+ *
+ * `catalogueCounts {total, canBuild, measured, free, batchHidden}` is
+ * server-computed, and it has to be: `batchHidden` counts ids the eligibility
+ * filter REMOVED, so nothing the client can see could ever recount it. A facet
+ * whose count the client invented would be a filter promising rows it cannot
+ * deliver.
+ *
+ * The degraded path counts only what the client genuinely holds — the offerable
+ * rows — and reports `batchHidden` as null, which renders NO clause rather than
+ * a zero. "None were hidden" and "we were not told how many were hidden" are
+ * different facts and a `0` would assert the first.
+ */
+function catalogueCountsOf(k) {
+  const c = (k && k.catalogueCounts && typeof k.catalogueCounts === 'object') ? k.catalogueCounts : null;
+  const int = (v) => (Number.isInteger(v) && v >= 0) ? v : null;
+  if (c) {
+    return {
+      total: int(c.total) === null ? chatModelCount(k) : c.total,
+      canBuild: int(c.canBuild),
+      measured: int(c.measured),
+      free: int(c.free),
+      batchHidden: int(c.batchHidden),
+    };
+  }
+  let measured = 0;
+  let free = 0;
+  for (const row of allCatalogueRows(k)) {
+    if (isCuratorMeasured(row.m) || row.qual) measured++;
+    if (row.m && row.m.free === true) free++;
+  }
+  return {
+    total: chatModelCount(k),
+    canBuild: buildCandidates(k).length,
+    measured,
+    free,
+    batchHidden: null,
+  };
+}
+
+/**
+ * Every model on the page, flattened across providers, each row carrying the
+ * provider it is served by and the lane it is in.
+ *
+ * ONE WALK, SHARED BY THE TABLE, THE COUNTS AND THE SHELF. `buildCandidates`
+ * already does exactly this for the build lane, and a second walk with its own
+ * lane test is how the four expressions `modelLaneOf` replaced came to
+ * disagree. This is that walk with the lane filter removed.
+ */
+function allCatalogueRows(k) {
+  const out = [];
+  if (!k) return out;
+  const quals = qualIndex(k);
+  for (const p of PROVIDER_ROWS) {
+    if (!p.available || !providerHasSavedKey(p.id, k)) continue;
+    const list = (k.offerable && Array.isArray(k.offerable[p.id])) ? k.offerable[p.id] : [];
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (!m || typeof m !== 'object' || typeof m.id !== 'string') continue;
+      const qual = Object.hasOwn(quals, m.id) ? quals[m.id] : null;
+      out.push({ p, m, index: i, lane: modelLaneOf(m, qual), qual });
+    }
+  }
+  return out;
+}
+
+/**
+ * What chat starts on, and how many models it can reach.
+ *
+ * READ from `chat {startsOn {model, provider}, count}`, degrading to the pair
+ * this screen has always had — `activeProvider` + `models[activeProvider]` — for
+ * the same reason `renderBuildCurrent` degrades: a backend that predates the
+ * field still resolves a perfectly good starting model, and telling that user
+ * "no models are available" would be a false statement about a working install.
+ */
+function chatStartFacts(k) {
+  const c = (k && k.chat && typeof k.chat === 'object') ? k.chat : null;
+  const count = (c && Number.isInteger(c.count) && c.count >= 0) ? c.count : chatModelCount(k);
+  const s = (c && c.startsOn && typeof c.startsOn === 'object') ? c.startsOn : null;
+  let provider = (s && typeof s.provider === 'string') ? s.provider : '';
+  let model = (s && typeof s.model === 'string') ? s.model : '';
+  if (!model) {
+    provider = (k && typeof k.activeProvider === 'string') ? k.activeProvider : '';
+    model = (k && k.models && typeof k.models[provider] === 'string') ? k.models[provider] : '';
+  }
+  return { provider, model, count };
+}
+
+/**
+ * ── THE BROWSE TABLE'S FILTER SCOPE ────────────────────────────────────────
+ *
+ * `modelFilterFor` is keyed by provider because the per-provider catalogues
+ * each carry their own bar. Block 4's table is ACROSS providers, so it needs a
+ * key no provider can ever have. Two underscores at each end is not a provider
+ * id under any naming scheme the route emits, and `isValidProvider`-style
+ * checks elsewhere would reject it — which is the point: a collision here would
+ * make one bar silently drive two lists.
+ */
+const ALL_MODELS_SCOPE = '__all__';
+
+/**
+ * The build lane's working set, in tokens.
+ *
+ * DERIVED FROM THE APP'S OWN BUDGETS, not inherited from a parity rule: ingest
+ * caps a source at 80,000 characters and adds the index and the slug inventory
+ * (~341,005 characters ≈ 85K tokens on a mature domain), and Phase 1 asks for
+ * `MULTI_PHASE_OUTLINE_TOKENS` = 24,576 back. ~110,000 is that sum. It is used
+ * here for ONE purpose — saying which unmeasured models could physically hold
+ * the job — and never as a gate: the server owns eligibility, and a client-side
+ * gate would be a second copy of a rule that decides what a user may spend
+ * their own key on.
+ */
+const BUILD_WORKING_SET_TOKENS = 110000;
+
+const MODEL_PRICE_BANDS = [
+  ['any', 'Any price', null],
+  ['free', 'Free', (m) => m && m.free === true],
+  ['lt20', 'Under $0.20', (m) => typeof m.input === 'number' && m.input > 0 && m.input < 0.2],
+  ['mid', '$0.20–$1', (m) => typeof m.input === 'number' && m.input >= 0.2 && m.input <= 1],
+  ['high', '$3 and up', (m) => typeof m.input === 'number' && m.input >= 3],
+];
+
+const MODEL_LANE_FACETS = [
+  ['all', 'All'],
+  ['build', 'Can build'],
+  ['measured', 'Measured'],
+  ['free', 'Free'],
+];
+
+/** Does this row pass the lane facet? Reads the SHARED lane predicate, never a second test. */
+function browseLanePass(row, lane) {
+  if (lane === 'build') return laneBuildsWiki(row.lane);
+  if (lane === 'measured') return isCuratorMeasured(row.m) || !!row.qual;
+  if (lane === 'free') return row.m && row.m.free === true;
+  return true;
+}
+
+function browseBandPass(m, band) {
+  for (const [id, , pred] of MODEL_PRICE_BANDS) {
+    if (id !== band) continue;
+    return pred ? !!pred(m) : true;
+  }
+  return true;
+}
+
+/**
+ * The rows block 4 will actually draw, after every facet.
+ *
+ * ONE FILTER FUNCTION, and the counts on the facet buttons are computed by
+ * calling it with that one axis relaxed — so a count can never promise rows the
+ * table would not deliver. A hand-written count beside a hand-written filter is
+ * two descriptions of one rule, and this file already records where that goes.
+ */
+function browseFilter(rows, f) {
+  const q = typeof f.q === 'string' ? f.q.trim().toLowerCase() : '';
+  return rows.filter((row) => {
+    if (!browseLanePass(row, f.lane)) return false;
+    if (!browseBandPass(row.m, f.band)) return false;
+    if (f.provider && row.p.id !== f.provider) return false;
+    if (q && !modelSearchText(row.m).includes(q)) return false;
+    return true;
+  });
+}
+
+/**
+ * ── "WORTH TESTING FOR THIS JOB" — A FILTER WITH A SENTENCE, NOT A RANKING ──
+ *
+ * v3.16.1 refused a most-capable sort on evidence: price, parameter size,
+ * release date and vendor each pointed the wrong way, and one model that passed
+ * every metadata filter returned zero usable outlines in nine runs. So this is
+ * not a ranking and must never become one. Every entry is here because of a
+ * FACT already on its row, it says which fact, and the order is the catalogue's
+ * own delivered order rather than any score.
+ *
+ * THE THREE FACTS, and nothing else:
+ *   · it is not already in the build lane (there is nothing to test);
+ *   · its published context clears the build job's working set;
+ *   · its published input price is at or below what the build model costs now.
+ *
+ * The audit's fourth criterion — "declares no retirement date" — is DELIBERATELY
+ * absent: no retirement field reaches this view, and asserting the absence of a
+ * date we were never sent would be inventing a fact. It ships when the wire
+ * carries it.
+ *
+ * Capped at five, because a shortlist of twenty is a list.
+ */
+function worthTestingRows(rows, b) {
+  const nowIn = (b && typeof b.priceIn === 'number' && Number.isFinite(b.priceIn)) ? b.priceIn : null;
+  const out = [];
+  for (const row of rows) {
+    if (out.length >= 5) break;
+    const m = row.m;
+    if (!m || laneBuildsWiki(row.lane)) continue;
+    const ctx = (typeof m.contextLength === 'number' && Number.isFinite(m.contextLength))
+      ? m.contextLength : null;
+    if (ctx === null || ctx < BUILD_WORKING_SET_TOKENS) continue;
+    const inp = (typeof m.input === 'number' && Number.isFinite(m.input)) ? m.input : null;
+    if (inp === null) continue;
+    if (nowIn !== null && inp > nowIn) continue;
+    const why = (nowIn !== null && inp < nowIn)
+      ? 'cheaper on input than the model building your wiki now, and its published context clears ' +
+        'the working set ingest needs.'
+      : 'its published context clears the working set ingest needs, at or below what you pay now.';
+    out.push({ row, why });
+  }
+  return out;
+}
+
+/**
+ * ── BLOCK 4's TABLE ────────────────────────────────────────────────────────
+ *
+ * A TABLE, not a list of cards, and that is the whole argument: at 200+ rows the
+ * only question anyone asks here is comparative, and a comparison needs columns.
+ * The three numeric columns carry `tabular-nums` — without it a price column is
+ * not a column, it is a ragged stack of digits.
+ */
+function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
+  const shown = browseFilter(rowsAll, f);
+  const b = buildLaneFacts(k);
+
+  // ── FACET COUNTS: EACH AXIS COUNTED WITH ITSELF RELAXED ────────────────
+  // A count that showed the filtered total would read 0 on every button but
+  // the selected one, which is the opposite of what a facet count is for: it
+  // exists so a filter that would empty the list says so BEFORE it is clicked.
+  const laneCount = (id) => browseFilter(rowsAll, Object.assign({}, f, { lane: id })).length;
+  const bandCount = (id) => browseFilter(rowsAll, Object.assign({}, f, { band: id })).length;
+
+  const laneSeg = MODEL_LANE_FACETS.map(([id, label]) => {
+    // The server's own counts where it sent them and the facet is unfiltered —
+    // `batchHidden` proves the client cannot recount this catalogue, because
+    // the rows it names were removed before the payload was built.
+    const n = laneCount(id);
+    // `.theme-seg-btn` is the kit's segmented chip, reused wholesale rather
+    // than copied — it is the same control doing the same job, and this file
+    // already records what a second copy of a segment style costs (two
+    // declarations at identical specificity, one of them silently inert).
+    // `aria-pressed` AND the `active` class: the class is what the kit styles,
+    // the attribute is what a screen reader reads, and neither substitutes for
+    // the other.
+    return '<button type="button" class="theme-seg-btn' + (f.lane === id ? ' active' : '') +
+      '" data-browse-lane="' + escapeHtml(id) + '"' +
+      ' aria-pressed="' + (f.lane === id ? 'true' : 'false') + '">' + escapeHtml(label) +
+      '<span class="mono browse-seg-n">' + escapeHtml(String(n)) + '</span></button>';
+  }).join('');
+
+  const bandSeg = MODEL_PRICE_BANDS.map(([id, label]) => (
+    '<button type="button" class="theme-seg-btn' + (f.band === id ? ' active' : '') +
+      '" data-browse-band="' + escapeHtml(id) + '"' +
+      ' aria-pressed="' + (f.band === id ? 'true' : 'false') + '">' + escapeHtml(label) +
+      (id === 'any' ? '' : '<span class="mono browse-seg-n">' +
+        escapeHtml(String(bandCount(id))) + '</span>') + '</button>'
+  )).join('');
+
+  // The provider popup and the sort popup — the shared listbox, one cfg each,
+  // rendered here and mounted from pendingListboxes.
+  const provCfg = {
+    id: 'browse-provider-lb',
+    ariaLabel: 'Filter by provider',
+    value: f.provider || '',
+    triggerClass: 'browse-pop',
+    minWidth: 200,
+    options: [{ value: '', label: 'Every provider' }].concat(
+      PROVIDER_ROWS.filter((p) => p.available && providerHasSavedKey(p.id, k))
+        .map((p) => ({ value: p.id, label: p.name }))),
+    onChange: (value) => { setModelFilter(ALL_MODELS_SCOPE, { provider: String(value) }); render(myMountToken); },
+  };
+  pendingListboxes.push(provCfg);
+
+  const sortCfg = {
+    id: 'browse-sort-lb',
+    ariaLabel: 'Sort models',
+    value: f.sort,
+    triggerClass: 'browse-pop',
+    minWidth: 210,
+    options: MODEL_SORT_OPTIONS.map(([value, label]) => ({ value, label })),
+    onChange: (value) => { setModelFilter(ALL_MODELS_SCOPE, { sort: value }); render(myMountToken); },
+  };
+  pendingListboxes.push(sortCfg);
+
+  // ── SORTED BY THE ONE SORTER, THEN MAPPED BACK TO ROWS ─────────────────
+  // `orderModels` is the shelf's own sorter and takes model entries, so the two
+  // surfaces cannot rank the same catalogue differently. Mapping back through a
+  // BUCKET rather than a one-to-one Map is load-bearing: two providers can
+  // legitimately serve the same entry, and a Map keyed on the entry would drop
+  // the second row silently — a model vanishing when you change the ordering is
+  // the "broken picker" reading `orderModels` itself refuses to produce.
+  const ordered = orderModels(shown.map((r) => r.m), f.sort);
+  const bucket = new Map();
+  for (const row of shown) {
+    const arr = bucket.get(row.m);
+    if (arr) arr.push(row); else bucket.set(row.m, [row]);
+  }
+  const orderedRows = [];
+  for (const m of ordered) {
+    const arr = bucket.get(m);
+    if (arr && arr.length) orderedRows.push(arr.shift());
+  }
+
+  const activeProvider = (k && typeof k.activeProvider === 'string') ? k.activeProvider : '';
+  const defaultId = (b && typeof b.model === 'string') ? b.model : '';
+  const busyId = typeof state.modelPickBusy === 'string' ? state.modelPickBusy : '';
+  const pickDisabled = !!crossBusy || busyId !== '';
+
+  const body = orderedRows.map(({ p, m, lane, qual }) => {
+    const inUse = p.id === activeProvider && m.id === defaultId;
+    const canBuild = laneBuildsWiki(lane);
+    let laneCell;
+    if (inUse) {
+      laneCell = '<span class="browse-inuse">Building your wiki</span>';
+    } else if (canBuild) {
+      laneCell = '<button type="button" class="btn btn-secondary btn-xs"' +
+        ' data-build-model="' + escapeHtml(m.id) + '" data-build-provider="' + escapeHtml(p.id) + '"' +
+        (pickDisabled ? ' disabled' : '') + '>Use for building</button>';
+    } else {
+      // NEVER "cannot build". `jsonRaw === null` means UNMEASURED, and llm.js
+      // records in as many words that unmeasured must never become a rejection
+      // signal. The two absences are drawn apart here for the same reason
+      // `measurementChip` refuses to collapse them.
+      laneCell = (isCuratorMeasured(m) || qual)
+        ? '<span class="browse-chatonly">chat only — measured</span>'
+        : '<span class="browse-unmeasured">not measured yet</span>';
+    }
+    const ctx = formatTokenCount(m.contextLength);
+    return '<tr>' +
+      '<td class="browse-name"><b>' + escapeHtml(m.label || m.id) + '</b>' +
+        '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.output) || '—') + '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(ctx || '—') + '</td>' +
+      '<td>' + laneCell + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // ── THE COUNT LINE, INCLUDING WHAT IS NOT ON IT ────────────────────────
+  // `batchHidden` names ids the eligibility filter removed because they answer
+  // 404 on every synchronous call. Stating the number is the difference between
+  // a catalogue that is smaller than the vendor's and a catalogue that is
+  // silently partial — and v3.42.0 records what silence there cost: 26% of the
+  // picker was dead rows nobody could see were dead. A NULL is not a zero: an
+  // older backend that never sent the field renders no clause at all.
+  const hidden = (Number.isInteger(counts.batchHidden) && counts.batchHidden > 0)
+    ? ' · ' + String(counts.batchHidden) + ' batch-only ids hidden — they answer 404 on every call'
+    : '';
+  const countLine = (orderedRows.length === rowsAll.length
+    ? String(rowsAll.length) + ' models'
+    : 'Showing ' + String(orderedRows.length) + ' of ' + String(rowsAll.length)) + hidden;
+
+  const worth = worthTestingRows(rowsAll, b);
+  const worthHtml =
+    '<div class="browse-worth">' +
+      '<b>Worth testing for this job</b>' +
+      (worth.length
+        ? '<ul>' + worth.map(({ row, why }) =>
+            '<li><strong>' + escapeHtml(row.m.label || row.m.id) + '</strong> — ' + escapeHtml(why) +
+            ' Nobody has measured it against the ingest prompt.</li>').join('') + '</ul>'
+        : '<p>Nothing on your synced list stands out on facts alone for this job. Every model ' +
+          'stays reachable in the list above.</p>') +
+    '</div>';
+
+  const empty = orderedRows.length === 0
+    ? '<div class="model-filter-empty"><p>No model matches these filters.</p>' +
+      '<button type="button" class="btn btn-secondary btn-xs" data-model-filter-clear="' +
+        escapeHtml(ALL_MODELS_SCOPE) + '">Clear filters</button></div>'
+    : '';
+
+  return (
+    '<div class="browse-facets">' +
+      '<span class="theme-segmented browse-seg" role="group" aria-label="Model lane">' + laneSeg + '</span>' +
+      '<span class="theme-segmented browse-seg" role="group" aria-label="Input price band">' + bandSeg + '</span>' +
+      '<input type="search" class="model-filter-q browse-q" data-model-filter-q="' +
+        escapeHtml(ALL_MODELS_SCOPE) + '" placeholder="Search name or id"' +
+        ' aria-label="Search models by name or id" value="' + escapeHtml(f.q) + '">' +
+      renderListboxHtml(provCfg) +
+      renderListboxHtml(sortCfg) +
+    '</div>' +
+    '<p class="mono browse-count">' + escapeHtml(countLine) + '</p>' +
+    (orderedRows.length
+      ? '<div class="browse-table-wrap"><table class="browse-table">' +
+          '<thead><tr>' +
+            '<th>Model</th>' +
+            '<th class="browse-num">In /1M</th>' +
+            '<th class="browse-num">Out /1M</th>' +
+            '<th class="browse-num">Context</th>' +
+            '<th>Build lane</th>' +
+          '</tr></thead>' +
+          '<tbody>' + body + '</tbody>' +
+        '</table></div>'
+      : empty) +
+    worthHtml +
+    '<div class="browse-foot">' +
+      '<span class="browse-foot-t">Nothing here is hidden from chat. A model only leaves the ' +
+      'build lane by failing a measurement, never by price.</span>' +
+      '<span class="browse-foot-sp"></span>' +
+      '<button type="button" class="btn btn-secondary btn-xs" data-open-model-lab="1">Open Model Lab</button>' +
+      // ── ONE REFRESH CONTROL, AND ITS STATUS STAYS WHERE IT IS ──────────
+      // The same `data-sync-catalogue` hook the per-provider control carries,
+      // so one delegated handler and one 409-guarded route serve both. It is
+      // rendered here only for a provider that HAS a fetchable catalogue and a
+      // saved key, from the same table `renderCatalogueSync` reads — never
+      // `p.id === 'openrouter'`, the comparison this file forbids twice. The
+      // refusal, the funnel and the "synced at" line stay on that control,
+      // because a status that follows the button would then exist twice.
+      refreshCatalogueButton(k, crossBusy) +
+    '</div>'
+  );
+}
+
+/**
+ * The block-4 footer's refresh control, or '' when no connected provider has a
+ * catalogue that can be refetched.
+ *
+ * DERIVED FROM THE SAME TWO FACTS `renderCatalogueSync` uses — a provider that
+ * publishes a catalogue, and a SAVED key — so a second provider gaining a
+ * catalogue reaches both surfaces with one added line and neither can offer a
+ * control the route would refuse.
+ */
+function refreshCatalogueButton(k, crossBusy) {
+  const SYNC_BY_PROVIDER = Object.assign(Object.create(null), { openrouter: true });
+  const p = PROVIDER_ROWS.find((x) =>
+    x.available && SYNC_BY_PROVIDER[x.id] === true && providerHasSavedKey(x.id, k));
+  if (!p) return '';
+  const busy = state.catalogueSyncBusy === p.id;
+  const disabled = busy || !!crossBusy || state.catalogueSyncBusy !== null;
+  return '<button type="button" class="btn btn-ghost btn-xs" data-sync-catalogue="' +
+    escapeHtml(String(p.id)) + '"' + (disabled ? ' disabled' : '') + '>' +
+    (busy ? 'Refreshing…' : 'Refresh catalogue') + '</button>';
+}
+
+/**
+ * ── ONE NUMBERED BLOCK ─────────────────────────────────────────────────────
+ *
+ * The page is FOUR blocks read top to bottom, and the number is part of the
+ * argument rather than decoration: block 1 is the only one that can do anything
+ * on a fresh install, and every block below it is present and honestly empty
+ * until it can. Hiding an empty block would silently lose a step and the page
+ * would stop reading as a sequence — which is exactly what the old order
+ * (build → chat → Connections → shelf) asked a user to do: choose a model
+ * before they own a key.
+ *
+ * The heading stays `<h2 class="settings-job-title">`: the sidebar's own
+ * `<h1>` names the section, so a second `h1` here would be a competing document
+ * title, and scripts/test-next-model-picker.js indexes the page order off this
+ * exact markup.
+ */
+function settingsBlock(num, id, title, ledeHtml, bodyHtml) {
+  return (
+    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
+      '<div class="settings-block-hd">' +
+        '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(num)) + '</span>' +
+        '<h2 class="settings-job-title">' + escapeHtml(title) + '</h2>' +
+      '</div>' +
+      (ledeHtml ? '<p class="settings-job-lede settings-block-lede">' + ledeHtml + '</p>' : '') +
+      '<div class="settings-block-body">' + bodyHtml + '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * ── BLOCK 1 · CONNECT A PROVIDER ───────────────────────────────────────────
+ *
+ * The only block that can act on a fresh install, so it leads — and only on a
+ * fresh install does it say so. The bold **Start here.** is dropped the moment
+ * ANY provider is connected and the rest of the sentence is byte-identical, so
+ * the lede does not become a different sentence the second time you read it.
+ *
+ * ── THE LOCAL MODEL IS A FOOTNOTE, NOT A ROW ───────────────────────────────
+ * It used to be a permanently disabled row carrying a disabled `Replace`, a
+ * "not available" key field and a "not available in this build" state cell:
+ * four controls' worth of chrome for a thing that cannot be done. The sentence
+ * says the same fact and adds the part the row could not — that it is not
+ * missing from YOUR install, it does not exist yet — which is the difference
+ * between a broken install and an unbuilt feature.
+ *
+ * `renderProviderRow` still renders that arm (`available: false`) and
+ * scripts/test-next-provider-rows.js still executes it; it is simply not called
+ * from here. Nothing about that function changed for the unavailable case.
+ */
+function renderConnectBlock(k, crossBusy) {
+  const rows = PROVIDER_ROWS
+    .filter((p) => p.available)
+    .map((p) => renderProviderRow(p, k, crossBusy, { allowSetActive: false }))
+    .join('');
+  const anyKey = PROVIDER_ROWS.some((p) => p.available && providerConnected(p, k));
+
+  const lede =
+    (anyKey ? '' : '<strong>Start here.</strong> ') +
+    'One key per provider — connect as many as you like. The Curator calls the provider directly ' +
+    'with your key; nothing goes through us.';
+
+  const body =
+    // Directly above the key rows, because it exists to explain why the row the
+    // user just saved did not become the one that builds the wiki.
+    renderActivationNotice(state.keysActivationNotice) +
+    '<div class="cur-group provider-row-list">' + rows + '</div>' +
+    // A LOCAL MODEL, AS A SENTENCE. See the docblock.
+    '<p class="settings-block-footnote">A <strong>local model</strong> — Ollama, LM Studio, ' +
+    'llama.cpp — will connect here once there is a base-URL setting to point it at. It is not ' +
+    'missing from your install; it does not exist yet.</p>' +
+    // VERBATIM. Three facts, no adjectives, answering the question a
+    // credentials screen actually raises.
+    '<div class="settings-note-row">' +
+      icon('lockAlt', 15) +
+      '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
+      'never sent anywhere except the provider you call.</span>' +
+    '</div>';
+
+  return settingsBlock(1, 'connect', 'Connect a provider', lede, body);
+}
+
+/**
+ * ── BLOCK 4 · ALL MODELS ───────────────────────────────────────────────────
+ *
+ * Collapsed, because it answers "show me everything", which most users never
+ * ask. Inside it is the faceted browse table — one row per model across every
+ * connected provider, with the price columns in tabular numerals so a column of
+ * prices reads as a column — then the "Worth testing" shelf, then the two
+ * catalogue actions, then the per-provider catalogues that host the nine-run
+ * Model Lab flow.
+ *
+ * IT IS ALSO THE BUILD PICKER IN BUILD MODE. `Change…` in block 2 opens this
+ * disclosure with the "Can build" facet on, and every build-lane row here
+ * carries the same `data-build-model` control block 2's own list does — one
+ * endpoint, one handler, two entry points into the same list. What it is NOT is
+ * a second place to decide about CHAT: that control is in the composer, and
+ * this page says so once, in block 3.
+ */
+function renderAllModelsBlock(k, crossBusy) {
+  const counts = catalogueCountsOf(k);
+  const f = modelFilterFor(ALL_MODELS_SCOPE);
+  const rowsAll = allCatalogueRows(k);
+
+  const body = (counts.total === 0)
+    ? '<div class="settings-empty-card">' +
+        '<b>Nothing to browse yet.</b>' +
+        '<span>Connect a provider above and its whole catalogue appears here, with search, ' +
+        'filters and what each model costs.</span>' +
+      '</div>'
+    : renderModelBrowse(k, counts, f, rowsAll, crossBusy) +
+      // The per-provider catalogues, unchanged. They carry the per-model
+      // disclosure with the whole measured note, and the "Test on my wiki"
+      // nine-run flow the Model Lab entry above points at.
+      '<div class="settings-model-lab" id="settings-model-lab">' +
+        PROVIDER_ROWS.map((p) =>
+          renderCatalogueSync(p, k, crossBusy) +
+          renderModelPicker(p, k, state.modelPickerOpen[p.id] === true, crossBusy)).join('') +
+      '</div>';
+
+  const lede = 'The full catalogue for every provider you have connected, with search and filters. ' +
+    'Everything here is available in <strong>chat</strong>; the ones that can also build your wiki ' +
+    'are marked, and can be chosen from here or from block 2.';
+
+  const shelf =
+    '<details class="settings-shelf"' + (state.modelShelfOpen === true ? ' open' : '') +
+      ' data-model-shelf="1">' +
+      '<summary class="settings-shelf-summary">' +
+        icon('chevronRight', 12) +
+        '<span class="settings-shelf-title">Browse every model</span>' +
+        '<span class="mono settings-shelf-count">' +
+          escapeHtml(counts.total === 0 ? 'nothing connected yet' : String(counts.total) + ' in total') +
+        '</span>' +
+      '</summary>' +
+      '<div class="settings-shelf-body">' + body + '</div>' +
+    '</details>';
+
+  return settingsBlock(4, 'all', 'All models', lede, shelf);
+}
+
 function renderProviders() {
   if (state.keysError) {
     // CUT. This was a second, shorter copy of SECTION_INFO.providers rendered
@@ -2559,85 +3277,23 @@ function renderProviders() {
   const k = state.keys;
   // Cross-view write gate (see file-header comment): a write in flight
   // anywhere depends on getProviderInfo() resolving consistently for the
-  // rest of its run — Save/Disconnect/Set-active can change that mid-write.
+  // rest of its run — Save/Disconnect/the build pick can change that mid-write.
   const crossBusy = crossWriteBusy();
-  // Each provider's model catalogue is appended DIRECTLY AFTER its own row so
-  // the prices sit under the key they are billed against. renderProviderRow
-  // is left byte-identical — scripts/test-next-provider-rows.js extracts and
-  // executes it, and this change must not perturb what it renders.
-  // The catalogue-refresh control sits BETWEEN the row and the picker, as a
-  // SIBLING of the picker's <details> — never inside its <summary>. That is
-  // the v3.13.0 structural fix rather than the v3.0.1-beta.18 workaround: an
-  // interactive control inside a <summary> toggles its own section when
-  // clicked, and the answer there was preventDefault + stopPropagation, two
-  // calls a later edit can drop. A sibling has no propagation path to
-  // suppress, so there is nothing to forget.
-  //
-  // It is also OUTSIDE the collapsed picker deliberately. The picker is
-  // collapsed by default, so a Sync button inside its body would be
-  // unreachable until the user expanded a list they have no reason to expand
-  // — and the refusal it can produce would land inside a section that may not
-  // be open at all.
-  // ── THE SHELF: every model, still grouped by provider ─────────────────
-  // The FULL catalogue per provider, both lanes, with search — so "I know I
-  // want Kimi" still works, which is the reason the filter exists at all. What
-  // is not here is a CONTROL: the build choice is made once, above, through the
-  // atomic route. Reference and decision are different surfaces, and only one
-  // of them should have buttons.
-  const rows = PROVIDER_ROWS.map((p) =>
-    renderCatalogueSync(p, k, crossBusy) +
-    renderModelPicker(p, k, state.modelPickerOpen[p.id] === true, crossBusy)).join('');
-
-  const keyRows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy)).join('');
 
   return (
-    // The section description moved to SECTION_INFO.providers, behind the
-    // header's info mark. What follows it here is unchanged and stays
-    // UNFOLDED: a cross-write banner and a fallback-model banner are both
-    // statements about money and timing, and v3.16.1's rule is that a warning
-    // behind a click is not a warning.
     renderCrossWriteBanner('wait for it to finish before changing keys or the model that builds your wiki — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
     // Deliberately ABOVE everything and never behind a disclosure: a fallback
     // is a silent change to what the user is billed.
     renderFallbackBanner(k.fallback) +
-    // ── JOB 1 ───────────────────────────────────────────────────────────
+    // ── 1 ── the only block that can act on a fresh install
+    renderConnectBlock(k, crossBusy) +
+    // ── 2 ── what the money is spent on
     renderBuildBlock(k, crossBusy) +
-    // ── JOB 2 ───────────────────────────────────────────────────────────
+    // ── 3 ── a statement and a pointer, never a second picker
     renderChatBlock(k) +
-    // ── THE PLUMBING ────────────────────────────────────────────────────
-    '<div class="settings-job-block settings-job-keys">' +
-      '<h2 class="settings-job-title">Connections</h2>' +
-      '<p class="settings-job-lede">One key per provider. Connecting a provider makes its models ' +
-      'available for both jobs above; it does not by itself change what builds your wiki.</p>' +
-      // Directly above the key rows, because it exists to explain why the row
-      // the user just saved did not become the active one.
-      renderActivationNotice(state.keysActivationNotice) +
-      '<div class="provider-row-list">' + keyRows + '</div>' +
-      '<div class="settings-note-row">' +
-        icon('lockAlt', 15) +
-        '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
-        'never sent anywhere except the provider you call.</span>' +
-      '</div>' +
-    '</div>' +
-    // ── THE REFERENCE SHELF ─────────────────────────────────────────────
-    // Folded: it answers "show me everything", which most users never ask. It
-    // is NOT where the build decision is made, and it is not a second picker
-    // for chat — it is the catalogue, plus the one path from unmeasured into
-    // the build list.
-    '<details class="settings-job-block settings-shelf"' +
-      (state.modelShelfOpen === true ? ' open' : '') + ' data-model-shelf="1">' +
-      '<summary class="settings-shelf-summary">' +
-        icon('chevronRight', 12) +
-        '<span class="settings-job-title">Every model, by provider</span>' +
-        '<span class="mono settings-shelf-count">' + escapeHtml(String(chatModelCount(k))) + ' in total</span>' +
-      '</summary>' +
-      '<div class="settings-shelf-body">' +
-        '<p class="settings-job-lede">The full catalogue for each provider you have connected, with ' +
-        'search. The models that can build your wiki are listed above and are not repeated here.</p>' +
-        rows +
-      '</div>' +
-    '</details>'
+    // ── 4 ── the catalogue, folded
+    renderAllModelsBlock(k, crossBusy)
   );
 }
 
@@ -2671,18 +3327,25 @@ function buildPickButtonId(provider, modelId) {
 }
 
 /**
- * ── JOB 1: THE ONE MODEL THAT BUILDS THE WIKI ──────────────────────────────
+ * ── BLOCK 2 · WHAT BUILDS YOUR WIKI ────────────────────────────────────────
  *
- * ONE CHOICE, ONE LIST, ACROSS PROVIDERS. Provider is a label on a row here.
- * That is the substantive change: `POST /api/config/api-keys/build-model` names
- * provider AND model together and applies both, so choosing a model from a
- * different provider is one act rather than "pin a model, then remember to
- * activate its provider" — the two-step that produced the inert pins this block
- * also has to report.
+ * ONE CHOICE, ONE CONTROL, ACROSS PROVIDERS. Provider is a label on a row here.
+ * `POST /api/config/api-keys/build-model` names provider AND model together and
+ * applies both, so choosing a model from a different provider is one act rather
+ * than "pin a model, then remember to activate its provider" — the two-step that
+ * produced the inert pins this block also has to report.
  *
  * IT LEADS WITH WHAT IS TRUE RIGHT NOW, not with the list. "Which model does
  * what" is unanswerable from a catalogue; it is answered by one line naming the
  * model in force, where it came from, and who measured it.
+ *
+ * ── THE LIST IS BEHIND A DISCLOSURE, AND THE DISCLOSURE IS FORCED OPEN ─────
+ * The popup is the everyday control; `Change…` reveals the full list, which is
+ * where each candidate's price, measurement chip and Model-Lab entry live. The
+ * markup is emitted whether or not it is open, so a refusal that belongs to a
+ * ROW is in the document — and the disclosure is forced open whenever there is
+ * a refusal or a write in flight, because v3.9.x already recorded that a confirm
+ * rendered inside a collapsed disclosure is no confirm.
  */
 function renderBuildBlock(k, crossBusy) {
   const cands = buildCandidates(k);
@@ -2706,18 +3369,88 @@ function renderBuildBlock(k, crossBusy) {
       escapeHtml(errText) + '</div>'
     : '';
 
-  return (
-    '<div class="settings-job-block settings-job-build">' +
-      '<h2 class="settings-job-title">This model builds your wiki</h2>' +
-      '<p class="settings-job-lede">Ingest, Health scans and Compile all run on it. They always share ' +
-      'one model — there is nothing separate to set for each. Choosing here also makes that model’s ' +
-      'provider the active one, so the choice can never end up applying to nothing.</p>' +
-      renderBuildCurrent(k, pickDisabled) +
-      errHtml +
-      renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId,
-        ownedByRow ? errAt : '', ownedByRow ? errText : '') +
-    '</div>'
-  );
+  const b = buildLaneFacts(k);
+
+  // ── THE POPUP IS THE CONTROL, AND IT IS A REAL LISTBOX ─────────────────
+  // shared/listbox.js, adopted here for the third time in this file. Not a
+  // a native popup element: the house rule (and scripts/test-next-listbox.js's
+  // whole-tree scan, which reds on the literal appearing even inside a comment)
+  // is that no OS-drawn surface is left in these controls, and a native popup
+  // could not carry the provider group and the price that make a row of this
+  // list legible. ONE cfg object, rendered here and mounted
+  // from `pendingListboxes` — never described twice.
+  //
+  // OFFERED ONLY WHEN IT LEADS SOMEWHERE. With one candidate (or none) a popup
+  // is a control whose every use is a no-op, so the name renders as a
+  // STATEMENT instead. The rule the composer's "Browse all" row already
+  // follows: never offer an affordance that opens the thing already on screen.
+  let popupHtml = '';
+  if (b && cands.length > 1) {
+    const cfg = {
+      id: 'build-model-lb',
+      ariaLabel: 'The model that builds your wiki',
+      value: b.provider + '::' + b.model,
+      disabled: pickDisabled,
+      triggerClass: 'build-model-popup',
+      minWidth: 320,
+      options: cands.map(({ p, m }) => ({
+        value: p.id + '::' + m.id,
+        label: m.label || m.id,
+        group: p.name,
+        typeahead: (m.label || '') + ' ' + m.id,
+        html: '<span class="lb-opt-label">' + escapeHtml(m.label || m.id) + '</span>' +
+          '<span class="lb-opt-detail build-lb-id">' + escapeHtml(m.id) + '</span>' +
+          '<span class="mono build-lb-price">' +
+            escapeHtml(formatModelPrice(m.input, m.output) || 'price not published') + '</span>',
+      })),
+      onChange: (value) => {
+        // Split at the FIRST separator only: a model id is a third party's
+        // string and can contain anything, but a provider id cannot contain
+        // `:` — so the left half is unforgeable. An unparseable value does
+        // nothing rather than guessing, which is the same contract
+        // parseModelOptionValue states in chat.js.
+        const at = String(value).indexOf('::');
+        if (at <= 0) return;
+        onPickBuildModel(String(value).slice(0, at), String(value).slice(at + 2), myMountToken);
+      },
+    };
+    pendingListboxes.push(cfg);
+    popupHtml = renderListboxHtml(cfg);
+  }
+
+  // ── ONE EMPTY STATEMENT, NOT TWO ───────────────────────────────────────
+  // With no model and no candidates, `renderBuildCurrent` already renders the
+  // empty card that names the action — connect something, or measure something.
+  // `renderBuildList`'s own empty sentence then landed directly underneath it
+  // saying the same thing in different words, which reads as two problems.
+  // Found by rendering the page, not by reading it. The list still renders its
+  // empty sentence in the state that is genuinely different: a model IS
+  // building the wiki and there is nothing else to switch to.
+  const listHtml = (b || cands.length > 0)
+    ? renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId,
+        ownedByRow ? errAt : '', ownedByRow ? errText : '')
+    : '';
+
+  const body =
+    renderBuildCurrent(k, pickDisabled, { popupHtml }) +
+    errHtml +
+    listHtml;
+
+  // ── THE LEDE CARRIES THE *WHY ONE MODEL*, AND THE ONE CONSEQUENCE ──────
+  // "They always share one" is not a flourish: without it a reader looks for a
+  // per-feature override, and v3.14.0 recorded that such an override is
+  // INEXPRESSIBLE at four call sites (health-ai.js and compile.js call
+  // `generateText` with four and five arguments; the provider/model pair lives
+  // in argument six). The second sentence names the consequence a cross-
+  // provider choice has — the active provider, and therefore the key being
+  // billed, moves with it — which is the one place the word "active" still
+  // earns its keep now that the connection rows no longer carry it.
+  const lede = '<strong>Ingest, Health scans and Compile all run on this one model.</strong> ' +
+    'They always share one, and there is nothing separate to set for each of them — one model ' +
+    'keeps the ingest prompt cache warm and keeps one bill to read. Choosing a model from another ' +
+    'provider makes that provider the active one, so the bill moves with it.';
+
+  return settingsBlock(2, 'build', 'What builds your wiki', lede, body);
 }
 
 /**
@@ -2727,55 +3460,65 @@ function renderBuildBlock(k, crossBusy) {
  * "using gemini-2.5-flash-lite" cannot tell a user whether that is THEIRS
  * (pinned, and it will stay) or OURS (a default, and a release may move them) or
  * their SHELL's (`LLM_MODEL`, which outranks anything they click here). Those
- * are three different answers to "am I in control of this", and the route
- * reports which one applies rather than leaving it to be inferred.
+ * are four different answers to "am I in control of this" once a fallback is
+ * counted, and the route reports which one applies rather than leaving it to be
+ * inferred.
  *
  * ── AND IT NAMES INERTNESS PLAINLY RATHER THAN PRETENDING IT CANNOT HAPPEN ──
  * Two distinct shapes, both real:
- *   · `source: 'selected'` with `selectedHonoured: false` — the user's pin is on
- *     the ACTIVE provider and the engine still refused it (a stale id, a model
- *     pulled after a bad probe, a chat-only id pinned before that gate existed).
+ *   · `source: 'selected'` with `selectedHonoured: false` (or `source:
+ *     'fallback'`) — the user's pin is on the provider that builds and the
+ *     engine still refused it (a stale id, a model pulled after a bad probe, a
+ *     chat-only id pinned before that gate existed).
  *   · a pin under a NON-active provider — `inertPins`. The new route cannot
  *     create one; the old route still can, and the ones already on disk are
  *     still there.
  * Silence on either is the dead-data shape this repo keeps re-finding, in the
  * direction the user notices least: a choice nobody obeys, with no symptom.
+ *
+ * ── THE ID IS NOT IN MONOSPACE, AND THAT IS THE POINT OF THE BLOCK ─────────
+ * A model has a NAME a person reads and an ID a machine reads. The old line put
+ * the id in `<code class="mono">` and had no name at all, so the one thing on
+ * the screen naming what the money is spent on was a vendor slug. The name now
+ * leads in the text face; the id sits under it at `--text-2`, still selectable,
+ * still exact. `formatModelPrice` keeps tabular numerals because a price is
+ * digits that have to align with the ones in block 4.
+ *
+ * `opts` is trailing and defaulted: called with two arguments this renders the
+ * same card with a STATEMENT where the popup would be, which is exactly the
+ * one-candidate case, so the two-argument shape is a real state and not a test
+ * affordance.
  */
-function renderBuildCurrent(k, pickDisabled) {
-  const b = buildModelFacts(k);
+function renderBuildCurrent(k, pickDisabled, opts) {
+  const o = opts || {};
+  const b = buildLaneFacts(k);
   if (!b) {
     // ── TWO DIFFERENT ABSENCES, AND ONLY ONE OF THEM IS "NOTHING BUILDS" ──
-    // `buildModel` is a NEW derived field. A backend that predates it sends
-    // nothing here while still resolving a provider and a model perfectly well,
-    // and telling that user "nothing can build your wiki" would be a false
-    // statement about a working install — the failure mode this whole block
-    // exists to remove, arriving through a different door.
-    //
-    // So degrade to the OLDER pair (`activeProvider` + `activeModel`) rather
-    // than to an error. It is the same value from the same resolution — the
-    // route derives `buildModel.model` from `getProviderInfo()`, which is what
-    // `activeModel` already reported — so this cannot contradict the new field;
-    // it just carries less (no `source`, no `selectedHonoured`, no provenance),
-    // and the copy claims correspondingly less.
-    const a = activeModelLine(k);
-    if (a.show) {
-      return '<div class="build-current" role="status">' +
-        '<span class="build-current-head">' +
-          '<span class="build-current-provider">' + escapeHtml(a.providerLabel) + '</span>' +
-          '<code class="mono build-current-model">' + escapeHtml(a.model) + '</code>' +
-        '</span>' +
-        '<span class="build-current-why">This is what ingest, Health scans and Compile run on.</span>' +
+    // A keyed provider that offers nothing measured is a DIFFERENT state from
+    // no key at all, and the two need different actions: one is "connect
+    // something", the other is "measure something". Collapsing them tells a
+    // user with a working key to go and get a key.
+    const anyKey = PROVIDER_ROWS.some((p) => p.available && providerConnected(p, k));
+    if (anyKey) {
+      return '<div class="build-current build-current-none build-current-warn" role="status">' +
+        '<span class="build-current-head">Your key works, and nothing behind it has been ' +
+        'measured for building a wiki.</span>' +
+        '<span class="build-current-why">Ingest, Health scans and Compile have no model to run ' +
+        'on. Open <strong>All models</strong> and measure one on your own pages, or connect ' +
+        'another provider.</span>' +
         '</div>';
     }
     return '<div class="build-current build-current-none" role="status">' +
-      '<span class="build-current-head">Nothing can build your wiki yet.</span>' +
-      '<span class="build-current-why">Connect a provider below, then choose a model here. ' +
-      'Until then ingest, Health scans and Compile have no model to run on.</span>' +
+      '<span class="build-current-head">Nothing builds your wiki yet.</span>' +
+      '<span class="build-current-why">Connect a provider above. The Curator will start on the ' +
+      'cheapest model it has measured for that provider, and you can change it here at any time.' +
+      '</span>' +
       '</div>';
   }
 
   const name = providerLabel(b.provider) || b.provider;
   const chip = measurementChip({ measuredBy: b.measuredBy }, null);
+  const modelName = buildModelDisplayName(k, b);
 
   let why;
   if (b.source === 'env') {
@@ -2783,14 +3526,18 @@ function renderBuildCurrent(k, pickDisabled) {
       'That overrides anything chosen here, so a choice below will not take effect until it is unset.';
   } else if (b.source === 'selected' && b.honoured) {
     why = 'You chose this one, so app updates will not move you off it.';
-  } else if (b.source === 'selected') {
+  } else if (b.source === 'selected' || b.source === 'fallback') {
     why = 'You chose a model, and it is <strong>not the one running</strong> — The Curator refused it ' +
       'on read (it may no longer be offered, or may never have been measured for this job) and fell ' +
-      'back to the model named above. Choose again below to fix it.';
+      'back to the model named above. Choose again to fix it.';
   } else if (b.source === 'default') {
     why = 'Nobody has chosen one, so this follows the app default and can change when The Curator updates.';
+  } else if (b.degraded) {
+    // The oldest payload: a real model, resolved by the real chain, with no
+    // provenance attached. Claim exactly that and nothing more.
+    why = 'This is what ingest, Health scans and Compile run on.';
   } else {
-    // An unrecognised `source`. Say nothing rather than pick one of the three —
+    // An unrecognised `source`. Say nothing rather than pick one of the four —
     // a fabricated provenance on a spending surface is worse than a gap.
     why = '';
   }
@@ -2810,7 +3557,8 @@ function renderBuildCurrent(k, pickDisabled) {
     escapeHtml(name) + ' builds your wiki. Choosing it in the list below would switch to ' +
     escapeHtml(pin.name) + ' and make it take over.</span>').join('');
 
-  const warn = (b.source === 'selected' && !b.honoured) ? ' build-current-warn' : '';
+  const warn = ((b.source === 'selected' && !b.honoured) || b.source === 'fallback')
+    ? ' build-current-warn' : '';
 
   // ── THE CHIP'S MEANING IS NO LONGER HOVER-ONLY ────────────────────────
   // The chip's explanation (`chip.title`) was a `title=` on a <span>. A span
@@ -2822,54 +3570,117 @@ function renderBuildCurrent(k, pickDisabled) {
   // top of the section. renderMeasurementChip renders the same chip once per
   // model row (up to ~192 of them on a synced OpenRouter catalogue) and is
   // deliberately NOT converted — 192 extra tab stops would be a worse defect
-  // than the one being fixed, and there the lane note states the vocabulary
-  // once, visibly, for the whole group.
-  //
-  // The panel is a sibling of `.build-current-head`, not a child: `.build-
-  // current` is a flex COLUMN, so a block panel there is full width with no
-  // stylesheet change. Inside the head (a wrapping row) it would be a flex
-  // item and shrink-wrap.
+  // than the one being fixed.
   const chipInfo = infoMark('settings-build-chip-info', 'About the ' + chip.label + ' badge', chip.title);
 
+  // ── THREE FACT CHIPS, AND NO CONTEXT CHIP ──────────────────────────────
+  // Price, the measured finding, and who measured it. CONTEXT IS DELIBERATELY
+  // ABSENT: `contextLength` is null on every hand-typed static entry — i.e. on
+  // every model that can actually be the build model today — so a context chip
+  // would be blank or invented on exactly the rows that matter. It ships when
+  // those entries carry the field, not before.
+  const price = formatModelPrice(b.priceIn, b.priceOut);
+  const facts =
+    (price ? '<span class="build-fact build-fact-num mono">' + escapeHtml(price + ' per 1M tokens') + '</span>' : '') +
+    (b.outlineNote ? '<span class="build-fact">' + escapeHtml(b.outlineNote) + '</span>' : '') +
+    '<span class="build-fact build-fact-measured">' + escapeHtml(chip.label) + '</span>';
+
+  // ── CHEAPEST MEASURED — A FACT, NEVER A RECOMMENDATION ─────────────────
+  // Server-derived, and that is not a detail: a client-side cross-provider
+  // price comparator would be a second opinion about a money fact, and would
+  // have to decide what `null` means for a free model. The words are "cheapest
+  // measured", never "best" or "recommended", because only the first is
+  // something we can show our working for.
+  let cheapest = '';
+  if (b.cheapest) {
+    const cName = buildModelDisplayName(k, b.cheapest) || b.cheapest.model;
+    if (b.cheapest.same) {
+      cheapest = '<div class="build-cheapest"><span class="build-cheapest-tag">Cheapest measured</span>' +
+        '<span>For the keys you have connected, that is <strong>' + escapeHtml(cName) +
+        '</strong> — the one you are already using.</span></div>';
+    } else {
+      const cPrice = formatModelPrice(b.cheapest.priceIn, b.cheapest.priceOut);
+      const vs = price ? ', against the ' + price + ' you are paying now' : '';
+      cheapest = '<div class="build-cheapest"><span class="build-cheapest-tag">Cheapest measured</span>' +
+        '<span>For the keys you have connected, that is <strong>' + escapeHtml(cName) + '</strong>' +
+        (cPrice ? ' — <span class="mono">' + escapeHtml(cPrice + ' per 1M') + '</span>' : '') +
+        escapeHtml(vs) + '. ' +
+        '<button type="button" class="btn btn-secondary btn-xs" data-build-model="' +
+          escapeHtml(b.cheapest.model) + '" data-build-provider="' + escapeHtml(b.cheapest.provider) +
+          '"' + (pickDisabled ? ' disabled' : '') + '>Use it</button></span></div>';
+    }
+  }
+
+  // The popup, or — with nothing to switch to — the name as a statement.
+  const head = o.popupHtml
+    ? '<span class="build-current-popup">' + o.popupHtml + '</span>'
+    : '<span class="build-current-name">' + escapeHtml(modelName) + '</span>';
+
+  // ── THERE IS NO SEPARATE `Change…` BUTTON ──────────────────────────────
+  // The list below is a `<details>` and its `<summary>` IS the Change
+  // affordance. A button beside the popup plus a summary under it would be two
+  // controls opening one disclosure, with the button owing an `aria-expanded`
+  // the summary already provides natively — the shape v3.0.1-beta.18 records
+  // as the reason interactive controls do not get nested here.
   return (
     '<div class="build-current' + warn + '" role="status">' +
+      '<div class="build-current-top">' + head + '</div>' +
       '<span class="build-current-head">' +
         '<span class="build-current-provider">' + escapeHtml(name) + '</span>' +
-        '<code class="mono build-current-model">' + escapeHtml(b.model) + '</code>' +
-        '<span class="model-badge model-measured ' + escapeHtml(chip.cls) + '">' +
-          escapeHtml(chip.label) + '</span>' +
+        '<span class="build-current-model">' + escapeHtml(b.model) + '</span>' +
         chipInfo.btn +
       '</span>' +
       chipInfo.panel +
+      '<div class="build-facts">' + facts + '</div>' +
       (why ? '<span class="build-current-why">' + why + clear + '</span>'
            : (clear ? '<span class="build-current-why">' + clear + '</span>' : '')) +
       inert +
+      cheapest +
     '</div>'
   );
 }
 
 /**
+ * The model's own NAME, looked up in the catalogue the payload already carries.
+ *
+ * A model id is not a name — `upstage/solar-pro4` is what a machine routes on
+ * and `Solar Pro 4` is what a person recognises — and this block's whole
+ * argument is that the name leads. Degrades to the id when the catalogue holds
+ * no entry for it, which is the honest answer: showing a blank or a guessed
+ * prettification of a vendor slug would be inventing a name.
+ */
+function buildModelDisplayName(k, b) {
+  if (!b || typeof b.model !== 'string' || !b.model) return '';
+  const list = (k && k.offerable && Array.isArray(k.offerable[b.provider])) ? k.offerable[b.provider] : [];
+  for (const m of list) {
+    if (m && typeof m === 'object' && m.id === b.model && typeof m.label === 'string' && m.label) {
+      return m.label;
+    }
+  }
+  return b.model;
+}
+
+/**
  * The choice: every build-lane model, across providers, cheapest-first within
- * each provider.
+ * each provider — behind a `Change…` disclosure.
  *
  * ── NO `cheapest` BADGE HERE, AND THAT IS A REFUSAL RATHER THAN AN OMISSION ─
  * The route ships each provider's catalogue cheapest-first, so "index 0 is the
  * cheapest" is true PER PROVIDER. Concatenated, three providers produce three
  * index-0 rows — three `cheapest` badges, at most one of which could be true, on
- * the one screen whose purpose is comparing spend. Re-sorting across providers
- * to find the real cheapest would mean a client-side price comparator, which is
- * a second opinion about a money fact and would be the copy that rots (and would
- * have to decide what `null` means for a free model — the coercion bug §11 of
- * test-chat-model.js already found sitting in a green assertion).
+ * the one screen whose purpose is comparing spend. The block-level "cheapest
+ * measured" line replaces all three with ONE server-computed claim.
  *
- * So the badge is not rendered, `ctx.showCheapest: false` says so explicitly,
- * and every row carries its own price unfolded instead. The list is ~19 rows.
+ * ── THE DISCLOSURE IS FORCED OPEN WHEN SOMETHING IS HAPPENING IN IT ────────
+ * A refusal or an in-flight write belongs to a ROW, and a row inside a closed
+ * `<details>` is not on screen. v3.9.x recorded that shape once already, as a
+ * confirm panel rendered into a collapsed disclosure.
  */
 function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, errorText) {
   if (cands.length === 0) {
     return '<p class="settings-job-empty">No connected provider currently offers a model that has been ' +
-      'measured for building a wiki. Connect a provider below, or open <strong>Every model, by ' +
-      'provider</strong> and test one on your own pages.</p>';
+      'measured for building a wiki. Connect a provider above, or open <strong>All models</strong> ' +
+      'and test one on your own pages.</p>';
   }
 
   const defaultId = (k && k.buildModel && typeof k.buildModel.model === 'string')
@@ -2905,17 +3716,24 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
     baselineModelId: (k && k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
   })).join('');
 
+  // Forced open while a refusal or a write belongs to a row inside it.
+  const forceOpen = !!errorText || (typeof busyId === 'string' && busyId !== '');
+  const open = (state.buildListOpen === true || forceOpen) ? ' open' : '';
+
   return (
-    '<div class="build-list-head">' +
-      '<span class="build-list-title">Choose the one</span>' +
-      '<span class="mono build-list-count">' + escapeHtml(String(cands.length)) + ' measured for this job</span>' +
-    '</div>' +
-    '<ul class="model-list build-list">' + items + '</ul>'
+    '<details class="build-change"' + open + ' data-build-list="1">' +
+      '<summary class="build-change-summary">' +
+        '<span class="build-change-title">Change\u2026 <span class="build-change-sub">every model that can build your wiki</span></span>' +
+        '<span class="mono build-list-count">' + escapeHtml(String(cands.length)) +
+          ' measured for this job</span>' +
+      '</summary>' +
+      '<ul class="model-list build-list">' + items + '</ul>' +
+    '</details>'
   );
 }
 
 /**
- * ── JOB 2: CHAT ────────────────────────────────────────────────────────────
+ * ── BLOCK 3: CHAT ──────────────────────────────────────────────────────────
  *
  * A STATEMENT AND A POINTER. Never a second picker.
  *
@@ -2927,26 +3745,44 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
  * because chat's is sticky per browser and this screen has no idea which
  * conversation you are in.
  *
- * The COUNT is stated because it is the fact that makes the pointer worth
- * following: "every model" is abstract, "199 models" is a reason to look.
+ * WHAT IT DOES ADD IS A READOUT, WHICH IS NOT A CONTROL. "Starts on" answers a
+ * question the composer cannot: which model a NEW conversation opens on, before
+ * anyone has picked anything. It carries no button, no `data-` write hook and no
+ * listbox, and the suite asserts exactly that.
  */
 function renderChatBlock(k) {
-  const total = chatModelCount(k);
-  const count = total > 0
-    ? '<strong>' + escapeHtml(String(total)) + '</strong> models are available to it right now'
-    : 'No models are available to it yet';
+  const c = chatStartFacts(k);
+  let body;
+  if (c.count === 0) {
+    body = '<div class="settings-empty-card">' +
+      '<b>No models are available to chat yet.</b>' +
+      '<span>Connect a provider above. Chat will then be able to use every model that key reaches.</span>' +
+      '</div>';
+  } else {
+    const label = buildModelDisplayName(k, { provider: c.provider, model: c.model }) || c.model;
+    const prov = providerLabel(c.provider) || c.provider;
+    body =
+      '<div class="chat-start-row">' +
+        '<span class="chat-start-k">Starts on</span>' +
+        '<span class="chat-start-v">' + escapeHtml(label) +
+          (c.model ? '<small>' + escapeHtml((prov ? prov + ' · ' : '') + c.model) + '</small>' : '') +
+        '</span>' +
+        '<span class="chat-start-sp"></span>' +
+        '<span class="chat-start-k">' + escapeHtml(String(c.count)) + ' models available</span>' +
+      '</div>' +
+      // Favourites are INERT here. The composer owns the star, and a star that
+      // could be set in two places would be two writers on one localStorage
+      // key — the shape this file already refuses for the chat model itself.
+      '<p class="settings-block-footnote">Star a model in the composer and it appears at the top ' +
+      'of that menu, above everything else you have connected.</p>';
+  }
 
-  return (
-    '<div class="settings-job-block settings-job-chat">' +
-      '<h2 class="settings-job-title">Chat</h2>' +
-      '<p class="settings-job-lede">Chat can use <strong>any</strong> model from any provider you have ' +
-      'connected — including the ones that cannot build your wiki, because nothing is at stake in an ' +
-      'answer but the cost of that answer. ' + count + '.</p>' +
-      '<p class="settings-job-lede">You choose it <strong>per message, in the composer</strong> — the ' +
-      'model control sits next to Send in the Chat view. It changes that conversation only and never ' +
-      'touches what builds your wiki. There is deliberately no second control for it here.</p>' +
-    '</div>'
-  );
+  const lede = 'Chat can use <strong>any</strong> model you have connected, including the ones that ' +
+    'cannot build a wiki — nothing is at stake in an answer but the cost of that answer. ' +
+    '<strong>You choose it per message, in the composer</strong>, next to Send. It never touches ' +
+    'what builds your wiki, so there is no second control for it here.';
+
+  return settingsBlock(3, 'chat', 'Chat', lede, body);
 }
 
 /**
@@ -3032,14 +3868,38 @@ function renderActiveModelLine(k) {
   );
 }
 
-function renderProviderRow(p, k, crossBusy) {
+/**
+ * One connection row.
+ *
+ * ── THE STATUS IS TWO PLAIN WORDS, IN THE TEXT FACE ────────────────────────
+ * It used to be one of three MONOSPACE words — `active` / `configured` /
+ * `not set` — of which only one was about the credential at all. `active` was
+ * about which provider builds the wiki, which is block 2's whole subject, and
+ * putting it on the credential row is what made two screens' worth of state
+ * look like one row's. `configured` and `not set` are the same fact in
+ * developer vocabulary. So: **Connected** with a tick, or **Not connected**,
+ * in the text face, because these are words a person reads and not literals a
+ * machine emits.
+ *
+ * ── AND `Set active` IS OFF BY DEFAULT ON THIS PAGE ────────────────────────
+ * Option B: the build lane moves in block 2 and nowhere else, so the page does
+ * not offer a second control that changes what the user is billed for from a
+ * row whose subject is a key. `opts.allowSetActive` defaults to TRUE — the
+ * degraded case is real and has to stay reachable (a build block with nothing
+ * to offer cannot move the lane, and `POST /api-keys/active` is then the only
+ * path) — and `renderConnectBlock` passes `false`. Defaulting the other way
+ * would make the escape hatch the thing you have to remember to ask for.
+ */
+function renderProviderRow(p, k, crossBusy, opts) {
+  const rowOpts = opts || {};
+  const allowSetActive = rowOpts.allowSetActive !== false;
   if (!p.available) {
     return (
       '<div class="provider-row provider-row-unavailable">' +
         '<span class="provider-dot" style="background:' + p.dot + '"></span>' +
         '<span class="provider-name-block">' +
           '<span class="provider-name">' + escapeHtml(p.name) + '</span>' +
-          '<span class="mono provider-model">—</span>' +
+          '<span class="provider-vendor">' + escapeHtml(p.vendor || p.name) + '</span>' +
         '</span>' +
         '<code class="provider-key-field mono provider-key-empty">not available</code>' +
         '<span class="mono provider-state provider-state-muted">not available in this build</span>' +
@@ -3085,19 +3945,21 @@ function renderProviderRow(p, k, crossBusy) {
   const keyInfo = KEY_INFO_BY_PROVIDER[p.id] || {};
   const hasKeyField = keyInfo.field;
   const hasKey = keyInfo.has;
-  const model = (k.models && k.models[p.id]) || '—';
   const isActive = k.activeProvider === p.id;
   const isReplacing = state.replacing === p.id;
   const isBusy = state.keysBusy === p.id;
 
-  const stateText = isActive ? 'active' : (hasKey ? 'configured' : 'not set');
-  const stateClass = isActive ? 'provider-state-active' : 'provider-state-muted';
-  // The colour reinforcement for "active" — see the CSS comment on
-  // .provider-state-icon for why this is an ICON next to the word rather
-  // than the word's own colour. Icon-only so a colour-blind reader still
-  // has the word "active" itself (unchanged, never removed) as the primary
-  // signal; the icon is reinforcement, not a replacement.
-  const stateIcon = isActive ? '<span class="provider-state-icon" aria-hidden="true">' + icon('checkAlt', 11) + '</span>' : '';
+  // ── CONNECTED / NOT CONNECTED — the pill, in plain words ───────────────
+  // `providerConnected` reads the route's own boolean where it sends one and
+  // degrades to the saved-key test, so this row cannot disagree with the rest
+  // of the page about what a connection is. The TICK is reinforcement on top of
+  // the word, never a replacement for it: a colour-blind or icon-blind reader
+  // still has "Connected" spelled out, which is the same rule the retired
+  // `active` icon followed.
+  const connected = providerConnected(p, k);
+  const stateText = connected ? 'Connected' : 'Not connected';
+  const stateClass = connected ? 'provider-pill-on' : 'provider-pill-off';
+  const stateIcon = connected ? '<span class="provider-state-icon" aria-hidden="true">' + icon('checkAlt', 11) + '</span>' : '';
 
   // `isBusy` is THIS row's own in-flight request (already disables + shows
   // its own "Saving…"/etc label — not a conflict with itself). `crossBusy`
@@ -3176,7 +4038,7 @@ function renderProviderRow(p, k, crossBusy) {
   // providers, absent on the third, and had to ask why. A hidden control with no
   // stated reason reads as a missing feature, not as a safeguard. So say it where
   // the button would have been. Derived from `canBuild`, never from a provider id.
-  if (hasKey && !isActive && !canBuild) {
+  if (allowSetActive && hasKey && !isActive && !canBuild) {
     // The long form used to be a `title=` on this <span> — non-focusable, so
     // keyboard-invisible and absent entirely on touch, and it is the ONLY
     // place the reason is written. It is now behind a real button. The short
@@ -3191,7 +4053,7 @@ function renderProviderRow(p, k, crossBusy) {
       noModels.btn + noModels.panel
     );
   }
-  if (hasKey && !isActive && canBuild) {
+  if (allowSetActive && hasKey && !isActive && canBuild) {
     extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-set-active="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>Set active</button>');
   }
   if (hasKey && canTestKey) {
@@ -3312,8 +4174,8 @@ function renderProviderRow(p, k, crossBusy) {
     );
   } else {
     fieldHtml = (
-      '<code class="provider-key-field mono' + (hasKeyField ? '' : ' provider-key-empty') + '">' + escapeHtml(hasKeyField || 'Not set') + '</code>' +
-      '<span class="mono provider-state ' + stateClass + '">' + stateIcon + stateText + '</span>' +
+      '<code class="provider-key-field mono' + (hasKeyField ? '' : ' provider-key-empty') + '">' + escapeHtml(hasKeyField || 'No key') + '</code>' +
+      '<span class="provider-pill ' + stateClass + '">' + stateIcon + stateText + '</span>' +
       '<div class="provider-row-actions">' +
         extraActions.join('') +
         // This button only opens the input row locally — no network call — so it's deliberately NOT gated (see file-header comment).
@@ -3329,7 +4191,7 @@ function renderProviderRow(p, k, crossBusy) {
         // because the only way in was a button labelled as if there were
         // something to replace. Derived from `hasKeyField`, so a fourth
         // provider needs no edit here.
-        '<button type="button" class="btn btn-' + (hasKeyField ? 'secondary' : 'primary') + ' btn-xs" data-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>' + (hasKeyField ? 'Replace' : 'Add key') + '</button>' +
+        '<button type="button" class="btn btn-' + (hasKeyField ? 'secondary' : 'primary') + ' btn-xs" data-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>' + (hasKeyField ? 'Replace key' : 'Add key') + '</button>' +
       '</div>'
     );
   }
@@ -3346,7 +4208,15 @@ function renderProviderRow(p, k, crossBusy) {
       '<span class="provider-dot" style="background:' + p.dot + '"></span>' +
       '<span class="provider-name-block">' +
         '<span class="provider-name">' + escapeHtml(p.name) + '</span>' +
-        '<span class="mono provider-model">' + escapeHtml(model) + '</span>' +
+        // ── WHO THE KEY IS FOR, NOT WHICH MODEL IT DEFAULTS TO ────────────
+        // This line used to carry `models[p.id]` — the provider's default
+        // model id, in monospace. That is block 2's subject, stated there once
+        // with its price and its provenance, and repeating a bare id here made
+        // three rows look like three build lanes. What a CREDENTIAL row owes
+        // the reader is whose credential it is, so the line is the vendor.
+        // `p.vendor` falls back to the provider's own name rather than to the
+        // model id: a missing label must not resurrect the thing being removed.
+        '<span class="provider-vendor">' + escapeHtml(p.vendor || p.name) + '</span>' +
       '</span>' +
       fieldHtml +
     '</div>' +
@@ -4558,6 +5428,21 @@ function modelFilterFor(provider) {
     q: f && typeof f.q === 'string' ? f.q : '',
     sort: f && MODEL_SORTS.includes(f.sort) ? f.sort : 'cheapest',
     measuredOnly: !!(f && f.measuredOnly),
+    // ── THE THREE AXES BLOCK 4's TABLE ADDS ────────────────────────────────
+    // Read here rather than in a second reader, so the per-provider bars and
+    // the cross-provider table share one normaliser. The per-provider bars
+    // never SET these, so they read their defaults and render byte-identically
+    // — which is what keeps §22e's "exactly three controls" assertion true of
+    // the bar it was written about.
+    //
+    // Each is validated against the values THIS file defines, never trusted
+    // from state: `state.modelFilter` is a plain in-memory object, but a stored
+    // value that no longer matches a facet id would otherwise filter every row
+    // out and read as an empty catalogue.
+    lane: (f && MODEL_LANE_FACETS.some(([id]) => id === f.lane)) ? f.lane : 'all',
+    band: (f && MODEL_PRICE_BANDS.some(([id]) => id === f.band)) ? f.band : 'any',
+    provider: (f && typeof f.provider === 'string'
+      && PROVIDER_ROWS.some((p) => p.id === f.provider)) ? f.provider : '',
   };
 }
 
@@ -6050,6 +6935,12 @@ function wireProviderListeners() {
       else delete state.modelLaneOpen[el.dataset.modelLane];
     });
   });
+  // Block 2's `Change…` disclosure — record, never re-render. Same contract as
+  // every other <details> here: the element has already applied the change, so
+  // repainting would throw away the DOM the user is looking at.
+  document.querySelectorAll('[data-build-list]').forEach((el) => {
+    el.addEventListener('toggle', () => { state.buildListOpen = !!el.open; });
+  });
   // ── THE FILTER CONTROLS ────────────────────────────────────────────────
   // `input`, not `change`, so the list narrows as you type — the whole point of
   // a search box at 190 rows.
@@ -6087,10 +6978,49 @@ function wireProviderListeners() {
   document.querySelectorAll('[data-model-filter-clear]').forEach((btn) => {
     btn.addEventListener('click', () => {
       // Clears every axis, not just the search text: the empty state can be
-      // caused by the checkbox alone, and a "Clear filters" button that leaves
-      // one filter applied is the control that looks broken.
-      setModelFilter(btn.dataset.modelFilterClear, { q: '', measuredOnly: false });
+      // caused by one facet alone, and a "Clear filters" button that leaves one
+      // filter applied is the control that looks broken. The three block-4 axes
+      // are cleared here too — one clear for one bar, whichever bar it is,
+      // because the alternative is a second handler that has to be kept in step
+      // with which scope owns which axis.
+      setModelFilter(btn.dataset.modelFilterClear,
+        { q: '', measuredOnly: false, lane: 'all', band: 'any', provider: '' });
       render(myMountToken);
+    });
+  });
+  // ── BLOCK 4's SEGMENTED FACETS ─────────────────────────────────────────
+  // Two attributes rather than one delegated handler with a mode string: they
+  // set different axes, and this file already records why a single dispatcher
+  // keyed on a string is one typo away from the wrong write.
+  document.querySelectorAll('[data-browse-lane]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setModelFilter(ALL_MODELS_SCOPE, { lane: btn.dataset.browseLane });
+      render(myMountToken);
+    });
+  });
+  document.querySelectorAll('[data-browse-band]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setModelFilter(ALL_MODELS_SCOPE, { band: btn.dataset.browseBand });
+      render(myMountToken);
+    });
+  });
+  // ── OPEN MODEL LAB ─────────────────────────────────────────────────────
+  // The nine-run flow lives on the per-provider catalogue rows, so "opening the
+  // lab" is opening those. It expands every provider that HAS a catalogue (the
+  // saved-key gate renderModelPicker itself applies), opens the shelf so they
+  // are on screen at all, and then scrolls — reveal AFTER the repaint, by id,
+  // because the node the click came from does not survive it.
+  document.querySelectorAll('[data-open-model-lab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.modelShelfOpen = true;
+      for (const p of PROVIDER_ROWS) {
+        if (p.available && providerHasSavedKey(p.id, state.keys)) state.modelPickerOpen[p.id] = true;
+      }
+      render(myMountToken);
+      const el = document.getElementById('settings-model-lab');
+      if (el && typeof el.scrollIntoView === 'function') {
+        try { el.scrollIntoView({ block: 'start' }); } catch { /* jsdom / older engines */ }
+      }
     });
   });
   document.querySelectorAll('[data-save-key]').forEach((btn) => {

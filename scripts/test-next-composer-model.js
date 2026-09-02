@@ -312,10 +312,24 @@ const FN_NAMES = [
   'answerIsInPromptWindow',
   // §16 — the option VALUE that names a row rather than a model id.
   'modelOptionValue', 'parseModelOptionValue',
+  // §13d-ii — the composer picker's ONE cfg builder. Extracted and CALLED, not
+  // grepped: the property under test is that the "Browse all N models…" action
+  // row is in the options the listbox will be mounted with, in every shape the
+  // working set can take, and a source scan proves a line exists rather than
+  // what it does (§16's own rule, one level up).
+  'modelListboxCfg',
 ];
 
 /** Bindings the sandbox supplies to the extracted code, in call order. */
-const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary', 'icon', 'formatDurationMs'];
+// `openBrowseDialog` and `selectChatModel` are the two handlers
+// `modelListboxCfg`'s onChange closure names. Neither runs when a cfg is BUILT,
+// which is all this suite does with it — but a name the sandbox cannot resolve
+// is a ReferenceError at definition time, and §0 refuses to start rather than
+// let that surface as an unrelated crash. Injected as inert stand-ins: they are
+// DOM-bound in the real view (one opens a document-level overlay, one writes
+// localStorage), so extracting them would drag the whole dialog in for nothing.
+const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary', 'icon', 'formatDurationMs',
+  'openBrowseDialog', 'selectChatModel'];
 
 /**
  * The shell's `icon()`, reproduced as an inert stub.
@@ -379,11 +393,18 @@ const sandbox = new Function(
   // here rather than added to INJECTED so the sandbox's argument ORDER — which
   // §0 does not check — cannot silently shift under a later edit.
   'var state = { thread: [] };\n' +
+  // The render->wire handoff array `modelListboxCfg` is a client of. Declared
+  // here rather than added to INJECTED so the sandbox's argument ORDER — which
+  // §0 does not check — cannot silently shift under a later edit; the two
+  // HANDLERS it names go through INJECTED because §0 scans for them by name.
+  'var pendingListboxes = [];\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
   'return { SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' +
   'PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, ' +
-  '__setThread(t) { state.thread = t; }, ' + FN_NAMES.join(', ') + ' };'
-)(escapeHtmlStub, formatUsdHonest, formatModelSummary, iconStub, formatDurationMs);
+  '__setThread(t) { state.thread = t; }, ' +
+  '__setChatState(o) { Object.assign(state, o); }, ' + FN_NAMES.join(', ') + ' };'
+)(escapeHtmlStub, formatUsdHonest, formatModelSummary, iconStub, formatDurationMs,
+  () => {}, () => {});
 
 const {
   SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED,
@@ -396,7 +417,9 @@ const {
   assistantEyebrowHtml,
   messageUsageTokens, cacheMultipliers, messageCostUsd, assistantCostHtml, costMarkHtml,
   PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, __setThread,
+  __setChatState,
   answerIsInPromptWindow, modelOptionValue, parseModelOptionValue,
+  modelListboxCfg,
 } = sandbox;
 
 // ── The FN_NAMES completeness guard — see §0 ─────────────────────────────
@@ -3123,15 +3146,88 @@ section('§13  THE WORKING SET — a short list that hides nothing');
     ok(ws.total === 200, '…while total still reports every model, which is what the escape hatch counts');
   }
 
-  // ── 13d. AN EMPTY WORKING SET SHOWS EVERYTHING ────────────────────────
-  // A backend too old to send `measuredBy`, with no stars and no recents. There
-  // is no fact to select on, so the only honest answer is the whole list — never
-  // an empty menu, which would read as "you have no models".
+  // ── 13d. AN EMPTY WORKING SET COLLAPSES — REVERSED DELIBERATELY ───────
+  // This asserted the OPPOSITE, on the reasoning that with no fact to select on
+  // the only honest answer is the whole list, because an empty menu reads as
+  // "you have no models". The first half is right at 7 models and wrong at 200:
+  // it puts the WHOLE CATALOGUE into a composer dropdown, which is the single
+  // case the collapse was built for. The state is reachable without anything
+  // being broken — a backend too old to send `measuredBy`, on a fresh browser
+  // profile with no stars and no recents, before the first message.
+  //
+  // The second half was the real objection and it is answered STRUCTURALLY
+  // rather than by keeping the dump: the "Browse all N models…" action row is
+  // now emitted UNCONDITIONALLY (see modelListboxCfg), so the empty menu this
+  // clause existed to prevent cannot occur — the menu always offers the one
+  // surface that can actually handle 200 rows, with search, filters and the
+  // star control. That is asserted directly below, because a collapse whose
+  // escape hatch was conditional would be strictly worse than the dump.
+  //
+  // The size gate is untouched: a small catalogue is still shown whole.
   {
     const big = rows(Array.from({ length: 200 }, (_, i) => mkEntry('m' + i)));
     const ws = buildWorkingSet(big, { recents: [], starred: [], selectedId: null });
-    ok(ws.collapsed === false, 'no measuredBy anywhere: no collapse');
-    ok(ws.rows.length === 200, '…the whole catalogue is shown rather than nothing');
+    ok(ws.collapsed === true, 'no measuredBy anywhere at 200 models: DOES collapse');
+    ok(ws.rows.length === 0, '…to nothing, rather than dumping 200 rows into a composer menu');
+    ok(ws.total === 200, '…while still REPORTING the true total, which is what the browse row names');
+
+    // CONTROL: the same emptiness under the size gate is still shown whole, so
+    // this is a rule about SIZE and not a rule about the working set being
+    // empty. Without this, a mutation deleting the size gate entirely would
+    // leave the assertions above green.
+    const small = rows(Array.from({ length: 6 }, (_, i) => mkEntry('s' + i)));
+    const wsSmall = buildWorkingSet(small, { recents: [], starred: [], selectedId: null });
+    ok(wsSmall.collapsed === false && wsSmall.rows.length === 6,
+      'CONTROL: an equally empty working set on a SMALL catalogue is still shown whole');
+  }
+
+  // ── 13d-ii. THE ESCAPE HATCH IS UNCONDITIONAL ─────────────────────────
+  // Driven through the REAL cfg builder rather than by reading its source: the
+  // property is that the row is among the OPTIONS the listbox will be mounted
+  // with, in every shape the working set can take — collapsed, shown whole, and
+  // the collapsed-to-nothing shape 13d above now produces.
+  {
+    const shapes = [
+      ['a menu collapsed to a working set', 40, { measuredBy: 'curator' }, 3],
+      ['a menu collapsed to NOTHING', 40, null, 0],
+      ['a menu shown whole', 4, null, 0],
+    ];
+    for (const [what, n, measured, howManyMeasured] of shapes) {
+      __setChatState({
+        offerable: { gemini: Array.from({ length: n }, (_, i) =>
+          mkEntry('g' + i, (measured && i < howManyMeasured) ? measured : {})) },
+        availableProviders: ['gemini'],
+        chatModel: null, modelProvider: null, activeProvider: null,
+        modelRecents: [], modelStarred: [],
+      });
+      const cfg = modelListboxCfg();
+      const browse = cfg.options.filter((o) => o.action === true);
+      ok(browse.length === 1, `${what}: exactly one action row is offered`);
+      ok(!!browse[0] && /Browse all /.test(browse[0].label),
+        `${what}: and it is the browse row`);
+      ok(!!browse[0] && browse[0].label.includes(String(n)),
+        `${what}: naming the TRUE total (${n}), not the number of rows shown`);
+      // GUARDED. Under the mutation that re-gates the browse row on
+      // `ws.collapsed`, `browse[0]` is undefined and this line threw a
+      // TypeError — so the suite reddened by CRASHING rather than by naming
+      // what broke, which is the shape this repo records at v3.24.1.
+      ok(!!browse[0] && Array.isArray(cfg.actionValues) && cfg.actionValues.includes(browse[0].value),
+        `${what}: and its value is declared as an ACTION, so choosing it cannot become "pick this model"`);
+      // A model row must NEVER be an action — that is what stops "selecting a
+      // model" silently becoming "run a handler and keep the old model".
+      const modelActions = cfg.options.filter((o) => o.action === true && o.value !== BROWSE_MODEL_VALUE);
+      ok(modelActions.length === 0, `${what}: and no MODEL row is marked as an action`);
+    }
+    // The sharpest one: the collapsed-to-nothing menu is not empty, because the
+    // browse row is unconditional. Without that, fixing the working set's
+    // fail-safe would have produced a menu with no rows at all.
+    __setChatState({
+      offerable: { gemini: Array.from({ length: 40 }, (_, i) => mkEntry('g' + i)) },
+      availableProviders: ['gemini'], chatModel: null, modelProvider: null,
+      activeProvider: null, modelRecents: [], modelStarred: [],
+    });
+    ok(modelListboxCfg().options.length === 1,
+      'a menu whose working set is empty holds EXACTLY the browse row — never nothing at all');
   }
 
   // ── 13e. THE FOUR MEMBERSHIP FACTS, AND ONLY THOSE ────────────────────

@@ -3769,10 +3769,21 @@ function buildWorkingSet(all, opts) {
   //   • the catalogue is small enough to read whole; or
   //   • the working set is not actually smaller than it, so the fold would buy
   //     the user nothing and cost them a click.
-  // An EMPTY working set also lands here (a backend too old to send
-  // `measuredBy`, with no stars and no recents): showing everything is the only
-  // honest answer, since we have no fact to select on.
-  if (total <= WORKING_SET_COLLAPSE_ABOVE || rows.length >= total || rows.length === 0) {
+  //
+  // ── THE EMPTY WORKING SET USED TO LAND HERE, AND THAT WAS INVERTED ──────
+  // A third clause read `|| rows.length === 0`, on the reasoning that with no
+  // fact to select on, showing everything is the only honest answer. It is the
+  // honest answer at 7 models. At 211 it puts the WHOLE CATALOGUE into a
+  // composer dropdown — the one case the collapse exists for — and it is
+  // reachable without anything being broken: a backend too old to send
+  // `measuredBy`, on a fresh browser profile with no stars and no recents,
+  // before the first message is sent. The fail-safe direction is the other
+  // one: an empty working set with a large catalogue collapses to nothing but
+  // the "Browse all N models…" row, which leads somewhere that can actually
+  // handle 211 rows (search, filters, a scroll container that is not a menu).
+  // Nothing is hidden — the browse dialog holds every model — and the size
+  // gate above still shows a small catalogue whole.
+  if (total <= WORKING_SET_COLLAPSE_ABOVE || rows.length >= total) {
     return { rows: entries.map(r => ({ ...r, reasons: [] })), collapsed: false, total };
   }
   return { rows, collapsed: true, total };
@@ -4547,15 +4558,33 @@ function renderModelRowBodyHtml(provider, entry, opts) {
     marks.push('<span class="chat-mm-mark" title="You used this recently">recent</span>');
   }
 
+  // ── THE PRICE IS A COLUMN, AND A COLUMN HAS TO BE ONE ────────────────────
+  // It used to be its own full-width line under the id. Stacked, tabular
+  // numerals buy nothing — there is no second number above or below to line up
+  // with — so a menu of 24 models gave no way to compare cost by eye, which is
+  // the one comparison this control exists to support. It now sits at the END
+  // of the head row, pushed right and right-aligned, with tabular numerals.
+  //
+  // IT STAYS IN THE TEXT FACE, AND THAT IS A DELIBERATE DEVIATION FROM THE
+  // PROPOSAL, which asked for a mono column. v3.44.0 moved every COUNT and
+  // PRICE in /next off the monospace face onto the text one — mono is kept for
+  // code and raw source, and a price is neither — and that decision is a
+  // release old with its reasoning recorded here in
+  // scripts/test-next-composer-model.js's own assertion. What the proposal
+  // actually argued for is ALIGNMENT ("without tabular numerals a price column
+  // is not a column"), and alignment is what is delivered: right-aligned,
+  // `tabular-nums`, `nowrap`. Re-adding `mono` here would reverse a shipped
+  // typographic rule in one control and leave the app's two price surfaces
+  // disagreeing about which face a price is set in.
   return (
     '<span class="chat-mm-head">' +
       '<span class="chat-dd-opt-title">' + escapeHtml(entry.label || entry.id) + '</span>' +
       prov +
       marks.join('') +
       badges.join('') +
+      '<span class="chat-mm-price">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
     '</span>' +
     '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
-    '<span class="chat-mm-price">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
     (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
     (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '')
   );
@@ -4754,19 +4783,30 @@ function modelListboxCfg() {
     }),
   }));
 
-  // THE ESCAPE HATCH, PRESENT ONLY WHEN IT LEADS SOMEWHERE ELSE.
-  // `collapsed` is false whenever the working set is not actually smaller than
-  // the catalogue, so a user looking at every model they have is never offered
-  // a button that opens the list already in front of them.
-  if (ws.collapsed) {
-    options.push({
-      value: BROWSE_MODEL_VALUE,
-      label: 'Browse all ' + ws.total + ' models',
-      action: true,
-      html: '<span class="chat-mm-browse">' + icon('search', 13) +
-        '<span>Browse all ' + ws.total + ' models - search, filter, star</span></span>',
-    });
-  }
+  // ── THE ESCAPE HATCH IS ALWAYS PRESENT, AND THAT REVERSES A REFUSAL ──────
+  // It used to be gated on `ws.collapsed`, on the reasoning that a user looking
+  // at every model they have should not be offered a button that opens the list
+  // already in front of them. That reasoning assumed the dialog is the same
+  // list, and it is not: the dialog carries a SEARCH field, a provider filter,
+  // a free-only filter and the STAR control, none of which exist in this menu
+  // and all of which are the reason someone opens it. Starring in particular is
+  // reachable nowhere else, so on a 7-model install the working set could never
+  // be built at all — the affordance was missing from exactly the configuration
+  // that needed it to get started.
+  //
+  // It also removes a conditional the collapse rule could get wrong: with the
+  // empty-working-set clause fixed above, a large catalogue with nothing to
+  // select on now collapses to rows: [] — and an action row that was gated on
+  // anything at all could have left that menu completely empty, which reads as
+  // "you have no models". The row is unconditional, so that state is
+  // inexpressible.
+  options.push({
+    value: BROWSE_MODEL_VALUE,
+    label: 'Browse all ' + ws.total + ' models',
+    action: true,
+    html: '<span class="chat-mm-browse">' + icon('search', 13) +
+      '<span>Browse all ' + ws.total + ' models - search, filter, star</span></span>',
+  });
 
   // ── NO `|| 'gemini'` TERMINAL FALLBACK ───────────────────────────────────
   // This chain used to end in the literal 'gemini', so with NOTHING resolved -
@@ -4796,6 +4836,19 @@ function modelListboxCfg() {
     // provider can be named; a bare "Default" claims only what is known.
     placeholder: shownLabel ? shownLabel + ' default' : 'Default',
     ariaLabel: 'Model for this chat',
+    // ── THE FULL NAME, RECOVERABLE ON HOVER ──────────────────────────────
+    // The trigger sits in a composer row beside Send and truncates, and an
+    // OpenRouter label routinely runs past it (`Mistral Medium 3.1` under a
+    // vendor prefix, `moonshotai/kimi-k2-0905`). Without this the only way to
+    // read what is about to answer is to open the menu. It names BOTH halves —
+    // the label a person recognises and the id the bill is written against —
+    // because the truncated half is not always the same one.
+    title: (() => {
+      const cur = ws.rows.find((r) => r.entry && r.entry.id === state.chatModel);
+      if (!cur) return shownLabel ? shownLabel + ' default' : 'Default';
+      const nm = cur.entry.label || cur.entry.id;
+      return nm === cur.entry.id ? nm : nm + ' — ' + cur.entry.id;
+    })(),
     triggerClass: 'lb-sm chat-lb',
     menuClass: 'lb-rich chat-mm-menu',
     prefer: 'up',
@@ -4968,6 +5021,11 @@ function isBrowseDialogOpen() {
 
 function closeBrowseDialog() {
   if (!browseUi) return;
+  // Cancel any pending search repaint BEFORE dropping the reference: a timer
+  // that fired afterwards would find `browseUi` null and do nothing, but it
+  // would also keep this closure — and the dialog's whole DOM — alive until it
+  // did. Cheaper and clearer to cancel it.
+  if (browseRefreshTimer !== null) { clearTimeout(browseRefreshTimer); browseRefreshTimer = null; }
   const { root, restoreFocusTo } = browseUi;
   browseUi = null;
   if (root && root.parentNode) root.parentNode.removeChild(root);
@@ -5062,6 +5120,36 @@ function renderBrowseFiltersHtml() {
   );
 }
 
+// ── THE SEARCH DEBOUNCE ───────────────────────────────────────────────────
+// Module-level beside `browseUi` for the same reason that is: the dialog is a
+// document-level overlay that must survive `state` being rebuilt, and a timer
+// held on `browseUi` would be lost the moment the object is replaced while
+// still leaving a scheduled callback pointing at a dead dialog.
+//
+// 90 ms — under the ~100 ms "immediate" threshold, so a person never perceives
+// the deferral, while a 60 wpm typist's burst collapses to one rebuild.
+const BROWSE_SEARCH_DEBOUNCE_MS = 90;
+let browseRefreshTimer = null;
+
+function scheduleBrowseRefresh() {
+  if (browseRefreshTimer !== null) clearTimeout(browseRefreshTimer);
+  browseRefreshTimer = setTimeout(() => {
+    browseRefreshTimer = null;
+    // Re-checked INSIDE the callback: the dialog can close between the last
+    // keystroke and the timer firing (Escape, the scrim, a teardown), and
+    // `refreshBrowseDialog` would then be querying a detached tree.
+    if (browseUi) refreshBrowseDialog();
+  }, BROWSE_SEARCH_DEBOUNCE_MS);
+}
+
+/** Paint now if a repaint is pending. Called wherever the RENDERED list is read. */
+function flushBrowseRefresh() {
+  if (browseRefreshTimer === null) return;
+  clearTimeout(browseRefreshTimer);
+  browseRefreshTimer = null;
+  if (browseUi) refreshBrowseDialog();
+}
+
 /** Repaint the list + filters in place, keeping the search field and its caret. */
 function refreshBrowseDialog() {
   if (!browseUi) return;
@@ -5147,16 +5235,34 @@ function openBrowseDialog(opts) {
 
   const input = root.querySelector('#chat-browse-q');
   if (input) {
+    // ── DEBOUNCED, BECAUSE EVERY KEYSTROKE REBUILDS 211 ROWS ─────────────
+    // `refreshBrowseDialog` replaces the whole list with innerHTML, and
+    // `renderModelMenuHtml` composes a rich body per row — badges, price,
+    // summary, two buttons — so a fast typist was paying for the full catalogue
+    // once per character. 90 ms is under the ~100 ms threshold at which a
+    // response stops feeling immediate, so nothing about typing gets slower to
+    // a person; what changes is that a burst of keystrokes costs ONE rebuild
+    // instead of one each.
+    //
+    // THE STATE IS WRITTEN IMMEDIATELY AND ONLY THE PAINT IS DEFERRED, which
+    // matters because Enter and ArrowDown (below) read the RENDERED list: the
+    // pending timer is flushed there rather than being allowed to race, so a
+    // type-then-Enter lands on the results for what was typed and never on the
+    // previous frame's first row.
     input.addEventListener('input', () => {
       if (!browseUi) return;
       browseUi.q = input.value;
-      refreshBrowseDialog();
+      scheduleBrowseRefresh();
     });
     // ARROW KEYS FROM THE FIELD, so a search and a choice are one gesture. Tab
     // reaches every row too (they are real buttons); this is the fast path, not
     // the only path.
     input.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowDown' && e.key !== 'Enter') return;
+      // Flush first: this reads the RENDERED list, and a pending debounce would
+      // otherwise focus the first row of the PREVIOUS query's results — which
+      // on a picker is not a cosmetic lag, it is landing on the wrong model.
+      flushBrowseRefresh();
       const first = root.querySelector('.chat-browse-pick');
       if (!first) return;
       e.preventDefault();

@@ -2703,33 +2703,88 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 | Section | What's in it |
 |---|---|
 | **General** | Appearance (theme), System check, Show setup guide |
-| **Providers & keys** | Gemini, Anthropic, OpenRouter — save, set active, disconnect, **and choose which model each one runs** ([§16b](#16b-choosing-your-ai-model)) |
+| **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read what chat starts on, browse the whole catalogue ([§16b](#16b-choosing-your-ai-model)) |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
 
 At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` — next to an **Updates** button.
 
-### API keys
+### The page is four numbered steps
 
-**Settings → Providers & keys.** Each provider gets a row showing its model, its key (masked), and whether it is `active`, `configured`, or `not set`.
+**Settings → Providers & keys** reads top to bottom as a sequence, and the numbers are on the page:
+
+| | Block | What it is for |
+|---|---|---|
+| **1** | **Connect a provider** | Your keys. The only block that can do anything on a brand-new install. |
+| **2** | **What builds your wiki** | The one model ingest, Wiki Health and Compile all run on — what it costs, where the choice came from, and how to change it. |
+| **3** | **Chat** | A statement and a readout. The chat model is chosen **in the composer**, per message; there is deliberately no second control here. |
+| **4** | **All models** | The whole catalogue, collapsed, with search and filters. Reference — and the place to test an unmeasured model on your own pages. |
+
+**No block is ever hidden.** Before you have connected anything, blocks 2, 3 and 4 each say what they are waiting for rather than disappearing — otherwise the numbered flow would silently lose steps and stop reading as a sequence.
+
+### 1 · Connect a provider
+
+Each provider gets one row: a coloured dot, its name and vendor, the key (masked), and a status in plain words — **Connected** or **Not connected**.
 
 To add or change a key:
 
-1. Click **Add key** on a provider that has none, or **Replace** on one that already does
+1. Click **Add key** on a provider that has none, or **Replace key** on one that already does
 2. Paste the key into the field that appears
 3. Click **Save**
 
-Saving a key **connects** that provider. It becomes the one that builds your wiki only if nothing else already does — i.e. on your first key. After that the key is saved and the build lane stays where it is; change it under *What builds your wiki*. (If a provider has no model able to build a wiki at all, it cannot take the lane in any case, and the reason is shown.) Two more controls appear on a row once it has a key:
+Saving a key **connects** that provider. It becomes the one that builds your wiki only if nothing else already does — i.e. on your first key. After that the key is saved and the build lane stays where it is; change it under *What builds your wiki*. (If a provider has no model able to build a wiki at all, it cannot take the lane in any case, and the reason is shown.)
 
-- **Set active** — makes this the provider used for ingest, Wiki Health and Compile, without re-pasting anything. Shown on any provider that has a key, isn't already active, **and** has a model able to build your wiki. All three usable providers — Gemini, Anthropic and OpenRouter — qualify today. (The condition is still enforced rather than assumed: a provider with a key but no build-lane model would show a short label explaining why instead of a button that would just break ingest. Nothing ships in that state right now, but the guard is what makes adding a new provider safe.)
-- **Disconnect** — removes that key entirely. Use it only when you want to drop a provider, not just deactivate it.
+Once a row has a key it also offers **Disconnect** (which removes that key entirely — use it to drop a provider, not to pause one), and OpenRouter additionally offers **Test this key**, which asks OpenRouter about the credential and spends nothing. That test confirms the *key*, not any particular model: The Curator asks for an exact model and never lets OpenRouter substitute one, so an individual model can still be unavailable on a key that passes.
 
-Under each connected provider's row there is a collapsible **model list** — that is where you choose which model that provider runs. It is covered in its own section: [§16b Choosing your AI model](#16b-choosing-your-ai-model).
+> **The row no longer says `active`.** It used to show one of three words — `active`, `configured` or `not set` — and only one of them was about your key at all. *Active* meant "this provider's model builds your wiki", which is now block 2's whole subject, stated there once with the price and the provenance beside it. A credential row answers one question, so it now gives one answer.
 
-> **The active provider is chosen first, then its model.** A model you pin under a provider only takes effect while that provider is the active one; pinning under the *other* provider stores a preference that sits dormant until you **Set active** on it. So switching providers also switches which pinned model is running — see [§16b](#16b-choosing-your-ai-model).
+> **Saving a second key no longer moves your build lane.** Previously the last key you saved became the active provider, which quietly changed which model built your wiki and which key was billed. Now the build lane moves in block 2 and nowhere else. The first key you connect still becomes the build lane, because on a fresh install there is nothing to displace.
 
-You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) explains what makes OpenRouter different from the other two.
+**A local model** — Ollama, LM Studio, llama.cpp — appears as one sentence at the foot of the block rather than as a permanently disabled row. It will connect there once there is a base-URL setting to point it at. It is not missing from your install; it does not exist yet.
+
+### 2 · What builds your wiki
+
+Ingest, Wiki Health and Compile **all run on this one model**. They always share one, and there is nothing separate to set for each of them — one model keeps the ingest prompt cache warm and keeps one bill to read.
+
+The block shows:
+
+- **The model, by name**, with its provider and id underneath. Change it from the popup, which lists every model that has been measured for this job, across every provider you have connected.
+- **Three facts**: what it costs per million tokens, what the measurement found (how many pages it plans from a source, and how long a call takes), and who measured it.
+- **Where the choice came from** — one of four sentences, and they are genuinely different states:
+
+| The page says | It means |
+|---|---|
+| *follows the app default* | Nobody chose it. A Curator update can move you. |
+| *You chose this one* | Your pick, and updates will not move you off it. A **Follow the app default** button undoes it. |
+| *Set by `LLM_MODEL`* | An environment variable outranks anything you click here; a choice will not take effect until it is unset. |
+| *not the one running* | You chose a model and The Curator refused it on read — it may no longer be offered, or may never have been measured for this job — and fell back. Choose again to fix it. |
+
+- **Cheapest measured** — for the keys you have connected, which measured model costs least, and a **Use it** button when that is not the one you are on. It says *cheapest measured*, never *best* or *recommended*: the first is a fact and the other two would be a guess.
+
+**Change…** opens the full list — every model that can build your wiki, cheapest-first within each provider, each carrying its price and what the measurement found.
+
+> **Choosing a model from another provider switches to that provider**, so the bill moves with it. That is the one consequence worth knowing before you pick across providers.
+
+### 3 · Chat
+
+Chat can use **any** model you have connected, including the ones that cannot build a wiki — nothing is at stake in an answer but the cost of that answer. You choose it **per message, in the composer**, next to Send.
+
+The block is a readout, not a control: which model a new conversation **starts on**, and how many models chat can reach. Starring a model in the composer keeps it at the top of that menu.
+
+### 4 · All models
+
+Collapsed by default, because it answers "show me everything", which most people never ask. Open it and you get the whole catalogue in one table across every connected provider — name, provider and id, input and output price per million tokens, context, and whether it can build a wiki — with:
+
+- **Filters with live counts**: All / Can build / Measured / Free, plus price bands. Each count is worked out by the same filter that draws the rows, so a filter that would empty the list tells you before you click it.
+- **Search**, by name or id.
+- **A count line** that also states how many ids are hidden and why — OpenRouter publishes `:batch` variants that answer 404 on every call The Curator makes, so they are excluded and the number is named rather than the list quietly being shorter than the vendor's.
+- **Worth testing for this job** — a shortlist of at most five models to *measure*, composed only from facts already on the row (its published context clears what ingest needs; its price is at or below what you pay now). It is a filter with a sentence attached, never a ranking, and when nothing qualifies it says so.
+- **Open Model Lab** and **Refresh catalogue**.
+
+> **Nothing here is hidden from chat.** A model only leaves the build lane by failing a measurement, never by price.
+
+You'll also see nothing at all for **OpenAI** — it was removed rather than shipped as a disabled row promising a feature that does not exist. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) explains what makes OpenRouter different from the other two.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
 >

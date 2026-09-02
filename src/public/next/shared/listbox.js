@@ -220,6 +220,16 @@ export function renderListboxHtml(cfg) {
         ' role="combobox" aria-haspopup="listbox" aria-expanded="false"' +
         ' aria-controls="' + escapeHtml(id) + '-menu"' +
         (cfg.ariaLabel ? ' aria-label="' + escapeHtml(cfg.ariaLabel) + '"' : '') +
+        // ── AN OPTIONAL `title`, FOR A TRIGGER THAT TRUNCATES ────────────
+        // The trigger's label is a single line in a fixed-width control, so an
+        // adopter whose values can run long (the chat composer's model names,
+        // which carry a vendor prefix and an id) has no way to show the full
+        // text without opening the menu. It is OPTIONAL and absent by default:
+        // a tooltip repeating a label that already fits is noise, and a
+        // `title` is mouse-only, so it may never carry the ONLY copy of
+        // anything — `ariaLabel` above is what a screen reader gets, and it is
+        // separate on purpose.
+        (cfg.title ? ' title="' + escapeHtml(cfg.title) + '"' : '') +
         (disabled ? ' disabled' : '') + '>' +
         '<span class="lb-btn-text" data-lb-text>' + escapeHtml(label) + '</span>' +
         '<span class="lb-chevron" aria-hidden="true">' + icon('chevronDown', 12) + '</span>' +

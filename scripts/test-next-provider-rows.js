@@ -290,7 +290,13 @@ const stubState = { replacing: null, keysBusy: null };
 // stubbed: a stub would prove something about the stub, and this is the one
 // place the reason is written anywhere on that row.
 const ROW_CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH'];
-const ROW_FN_NAMES = ['infoMark', 'renderProviderRow'];
+// v3.45.0: `providerHasSavedKey` + `providerConnected` are EXTRACTED rather
+// than stubbed. The row's status pill is the thing this suite exists to police
+// — a row that shows the wrong provider's credential state is the historical
+// defect — and a stub would prove a property of the stub. `providerConnected`
+// reads the route's own `connected` boolean where it is sent and degrades to
+// `providerHasSavedKey` where it is not, so both arms have to be the real ones.
+const ROW_FN_NAMES = ['infoMark', 'providerHasSavedKey', 'providerConnected', 'renderProviderRow'];
 // A minimal stand-in for app.js's real icon() (Defect 1 fix: renderProviderRow
 // now calls it for the "active" row's checkAlt reinforcement icon). Real
 // enough for substring assertions: it echoes the requested name so a test can
@@ -653,8 +659,23 @@ section('§3  Every REAL row renders only its OWN provider\'s state (mechanicall
     // happened to write assertions for show their own".
     ok(html.includes(maskFor(p.id)),
       `row "${p.id}": renders its OWN mask (${maskFor(p.id)}) — read via its own wire field "${wireMaskField(p.id)}"`);
-    ok(html.includes(modelFor(p.id)),
-      `row "${p.id}": renders its OWN model (${modelFor(p.id)}) — the k.models[p.id] lookup`);
+    // ── UPDATED (v3.45.0): THE ROW NO LONGER CARRIES A MODEL ID ──────────
+    // The second line was `k.models[p.id]` — the provider's default model, in
+    // monospace. That is block 2's subject, stated there ONCE with its price
+    // and its provenance, and repeating a bare id on three credential rows made
+    // three rows read as three build lanes. The line is now the VENDOR.
+    //
+    // The historical defect this assertion guards against is unchanged and is
+    // still asserted below and in §6: a row must never render ANOTHER
+    // provider's value. So the pair is inverted rather than dropped — the row
+    // shows its own vendor, and NO row shows any model id at all, which is a
+    // strictly stronger statement than "it shows its own".
+    ok(html.includes(p.vendor || p.name),
+      `row "${p.id}": renders its OWN vendor line ("${p.vendor || p.name}")`);
+    for (const otherId of AVAILABLE_IDS) {
+      ok(!html.includes(modelFor(otherId)),
+        `row "${p.id}": renders NO model id at all — not even its own (${modelFor(otherId)})`);
+    }
     for (const otherId of AVAILABLE_IDS) {
       if (otherId === p.id) continue;
       ok(!html.includes(maskFor(otherId)),
@@ -799,8 +820,20 @@ section('§4  THE CLASS INVARIANT — an id absent from PROVIDER_ROWS, fed strai
         `unknown id "${syntheticId}": does NOT render "${realId}"'s model id`);
     }
     ok(html.includes('provider-key-empty'), `unknown id "${syntheticId}": key field renders in the EMPTY state`);
-    ok(/>Not set<\/code>/.test(html), `unknown id "${syntheticId}": key field text reads "Not set"`);
-    ok(/provider-state[^"]*">not set</.test(html), `unknown id "${syntheticId}": status text reads "not set", not "configured" or "active"`);
+    // UPDATED (v3.45.0): "Not set" -> "No key". Same state, plainer words; the
+    // page no longer uses configuration vocabulary for credentials.
+    ok(/>No key<\/code>/.test(html), `unknown id "${syntheticId}": key field text reads "No key"`);
+    // ── UPDATED (v3.45.0): THE STATUS IS TWO PLAIN WORDS, IN THE TEXT FACE ─
+    // It was one of three MONOSPACE words — `active` / `configured` / `not
+    // set` — of which only one was about the credential at all: `active` was
+    // about which provider builds the wiki, which is now block 2's whole
+    // subject. The fail-safe direction is what this assertion actually guards
+    // and it is unchanged: an id absent from the lookup table must read as NOT
+    // CONNECTED, never as connected with somebody else's key.
+    ok(/provider-pill provider-pill-off">Not connected</.test(html),
+      `unknown id "${syntheticId}": status reads "Not connected" — never "Connected"`);
+    ok(!/>Connected</.test(html),
+      `unknown id "${syntheticId}": and never claims a connection it cannot have`);
     ok(!/data-disconnect="/.test(html), `unknown id "${syntheticId}": no Disconnect button renders (no key to disconnect)`);
     ok(!/data-set-active="/.test(html), `unknown id "${syntheticId}": no Set-active button renders (no key to activate)`);
   }
