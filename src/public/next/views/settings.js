@@ -2621,6 +2621,9 @@ function buildLaneFacts(k) {
         measuredBy: null,
         priceIn: null,
         priceOut: null,
+        // Explicit, so every arm returns the same shape. `false` is the
+        // fail-safe value: a degraded payload must never claim a model is free.
+        free: false,
         outlineNote: '',
         thinks: false,
         cheapest: null,
@@ -2635,6 +2638,7 @@ function buildLaneFacts(k) {
       measuredBy: legacy.measuredBy,
       priceIn: null,
       priceOut: null,
+      free: false,
       outlineNote: '',
       thinks: false,
       cheapest: null,
@@ -2648,7 +2652,7 @@ function buildLaneFacts(k) {
     return legacy ? {
       provider: legacy.provider, model: legacy.model, source: legacy.source,
       honoured: legacy.honoured, measuredBy: legacy.measuredBy,
-      priceIn: null, priceOut: null, outlineNote: '', thinks: false, cheapest: null,
+      priceIn: null, priceOut: null, free: false, outlineNote: '', thinks: false, cheapest: null,
     } : null;
   }
   const SOURCES = ['default', 'selected', 'env', 'fallback'];
@@ -2679,6 +2683,12 @@ function buildLaneFacts(k) {
       : (f.measured === true ? 'curator' : null),
     priceIn: num(f.priceIn),
     priceOut: num(f.priceOut),
+    // `=== true`, never truthiness. A free model's prices are BOTH null, and so
+    // are an unpriced model's — this is the only thing that separates them, so
+    // an absent field must read as "not known to be free" and render the blank,
+    // never as free. Rendering a paid model as free is the one direction of
+    // this mistake a user pays for.
+    free: f.free === true,
     outlineNote: typeof f.outlineNote === 'string' ? f.outlineNote : '',
     thinks: f.thinks === true,
     cheapest: (ch && typeof ch.model === 'string' && ch.model) ? {
@@ -2686,6 +2696,7 @@ function buildLaneFacts(k) {
       provider: typeof ch.provider === 'string' ? ch.provider : '',
       priceIn: num(ch.priceIn),
       priceOut: num(ch.priceOut),
+      free: ch.free === true,
       // `same` is READ. Comparing ids here would be a second opinion about a
       // money fact — the very comparator renderBuildList's docblock refuses —
       // so an absent flag degrades to "we were not told", which renders the
@@ -3579,9 +3590,18 @@ function renderBuildCurrent(k, pickDisabled, opts) {
   // every model that can actually be the build model today — so a context chip
   // would be blank or invented on exactly the rows that matter. It ships when
   // those entries carry the field, not before.
+  // FREE IS RENDERED AS THE WORD, NEVER AS $0.00 AND NEVER AS A BLANK.
+  // The route sends null prices for a free model — free has no per-token figure
+  // to quote — so `formatModelPrice` correctly returns '' and, before the `free`
+  // flag existed, a free build model showed NO price chip at all: identical to a
+  // model whose price nobody has published. Two different facts, one rendering.
+  // `$0.00` is the other wrong answer: it states a per-token rate that does not
+  // exist, and this repo has shipped that exact figure before (v3.3.1).
   const price = formatModelPrice(b.priceIn, b.priceOut);
+  const priceChip = b.free ? 'free — this model bills nothing'
+    : (price ? price + ' per 1M tokens' : '');
   const facts =
-    (price ? '<span class="build-fact build-fact-num mono">' + escapeHtml(price + ' per 1M tokens') + '</span>' : '') +
+    (priceChip ? '<span class="build-fact build-fact-num mono">' + escapeHtml(priceChip) + '</span>' : '') +
     (b.outlineNote ? '<span class="build-fact">' + escapeHtml(b.outlineNote) + '</span>' : '') +
     '<span class="build-fact build-fact-measured">' + escapeHtml(chip.label) + '</span>';
 
@@ -3599,11 +3619,15 @@ function renderBuildCurrent(k, pickDisabled, opts) {
         '<span>For the keys you have connected, that is <strong>' + escapeHtml(cName) +
         '</strong> — the one you are already using.</span></div>';
     } else {
-      const cPrice = formatModelPrice(b.cheapest.priceIn, b.cheapest.priceOut);
-      const vs = price ? ', against the ' + price + ' you are paying now' : '';
+      // Same free/unpriced split as the chip above, on both halves of the
+      // comparison: the row being offered, and the model being paid for now.
+      const cPrice = b.cheapest.free ? 'free' : formatModelPrice(b.cheapest.priceIn, b.cheapest.priceOut);
+      const cPriceLabel = b.cheapest.free ? 'free' : (cPrice ? cPrice + ' per 1M' : '');
+      const vs = b.free ? ', against the free model you are running now'
+        : (price ? ', against the ' + price + ' you are paying now' : '');
       cheapest = '<div class="build-cheapest"><span class="build-cheapest-tag">Cheapest measured</span>' +
         '<span>For the keys you have connected, that is <strong>' + escapeHtml(cName) + '</strong>' +
-        (cPrice ? ' — <span class="mono">' + escapeHtml(cPrice + ' per 1M') + '</span>' : '') +
+        (cPriceLabel ? ' — <span class="mono">' + escapeHtml(cPriceLabel) + '</span>' : '') +
         escapeHtml(vs) + '. ' +
         '<button type="button" class="btn btn-secondary btn-xs" data-build-model="' +
           escapeHtml(b.cheapest.model) + '" data-build-provider="' + escapeHtml(b.cheapest.provider) +

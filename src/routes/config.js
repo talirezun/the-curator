@@ -1011,10 +1011,36 @@ function connectedOffers(keys) {
   return out;
 }
 
-/** Has anyone measured this model against the real ingest prompt? */
-function isMeasured(provider, modelId) {
+/**
+ * WHO measured this model against the real ingest prompt: `'curator'`, `'user'`
+ * or `null`.
+ *
+ * ── WHY THIS IS NOT A BOOLEAN, AND WHY THE ROUTE SENDS THE STRING ───────────
+ * `measurementProvenance` (llm.js) already computes THREE states in one place,
+ * and its own docblock says why they must not be collapsed: 'curator' is "we
+ * measured this across many documents", 'user' is "you ran nine last Tuesday",
+ * and `null` is "nobody has looked" — three different epistemic claims. This
+ * route briefly sent `build.facts.measured` as a BOOLEAN, and the Providers
+ * page then had to guess: a `true` could only be rendered as ONE of the two
+ * badges, so a model the user had qualified on their own wiki was badged
+ * "measured by The Curator". That is the exact collapse the whole
+ * measured/qualified split exists to prevent, and the client cannot undo it —
+ * the distinguishing fact never left the server.
+ *
+ * So the wire carries the string, `measurementChip` reads it off the wire, and
+ * this file owns no second copy of the rule. Anything that only needs the
+ * yes/no — the facet count, the cheapest-measured filter — asks `hasMeasurement`
+ * below, which is derived FROM this one so the two cannot disagree.
+ */
+function measuredBy(provider, modelId) {
   return typeof llmModule.measurementProvenance === 'function'
-    && llmModule.measurementProvenance(provider, modelId) !== null;
+    ? llmModule.measurementProvenance(provider, modelId)
+    : null;
+}
+
+/** Has ANYONE measured it? Derived from `measuredBy`, never a second rule. */
+function isMeasured(provider, modelId) {
+  return measuredBy(provider, modelId) !== null;
 }
 
 /**
@@ -1119,6 +1145,11 @@ export function pickCheapestMeasuredBuild(offers, opts = {}) {
       provider,
       priceIn: typeof entry.input === 'number' ? entry.input : null,
       priceOut: typeof entry.output === 'number' ? entry.output : null,
+      // Same reason as `facts.free` on the route: a free row's prices are null,
+      // and null alone cannot say WHICH null it is. The docblock above already
+      // refuses to let the client "decide for itself what null means for a free
+      // model" — this is the field that means it never has to.
+      free: entry.free === true,
       same: provider === opts.currentProvider && entry.id === opts.currentModel,
     };
   }
@@ -1299,9 +1330,9 @@ router.get('/api-keys', (_req, res) => {
         // shows a stored choice the engine has stopped obeying is this repo's
         // named dead-data shape, in the direction the user notices least.
         selectedHonoured: !!selected && selected === (provider?.model || null),
-        measuredBy: typeof llmModule.measurementProvenance === 'function'
-          ? llmModule.measurementProvenance(p, provider?.model || null)
-          : null,
+        // ONE producer for this fact — the same helper `build.facts.measured`
+        // uses, so the two objects describing one model cannot disagree.
+        measuredBy: measuredBy(p, provider?.model || null),
       };
     })(),
     // ── `build` — THE PROVIDERS PAGE'S BLOCK 2, WHOLE ────────────────────────
@@ -1343,7 +1374,18 @@ router.get('/api-keys', (_req, res) => {
           contextLength: entry && Number.isInteger(entry.contextLength) ? entry.contextLength : null,
           priceIn: entry && typeof entry.input === 'number' ? entry.input : null,
           priceOut: entry && typeof entry.output === 'number' ? entry.output : null,
-          measured: isMeasured(p, model),
+          // THREE-VALUED ('curator' | 'user' | null), never a boolean — see
+          // `measuredBy` above. `buildModel.measuredBy` carries the same value
+          // from the same producer, so the two objects cannot disagree.
+          measured: measuredBy(p, model),
+          // FREE IS A PRICE WE KNOW EXACTLY, and it is why `priceIn`/`priceOut`
+          // are null on a free model rather than 0 — there is no per-token
+          // figure to quote. Without this flag the client cannot tell that null
+          // from the OTHER null it means ("unpublished"), so both render blank
+          // and a free model looks like an unpriced one. That is the
+          // fact-versus-absence collapse this file's own comments keep naming,
+          // and here it is about money.
+          free: entry && typeof entry.free === 'boolean' ? entry.free : null,
           thinks: entry && typeof entry.thinks === 'boolean' ? entry.thinks : null,
           outlineNote: outlineNoteFor(entry),
         },

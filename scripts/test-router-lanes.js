@@ -448,7 +448,15 @@ let buildBody = null;
   ok(f && typeof f === 'object', 'build.facts is an object');
   eq(f.contextLength, 1048576, 'facts.contextLength is the provider-published window');
   ok(typeof f.priceIn === 'number' && typeof f.priceOut === 'number', 'facts carries both prices as numbers');
-  eq(f.measured, true, 'facts.measured is true for a hand-measured model');
+  // THREE-VALUED, never a boolean. The route sends `measurementProvenance`'s own
+  // string so a model the USER qualified on their own wiki cannot be badged as
+  // one The Curator measured — a `true` is renderable as only one of the two
+  // badges, and the distinguishing fact never leaves the server to be recovered.
+  eq(f.measured, 'curator', "facts.measured names WHO measured it — 'curator' for a hand-measured entry");
+  ok(f.measured === 'curator' || f.measured === 'user' || f.measured === null,
+    '…and is always one of the three documented values');
+  eq(f.measured, b.buildModel.measuredBy,
+    '…and agrees with buildModel.measuredBy, because both come from the one producer');
   eq(f.thinks, false, 'facts.thinks is the measured verdict, not a guess');
   ok(typeof f.outlineNote === 'string' && /pages/.test(f.outlineNote),
     `facts.outlineNote states the measured coverage ("${f.outlineNote}")`);
