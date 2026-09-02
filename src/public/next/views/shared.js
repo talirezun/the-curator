@@ -877,15 +877,29 @@ function adminAffordances(conn, card) {
   if (conn && conn.read_only === true) {
     return { show: false, showRotate: false, showRevoke: false, hasToken: false, rotateLabel: '' };
   }
+  // v3.43.0: `has_admin_token` is the explicit boolean GET /list now carries.
+  // It is read in preference to `admin_token` because that field is MASKED in
+  // the listing — a card reasoning about whether a credential exists must not
+  // depend on how it happens to be redacted. `admin_token` is kept as a
+  // fallback for a caller holding a full record, and `adminTokenProvisioned`
+  // for the window after a rotate, before any list refresh.
   const hasToken =
+    (conn && conn.has_admin_token === true) ||
     !!(conn && typeof conn.admin_token === 'string' && conn.admin_token.length > 0) ||
     !!(card && card.adminTokenProvisioned);
   return {
     show: true,
-    showRotate: true,
+    // v3.43.0: rotate is no longer the PROVISIONING path. POST
+    // /:id/admin-token/rotate requires proof of possession of the CURRENT
+    // token, so on a connection that stores none the button could only ever
+    // 403 `no_admin_token` — and offering it to every non-read-only
+    // connection is what let a plain contributor mint an admin token, read
+    // every fellow_id and revoke the cohort admin (F-01). A connection with
+    // no token has nothing to rotate; the wizard is its only path to one.
+    showRotate: hasToken,
     showRevoke: hasToken,
     hasToken,
-    rotateLabel: hasToken ? 'Rotate admin token' : 'Generate admin token',
+    rotateLabel: 'Rotate admin token',
   };
 }
 
@@ -1357,19 +1371,20 @@ function renderAdmin(conn, card, busy, mirrorBusy) {
     '<details class="sb-card-admin"' + (open ? ' open' : '') + ' data-sb-admin="' + escapeHtml(conn.id) + '">' +
       '<summary>' + icon('lock', 13) + ' Admin controls — admin token &amp; contributor revocation</summary>' +
       '<div class="sb-admin-body">' +
-        renderAdminToken(card, aff, busy) +
+        renderAdminToken(card, aff, busy, conn.id) +
         renderInvite(conn, card, busy) +
         (aff.showRevoke
           ? renderRevoke(conn, card, busy, mirrorBusy)
           : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
             '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
-            'Generate one above first — that is also the provisioning path for brains created before admin tokens existed.</span></div>') +
+            'Only the cohort admin’s own connection stores one. If you are the admin here, re-run the ' +
+            'brain-setup wizard — it issues an admin token and saves it to this connection.</span></div>') +
       '</div>' +
     '</details>'
   );
 }
 
-function renderAdminToken(card, aff, busy) {
+function renderAdminToken(card, aff, busy, connId) {
   let html = '<div class="sb-admin-block">';
   html +=
     '<div class="sb-admin-row">' +
@@ -1378,28 +1393,34 @@ function renderAdminToken(card, aff, busy) {
         '<p class="sb-admin-hint">' +
           (aff.hasToken
             ? 'Authorises contributor revocation on this connection. Rotate it if you think it leaked — the current token stops working immediately.'
-            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection yet.') +
+            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection, so there is nothing to rotate — the brain-setup wizard is the only path to one.') +
         '</p>' +
       '</div>' +
-      (card.rotateConfirmOpen
+      (!aff.showRotate || card.rotateConfirmOpen
         ? ''
         : '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="rotate-open"' + (busy ? ' disabled' : '') + '>' +
             (card.acting === 'rotate' ? 'Working…' : escapeHtml(aff.rotateLabel)) +
           '</button>') +
     '</div>';
 
-  if (card.rotateConfirmOpen) {
+  if (aff.showRotate && card.rotateConfirmOpen) {
+    // v3.43.0: proof of possession. The CURRENT token is typed into a password
+    // field and sent in the request body — the same shape and the same
+    // discipline as the revoke gate's own token field (read from a password
+    // manager, sent once, never stored by this screen, never prefilled).
     html +=
       '<div class="sb-confirm-inline sb-confirm-block">' +
         '<span>' +
-          (aff.hasToken
-            ? 'Rotate the admin token? The CURRENT token stops working immediately — anywhere you stored it becomes invalid, including any other machine you administer this brain from.'
-            : 'Generate an admin token for this connection? It authorises contributor revocation (GDPR erasure).') +
-          ' It is shown <strong>once</strong> and never again — have your password manager open before you continue.' +
+          'Rotate the admin token? The CURRENT token stops working immediately — anywhere you stored it becomes invalid, ' +
+          'including any other machine you administer this brain from.' +
+          ' The new one is shown <strong>once</strong> and never again — have your password manager open before you continue.' +
         '</span>' +
+        '<input type="password" class="sb-revoke-input mono" id="sb-rotate-token-' + escapeHtml(connId || '') + '" ' +
+          'placeholder="sbat_… (the current token)" autocomplete="off" spellcheck="false">' +
+        '<p class="sb-admin-hint">Read the current token from your password manager. Rotation needs it — if it is lost, re-run the brain-setup wizard to issue a new one.</p>' +
         '<div class="sb-confirm-actions">' +
           '<button type="button" class="btn btn-primary btn-xs" data-sb-action="rotate-confirm"' + (busy ? ' disabled' : '') + '>' +
-            (aff.hasToken ? 'Rotate token' : 'Generate token') +
+            'Rotate token' +
           '</button>' +
           '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="rotate-cancel">Cancel</button>' +
         '</div>' +
@@ -1635,6 +1656,16 @@ function updateRevokeGateUi(cardEl, connId) {
 
 // ── Admin controls: actions ───────────────────────────────────────────────
 
+// The three 403 codes POST /:id/admin-token/rotate can answer with, as plain
+// sentences. The route's own `error` strings are long-form guidance aimed at
+// any consumer; the card says the one thing that happened. Keyed on `code`, so
+// neither side's wording can drift the other's out from under it.
+const ROTATE_403_COPY = {
+  no_admin_token: 'This connection has no admin token.',
+  admin_token_required: 'Enter the current admin token to rotate it.',
+  admin_token_mismatch: 'That is not the current admin token.',
+};
+
 async function onRotateAdminToken(token, connId) {
   const card = ensureCard(connId);
   if (card.acting) {
@@ -1647,17 +1678,39 @@ async function onRotateAdminToken(token, connId) {
   const aff = adminAffordances(conn, card);
   if (!aff.showRotate) return;   // rule 4, enforced at the action too, not only in the render
 
+  // v3.43.0: proof of possession. Read the live input rather than any cached
+  // flag — the same re-read runRevoke() does, and for the same reason: an
+  // unrelated re-render can empty the field, and a doomed request is better
+  // refused here than turned into a confusing 403.
+  const currentEl = document.getElementById('sb-rotate-token-' + connId);
+  const currentToken = currentEl ? currentEl.value.trim() : '';
+  if (!currentToken) {
+    card.message = ROTATE_403_COPY.admin_token_required;
+    card.error = true;
+    render(token);
+    return;
+  }
+
   card.rotateConfirmOpen = false;
   card.acting = 'rotate';
-  card.message = aff.hasToken ? 'Rotating the admin token…' : 'Generating an admin token…';
+  card.message = 'Rotating the admin token…';
   card.error = false;
   render(token);
 
   try {
-    const res = await fetch('/api/sharedbrain/' + connId + '/admin-token/rotate', { method: 'POST' });
+    const res = await fetch('/api/sharedbrain/' + connId + '/admin-token/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_token: currentToken }),
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok !== true || typeof data.admin_token !== 'string' || !data.admin_token) {
-      throw new Error(data.error || 'The admin token could not be ' + (aff.hasToken ? 'rotated' : 'generated') + ' (HTTP ' + res.status + ').');
+      // The three 403 codes are rendered as plain sentences. The code is read,
+      // never the server's prose — the prose is long-form guidance for the
+      // route's own consumers, and a card that pattern-matched it would drift
+      // the moment either side was reworded.
+      const plain = data && ROTATE_403_COPY[data.code];
+      throw new Error(plain || data.error || 'The admin token could not be rotated (HTTP ' + res.status + ').');
     }
     // Deliberately NOT gated on isCurrentMount: `card` is this mount's own
     // object and `state` is replaced wholesale on re-entry, so writing here
@@ -1665,9 +1718,7 @@ async function onRotateAdminToken(token, connId) {
     // render call below IS gated.
     card.shownAdminToken = data.admin_token;
     card.adminTokenProvisioned = true;
-    card.message = data.rotated
-      ? 'Admin token rotated. The previous token no longer works.'
-      : 'Admin token generated. Contributor revocation is now available on this connection.';
+    card.message = 'Admin token rotated. The previous token no longer works.';
     card.error = false;
   } catch (err) {
     card.message = err.message;

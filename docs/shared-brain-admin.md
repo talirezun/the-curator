@@ -466,6 +466,7 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 **Provisioning:**
 - **New brains** — the admin wizard generates a `sbat_…` token (160 bits of entropy) and shows it **once** on step 2, next to the invite token. It's stored on your connection when you finish the wizard; save the plaintext in your password manager immediately.
 - **Existing connections created before v3.0.5** — re-run the brain-setup wizard against the same repo and shared domain. It mints a fresh admin token and saves it with the connection.
+- **Lost token, any vintage** — the same route: re-run the brain-setup wizard. Since v3.43.0 rotation is not a provisioning path (see the box below).
 - **Rotation** — connection card → **Admin controls — admin token & contributor revocation** → **Rotate token**, or `POST /api/sharedbrain/:id/admin-token/rotate` with `{"admin_token": "<your CURRENT sbat_… token>"}`. The old token stops working immediately; the new one is returned once and never again.
 
 > **v3.43.0 CLOSED A HOLE HERE, and the old text described it as a feature.**
@@ -505,7 +506,7 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 | Run synthesis | **Shared Brain** → connection card → **"Run synthesis (admin)"** in the main action row, beside Push and Pull (confirm dialog) |
 | See who has contributed | Card → **Admin controls — admin token & contributor revocation** → Revoke panel, or `GET /api/sharedbrain/:id/members` (v3.0.5+). For counts only, without opening the revoke panel: Card → **"Cohort & sharing details"** |
 | Revoke a contributor | Card → **Admin controls — admin token & contributor revocation** → **Revoke a contributor…** (v3.0.5+), or `POST /api/sharedbrain/:id/revoke` |
-| Generate / rotate the admin token | Card → **Admin controls — admin token & contributor revocation** → Generate token / Rotate token (v3.0.5+) |
+| Rotate the admin token | Card → **Admin controls — admin token & contributor revocation** → **Rotate admin token** (v3.0.5+; since v3.43.0 the control appears only on a connection that already HOLDS one, and asks for the current token). There is no GENERATE path here any more — see §9. |
 | Re-display the invite token | Card → **Admin controls — admin token & contributor revocation** → **Show invite token** (v3.0.5+), or `POST /api/sharedbrain/generate-invite` |
 | Check synthesis stats | `meta/state/last-synthesis.json` in the repo |
 | Read the audit log | `state/revocations.jsonl` in the repo |

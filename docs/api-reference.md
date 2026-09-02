@@ -847,6 +847,7 @@ of the guard.
   "answer": "…markdown with [source: concepts/rag.md] citation tags…",
   "citations": ["concepts/rag.md", "summaries/rag-survey.md"],
   "responseStyle": "balanced",
+  "persisted": true,
   "provider": null,
   "model": "claude-haiku-4-5",
   "usage": {
@@ -858,6 +859,17 @@ of the guard.
 }
 ```
 
+- `persisted` (v3.43.0+) says whether the turn was written to
+  `conversations/<uuid>.json` on disk. It is **`false` on a read-only Shared
+  Brain mirror**, which declares `readonly: true` in its own `CLAUDE.md`. Chat
+  was the last write surface not honouring that flag — it wrote a real
+  conversation file into the mirror on the first message, which the v3.42.0
+  live run found sitting in the admin instance's own mirror. Answering is still
+  allowed, because asking the collective a question is what a mirror is FOR;
+  only the WRITE is withheld. The transcript is kept in the server's memory
+  instead, so multi-turn context is unchanged — the thread simply does not
+  survive a restart, and this field says so rather than leaving the user to
+  discover it. It is `true` everywhere else.
 - `provider` is what was **asked for** — `null` means "the global active
   provider was used".
 - `model` is the model that **answered**, read out of the provider's own usage
@@ -880,7 +892,7 @@ data: {"type":"reasoning","text":"…"}
 
 data: {"type":"content","text":"…"}
 
-data: {"type":"done","conversationId":"…","isNew":false,"title":"…","answer":"…","citations":[…],"responseStyle":"balanced","provider":null,"model":"…","usage":{…}}
+data: {"type":"done","conversationId":"…","isNew":false,"title":"…","answer":"…","citations":[…],"responseStyle":"balanced","persisted":true,"provider":null,"model":"…","usage":{…}}
 
 data: {"type":"error","message":"…"}
 ```
@@ -2112,12 +2124,12 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 | Path | Description |
 |---|---|
-| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. Powers the navbar pending badge. |
+| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. Powers the navbar pending badge. |
 | `POST /api/sharedbrain/save` | Body: `{connection: {...}}`. Validated server-side. UUIDs assigned if missing. Rejects with 400 if `github_pat` looks like a masked display value (defense against round-trip overwrites). v3.0.4+: optional boolean `read_only` field (defaults `false`) — set by the wizard when the PAT verdict is valid-but-no-write-access; read-only connections may have zero `local_domains`. v3.0.5+: optional `admin_token` (single-line string 16-200 chars or null; masked-ellipsis values refused) and `data_handling_terms` (`contributor_retains` \| `organisational`, persisted for invite re-display). |
 | `DELETE /api/sharedbrain/:id` | Removes the connection from this machine. The remote shared repo is unaffected. |
 | `POST /api/sharedbrain/:id/unskip` | v3.0.4+. Body: `{pages?: string[]}` — clears the listed pages from `permanent_skip` (omit `pages` to clear all) and resets their `pending_retry` strike counters, so they're re-attempted on the next push. Paths not actually skipped are ignored. Returns `{ok, unskipped, permanent_skip}`. Local config change only; not SSE. |
 | `GET /api/sharedbrain/:id/members` | v3.0.5+. Member directory: everyone who has ever contributed to this brain. Returns `{members: [{fellow_id, short_id, submissions, pages, first_contributed_at, last_contributed_at, display_name}], self_fellow_id}`. Identity is storage-path-derived (same trust rule as synthesis); display names are informational. Reads every contribution payload — fine at cohort scale. Powers the revoke UI's fellow picker. |
-| `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. Generates a fresh `sbat_…` admin token for this connection, stores it (single audited credential write path), and returns it **once**: `{ok, admin_token, rotated}` (`rotated: true` when a previous token existed and is now invalid). Used to provision pre-v3.0.5 connections and to rotate after a suspected leak. |
+| `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. **v3.43.0 — PROOF OF POSSESSION IS NOW REQUIRED.** Body: `{admin_token}` — the connection's CURRENT `sbat_…` token, compared constant-time through the same gate the revoke route uses. On success it generates a fresh token, stores it (single audited credential write path) and returns it **once**: `{ok, admin_token, rotated}`. Three **403** shapes, each carrying a machine-readable `code` beside the prose `error`: `no_admin_token` (this connection stores none — it is a plain contributor's, and this route will never mint one), `admin_token_required` (no usable token in the body), `admin_token_mismatch` (a token was supplied and it is the wrong one). **Until v3.43.0 this route took NO body and authenticated nothing**, so any connection on the machine could mint an admin token — and with it read every `fellow_id` from `/:id/members` and pass `/:id/revoke`, letting a plain contributor GDPR-erase the cohort admin. The provisioning use this row used to describe ("used to provision pre-v3.0.5 connections") is therefore **gone and cannot come back**: nothing on this machine can tell a legacy admin from a contributor. Such an admin re-runs the brain-setup wizard, whose `/generate-invite` returns a fresh `admin_token` that `/save` persists. |
 
 ### Push, pull, synthesize, revoke (SSE)
 

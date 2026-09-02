@@ -244,15 +244,45 @@ section('1. Rule 4 — who may see the admin surface (adminAffordances)');
     'read-only beats a locally-provisioned token — the provisioning flag cannot re-open the surface');
 }
 {
-  const a = adminAffordances(conn({ admin_token: null }), baseCard());
-  ok(a.show === true && a.showRotate === true, 'no admin token: the surface shows and rotate is offered');
+  // v3.43.0 REVERSAL, and the reason is the whole point of this release's
+  // F-01. Rotate USED to be offered here as the PROVISIONING path, labelled
+  // "Generate admin token", on every non-read-only connection. The route
+  // behind it had no proof of possession at all — so that button minted an
+  // admin token for anyone who could reach localhost, including every plain
+  // contributor, whose card SHOWED it. With that token GET /:id/members
+  // hands out every fellow_id and POST /:id/revoke is accepted: a member
+  // could GDPR-erase the cohort admin, and the live run walked exactly that
+  // path. The route now requires the CURRENT token, so the old button could
+  // only ever 403 — offering it was both a hazard and a lie.
+  const a = adminAffordances(conn({ has_admin_token: false }), baseCard());
+  ok(a.show === true, 'no admin token: the surface still shows (the invite block lives there)');
+  ok(a.showRotate === false,
+    'NO ADMIN TOKEN: ROTATE IS HIDDEN — there is nothing to rotate, and the button that used to be here was F-01');
   ok(a.showRevoke === false, 'no admin token: REVOKE is hidden');
-  ok(a.rotateLabel === 'Generate admin token', 'no admin token: rotate is labelled as PROVISIONING, not rotation');
+  ok(a.rotateLabel === 'Rotate admin token',
+    'the label no longer claims to GENERATE anything — provisioning is the wizard\'s job, not this button\'s');
+}
+{
+  // has_admin_token is what GET /list now carries. It is read in preference
+  // to admin_token BECAUSE that field is masked in the listing — a card
+  // reasoning about a credential's presence must not depend on how it is
+  // redacted.
+  const a = adminAffordances(conn({ has_admin_token: true, admin_token: 'sbat_abc…' }), baseCard());
+  ok(a.showRotate === true, 'has_admin_token true: rotate IS offered (the gate goes both ways)');
+  ok(a.showRevoke === true, 'has_admin_token true: revoke is offered');
+  ok(a.rotateLabel === 'Rotate admin token', 'admin token present: the button says Rotate');
+}
+{
+  // ANTI-VACUITY on the field itself: an explicit false must beat a
+  // non-empty admin_token, or the new boolean is decorative.
+  const yes = adminAffordances(conn({ has_admin_token: true, admin_token: null }), baseCard());
+  ok(yes.showRotate === true && yes.showRevoke === true,
+    'has_admin_token alone is sufficient — the masked credential field need not be present at all');
 }
 {
   const a = adminAffordances(conn({ admin_token: 'sbat_abcd1234…' }), baseCard());
-  ok(a.showRevoke === true, 'admin token present (masked, as GET /list returns it): revoke is offered');
-  ok(a.rotateLabel === 'Rotate admin token', 'admin token present: the button says Rotate');
+  ok(a.showRevoke === true && a.showRotate === true,
+    'a caller holding a FULL record (no has_admin_token field) still resolves — the fallback is intact');
 }
 {
   const a = adminAffordances(conn({ admin_token: null }), baseCard({ adminTokenProvisioned: true }));
@@ -689,10 +719,38 @@ section('8. Rendered markup — hiding, no-prefill, shown-once');
   ok(html === '', 'read-only renders nothing even with a token stored AND provisioned locally');
 }
 {
-  const html = renderAdmin(conn({ admin_token: null }), baseCard(), false, false);
+  // v3.43.0 REVERSAL — see §1. This assertion was `html.includes(rotate-open)`
+  // and it was CORRECT for the check-and-provision design it was written
+  // against; it is wrong now, because that button had no proof of possession
+  // behind it (F-01). It reverses, and records why, rather than being deleted.
+  const html = renderAdmin(conn({ has_admin_token: false }), baseCard(), false, false);
   ok(!html.includes('data-sb-action="revoke-open"'), 'no admin token: the revoke control is absent from the markup');
-  ok(html.includes('data-sb-action="rotate-open"'), 'no admin token: rotate IS offered as the provisioning path');
-  ok(/Generate one above first/.test(html), 'no admin token: the markup explains how to unlock revoke');
+  ok(!html.includes('data-sb-action="rotate-open"'),
+    'NO ADMIN TOKEN: THE ROTATE BUTTON IS ABSENT FROM THE MARKUP — it could only 403, and offering it was F-01');
+  ok(/re-run the brain-setup wizard/.test(html),
+    'no admin token: the markup names the real way to get one (the wizard) instead of pointing at a button that is not there');
+  ok(!/Generate one above first/.test(html),
+    'the old copy promising a Generate button above is gone — a card must not point at a control it does not render');
+}
+{
+  const html = renderAdmin(conn({ has_admin_token: true }), baseCard(), false, false);
+  ok(html.includes('data-sb-action="rotate-open"'),
+    'has_admin_token true: the rotate control IS rendered (the render gate goes both ways)');
+  ok(!/Generate admin token/.test(html), 'and it never offers to GENERATE one');
+}
+{
+  // The proof-of-possession field only exists once the admin has opened the
+  // confirm step, is a password input, and is NEVER prefilled.
+  const html = renderAdminToken(baseCard({ rotateConfirmOpen: true }),
+    adminAffordances(conn({ has_admin_token: true }), baseCard()), false, 'c1');
+  const input = /<input[^>]*id="sb-rotate-token-c1"[^>]*>/.exec(html);
+  ok(input !== null, 'the rotate confirm step renders the current-token field');
+  ok(/type="password"/.test(input[0]), 'it is a password field, like the revoke gate\'s own token field');
+  ok(!/value=/.test(input[0]), 'IT IS NEVER PREFILLED — nothing puts a credential into a value attribute');
+  ok(/autocomplete="off"/.test(input[0]), 'and it is not offered to the browser\'s autofill');
+  const closed = renderAdminToken(baseCard({ rotateConfirmOpen: false }),
+    adminAffordances(conn({ has_admin_token: true }), baseCard()), false, 'c1');
+  ok(!closed.includes('sb-rotate-token-c1'), 'and the field is absent until the admin opens the confirm step');
 }
 {
   const html = renderAdmin(conn({ admin_token: 'sbat_abcd1234…' }), baseCard(), false, false);
@@ -964,6 +1022,136 @@ section('10c. MEDIUM-5 — the no-prefill invariant, proven behaviourally');
     'MUTATION PROOF: a selection handler that PREFILLS the confirmation phrase — defeating the accident gate outright — ' +
     'produces a non-empty revokeTyped, which the behavioural assertion above (checking for emptiness) would catch, ' +
     'unlike the old whole-file regex');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+section('10d. F-01 — rotate proof of possession, driven through the REAL action');
+//
+// A source regex is worthless here: the defect being fixed was a route that
+// looked correct and a button that looked deliberate. So onRotateAdminToken
+// is EXTRACTED and EXECUTED against a recording fetch, and the headline
+// assertion is the REQUEST — what actually left the browser — plus the
+// message the admin is left looking at.
+
+const ROTATE_COPY_SRC = (() => {
+  const m = /const ROTATE_403_COPY = \{[\s\S]*?\n\};/.exec(shared);
+  if (!m) throw new Error('10d: ROTATE_403_COPY not found in shared.js — the 403 copy table was renamed or removed');
+  return m[0];
+})();
+
+// A minimal DOM/host for the action. Everything it touches is recorded.
+function rotateHarness(opts) {
+  const o = opts || {};
+  const calls = [];
+  const card = baseCard(Object.assign({ rotateConfirmOpen: true }, o.card));
+  const connection = conn(o.conn || { has_admin_token: true });
+  const host = {
+    state: { expandedAdmin: new Set() },
+    calls,
+    card,
+    renders: 0,
+    fieldValue: o.fieldValue === undefined ? 'sbat_currentcurrent1' : o.fieldValue,
+    fieldPresent: o.fieldPresent !== false,
+  };
+  const src =
+    ROTATE_COPY_SRC + '\n' +
+    extractFunction(shared, 'adminAffordances', 'shared.js') + '\n' +
+    extractFunction(shared, 'onRotateAdminToken', 'shared.js') + '\n' +
+    'return onRotateAdminToken;';
+  const fn = new Function(
+    'host', 'ensureCard', 'findConnection', 'render', 'isCurrentMount', 'document', 'fetch', 'state',
+    src
+  )(
+    host,
+    () => host.card,
+    () => connection,
+    () => { host.renders++; },
+    () => true,
+    { getElementById: (id) => {
+        host.lastFieldId = id;
+        return host.fieldPresent ? { value: host.fieldValue } : null;
+      } },
+    async (url, init) => {
+      calls.push({ url, init });
+      const r = o.response || { status: 200, body: { ok: true, admin_token: 'sbat_brandnewbrandnew', rotated: true } };
+      return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
+    },
+    host.state
+  );
+  return { run: () => fn('tok', connection.id), host, calls, card, connection };
+}
+
+{
+  const h = rotateHarness({});
+  await h.run();
+  ok(h.calls.length === 1, 'a rotate on a token-holding connection issues exactly one request');
+  const { url, init } = h.calls[0];
+  ok(url === '/api/sharedbrain/c1/admin-token/rotate', 'it hits the rotate route');
+  ok(init.method === 'POST', 'by POST');
+  ok(JSON.parse(init.body).admin_token === 'sbat_currentcurrent1',
+    'THE REQUEST BODY CARRIES THE CURRENT TOKEN — proof of possession, read from the live password field');
+  ok(!/sbat_/.test(url), 'the token is never placed in the URL');
+  ok(h.host.lastFieldId === 'sb-rotate-token-c1', 'the value is read from THIS connection\'s own rotate field');
+  ok(h.card.shownAdminToken === 'sbat_brandnewbrandnew',
+    'the NEW token is held in card state for the shown-once box (unchanged behaviour)');
+  ok(h.card.message === 'Admin token rotated. The previous token no longer works.', 'and the outcome says so');
+  ok(h.card.error === false, 'a clean rotation is not an error');
+}
+{
+  // THE GATE. A connection with no admin token must not be able to reach the
+  // route at all — this is F-01 at the client, complementing the route's own
+  // 403. Anti-vacuity is the case above: the same harness DOES fire when the
+  // connection holds a token.
+  const h = rotateHarness({ conn: { has_admin_token: false } });
+  await h.run();
+  ok(h.calls.length === 0,
+    'F-01: a connection with NO admin token issues NO rotate request — the mint-a-token path is closed at the client too');
+}
+{
+  // Nothing typed: refused locally, in the same words the route's own
+  // `admin_token_required` gets, rather than sent to certainly-403.
+  const h = rotateHarness({ fieldValue: '   ' });
+  await h.run();
+  ok(h.calls.length === 0, 'an empty token field sends nothing');
+  ok(h.card.message === 'Enter the current admin token to rotate it.',
+    'and says so in the plain sentence, not the route\'s long-form guidance');
+  ok(h.card.error === true, 'it is surfaced as an error');
+}
+for (const [code, sentence] of [
+  ['no_admin_token', 'This connection has no admin token.'],
+  ['admin_token_required', 'Enter the current admin token to rotate it.'],
+  ['admin_token_mismatch', 'That is not the current admin token.'],
+]) {
+  const h = rotateHarness({
+    response: { status: 403, body: { error: 'a long paragraph of route guidance that must not be rendered', code } },
+  });
+  await h.run();
+  ok(h.card.message === sentence, `403 ${code} renders as the plain sentence "${sentence}"`);
+  ok(h.card.error === true, `403 ${code} is an error`);
+  ok(h.card.shownAdminToken === null, `403 ${code} shows no token`);
+}
+{
+  // ANTI-VACUITY on the copy table: an UNKNOWN code must fall back to the
+  // server's own message, not to silence or to a wrong sentence.
+  const h = rotateHarness({ response: { status: 403, body: { error: 'something new the route learned to say', code: 'not_a_known_code' } } });
+  await h.run();
+  ok(h.card.message === 'something new the route learned to say',
+    'an unrecognised code falls through to the server\'s own error text rather than being mis-labelled');
+}
+{
+  // MUTATION PROOF: drop the gate (restore `showRotate: true`) and the
+  // no-token case starts firing a request again — the assertion above is
+  // what catches it.
+  const affSrc = extractFunction(shared, 'adminAffordances', 'shared.js');
+  const needle = 'showRotate: hasToken,';
+  if (!affSrc.includes(needle)) {
+    throw new Error('10d mutation guard: adminAffordances no longer gates showRotate on hasToken — update this mutation');
+  }
+  const mutated = new Function(affSrc.replace(needle, 'showRotate: true,') + '\nreturn adminAffordances;')();
+  const a = mutated(conn({ has_admin_token: false }), baseCard());
+  ok(a.showRotate === true,
+    'MUTATION PROOF: with the gate dropped, a connection holding no admin token is offered rotate again — ' +
+    'exactly the F-01 shape, and the no-request assertion above is what reds on it');
 }
 
 // CSS seams (C4/C5: no new stylesheet, no new custom property).
