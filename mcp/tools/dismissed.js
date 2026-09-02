@@ -19,6 +19,20 @@ import {
 import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 
+/**
+ * The types these two tools accept, and the SINGLE source for both the runtime
+ * gate and the schema below.
+ *
+ * These are the SCANNER'S OWN type names — `orphans`, the plural, is what
+ * `scanWiki` emits and what a dismissal record is keyed on. It is deliberately
+ * NOT the same set `fix_wiki_issue` takes: that one gates on `AUTO_FIXABLE`,
+ * which carries the pseudo-type `orphanLink` (an AI rescue suggestion, never
+ * emitted by a scan) and has no `orphans` at all. Two surfaces, two questions
+ * — "may I hide this?" and "may I write this?" — and the answer legitimately
+ * differs. The trap is only that the difference used to live in PROSE on both
+ * sides, so `orphans` vs `orphanLink` was one typo away from a model being
+ * refused by a tool whose own description had told it that value was fine.
+ */
 const DISMISSIBLE_TYPES = new Set([
   'brokenLinks',
   'orphans',
@@ -28,6 +42,16 @@ const DISMISSIBLE_TYPES = new Set([
   'missingBacklinks',
   'semanticDupe',
 ]);
+
+/**
+ * The schema's `enum`, DERIVED from the gate above rather than re-typed beside
+ * it. An MCP client validates arguments against the schema before the call is
+ * made, so this is the difference between a model being told the accepted
+ * values up front and discovering them from a refusal string. Exported so a
+ * suite can assert the schema and the runtime gate are the same set — the only
+ * thing that keeps them from drifting the way the prose did.
+ */
+export const DISMISSIBLE_TYPE_VALUES = Object.freeze([...DISMISSIBLE_TYPES]);
 
 // ── get_health_dismissed ─────────────────────────────────────────────────────
 
@@ -79,7 +103,10 @@ export const dismissWikiIssueDefinition = {
       domain: { type: 'string', description: "Target domain slug. If omitted, uses the default domain." },
       type: {
         type: 'string',
-        description: "Issue type. One of: brokenLinks, orphans, folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, semanticDupe.",
+        enum: [...DISMISSIBLE_TYPE_VALUES],
+        // Composed from the enum, so the sentence a model reads and the values
+        // the handler accepts cannot say different things.
+        description: `Issue type — exactly as scan_wiki_health reports it. One of: ${DISMISSIBLE_TYPE_VALUES.join(', ')}.`,
       },
       issue: {
         type: 'object',
@@ -144,7 +171,11 @@ export const undismissWikiIssueDefinition = {
     type: 'object',
     properties: {
       domain: { type: 'string', description: "Target domain slug. If omitted, uses the default domain." },
-      type: { type: 'string', description: "Same set of types as dismiss_wiki_issue." },
+      type: {
+        type: 'string',
+        enum: [...DISMISSIBLE_TYPE_VALUES],
+        description: `The type the record was dismissed under — the same set dismiss_wiki_issue takes. One of: ${DISMISSIBLE_TYPE_VALUES.join(', ')}.`,
+      },
       issue: {
         type: 'object',
         description: "The same issue object that was dismissed. Pass the record returned by get_health_dismissed verbatim.",

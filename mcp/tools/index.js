@@ -66,6 +66,12 @@ export const tools = [
 // model's reasoning. We cap at 400 KB (~100 k tokens) so multiple tool calls
 // can coexist in one conversation without exhausting context.
 const MAX_RESPONSE_BYTES = 400 * 1024;
+// The same number in the words a MODEL reads. Derived, never typed twice: all
+// three notices below used to say "1 MB limit" — a figure the guard has not
+// enforced since v2.3.1 — so a model told to narrow its query was given a
+// budget 2.6x larger than the one that had just trimmed its answer, and could
+// reasonably retry a request the guard was always going to cut again.
+const MAX_RESPONSE_LABEL = `${Math.round(MAX_RESPONSE_BYTES / 1024)} KB`;
 
 /**
  * Ensure tool output fits within the MCP response limit.
@@ -79,7 +85,7 @@ function enforceSizeLimit(toolName, result) {
   // String result — just truncate with a notice
   if (typeof result === 'string') {
     const truncated = text.slice(0, MAX_RESPONSE_BYTES - 2000);
-    return truncated + '\n\n…[response truncated — exceeded MCP 1 MB limit; use a more specific query]';
+    return truncated + `\n\n…[response truncated — exceeded the MCP ${MAX_RESPONSE_LABEL} response limit; use a more specific query]`;
   }
 
   // Object result — progressively trim known heavy arrays
@@ -113,7 +119,7 @@ function enforceSizeLimit(toolName, result) {
   }
 
   if (trimmedFields.length) {
-    trimmed._truncated = `Response exceeded MCP 1 MB limit and was trimmed: ${trimmedFields.join(', ')}. ` +
+    trimmed._truncated = `Response exceeded the MCP ${MAX_RESPONSE_LABEL} response limit and was trimmed: ${trimmedFields.join(', ')}. ` +
       `Narrow your query (filter, min_connections, max_results, domain-scoped call) for complete results.`;
   }
 
@@ -122,7 +128,7 @@ function enforceSizeLimit(toolName, result) {
   if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
     return JSON.stringify(
       {
-        _truncated: `Response from ${toolName} exceeded the 1 MB MCP response limit even after trimming. ` +
+        _truncated: `Response from ${toolName} exceeded the MCP ${MAX_RESPONSE_LABEL} response limit even after trimming. ` +
           `Please call this tool with more specific filters.`,
       },
       null,

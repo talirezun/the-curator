@@ -83,6 +83,63 @@ section('4. Mixed batch (1 pass + 1 transient) → exit 0, correct counts');
   ok(/1 inconclusive/.test(r.out), 'summary shows 1 inconclusive');
 }
 
+// ── 5. MANIFEST AUDIT — a suite in no list must FAIL the run, before it starts ──
+//
+// The manifest is hand-typed, and `test-next-asset-paths.js` proved what that
+// costs: it existed, it passed, and it was registered nowhere, so nothing ever
+// ran it. The audit closes that by requiring set equality between
+// `scripts/test-*.js` and OFFLINE + LIVE_CI + LIVE_LOCAL.
+//
+// Driven through the REAL runner via RUN_TESTS_MANIFEST_FIXTURE, pointed at
+// throwaway directories carrying their own manifest.json — so the failure
+// shapes are produced by the shipped code rather than re-implemented here, and
+// no file has to be planted inside scripts/ to make the check fire.
+section('5. Manifest audit — disk and manifest must agree');
+function runManifestAudit(fixtureDir) {
+  const res = spawnSync(process.execPath, [RUNNER], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, RUN_TESTS_MANIFEST_FIXTURE: path.join(__dirname, 'test-fixtures', fixtureDir) },
+  });
+  return { code: res.status, out: (res.stdout || '') + (res.stderr || '') };
+}
+{
+  const clean = runManifestAudit('manifest-clean');
+  ok(clean.code === 0, `a manifest matching disk exits 0 (got ${clean.code})`);
+  ok(/Manifest OK/.test(clean.out), '…and says so, so a green audit is visible rather than merely silent');
+
+  const unreg = runManifestAudit('manifest-unregistered');
+  ok(unreg.code === 1, `an unregistered suite FAILS the run (got ${unreg.code})`);
+  ok(/MANIFEST ERROR/.test(unreg.out), 'the failure is named as a manifest error, not as a suite failure');
+  ok(/test-beta\.js/.test(unreg.out) && /test-gamma\.js/.test(unreg.out),
+    'EVERY unregistered file is listed by name — the message is what an agent merging parallel work acts on');
+  ok(!/test-alpha\.js/.test(unreg.out),
+    '…and a correctly registered file is NOT listed, so the report discriminates rather than dumping the directory');
+  ok(/nothing was run/i.test(unreg.out) && !/Suites:/.test(unreg.out),
+    'THE ORDERING: it refuses BEFORE spawning any suite — a four-minute run that then reports a typo has spent the time the check exists to save');
+
+  const missing = runManifestAudit('manifest-missing');
+  ok(missing.code === 1, `a listed suite that does not exist FAILS the run (got ${missing.code})`);
+  ok(/test-vanished\.js/.test(missing.out),
+    '…and names the entry, rather than letting it surface later as a MODULE_NOT_FOUND from a child');
+
+  const dupe = runManifestAudit('manifest-dupe');
+  ok(dupe.code === 1, `a suite listed in two tiers FAILS the run (got ${dupe.code})`);
+  ok(/listed twice/.test(dupe.out) && /OFFLINE and LIVE_CI/.test(dupe.out),
+    '…and names both lists — a live suite listed twice bills twice');
+
+  // CONTROL: the REAL manifest, audited for real, with no fixture seam. If this
+  // ever fails, the repository itself has an unregistered or missing suite —
+  // which is the whole point, and is exactly how this suite would tell you.
+  const real = spawnSync(process.execPath, [RUNNER, '--audit-only'], {
+    cwd: ROOT, encoding: 'utf8',
+    env: { ...process.env, RUN_TESTS_AUDIT_ONLY: '1' },
+  });
+  const realOut = (real.stdout || '') + (real.stderr || '');
+  ok(real.status === 0 && !/MANIFEST ERROR/.test(realOut),
+    'CONTROL: the repository\'s OWN manifest passes the same audit');
+}
+
 // ── Report ──────────────────────────────────────────────────────────────────────
 console.log(`\n${'─'.repeat(50)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

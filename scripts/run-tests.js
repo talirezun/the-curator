@@ -23,6 +23,7 @@
  */
 
 import { spawn } from 'child_process';
+import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { hasTransientMarker, classifyLiveOutcome } from './ci-flake.js';
@@ -52,7 +53,7 @@ const OFFLINE = [
   'test-sync-prune-safety.js',               // a pull rm -rf'd any non-dot top-level folder without a CLAUDE.md, unconditionally. The domains folder is a documented Obsidian VAULT ROOT, so an Attachments folder — Obsidian's own default for pasted images — was destroyed by the next pull and reported as "removed N deleted domains", which it never was. AND THE BLAST RADIUS WAS NOT LOCAL, which the original report never noticed: push()'s `git add -A` tracks a stray folder, so removing it STAGED a deletion that the next push propagated to the remote and every other machine. Removal now requires ALL FOUR: this pull's merge actually deleted tracked files under that path (a folder git has never heard of cannot appear in a deletion diff, so it is unreachable regardless of name), no CLAUDE.md, git tracks nothing under it any more, and nothing under it is untracked-and-not-ignored — ignored content does not block, because that IS the v2.3.4 case the function exists for. Every branch fails toward KEEPING. §1 is a permanent control running the pre-fix rule, transcribed literally, against real git.
   'test-memory-truth.js',                    // two defects in the memory layer the maintainer was living with. The state path is per INSTALLATION — <hostname>-<install-id> — so opencode and Claude Code on ONE computer resolve to the SAME folder, the continuity skill tells agents to reuse an existing scope, and the only guard refuses a save under ~5% of the stored one, so two full handoffs are both accepted and one silently replaces the other. §3 REPRODUCES that rather than quoting it. Detection is by ALTERNATION, not a clock: a user who migrated tools produces exactly one transition ever (A A A B B B) while two tools working one scope INTERLEAVE (A B A B), so the structural test needs no tuned constant that would be wrong on somebody's machine; entries with no harness are skipped rather than treated as a third value, because an unnamed save is missing evidence and would manufacture transitions out of silence. Second defect: ageSeconds came from filesystem mtime, which git REWRITES on checkout, so every scope pulled from another machine read as just-written — a live defect in the shipped Agent memory view. The agent's clock is now returned BESIDE the filesystem clock and never replaces it, because when a handoff ARRIVED here is also a real question, and savedAt is left untouched because it is on the pinned MCP contract.
   'test-tray-summary.js',                    // the one cheap call behind the menubar widget. It lives OUTSIDE working-state.js on purpose: the store deliberately has no notion of how many PROJECTS exist (every function there takes one), and `remote` is a sync fact the store does not own — either inside it would drag sync.js into the import graph the MCP loads on every spawn, which is the graph the stdout-discipline rule is stated over. `remote` is an OBSERVATION rather than a read-through, because brain/sync.js exposes NO non-fetching accessor: getRemoteStatus() is cache-hit-or-git-fetch, and maxAgeMs:0 does not help since remoteCacheTtl returns 0 for a successful payload, so the freshness test fails and it fetches. The module therefore does not import sync.js AT ALL — asserted by walking the transitive import graph off disk with a positive control, so child_process is unreachable and no git of any kind can run from THAT MODULE — the SHELL does now run a check on menu open, through sync.js's own gate and cache, which is a different claim. A FAILED check is not a MISSING one — and that distinction survived the store and DIED AT THE MODEL until it was fixed: the renderer branched on an `ok` field the producer never emitted, so a failed check rendered byte-identically to never having checked. True end to end now. total is counted BEFORE the slice, because reporting a cap as a measurement is this project's own named defect, and lastSave IS scopes[0] by construction rather than by coincidence.
-  'test-tray-pulse.js',                      // the heartbeat behind the menubar strip. The whole feature costs ZERO extra file I/O: listWorkingScopes ALREADY reads and parses every journal in full on every call and journalFacts then threw away every timestamp except the newest — 54 of 65 entries on the maintainer's own store, parsed and discarded. The pulse keeps them. `saveTimes` is OPT-IN (strict opts.withSaveTimes === true) precisely so the MCP index payload stays byte-identical, which is asserted by EXECUTING the real getWorkingStateHandler down the branch that forwards store rows wholesale, with a control proving the search finds the fields when present. Only the journal's own `at` may be counted and there is deliberately NO mtime fallback and no 'mixed' clock — git rewrites mtime on checkout, so an mtime-fed chart would draw a second machine's pulled history as a spike at the moment of the pull, which is the v3.34.0 defect redrawn. `events` and `pairsCounted` are counted BEFORE the display slice, asserted at limit 1, because reporting a cap as a measurement is this project's own twice-shipped defect. coversWholeWindow/firstKnownBucket exist so the renderer can tell NOTHING HAPPENED from THIS STORE DID NOT EXIST YET; on a 3.5-day-old store against a 7-day window, 13 of 28 cells are unknown, so that is the common case rather than an edge. Also carries the machine-identity fix: mac-17d23c and talis-macbook-pro-17d23c are ONE laptop whose hostname flapped under DHCP, matched on the trailing installation id ALONE via INSTALL_ID_RE — the hostname half is never compared — with foreign machines, id-less machines and hex-shaped non-ids all asserted unaffected.
+  'test-tray-pulse.js',                      // the heartbeat behind the menubar strip. The whole feature costs ZERO extra file I/O: listWorkingScopes ALREADY reads and parses every journal in full on every call and journalFacts then threw away every timestamp except the newest — 54 of 65 entries on the maintainer's own store, parsed and discarded. The pulse keeps them. `saveTimes` is OPT-IN (strict opts.withSaveTimes === true) precisely so the MCP index payload stays byte-identical, which is asserted by EXECUTING the real getWorkingStateHandler down the branch that forwards store rows wholesale, with a control proving the search finds the fields when present. Only the journal's own `at` may be counted and there is deliberately NO mtime fallback and no 'mixed' clock — git rewrites mtime on checkout, so an mtime-fed chart would draw a second machine's pulled history as a spike at the moment of the pull, which is the v3.34.0 defect redrawn. `events` and `pairsCounted` are counted BEFORE the display slice, asserted at limit 1, because reporting a cap as a measurement is this project's own twice-shipped defect. coversWholeWindow/firstKnownBucket exist so the renderer can tell NOTHING HAPPENED from THIS STORE DID NOT EXIST YET; on a 3.5-day-old store against a 7-day window, 13 of 28 cells are unknown, so that is the common case rather than an edge. Also carries the machine-identity fix: mac-9f3c1a20 and alices-macbook-pro-9f3c1a20 are ONE laptop whose hostname flapped under DHCP, matched on the trailing installation id ALONE via INSTALL_ID_RE — the hostname half is never compared — with foreign machines, id-less machines and hex-shaped non-ids all asserted unaffected.
   'test-tray-pulse-strip.js',                // the strip the pulse is DRAWN as, plus the width work. A menu item can carry an `icon` and Electron does NO scaling, so a wide-short template PNG is the only drawing primitive a menu has — NSMenuItem.setView:, which is how Stats and iStat Menus draw their graphs, is ABSENT from Electron, so a live multi-band trace is impossible and the strip is a STILL FRAME redrawn per open. It reuses encodeAlphaPng from tray-icon.js rather than carrying a second encoder, and the suite DECODES the emitted bytes and asserts real pixel coverage. THREE cell states, not two: ACTIVE, EMPTY, and UNKNOWN for buckets predating the store — they differ by SHAPE (bar versus baseline tick) rather than opacity, because an opacity difference does not survive 2pt of width, and on a 3.5-day-old store 13 of 28 cells are UNKNOWN, so collapsing it into EMPTY would misdescribe half the picture. Alpha encodes cadence and NEVER anything readable as quality: more saves means a different capture cadence, not more progress, and the refusal is asserted as copy with an anti-vacuity control. The label states what it can support — `4 days known` when the store is younger than the window, `at least N` when a journal hit its tail cap — because a strip that silently spans a week it knows nothing about is a confident lie. On width: the widest rendered line went 87 -> 54 with zero lines over 56, by dropping the constant project token, the `session-` prefix and a harness every row shared, and cutting the headline cap 72 -> 54; every dropped fact is asserted still reachable in that row's tooltip. Colliding rows on ONE machine escalate the AGE (day -> hour -> minute) instead of falling back to folder names, because the maintainer's own laptop owns two folders after a DHCP hostname flap and naming them would reassert the phantom second computer the identity fix just removed; genuinely different machines still keep their labels, asserted.
   'test-tray-paint.js',                      // the COLOUR the menu is drawn in, and the palette is a MEASUREMENT rather than a taste decision. The strip shipped in v3.37.0 as an alpha-only TEMPLATE image on a DISABLED row, so macOS tinted it to the disabled text colour and the maintainer's verdict was that it was barely visible — the template constraint is REAL for the tray glyph and FALSE for menu-item icons, proven by building a real Electron menu on this machine. Every shipped colour is asserted at >= 3:1 (the WCAG non-text floor, not the 4.5:1 text floor) against its own theme's background, computed IN THE SUITE from the values actually shipped, with Apple's own systemGreen kept as the anti-vacuity control BECAUSE IT FAILS at ~1.8:1 on light. The first palette failed too, and the suite is what caught it: light rung 1 sat at 3.15 against EMPTY's 3.29, so ONE SAVE READ QUIETER THAN NONE. The strip went 83x11 -> 55x14 — narrower AND twice the ink per active cell — by folding two six-hour buckets into one drawn cell; the producer's window and buckets are untouched, only the drawn resolution. Colour is an ACCELERATOR and never the signal: a separate section discards the palette entirely and requires all three strip states and all five dot silhouettes to remain distinguishable in the alpha channel alone, with the strip's silhouette asserted byte-identical between themes. `unknown` is a written case that draws NO DOT, never a grey one — a grey dot would assert 'old' about a row whose own label says the time is unknown.
   'test-background-mode.js',                 // the widget's on/off switch. backgroundMode is TOP-LEVEL beside sharedBrainEnabled rather than in the ui.* mechanism, and that was verified rather than assumed: every field in UI_STATE_SPEC is monotonic, writeOnce or one-way clearable, and setUiState REFUSES a second write — so a two-way toggle has no expressible shape there. The suite drives a real monotonic field twice and watches the second write refuse, which makes the argument measured. Lenient read, strict write: an unknown value RESOLVES to window so a config written by a newer build still launches, but setBackgroundMode REFUSES it rather than coercing, because coercing would let Settings report 'tray-only saved' while the file holds window.
@@ -192,6 +193,9 @@ const OFFLINE = [
   'test-release-publish.js',                 // the step that was MISSING and cost the maintainer a morning: release.js tags and pushes, the DMG workflow builds both installers into a 14-DAY ARTIFACT, and NOTHING published them as a GitHub Release — which is what the in-app updater resolves against. So v3.37.0 existed as a tag with no installer, and every installed copy confidently said "You're up to date" while running the previous version. A wrong reassurance is worse than an error. The workflow now renames and publishes them itself. THE RENAME IS NOT COSMETIC: archFromAssetName() splits a name on '-' and needs a whole `arm64` or `x64` token, and electron-builder's x64 output is `The Curator-<v>.dmg` with NO ARCH IN IT AT ALL, so publishing unrenamed leaves every Intel Mac unable to find a build, silently. publish-dmg-assets.js IMPORTS that matcher rather than re-implementing it, refuses any plan whose output names do not resolve, and re-reads the directory afterwards to verify what actually exists; the workflow then MOUNTS each image and checks `lipo -archs` against the name it is about to publish under, because an architecture in a filename is a claim. release.js's stale comment — that publishing was deferred "before anything consumes it" — expired in v3.31.0 when the updater shipped, and is corrected in place.
   'test-next-sse.js', // shared/sse.js — the canonical SSE frame reader extracted from the reader.read() loop copy-pasted across views/ingest.js (x2), views/chat.js and app.js (a 6th copy was about to be added for chat streaming). Reproduces that idiom exactly: line-buffered (not frame-buffered like domains.js/shared.js's `\n\n`-split readers, which this module's behaviour is a superset of for every producer here since JSON.stringify never emits a raw newline), `data: `-prefixed lines only, a malformed JSON frame silently skipped rather than fatal, reader.cancel() guaranteed on every exit path via the async generator's own try/finally. Takes no imports and touches no document/window, so it is driven directly rather than by source-scan or a new Function() sandbox. Mutation-proven: dropping the lines.pop() partial-line buffer reds 3 (the split-across-chunk-boundary case), making a JSON parse error fatal reds 3, and removing the try/finally around reader.cancel() reds 5 — each read back off disk before being trusted and restored by copy, shasum-verified.
   'test-logger.js', // src/brain/logger.js — the app's own log file, closing the gap where /tmp/the-curator.log existed only as an AppleScript-wrapper shell redirect (>>) that the macOS packaging pivot deletes outright. Resolves through a NEW paths.js seam (getLogsDir/__setLogDirOverride/CURATOR_TEST_LOG_DIR) that deliberately does NOT fork on install mode like getUserDataDir() does — a repo checkout is still a live git working tree, and this project has twice already shipped machine-local operational files landing inside a tracked/synced tree by mistake (.DS_Store, .write-lock), so the log gets ~/Library/Logs/The Curator in EITHER mode. Pins: every write is wrapped in ONE try/catch so a blocked directory (parent path is a regular file, mkdir can never succeed) is silently absorbed rather than thrown, proven by actually blocking it rather than asserting the try/catch exists; single-generation rotation genuinely bounds the file (two forced rotation waves, still exactly two generations on disk, sizes bounded under 2x a test-forced cap); scrubPaths (imported, not reimplemented) strips a path's directory while keeping its basename; and scrubSecrets — patterns deliberately kept IN SYNC with this repo's own `.git/hooks/pre-commit` secret guard — redacts ten credential-shaped fixture strings (Gemini/Anthropic/OpenRouter/GitHub classic+fine-grained/Shared-Brain-admin/generic sk-/Bearer/PEM/URL-embedded PAT) both from scrubSecrets() directly and from the file the write path actually produces, while a benign message with no secret shape survives untouched (over-scrubbing would make the log useless for its actual job). Also covers the two integration points: diagnostics.js's new "Application log" info row (before-write vs after-write detail, isolated log dir), and — WITHOUT invoking it live, for the same reason src/routes/mcp.js's own reveal-config route documents itself as untestable end-to-end (it would pop a Finder window on a maintainer running `npm test`) — source guards on POST /api/diagnostics/reveal-log proving execFile (never exec, no shell interpolation) and a server-resolved path that never reads req.query/body/params. §8 proves the module itself contains zero console.* calls and no process.stdout.write, satisfying MCP stdout discipline even though nothing under mcp/ imports it today. A real bug in an early draft of this very suite — several assertions called the wrong internal helper (ok(cond, label) where ok() only takes a label and always passes) and were silently vacuous — was caught by re-reading the run's own output before trusting it, not by review, and is why this file exists as a cautionary instance of the exact failure class it also guards against.
+  'test-next-asset-paths.js',                // REGISTERED at last: it existed and passed while being run by NOTHING — the instance that produced the manifest audit above. Guards the /next asset paths.
+  'test-mcp-save-verdict.js',                // the MCP save response's verdict, which had drifted TWO ways from the store's own classifier: its private loss regex was missing rejected/discarded/lost, and it never learned v3.39.0's fifth verdict, so a save whose ONLY note was `headline: truncated to 200 chars` — body stored in full — told the agent to "re-save what matters". Six of eight headlines in one real session clip, so that instruction fired on most saves and asked a context-starved agent for a wasted full re-save. Every verdict is produced by DRIVING the real handler; `stored in full` is measured from the READ side, not claimed from the write side; and §6 keeps the deleted regex as a control proving it matched BOTH fixtures, so the discrimination is real rather than two notes that never collided.
+  'test-mcp-schema-contracts.js',            // two contracts a client reads BEFORE calling: the dismiss/undismiss `type` enum, and the response-budget notices. The enum is asserted EQUAL to the runtime gate over a universe drawn from an INDEPENDENT source (a real scanWiki's own keys) — the first draft derived the universe from the enum under test and a mutation deleting a value came back GREEN, because deleting it from the enum also deleted it from the probe. The budget half drives the real guard through registerTools until it genuinely trims, then asserts the emitted text names 400 KB: MAX_RESPONSE_BYTES has been 400 KB since v2.3.1 while all three notices said "1 MB limit", handing a trimmed model a budget 2.6x too large to plan its retry with.
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
@@ -317,6 +321,126 @@ const LIVE_LOCAL = [
 
 // All live suites, for labelling.
 const LIVE = [...LIVE_CI, ...LIVE_LOCAL];
+
+// ── MANIFEST AUDIT — the three lists above must equal what is on disk ───────
+//
+// WHY THIS EXISTS. The manifest is hand-typed, and a suite that is never typed
+// into it is never run: it passes locally when its author invokes it by name,
+// it is green in every review, and CI never executes a line of it. That is not
+// hypothetical — `test-next-asset-paths.js` existed, passed, and was registered
+// NOWHERE, so the guard it carries was decorative for its whole life. Nothing
+// in the runner could see that, because the runner only ever knew about the
+// files somebody had already remembered.
+//
+// The check is the cheap one that closes the class: enumerate `scripts/test-*.js`
+// off disk and require an exact SET EQUALITY with OFFLINE + LIVE_CI + LIVE_LOCAL.
+// Both directions are errors, and they are DIFFERENT errors:
+//
+//   · on disk, in no list  → a suite nobody is running. Named individually,
+//     with the line to paste, because the fix is a one-line edit and the
+//     commonest reader of this message is an agent merging parallel work.
+//   · in a list, not on disk → an entry that spawns a child which exits
+//     non-zero with MODULE_NOT_FOUND. That already fails the build, but it
+//     fails it as a mysterious suite failure rather than as a typo.
+//
+// It runs BEFORE any suite, because a run that spends four minutes and then
+// says the manifest is wrong has already spent the time the check exists to
+// protect. Directories are excluded by construction (`isFile()`), so
+// `scripts/test-fixtures/` and `scripts/test-helpers/` are out of scope — they
+// are inputs to suites, not suites.
+//
+// DUPLICATES are an error too: a file listed twice runs twice, which is merely
+// wasteful offline and real money on a live suite.
+//
+// THE TWO CHECKS ARE DELIBERATELY ASYMMETRIC, and the first version of this
+// was wrong for exactly that reason. `unregistered` is computed over the
+// `test-*.js` enumeration, because that is the naming convention a suite is
+// expected to follow. `missing` is NOT: it asks whether the listed file EXISTS,
+// via `exists`. The manifest legitimately carries `check-doc-suite-counts.js`,
+// which is a real, registered, passing suite that does not match the pattern —
+// so subtracting the enumeration from the lists reported a healthy entry as a
+// missing file. A check whose first run accuses a working suite is a check
+// people learn to ignore.
+function auditManifest(diskFiles, lists, exists) {
+  const seen = new Map();
+  const duplicates = [];
+  for (const [name, arr] of Object.entries(lists)) {
+    for (const f of arr) {
+      if (seen.has(f)) duplicates.push(`${f} (in ${seen.get(f)} and ${name})`);
+      else seen.set(f, name);
+    }
+  }
+  const unregistered = diskFiles.filter((f) => !seen.has(f));
+  const missing = [...seen.keys()].filter((f) => !exists(f));
+  return {
+    unregistered, missing, duplicates,
+    ok: !unregistered.length && !missing.length && !duplicates.length,
+  };
+}
+
+function reportManifestAudit(audit) {
+  const lines = ['', '  MANIFEST ERROR — the suite list and scripts/ disagree, so nothing was run.', ''];
+  if (audit.unregistered.length) {
+    lines.push(`  ${audit.unregistered.length} suite(s) on disk are in NO list, so they never run:`);
+    for (const f of audit.unregistered) lines.push(`      '${f}',`);
+    lines.push('', '  Add each to OFFLINE (or LIVE_CI / LIVE_LOCAL if it needs a key) in scripts/run-tests.js.', '');
+  }
+  if (audit.missing.length) {
+    lines.push(`  ${audit.missing.length} listed suite(s) are not present in scripts/:`);
+    for (const f of audit.missing) lines.push(`      ${f}`);
+    lines.push('', '  Drop the entry, or restore the missing file.', '');
+  }
+  if (audit.duplicates.length) {
+    lines.push(`  ${audit.duplicates.length} suite(s) are listed twice — a live suite listed twice bills twice:`);
+    for (const f of audit.duplicates) lines.push(`      ${f}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// TEST-ONLY SEAM (unset in normal runs and CI). Points the audit at a fixture
+// directory carrying its own manifest.json, so `test-runner-integration.js` can
+// drive both failure shapes AND the clean case for real, without inventing
+// files inside scripts/ or reaching into this module's private state. It
+// reports and EXITS — no suite is spawned in this mode.
+if (process.env.RUN_TESTS_MANIFEST_FIXTURE) {
+  const dir = process.env.RUN_TESTS_MANIFEST_FIXTURE;
+  const fx = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && /^test-.*\.js$/.test(d.name)).map((d) => d.name).sort();
+  const audit = auditManifest(files, {
+    OFFLINE: fx.OFFLINE || [], LIVE_CI: fx.LIVE_CI || [], LIVE_LOCAL: fx.LIVE_LOCAL || [],
+  }, (f) => existsSync(path.join(dir, f)));
+  if (audit.ok) {
+    console.log('\n  Manifest OK — every suite on disk is registered exactly once.\n');
+    process.exit(0);
+  }
+  console.error(reportManifestAudit(audit));
+  process.exit(1);
+}
+
+// The real audit. Skipped ONLY under RUN_TESTS_LIVE_ONLY, which replaces the
+// manifest with fake suites in a fixture folder: auditing the real scripts/
+// directory against a manifest that is deliberately not the real one would
+// report a failure that means nothing.
+if (!process.env.RUN_TESTS_LIVE_ONLY) {
+  const diskSuites = readdirSync(__dirname, { withFileTypes: true })
+    .filter((d) => d.isFile() && /^test-.*\.js$/.test(d.name)).map((d) => d.name).sort();
+  const audit = auditManifest(diskSuites, { OFFLINE, LIVE_CI, LIVE_LOCAL },
+    (f) => existsSync(path.join(__dirname, f)));
+  if (!audit.ok) {
+    console.error(reportManifestAudit(audit));
+    process.exit(1);
+  }
+  // `node scripts/run-tests.js --audit-only` (or RUN_TESTS_AUDIT_ONLY=1) checks
+  // the manifest and stops. It costs milliseconds, so an agent that has just
+  // added a suite — or an orchestrator merging several branches — can confirm
+  // the registration without paying for a full run first.
+  if (process.env.RUN_TESTS_AUDIT_ONLY || process.argv.includes('--audit-only')) {
+    console.log(`\n  Manifest OK — ${diskSuites.length} suite file(s) on disk, all registered exactly once.\n`);
+    process.exit(0);
+  }
+}
 
 // Env vars that grant API/network access. Stripped from offline children.
 const CREDENTIAL_ENV = [
@@ -513,7 +637,22 @@ function tail(out, n = 12) {
   for (const file of suites) {
     const isLive = LIVE.includes(file) || (forcedLive !== null && forcedLive.has(file));
     const opts = {
-      stripCreds: !runLive,
+      // CREDENTIALS ARE STRIPPED PER SUITE, NOT PER RUN.
+      //
+      // This was `!runLive`, which meant `npm run test:live` handed the API and
+      // GitHub credentials to EVERY suite — the ~180 offline ones included. The
+      // safety net the header describes ("even if a suite is mis-classified as
+      // offline, it physically cannot make a paid API call") therefore existed
+      // in `npm test` and vanished in the one mode where real keys are present,
+      // which is the mode where a mis-classified suite would actually spend
+      // money.
+      //
+      // The change is provably free: every offline suite must already pass with
+      // these variables absent, because that is exactly what `npm test` does on
+      // every commit and in CI. So stripping them in live mode too cannot break
+      // a correct offline suite — it can only expose one that was silently
+      // relying on a key it is not supposed to have.
+      stripCreds: !isLive,
       timeoutMs: isLive ? (LIVE_SUITE_TIMEOUT_MS[file] || LIVE_TIMEOUT_MS) : OFFLINE_TIMEOUT_MS,
     };
     let r = await runSuite(file, opts);

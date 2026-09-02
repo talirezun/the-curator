@@ -54,6 +54,7 @@ import {
   saveWorkingState,
   readWorkingState,
   listWorkingScopes,
+  classifySaveNotes,
   STATE_SECTIONS,
   MAX_JOURNAL_ENTRIES,
 } from '../../src/brain/working-state.js';
@@ -412,22 +413,34 @@ async function classifyBriefAuthority(project, brief) {
   }
 }
 
-/** Notes/rejections that genuinely mean input was LOST, as opposed to normalised. */
-const LOSSY_NOTE_RE = /\b(dropped|omitted|truncated)\b/i;
-
 /**
- * A note reporting that the PRIOR handoff was deliberately overwritten
- * (`replace: true`). It is a THIRD case and neither of the other two is true
- * of it: nothing the caller sent was dropped, so the loss arm is wrong — but
- * a larger document was destroyed and current.md is overwritten in place, so
- * "nothing was dropped; the save is complete" is a reassurance the code did
- * not earn. This arm became reachable through MCP only when `replace` was
- * forwarded (it had no caller before), which is why it was not needed until
- * now. The store owns the wording; test-mcp-working-state.js pins this match
- * against a REAL replace save, so a reword there goes RED here rather than
- * silently reclassifying a destructive save as a routine one.
+ * ── WHY THERE ARE NO LOSS/REPLACE REGEXES HERE ANY MORE ───────────────────
+ *
+ * This file used to carry its own `LOSSY_NOTE_RE = /\b(dropped|omitted|
+ * truncated)\b/i` and `REPLACED_NOTE_RE = /\boverwrote\b/i` and decide the
+ * verdict itself. Two copies of one classification, and they had already
+ * drifted in BOTH directions:
+ *
+ *   · the local loss regex was missing `rejected|discarded|lost`, three words
+ *     the store's own `SAVE_NOTE_LOSS_RE` matches — so a note using one of
+ *     them read to a model as "nothing was dropped, the save is complete";
+ *   · and v3.39.0 split the store's loss verdict in two (`clipped` vs
+ *     `trimmed`) after a REAL save was misreported. That fix never reached
+ *     here, so a save whose ONLY note was `headline: truncated to 200 chars
+ *     (was 244)` — body stored in full, 6,698 of 49,152 budget bytes — told
+ *     the agent to "read `notes` and re-save what matters". Six of eight
+ *     headlines in one working session clip, so that instruction fired on
+ *     most real saves and asked for a full, wasted re-save every time.
+ *
+ * The verdict is now the store's, via `classifySaveNotes`. This file owns
+ * only the WORDING for each verdict, which is the thing an MCP surface is
+ * actually for.
+ *
+ * The machine-identity note keeps a local matcher because it has no verdict
+ * of its own: it carries no loss vocabulary, so the store classifies it
+ * `noted` alongside ordinary normalisations, and it must not be rendered in
+ * the same words as one.
  */
-const REPLACED_NOTE_RE = /\boverwrote\b/i;
 
 /**
  * A note about the STORAGE LAYOUT rather than about the caller's input — the
@@ -449,6 +462,60 @@ const REPLACED_NOTE_RE = /\boverwrote\b/i;
  * there goes RED here rather than silently demoting the warning.
  */
 const MACHINE_IDENTITY_NOTE_RE = /^machine identity:/i;
+
+/**
+ * One sentence per verdict, and the point of the whole exercise is that they
+ * are DIFFERENT sentences — a model acts on this line.
+ *
+ * `clipped` is the one worth reading twice. It reports a shortened LABEL —
+ * `headline`, `harness`, `model` or the normalised `scope` — with the handoff
+ * body stored in full. The old code rendered it identically to real content
+ * loss and told the agent to re-save; that instruction cost a full, wasted
+ * re-save on most saves in a real session. It now says explicitly that no
+ * re-save is needed, while still asking for a shorter headline next time,
+ * because the headline is the ONE line a future session reads before deciding
+ * whether to open this state at all.
+ *
+ * `trimmed` deliberately keeps the loud wording. It is the fail-safe bucket:
+ * a body field, or a note naming no field the store recognises.
+ *
+ * `noted` splits on the machine-identity warning, which carries no loss
+ * vocabulary and so cannot be told apart by verdict alone — it is a standing
+ * risk about the STORAGE LAYOUT, not a description of this call, and reading
+ * it as a routine normalisation is how it stayed invisible for a release.
+ */
+function saveMeaning(kind, identityOnly) {
+  switch (kind) {
+    case 'trimmed':
+      return 'Some input was DROPPED, OMITTED or TRUNCATED — read `notes` for the field it names and re-save what matters.';
+    case 'clipped':
+      return 'Your handoff was stored IN FULL — no re-save is needed. The only thing shortened was the label field named in `notes` (the one-line headline, or the harness/model/scope tag), never the handoff body. Send a shorter headline next time: it is the one line a future session sees before deciding whether to open this state.';
+    case 'replaced':
+      return 'Nothing you sent was dropped — but this save REPLACED a larger saved handoff because replace: true was set, and that text is not recoverable.';
+    case 'noted':
+      return identityOnly
+        ? 'Nothing you sent was dropped and the save is complete — but read `notes`: this installation has no persisted machine id, so state is stored under the bare hostname and another computer with the same hostname can replace it through sync.'
+        : 'These notes record how your input was NORMALISED (for example a missing timestamp filled in). Nothing was dropped; the save is complete.';
+    default:
+      return 'No notes — every field was stored exactly as supplied.';
+  }
+}
+
+/** The `report` tail for the same verdict, appended after the note count. */
+function saveReportTail(kind, identityOnly) {
+  switch (kind) {
+    case 'trimmed':
+      return 'note(s): some input was dropped or truncated — see `notes`.';
+    case 'clipped':
+      return 'note(s): only a label was shortened — the handoff itself was stored in full, so no re-save is needed. See `notes`.';
+    case 'replaced':
+      return 'note(s): it replaced a LARGER saved handoff, which is not recoverable — see `notes`.';
+    default:
+      return identityOnly
+        ? 'note(s): nothing was dropped, but this machine has no persisted id — see `notes`.'
+        : 'note(s) about how your input was normalised — nothing was dropped.';
+  }
+}
 
 /**
  * Candidate scope names for a scope that was not found.
@@ -1020,9 +1087,14 @@ export async function saveWorkingStateHandler(args, storage) {
     });
   } catch { /* best-effort */ }
 
-  // Bounded once, then read twice (the field and its classification), so the
-  // two can never describe different arrays.
+  // Bounded for the wire. The VERDICT is taken over the store's raw array
+  // rather than over this copy, for the store's own stated reason: a note
+  // pushed past the cap, or a loss word past REJECTION_CHARS, still happened,
+  // and classifying the truncated copy could only ever under-report loss —
+  // the one direction that must never be silent.
   const notes = (result.notes || []).slice(0, 20).map((n) => String(n).slice(0, REJECTION_CHARS));
+  const saveKind = classifySaveNotes(Array.isArray(result.notes) ? result.notes : []);
+  const identityOnly = notes.some((n) => MACHINE_IDENTITY_NOTE_RE.test(n));
 
   return {
     ok: true,
@@ -1054,26 +1126,15 @@ export async function saveWorkingStateHandler(args, storage) {
     // Always present, so "no warning" is a stated fact rather than an absence
     // the caller has to interpret.
     install_id_available: result.installIdAvailable !== false,
-    notes_meaning: notes.length
-      ? (notes.some((n) => LOSSY_NOTE_RE.test(n))
-        ? 'Some input was DROPPED, OMITTED or TRUNCATED — read `notes` and re-save what matters.'
-        : notes.some((n) => REPLACED_NOTE_RE.test(n))
-          ? 'Nothing you sent was dropped — but this save REPLACED a larger saved handoff because replace: true was set, and that text is not recoverable.'
-          : notes.some((n) => MACHINE_IDENTITY_NOTE_RE.test(n))
-            ? 'Nothing you sent was dropped and the save is complete — but read `notes`: this installation has no persisted machine id, so state is stored under the bare hostname and another computer with the same hostname can replace it through sync.'
-            : 'These notes record how your input was NORMALISED (for example a missing timestamp filled in). Nothing was dropped; the save is complete.')
-      : 'No notes — every field was stored exactly as supplied.',
+    // The store's own verdict, forwarded verbatim so a caller can switch on
+    // it instead of pattern-matching the prose below. Same five values
+    // `get_working_state` reports for the last save: complete / noted /
+    // clipped / replaced / trimmed.
+    save_kind: saveKind,
+    notes_meaning: saveMeaning(saveKind, identityOnly),
     report:
       `Saved working state for '${result.project}' / scope '${result.scope}' (machine: ${result.machine}). ` +
       `This OVERWROTE the previous save for that scope — save again as the work moves.` +
-      (notes.length
-        ? (notes.some((n) => LOSSY_NOTE_RE.test(n))
-          ? ` ${notes.length} note(s): some input was dropped or truncated — see \`notes\`.`
-          : notes.some((n) => REPLACED_NOTE_RE.test(n))
-            ? ` ${notes.length} note(s): it replaced a LARGER saved handoff, which is not recoverable — see \`notes\`.`
-            : notes.some((n) => MACHINE_IDENTITY_NOTE_RE.test(n))
-              ? ` ${notes.length} note(s): nothing was dropped, but this machine has no persisted id — see \`notes\`.`
-              : ` ${notes.length} note(s) about how your input was normalised — nothing was dropped.`)
-        : ''),
+      (notes.length ? ` ${notes.length} ${saveReportTail(saveKind, identityOnly)}` : ''),
   };
 }
