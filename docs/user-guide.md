@@ -448,14 +448,16 @@ If you'd rather pay Anthropic than Google (e.g. for privacy preference, or becau
 3. Anthropic has **no free tier** — you must add billing before any call works
 4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). If you want more capability, you can pick a different Anthropic model in **Settings → Providers & keys** — seven are offered, with the price and the measured trade-off shown next to each. See [§16b Choosing your AI model](#16b-choosing-your-ai-model).
 
-**⚠ Saving a key switches which AI builds your wiki.** The Curator uses *last-saved-wins*: whenever you save a provider key, **that provider immediately becomes the active one** — and the active provider is what runs **ingest, Wiki Health and Compile**. So if you've been on Anthropic and then paste a Gemini key, the app switches to Gemini on its own. That is expected, long-standing behaviour, and it **applies to all three providers, OpenRouter included**.
+**Saving a second key does NOT change which AI builds your wiki.** Connecting a provider connects it, and nothing else. The **first** key you connect becomes the one that builds — there is nothing else it could be — but after that, the model that runs **ingest, Wiki Health and Compile** only changes when **you change it**, under *What builds your wiki*. So you can paste an OpenRouter key to try a model in chat and your next ingest is still built by exactly what built the last one.
 
-Worth pausing on, because it is the easiest way to surprise yourself: paste an OpenRouter key just to try a model in chat, and your **next ingest is built by OpenRouter's model instead of the one you were using** — a different model, from a different vendor, at a different price. Nothing breaks and nothing is lost; the wiki still builds. But it is built by something you did not deliberately choose.
+> **Changed in v3.45.0.** Until then The Curator used *last-saved-wins*: every key you saved silently took over the build lane, so pasting a key to try one thing moved your ingests — and your bill — onto a different vendor's model without asking. That was the single most surprising behaviour in the whole provider screen. Connecting a key now saves the key; choosing a build model is what moves the lane.
 
 Two things make this easy to stay on top of:
 
-- **The word `active` beside a row in Settings → Providers & keys is always the truth** about which provider is live. Check it after saving a key.
-- **To flip back without re-pasting or deleting anything**, click **Set active** on the row you want. That button appears on any provider that has a key saved, has a model able to build your wiki, and isn't already active. The switch is instant.
+- **The model shown under *What builds your wiki* is always the truth** about what runs your next ingest, including which provider it belongs to.
+- **To change it**, pick a different model there. You never need to re-paste or delete a key to switch provider.
+
+**If you disconnect the provider that was building**, the lane has to go somewhere, so it moves to the **cheapest model you have connected that we have actually measured** — and the app tells you where it went. Nothing silently stops working, and nothing silently gets more expensive than it needs to be.
 
 **Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → API keys](#api-keys) and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
@@ -2718,7 +2720,7 @@ To add or change a key:
 2. Paste the key into the field that appears
 3. Click **Save**
 
-Saving a key makes that provider active (*last-saved-wins*) — unless that provider has no model able to build your wiki, in which case the key is saved and the switch is skipped, with the reason shown. Two more controls appear on a row once it has a key:
+Saving a key **connects** that provider. It becomes the one that builds your wiki only if nothing else already does — i.e. on your first key. After that the key is saved and the build lane stays where it is; change it under *What builds your wiki*. (If a provider has no model able to build a wiki at all, it cannot take the lane in any case, and the reason is shown.) Two more controls appear on a row once it has a key:
 
 - **Set active** — makes this the provider used for ingest, Wiki Health and Compile, without re-pasting anything. Shown on any provider that has a key, isn't already active, **and** has a model able to build your wiki. All three usable providers — Gemini, Anthropic and OpenRouter — qualify today. (The condition is still enforced rather than assumed: a provider with a key but no build-lane model would show a short label explaining why instead of a button that would just break ingest. Nothing ships in that state right now, but the guard is what makes adding a new provider safe.)
 - **Disconnect** — removes that key entirely. Use it only when you want to drop a provider, not just deactivate it.
@@ -3278,16 +3280,16 @@ Two examples, because the principle matters more than the specifics:
 
 Those figures are a measurement, not a promise, and this guide will not print a standing number: OpenRouter's catalogue moved by **seven records inside five hours** on the day this was written. What is stable is the *method* — see [Refreshing the model list](#refreshing-the-model-list) below — and the split it produces: **OpenRouter tells us what a model costs; only we can measure whether it does our job.**
 
-**⚠ Read this first: OpenRouter can now build your wiki — and saving its key switches you over to it.**
+**Read this first: OpenRouter can now build your wiki — but saving its key does not switch you over to it.**
 
 Ingest, Wiki Health scans and Compile all run on models measured against The Curator's real ingest prompt, and **several OpenRouter routes have been measured that way** (see [The measured models](#the-measured-models-and-which-to-pick) below). Since v3.16.0 you can also [measure one yourself, against your own wiki](#test-a-model-on-your-own-wiki). So:
 
 - OpenRouter is available for **chat**, as before.
 - It is now **also** available for ingest, Wiki Health and Compile.
-- **Saving an OpenRouter key makes it your active provider** — ordinary *last-saved-wins*, the same as Gemini and Anthropic. In the previous release it did not, because there was no model to build with; that exception is gone.
-- You can also switch to it deliberately with **Set active**.
+- **Saving an OpenRouter key does not change what builds your wiki** — the same rule as Gemini and Anthropic since v3.45.0. Connecting a provider connects it; choosing a build model is what moves the lane.
+- To build with it, pick one of its models under *What builds your wiki*.
 
-**The practical consequence, stated plainly:** if you have a Gemini or Anthropic key that has been building your wiki, and you save an OpenRouter key to try a model in chat, **your next ingest will be built by OpenRouter** — specifically by `upstage/solar-pro4`, the pinned default. Nothing breaks and nothing is lost. But it is a different model at a different price, and if you did not intend it, click **Set active** on the provider you did want. The word `active` beside a row is always the truth about which provider is live.
+**The practical consequence, stated plainly:** if you have a Gemini or Anthropic key that has been building your wiki, and you save an OpenRouter key to try a model in chat, **your next ingest is still built by exactly what built the last one**. Before v3.45.0 it was not — it silently moved to `upstage/solar-pro4`, a different model from a different vendor at a different price. If you *want* OpenRouter to build, choose one of its models deliberately; the model named under *What builds your wiki* is always the truth.
 
 If OpenRouter is your **only** key, you can now run the whole app on it, which was not true before.
 
@@ -3375,7 +3377,9 @@ Some models are ruled out structurally, because of something the app *can't* do 
 - **"Auto" router models whose price is unknown until after the call.** Every price in this app is shown to you **before** you choose. A model that can't be priced in advance can't be shown honestly, so it isn't shown.
 - **Moving aliases** that quietly resolve to whatever the vendor considers newest. Pin one and what you picked can change underneath you.
 - **Models that can't write enough in one go** to produce an ingest outline at all.
-- **Models with a smaller context window than a model The Curator already ships.** The floor is 200,000 tokens, and that number is not rounded for tidiness: it is exactly the window of `claude-haiku-4.5`, one of the app's own defaults. The rule is *we will not offer a model that is worse on context than something you can already pick here*. It is a deliberate trade with a cost — it excludes some perfectly good models, including one The Curator does ship (`ibm-granite/granite-4.0-h-micro`, at 131,000), which survives as a hand-measured entry rather than a fetched one.
+- **Models too small to hold what the job needs.** There are **two** floors, and both are worked out from what The Curator actually sends rather than copied from a model it happens to ship. **32,768 tokens** to be offered at all — that is a chat turn (60,000 characters of your pages plus a 12,000-character index, and room for the answer). **131,072 tokens** to build a wiki — an 80,000-character source plus the index and page list is about 85,000 tokens, and planning the outline needs another 24,576 on top. Only the smaller floor turns a model away; the larger one decides whether *Use this* is offered on the row, so a model that is fine for chat and too small for ingest stays available for chat and says so.
+
+  > **Changed in v3.45.0.** The old rule was a single 200,000-token floor, matched to `claude-haiku-4.5` because The Curator ships it. That was too high for building (which needs about 110,000) and far too high for chat (about 26,000), and it excluded 56 models that were perfectly capable of the job you were asking of them — including one The Curator itself falls back on.
 - **Models retiring within the next 30 days.** One model in a measured refresh published a retirement date **three days** out. Offering it would hand you something that stops working inside the release's own lifetime.
 - **Models whose price changes above a certain prompt size** — some double their rate on long prompts. Those are allowed **for chat only**, where prompts are small and bounded, and never for ingest, which is exactly where a long prompt would cross the threshold and where quoting half the real rate would matter most.
 
@@ -3391,15 +3395,16 @@ The three measured models are shipped with the app. Everything else OpenRouter o
 
 | Check | Removed | Left |
 |---|---|---|
-| listed by OpenRouter | — | 387 |
-| structured-output mode | 58 | 329 |
-| price knowable in advance | 2 | 327 |
-| not a moving alias | 13 | 314 |
-| output ceiling big enough | 61 | 253 |
-| context window at least 200,000 | 59 | 194 |
-| not retiring within 30 days | 1 | 193 |
+| listed by OpenRouter | — | 421 |
+| structured-output mode | 59 | 362 |
+| price knowable in advance | 2 | 360 |
+| not a moving alias | 14 | 346 |
+| not a batch-only id | 64 | 282 |
+| output ceiling big enough | 61 | 221 |
+| context window at least 32,768 | 1 | 220 |
+| not retiring within 30 days | 2 | 218 |
 
-Of those 193, **189 were added** and 2 were models The Curator had already measured by hand — so the shipped entry was kept and the fetched copy dropped. Your own numbers will differ, and they should: this is a snapshot of somebody else's catalogue on one afternoon.
+Of those 218, **201 also clear the larger 131,072-token floor** and so can build a wiki as well as chat. Your own numbers will differ, and they should: this is one catalogue on one afternoon (2 September 2026), re-measured with the app's own filter after the v3.45.0 floors landed. Two rows are worth a second look. **Batch-only ids** removed 64 — those are `:batch` twins that are listed at half price and return an error on every ordinary call, so cheapest-first sorting used to put dead models near the top of your list. And the **context window** row now removes almost nothing: that is the point of the change, not a check that stopped working. It used to remove 59.
 
 **It sticks.** The list is saved on your machine and reloaded when The Curator starts, so a refresh is not something you repeat every session. It is *re-checked* on the way back in rather than trusted because it was on disk, so a model that has since stopped qualifying is dropped rather than quietly kept. If the app could not save the list, it says so on the panel — the models work for this session and are gone after a restart, and the fix is to refresh again once you have restarted.
 

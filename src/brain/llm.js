@@ -44,6 +44,13 @@ import { writeFileAtomicSync } from './atomic-write.js';
 // import would be a cycle and would drag the ingest queue and health.js into
 // the MCP child's import graph, where a stray stdout write corrupts JSON-RPC.
 import { scrubPaths } from './scrub-paths.js';
+// The eligibility rules, so the HAND-TYPED tables can be held to them too (see
+// auditStaticOffers). NAMESPACE import for the same reason the adapter and
+// routes/config.js use one: a not-yet-shipped export must resolve to
+// `undefined` rather than failing this module's load and taking the app down
+// with it. `openrouter-eligibility.js` is itself import-free, so llm.js ->
+// eligibility adds no cycle and no new capability to the MCP child's graph.
+import * as eligibilityModule from './openrouter-eligibility.js';
 
 /**
  * The providers this module can dispatch to.
@@ -1660,12 +1667,42 @@ function defineOfferableModel(provider, spec, opts = {}) {
  *   • claude-opus-4-7 / claude-opus-4-6 — real, documented, never probed. See
  *     AWAITING_MEASUREMENT.
  *   • Every RETIRED id (test-chat-model.js §9) — those 404.
+ *
+ * ── `contextLength` PROVENANCE — EVERY VALUE READ FROM A PROVIDER ───────────
+ *
+ * Each entry's `contextLength` is the provider's OWN published input-window
+ * figure, fetched from that provider's list endpoint on 2026-09-02, never
+ * inferred from a family name, a sibling id or `maxOutput` (which is the OUTPUT
+ * ceiling — a different fact; `defineOfferableModel` says why at length).
+ *
+ *   Gemini      GET https://generativelanguage.googleapis.com/v1beta/models
+ *               field `inputTokenLimit`. All seven read 1,048,576.
+ *   Anthropic   GET https://api.anthropic.com/v1/models
+ *               field `max_input_tokens`. 200,000 for claude-haiku-4-5 and
+ *               claude-opus-4-5; 1,000,000 for the five newer entries. (The
+ *               dated ids the endpoint returns — e.g. claude-haiku-4-5-20251001
+ *               — are what our undated aliases resolve to.)
+ *   OpenRouter  GET https://openrouter.ai/api/v1/models
+ *               field `top_provider.context_length`, the CONSERVATIVE field,
+ *               never the headline `context_length`. The two disagree on
+ *               z-ai/glm-5.3-flash (headline 1,310,720 against 1,048,576) and
+ *               the headline is the maximum ACROSS providers, which is not what
+ *               a request gets. `openrouter-adapter.js` reads the same field
+ *               for fetched entries, so hand-typed and fetched entries carry
+ *               one meaning between them.
+ *
+ * WHY IT IS HERE AT ALL. These entries were the only offers in the app with no
+ * context figure — i.e. exactly the models that can BE the build model — so a
+ * context facet or chip on the picker would have been blank or invented on the
+ * rows that matter most. It is also what lets `checkStaticEntry` classify a
+ * hand-typed entry into the same lanes as a fetched one.
  */
 export const OFFERABLE_MODELS = Object.freeze({
   gemini: Object.freeze([
     defineOfferableModel('gemini', {
       id: 'gemini-2.5-flash-lite',
       label: 'Flash Lite 2.5',
+      contextLength: 1048576,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
       outlinePagesLow: 18, outlinePagesHigh: 20,
@@ -1677,6 +1714,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-3.1-flash-lite',
       label: 'Flash Lite 3.1',
+      contextLength: 1048576,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 5, outlinePagesHigh: 12,
@@ -1691,6 +1729,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-2.5-flash',
       label: 'Flash 2.5',
+      contextLength: 1048576,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
       outlinePagesLow: 17, outlinePagesHigh: 19,
@@ -1702,6 +1741,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-3.5-flash-lite',
       label: 'Flash Lite 3.5',
+      contextLength: 1048576,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'chat-only',
       cautionReason:
@@ -1716,6 +1756,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-3.7-flash',
       label: 'Flash 3.7',
+      contextLength: 1048576,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 12, outlinePagesHigh: 16,
@@ -1731,6 +1772,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-3.6-flash',
       label: 'Flash 3.6',
+      contextLength: 1048576,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 12, outlinePagesHigh: 16,
@@ -1745,6 +1787,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('gemini', {
       id: 'gemini-3.5-flash',
       label: 'Flash 3.5',
+      contextLength: 1048576,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 8, outlinePagesHigh: 14,
@@ -1761,6 +1804,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-haiku-4-5',
       label: 'Haiku 4.5',
+      contextLength: 200000,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'general',
       outlinePagesLow: 5, outlinePagesHigh: 13,
@@ -1775,6 +1819,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-sonnet-5',
       label: 'Sonnet 5',
+      contextLength: 1000000,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'general',
       outlinePagesLow: 16, outlinePagesHigh: 18,
@@ -1789,6 +1834,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-sonnet-4-6',
       label: 'Sonnet 4.6',
+      contextLength: 1000000,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
       outlinePagesLow: 17, outlinePagesHigh: 17,
@@ -1801,6 +1847,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-sonnet-4-5',
       label: 'Sonnet 4.5',
+      contextLength: 1000000,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 15, outlinePagesHigh: 16,
@@ -1815,6 +1862,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-opus-5',
       label: 'Opus 5',
+      contextLength: 1000000,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'general',
       outlinePagesLow: 25, outlinePagesHigh: 27,
@@ -1828,6 +1876,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-opus-4-8',
       label: 'Opus 4.8',
+      contextLength: 1000000,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'caution',
       outlinePagesLow: 19, outlinePagesHigh: 20,
@@ -1843,6 +1892,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('anthropic', {
       id: 'claude-opus-4-5',
       label: 'Opus 4.5',
+      contextLength: 200000,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'caution',
       outlinePagesLow: 12, outlinePagesHigh: 13,
@@ -2032,6 +2082,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('openrouter', {
       id: 'minimax/minimax-m3:free',
       label: 'MiniMax M3 (free)',
+      contextLength: 1048576,
       maxOutput: 943718, free: true,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.015,
       suitability: 'caution',
@@ -2050,6 +2101,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('openrouter', {
       id: 'ibm-granite/granite-4.0-h-micro',
       label: 'Granite 4.0 H Micro',
+      contextLength: 131000,
       maxOutput: 117900,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.036,
       suitability: 'caution',
@@ -2066,6 +2118,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('openrouter', {
       id: 'upstage/solar-pro4',
       label: 'Solar Pro 4',
+      contextLength: 524288,
       maxOutput: 131072,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
@@ -2080,6 +2133,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('openrouter', {
       id: 'z-ai/glm-5.3-flash',
       label: 'GLM 5.3 Flash',
+      contextLength: 1048576,
       maxOutput: 131072,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.041,
       suitability: 'caution',
@@ -2104,6 +2158,7 @@ export const OFFERABLE_MODELS = Object.freeze({
     defineOfferableModel('openrouter', {
       id: 'moonshotai/kimi-k2-0905',
       label: 'Kimi K2 0905',
+      contextLength: 262144,
       maxOutput: 100352,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.022,
       suitability: 'caution',
@@ -2153,6 +2208,40 @@ let _openrouterCatalogue = Object.freeze([]);
 // without the other having been initialised.
 let _openrouterCatalogueSyncedAt = null;
 let _openrouterCatalogueSource = null; // 'network' | 'disk' | null
+
+/**
+ * The eligibility funnel from the sync that produced whatever is loaded, or
+ * null when nobody has synced in this process and nothing was restored.
+ *
+ * ── WHY IT IS KEPT AND PERSISTED ────────────────────────────────────────────
+ * A user looking at "211 models" reasonably asks what the other 210 were. Every
+ * loss is already attributed rule-by-rule at sync time and then thrown away, so
+ * the answer existed for one HTTP response and no longer exists on the screen
+ * that needs it. `batch-only` in particular is a number the picker should say
+ * out loud: 64 dead ids were being OFFERED before v3.42.0, and "we now hide
+ * them" is only credible with the count beside it.
+ *
+ * NULL MEANS UNKNOWN AND MUST RENDER AS UNKNOWN. A catalogue persisted by an
+ * older build carries no funnel; reporting 0 there would state that no model
+ * was rejected for any reason, which is false in a way nobody could see. Every
+ * consumer therefore reads `null` from `getOpenRouterCatalogueMeta`, never 0.
+ */
+let _openrouterCatalogueFunnel = null;
+
+/** The `lost` count for one funnel rule, or null when the funnel is unknown. */
+function funnelLost(rule) {
+  if (!Array.isArray(_openrouterCatalogueFunnel)) return null;
+  const stage = _openrouterCatalogueFunnel.find(f => f && f.rule === rule);
+  if (!stage) return null;
+  // The adapter re-labels the eligibility module's `in`/`out` as
+  // `before`/`after` for the wire; accept either rather than pinning one
+  // spelling, and never invent a difference when both are absent.
+  const before = Number.isFinite(stage.before) ? stage.before : stage.in;
+  const after = Number.isFinite(stage.after) ? stage.after : stage.out;
+  if (Number.isFinite(stage.lost)) return stage.lost;
+  if (Number.isFinite(before) && Number.isFinite(after)) return before - after;
+  return null;
+}
 
 /**
  * Replace the live OpenRouter chat catalogue.
@@ -2457,6 +2546,12 @@ export function getOpenRouterCatalogueMeta(nowMs = Date.now()) {
     stale: verdict.needed,
     reason: verdict.reason,
     maxAgeMs: OPENROUTER_CATALOGUE_MAX_AGE_MS,
+    // How many ids the last sync rejected as batch-only — the `:batch` twins
+    // that answer 404 on every synchronous call. NULL when the funnel is
+    // unknown (a catalogue persisted before this field existed); never 0, which
+    // would assert that none were found. See `_openrouterCatalogueFunnel`.
+    batchHidden: funnelLost('not_batch_only'),
+    funnel: Array.isArray(_openrouterCatalogueFunnel) ? _openrouterCatalogueFunnel : null,
   };
 }
 
@@ -2513,11 +2608,16 @@ export function measurementProvenance(provider, modelId) {
  * in memory. The user's models work this session either way; the only cost of a
  * failed write is that they work again after a restart.
  */
-function persistOpenRouterCatalogue(specs, syncedAt) {
+function persistOpenRouterCatalogue(specs, syncedAt, funnel) {
   try {
     writeFileAtomicSync(
       openRouterCataloguePath(),
-      JSON.stringify({ version: 1, syncedAt, specs }, null, 0),
+      // `funnel` is ADDITIVE and optional — `version` stays 1 because an older
+      // build reading this file ignores unknown keys, and a newer build reading
+      // an older file finds the key absent and reports UNKNOWN rather than
+      // zero. Bumping the version would make an older build discard a catalogue
+      // it can still use perfectly.
+      JSON.stringify({ version: 1, syncedAt, specs, ...(Array.isArray(funnel) ? { funnel } : {}) }, null, 0),
       'utf8',
     );
     return true;
@@ -2571,6 +2671,8 @@ export function restoreOpenRouterCatalogue() {
   const { admitted, refused } = setOpenRouterCatalogue(parsed.specs);
   _openrouterCatalogueSyncedAt = typeof parsed.syncedAt === 'string' ? parsed.syncedAt : null;
   _openrouterCatalogueSource = 'disk';
+  // Absent (an older file) leaves it null — UNKNOWN, not "nothing was rejected".
+  _openrouterCatalogueFunnel = Array.isArray(parsed.funnel) ? parsed.funnel : null;
   return { restored: true, admitted, refused, syncedAt: _openrouterCatalogueSyncedAt };
 }
 
@@ -2663,12 +2765,13 @@ export async function syncOpenRouterCatalogue(opts = {}) {
   const syncedAt = new Date().toISOString();
   _openrouterCatalogueSyncedAt = syncedAt;
   _openrouterCatalogueSource = 'network';
+  _openrouterCatalogueFunnel = Array.isArray(built.funnel) ? built.funnel : null;
 
   // Persist the SPECS, not the built entries: entries carry price GETTERS that
   // JSON.stringify would flatten into today's number, freezing a promotional
   // price past its expiry. Specs are plain data and are re-admitted through the
   // same factory on the way back in.
-  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt);
+  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt, built.funnel);
 
   return {
     syncedAt,
@@ -3013,7 +3116,13 @@ export function listOfferableModels(provider) {
  * Compared on the price billed TODAY (`input`/`output` are getters that resolve
  * a live promotion), because that is the number rendered beside the badge.
  */
-function compareOfferablePrice(a, b) {
+// EXPORTED since v3.45.0 so `GET /api/config/api-keys` can compute its
+// "cheapest measured" line with THIS comparator rather than a second one. The
+// route needs a cross-provider minimum, and the alternative — a `<` on
+// `.input` at the route — is precisely the coercion this function's docblock
+// was written about (a free entry's `null` compares as 0 and "works"). One
+// comparator, one answer, wherever the question is asked.
+export function compareOfferablePrice(a, b) {
   const rank = (e) => (e.free === true ? 0 : (typeof e.input === 'number' ? 1 : 2));
   const ra = rank(a), rb = rank(b);
   if (ra !== rb) return ra - rb;
@@ -3097,6 +3206,191 @@ export function isBuildLaneModel(provider, modelId) {
   // `suitability: 'chat-only'` on the wire, and the UI badges it as measured by
   // the user rather than by us. See isLocallyQualified for what it refuses.
   return isLocallyQualified(provider, modelId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE HAND-TYPED TABLES ARE HELD TO THE SAME RULES AS THE FETCHED ONES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Models that are OFFERED or used as a fallback rung despite not satisfying an
+ * eligibility rule — every one named, reasoned, and asserted by the suite.
+ *
+ * ── WHY A REGISTRY RATHER THAN A GAP ────────────────────────────────────────
+ *
+ * Until now the hand-typed tables were exempt from the filter STRUCTURALLY:
+ * nothing ran them through it. That is how `ibm-granite/granite-4.0-h-micro`
+ * came to be the app's sole OpenRouter fallback rung while failing the app's own
+ * context floor — a rung picks FOR the user, silently, on the day their model
+ * dies. The gap was invisible precisely because it was structural.
+ *
+ * An exemption is now a DECISION someone wrote down, with the rule it waives and
+ * the evidence that justifies waiving it. `auditStaticOffers` fails on any
+ * shortfall that is not listed here, so adding a model that falls short of a
+ * rule means either fixing the model or defending it in this object.
+ *
+ * ── THE ONE ENTRY, AND WHY IT IS DEFENSIBLE ─────────────────────────────────
+ *
+ * The build floor (131,072) is DERIVED as the measured requirement (~109,576
+ * tokens: an 85,000-token outline prompt plus the 24,576-token output budget)
+ * plus ~19.6% headroom, rounded up to the catalogue's own tier boundary. It is a
+ * PROXY, and its job is to keep out models nobody has run the real prompt
+ * through.
+ *
+ * granite-4.0-h-micro is not one of those. It was measured against this repo's
+ * real `buildOutlinePrompt`, nine times, and returned raw-parseable JSON in 9 of
+ * 9 with no hidden reasoning tokens. Its published 131,000 clears the MEASURED
+ * requirement by 21,424 tokens — 19.6% headroom, the same headroom the floor
+ * itself encodes — and falls 72 tokens short of the rounded boundary. Direct
+ * evidence from the actual workload outranks a proxy for the absence of it.
+ *
+ * The alternative was to lower the floor to 131,000 so this model passes, and
+ * that is exactly what must not happen: a threshold reverse-engineered to admit
+ * one favourite is no longer a derivation of anything, and the next reader
+ * cannot tell which. The floor keeps its derivation; the model keeps its
+ * measurement; the disagreement between them is written here.
+ *
+ * SCOPE IS ONE RULE AND ONE LANE. This waives `context_window` for the BUILD
+ * lane on this id and nothing else — it does not make the model exempt from
+ * JSON, price or alias rules, and it does not exempt any other model.
+ */
+export const STATIC_ELIGIBILITY_EXEMPTIONS = Object.freeze({
+  'ibm-granite/granite-4.0-h-micro': Object.freeze({
+    rule: 'context_window',
+    lane: 'build',
+    since: 'v3.45.0',
+    shortfallTokens: 72,
+    reason:
+      'Published context 131,000 against a derived build floor of 131,072 — 72 tokens short of the ' +
+      'rounded tier boundary, and 21,424 tokens ABOVE the measured requirement the floor is derived ' +
+      'from (85,000 prompt + 24,576 output). Measured 9/9 raw-parseable JSON on the real ingest ' +
+      'outline prompt, so there is direct evidence from the workload itself rather than a proxy for ' +
+      'its absence. Lowering the floor to admit it would destroy the floor\'s derivation; this ' +
+      'records the disagreement instead.',
+  }),
+});
+
+/**
+ * Run every HAND-TYPED offer and every fallback rung through the eligibility
+ * rules, and report anything that falls short without a named exemption.
+ *
+ * ── WHAT "FALLS SHORT" MEANS HERE, PRECISELY ────────────────────────────────
+ *
+ *   `pass`            the entry clears every rule `checkStaticEntry` can apply
+ *                     (see that function for which four, and why the other four
+ *                     cannot be applied to a hand-typed entry honestly).
+ *   `buildClaimed`    the entry's `suitability` admits it to the build lane —
+ *                     i.e. the app will let a user pin it to run ingest, Health
+ *                     and Compile. Read from the STATIC table only: a local
+ *                     qualification is per-installation and cannot be audited
+ *                     from here.
+ *   `buildSupported`  its published context clears the BUILD floor.
+ *
+ * A claim without support is the defect this exists to find: a model the app
+ * will happily run the 109,576-token ingest prompt through, on a window we have
+ * published as too small for it. Everything else is reported as data.
+ *
+ * FALLBACK RUNGS ARE AUDITED AS BUILD-LANE MODELS whatever their suitability,
+ * because a rung substitutes for the model that was ALREADY RUNNING — which may
+ * be an ingest — and the user is never asked. Every rung must also be an
+ * offerable static entry; a rung nobody could have picked is a model we have
+ * never held to any of this.
+ *
+ * PURE AND SIDE-EFFECT FREE: reads the frozen tables, calls a pure module, and
+ * returns a report. It is called by the suite and may be called by diagnostics;
+ * nothing in the request path depends on it.
+ *
+ * THROWS if the eligibility module is unavailable. Every other consumer of that
+ * module degrades gracefully because the app must keep working; this one is an
+ * AUDIT, and an audit that quietly reports "nothing wrong" because it could not
+ * run is worse than no audit at all.
+ *
+ * @param {object} [opts] passed through to `checkStaticEntry` (lets a suite
+ *   drive a different floor to prove the audit can actually fail).
+ */
+export function auditStaticOffers(opts) {
+  const check = eligibilityModule && eligibilityModule.checkStaticEntry;
+  if (typeof check !== 'function') {
+    throw new Error(
+      '[llm] auditStaticOffers cannot run: openrouter-eligibility.js does not export checkStaticEntry. ' +
+      'This is an audit — reporting "no findings" without having checked would be a false clean bill.',
+    );
+  }
+
+  // TEST-ONLY SEAM, defaulted to the real registry and null in production — the
+  // same shape and rationale as `compile.js`'s `opts.generateText`. It exists
+  // because `exemptionsUnused` is UNFALSIFIABLE against the shipped registry:
+  // there is currently exactly one exemption and it is used, so a mutation
+  // deleting the whole detector still reports the same empty array. A guard that
+  // no reachable input can exercise is a guard nobody can prove.
+  const exemptions = (opts && opts.exemptions && typeof opts.exemptions === 'object')
+    ? opts.exemptions : STATIC_ELIGIBILITY_EXEMPTIONS;
+
+  const rows = [];
+  const seen = new Map();
+  for (const provider of KNOWN_PROVIDERS) {
+    // The STATIC table, deliberately, not listOfferableModels(): fetched entries
+    // have already been through the full filter on the way in, and re-auditing
+    // them here would report the live catalogue's shape as a defect in a
+    // hand-typed table.
+    for (const entry of (OFFERABLE_MODELS[provider] || [])) {
+      const verdict = check(entry, opts);
+      const exemption = Object.hasOwn(exemptions, entry.id) ? exemptions[entry.id] : null;
+      const buildClaimed = entry.suitability !== 'chat-only';
+      const row = {
+        provider,
+        id: entry.id,
+        kind: 'offer',
+        pass: verdict.pass,
+        lanes: verdict.lanes,
+        buildClaimed,
+        buildSupported: verdict.lanes.build === true,
+        contextLength: entry.contextLength ?? null,
+        exemption,
+        reasons: verdict.reasons,
+      };
+      row.ok = verdict.pass && (!buildClaimed || row.buildSupported || exemption !== null);
+      rows.push(row);
+      seen.set(`${provider}:${entry.id}`, row);
+    }
+  }
+
+  const rungs = [];
+  for (const provider of KNOWN_PROVIDERS) {
+    for (const modelId of (FALLBACK_CHAINS[provider] || [])) {
+      const row = seen.get(`${provider}:${modelId}`) || null;
+      const exemption = Object.hasOwn(exemptions, modelId) ? exemptions[modelId] : null;
+      rungs.push({
+        provider,
+        id: modelId,
+        kind: 'rung',
+        // A rung that is not an offerable entry has never been through any of
+        // this — reported as its own failure rather than skipped.
+        offered: row !== null,
+        pass: row ? row.pass : false,
+        lanes: row ? row.lanes : { chat: false, build: false },
+        buildSupported: row ? row.buildSupported : false,
+        exemption,
+        ok: row !== null && row.pass && (row.buildSupported || exemption !== null),
+        reasons: row ? row.reasons : [],
+      });
+    }
+  }
+
+  const failures = [...rows, ...rungs].filter(r => !r.ok);
+  return {
+    offers: rows,
+    rungs,
+    failures,
+    // Deduped by id: one model can appear twice (as an offer AND as a rung) and
+    // that is ONE waiver being relied on, not two.
+    exemptionsUsed: [...new Set([...rows, ...rungs].filter(r => r.exemption !== null).map(r => r.id))],
+    // Exemptions listed but not needed by anything. A stale waiver is not
+    // harmless: it is a standing permission for a rule to be broken by whatever
+    // takes that id next.
+    exemptionsUnused: Object.keys(exemptions)
+      .filter(id => ![...rows, ...rungs].some(r => r.id === id && r.exemption !== null)),
+  };
 }
 
 /**

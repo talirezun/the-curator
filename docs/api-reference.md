@@ -2976,8 +2976,31 @@ Returns masked API key status, the active provider, and the model-picker catalog
   "hasGeminiKey": true,
   "hasAnthropicKey": false,
   "hasOpenrouterKey": false,
+  "connected": { "gemini": true, "anthropic": false, "openrouter": false },
   "activeProvider": "gemini",
   "activeModel": "gemini-2.5-flash-lite",
+  "build": {
+    "model": "gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "source": "default",
+    "facts": {
+      "contextLength": 1048576,
+      "priceIn": 0.10,
+      "priceOut": 0.40,
+      "measured": true,
+      "thinks": false,
+      "outlineNote": "plans 18–20 pages per source"
+    },
+    "cheapestMeasured": {
+      "model": "gemini-2.5-flash-lite",
+      "provider": "gemini",
+      "priceIn": 0.10,
+      "priceOut": 0.40,
+      "same": true
+    }
+  },
+  "catalogueCounts": { "total": 7, "canBuild": 6, "measured": 7, "free": 0, "batchHidden": null },
+  "chat": { "startsOn": { "model": "gemini-2.5-flash-lite", "provider": "gemini" }, "count": 7 },
   "models": {
     "gemini": "gemini-2.5-flash-lite",
     "anthropic": "claude-haiku-4-5",
@@ -3134,10 +3157,55 @@ re-orders or removes one.
 - `minRunsToQualify` — the floor for promotion (**9**). Fewer completed runs are measured and stored
   honestly, with the run count, and qualify nothing.
 
+### The Providers-page fields (v3.45.0)
+
+All additive; every existing field above is unchanged. Every one is computed **on the server**,
+because each is a derived money fact and a client re-deriving it would be a second opinion about
+what the user is paying.
+
+- `connected` — `{ gemini, anthropic, openrouter }` booleans. The **same expression** as the
+  `hasXKey` fields beside them, in a shape a client can iterate a provider list over. The older
+  names are pinned by an earlier contract and cannot be removed; both are derived once, in one
+  place, so they cannot disagree.
+- `build` — what actually builds the wiki right now, `null` when no provider resolves.
+  - `source` — `'default'` | `'selected'` | `'env'` | `'fallback'`. `'fallback'` ranks first: it is
+    the one case where the model in force is not the model anybody chose, and it describes what is
+    actually being billed. `'env'` means `LLM_MODEL` is overriding everything.
+  - `facts` — read off the catalogue entry, never re-typed. **Every field is `null` when the entry
+    does not carry it**: absent means UNPUBLISHED or UNMEASURED, and a zero would state a
+    measurement nobody took. `outlineNote` is a composed one-liner (`"plans about 23 pages per
+    source · about 48s per call"`), built from the promoted measurement *fields* rather than by
+    regexing a number back out of the model's `note` prose; a clause whose field is absent is
+    omitted, and `null` means nothing was measured at all.
+  - `cheapestMeasured` — the cheapest model, across the providers the user has **connected**, that
+    is both build-lane and measured, or `null`. Derived from the **whole, unfiltered,
+    price-ordered** population — never index 0 of a display list, which is precisely the defect the
+    router audit found in the client's old `cheapest` badge (under *most expensive first* it badged
+    the dearest row). `same: true` means it IS the model already in force. ⚠ `priceIn`/`priceOut`
+    are `null` for a **free** model — free is a price we know exactly and has no per-token figure;
+    render it as free, never as *unpriced* and never as `$0.00`.
+- `catalogueCounts` — `{ total, canBuild, measured, free, batchHidden }`, counted over the same
+  key-gated population `offerable` serialises, with no sort, filter or cap applied first (reporting
+  a CAP as a MEASUREMENT is a defect this project has shipped twice). `batchHidden` is **not** a
+  count of that population — those `:batch` ids were rejected before admission — it comes from the
+  last catalogue sync's own funnel and is **`null` when unknown** (a catalogue persisted by an older
+  build carries no funnel). Null must render as unknown: `0` would assert that no batch-only id was
+  found, which was false for 60 of them on the 2026-09-02 catalogue.
+- `chat` — `{ startsOn: { model, provider } | null, count }`. `startsOn` is a **readout** of the
+  engine's own resolution (the pair that answers if the user sends a message without touching the
+  composer's picker), not a second derivation of the precedence ladder. `count` is the whole
+  connected population: chat has no build-lane gate, deliberately.
+
 ## POST /api/config/api-keys
 
-Save API keys (partial update — only overwrites provided fields). Saving a non-empty key normally
-also makes that provider active ("last-saved-wins").
+Save API keys (partial update — only overwrites provided fields).
+
+**Since v3.45.0 a key save sets `activeProvider` ONLY when nothing is active yet** — the first key
+you connect takes the build lane; every later save leaves it where it is. `POST
+/api-keys/build-model` is the only writer afterwards. The policy is one constant,
+`ACTIVE_PROVIDER_DERIVED` in `src/brain/config.js`; `false` restores v2.4.2 *last-saved-wins*
+exactly, with no field or storage change. See
+[model-lifecycle.md](model-lifecycle.md#saving-a-key-does-not-change-which-model-builds-your-wiki-v3450).
 
 ```json
 // Request
@@ -3150,9 +3218,22 @@ also makes that provider active ("last-saved-wins").
   "ok": true,
   "activeProvider": "gemini",
   "activeModel": "gemini-2.5-flash-lite",
-  "skippedActivation": []
+  "skippedActivation": [],
+  "activationDeferred": [{ "provider": "anthropic", "activeProvider": "gemini" }],
+  "activationPolicy": "derived"
 }
 ```
+
+- `activationPolicy` — `"derived"` (v3.45.0+) or `"last-saved-wins"`. Reported on **every** save,
+  never only when interesting: a client that must distinguish a deferring build from an older
+  always-switching one cannot do it from an absent field, and inferring the policy from behaviour is
+  how a client ends up asserting a rule the server does not have.
+- `activationDeferred` — an array of `{ provider, activeProvider }`. An entry means the key **was
+  saved**, that provider **could** have taken the build lane, and deliberately did not because one
+  is already set. It is a successful policy, not a failure, and is kept **out of**
+  `skippedActivation` for that reason — that array means *could not be activated* and renders under
+  a warning icon; announcing a working policy as a warning on every second key save trains users to
+  ignore the array that carries the real failure.
 
 - `skippedActivation` — an array of `{ provider, reason }`. An entry means the key
   **was saved** but that provider did **not** become active, because it has no model available for
@@ -3161,23 +3242,106 @@ also makes that provider active ("last-saved-wins").
   Without it the user sees a successful save and an unchanged active provider with no reason given,
   which reads as the app ignoring the click.
   - ⚠ **It is empty for every provider that ships today.** All three — `gemini`, `anthropic` and
-    `openrouter` — now have a build-lane model, so saving any of their keys **activates** that
-    provider under ordinary last-saved-wins. `openrouter` produced an entry here until its build
-    lane was measured; it no longer does. Treat this array as a channel that may legitimately
-    never carry anything, and **do not** rely on it to warn a user that saving a key changed their
-    active provider — saving a key changing the active provider is the *normal* path, and the
-    honest signal for it is `activeProvider` in the same response.
+    `openrouter` — have a build-lane model, so none of them is refused for that reason. Treat this
+    array as a channel that may legitimately never carry anything. It is **not** the signal that a
+    save left the build lane alone — that is `activationDeferred` above, and the two mean different
+    things: *could not* versus *deliberately did not*.
 
-  This is the one documented exception to last-saved-wins, and it exists because activating a
-  provider that cannot build silently breaks ingest, Health and Compile. See
+  It exists because activating a provider that cannot build silently breaks ingest, Health and
+  Compile. See
   [model-lifecycle.md → OpenRouter](model-lifecycle.md#the-state-of-the-build-lane-in-this-release).
 
 ## POST /api/config/api-keys/disconnect
 
-Clear one provider's stored key. Body: `{ "provider": "<provider>" }`. If the cleared key was
-active, active moves to the first remaining provider **in provider order** that still holds a saved
-key, or to `null` when none does. Config keys only — a lingering `.env` key does not hold a
-provider active after the user disconnected it (the v3.0.13 rule).
+Clear one provider's stored key. Body: `{ "provider": "<provider>" }`. Config keys only — a
+lingering `.env` key does not hold a provider active after the user disconnected it (the v3.0.13
+rule).
+
+**If the cleared key was the active one, the build lane moves — and since v3.45.0 it moves by
+PRICE rather than by position in a hardcoded array.** The destination is the cheapest provider still
+connected that has a **measured build-lane model**, falling back to provider order when there is
+nothing to order. The response says so, because silently changing what a user is billed for and then
+not mentioning it is the surprise this release exists to remove, not to relocate:
+
+```json
+{
+  "ok": true,
+  "activeProvider": "openrouter",
+  "activeModel": "upstage/solar-pro4",
+  "buildLaneMoved": true,
+  "previousActive": "gemini",
+  "reason": "cheapest_measured"
+}
+```
+
+- `reason` — `"cheapest_measured"` (price ordering ran and governed), `"first_connected"` (there was
+  nothing to order, or the ordering could not be trusted), `"all_refused"` (candidates existed and
+  every one was refused the build lane), `"none_left"` (no candidate at all), or `"not_active"` (the
+  disconnected provider was not the one building, so nothing moved).
+- `buildLaneMoved` is `false` whenever the disconnected provider was not the active one.
+
+## GET /api/config/models/new
+
+**Free.** What your connected providers list that this app has no record of. Every endpoint behind
+it is a *list* endpoint: no tokens, no generation, no charge. Cached for 24 hours in a sidecar;
+`?force=1` bypasses the cache.
+
+**It never offers anything.** The result is a list of ids and the date each was first seen. Nothing
+writes to the offer table, and there is deliberately no companion `POST` that would: adding a model
+requires a measurement, which is a human act. "Not offered" means **unmeasured** — never better, and
+never worse.
+
+```json
+{
+  "ok": true,
+  "checkedAt": "2026-09-02T13:00:00.000Z",
+  "cached": false,
+  "ageMs": 0,
+  "maxAgeMs": 86400000,
+  "providers": {
+    "anthropic": {
+      "connected": true,
+      "checked": true,
+      "error": null,
+      "listed": 11,
+      "rejectedUnoffered": null,
+      "suppressed": { "movingAlias": 0, "belowChatFloor": 0 },
+      "models": [
+        { "id": "claude-fable-5-1", "label": "Claude Fable 5.1",
+          "contextLength": 1000000, "created": "2026-08-28T00:00:00Z",
+          "firstSeen": "2026-09-02T13:00:00.000Z" }
+      ]
+    },
+    "gemini": { "connected": true, "checked": true, "error": null, "listed": 38, "rejectedUnoffered": null, "models": [] },
+    "openrouter": { "connected": false, "checked": false, "error": null, "listed": null, "rejectedUnoffered": null, "models": [] }
+  }
+}
+```
+
+- **`connected` and `checked` must BOTH be read.** `checked: false` with an empty `models` means
+  *we could not ask* — which is not the same fact as *nothing new* and must never render as one.
+  A failing provider carries `error`; a disconnected one carries `connected: false` and no error.
+- `firstSeen` is **sticky**: an id already known keeps the date it was first observed across
+  refreshes. Restamping everything with today's date would make every id look new forever.
+- `suppressed` — `{ movingAlias, belowChatFloor }`, ids dropped because the app would refuse them
+  anyway: a `*-latest` moving alias (the offer factory refuses those by name) or a window under the
+  32,768-token admission floor. **Counted, never silently dropped** — `listed − models.length`
+  is fully accounted for by these two numbers plus what the app already has a record of. Measured
+  live on 2026-09-02: Gemini listed 38, of which 31 were unrecorded and 6 of those unactionable
+  (3 aliases, 3 text-to-speech models at 8,192 tokens). An **unknown** context length never
+  suppresses: unknown is not small, and over-reporting is the safe direction.
+- **Anthropic and Gemini** report any listed id the app has no record of, where "record" means
+  `OFFERABLE_MODELS` ∪ `AWAITING_MEASUREMENT` ∪ the provider default ∪ its fallback chain — so a
+  model somebody already looked at and deliberately deferred is not re-raised every day.
+- **OpenRouter asks a narrower question**, because its catalogue is synced wholesale: it reports
+  only ids that **pass** the eligibility filter and are still not offered, i.e. the synced catalogue
+  is stale. The rejected-and-unoffered population is reported as the count `rejectedUnoffered` so the
+  arithmetic adds up without listing ~200 correctly-rejected ids.
+- **Known false positive, kept deliberately:** Anthropic lists dated ids
+  (`claude-haiku-4-5-20251001`) while the app stores the undated alias, so the dated form is
+  reported as unknown. Stripping a trailing `-YYYYMMDD` would be a guess about another vendor's id
+  scheme, and a wrong strip would *suppress* a genuinely new model — the one thing this check exists
+  to catch. Over-reporting is the safe direction.
 
 ## POST /api/config/api-keys/active
 

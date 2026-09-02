@@ -107,7 +107,8 @@ import {
   RULE_ORDER,
   DEFAULT_ELIGIBILITY_OPTS,
   APP_OUTPUT_FLOOR_TOKENS,
-  APP_CONTEXT_FLOOR_TOKENS,
+  APP_CONTEXT_FLOOR_ADMISSION_TOKENS,
+  APP_CONTEXT_FLOOR_BUILD_TOKENS,
   APP_INGEST_PROMPT_TOKENS_APPROX,
 } from '../src/brain/openrouter-eligibility.js';
 
@@ -359,15 +360,23 @@ ok(SYNTHETIC_MODELS.some(m => m.expiration_date === ''),
 ok(SYNTHETIC_MODELS.some(m => m.expiration_date === '2026-01-01'),
   '⟨POSITIVE CONTROL⟩ corpus contains an ALREADY-PAST expiration_date');
 // Positive control for the context-field change: the corpus must contain models
-// that DISAGREE across the two fields in BOTH directions relative to the floor,
-// or the field switch could not be shown to matter.
-ok(REAL_MODELS.some(m => m.context_length >= APP_CONTEXT_FLOOR_TOKENS
-    && m.top_provider.context_length !== null && m.top_provider.context_length < APP_CONTEXT_FLOOR_TOKENS),
-  '⟨POSITIVE CONTROL⟩ corpus contains a model that STRADDLES the floor across the two context fields');
+// that DISAGREE across the two fields in BOTH directions relative to a floor, or
+// the field switch could not be shown to matter.
+//
+// MEASURED AGAINST THE BUILD FLOOR since v3.45.0, and the reason is itself a
+// finding: at the ADMISSION floor (32,768) NO record in this corpus straddles,
+// so the same control written against that floor would be VACUOUS — it would
+// pass by finding nothing to disagree about. The build floor is where the two
+// fields decide a verdict on this corpus (unslopnemo 1,024,000 vs 32,768,
+// llama-3.3-70b, qwen3-30b), which is exactly the lane the choice of field
+// matters most for.
+ok(REAL_MODELS.some(m => m.context_length >= APP_CONTEXT_FLOOR_BUILD_TOKENS
+    && m.top_provider.context_length !== null && m.top_provider.context_length < APP_CONTEXT_FLOOR_BUILD_TOKENS),
+  '⟨POSITIVE CONTROL⟩ corpus contains a model that STRADDLES the build floor across the two context fields');
 ok(REAL_MODELS.some(m => m.top_provider.context_length !== null
     && m.context_length !== m.top_provider.context_length
-    && m.top_provider.context_length >= APP_CONTEXT_FLOOR_TOKENS),
-  '⟨POSITIVE CONTROL⟩ …and one that disagrees while clearing the floor on BOTH');
+    && m.top_provider.context_length >= APP_CONTEXT_FLOOR_BUILD_TOKENS),
+  '⟨POSITIVE CONTROL⟩ …and one that disagrees while clearing the build floor on BOTH');
 ok(REAL_MODELS.some(m => Array.isArray(m.supported_parameters) && m.supported_parameters.length === 0),
   '⟨POSITIVE CONTROL⟩ corpus contains a model with supported_parameters === [] (empty array, not absent)');
 ok(REAL_MODELS.some(m => m.pricing.prompt === '-1'),
@@ -608,8 +617,24 @@ section('6. Rule 5 — context window, and the optimistic-field disagreement');
 const granite = byId(REAL_MODELS, 'ibm-granite/granite-4.0-h-micro');
 ok(granite.context_length === 131000, '⟨PREMISE⟩ granite-4.0-h-micro publishes 131000');
 const xGran = checkContextWindow(granite, {});
-ok(xGran.pass === false, '…so it fails the 200000 floor');
-ok(firstCode(xGran) === REASON_CODES.CONTEXT_BELOW_FLOOR, '…as CONTEXT_BELOW_FLOOR');
+// REVERSED IN v3.45.0, and the reversal is the release. Under the old single
+// 200,000 parity floor this record FAILED — and it is the app's own sole
+// OpenRouter fallback rung, which survived only because hand-typed entries
+// bypassed this filter entirely. It now PASSES admission (131,000 clears the
+// 32,768 chat floor comfortably) and is classified OUT of the build lane by 72
+// tokens, which is a fact stated on the row rather than a model made invisible.
+ok(xGran.pass === true,
+  '…so it PASSES the admission floor (32,768) — it was the old parity floor, not any measured need, that ejected it');
+ok(xGran.facts.lanes.chat === true, '…and is CHAT-eligible');
+ok(xGran.facts.lanes.build === false,
+  '…while falling 72 tokens short of the 131,072 build floor — a lane classification, not a rejection');
+ok(xGran.reasons.length === 0,
+  '…with NO rejection reason at all: the build floor is a facet and contributes nothing to `reasons`');
+// The below-floor code is still reachable and still means what it says — proven
+// on the same record against a floor it genuinely fails.
+const xGranHigh = checkContextWindow(granite, { contextFloorTokens: 200000 });
+ok(xGranHigh.pass === false && firstCode(xGranHigh) === REASON_CODES.CONTEXT_BELOW_FLOOR,
+  '⟨CONTROL⟩ …and the same record still reports CONTEXT_BELOW_FLOOR when the GATE is raised to 200,000');
 
 const zeroCtx = byId(SYNTHETIC_MODELS, 'synthetic/zero-context');
 ok(checkContextWindow(zeroCtx, {}).reasons[0].code === REASON_CODES.CONTEXT_ZERO,
@@ -617,24 +642,46 @@ ok(checkContextWindow(zeroCtx, {}).reasons[0].code === REASON_CODES.CONTEXT_ZERO
 ok(checkContextWindow({ id: 'x/null-ctx', context_length: null, top_provider: {} }, {}).reasons[0].code
   === REASON_CODES.CONTEXT_UNKNOWN, 'a null context_length is CONTEXT_UNKNOWN');
 
-// The 200,000 default is a PARITY rule with the app's shipped Anthropic default.
+// ── THE FLOORS ARE DERIVED FROM THE APP'S BUDGETS, NOT FROM A SHIPPED MODEL ──
+// Until v3.45.0 the single 200,000 floor was a PARITY rule with the published
+// context of `claude-haiku-4.5`, and that assertion lived here. Parity to a
+// model we happen to ship is not a measurement of what anything needs: it was
+// simultaneously too high for the build lane (~109,576 tokens) and far too high
+// for chat (~26,000), and it ejected the app's own OpenRouter fallback rung.
+// What is asserted now is the ARITHMETIC each floor claims in its docblock.
+const MEASURED_BUILD_NEED = APP_INGEST_PROMPT_TOKENS_APPROX + APP_OUTPUT_FLOOR_TOKENS;
+ok(MEASURED_BUILD_NEED === 109576,
+  '⟨PREMISE⟩ the measured build working set is 85,000 prompt + 24,576 output = 109,576 tokens');
+ok(APP_CONTEXT_FLOOR_BUILD_TOKENS > MEASURED_BUILD_NEED,
+  'the build floor sits ABOVE the measured requirement — a floor below it would admit models that cannot finish an outline');
+ok(APP_CONTEXT_FLOOR_BUILD_TOKENS / MEASURED_BUILD_NEED < 1.25,
+  '…and not far above it: the headroom is ~19.6%, not a parity rule borrowed from whatever we happen to ship');
+ok(APP_CONTEXT_FLOOR_ADMISSION_TOKENS < APP_CONTEXT_FLOOR_BUILD_TOKENS,
+  'the admission floor is the LOWER of the two — the chat lane is the one every entry is admitted into');
 const haiku = byId(REAL_MODELS, 'anthropic/claude-haiku-4.5');
-ok(haiku.context_length === APP_CONTEXT_FLOOR_TOKENS,
-  'the default context floor equals claude-haiku-4.5\'s published context (the parity derivation)');
 ok(evaluateModel(haiku).eligible === true,
-  '…and claude-haiku-4.5 itself is eligible, so the floor cannot exclude the model it is derived from');
+  'claude-haiku-4.5 — the app\'s shipped Anthropic default — is eligible');
+ok(evaluateModel(haiku).lanes.build === true,
+  '…and clears the BUILD floor, so the model the app ingests with is not classified out of its own lane');
 
 // ── The two context fields disagree on real models, and the headline one is the
 //    OPTIMISTIC max-across-providers value. The default now reads the other one.
 const unslop = byId(REAL_MODELS, 'thedrummer/unslopnemo-12b');
 ok(unslop.context_length === 1024000 && unslop.top_provider.context_length === 32768,
   '⟨PREMISE⟩ unslopnemo-12b: context_length 1024000 vs top_provider 32768 — a factor of 31');
-ok(checkContextWindow(unslop, { contextField: CONTEXT_FIELDS.HEADLINE }).pass === true,
-  'on the HEADLINE field unslopnemo-12b PASSES — that figure is the max across providers');
-ok(checkContextWindow(unslop, {}).pass === false,
-  '…and FAILS on the DEFAULT field, because the default is now top_provider.context_length');
-ok(firstCode(checkContextWindow(unslop, {})) === REASON_CODES.CONTEXT_BELOW_FLOOR,
-  '…as CONTEXT_BELOW_FLOOR, computed from 32768 rather than 1024000');
+// SINCE v3.45.0 THE FIELD CHOICE DECIDES THE BUILD LANE RATHER THAN ADMISSION,
+// because 32,768 is exactly the admission floor. That makes the demonstration
+// sharper, not weaker: ONE record, one pair of published figures, and the choice
+// of field is the whole difference between "may run your ingest" and "may not".
+ok(checkContextWindow(unslop, { contextField: CONTEXT_FIELDS.HEADLINE }).facts.lanes.build === true,
+  'on the HEADLINE field unslopnemo-12b is BUILD-eligible — that figure is the max across providers');
+ok(checkContextWindow(unslop, {}).facts.lanes.build === false,
+  '…and is NOT on the DEFAULT field, because the default is top_provider.context_length');
+ok(checkContextWindow(unslop, {}).pass === true && checkContextWindow(unslop, {}).facts.lanes.chat === true,
+  '…while still being admitted for CHAT at exactly the 32,768 floor — the boundary is inclusive');
+ok(firstCode(checkContextWindow(unslop, { contextFloorTokens: APP_CONTEXT_FLOOR_BUILD_TOKENS }))
+  === REASON_CODES.CONTEXT_BELOW_FLOOR,
+  '⟨CONTROL⟩ …and reports CONTEXT_BELOW_FLOOR from 32768 rather than 1024000 when the build figure is used as a GATE');
 ok(checkContextWindow(unslop, {}).facts.modelLevel === 32768,
   '…and facts.modelLevel reports the value actually read, not the headline');
 ok(DEFAULT_ELIGIBILITY_OPTS.contextField === CONTEXT_FIELDS.TOP_PROVIDER,
@@ -668,10 +715,23 @@ ok(checkContextWindow(byId(REAL_MODELS, 'upstage/solar-pro4'),
   '…while per-endpoint data IS a guarantee (so the two flags above are not unconditionally false)');
 
 // An UNRECOGNISED field token must not silently select the optimistic field.
+//
+// MEASURED ON THE VERDICT, NOT ON A FIELD NAME. This used to assert
+// `pass === false`, which stopped discriminating the moment the admission floor
+// dropped below unslopnemo's conservative figure — a green assertion that had
+// quietly become a tautology. What it is really claiming is that a typo lands on
+// the same answer as the CONSERVATIVE token and a different one from the
+// OPTIMISTIC token, so both halves are now asserted directly. On this record the
+// two tokens genuinely disagree (build true vs false), which is what makes the
+// comparison capable of failing at all.
+const conservativeBuild = checkContextWindow(unslop, { contextField: CONTEXT_FIELDS.TOP_PROVIDER }).facts.lanes.build;
+const optimisticBuild = checkContextWindow(unslop, { contextField: CONTEXT_FIELDS.HEADLINE }).facts.lanes.build;
+ok(conservativeBuild !== optimisticBuild,
+  '⟨ANTI-VACUITY⟩ the two recognised tokens give DIFFERENT verdicts on unslopnemo-12b, so "resolves conservatively" is falsifiable');
 for (const bad of ['top_provider', 'context-length', '', null, 42, {}]) {
   const label = JSON.stringify(bad);
   const c = checkContextWindow(unslop, { contextField: bad });
-  ok(c.pass === false,
+  ok(c.facts.lanes.build === conservativeBuild && c.facts.lanes.build !== optimisticBuild,
     'contextField ' + label + ' resolves CONSERVATIVELY — a typo never widens the eligible set');
   ok(c.risks.some(r => r.code === RISK_CODES.CONTEXT_FIELD_UNRECOGNISED),
     '…and raises CONTEXT_FIELD_UNRECOGNISED for ' + label);
@@ -899,15 +959,35 @@ ok(stage('json_mode').lost === 2, 'json_mode loses exactly 2 (fusion, ling-3.0-f
 ok(stage('knowable_price').lost === 1, 'knowable_price loses exactly 1 (openrouter/auto)');
 ok(stage('not_moving_alias').lost === 2, 'not_moving_alias loses exactly 2 (gpt-chat-latest, ~claude-haiku-latest)');
 ok(stage('output_ceiling').lost === 2, 'output_ceiling loses exactly 2 (openrouter/free, nemotron-3-ultra)');
-ok(stage('context_window').lost === 4,
-  'context_window loses exactly 4 (granite, llama-3.3-70b, and — new on the top_provider default — unslopnemo-12b and qwen3-30b-a3b-instruct-2507)');
-ok(stage('context_window').lostIds.includes('thedrummer/unslopnemo-12b')
-   && stage('context_window').lostIds.includes('qwen/qwen3-30b-a3b-instruct-2507'),
-  '…naming the two models the context-field change is responsible for');
-ok(filterCatalogue(REAL_MODELS, { contextField: CONTEXT_FIELDS.HEADLINE })
-     .funnel.find(f => f.rule === 'context_window').lost === 2,
-  '…and the SAME corpus loses only 2 there under the headline field, so the delta is the field, not the corpus');
-ok(run.eligible.length === 15, 'the fixture catalogue yields 15 eligible models under the default (clock-free) options');
+// ── THE CONTEXT GATE NOW REJECTS NOTHING ON THIS CORPUS, AND THAT IS THE ────
+//    MEASUREMENT, NOT A HOLE. Under the old single 200,000 floor this stage lost
+//    4 of 26; at the 32,768 admission floor it loses 0, because every record here
+//    can hold a chat turn. The models are not gone — they moved from "rejected"
+//    to "chat yes, build no", which is a partition rather than a loss and is
+//    asserted as one below. The stage's ability to reject is proven separately,
+//    by raising the gate, so this zero is a reading and not an untested rule.
+ok(stage('context_window').lost === 0,
+  'context_window loses 0 at the 32,768 admission floor — every record here can hold a chat turn');
+ok(run.lanes.chat === 19 && run.lanes.build === 15,
+  '…and the eligible set PARTITIONS 19 chat / 15 build, so what the old floor rejected is now classified');
+const buildIneligible = run.eligible.filter(e => e.lanes.build === false).map(e => e.id);
+ok(buildIneligible.length === 4
+   && buildIneligible.includes('ibm-granite/granite-4.0-h-micro')
+   && buildIneligible.includes('thedrummer/unslopnemo-12b')
+   && buildIneligible.includes('meta-llama/llama-3.3-70b-instruct')
+   && buildIneligible.includes('qwen/qwen3-30b-a3b-instruct-2507'),
+  '…naming exactly the four the build floor excludes — the same set the old gate REJECTED outright');
+ok(run.lanes.buildUnknown === 0,
+  'no eligible model has an UNKNOWN window in the shipping config — the admission gate rejects those first');
+// The gate is still a gate. Raised to the old value it reproduces the old loss
+// on the same corpus, so "loses 0" above is a property of the floor, not of a
+// rule that has stopped running.
+const runHighGate = filterCatalogue(REAL_MODELS, { contextFloorTokens: 200000 });
+ok(runHighGate.funnel.find(f => f.rule === 'context_window').lost === 4,
+  '⟨CONTROL⟩ raising the GATE back to 200,000 loses 4 again — the rule is live, the floor moved');
+ok(filterCatalogue(REAL_MODELS, { contextField: CONTEXT_FIELDS.HEADLINE }).lanes.build === 18,
+  '…and the SAME corpus classifies 18 into the build lane under the headline field, so the delta is the field, not the corpus');
+ok(run.eligible.length === 19, 'the fixture catalogue yields 19 eligible models under the default (clock-free) options');
 
 // ── The expiry stage is INERT without a clock, and that is the DEFAULT. ───────
 // `opts.now` defaults to null and this module may not read a clock, so the
@@ -920,8 +1000,8 @@ const runClocked = filterCatalogue(REAL_MODELS, { now: SNAPSHOT_DAY });
 const stageC = name => runClocked.funnel.find(f => f.rule === name);
 ok(stageC('not_expiring').lost === 1 && stageC('not_expiring').lostIds.includes('moonshotai/kimi-k2.5'),
   '…while injecting a clock makes it lose exactly 1 (kimi-k2.5), so the stage is live, not dead');
-ok(runClocked.eligible.length === 14,
-  '…and the clocked eligible set is one smaller (15 → 14)');
+ok(runClocked.eligible.length === 18,
+  '…and the clocked eligible set is one smaller (19 → 18)');
 ok(runClocked.eligible.length < run.eligible.length,
   '…strictly smaller: supplying a clock can only ever remove models here, never add them');
 // Every OTHER stage must be identical with and without a clock — the clock must
@@ -932,7 +1012,14 @@ for (const name of ['json_mode', 'knowable_price', 'not_moving_alias', 'output_c
 }
 
 // Every stage must lose SOMETHING, or a rule could stop working unnoticed.
-for (const name of ['json_mode', 'knowable_price', 'not_moving_alias', 'output_ceiling', 'context_window']) {
+//
+// `context_window` LEFT THIS LIST IN v3.45.0 and did not simply get deleted from
+// it: at the shipping admission floor it legitimately loses 0 on this corpus, so
+// keeping it here would have forced either a weakened floor or a fabricated
+// fixture. Its non-vacuity is proven above instead, by raising the GATE to
+// 200,000 and watching the same corpus lose 4 — a stronger check than "loses at
+// least one", because it names the number.
+for (const name of ['json_mode', 'knowable_price', 'not_moving_alias', 'output_ceiling']) {
   ok(stage(name).lost > 0, `⟨NON-VACUITY⟩ stage ${name} loses at least one model in this corpus`);
 }
 ok(stageC('not_expiring').lost > 0, '⟨NON-VACUITY⟩ the expiry stage loses at least one model once a clock is supplied');
@@ -952,7 +1039,9 @@ ok(runEps.eligible.length < run.eligible.length,
   'supplying endpoint data STRICTLY shrinks the eligible set on this corpus');
 ok(runEps.opts.endpointDataSupplied === true, 'the run records that endpoint data was supplied');
 ok(run.opts.endpointDataSupplied === false, '…and records its absence otherwise');
-ok(run.opts.contextFloorTokens === APP_CONTEXT_FLOOR_TOKENS, 'the run echoes the thresholds it used');
+ok(run.opts.contextFloorTokens === APP_CONTEXT_FLOOR_ADMISSION_TOKENS
+  && run.opts.buildContextFloorTokens === APP_CONTEXT_FLOOR_BUILD_TOKENS,
+  'the run echoes BOTH thresholds it used — the gate and the lane facet');
 
 ok(filterCatalogue(null).total === 0, 'filterCatalogue(null) is empty, not a throw');
 ok(filterCatalogue([null, 5, 'x']).eligible.length === 0, 'malformed entries are rejected, not thrown on');
@@ -1222,7 +1311,8 @@ ok(Object.isFrozen(DEFAULT_ELIGIBILITY_OPTS), 'DEFAULT_ELIGIBILITY_OPTS is froze
 ok(Object.isFrozen(REASON_CODES) && Object.isFrozen(RISK_CODES) && Object.isFrozen(RULE_ORDER),
   'the exported code tables are frozen');
 ok(DEFAULT_ELIGIBILITY_OPTS.outputFloorTokens === APP_OUTPUT_FLOOR_TOKENS
-  && DEFAULT_ELIGIBILITY_OPTS.contextFloorTokens === APP_CONTEXT_FLOOR_TOKENS
+  && DEFAULT_ELIGIBILITY_OPTS.contextFloorTokens === APP_CONTEXT_FLOOR_ADMISSION_TOKENS
+  && DEFAULT_ELIGIBILITY_OPTS.buildContextFloorTokens === APP_CONTEXT_FLOOR_BUILD_TOKENS
   && DEFAULT_ELIGIBILITY_OPTS.promptTokens === APP_INGEST_PROMPT_TOKENS_APPROX,
   'the defaults object uses the documented named constants');
 ok(DEFAULT_ELIGIBILITY_OPTS.requireTextOutput === false,
@@ -1235,7 +1325,8 @@ ok(DEFAULT_ELIGIBILITY_OPTS.now === null,
 ok(DEFAULT_ELIGIBILITY_OPTS.expirySentinelDays > DEFAULT_ELIGIBILITY_OPTS.expiryHorizonDays,
   '…and the sentinel threshold sits above the horizon, so the two cannot overlap in the shipped config');
 // filterCatalogue must echo every threshold it used, or a funnel is unreadable.
-for (const key of ['outputFloorTokens', 'contextFloorTokens', 'promptTokens', 'contextField',
+for (const key of ['outputFloorTokens', 'contextFloorTokens', 'buildContextFloorTokens',
+                   'promptTokens', 'contextField',
                    'expiryHorizonDays', 'expirySentinelDays', 'requireTextOutput']) {
   ok(Object.hasOwn(filterCatalogue([], {}).opts, key),
     `the funnel echoes the ${key} it ran with`);

@@ -263,6 +263,45 @@ function providerFields(provider) {
   return PROVIDER_KEY_FIELDS[provider];
 }
 
+/**
+ * ── WHO MAY MOVE THE BUILD LANE (the "active provider" question) ────────────
+ *
+ * `activeProvider` + `selectedModels[activeProvider]` IS, on disk, the storage
+ * for "whose model builds the wiki" — `POST /api-keys/build-model`'s own
+ * docblock records that a second `buildModel` field was rejected as a second
+ * source of truth. So whoever writes this field is choosing what the user pays
+ * for on their next ingest.
+ *
+ * TRUE (Option B, the shipped policy) — ACTIVE IS DERIVED, NOT SET:
+ *   • Saving a key sets `activeProvider` ONLY when nothing is active yet. The
+ *     first key you connect becomes the build lane, which is helpful and is the
+ *     only moment there is no answer to overwrite.
+ *   • After that, exactly ONE writer moves it: choosing a build model.
+ *     Connecting a second key SAVES the key and leaves the bill where it is.
+ *   • Disconnecting the active provider falls to the CHEAPEST MEASURED provider
+ *     still connected, and the response says which and why.
+ *
+ * FALSE — v2.4.2 "last-saved-wins": every non-empty key save takes the lane.
+ *
+ * ── WHY IT IS A CONSTANT AND NOT A DELETION ─────────────────────────────────
+ *
+ * This is a PRODUCT decision about a money path, made from a design review, not
+ * a defect fix — so it must be reversible by one edit rather than by an archived
+ * diff. Flipping it to `false` restores v2.4.2 behaviour exactly: no field
+ * changes shape, nothing migrates, `getProviderInfo` is untouched, and the
+ * suite drives BOTH values. It is not a user setting and deliberately has no UI:
+ * two behaviours a user can toggle would need two sets of documentation for one
+ * question they should never have to think about.
+ *
+ * ── WHAT IS LOST, STATED PLAINLY ────────────────────────────────────────────
+ *
+ * A user who deliberately pasted a key to SWITCH providers now needs one more
+ * click. That is a real cost, taken knowingly: the silent version of it moved
+ * the build lane and the bill without anyone asking, which `docs/user-guide.md`
+ * already called the likeliest surprise in the router.
+ */
+export const ACTIVE_PROVIDER_DERIVED = true;
+
 /** Read API keys from .curator-config.json (not .env). */
 export function getApiKeys() {
   const cfg = readRaw();
@@ -330,6 +369,10 @@ export function getApiKeys() {
 export function setApiKeys({ geminiApiKey, anthropicApiKey, openrouterApiKey }, opts = {}) {
   const cfg = readRaw();
   const skippedActivation = [];
+  // Keys that were saved, COULD have become active, and deliberately did not
+  // because something already is (Option B). A successful policy, not a failure
+  // — see the assignment below for why it is not folded into skippedActivation.
+  const activationDeferred = [];
   // NO PREDICATE MEANS NO ACTIVATION — see the docblock above.
   const canActivate = typeof opts.canActivate === 'function' ? opts.canActivate : null;
   // Snapshotted BEFORE anything is written, because "the refusal must not move
@@ -351,10 +394,27 @@ export function setApiKeys({ geminiApiKey, anthropicApiKey, openrouterApiKey }, 
     if (!value) continue;                    // clearing never activates
     let allowed = false;
     try { allowed = !!(canActivate && canActivate(provider)); } catch { allowed = false; }
-    if (allowed) {
-      cfg.activeProvider = provider;         // last-saved-wins, unchanged
-    } else {
+    if (!allowed) {
       skippedActivation.push({ provider, reason: 'no_build_model' });
+      continue;
+    }
+    // ── OPTION B: A SAVE MAY ONLY FILL AN EMPTY SLOT ─────────────────────────
+    // `activeBefore` is the RESOLVED answer as it stood before this call, so
+    // `null` means genuinely nobody — either a fresh config, or the explicit
+    // "we decided: nobody" sentinel. Either way there is no answer to overwrite,
+    // and adopting the key just saved is the helpful thing. Anything else is a
+    // deliberate choice the user has already made, and a key save is not the
+    // gesture with which to change it.
+    //
+    // NOT REPORTED THROUGH `skippedActivation`. That array means "your key was
+    // saved but could NOT be activated" and renders under an alert triangle;
+    // this is a policy that worked exactly as intended, and dressing a working
+    // policy as a warning on every second key save would train users to ignore
+    // the array that carries the real failure. It is reported as its own field.
+    if (!ACTIVE_PROVIDER_DERIVED || activeBefore === null) {
+      cfg.activeProvider = provider;
+    } else {
+      activationDeferred.push({ provider, activeProvider: activeBefore });
     }
   }
 
@@ -395,7 +455,17 @@ export function setApiKeys({ geminiApiKey, anthropicApiKey, openrouterApiKey }, 
   }
 
   writeRaw(cfg);
-  return { activeProvider: getActiveProvider(), skippedActivation };
+  return {
+    activeProvider: getActiveProvider(),
+    skippedActivation,
+    // ADDITIVE, and both fields are reported ALWAYS rather than only when they
+    // are interesting: a consumer that must distinguish "this build defers" from
+    // "this build is older and always switched" cannot do it from an absent
+    // field, and guessing from behaviour is how a client ends up asserting a
+    // policy the server does not have.
+    activationDeferred,
+    activationPolicy: ACTIVE_PROVIDER_DERIVED ? 'derived' : 'last-saved-wins',
+  };
 }
 
 
@@ -452,23 +522,65 @@ export function setApiKeys({ geminiApiKey, anthropicApiKey, openrouterApiKey }, 
  * still calls this with one argument, so the check is inert on the shipping
  * path today. It is a one-argument change there — that file already namespace-
  * imports llm.js and already builds `providerCanBuild` for `setApiKeys`.
+ *
+ * ── `opts.rank` — WHICH SURVIVOR INHERITS THE BILL (Option B) ───────────────
+ *
+ * Disconnecting the active provider is the ONE moment the build lane must move
+ * without the user choosing where to. PROVIDER_ORDER answers "which provider is
+ * listed first", which is a fact about a hardcoded array and about nothing the
+ * user cares about; the decision is a SPENDING one, so it should be answered by
+ * price. `opts.rank(candidates) -> ordered candidates` lets the caller order
+ * them cheapest-measured-first.
+ *
+ * INJECTED, not computed here, for the reason `opts.canActivate` is: prices and
+ * measurements live in llm.js, and llm.js imports THIS file, so importing back
+ * would be a cycle. `src/routes/config.js` already namespace-imports llm.js.
+ *
+ * ABSENT MEANS PROVIDER_ORDER — byte-identical to the pre-Option-B behaviour, so
+ * a caller that passes nothing is unaffected. A `rank` that throws, returns a
+ * non-array, or drops candidates is IGNORED in favour of PROVIDER_ORDER: a
+ * reordering helper must never be able to REMOVE a survivor and hand the lane to
+ * nobody, which is the loss-of-ingest P0 in a new costume.
+ *
+ * ── RETURNS A REPORT (additive; previously returned undefined) ──────────────
+ * `{cleared, wasActive, activeProvider, previousActive, reason}` so the route
+ * can tell the user which provider inherited the build lane and why. Silently
+ * moving what a user is billed for, and then not saying so, is the surprise
+ * Option B exists to remove — not one to relocate.
  */
 export function clearApiKey(provider, opts = {}) {
   const fields = providerFields(provider);
-  if (!fields) return;
+  if (!fields) return { cleared: false, wasActive: false, activeProvider: getActiveProvider(), previousActive: null, reason: 'unknown_provider' };
   // ABSENT MEANS ALLOW — see this function's docblock for why it is NOT
   // setApiKeys' default.
   const canActivate = typeof opts.canActivate === 'function' ? opts.canActivate : null;
+  const rank = typeof opts.rank === 'function' ? opts.rank : null;
   const cfg = readRaw();
+  const previousActive = getActiveProvider();
   cfg[fields.config] = '';
+  let reason = 'not_active';
   if (cfg.activeProvider === provider) {
     const candidates = PROVIDER_ORDER.filter(
       p => p !== provider && !!cfg[PROVIDER_KEY_FIELDS[p].config]
     );
-    let next = candidates[0] ?? null;
+    // Re-order by the caller's preference, then VERIFY the result is the same
+    // SET. A rank that loses a candidate must not be able to lose the lane.
+    let ordered = candidates;
+    let ranked = false;
+    if (rank && candidates.length > 1) {
+      let proposal = null;
+      try { proposal = rank([...candidates]); } catch { proposal = null; }
+      if (Array.isArray(proposal)
+          && proposal.length === candidates.length
+          && candidates.every(p => proposal.includes(p))) {
+        ordered = proposal;
+        ranked = true;
+      }
+    }
+    let next = ordered[0] ?? null;
     let refusedAll = false;
-    if (canActivate && candidates.length > 0) {
-      next = candidates.find(p => { try { return !!canActivate(p); } catch { return false; } }) ?? null;
+    if (canActivate && ordered.length > 0) {
+      next = ordered.find(p => { try { return !!canActivate(p); } catch { return false; } }) ?? null;
       refusedAll = next === null;
     }
     if (next) cfg.activeProvider = next;
@@ -481,8 +593,24 @@ export function clearApiKey(provider, opts = {}) {
     // consider. The field is REMOVED, unchanged from before, so the documented
     // `.env` developer fallback in `getActiveProvider` still applies.
     else delete cfg.activeProvider;
+    // Reported AFTER the branch above, so it can never claim an outcome the
+    // branch did not take. `cheapest_measured` is claimed ONLY when a rank
+    // actually ran AND survived the set check — never merely because one was
+    // supplied.
+    reason = next
+      ? (ranked ? 'cheapest_measured' : 'first_connected')
+      : (refusedAll ? 'all_refused' : 'none_left');
   }
   writeRaw(cfg);
+  return {
+    cleared: true,
+    wasActive: previousActive === provider,
+    // Re-read rather than echoed, so the report states what is ON DISK and not
+    // what this function believes it wrote.
+    activeProvider: getActiveProvider(),
+    previousActive,
+    reason,
+  };
 }
 
 /**

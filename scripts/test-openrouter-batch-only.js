@@ -317,11 +317,18 @@ section('5. The pinned figures, so a drift shows up as its own failure');
 // different fault from a change that breaks both.
 // ─────────────────────────────────────────────────────────────────────────────
 
-ok(before.eligible === 219 && after.eligible === 162,
-  `eligible 219 → 162 on this snapshot (got ${before.eligible} → ${after.eligible})`);
-ok(before.rows === 218 && after.rows === 161,
-  `picker rows 218 → 161 on this snapshot (got ${before.rows} → ${after.rows})`);
-ok(eligibleBatch === 57, `57 dead rows removed (got ${eligibleBatch})`);
+// ── RE-MEASURED AT v3.45.0, AND THE MOVE IS THE CONTEXT FLOOR, NOT THIS RULE ─
+// Every figure here rose when the single 200,000 context floor was replaced by a
+// per-lane pair (admission 32,768 / build 131,072). More records clear the gate,
+// so more records reach this rule — INCLUDING three more `:batch` ids, which is
+// why the dead-row count is 60 rather than 57. The batch rule itself is
+// unchanged, and §4 above still proves the SAME number is lost at every layer,
+// which is the reasoning; these are the readings taken on 2026-09-02.
+ok(before.eligible === 278 && after.eligible === 218,
+  `eligible 278 → 218 on this snapshot (got ${before.eligible} → ${after.eligible})`);
+ok(before.rows === 276 && after.rows === 216,
+  `picker rows 276 → 216 on this snapshot (got ${before.rows} → ${after.rows})`);
+ok(eligibleBatch === 60, `60 dead rows removed (got ${eligibleBatch})`);
 
 console.log('\n────────────────────────────────────────────────────────────');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
