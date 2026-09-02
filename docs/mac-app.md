@@ -234,7 +234,7 @@ You click **Check for updates** in the **Settings** view (reached from the left 
 **The app updates itself.** You do not go back to the Releases page — that is a
 first install only. There are two ways in and they run the same update:
 **Settings → General → Check for updates**, and **Check for Updates…** in the
- menu, which since v3.41.0 opens a small **Software Update** window showing
+ menu, which since v3.42.0 opens a small **Software Update** window showing
 the same progress ([§ Updating from the menu bar](#updating-from-the-menu-bar)).
 
 A checkout replaces its own files (`git fetch` + `git reset --hard` + `npm install`
