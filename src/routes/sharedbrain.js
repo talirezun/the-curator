@@ -297,6 +297,14 @@ router.get('/list', gate, async (_req, res) => {
     for (const c of connections) {
       try { c.pending_pages = await computePendingPages(c); }
       catch { c.pending_pages = 0; }
+      // v3.43.0: an explicit boolean so the UI can decide whether to render
+      // the admin affordances (rotate / revoke) without inferring it from a
+      // MASKED credential field. `admin_token` is masked to its first 8 chars
+      // here, so `!!c.admin_token` happens to work today — but a card that
+      // reasons about a credential's presence should not depend on how that
+      // credential is redacted. POST /:id/admin-token/rotate now refuses
+      // 403 `no_admin_token` for exactly the connections where this is false.
+      c.has_admin_token = typeof c.admin_token === 'string' && c.admin_token.length > 0;
     }
     res.json({ connections });
   } catch (err) {
@@ -349,6 +357,39 @@ function openSseStream(res) {
   return (data) => {
     if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
+}
+
+// ── Admin-token proof of possession ──────────────────────────────────────
+//
+// ONE implementation, used by BOTH admin-only routes (revoke and
+// admin-token/rotate). Before v3.43.0 only revoke had it: rotate minted a new
+// admin token for ANY connection on this machine that asked, with no proof of
+// possession at all — so a plain contributor could mint an admin token,
+// discover the admin's fellow_id from GET /:id/members, and revoke the admin.
+// That is not theoretical: it happened in the v3.42.0 live end-to-end run, on
+// the member instance, against a real repo.
+//
+// v3.0.3's constant-time comparison is preserved: a plain `!==` leaks match
+// length/position through timing. sha256 first so timingSafeEqual always gets
+// two equal-length buffers (it THROWS on a length mismatch, which would itself
+// be an oracle).
+//
+// Returns { ok: true } or { ok: false, code }, where `code` is one of:
+//   'no_admin_token'      — this connection stores no admin token. It is a
+//                           plain contributor connection: there is nothing to
+//                           rotate and nothing to prove. NEVER mint one here.
+//   'admin_token_required'— no usable token in the request body.
+//   'admin_token_mismatch'— a token was supplied and it is the wrong one.
+//
+// The caller owns the message. `code` is what a UI should switch on.
+export function adminTokenGate(conn, supplied) {
+  const stored = conn && typeof conn.admin_token === 'string' ? conn.admin_token : '';
+  if (!stored) return { ok: false, code: 'no_admin_token' };
+  if (typeof supplied !== 'string' || !supplied) return { ok: false, code: 'admin_token_required' };
+  const a = createHash('sha256').update(supplied).digest();
+  const b = createHash('sha256').update(stored).digest();
+  if (!timingSafeEqual(a, b)) return { ok: false, code: 'admin_token_mismatch' };
+  return { ok: true };
 }
 
 function loadConnectionOr404(id, res) {
@@ -411,12 +452,42 @@ router.post('/:id/push', gate, async (req, res) => {
 
   const emit = openSseStream(res);
   const releases = domainsToPush.map(d => registerWrite(d, 'sharedbrain-push'));
+
+  // ── ONE RUN, ONE CLOCK, AND A FRESH READ PER DOMAIN (v3.43.0) ───────────
+  //
+  // Before this, the connection was loaded ONCE and handed to every
+  // pushDomain call. Each call ends by patching the connection's queues, so
+  // domain B wrote a record computed from the PRE-domain-A snapshot and
+  // erased everything A had just queued (see the queue-key comment in
+  // sharedbrain.js for what that costs). Re-reading per domain is half the
+  // fix; the merge in mergeQueues is the other half, and neither works alone.
+  //
+  // Two things are deliberately NOT re-read from disk:
+  //
+  //   `last_push_at`  — pinned to the value this run STARTED with. Domain A
+  //     advances it before B is scanned, so a naive re-read would hand B a
+  //     watermark newer than half of B's own edits and those pages would be
+  //     silently judged unchanged. Every domain in one push must scan from
+  //     the same baseline.
+  //   `now`           — one Date for the whole run, so every domain writes
+  //     the SAME new watermark. With per-domain clocks the stored value is
+  //     the last domain's, and the window between the first domain's stamp
+  //     and it is lost for that first domain — minutes, on a push whose
+  //     per-page work is an LLM call.
+  //
+  // The tokens are re-read with everything else; a credential rotated between
+  // two domains of one push is a case nobody has, and taking the fresh value
+  // is the same rule the rest of this file follows.
+  const baselinePushAt = conn.last_push_at;
+  const runClock = new Date();
   try {
     const results = [];
     for (const d of domainsToPush) {
       if (domainsToPush.length > 1) emit({ type: 'info', message: `— Domain "${d}" —` });
-      const result = await pushDomain(conn, d, {
+      const fresh = getSharedBrainWithToken(conn.id) || conn;
+      const result = await pushDomain({ ...fresh, last_push_at: baselinePushAt }, d, {
         onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
+        now: () => runClock,
       });
       results.push(result);
       if (result && result.ok === false) {
@@ -563,7 +634,22 @@ export function computeUnskipPatch(conn, requested) {
       return null;
     }
     const skipSet = new Set(currentSkip);
-    toClear = requested.filter(p => skipSet.has(p)); // only paths actually skipped
+    // v3.43.0: skip entries are DOMAIN-QUALIFIED ("<domain>/entities/foo.md").
+    // An exact match still wins. A caller that names a bare page path — an
+    // older client, or a hand-written curl — is expanded to the qualified
+    // entries that end in it, so the request cannot silently clear nothing.
+    // A bare path matching entries in two domains clears BOTH, which is the
+    // right reading of "retry this page": un-skipping only re-queues a page
+    // for one more attempt, and the alternative (clear neither, report 0)
+    // is the silent no-op this expansion exists to remove.
+    toClear = [];
+    for (const p of requested) {
+      if (skipSet.has(p)) { toClear.push(p); continue; }
+      for (const k of currentSkip) {
+        if (typeof k === 'string' && k.endsWith(`/${p}`)) toClear.push(k);
+      }
+    }
+    toClear = [...new Set(toClear)];
   }
   const clearSet = new Set(toClear);
   const newRetry = { ...(conn.pending_retry || {}) };
@@ -604,15 +690,17 @@ router.post('/:id/revoke', gate, async (req, res) => {
 
   // The admin_token in the body must match the one stored in the connection.
   // (Connections used by non-admin contributors won't have an admin_token at
-  // all — only the connection cohort admin has stored theirs.) v3.0.3:
-  // constant-time comparison over sha256 digests — a plain !== leaks match
-  // length/position through timing. Low practical risk on loopback, but the
-  // fix is one line.
-  const tokensMatch = (a, b) =>
-    typeof a === 'string' && typeof b === 'string' &&
-    timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
-  if (!conn.admin_token || !tokensMatch(admin_token, conn.admin_token)) {
-    return res.status(403).json({ error: 'admin_token is required and must match the connection' });
+  // all — only the connection cohort admin has stored theirs.) The comparison
+  // itself lives in adminTokenGate — ONE implementation, shared with the
+  // rotate route, because two hand-maintained copies of a credential check is
+  // the shape that produced the v3.2.0 CRITICAL.
+  //
+  // The MESSAGE stays byte-identical to the one this route has always sent
+  // (and which test-next-sharedbrain-admin.js pins as the non-SSE path the
+  // view handles); the machine-readable `code` rides alongside it.
+  const gate = adminTokenGate(conn, admin_token);
+  if (!gate.ok) {
+    return res.status(403).json({ error: 'admin_token is required and must match the connection', code: gate.code });
   }
   if (!isUuid(fellow_id)) {
     return res.status(400).json({ error: 'fellow_id must be a UUID' });
@@ -737,14 +825,47 @@ router.get('/:id/members', gate, async (req, res) => {
 
 // ── Admin-token provision / rotation (v3.0.5, Phase 4.1) ─────────────────
 //
-// Generates a new admin token for this connection and returns it ONCE.
-// Used by: (a) pre-v3.0.5 admin connections that have no admin_token yet
-// (revoke was impossible without hand-editing config), (b) rotation after
-// a suspected leak. Rotating invalidates the previous token immediately.
+// ROTATES an existing admin token. It does NOT provision one, and that is the
+// v3.43.0 change: from v3.0.5 to v3.42.0 this route had NO proof of possession
+// whatsoever, so it was a mint-an-admin-token button for anyone who could
+// reach localhost — including every plain contributor, whose connection card
+// showed the affordance. Combined with GET /:id/members (which hands out every
+// fellow_id) and POST /:id/revoke (which accepts the freshly minted token),
+// a member could erase the cohort admin. That path was walked end to end in
+// the v3.42.0 live run.
+//
+// The rule now: the CURRENT admin token must be supplied, in the same shape
+// the revoke gate takes it (the `sbat_…` literal in the JSON body), and it is
+// compared through the same adminTokenGate. A connection that stores no admin
+// token — i.e. a plain contributor — is refused 403 `no_admin_token` and never
+// receives one.
+//
+// COST, STATED RATHER THAN HIDDEN: the "(a) pre-v3.0.5 admin connections that
+// have no admin_token yet" provisioning case this route used to serve is gone.
+// It cannot be kept: a route that mints a token for any connection lacking one
+// is exactly the hole, and nothing on this machine can tell a legacy admin
+// from a contributor. Such an admin re-runs the brain-setup wizard, whose
+// POST /generate-invite returns a fresh admin_token that /save persists — the
+// same path every admin since v3.0.5 has taken. The error message says so.
 
 router.post('/:id/admin-token/rotate', gate, (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
+
+  const proof = adminTokenGate(conn, req.body && req.body.admin_token);
+  if (!proof.ok) {
+    const error = proof.code === 'no_admin_token'
+      ? 'This connection has no admin token, so there is nothing to rotate. Only the cohort admin\'s ' +
+        'connection stores one. If you ARE the admin on a pre-v3.0.5 connection, re-run the brain-setup ' +
+        'wizard to issue and save a new admin token.'
+      : proof.code === 'admin_token_required'
+        ? 'The current admin_token is required to rotate it. Paste the sbat_… token you were shown when ' +
+          'this brain was set up (or at the last rotation).'
+        : 'That is not this connection\'s admin token. Rotation needs the CURRENT token; if it is lost, ' +
+          're-run the brain-setup wizard to issue a new one.';
+    return res.status(403).json({ error, code: proof.code });
+  }
+
   try {
     const token = generateAdminToken();
     // saveSharedBrain (not patch) — credential fields have a single audited
@@ -855,4 +976,5 @@ export const __testing = {
   INVITE_STORAGE_TYPE,
   computeUnskipPatch,
   generateAdminToken,
+  adminTokenGate,
 };

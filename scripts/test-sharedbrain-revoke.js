@@ -619,19 +619,29 @@ section('§12 Source guards on the erasure path');
 /**
  * Build a brain with a revoked fellow C and a SURVIVING fellow D.
  *
- * `dEscapes` adds a second delta for D whose page path escapes the wiki
- * root. LocalFolderStorageAdapter.writePage refuses it (`_wikiPath` →
- * resolveInsideBase → null → throw), so runLocalSynthesis's per-page guard
- * records exactly one `pages_failed` while everything else succeeds.
+ * `dBlocked` adds a second delta for D naming a page that CANNOT be written:
+ * a directory is planted at that page's exact path, so writeFileAtomic's
+ * rename fails and runLocalSynthesis's per-page guard records exactly one
+ * `pages_failed` while everything else succeeds.
  *
- * Why this mechanism and not chmod (as §7/§8 use): a permission-denied
- * fixture cannot run as root, and §7/§8 already self-skip there. The term
- * under test here is the one the audit found UNCOVERED, so its coverage
- * must not evaporate on a root CI runner. A hostile or corrupted
- * contribution payload is also exactly the case the per-page guard in
- * sharedbrain-synthesis.js was written for.
+ * ── WHY THIS MECHANISM CHANGED IN v3.43.0 ────────────────────────────────
+ * It used to use `path: '../escape-attempt.md'`, relying on the ADAPTER to
+ * refuse the traversal. v3.43.0 validates `delta.path` at the trust boundary
+ * in groupDeltasByPage, so such a delta is now DROPPED before any adapter sees
+ * it — which is the whole point of that fix: an unwritable path must not be
+ * able to wedge the watermark. The old fixture therefore produced
+ * `pages_failed: 0` and §13's precondition assertion caught it, exactly as a
+ * precondition assertion is supposed to.
+ *
+ * The replacement keeps every property the old one had. The path is CANONICAL
+ * (so the new guard passes it through, and this fixture tests the rebuild
+ * accounting rather than the path guard); the failure happens at the real
+ * write; and it does not use chmod, so — unlike §7/§8, which self-skip there —
+ * it still works as root on a CI runner. The planted directory is invisible to
+ * `listPages` (it recurses into directories and only emits `isFile()` entries),
+ * so nothing else in the fixture shifts.
  */
-async function makeBrainWithSurvivor(tag, dEscapes) {
+async function makeBrainWithSurvivor(tag, dBlocked) {
   const root = mkdtempSync(path.join(tmpdir(), `sharedbrain-${tag}-`));
   scratchDirs.push(root);
   const store = path.join(root, 'shared-storage');
@@ -658,11 +668,14 @@ async function makeBrainWithSurvivor(tag, dEscapes) {
     path: 'entities/d-only.md', type: 'entity', title: 'D-only Entity',
     new_facts: ['Fact authored by Fellow D only.'], new_links: [], removed_links: [],
   }];
-  if (dEscapes) {
+  if (dBlocked) {
     dDeltas.push({
-      path: '../escape-attempt.md', type: 'entity', title: 'Escape Attempt',
+      path: 'entities/blocked-page.md', type: 'entity', title: 'Blocked Page',
       new_facts: ['This page can never be written.'], new_links: [], removed_links: [],
     });
+    // Plant a DIRECTORY where the page file must go. See the docblock.
+    mkdirSync(path.join(store, 'collective', 'work-ai', 'wiki', 'entities', 'blocked-page.md'),
+      { recursive: true });
   }
   await ad.storeContribution(fidD, subD, {
     submission_id: subD, fellow_id: fidD, fellow_display_name: 'Fellow D',

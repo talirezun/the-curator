@@ -90,7 +90,7 @@ async function assertWritableDomain(domain) {
     const err = new Error(
       `Domain "${domain}" is a read-only Shared Brain mirror — fixes here would be ` +
       `overwritten on the next Pull. Fix the issue in your personal contributing domain, ` +
-      `then push contributions from the Sync tab.`
+      `then push contributions from the Shared Brain view.`
     );
     err.status = 400;
     throw err;

@@ -1756,7 +1756,12 @@ console.log('\n=== 13. BEHAVIOURAL: every writability-class route refuses a read
       `${r.label} on a mirror: refusal names the offending domain`);
     assert(/read-only Shared Brain mirror/i.test(err),
       `${r.label} on a mirror: refusal carries the Decision 7 steer text`);
-    assert(/push contributions from the Sync tab/i.test(err),
+    // v3.43.0: the steer names the SHARED BRAIN VIEW, not a "Sync tab". The
+    // Shared Brain section left the Sync tab in v3.0.4 and the whole old shell
+    // that had tabs was deleted in v3.41.0, so this sentence had been sending
+    // users to a place that does not exist. The assertion still checks that a
+    // destination is named — it is just the right one now.
+    assert(/push contributions from the Shared Brain view/i.test(err),
       `${r.label} on a mirror: refusal tells the user what to do instead`);
     assert(!res.body || res.body.ok === undefined,
       `${r.label} on a mirror: refusal does NOT carry ok:true`);

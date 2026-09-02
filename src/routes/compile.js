@@ -92,7 +92,7 @@ router.get('/estimate', async (req, res) => {
       compilable: false,
       refusal:
         `Domain "${domain}" is a read-only Shared Brain mirror. ` +
-        `Compile into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+        `Compile into your personal opted-in domain instead, then push contributions from the Shared Brain view.`,
       provider: null, model: null, conversation: null, domainContext: null,
       estimate: null, warnings: [],
     });
@@ -126,7 +126,7 @@ router.post('/conversation', async (req, res) => {
   if (await isDomainReadonly(domain)) {
     return res.status(400).json({
       error: `Domain "${domain}" is a read-only Shared Brain mirror. ` +
-             `Compile into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+             `Compile into your personal opted-in domain instead, then push contributions from the Shared Brain view.`,
     });
   }
 

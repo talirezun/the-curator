@@ -118,7 +118,10 @@ router.post('/', async (req, res) => {
     await createDomain(slug, displayName.trim(), description.trim(), template);
     res.status(201).json({ slug, displayName: displayName.trim() });
   } catch (err) {
-    const status = err.message.includes('already exists') || err.message.includes('Invalid') ? 400 : 500;
+    // 'reserved' — the shared-* namespace guard in files.js. A user-fixable
+    // input problem, so a 400 like the other two, not a 500.
+    const status = err.message.includes('already exists') || err.message.includes('Invalid')
+      || err.message.includes('reserved') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
 });
@@ -169,7 +172,8 @@ router.put('/:domain', async (req, res) => {
     res.json({ oldSlug, newSlug, displayName: displayName.trim(), syncWarning: isConfigured() });
   } catch (err) {
     const status = err.message.includes('not found') ? 404
-                 : err.message.includes('already exists') || err.message.includes('Invalid') ? 400 : 500;
+                 : err.message.includes('already exists') || err.message.includes('Invalid')
+                   || err.message.includes('reserved') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
 });

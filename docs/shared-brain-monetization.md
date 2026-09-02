@@ -64,14 +64,29 @@ This is **the** gate. Whether someone has paid or not, they cannot push or pull 
 
 > 🔑 **All your access control happens here.** Pay → add collaborator. Cancel → remove collaborator. Refund → remove collaborator. This is the single gate you control 100%.
 
-### Gate 2 — PAT scope (read-only vs read+write)
+### Gate 2 — PAT scope (an honour-system tier, NOT an enforced one)
 
 When the buyer creates their fine-grained Personal Access Token, you can instruct them to create it with either:
 
-- **Contents: Read** — they can Pull the collective wiki but cannot Push (read-only tier)
-- **Contents: Read AND write** — they can both Pull AND Push (full contributor tier)
+- **Contents: Read** — they Pull the collective wiki and do not Push
+- **Contents: Read AND write** — they Pull and Push
 
-The Curator wizard validates the scope at PAT-paste time and reports the result. This gives you **two distinct tiers** at the GitHub-permission level, no code needed.
+The Curator wizard calls GitHub once at PAT-paste time, reads `permissions.push` off the repo response, and stores the verdict as `read_only` on the buyer's connection. Push and Synthesize then refuse when that flag is `true`, with a clear message instead of a confusing mid-stream GitHub 403.
+
+> ⚠️ **`read_only` is a CLIENT-SIDE flag, self-declared by the buyer's own copy of The Curator, and
+> it is not a paywall.** It lives in a JSON file on their machine that they can edit, and the
+> refusals it drives are enforced by their app, not by your repo. A buyer on the "read-only tier"
+> who pastes a read-and-write PAT — or edits the flag — pushes successfully, because **you added
+> them as a collaborator with write access and GitHub is doing exactly what you told it to.**
+>
+> **Gate 1 is the only gate GitHub enforces.** What Gate 2 buys you is a clear, correct default and
+> an honest experience for a buyer who follows instructions. Price and describe it as that.
+>
+> **A REAL two-tier product needs a real permission split**, which GitHub can do and this app does
+> not wire up: put the repo in an ORGANISATION and add read-only buyers to a team with **Read**
+> access and contributors to a team with **Write** access. Then a read-only buyer's push is refused
+> by GitHub itself, whatever their client believes. That is an org-plan setup you configure on
+> github.com — no Curator change is needed for it to work, and none of it is automated here.
 
 ### Gate 3 — Invite token (UX, not security)
 
@@ -142,10 +157,10 @@ flowchart TB
   GitHub --> Brain["🧠 Shared Brain"]
 ```
 
-| Tier | What they can do | What they pay |
-|---|---|---|
-| **Read-only** | Pull the collective wiki, read everything, query via Claude (MCP) | Free or small one-time fee |
-| **Contributor (read+write)** | Pull + Push their own reading and synthesis into the collective | Recurring monthly fee |
+| Tier | What they can do | What they pay | Enforced by |
+|---|---|---|---|
+| **Read-only** | Pull the collective wiki, read everything, query via Claude (MCP) | Free or small one-time fee | Their own Curator client (see Gate 2's warning) — or by GitHub, if you use an org repo with a Read team |
+| **Contributor (read+write)** | Pull + Push their own reading and synthesis into the collective | Recurring monthly fee | GitHub collaborator access (Gate 1) |
 
 **Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. **Do not sell "your name on the page": collective wiki pages have never carried names and still do not.** Provenance sections and conflict markers show the shortened UUID only. There *is* a name-attribution setting, but it governs something narrower and less saleable: a contributor who opts in has their display name written into their raw contribution records in the repo, readable by every collaborator — not rendered on any wiki page (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-attribution--uuids-on-collective-pages-always-the-real-name-only-if-you-opt-in)). It is off by default, chosen once at join time, and not retroactively removable, so treat it as a privacy control rather than a perk to advertise.
 
@@ -347,7 +362,7 @@ Read the [compliance reference](shared-brain-compliance.md) carefully. Key conce
 
 - **Don't put PII in the brain** unless you have a lawful basis to process it
 - **Handle revocation requests** (GDPR Article 17) — buyers in the EU can ask you to delete their data
-- **EU data residency** — if your buyers are in the EU, GitHub Free/Pro stores data in the US. For full compliance you need GitHub Enterprise Cloud with EU residency, OR wait for the planned Cloudflare R2 backend (see [Shared Brain roadmap](shared-brain.md#7--roadmap))
+- **EU data residency — there is no EU-resident deployment of Shared Brain today, and buying one will not produce one.** The shipped adapter hard-codes `https://api.github.com` with no configurable endpoint, so it cannot reach GitHub Enterprise Cloud with EU data residency, nor Enterprise Server. **Do not sell to EU-regulated buyers on the strength of an Enterprise plan.** Every working Shared Brain stores its data in the United States. The planned Cloudflare R2 backend would change this and has not shipped — see [compliance § 4](shared-brain-compliance.md#4--eu-data-residency), which is the authoritative statement, and the [Shared Brain roadmap](shared-brain.md#7--roadmap)
 
 ### Tax / VAT
 

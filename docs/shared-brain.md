@@ -31,7 +31,23 @@ Personal Sync (the existing feature in v2.x) and Shared Brain (new in v3.0.0-bet
 | Visible in Curator | Pages are part of your personal wiki | Pages appear as a separate `shared-<slug>/` domain in your local app |
 | Required infrastructure | A private GitHub repo + your own PAT | A private GitHub repo + per-contributor PATs + an admin's PAT |
 
-The two features are separate rail items: **Sync** covers Personal Sync only, and **Shared Brain** has its own view. (At `/old` both live in the Sync tab, in separate sections.)
+The two features are separate rail items: **Sync** covers Personal Sync only, and **Shared Brain** has its own view. (They shared one "Sync tab" in the old shell, which was deleted in v3.41.0.)
+
+> **The `shared-` domain-name prefix is reserved (v3.43.0).** It always belonged to Shared Brain
+> mirrors, and three places already refused to *contribute from* one — but domain CREATION did not
+> refuse the name, so a user could own `shared-articles` outright. A pull computes its mirror slug
+> as `shared-<shared_brain_slug>` from an **unsigned** invite token and then prunes every page the
+> collective does not have, so a crafted invite could aim that prune at somebody's own wiki. Both
+> halves are now closed: creating or renaming a domain into `shared-…` is refused with a clear
+> message, and a pull REFUSES any existing domain whose `CLAUDE.md` does not carry the mirror
+> marker it writes itself (`readonly: true` **and** `source: shared-brain`) rather than adopting it.
+
+> **A read-only mirror never receives a chat transcript (v3.43.0).** You can chat with a mirror —
+> that is most of what a mirror is for — but the conversation is held in the server's memory for
+> the life of the process rather than written into a domain the app declares read-only. The reply
+> carries `persisted: false`. Multi-turn context is preserved within a session; the thread does not
+> survive a restart. Before v3.43.0 the first message wrote a real
+> `shared-<slug>/conversations/<uuid>.json`.
 
 ---
 
@@ -199,7 +215,8 @@ Implemented in `filterToDomainLinks(links, domainPageSlugs)` in `src/brain/share
 **Why:** A student hitting a Gemini quota mid-week should not block their whole cohort contribution. Partial push delivers what worked; failed pages retry next cycle.
 
 Implementation:
-- `.sharedbrain-config.json` connection gains `last_push_at` (set BEFORE push starts) + `pending_retry: { [pagePath]: attemptCount }`.
+- `.sharedbrain-config.json` connection gains `last_push_at` (set BEFORE push starts) + `pending_retry: { [queueKey]: attemptCount }`.
+- **The queue key is `<domain>/<folder>/<file>.md` (v3.43.0), not the bare page path.** A connection may contribute from several domains, and two of them holding a page of the same name shared one strike counter and one skip entry. Worse, `pushDomain` wrote both fields as complete REPLACEMENTS while the push route loaded the connection once, so in a multi-domain push domain B's write erased domain A's queue — and because `last_push_at` had already advanced, those pages were treated as previously-contributed on the next push and DIFFED, so their whole body arrived as `stable_facts`, which nothing reads. Legacy unqualified keys are migrated on read, claimed only by a domain that actually holds that page. The push route now re-reads the connection per domain, pins the pre-run `last_push_at` as the scan baseline for every domain, and uses one clock for the run.
 - `findChangedPages(wikiDir, sinceDate, pendingRetry)` returns the union of (mtime > sinceDate) ∪ (paths in `pending_retry`).
 - A page that fails 3 consecutive times moves to `permanent_skip` and is surfaced in the UI. Recovery paths: edit-the-page (mtime > last_push_at un-skips automatically, v3.0.2) or the card's **Retry these pages** action → `POST /api/sharedbrain/:id/unskip` (v3.0.4), which clears entries + resets strike counters. Transient provider errors (503/429/network) never advance the strike counter.
 - User-visible push result: `"Pushed 7 of 10 pages. 3 will retry next time."` Since v3.0.4 the card also shows the resting-state pieces: a `pending_pages` count (from `GET /list`, computed by `computePendingPages()` — same detection as push, read-only), the skipped-pages block, and `last_synthesis_at` (patched locally by the admin's synthesis run and learned from `state.last-synthesis` on every contributor Pull).
