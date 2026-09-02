@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, Menu, Tray, clipboard, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
@@ -59,6 +59,7 @@ import { buildMenuTemplate, SETTINGS_NAV_SELECTOR } from './lib/menu.js';
 import { fetchUpdateCheck } from './lib/update-check.js';
 import { describeUpdate, describeInstallOutcome, ACTION_ID } from './lib/update-verdict.js';
 import { fetchUpdaterProbe, runInstall, applyOnlyForAction, UPDATE_LABEL_PENDING } from './lib/update-client.js';
+import { createUpdateWindow } from './lib/update-window.js';
 import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
@@ -796,6 +797,22 @@ async function runMenuInstall(action) {
   updateInstallLabel = UPDATE_LABEL_PENDING;
   applyMenu();
 
+  const updWindow = createUpdateWindow({
+    openWindow: (spec) => {
+      const { url, ...opts } = spec;
+      const w = new BrowserWindow(opts);
+      w.once('ready-to-show', () => { try { w.show(); } catch { /* gone */ } });
+      w.loadURL(url);
+      return w;
+    },
+    setDockProgress: (w, value) => { if (!w.isDestroyed()) w.setProgressBar(value); },
+    closeWindow: (w) => { if (!w.isDestroyed()) w.close(); },
+    notify: Notification.isSupported()
+      ? (n) => { new Notification({ title: n.title, body: n.body }).show(); }
+      : null,
+  });
+  updWindow.open(baseUrl, action);
+
   // A staged-but-not-installed outcome is OFFERED AGAIN rather than reported
   // as a dead end — the verified bundle is still on disk and still installable.
   // Written as a LOOP and not as recursion, so a user who keeps clicking
@@ -815,11 +832,13 @@ async function runMenuInstall(action) {
         // the client and is asserted there, so the menu is rebuilt about a
         // hundred times over a 140 MB download rather than five hundred.
         onLabel: (label) => { updateInstallLabel = label; applyMenu(); },
+        onProgress: (job) => updWindow.progress(job),
       });
     } catch (err) {
       // `runInstall` has its own total catch and does not reject, so this is
       // belt and braces. It exists so that no path can leave the menu item
       // stuck on "Downloading Update…" and permanently disabled.
+      updWindow.finish({ ok: false });
       updateInstallLabel = null;
       applyMenu();
       throw err;
@@ -829,8 +848,9 @@ async function runMenuInstall(action) {
     // and the new app must not open one nobody asked for. The label is
     // deliberately left saying "Installing Update…" — it is the last true thing
     // the menu can say, and rebuilding a menu during shutdown buys nothing.
-    if (!outcome || outcome.ok === true) return;
+    if (!outcome || outcome.ok === true) { updWindow.finish(outcome); return; }
 
+    updWindow.finish(outcome);
     updateInstallLabel = null;
     applyMenu();
 
@@ -841,6 +861,7 @@ async function runMenuInstall(action) {
     if (!applyOnlyForAction(verdict.action)) return;
 
     next = verdict.action;
+    updWindow.open(baseUrl, next);
     updateInstallLabel = UPDATE_LABEL_PENDING;
     applyMenu();
   }
