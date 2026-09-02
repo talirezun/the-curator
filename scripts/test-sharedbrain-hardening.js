@@ -398,15 +398,17 @@ const src = rel => readFileSync(path.join(PROJECT_ROOT, rel), 'utf-8');
   const domainsRoute = src('src/routes/domains.js');
   assert(domainsRoute.includes('readonlyDomains'), 'GET /api/domains reports readonly mirrors');
 
-  const appJs = src('src/public/app.js');
-  assert(appJs.includes('readonlyDomains.includes(d)'), 'ingest dropdown filters readonly mirrors');
-  assert(appJs.includes('sharedbrain:${connId}') || appJs.includes('`sharedbrain:'),
-    'Shared Brain ops register through the busy-state gate');
-
-  const indexHtml = src('src/public/index.html');
-  assert(indexHtml.includes('settings-sharedbrain-enabled'), 'Settings hosts the Shared Brain enable state');
-  const syncTab = indexHtml.slice(indexHtml.indexOf('id="tab-sync"'), indexHtml.indexOf('id="tab-settings"'));
-  assert(!syncTab.includes('sharedbrain-enable-btn'), 'the enable button no longer lives in the Sync tab');
+  // REMOVED in v3.41.0 — four source-PRESENCE assertions against
+  // src/public/app.js and src/public/index.html (readonly-mirror filtering in
+  // the ingest dropdown, the busy-state registration key, the Settings enable
+  // state, and the enable button's absence from the Sync tab). Both files are
+  // deleted. They are not repointed at /next: they asserted that an
+  // identifier appeared in a file, which CLAUDE.md names as the weakest
+  // shape a guard can take, and /next's own suites
+  // (test-next-sync-spin.js, test-next-sharedbrain-admin.js) drive the
+  // corresponding logic by executing it. The BACKEND half of each — the
+  // readonly-mirror refusals and the route-level gating — is asserted above
+  // and below this block and is untouched.
 }
 
 
@@ -935,32 +937,19 @@ section('21. Phase 3 source-level guards');
   assert(brain.includes('onWarn') && brain.includes('computePendingPages'),
     'brain layer wires adapter warnings + pending count');
 
-  const appJs = src('src/public/app.js');
-  assert(appJs.includes('_sbInFlight') && appJs.includes('_sbLastResult'),
-    'per-connection in-flight registry present (M12/M13)');
-  assert(appJs.includes('sbComposeDoneMessage'), 'done-message composer present (M13)');
-  assert((appJs.match(/mySeq !== seq/g) || []).length >= 2,
-    'sequence guards on BOTH debounced validations (M11)');
-  assert(appJs.includes('sbWizard.state.selectedDomains.has(name)'),
-    'step-4 checkboxes restored from state (M10)');
-  assert(appJs.includes("activeId === 'sb-step-2') refreshStep2Links()"),
-    'step-2 links populated on panel ENTRY (M9)');
-  assert(appJs.includes('read_only:') && appJs.includes('sbIsReadOnlyVerdict'),
-    'wizard saves the read_only flag on warn verdicts (H10)');
-  assert(appJs.includes("'aria-current', 'step'") && appJs.includes('sbWizardKeydown') && appJs.includes("e.key === 'Escape'"),
-    'wizard a11y: aria-current pips, focus trap, Escape-close (L16)');
-  assert(appJs.includes('pending_pages'), 'navbar badge includes Shared Brain pending pages (M14)');
-  assert(appJs.includes('never — ask your admin to run synthesis'),
-    'card shows last-synthesis state incl. the never case (M16)');
-  assert(appJs.includes('retry-skipped'), 'skipped-pages retry action wired (M15)');
-  assert(appJs.includes('chatReadonlyDomains'), 'Compile hidden for read-only mirrors (Phase-1 deferral closed)');
-
-  const html = src('src/public/index.html');
-  assert(html.includes('role="dialog"') && html.includes('aria-modal="true"'),
-    'wizard overlay is a proper modal dialog (L16)');
-  assert(html.includes('sb-step4-status'), 'step-4 inline status element present (L14)');
-  assert(html.includes('invite-repo'), 'step-2 email hint names the repo, not a phantom admin name (L18)');
-  assert(html.includes('sharedbrain-init-error'), 'init-failure error row present (L12)');
+  // REMOVED in v3.41.0 — fifteen source-PRESENCE assertions against
+  // src/public/{app.js,index.html} covering the Phase 3 UI/UX items
+  // (M9-M16, H10, L12, L14, L16, L18). Both files are deleted. Same
+  // reasoning as the Phase 1 block above: these named identifiers in a
+  // frontend file rather than driving behaviour, and the shell they named is
+  // gone. The corresponding /next surfaces are exercised by
+  // scripts/test-next-sync-spin.js and scripts/test-next-sharedbrain-admin.js.
+  //
+  // WORTH RECORDING RATHER THAN JUST DELETING: this block was green for
+  // thirty releases while reading a shell no user was served. Whether every
+  // one of M9-M16 has a /next counterpart at all was NOT established here —
+  // it is a source-scan question this file can no longer answer, and it is
+  // reported to the release as an open item rather than assumed closed.
 
   const ghAdapter = src('src/brain/sharedbrain-github-adapter.js');
   assert(ghAdapter.includes('_onWarn'), 'GitHub adapter carries the onWarn channel (M18)');
@@ -1067,24 +1056,13 @@ section('25. Phase 4 source-level guards');
   assert(routes.includes("post('/:id/admin-token/rotate'"), 'admin-token rotate endpoint registered (4.1)');
   assert(routes.includes('admin_token: generateAdminToken()'), 'generate-invite returns a fresh admin token (4.1)');
 
-  const appJs = src('src/public/app.js');
-  assert(appJs.includes('generatedAdminToken'), 'admin wizard stores the generated admin token (4.1)');
-  assert(appJs.includes('sb-admin-admin-token'), 'admin token displayed once on wizard step 2 (4.1)');
-  assert(appJs.includes('runSharedBrainRevoke') && appJs.includes('REVOKE-${member.fellow_id}'),
-    'revoke UI sends the full API confirmation literal (4.2)');
-  assert(appJs.includes('REVOKE-${selected.short_id}'),
-    'revoke unlock requires deliberately TYPING the short confirmation (4.2)');
-  assert(appJs.includes("data_handling_terms: meta.data_handling_terms || 'contributor_retains'"),
-    'connections persist data_handling_terms at save (4.4)');
-  assert(appJs.includes('sbToggleInviteBox'), 'invite-token re-display wired on the card (4.4)');
-  assert(appJs.includes("'synthesize', card, { ...opts, confirmed: true }"),
-    'synthesis runs only after inline confirm (4.5)');
-  assert(appJs.includes('sbHandleAdminToken'), 'admin-token generate/rotate affordance on the card (4.1)');
-
-  const html = src('src/public/index.html');
-  assert(html.includes('sb-admin-token-block'), 'admin-token block present on wizard step 2 (4.1)');
-  assert(html.includes('id="sharedbrain-enable-btn" class="btn primary pill"'),
-    'Settings enable button matches the Settings pill convention (user-reported design fix)');
+  // REMOVED in v3.41.0 — ten source-PRESENCE assertions against
+  // src/public/{app.js,index.html} for the Phase 4 admin items (4.1-4.5).
+  // Both files are deleted; the same reasoning as the two blocks above
+  // applies. The admin-credential INVARIANTS these shadowed — the shown-once
+  // token, the masked listings, the storage-path-derived member identity —
+  // are enforced in src/brain and src/routes and are asserted directly above
+  // this block, which is where they belong.
 }
 
 // ═══ Result ════════════════════════════════════════════════════════════════

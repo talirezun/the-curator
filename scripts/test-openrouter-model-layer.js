@@ -860,26 +860,18 @@ section('2. Free-model price posture — no zero price may enter any table, by a
       'the genuinely-unpriced note is unchanged (control)');
 
     // NEVER A DOLLAR FIGURE. `estimatedUsd: 0` is the obvious-looking encoding
-    // and is forbidden here: formatHealthCost() in the FROZEN src/public/app.js
-    // renders any number through toFixed(4), so a zero prints "$0.0000" — the
-    // exact string src/public/next/shared/format-usd.js exists to prevent,
-    // because a reader cannot tell it from a real charge that rounded away.
-    // Asserted against the REAL renderer, extracted from the real frontend, so
-    // the claim is about what is on screen and not about a field name.
+    // and is forbidden here, because a renderer that pushes any number through
+    // a fixed-4 formatter prints a zero as "$0.0000" — the exact string
+    // src/public/next/shared/format-usd.js exists to prevent, because a reader
+    // cannot tell it from a real charge that rounded away.
+    //
+    // Until v3.41.0 this was asserted against the REAL renderer, extracted
+    // from src/public/app.js's formatHealthCost(). That shell is deleted, so
+    // the on-screen half of the claim now rests on formatUsdHonest() and its
+    // own suite; what is asserted here is the FIELD contract that feeds it,
+    // which is this module's actual subject.
     eq(free.estimatedUsd, null,
-      'a free model reports NO dollar figure — a 0 would render "$0.0000" in the frozen app.js, indistinguishable from a rounded-away real charge');
-    {
-      const appSrc = readFileSync(path.join(REPO_ROOT, 'src/public/app.js'), 'utf8');
-      const fnSrc = appSrc.match(/function formatHealthCost\([^)]*\) \{[\s\S]*?\n\}/);
-      ok(!!fnSrc, 'formatHealthCost extracted from the real src/public/app.js');
-      const formatHealthCost = new Function(fnSrc[0] + '\nreturn formatHealthCost;')();
-      ok(/^Free\b/.test(formatHealthCost(free)),
-        'the SHIPPING frontend renders a free model as "Free …" — the user-visible end of this contract, not an internal field');
-      ok(!/\$0\.0000/.test(formatHealthCost(free)),
-        'and never as "$0.0000"');
-      eq(formatHealthCost({ estimatedUsd: 0, priceKnown: true, costNote: null }), '$0.0000',
-        'positive control: a numeric 0 really does render "$0.0000" there, so the assertion above is not vacuous');
-    }
+      'a free model reports NO dollar figure — a 0 would render as "$0.0000", indistinguishable from a rounded-away real charge');
   }
 }
 

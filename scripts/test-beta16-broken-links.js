@@ -584,13 +584,13 @@ console.log('\n7. every count applyBrokenLinkFixes returns must reach the wire A
   //     That is precisely how /next shipped `occurrencesReplaced` labelled
   //     "Repointed" — a source scan would have called that a reader.
   //
-  // Why not behavioural: src/public/app.js is ONE ES module of ~6,800 lines with
-  // ~90 top-level getElementById constants — importing it in Node dereferences a
-  // missing element at module scope and throws (that is the blank-page failure
-  // test-frontend-null-safety.js exists for). /next's view imports the shell,
-  // which is equally DOM-bound. Refactoring either for testability is a bigger
-  // and riskier change than the defect being closed, and app.js is the file this
-  // repo has documented as its most dangerous. So: scoped, honest, and labelled.
+  // Why not behavioural: /next's view imports the shell, which is DOM-bound —
+  // importing it in Node dereferences missing elements and throws. Refactoring
+  // it for testability is a bigger and riskier change than the defect being
+  // closed. So: scoped, honest, and labelled. (The same paragraph used to
+  // name src/public/app.js, a single ~6,800-line module with ~90 top-level
+  // getElementById constants, as the harder of the two cases; it was deleted
+  // in v3.41.0.)
   const stripComments = (src) => src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     // Whole-line comments only. Deliberately NOT a general // stripper: this
@@ -615,8 +615,13 @@ console.log('\n7. every count applyBrokenLinkFixes returns must reach the wire A
     return null;
   };
 
+  // Until v3.41.0 this loop had TWO entries — the deleted /old shell's
+  // applyBrokenLinkPlan() and /next's applyPendingPlan(). Both frontends read
+  // the same route response, and reading them together is what caught /next
+  // shipping `occurrencesReplaced` under the label "Repointed". With one
+  // shell left there is one reader; the loop is kept rather than inlined so
+  // adding a second surface later is an array entry, not a rewrite.
   const readers = [
-    { label: '/old (src/public/app.js)', file: '../src/public/app.js', fn: 'async function applyBrokenLinkPlan(' },
     { label: '/next (src/public/next/views/domains.js)', file: '../src/public/next/views/domains.js', fn: 'async function applyPendingPlan(' },
   ];
   for (const r of readers) {
@@ -852,170 +857,18 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     assert(st.pendingPlan === null, '/next: the dead plan is discarded', JSON.stringify(st.pendingPlan));
   }
 
-  // ── (b) /old — behavioural, real source ──────────────────────────────────
-  const oldSrc = readFileSync(new URL('../src/public/app.js', import.meta.url), 'utf8');
-  const oldBodies = ['function renderBrokenLinkPreview(', 'function renderOrphanPreview(']
-    .map((n) => grab(oldSrc, n));
-  assert(oldBodies.every((b) => b && b.length > 200),
-    'PRECONDITION: both /old preview renderers extracted from real source',
-    oldBodies.map((b) => b.length).join(','));
-
-  function buildOld() {
-    // querySelector returns a listener-accepting stub: the NON-empty control
-    // path wires click handlers, and a null here would make that control fail
-    // for a reason unrelated to what it is testing.
-    const el = () => ({ innerHTML: '', classList: { add() {}, remove() {} },
-      querySelector: () => ({ addEventListener() {} }) });
-    const preamble = `
-      let _blPlan = null, _orphPlan = null;
-      const blProgress = __el.blProgress, blResults = __el.blResults;
-      const orphProgress = __el.orphProgress, orphResults = __el.orphResults;
-      const formatHealthCost = () => '$0.0000';
-      // Mirrors the real module-scope constants in app.js. Deliberately NOT
-      // copies of the sentences: §9 asserts the real strings; here they only
-      // need to exist so the renderers evaluate.
-      const GIT_UNDO_NOTE = '<<NOTE>>';
-      const GIT_UNDO_WARN = '<<WARN>>';
-      const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    `;
-    const els = { blProgress: el(), blResults: el(), orphProgress: el(), orphResults: el() };
-    const api = `return { renderBrokenLinkPreview, renderOrphanPreview,
-      __setBl: (p) => { _blPlan = p; }, __setOrph: (p) => { _orphPlan = p; } };`;
-    const s = new Function('__el', preamble + oldBodies.join('\n\n') + '\n' + api)(els);
-    s.__el = els;
-    return s;
-  }
-
-  // ── (b1) the silent dead button ─────────────────────────────────────────
-  {
-    const s = buildOld();
-    s.__setBl([]);
-    s.renderBrokenLinkPreview({ retarget: 0, strip: 0, retargetOccurrences: 0, stripOccurrences: 0,
-      deterministic: 0, ai: 0 }, {}, 0);
-    const html = s.__el.blResults.innerHTML;
-    assert(!/Apply/.test(html),
-      '/old broken links: an empty plan renders NO Apply button (it used to render a dead one saying "fix 0 broken links")',
-      html.slice(0, 200));
-    assert(/nothing was written/i.test(html) && /unchanged/i.test(html),
-      '/old broken links: it says plainly that nothing happened', html.slice(0, 200));
-  }
-  // ── (b2) CONTROL — a real plan still renders the Apply button ────────────
-  {
-    const s = buildOld();
-    s.__setBl([{ linkText: 'a', action: 'strip', target: null, occurrences: 2 }]);
-    s.renderBrokenLinkPreview({ retarget: 0, strip: 1, retargetOccurrences: 0, stripOccurrences: 2,
-      deterministic: 0, ai: 1 }, {}, 0);
-    const html = s.__el.blResults.innerHTML;
-    assert(/broken-links-apply-btn/.test(html),
-      'CONTROL /old broken links: a real plan still offers Apply', html.slice(0, 200));
-  }
-  // ── (b3) /old orphans was ALREADY right — pin it so it stays right ───────
-  {
-    const s = buildOld();
-    s.__setOrph([]);
-    s.renderOrphanPreview({ rescuable: 0, noHome: 3, orphans: 3 }, {}, 0);
-    const html = s.__el.orphResults.innerHTML;
-    assert(/no confident home/i.test(html) && /manual review/i.test(html),
-      '/old orphans: the correct v3.0.1-beta.17 message is preserved (this is what /next was missing)',
-      html.slice(0, 200));
-    assert(!/Apply/.test(html), '/old orphans: and no Apply button', html.slice(0, 200));
-  }
-  // ── (b4) the same honesty fix in /old ───────────────────────────────────
-  {
-    const s = buildOld();
-    s.__setOrph([]);
-    s.renderOrphanPreview({ rescuable: 0, noHome: 3, orphans: 3 }, {}, 2);
-    const html = s.__el.orphResults.innerHTML;
-    assert(/did not answer/i.test(html) && !/no confident home/i.test(html),
-      '/old orphans: an all-batches-failed run no longer claims the AI made a judgement', html.slice(0, 200));
-  }
-
-  // ── (b5) THE WIRING, not just the renderer ──────────────────────────────
-  // FOUND BY A MUTATION THAT STAYED GREEN, and closed rather than filed.
-  // Deleting `orphBatchErrors++` from /old's SSE loop left the suite at
-  // 239 passed / 0 failed: (b4) hands `batchErrors` to renderOrphanPreview as an
-  // ARGUMENT, so it proves the renderer branches correctly and proves nothing
-  // about whether anything ever counts. The frame could stop being counted, the
-  // renderer would be handed 0 forever, and an all-batches-failed run would go
-  // back to claiming "The AI found no confident home" — a judgement no model
-  // made. That is this repo's dead-data shape with the halves reversed: a reader
-  // that works, wired to a producer nobody checks.
+  // ── (b) /old — REMOVED in v3.41.0 ────────────────────────────────────────
+  // This arm read src/public/app.js, extracted renderBrokenLinkPreview() and
+  // renderOrphanPreview() by brace-matching, and executed them inside a DOM
+  // stub — the same behavioural technique the /next arm above uses. That file
+  // was deleted with the rest of the pre-redesign shell, so the arm has no
+  // subject. Nothing about the /next arm changed; it was always the half that
+  // tests the frontend a user is actually served.
   //
-  // /next did not have this hole — §(a4) drives the real runOrphansPlan over
-  // synthetic frames — so this is /old-only, and it is here because the two
-  // frontends must be held to the same standard.
-  //
-  // The planners are driven over a stubbed fetch that emits REAL SSE bytes
-  // (`data: {...}\n\n`), so the frame parsing, the buffer splitting and the
-  // counting are all exercised; only the network and the DOM are stubbed. The
-  // renderers are replaced with recorders — what is asserted is the ARGUMENT
-  // they receive, which is precisely the wiring (b1)–(b4) cannot see.
-  {
-    const planners = ['async function runBrokenLinkPlan(', 'async function runOrphanPlan(']
-      .map((n) => grab(oldSrc, n));
-    assert(planners.every((b) => b && b.length > 400),
-      'PRECONDITION: both /old plan runners extracted from real source',
-      planners.map((b) => b.length).join(','));
-
-    function buildOldPlanners(frames) {
-      const seen = { bl: null, orph: null };
-      const el = () => ({ innerHTML: '', textContent: '', style: {},
-        classList: { add() {}, remove() {} },
-        querySelector: () => ({ style: {}, textContent: '', addEventListener() {} }) });
-      const els = { blProgress: el(), blResults: el(), orphProgress: el(), orphResults: el(), blBtn: el() };
-      const body = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join('');
-      const preamble = `
-        let _blPlan = null, _orphPlan = null, _blBusy = false, _orphBusy = false;
-        const _healthDomain = 'articles';
-        const blProgress = __x.els.blProgress, blResults = __x.els.blResults, blBtn = __x.els.blBtn;
-        const orphProgress = __x.els.orphProgress, orphResults = __x.els.orphResults;
-        const healthStatusEl = __x.els.blResults;
-        const document = { getElementById: () => ({ classList: { add(){}, remove(){} }, scrollIntoView(){} }) };
-        const showStatus = () => {};
-        // Recorders. The third argument IS the assertion target.
-        const renderBrokenLinkPreview = (s, c, n) => { __x.seen.bl = n; };
-        const renderOrphanPreview = (s, c, n) => { __x.seen.orph = n; };
-        const fetch = async () => ({ ok: true, body: { getReader: () => {
-          let sent = false;
-          return { read: async () => sent ? { done: true } :
-            (sent = true, { done: false, value: new TextEncoder().encode(__x.body) }) };
-        } } });
-      `;
-      const api = 'return { runBrokenLinkPlan, runOrphanPlan };';
-      const ctx = { els, seen, body };
-      return { fns: new Function('__x', preamble + planners.join('\n\n') + '\n' + api)(ctx), seen };
-    }
-
-    {
-      const h = buildOldPlanners([
-        { type: 'start', total: 4 },
-        { type: 'batch-error', batch: 0, error: 'boom' },
-        { type: 'batch-error', batch: 1, error: 'boom' },
-        { type: 'done', plan: [], summary: { rescuable: 0, orphans: 3 }, cost: {} },
-      ]);
-      await h.fns.runOrphanPlan();
-      assert(h.seen.orph === 2,
-        '/old orphans: batch-error frames are COUNTED off the wire and reach the renderer (not merely handled once there)',
-        `renderer received ${h.seen.orph}`);
-      await h.fns.runBrokenLinkPlan();
-      assert(h.seen.bl === 2,
-        '/old broken links: same — the count is produced by the SSE loop, not assumed',
-        `renderer received ${h.seen.bl}`);
-    }
-    // CONTROL: with no batch-error frames the count is 0, so the assertion
-    // above cannot be satisfied by a recorder that simply never changes.
-    {
-      const h = buildOldPlanners([
-        { type: 'done', plan: [], summary: { rescuable: 0, orphans: 3 }, cost: {} },
-      ]);
-      await h.fns.runOrphanPlan();
-      await h.fns.runBrokenLinkPlan();
-      assert(h.seen.orph === 0 && h.seen.bl === 0,
-        'CONTROL: a clean run reports zero failed batches (the counter is not stuck)',
-        `orph=${h.seen.orph} bl=${h.seen.bl}`);
-    }
-  }
+  // What went with it, stated so nobody assumes otherwise: the /old arm also
+  // covered a failed-batch counter (`runOrphanPlan` / `runBrokenLinkPlan`
+  // reporting how many batches failed) and its clean-run control. Whether
+  // /next carries an equivalent was NOT established here.
 
   // ── (c) the route KEEPS its 400 — deliberately, as a backstop ────────────
   // Decision recorded here because a future reader will ask why the frontends
@@ -1140,8 +993,9 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   // how this defect happened, and thirteen copies of a true one is how the next
   // one would.
   const scrubHonest = (src) => [NOTE, WARN].reduce((s, h) => s.split(h).join(' [honest-copy] '), src);
+  // One entry since v3.41.0 deleted the /old shell — see the readers array
+  // above for why the loop shape is kept.
   const frontends = [
-    { label: '/old (src/public/app.js)', file: '../src/public/app.js' },
     { label: '/next (src/public/next/views/domains.js)', file: '../src/public/next/views/domains.js' },
   ];
   for (const f of frontends) {
@@ -1166,11 +1020,14 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   // an unconditional "it's git-tracked" would be the same false comfort in a
   // new coat.
   const nextRaw = readFileSync(new URL('../src/public/next/views/domains.js', import.meta.url), 'utf8');
-  const oldRaw = readFileSync(new URL('../src/public/app.js', import.meta.url), 'utf8');
   // NOTE / WARN are declared once, above (b), because the detector's scrub
   // needs them too — two copies here and there is the drift this whole section
   // exists to forbid.
-  for (const [label, src] of [['/next', nextRaw], ['/old', oldRaw]]) {
+  // One frontend since v3.41.0. The honest wording was asserted present in
+  // BOTH shells because the false "you can revert from Sync" promise was
+  // found at 14 sites across both; the shell that carried half of them is
+  // deleted, and the surviving half is checked here exactly as before.
+  for (const [label, src] of [['/next', nextRaw]]) {
     assert(src.includes(NOTE), `${label}: carries the honest informational wording`);
     assert(src.includes(WARN), `${label}: carries the honest destructive-action wording`);
     assert(/no Undo button/.test(src), `${label}: says plainly that the app has no Undo button`);

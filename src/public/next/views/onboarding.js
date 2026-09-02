@@ -456,10 +456,14 @@ async function loadFacts() {
 // call-site half.
 export async function maybeShowOnboarding() {
   try {
-    // ONE shared GET for the whole page load, memoised in shared/ui-state.js
-    // — views/cutover-notice.js has already awaited the same promise by the
-    // time this runs, so this call costs no second request. It never throws
-    // and never rejects, so the markBooted() property above is untouched.
+    // ONE shared GET for the whole page load, memoised in shared/ui-state.js.
+    // Until v3.41.0 views/cutover-notice.js ran first and had already awaited
+    // the same promise by the time this did, so this call cost no second
+    // request; that module is deleted, so this is now the FIRST awaiter and
+    // the one that pays for the GET. Still one request per load either way —
+    // the memoisation is what guarantees that, not the call order. It never
+    // throws and never rejects, so the markBooted() property above is
+    // untouched.
     await loadUiState();
     const dismissed = readDismissed(storage());
     // Short-circuit BEFORE the two GETs. A dismissed panel cannot show

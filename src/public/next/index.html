@@ -138,14 +138,6 @@
      scripts/test-css-tokens.js §5, which discovers /next stylesheets only
      from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/views/onboarding.css">
-<!-- Also not a view: the one-time cutover notice, a SHELL-level bar owned by
-     views/cutover-notice.js and opened from app.js's boot() for an existing
-     user's first load after "/" started serving this shell. Same load-bearing
-     <link> as above — without it the bar is unstyled in the browser AND the
-     #app-shell reservation that stops it covering live controls never
-     applies, AND it is invisible to scripts/test-css-tokens.js §5, which
-     discovers /next stylesheets only from this file's <link> tags. -->
-<link rel="stylesheet" href="/next/views/cutover-notice.css">
 
 <!--
   Boot guard (M2 fix) — ported from src/public/index.html; read that file's
@@ -238,13 +230,14 @@
       ol.style.cssText = 'margin:0 0 18px;padding-left:22px;';
       [
         'Reload this page — a partly-downloaded file usually fixes itself.',
-        // CUTOVER (v3.9.0): the escape hatch is /old, NOT "/". Post-cutover
-        // "/" serves THIS shell, so sending a user whose app just failed to
-        // boot back to "/" is a loop that returns them to the broken page.
-        // /old is the previous frontend — still installed, still served, and
-        // reading the same markdown files on disk. If /old is ever removed,
-        // this line must change with it.
-        'Open the previous version of the app at /old — it reads the same files and still works — and report the error below.'
+        // v3.41.0 removed the /old escape hatch this line used to offer,
+        // and the previous comment here said in as many words that this
+        // line must change with it. There is no second interface to fall
+        // back to any more, so this step says what CAN still be done rather
+        // than naming a path that now just redirects to the page that
+        // failed. Sending the user to "/" would be a loop back to the
+        // broken page, which is why that was never the advice.
+        'Quit The Curator and open it again — the server restarts and re-serves the app files. If it still fails, report the error below.'
       ].forEach(function (t) {
         var li = document.createElement('li');
         li.textContent = t;
@@ -283,7 +276,7 @@
       host.appendChild(box);
     } catch (e) {
       try { document.documentElement.textContent =
-        'The Curator could not finish loading. Reload this page, or open the previous version of the app at /old. Your markdown files on disk are safe.'; } catch (e2) {}
+        'The Curator could not finish loading. Reload this page, or quit The Curator and open it again. Your markdown files on disk are safe.'; } catch (e2) {}
     }
   }
 

@@ -461,110 +461,60 @@ section('7. THE CLIENT AND SERVER TABLES AGREE — two copies of one rule is the
 section('8. THE CONSUMERS ARE WIRED, and each keeps its OWN fail-safe direction');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  const cvn = readFileSync(path.join(ROOT, 'src/public/next/views/cutover-notice.js'), 'utf8');
+  // v3.41.0: this loop had THREE consumers. views/cutover-notice.js was
+  // deleted with the shell its one link pointed at, so two remain — and the
+  // "opposite fail-safe directions" assertion below loses the HIDE side with
+  // it. That is a loss worth naming rather than papering over: the pairing
+  // was what proved neither consumer had silently adopted the other's
+  // direction. What survives is each remaining consumer's own direction,
+  // asserted individually, plus the durable-store wiring for both.
   const obd = readFileSync(path.join(ROOT, 'src/public/next/views/onboarding.js'), 'utf8');
   const dms = readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
 
-  for (const [label, src] of [['cutover-notice.js', cvn], ['onboarding.js', obd], ['domains.js', dms]]) {
+  for (const [label, src] of [['onboarding.js', obd], ['domains.js', dms]]) {
     ok(/from '\.\.\/shared\/ui-state\.js'/.test(src), `${label} imports the durable store`);
     ok(/durableStorage/.test(src), `${label} uses durableStorage() rather than window.localStorage directly`);
   }
-  ok(/await loadUiState\(\)/.test(cvn), 'cutover-notice.js AWAITS the durable load before its first storage read — otherwise it reads an empty native partition');
-  ok(/await loadUiState\(\)/.test(obd), 'onboarding.js does too');
+  ok(/await loadUiState\(\)/.test(obd), 'onboarding.js AWAITS the durable load before its first storage read — otherwise it reads an empty native partition');
   ok(/loadUiState\(\)/.test(dms), 'domains.js primes it on mount, so the SYNCHRONOUS consent check has an answer by the time a button can be clicked');
 
   // Neither consumer may have silently adopted the other's direction. These
   // are the two assertions that matter most in this section: the directions
   // are OPPOSITE on purpose and each carries a written cost argument.
-  ok(/return true;\s*\n\s*\}\s*\n\}/.test(cvn.slice(cvn.indexOf('function readDismissed'), cvn.indexOf('function writeDismissed'))),
-    'cutover-notice.js readDismissed still fails towards HIDE (catch -> true)');
   ok(/catch\s*\{\s*return false;/.test(obd.slice(obd.indexOf('function readDismissed'), obd.indexOf('function writeDismissed'))),
-    'onboarding.js readDismissed still fails towards SHOW (catch -> false) — the OPPOSITE, deliberately');
+    'onboarding.js readDismissed still fails towards SHOW (catch -> false) — a panel a user can dismiss again is cheaper than guidance they never see');
   ok(/function aiDisclosureSeen\(\)\s*\{[\s\S]{0,300}?catch\s*\{\s*return false;/.test(dms),
     'domains.js aiDisclosureSeen still fails CLOSED (catch -> false = ask again) for the privacy consent');
 
   // The rescue must not have quietly bypassed the storage indirection.
-  const cvnAfterImport = cvn.slice(cvn.indexOf('const DISMISS_KEY'));
-  ok(!/window\.localStorage/.test(cvnAfterImport), 'cutover-notice.js no longer reaches window.localStorage directly');
   ok(!/localStorage\.(get|set)Item/.test(dms.slice(dms.indexOf('const AI_DISCLOSURE_KEY'), dms.indexOf('function confirmAiAction'))),
     'the AI consent no longer reaches localStorage directly — it would still work, and it would not survive a partition change');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('9. END TO END — the defect this release fixes, through the REAL cutover functions');
+// 9 (REMOVED in v3.41.0) — END TO END through the REAL cutover functions
 // ═════════════════════════════════════════════════════════════════════════
-{
-  const cvn = readFileSync(path.join(ROOT, 'src/public/next/views/cutover-notice.js'), 'utf8');
-  function fn(name) {
-    const i = cvn.indexOf(`function ${name}(`);
-    if (i < 0) throw new Error('missing ' + name);
-    let d = 0; const j = cvn.indexOf('{', i);
-    for (let k = j; k < cvn.length; k++) {
-      if (cvn[k] === '{') d++;
-      else if (cvn[k] === '}') { d--; if (d === 0) return cvn.slice(i, k + 1); }
-    }
-    throw new Error('unbalanced ' + name);
-  }
-  function kon(name) { const m = cvn.match(new RegExp(`const ${name} = ('[^']*');`)); return `const ${name} = ${m[1]};`; }
-  const M = new Function([
-    kon('DISMISS_KEY'), kon('ORIGIN_KEY'),
-    fn('isExistingUser'), fn('readDismissed'), fn('readOrigin'), fn('classifyOrigin'), fn('shouldShowNotice'),
-    'return {readDismissed,readOrigin,classifyOrigin,shouldShowNotice,DISMISS_KEY,ORIGIN_KEY};',
-  ].join('\n'))();
-
-  // The facts a MIGRATING user presents. Every one comes from the SERVER, so
-  // every one is true on the native app's very first launch.
-  const facts = { hasKey: true, hasDomain: true, hasPages: true };
-
-  // (a) THE DEFECT, reproduced: an empty partition with no durable record.
-  const emptyStore = { getItem: () => null, setItem: () => {} };
-  eq(M.shouldShowNotice(facts, M.readDismissed(emptyStore), M.classifyOrigin(M.readOrigin(emptyStore), facts)), true,
-    'DEFECT REPRODUCED: with nothing recorded anywhere, a migrating user is told "The Curator has a new look" and pointed at /old');
-
-  // (b) THE FIX: the same empty partition, but the durable record survived.
-  //     Driven through the REAL loadUiState()/durableStorage() over a stubbed
-  //     transport, so the cache these functions read is populated by
-  //     production code rather than by hand.
-  const durable = await makeDurable({ installOrigin: 'post' }, {});
-  eq(M.shouldShowNotice(facts, M.readDismissed(durable), M.classifyOrigin(M.readOrigin(durable), facts)), false,
-    'FIXED: the durable origin reaches the same code through durableStorage() and the bar stays away');
-
-  // (c) A genuine pre-cutover user who already dismissed it, migrating.
-  const durable2 = await makeDurable({ installOrigin: 'pre', cutoverNoticeDismissed: '1' }, {});
-  eq(M.shouldShowNotice(facts, M.readDismissed(durable2), M.classifyOrigin(M.readOrigin(durable2), facts)), false,
-    'a pre-cutover user who already pressed "Got it" does not have to press it again after migrating');
-
-  // (d) CONTROL — the fix must not have simply disabled the surface. A real
-  //     pre-cutover user who has NOT dismissed it still sees it.
-  const durable3 = await makeDurable({ installOrigin: 'pre' }, {});
-  eq(M.shouldShowNotice(facts, M.readDismissed(durable3), M.classifyOrigin(M.readOrigin(durable3), facts)), true,
-    'CONTROL: a pre-cutover user who has not dismissed it STILL sees the bar — the fix is a rescue, not a mute');
-
-  // (e) THE NO-OP CASE, end to end: an existing BROWSER user whose values are
-  //     in localStorage and whose server holds nothing. Nothing about what
-  //     they see may change — and the promotion must carry their values up.
-  const posted = [];
-  const durable4 = await makeDurable({}, { 'curator-next-install-origin-v1': 'post' }, posted);
-  eq(M.shouldShowNotice(facts, M.readDismissed(durable4), M.classifyOrigin(M.readOrigin(durable4), facts)), false,
-    'NO-OP: an existing browser user sees exactly what they saw before — the localStorage origin still decides');
-  eq(JSON.stringify(posted[0] || null), JSON.stringify({ installOrigin: 'post' }),
-    '...and their value is PROMOTED to the server, which is what makes the later migration correct');
-
-  // (f) THE AWAIT IS LOAD-BEARING. §8 asserts the `await loadUiState()` call
-  //     SITE by reading the source, which is the weaker tool — so the
-  //     CONSEQUENCE of dropping it is measured here instead of argued: a read
-  //     taken before the load resolves falls through to the (empty) partition
-  //     and reproduces the defect exactly.
-  client.__resetUiState();
-  globalThis.window = { localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } };
-  globalThis.fetch = async () => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => ({ ok: true, ui: { installOrigin: 'post' } }) });
-  const premature = client.durableStorage();          // NO await — the mutation being modelled
-  eq(M.shouldShowNotice(facts, M.readDismissed(premature), M.classifyOrigin(M.readOrigin(premature), facts)), true,
-    'the await is LOAD-BEARING: reading before the durable record has landed re-creates the bar, which is why the call sites await');
-  await client.loadUiState();
-  eq(M.shouldShowNotice(facts, M.readDismissed(premature), M.classifyOrigin(M.readOrigin(premature), facts)), false,
-    '...and the SAME adapter instance is correct once it has — so the difference is the ordering, not the adapter');
-}
+// This section drove views/cutover-notice.js's real isExistingUser /
+// readDismissed / readOrigin / classifyOrigin / shouldShowNotice inside a
+// sandbox, over a durableStorage() populated by the REAL loadUiState() and a
+// stubbed transport. It reproduced the migration defect (an empty native
+// partition telling a migrating user "The Curator has a new look" and
+// pointing at /old), proved the durable record fixes it, and carried a
+// control proving the fix was a rescue and not a mute. It also MEASURED that
+// the `await loadUiState()` is load-bearing, by reading before the load
+// resolved and watching the defect come back.
+//
+// The module is deleted, so all of it goes. Two things were lost with it and
+// are named rather than assumed replaced:
+//   • The await-is-load-bearing MEASUREMENT. §8 still asserts the `await`
+//     CALL SITE by reading source, which that section itself calls the
+//     weaker tool — the consequence of dropping the await is no longer
+//     driven anywhere. views/onboarding.js has the same await and the same
+//     exposure.
+//   • The only end-to-end exercise of durableStorage() against a real
+//     consumer's real logic. §§8b and 9b still drive the privacy consent and
+//     the un-dismiss through real functions, so the store is not untested —
+//     but the migrating-partition scenario specifically is not.
 
 // ═════════════════════════════════════════════════════════════════════════
 section('8b. THE PRIVACY CONSENT, BEHAVIOURALLY — the real aiDisclosureSeen/markAiDisclosureSeen');

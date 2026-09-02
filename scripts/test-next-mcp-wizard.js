@@ -669,23 +669,13 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   }
   ok(!/seventeen tools/i.test(settingsCode), 'the old, wrong "seventeen tools" claim is gone');
 
-  // The SHIPPING frontend states the same count in two places, and it has now
-  // been wrong TWICE — v3.6.1 fixed "seventeen tools, ten read and seven
-  // write" in /next, and v3.8.0 found src/public/index.html still saying "10
-  // structured tools" while the real table held 18. Twice wrong means it rots,
-  // so it is pinned. This lives in a /next suite deliberately: the reader for
-  // the REAL tool table is already here, and standing up a second copy of it
-  // in a shipping-scoped suite is the two-hand-maintained-copies shape this
-  // project keeps paying for. Delete these three when cutover deletes
-  // src/public/index.html — not before.
-  const shippingHtml = readFileSync(path.join(ROOT, 'src/public/index.html'), 'utf8');
-  ok(!/\b10 structured tools\b/.test(shippingHtml),
-    'shipping index.html no longer claims "10 structured tools"');
-  const shippingCounts = [...shippingHtml.matchAll(/(\d+) structured tools/g)].map((m) => Number(m[1]));
-  ok(shippingCounts.length === 2,
-    `shipping index.html states the tool count in exactly 2 places (found ${shippingCounts.length})`);
-  ok(shippingCounts.every((n) => n === realTotal),
-    `every "N structured tools" in shipping index.html matches the real table (${realTotal}) — found ${JSON.stringify(shippingCounts)}`);
+  // REMOVED in v3.41.0, on this block's own instruction. Three assertions
+  // pinned the same tool count in src/public/index.html, which stated it
+  // twice and had been wrong twice ("10 structured tools" against a real 18,
+  // found in v3.8.0). Their comment said in as many words: "Delete these
+  // three when cutover deletes src/public/index.html — not before." That
+  // file is deleted, so the two stale copies of the count are gone with it
+  // and settings.js below is the only place left that states it.
   ok(!/ten read and seven write/i.test(settingsCode), 'the old, wrong read/write split is gone');
   ok(/compiling a conversation into pages|fixing health issues/i.test(settingsCode),
     'settings.js now makes the WRITE capability discoverable, not just countable');

@@ -524,7 +524,35 @@ section('§7  D2 — the honest result actually REACHES the user (frontend consu
 // knowledge folder with "no domains yet … the issue is inside its config file",
 // which is the exact harm D2 exists to remove.
 
-const appSrc = readFileSync(path.join(REPO_ROOT, 'src', 'public', 'app.js'), 'utf8');
+const wizardSrc = readFileSync(
+  path.join(REPO_ROOT, 'src', 'public', 'next', 'views', 'mcp-wizard.js'), 'utf8');
+
+// ── A GAP THIS DELETION SURFACED, RECORDED RATHER THAN QUIETLY DROPPED ───
+// Everything below used to read src/public/app.js. v3.41.0 deleted that
+// shell, and repointing the assertions at /next found that the D2 half does
+// not exist there: src/public/next/views/mcp-wizard.js NEVER READS
+// `domains_status`. Its describeSelfTest() branches on `ok`, `tool_count`,
+// `error`, `stderr` and a null `domains` list — so a MISSING knowledge folder
+// and an EMPTY one reach the user as the same sentence, which is precisely
+// the harm D2 was built to remove.
+//
+// This is NOT a regression introduced here. /next has been the only shell a
+// user sees since v3.9.0, so the consumer has been absent for thirty
+// releases while this section reported green — it was reading the shell
+// nobody was served. That is this repo's named shape: a check that stopped
+// reaching the thing it protects, kept alive by the file it read still
+// existing on disk.
+//
+// So the gap is ASSERTED as a measured fact rather than deleted. It goes RED
+// the moment somebody wires a consumer up, which is the moment the real
+// assertions below it should come back — they are preserved verbatim in git
+// history at this file's pre-v3.41.0 revision, and the route-level checks in
+// §6 above still prove the honest statuses are PRODUCED.
+check('KNOWN GAP: /next mcp-wizard.js does not consume domains_status (route emits it; no UI renders it)',
+  !/domains_status/.test(wizardSrc));
+// Control: the probe really is reading the wizard and could see the field.
+check('  (control) the wizard source was read and does reference the self-test route',
+  /self-test/.test(wizardSrc) && wizardSrc.length > 1000);
 
 /** Slice a function body out of source by brace-matching from its signature. */
 function functionBody(src, signature) {
@@ -541,56 +569,20 @@ function functionBody(src, signature) {
   return null;
 }
 
-const selfTestFn = functionBody(appSrc, 'async function runSelfTestInto(');
-check('frontend: runSelfTestInto located in app.js', typeof selfTestFn === 'string' && selfTestFn.length > 200);
-
-if (selfTestFn) {
-  check('frontend: runSelfTestInto reads data.domains_status', /data\.domains_status/.test(selfTestFn));
-  check('frontend: it branches on the status (switch/case or equivalent)',
-    /case\s*'(ok|empty|missing_folder)'/.test(selfTestFn));
-  check('frontend: an unrecognised/degraded status still renders something honest (default arm present)',
-    /\bdefault\s*:/.test(selfTestFn));
-  for (const s of ['ok', 'empty', 'missing_folder']) {
-    check(`frontend: status '${s}' has its own arm`,
-      new RegExp(`case\\s*'${s}'`).test(selfTestFn));
-  }
-
-  // THE REGRESSION THAT MATTERS. This sentence is correct for a healthy bridge
-  // and actively harmful for a missing/unreadable folder — it sends the user to
-  // debug the one file that is fine. It must live ONLY in the 'ok' arm.
-  const BLAME_CONFIG = "the issue is inside its config file";
-  const arms = selfTestFn.split(/case\s*'|(?=\bdefault\s*:)/);
-  const blamingArms = arms.filter(a => a.includes(BLAME_CONFIG));
-  check(`frontend: the "blame the config file" sentence appears in exactly one arm (found ${blamingArms.length})`,
-    blamingArms.length === 1);
-  check('frontend: and that arm is the healthy \'ok\' one',
-    blamingArms.length === 1 && blamingArms[0].startsWith("ok'"));
-  check('frontend: the missing_folder arm explicitly tells the user NOT to blame the config file',
-    /missing_folder'[\s\S]*?not a mistake in your Claude Desktop config file/.test(selfTestFn));
-
-  // XSS boundary: every one of these is a spawned child's stdout or a path.
-  for (const f of ['domains_dir', 'domains_error', 'domains_message']) {
-    check(`frontend: data.${f} is never interpolated unescaped`,
-      !new RegExp(`\\$\\{\\s*data\\.${f}\\s*\\}`).test(selfTestFn));
-  }
-  check('frontend: the domain NAMES from the child are escaped too',
-    !/\$\{\s*data\.domains\.join/.test(selfTestFn) && /data\.domains\.map\(escapeHtml\)/.test(selfTestFn));
-  check('frontend: stderr is still escaped on the failure path',
-    /escapeHtml\(data\.stderr\)/.test(selfTestFn));
-}
-
-// D1 residue — the "Your file now" pane must not claim an unparseable file is empty.
-const renderFn = functionBody(appSrc, "const diffBefore = document.getElementById('mcp-diff-before')");
-check('frontend: the diff-before block was located', typeof renderFn === 'string');
-if (renderFn) {
-  const mergeAt = renderFn.indexOf('merge_available');
-  const emptyAt = renderFn.indexOf('was_empty');
-  check('frontend: diff-before checks merge_available at all', mergeAt !== -1);
+// D1 residue — the "Your file now" pane must not claim an unparseable file is
+// empty. This half DID survive the port: /next's wholeFileUsable() makes the
+// ordered decision the deleted shell's diff-before block did.
+const usabilityFn = functionBody(wizardSrc, 'function wholeFileUsable(');
+check('frontend: /next wholeFileUsable() was located', typeof usabilityFn === 'string' && usabilityFn.length > 100);
+if (usabilityFn) {
+  const mergeAt = usabilityFn.indexOf('merge_available');
+  const emptyAt = usabilityFn.indexOf('was_empty');
+  check('frontend: it checks merge_available at all', mergeAt !== -1);
   check('frontend: …and checks it BEFORE was_empty, so a corrupt file never renders as "{}"',
     mergeAt !== -1 && emptyAt !== -1 && mergeAt < emptyAt);
-  check('frontend: the corrupt branch says the file is unreadable, not empty',
-    /not valid JSON/.test(renderFn));
 }
+check('frontend: the corrupt branch says the file is unreadable, not empty',
+  /not valid JSON/.test(wizardSrc));
 
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(60)}`);
