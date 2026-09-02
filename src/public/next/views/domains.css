@@ -331,6 +331,30 @@
   gap: 10px;
   margin-bottom: 24px;
 }
+/* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
+   ONE thing: `.dm-path-eyebrow`, and it keeps it because an EYEBROW is a
+   mono idiom in this design system (`--type-eyebrow` is defined as a mono
+   token in tokens/typography.css), not because a path is code.
+
+   The other 31 monospace spans this view emitted are gone. They were doing
+   two different jobs under one name — a COUNT was in mono so it would not
+   reflow as it changed, which is tabular figures; a NAME (a wiki slug, a
+   folder path, a domain) was in mono out of habit, and on a screen that is
+   almost entirely counts and slugs that is what made the whole view read as
+   terminal output. The counts keep the property that mattered. */
+.dm-num,
+.dm-row-meta,
+.dm-chip-count,
+.dm-browse-tab-count,
+.dm-quick-cost,
+.dm-plan-detail,
+.dm-group-pill,
+.dm-issue-more { font-variant-numeric: var(--numeric-tabular); }
+/* A slug, a folder or a path named inside a sentence. Emphasised by colour
+   and weight rather than by a change of face mid-line — the same decision as
+   views/ingest.css's `.ing-name` and views/memory.css's `.mem-name`. */
+.dm-name { color: var(--text); font-weight: var(--weight-medium); }
+
 .dm-stat-card {
   /* 14 -> --space-8 (16px), on the 4pt grid. */
   padding: var(--space-8);
@@ -446,6 +470,10 @@
   gap: 8px;
   margin-bottom: 14px;
 }
+/* A health readout, NOT a control: it is a <span> with no handler, which is
+   why its 25px height is not a hit-target finding. It loses the code face for
+   the same reason everything else here did — `Broken links 0` is a sentence
+   with a number in it — and keeps tabular digits on the number itself. */
 .dm-chip {
   display: inline-flex;
   align-items: center;
@@ -453,7 +481,7 @@
   height: 25px;
   padding: 0 10px;
   border-radius: var(--radius-full);
-  font: var(--type-mono);
+  font: var(--type-body-sm);
   font-size: var(--text-2xs);
   border: 1px solid transparent;
 }
@@ -677,10 +705,13 @@
   padding: 1px 8px;
 }
 
+/* 26 -> --control-sm (28px). A real <button class="btn btn-secondary"> that
+   applies every fix in a category at once, and it was the smallest pointer
+   target on the health panel. The BOX grew; the type did not. */
 .dm-group-fixall-btn {
   margin-left: auto;
-  height: 26px;
-  padding: 0 9px;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
   font-size: var(--text-xs);
 }
 

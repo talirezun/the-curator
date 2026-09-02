@@ -144,6 +144,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: var(--numeric-tabular);
 }
 /* A project row with nothing saved yet. It was --text-3, which this file's own
    note on .mem-row-meta six lines above already argues against in principle:
