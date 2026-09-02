@@ -725,7 +725,12 @@
 /* .btn-xs is declared in sync.css/settings.css as a shared-looking utility,
    but each view owns its own CSS file (views/README) — re-declared here so
    an edit there can never silently change this view's button. */
-.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+/* 26 -> --control-sm (28px). macOS's DEFAULT control target, and the change
+   settings.css's own copy of this rule already took in the design pass — all
+   four copies have to move together or the app has two sizes of small button
+   depending on which view you are looking at. Its BOX grew; the type and the
+   glyphs inside it did not. */
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 
 /* ── Narrow viewports ────────────────────────────────────────────────── */

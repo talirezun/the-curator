@@ -32,16 +32,21 @@
    in both themes) and the words stay at --text / --text-2. One definition, in
    one place, legible in both themes. */
 
-.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+/* 26 -> --control-sm (28px). macOS's DEFAULT control target, and the change
+   settings.css's own copy of this rule already took in the design pass — all
+   four copies have to move together or the app has two sizes of small button
+   depending on which view you are looking at. Its BOX grew; the type and the
+   glyphs inside it did not. */
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 /* ── Sidebar: cross-mount busy note ──────────────────────────────────── */
 
 .ing-sidebar-busy {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  margin-top: 10px;
-  padding: 9px 10px;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -49,17 +54,17 @@
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.ing-sidebar-busy svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+.ing-sidebar-busy svg { flex: none; margin-top: var(--space-px); color: var(--attention-text); }
 
 /* ── Form ─────────────────────────────────────────────────────────────── */
 
-.ing-field { margin-bottom: 18px; max-width: 480px; }
+.ing-field { margin-bottom: var(--space-8); max-width: 480px; }
 
 .ing-label {
   display: block;
   font: var(--type-label);
   color: var(--text-2);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 /* ── THE DOMAIN PICKER IS NO LONGER A <select> ────────────────────────
@@ -87,7 +92,7 @@
 .ing-select {
   width: 100%;
   height: var(--control-md);
-  padding: 0 10px;
+  padding: 0 var(--space-5);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -114,12 +119,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   min-height: 168px;
   background: var(--surface-inset);
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
-  padding: 28px 24px;
+  padding: var(--space-14) var(--space-12);
   text-align: center;
   color: var(--text-2);
   font: var(--type-body-sm);
@@ -153,7 +158,7 @@
 
 .ing-drop-icon {
   color: var(--text-2);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
   transition: color var(--t-state);
 }
 .ing-drop-zone:hover .ing-drop-icon { color: var(--accent-text); }
@@ -176,14 +181,14 @@
    decoration — an unsupported extension is refused after the fact by
    pickSingleFile, and this is what stops that happening. */
 .ing-drop-formats {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   font-size: var(--text-xs);
   color: var(--text-2);
   letter-spacing: var(--track-mono);
 }
 .ing-drop-formats .mono { color: var(--text); }
 .ing-drop-batch-hint {
-  margin-top: 2px;
+  margin-top: var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-2);
 }
@@ -205,14 +210,14 @@
    the SAME `GET /api/domains/stats` response loadDomains already fetches;
    `pageCount` and `lastIngestDate` were being parsed and thrown away. */
 
-.ing-dest-list { display: flex; flex-direction: column; gap: 1px; }
+.ing-dest-list { display: flex; flex-direction: column; gap: var(--space-px); }
 
 .ing-dest-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 7px 8px;
+  padding: var(--space-3) var(--space-4);
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
@@ -224,17 +229,19 @@
   font: inherit;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.ing-dest-row:hover:not([disabled]) { background: var(--surface-hover); }
-.ing-dest-row.active { background: var(--surface-active); color: var(--text); }
+/* Rows on the sidebar material take the alpha overlay, never an opaque
+   surface — see views/chat.css's conversation rows for the full argument. */
+.ing-dest-row:hover:not([disabled]) { background: var(--mat-row-hover); }
+.ing-dest-row.active { background: var(--mat-row-active); color: var(--text); }
 /* Press. `:not([disabled])` matches the hover's 0,3,0 so the press is not
    swallowed by it, AND stops a destination that is refusing clicks from
    acknowledging one — the row is disabled during a live write, which is the
    worst moment for a control to imply it did something. */
-.ing-dest-row:active:not([disabled]) { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.ing-dest-row:active:not([disabled]) { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
 .ing-dest-row.active .ing-dest-name { font-weight: var(--weight-medium); }
 .ing-dest-row[disabled] { cursor: not-allowed; opacity: var(--opacity-disabled); }
 
-.ing-dest-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ing-dest-main { display: flex; flex-direction: column; gap: var(--space-px); min-width: 0; flex: 1; }
 .ing-dest-name {
   font-size: var(--text-md);
   white-space: nowrap;
@@ -257,7 +264,7 @@
    row scale, so the sidebar speaks with one voice about one fact. */
 .ing-dest-live {
   flex: none;
-  padding: 1px 6px;
+  padding: var(--space-px) var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -283,7 +290,7 @@
    success would answer a different question from the one they asked. */
 .ing-dest-settled {
   flex: none;
-  padding: 1px 6px;
+  padding: var(--space-px) var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--success-text);
   background: var(--success-tint);
@@ -297,24 +304,24 @@
   background: var(--danger-tint);
 }
 
-.ing-sidebar-pick-btn { width: 100%; margin: 10px 0 4px; justify-content: center; }
+.ing-sidebar-pick-btn { width: 100%; margin: var(--space-5) 0 var(--space-2); justify-content: center; }
 .ing-file-name {
   display: block;
-  margin-top: 8px;
+  margin-top: var(--space-4);
   font-size: var(--text-xs);
   color: var(--accent-text);
 }
 .ing-field-error {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   color: var(--danger-text);
   font-size: var(--text-xs);
 }
 .ing-multi-note {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  margin-top: 10px;
-  padding: 9px 10px;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -322,18 +329,18 @@
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.ing-multi-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+.ing-multi-note svg { flex: none; margin-top: var(--space-px); color: var(--attention-text); }
 
 /* ── Progress bar (ported from src/public/styles.css's .ingest-progress
    family — same v3.0.17 elapsed-clock behaviour, restyled onto this
    shell's tokens) ───────────────────────────────────────────────────── */
 
 .ing-progress {
-  margin: 16px 0 4px;
+  margin: var(--space-8) 0 var(--space-2);
   max-width: 480px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 /* The linear bar (.ing-progress-header/-label/-meta/-pct/-elapsed/-track/
    -fill/-fill-waiting and the ing-progress-pulse keyframe) was REMOVED
@@ -363,17 +370,17 @@
   line-height: var(--leading-normal);
 }
 .ing-remote-outcome {
-  margin-top: 20px;
+  margin-top: var(--space-10);
   max-width: 640px;
 }
 /* The panel below carries its own margin-top; collapsing it here keeps the
    header visually attached to the result it heads rather than floating. */
-.ing-remote-outcome .ing-result { margin-top: 8px; }
+.ing-remote-outcome .ing-result { margin-top: var(--space-4); }
 .ing-remote-outcome-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
   flex-wrap: wrap;
 }
 .ing-remote-outcome-when {
@@ -389,11 +396,11 @@
 
 .ing-duplicate {
   display: flex;
-  gap: 12px;
+  gap: var(--space-6);
   align-items: flex-start;
   max-width: 480px;
-  margin-top: 16px;
-  padding: 14px 16px;
+  margin-top: var(--space-8);
+  padding: var(--space-7) var(--space-8);
   border-radius: var(--radius-lg);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -401,31 +408,31 @@
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
 }
-.ing-duplicate svg { flex: none; margin-top: 2px; color: var(--attention-text); }
-.ing-duplicate-actions { display: flex; gap: 8px; margin-top: 10px; }
+.ing-duplicate svg { flex: none; margin-top: var(--space-1); color: var(--attention-text); }
+.ing-duplicate-actions { display: flex; gap: var(--space-4); margin-top: var(--space-5); }
 
 /* ── Result panel ─────────────────────────────────────────────────────── */
 
 .ing-result {
-  margin-top: 20px;
+  margin-top: var(--space-10);
   max-width: 640px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: 18px 22px;
+  padding: var(--space-8) var(--space-10);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
 }
 .ing-result-title {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-6);
   color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: var(--track-eyebrow);
 }
-.ing-change-list-flat { padding-left: 18px; margin: 0; }
-.ing-change-list-flat li { margin-bottom: 4px; color: var(--text-2); font-family: var(--font-mono); font-size: var(--text-sm); }
+.ing-change-list-flat { padding-left: var(--space-8); margin: 0; }
+.ing-change-list-flat li { margin-bottom: var(--space-2); color: var(--text-2); font-family: var(--font-mono); font-size: var(--text-sm); }
 
 /* ── Change records (ported from src/public/styles.css's .change-* family) */
 
@@ -434,9 +441,9 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--text);
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
-.ing-change-section { margin-bottom: 14px; }
+.ing-change-section { margin-bottom: var(--space-7); }
 .ing-change-section:last-child { margin-bottom: 0; }
 .ing-change-header {
   font-size: var(--text-xs);
@@ -444,10 +451,10 @@
   color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 /* These headers are icon + count + words. --success-text painted the WORDS at
    4.05 light, so the green moves to the icon (a graphic at 4.05, over 3:1) and
@@ -463,10 +470,10 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--space-6);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  padding: 3px 0;
+  padding: var(--space-1) 0;
   color: var(--text-2);
   border-bottom: 1px solid var(--border-subtle);
   min-width: 0;
@@ -488,7 +495,7 @@
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;
@@ -502,8 +509,8 @@
 
 .ing-warnings {
   border-radius: var(--radius-md);
-  padding: 10px 12px;
-  margin: 0 0 14px;
+  padding: var(--space-5) var(--space-6);
+  margin: 0 0 var(--space-7);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
   border: 1px solid var(--border-subtle);
@@ -513,28 +520,28 @@
 .ing-warnings-review { border-color: var(--attention-text); background: var(--attention-tint); }
 .ing-warnings-attention { border-color: var(--danger-text); background: var(--danger-tint); }
 .ing-warnings-info { border-color: var(--accent-border); background: var(--accent-tint); }
-.ing-warnings-summary { font-size: var(--text-xs); margin-top: 2px; }
-.ing-warnings-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.ing-warnings-summary { font-size: var(--text-xs); margin-top: var(--space-1); }
+.ing-warnings-list { margin: var(--space-4) 0 0; padding: 0; list-style: none; }
 .ing-warnings-list li {
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
-.ing-warn-icon { flex: none; margin-top: 2px; }
+.ing-warn-icon { flex: none; margin-top: var(--space-1); }
 .ing-warn-icon svg { display: block; }
 
 /* ── Token/cache usage footer (ported from src/public/styles.css's
    .token-usage family) ──────────────────────────────────────────────── */
 
 .ing-token-usage {
-  margin-top: 12px;
-  padding-top: 10px;
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 5px 14px;
+  gap: var(--space-2) var(--space-7);
   font-size: var(--text-xs);
   color: var(--text-2);
 }
@@ -547,44 +554,98 @@
 
 /* ── Confirm gate ─────────────────────────────────────────────────────── */
 
-.ing-queue-confirm-head { margin: 4px 0 14px; }
+.ing-queue-confirm-head { margin: var(--space-2) 0 var(--space-7); }
 .ing-queue-confirm-title {
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   color: var(--text);
-  margin: 0 0 4px;
+  margin: 0 0 var(--space-2);
 }
 .ing-queue-confirm-sub { font-size: var(--text-xs); color: var(--text-2); }
 
-.ing-queue-section { margin-bottom: 16px; max-width: 480px; }
+.ing-queue-section { margin-bottom: var(--space-8); max-width: 480px; }
 .ing-queue-section-label {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
+
+/* ── THE TWO QUEUE BLOCKS ARE LISTS, SO THEY ARE INSET GROUPS ─────────────
+   Both are a stack of rows inside a boundary, which is exactly the shape
+   shell.css's `.cur-group` / `.cur-group-row` describes: a raised content
+   card (`--elev-1` + `--hairline`, never the two-line material edge, which
+   belongs to chrome that floats) with separators INSET to the row's own left
+   padding, so the rules start where the text starts instead of cutting the
+   card in half.
+
+   The treatment is applied to this view's own class names rather than by
+   rewriting the markup onto `.cur-group*`: `#ing-queue-file-list` and every
+   `.ing-queue-*` name here is read by views/ingest.js and by its suites, and
+   swapping the class names would be a behaviour change dressed as a paint
+   change. What matters is that the two look like the rest of the app's
+   lists, and that is a property of the RULES.
+
+   The separator moves from `border-bottom` to an absolutely-positioned
+   `::before` on every row but the first — the same construction `.cur-group-
+   row` uses — because a bottom border cannot be inset on the left without
+   also being drawn on the last row and then removed again. */
+/* ── WHAT THIS VIEW SETS IN CODE TYPE, AND WHAT IT NO LONGER DOES ─────────
+   views/ingest.js carried 57 `mono` spans — the most of any view — and they
+   were doing two different jobs under one name. A COUNT (a stage ordinal, an
+   elapsed clock, a percentage, a page count, a dollar figure) was in mono so
+   it would not reflow the words beside it as it ticked; that is TABULAR
+   FIGURES, and `.ing-num` gives it without a code face. A NAME (a filename, a
+   domain, a wiki path, a byte size) was in mono for no reason but habit, and
+   in a view that reports progress it is what made the whole screen read as a
+   build log.
+
+   ONE thing here is still monospace and belongs there: the accepted
+   extensions, `.txt`/`.md`/`.pdf`, which are literals a user would type. */
+.ing-num { font-variant-numeric: var(--numeric-tabular); }
+/* A filename or a domain named inside a sentence. It is emphasised by COLOUR
+   and weight, which is what the sentence needs, rather than by a change of
+   face mid-line. */
+.ing-name { color: var(--text); font-weight: var(--weight-medium); }
+/* Figures in the result and queue lists: tabular so a column of byte sizes
+   and page counts aligns, which is the only thing the code face was buying. */
+.ing-change-detail,
+.ing-token-usage,
+.ing-queue-file-size,
+.ing-queue-item-size,
+.ing-queue-confirm-sub { font-variant-numeric: var(--numeric-tabular); }
 
 .ing-queue-file-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
   overflow: hidden;
   max-height: 220px;
   overflow-y: auto;
 }
 .ing-queue-file-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5);
   font-size: var(--text-sm);
 }
-.ing-queue-file-item:last-child { border-bottom: none; }
+.ing-queue-file-item + .ing-queue-file-item::before {
+  content: "";
+  position: absolute;
+  left: var(--space-5);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
 .ing-queue-file-name {
   flex: 1;
   min-width: 0;
@@ -619,23 +680,107 @@
    destructive control is the last place to invent a colour so a scan can
    report uniformity. See shell.css `.btn-danger` for the same refusal. */
 .ing-queue-file-remove:active { transform: scale(var(--press-scale-icon)); }
+/* ── THE GLYPH STAYS 20x20; THE POINTER TARGET REACHES --hit-min ──────────
+   The amplitude above is deliberate and unchanged. What was not deliberate is
+   that the TARGET was also 20, under macOS's 28pt default, on the control
+   that removes a file from a batch the user is about to pay to ingest. The
+   sanctioned technique: a transparent ::before, exactly as shell.css uses for
+   `.reader-close`. */
+.ing-queue-file-remove { position: relative; }
+.ing-queue-file-remove::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 20px) / -2);
+}
 
-.ing-queue-estimate { max-width: 480px; margin-bottom: 14px; }
+.ing-queue-estimate {
+  max-width: 480px;
+  margin-bottom: var(--space-7);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
+  padding: var(--space-2) 0;
+}
 .ing-queue-estimate-row {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 4px 0;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-5);
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-.ing-queue-estimate-row strong { color: var(--text); }
-.ing-queue-estimate-basis { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; line-height: var(--leading-normal); }
+.ing-queue-estimate-row + .ing-queue-estimate-row::before {
+  content: "";
+  position: absolute;
+  left: var(--space-5);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
+/* The figure on the right of each row. Tabular so a dollar range, a token
+   range and a file count line up down the column instead of drifting with
+   their digits — the reason a settings list is a list. */
+.ing-queue-estimate-row strong {
+  color: var(--text);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.ing-queue-estimate-basis {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-5);
+  line-height: var(--leading-normal);
+}
+
+/* ── The estimate's loading placeholder ───────────────────────────────────
+   Same box, same rhythm, same row height as the answer it is standing in
+   for — a skeleton that does not match the shape it precedes just makes the
+   arrival jump twice. `.cur-skeleton` (shell.css) owns the shimmer and its
+   reduced-motion behaviour; nothing here re-declares either. */
+.ing-queue-skeleton {
+  max-width: 480px;
+  margin-bottom: var(--space-7);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
+  padding: var(--space-2) 0;
+}
+.ing-queue-skeleton-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-5);
+}
+.ing-queue-skeleton-row + .ing-queue-skeleton-row::before {
+  content: "";
+  position: absolute;
+  left: var(--space-5);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
+.ing-queue-skeleton-name { display: block; height: 10px; flex: 1; max-width: 260px; }
+.ing-queue-skeleton-size { display: block; height: 10px; width: 56px; flex: none; }
+/* The last row stands in for the TOTAL, which is the widest figure and the
+   shortest label — mirrored so the placeholder predicts the real row. */
+.ing-queue-skeleton-total .ing-queue-skeleton-name { max-width: 96px; }
+.ing-queue-skeleton-total .ing-queue-skeleton-size { width: 88px; }
+
+/* One numeric span for counts this view emits without a class of their own. */
+.ing-num { font-variant-numeric: var(--numeric-tabular); }
 
 .ing-queue-warnings {
   max-width: 480px;
-  margin-bottom: 14px;
-  padding: 9px 10px;
+  margin-bottom: var(--space-7);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
@@ -649,48 +794,48 @@
 .ing-queue-overwrite-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-2);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-8);
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.ing-queue-confirm-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.ing-queue-confirm-actions { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 
 /* ── Live / terminal job panel ────────────────────────────────────────── */
 
 .ing-queue-panel-head {
-  margin: 4px 0 14px;
+  margin: var(--space-2) 0 var(--space-7);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
 }
 .ing-queue-panel-headtext { min-width: 0; }
 .ing-queue-panel-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text); }
-.ing-queue-panel-sub { font-size: var(--text-xs); color: var(--text-2); margin-top: 2px; }
+.ing-queue-panel-sub { font-size: var(--text-xs); color: var(--text-2); margin-top: var(--space-1); }
 
 .ing-queue-paused-banner {
   max-width: 640px;
-  margin-bottom: 14px;
-  padding: 12px 14px;
+  margin-bottom: var(--space-7);
+  padding: var(--space-6) var(--space-7);
   border-radius: var(--radius-lg);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
 }
 /* Inside a banner that already carries an amber BORDER and an amber TINT, so
    the title does not need to spend legibility on the hue as well. */
-.ing-queue-paused-title { font-weight: var(--weight-semibold); color: var(--text); margin-bottom: 3px; }
+.ing-queue-paused-title { font-weight: var(--weight-semibold); color: var(--text); margin-bottom: var(--space-1); }
 .ing-queue-paused-body { font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
-.ing-queue-paused-detail { font-size: var(--text-xs); color: var(--text-2); margin-top: 6px; }
+.ing-queue-paused-detail { font-size: var(--text-xs); color: var(--text-2); margin-top: var(--space-3); }
 
 /* Defect #2 fix: an immediate, unambiguous "this is happening now" line —
    never silent between clicking Cancel/Pause and the next snapshot. */
 .ing-queue-inflight-notice {
   max-width: 640px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
   font-size: var(--text-sm);
   /* No border and no tint here for the amber to retreat into, and it measured
      3.58 light. --text at --weight-medium against the --text-2 lines around it
@@ -701,40 +846,40 @@
 
 .ing-queue-done-summary {
   max-width: 640px;
-  margin-bottom: 14px;
-  padding: 12px 14px;
+  margin-bottom: var(--space-7);
+  padding: var(--space-6) var(--space-7);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--surface);
 }
 .ing-queue-done-fail-reason {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   color: var(--danger-text);
   font-size: var(--text-sm);
 }
 .ing-queue-done-totals {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: var(--space-3) var(--space-7);
   font-size: var(--text-sm);
   color: var(--text-2);
 }
 /* Sits in a row of --text-2 totals, so --text + medium already reads as the odd
    one out; --attention-text was 3.58 light on this panel's surface. */
 .ing-queue-done-unaccounted { color: var(--text); font-weight: var(--weight-medium); }
-.ing-queue-done-health { margin-top: 8px; font-size: var(--text-xs); color: var(--text-2); }
+.ing-queue-done-health { margin-top: var(--space-4); font-size: var(--text-xs); color: var(--text-2); }
 
 .ing-queue-panel-controls {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
   max-width: 640px;
 }
 .ing-queue-cancel-confirm { font-size: var(--text-sm); color: var(--text-2); }
 
-.ing-queue-terminal-actions { margin-bottom: 16px; }
+.ing-queue-terminal-actions { margin-bottom: var(--space-8); }
 
 .ing-queue-item-list {
   list-style: none;
@@ -743,19 +888,19 @@
   max-width: 640px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-px);
 }
 .ing-queue-item-row {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.ing-queue-item-row + .ing-queue-item-row { margin-top: 6px; }
+.ing-queue-item-row + .ing-queue-item-row { margin-top: var(--space-3); }
 .ing-queue-item-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .ing-queue-item-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); color: var(--text); }
 .ing-queue-item-size { font-size: var(--text-xs); color: var(--text-2); flex-shrink: 0; }
@@ -764,7 +909,7 @@
   flex: none;
   font-size: var(--text-2xs);
   font-family: var(--font-mono);
-  padding: 2px 8px;
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
   color: var(--text-2);
@@ -795,14 +940,14 @@
    message line. The message is now the ring's own label, so the two can
    never disagree about which phase the row is in. */
 .ing-queue-item-progress {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   min-height: 20px;
 }
 /* The row's own label sizing lives in shared/progress-ring.css as the
    `pring-sm` modifier — every `pring-` rule stays in the file that owns the
    prefix, so a grep for it lands in one place. */
 .ing-queue-item-error {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   font-size: var(--text-xs);
   color: var(--danger-text);
 }
@@ -810,7 +955,7 @@
    and --attention-text put it at 3.58 in the light theme. */
 .ing-queue-item-stopped-msg { color: var(--text); }
 .ing-queue-item-result {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   font-size: var(--text-xs);
   color: var(--text-2);
 }
@@ -824,7 +969,7 @@
    These replace five `style="margin-*"` attributes that used to sit inline on
    the error boxes. Spacing is a property of WHERE a status appears, so it
    belongs to this file; the box itself belongs to the system.              */
-.ing-status-block { margin-top: 14px; margin-bottom: 14px; }
+.ing-status-block { margin-top: var(--space-7); margin-bottom: var(--space-7); }
 
 /* NOTHING PLACES THE SHARED ROLES HERE, and the absence is deliberate.
    shared/text.js owns their type AND their geometry, and
@@ -855,10 +1000,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
   flex-wrap: wrap;
-  margin: 0 0 14px;
-  padding: 8px 12px;
+  margin: 0 0 var(--space-7);
+  padding: var(--space-4) var(--space-6);
   border: 1px solid var(--success-text);
   background: var(--success-tint);
   border-radius: var(--radius-md);
@@ -882,7 +1027,7 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────

@@ -1279,12 +1279,12 @@ function renderSidebar(token) {
     : remoteRunning
       ? '<div class="ing-sidebar-busy">' + icon('alertTriangle', 13) +
         '<span>Ingesting ' +
-        (state.remote.filename ? '<span class="mono">' + escapeHtml(state.remote.filename) + '</span>' : 'a file') +
-        ' into <span class="mono">' + escapeHtml(state.domain) + '</span> — ' +
+        (state.remote.filename ? '<span class="ing-name">' + escapeHtml(state.remote.filename) + '</span>' : 'a file') +
+        ' into <span class="ing-name">' + escapeHtml(state.domain) + '</span> — ' +
         escapeHtml(state.remote.message || 'working…') + '</span></div>'
       : '<div class="ing-sidebar-busy">' + icon('alertTriangle', 13) +
         '<span>A write (' + escapeHtml(getDomainWriteLabel(state.domain) || 'write') +
-        ') is already running for <span class="mono">' + escapeHtml(state.domain) + '</span>.</span></div>';
+        ') is already running for <span class="ing-name">' + escapeHtml(state.domain) + '</span>.</span></div>';
 
   const hint = inQueueMode
     ? 'Files process one at a time, so a single failure costs one file, not the whole batch. A paused or ' +
@@ -1388,7 +1388,7 @@ function renderSidebar(token) {
         (isActive ? ' aria-current="true"' : '') + '>' +
         '<span class="ing-dest-main">' +
           '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
-          '<span class="ing-dest-meta mono">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
+          '<span class="ing-dest-meta">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
         '</span>' +
         (isRunning ? '<span class="ing-dest-live">Ingesting</span>' : '') +
         (settledRec
@@ -1594,7 +1594,7 @@ function renderIngestForm() {
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-file-input">File</label>' +
       renderDropZoneHtml({ disabled: state.submitting, multiHint: true }) +
-      (state.file ? '<span class="ing-file-name mono">' + escapeHtml(state.file.name) + '</span>' : '') +
+      (state.file ? '<span class="ing-file-name">' + escapeHtml(state.file.name) + '</span>' : '') +
       (state.fileError ? '<div class="ing-field-error">' + escapeHtml(state.fileError) + '</div>' : '') +
     '</div>' +
     // sparkles marks a token-spending action (design rule) — ingest always
@@ -1670,7 +1670,7 @@ function renderProgress() {
   // "Results are specific" (design principle): the terminal label is built
   // by formatIngestDoneLabelHtml from real counts + a byte delta — never
   // the literal word "Done!" — so it already carries its own <span
-  // class="mono"> around every number. Every OTHER progress label is a
+  // class="ing-num"> around every number. Every OTHER progress label is a
   // plain server-sent phase message (e.g. "AI is analyzing the
   // document…") with no numbers to mark up, so it stays plain escaped text.
   const labelContent = p.labelHtml ? p.labelHtml : escapeHtml(p.label || 'Working…');
@@ -1735,9 +1735,9 @@ function renderProgress() {
   const sublabelHtml =
     (pct >= 100
       ? 'finished'
-      : 'stage <span class="mono">' + stageOrdinal + '</span> of <span class="mono">' + INGEST_STAGES.length + '</span>') +
-    ' · <span class="mono" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
-    ' · <span class="mono">' + shownPct + '%</span>';
+      : 'stage <span class="ing-num">' + stageOrdinal + '</span> of <span class="ing-num">' + INGEST_STAGES.length + '</span>') +
+    ' · <span class="ing-num" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+    ' · <span class="ing-num">' + shownPct + '%</span>';
 
   return (
     '<div class="ing-progress">' +
@@ -1782,7 +1782,7 @@ function formatIngestDoneLabelHtml(changes) {
     const after = Number.isFinite(c.bytesAfter) ? c.bytesAfter : 0;
     return sum + (after - before);
   }, 0);
-  const mono = (n) => '<span class="mono">' + n + '</span>';
+  const mono = (n) => '<span class="ing-num">' + n + '</span>';
   const parts = [];
   if (created > 0) parts.push('Wrote ' + mono(created) + ' new ' + (created === 1 ? 'page' : 'pages'));
   if (updated > 0) parts.push('updated ' + mono(updated) + ' existing');
@@ -1831,9 +1831,9 @@ function renderRemoteProgress() {
   // arithmetic and is precisely how the three-figure defect started.
   const shownPct = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
   const sublabelHtml =
-    'stage <span class="mono">' + stageOrdinal + '</span> of <span class="mono">' + INGEST_STAGES.length + '</span>' +
-    ' · <span class="mono" id="ing-remote-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
-    ' · <span class="mono">' + shownPct + '%</span>';
+    'stage <span class="ing-num">' + stageOrdinal + '</span> of <span class="ing-num">' + INGEST_STAGES.length + '</span>' +
+    ' · <span class="ing-num" id="ing-remote-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+    ' · <span class="ing-num">' + shownPct + '%</span>';
 
   return (
     '<div class="ing-status-block">' +
@@ -1846,7 +1846,7 @@ function renderRemoteProgress() {
     '</div>' +
     '<div class="ing-progress ing-progress-remote">' +
       (r.filename
-        ? '<div class="ing-remote-file">Ingesting <strong class="mono">' + escapeHtml(r.filename) + '</strong> into <span class="mono">' + escapeHtml(r.domain) + '</span></div>'
+        ? '<div class="ing-remote-file">Ingesting <strong class="ing-name">' + escapeHtml(r.filename) + '</strong> into <span class="ing-name">' + escapeHtml(r.domain) + '</span></div>'
         : '') +
       progressRingHtml({
         stages: INGEST_STAGES,
@@ -1930,7 +1930,7 @@ function renderSettledElsewhere() {
       '<span class="ing-settled-elsewhere-text">' +
         (failed ? 'An ingest failed in ' : 'An ingest finished in ') +
         '<strong>' + escapeHtml(shown) + '</strong>' +
-        (top.filename ? ' · <span class="mono">' + escapeHtml(top.filename) + '</span>' : '') +
+        (top.filename ? ' · <span class="ing-name">' + escapeHtml(top.filename) + '</span>' : '') +
         (others > 0
           ? ' <span class="ing-settled-elsewhere-more">and ' + others +
             ' more ' + (others === 1 ? 'domain' : 'domains') + '</span>'
@@ -1965,7 +1965,7 @@ function renderRemoteOutcome() {
   const header =
     '<div class="ing-remote-outcome-head">' +
       '<span class="ing-remote-outcome-when">Finished while you were away' +
-        (r.filename ? ' · <span class="mono">' + escapeHtml(r.filename) + '</span>' : '') +
+        (r.filename ? ' · <span class="ing-name">' + escapeHtml(r.filename) + '</span>' : '') +
       '</span>' +
       '<button type="button" class="btn btn-ghost btn-xs" id="ing-remote-dismiss">Dismiss</button>' +
     '</div>';
@@ -2032,13 +2032,13 @@ function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
   const warningsHtml = renderWarningsHtml(r.warnings);
   const changesHtml = renderChangeRecordsHtml(r.changes, titlePrefix + ' ' + (r.title || ''), unchangedExpanded, toggleId);
   const fallbackHtml = (!r.changes || !r.changes.length)
-    ? '<ul class="ing-change-list-flat">' + (r.pagesWritten || []).map((p) => '<li class="mono">' + escapeHtml(p) + '</li>').join('') + '</ul>'
+    ? '<ul class="ing-change-list-flat">' + (r.pagesWritten || []).map((p) => '<li class="ing-name">' + escapeHtml(p) + '</li>').join('') + '</ul>'
     : '';
   const tokenHtml = formatTokenUsageHtml(r.tokenUsage);
   const shownChanges = Array.isArray(r.changes) ? r.changes.length : 0;
   const truncNote = (Number.isFinite(r.changesTotal) && r.changesTotal > shownChanges)
-    ? '<div class="ing-change-empty">Showing <span class="mono">' + shownChanges +
-      '</span> of <span class="mono">' + r.changesTotal + '</span> changed pages — the rest were not kept in this summary.</div>'
+    ? '<div class="ing-change-empty">Showing <span class="ing-num">' + shownChanges +
+      '</span> of <span class="ing-num">' + r.changesTotal + '</span> changed pages — the rest were not kept in this summary.</div>'
     : '';
   return (
     '<div class="ing-result">' +
@@ -2078,13 +2078,13 @@ function renderChangeRecordsHtml(changes, title, unchangedExpanded, toggleId = '
       const sections = c.sectionsChanged && c.sectionsChanged.length
         ? ' in ' + c.sectionsChanged.map(escapeHtml).join(', ')
         : '';
-      detail = '<span class="ing-change-detail">+<span class="mono">' + c.bulletsAdded + '</span> bullet' + (c.bulletsAdded === 1 ? '' : 's') + sections + '</span>';
+      detail = '<span class="ing-change-detail">+<span class="ing-num">' + c.bulletsAdded + '</span> bullet' + (c.bulletsAdded === 1 ? '' : 's') + sections + '</span>';
     } else if (c.status === 'created') {
-      detail = '<span class="ing-change-detail mono">' + formatBytesLocal(c.bytesAfter) + '</span>';
+      detail = '<span class="ing-change-detail">' + formatBytesLocal(c.bytesAfter) + '</span>';
     } else if (c.status === 'updated') {
-      detail = '<span class="ing-change-detail mono">' + formatBytesLocal(c.bytesBefore) + ' → ' + formatBytesLocal(c.bytesAfter) + '</span>';
+      detail = '<span class="ing-change-detail">' + formatBytesLocal(c.bytesBefore) + ' → ' + formatBytesLocal(c.bytesAfter) + '</span>';
     }
-    return '<li><span class="ing-change-path mono">' + escapeHtml(c.canonPath) + '</span>' + detail + '</li>';
+    return '<li><span class="ing-change-path">' + escapeHtml(c.canonPath) + '</span>' + detail + '</li>';
   };
 
   const headerRow = title ? '<h3 class="ing-change-title">' + escapeHtml(title) + '</h3>' : '';
@@ -2098,14 +2098,14 @@ function renderChangeRecordsHtml(changes, title, unchangedExpanded, toggleId = '
   // always exact").
   const createdBlock = created.length ? (
     '<div class="ing-change-section ing-change-created">' +
-      '<div class="ing-change-header">' + icon('plus', 13) + ' <span class="mono">' + created.length + '</span> new ' + (created.length === 1 ? 'page' : 'pages') + '</div>' +
+      '<div class="ing-change-header">' + icon('plus', 13) + ' <span class="ing-num">' + created.length + '</span> new ' + (created.length === 1 ? 'page' : 'pages') + '</div>' +
       '<ul class="ing-change-list">' + created.map(formatRecord).join('') + '</ul>' +
     '</div>'
   ) : '';
 
   const updatedBlock = updated.length ? (
     '<div class="ing-change-section ing-change-updated">' +
-      '<div class="ing-change-header">' + icon('activity', 13) + ' <span class="mono">' + updated.length + '</span> ' + (updated.length === 1 ? 'page' : 'pages') + ' updated</div>' +
+      '<div class="ing-change-header">' + icon('activity', 13) + ' <span class="ing-num">' + updated.length + '</span> ' + (updated.length === 1 ? 'page' : 'pages') + ' updated</div>' +
       '<ul class="ing-change-list">' + updated.map(formatRecord).join('') + '</ul>' +
     '</div>'
   ) : '';
@@ -2113,7 +2113,7 @@ function renderChangeRecordsHtml(changes, title, unchangedExpanded, toggleId = '
   const unchangedBlock = unchanged.length ? (
     '<div class="ing-change-section">' +
       '<button type="button" class="ing-change-toggle" id="' + toggleId + '">' +
-        (unchangedExpanded ? 'Hide ' : 'Show ') + '<span class="mono">' + unchanged.length + '</span> unchanged ' + (unchanged.length === 1 ? 'page' : 'pages') +
+        (unchangedExpanded ? 'Hide ' : 'Show ') + '<span class="ing-num">' + unchanged.length + '</span> unchanged ' + (unchanged.length === 1 ? 'page' : 'pages') +
       '</button>' +
       (unchangedExpanded ? '<ul class="ing-change-list">' + unchanged.map(formatRecord).join('') + '</ul>' : '') +
     '</div>'
@@ -2182,10 +2182,10 @@ function renderWarningsHtml(warnings) {
   // made the panel read as alarming to real users (see the file's own
   // classifyIngestEntry comment). Counts are numbers, so they carry mono.
   const summaryParts = [];
-  if (buckets.fixed) summaryParts.push('<span style="color:var(--success-text)"><span class="mono">' + buckets.fixed + '</span> auto-fixed</span>');
-  if (buckets.review) summaryParts.push('<span style="color:var(--attention-text)"><span class="mono">' + buckets.review + '</span> for review</span>');
-  if (buckets.attention) summaryParts.push('<span style="color:var(--danger-text)"><span class="mono">' + buckets.attention + '</span> attention</span>');
-  if (buckets.info) summaryParts.push('<span style="color:var(--accent-text)"><span class="mono">' + buckets.info + '</span> info</span>');
+  if (buckets.fixed) summaryParts.push('<span style="color:var(--success-text)"><span class="ing-num">' + buckets.fixed + '</span> auto-fixed</span>');
+  if (buckets.review) summaryParts.push('<span style="color:var(--attention-text)"><span class="ing-num">' + buckets.review + '</span> for review</span>');
+  if (buckets.attention) summaryParts.push('<span style="color:var(--danger-text)"><span class="ing-num">' + buckets.attention + '</span> attention</span>');
+  if (buckets.info) summaryParts.push('<span style="color:var(--accent-text)"><span class="ing-num">' + buckets.info + '</span> info</span>');
   const summaryLine = summaryParts.join(' · ');
 
   const items = classified.map((c) => (
@@ -2199,7 +2199,7 @@ function renderWarningsHtml(warnings) {
 
   return (
     '<div class="ing-warnings ' + bucketClass + '">' +
-      '<strong>Ingest finished — <span class="mono">' + warnings.length + '</span> note' + (warnings.length === 1 ? '' : 's') + '</strong>' +
+      '<strong>Ingest finished — <span class="ing-num">' + warnings.length + '</span> note' + (warnings.length === 1 ? '' : 's') + '</strong>' +
       (summaryLine ? '<div class="ing-warnings-summary">' + summaryLine + '</div>' : '') +
       '<ul class="ing-warnings-list">' + items + '</ul>' +
     '</div>'
@@ -2240,7 +2240,7 @@ function formatTokenUsageHtml(u) {
     parts.push('<span class="ing-token-cache">' + bits.join(' · ') + '</span>');
   }
   if (!parts.length) return '';
-  return '<div class="ing-token-usage mono">' + parts.join('') + '</div>';
+  return '<div class="ing-token-usage">' + parts.join('') + '</div>';
 }
 
 function formatElapsedMs(ms) {
@@ -3141,7 +3141,29 @@ function renderQueueConfirmGate() {
   let estimateBody = '';
   if (state.queueEstimateLoading) {
     const n = state.selectedFiles.length;
-    estimateBody = '<p class="view-body">Estimating cost for <span class="mono">' + n + '</span> file' + (n === 1 ? '' : 's') + '…</p>';
+    // ── THE SHAPE OF THE ANSWER, NOT A SPINNER ─────────────────────────────
+    // The sentence stays: it names the file count, so the wait is attributable
+    // and a user who picked the wrong pile can say so before spending. What is
+    // ADDED is the shape the estimate will land in — a row per file plus the
+    // three summary rows — so the panel does not jump from one line of prose
+    // to a full block. `aria-hidden` on the placeholder and `aria-live` on the
+    // sentence, so a screen reader gets the words and none of the scaffolding.
+    // Rows are capped at six: past that the skeleton stops describing the
+    // answer and starts being a wall.
+    const rows = Math.max(1, Math.min(n, 6));
+    estimateBody =
+      '<p class="view-body" aria-live="polite">Estimating cost for <span class="ing-num">' + n + '</span> file' + (n === 1 ? '' : 's') + '…</p>' +
+      '<div class="ing-queue-skeleton" aria-hidden="true">' +
+        Array.from({ length: rows }, () =>
+          '<div class="ing-queue-skeleton-row">' +
+            '<span class="cur-skeleton ing-queue-skeleton-name"></span>' +
+            '<span class="cur-skeleton ing-queue-skeleton-size"></span>' +
+          '</div>').join('') +
+        '<div class="ing-queue-skeleton-row ing-queue-skeleton-total">' +
+          '<span class="cur-skeleton ing-queue-skeleton-name"></span>' +
+          '<span class="cur-skeleton ing-queue-skeleton-size"></span>' +
+        '</div>' +
+      '</div>';
   } else if (state.queueEstimateError) {
     estimateBody = renderStatus({
       state: 'danger', title: 'Could not estimate this batch', detail: state.queueEstimateError,
@@ -3215,8 +3237,8 @@ function renderQueueEstimate(est) {
 
   return (
     '<div class="ing-queue-confirm-head">' +
-      '<h3 class="ing-queue-confirm-title">Batch ingest — <span class="mono">' + count + '</span> file' + (count === 1 ? '' : 's') + '</h3>' +
-      '<div class="ing-queue-confirm-sub mono">' + formatQueueBytes(totalBytes) + ' total · ' + provider + ' · ' + model + '</div>' +
+      '<h3 class="ing-queue-confirm-title">Batch ingest — <span class="ing-num">' + count + '</span> file' + (count === 1 ? '' : 's') + '</h3>' +
+      '<div class="ing-queue-confirm-sub">' + formatQueueBytes(totalBytes) + ' total · ' + provider + ' · ' + model + '</div>' +
     '</div>' +
     rejectedHtml +
     fileListHtml +
@@ -3273,13 +3295,13 @@ function renderQueueFileListItem(entry, opts) {
   const removeBtn = removable
     ? '<button type="button" class="ing-queue-file-remove" data-name="' + escapeHtml(rawName) + '" data-bytes="' + escapeHtml(rawBytes) + '" title="Remove this file" aria-label="Remove ' + name + '">' + icon('x', 12) + '</button>'
     : '';
-  return '<li class="ing-queue-file-item"><span class="ing-queue-file-name mono">' + name + '</span><span class="ing-queue-file-size mono">' + size + '</span>' + removeBtn + '</li>';
+  return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + removeBtn + '</li>';
 }
 
 function renderQueueRejectedItem(entry) {
   const name = escapeHtml(sanitizeDisplayName(entry && entry.name != null ? entry.name : ''));
   const reason = escapeHtml(entry && entry.reason != null ? entry.reason : 'not supported');
-  return '<li class="ing-queue-file-item ing-queue-file-rejected"><span class="ing-queue-file-name mono">' + name + '</span><span class="ing-queue-file-reason">' + reason + '</span></li>';
+  return '<li class="ing-queue-file-item ing-queue-file-rejected"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-reason">' + reason + '</span></li>';
 }
 
 // ── Rendering — live/terminal job panel ────────────────────────────────
@@ -3341,9 +3363,9 @@ function renderQueueDoneSummary(job) {
   const otherSpans = Object.keys(counts.other)
     .filter((k) => !(isCancelled && k === 'pending'))
     .sort()
-    .map((k) => '<span class="ing-queue-done-unaccounted"><span class="mono">' + counts.other[k] + '</span> ' + escapeHtml(k) + '</span>')
+    .map((k) => '<span class="ing-queue-done-unaccounted"><span class="ing-num">' + counts.other[k] + '</span> ' + escapeHtml(k) + '</span>')
     .join('');
-  const notStartedSpan = notStartedN > 0 ? '<span><span class="mono">' + notStartedN + '</span> not started</span>' : '';
+  const notStartedSpan = notStartedN > 0 ? '<span><span class="ing-num">' + notStartedN + '</span> not started</span>' : '';
 
   const pages = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.pagesWritten) ? i.result.pagesWritten : 0), 0);
   const warningsN = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.warningCount) ? i.result.warningCount : 0), 0);
@@ -3379,7 +3401,7 @@ function renderQueueDoneSummary(job) {
   //      claim is the true one, and "at least" over a possibly-inflated
   //      number is the reading we must never produce.
   //
-  // The qualifier sits OUTSIDE the <span class="mono"> below: it is prose,
+  // The qualifier sits OUTSIDE the <span class="ing-num"> below: it is prose,
   // and this view's rule is that the NUMBER is monospace, not the sentence
   // around it (same reasoning as the per-count spans beside it).
   const spentUsd = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? job.spentUsd : null;
@@ -3402,21 +3424,21 @@ function renderQueueDoneSummary(job) {
 
   // Every count/dollar figure here is a number, so — per the design's
   // "numbers are always monospace and always exact" — each gets its own
-  // <span class="mono">, not one blanket class on the whole row (these are
+  // <span class="ing-num">, not one blanket class on the whole row (these are
   // short "N label" phrases, same reasoning as formatIngestDoneLabelHtml).
   return (
     '<div class="ing-queue-done-summary">' +
       failReasonLine +
       '<div class="ing-queue-done-totals">' +
-        '<span><span class="mono">' + doneN + '</span> done</span>' +
-        '<span><span class="mono">' + failedN + '</span> failed</span>' +
-        '<span><span class="mono">' + skippedN + '</span> skipped</span>' +
-        '<span><span class="mono">' + cancelledN + '</span> stopped</span>' +
+        '<span><span class="ing-num">' + doneN + '</span> done</span>' +
+        '<span><span class="ing-num">' + failedN + '</span> failed</span>' +
+        '<span><span class="ing-num">' + skippedN + '</span> skipped</span>' +
+        '<span><span class="ing-num">' + cancelledN + '</span> stopped</span>' +
         notStartedSpan +
         otherSpans +
-        '<span><span class="mono">' + pages + '</span> page' + (pages === 1 ? '' : 's') + ' written</span>' +
-        '<span><span class="mono">' + warningsN + '</span> warning' + (warningsN === 1 ? '' : 's') + '</span>' +
-        '<span>' + spentQualifier + '<span class="mono">' + spent + '</span> spent</span>' +
+        '<span><span class="ing-num">' + pages + '</span> page' + (pages === 1 ? '' : 's') + ' written</span>' +
+        '<span><span class="ing-num">' + warningsN + '</span> warning' + (warningsN === 1 ? '' : 's') + '</span>' +
+        '<span>' + spentQualifier + '<span class="ing-num">' + spent + '</span> spent</span>' +
       '</div>' +
       healthLine +
     '</div>'
@@ -3479,13 +3501,13 @@ function renderQueueItemRow(item, opts) {
     : '';
   const pages = item && item.result && Number.isFinite(item.result.pagesWritten) ? item.result.pagesWritten : null;
   const resultLine = (item && item.status === 'done' && item.result)
-    ? '<div class="ing-queue-item-result">' + escapeHtml(sanitizeDisplayName(item.result.title || item.name || '')) + ' — <span class="mono">' + (pages == null ? 0 : pages) + '</span> page' + (pages === 1 ? '' : 's') + '</div>'
+    ? '<div class="ing-queue-item-result">' + escapeHtml(sanitizeDisplayName(item.result.title || item.name || '')) + ' — <span class="ing-num">' + (pages == null ? 0 : pages) + '</span> page' + (pages === 1 ? '' : 's') + '</div>'
     : '';
   return (
     '<li class="ing-queue-item-row" data-queue-idx="' + idx + '">' +
       '<div class="ing-queue-item-head">' +
-        '<span class="ing-queue-item-name mono">' + name + '</span>' +
-        '<span class="ing-queue-item-size mono">' + size + '</span>' +
+        '<span class="ing-queue-item-name">' + name + '</span>' +
+        '<span class="ing-queue-item-size">' + size + '</span>' +
         '<span class="ing-queue-item-pill ' + meta.cls + '">' + escapeHtml(meta.label) + '</span>' +
       '</div>' +
       // The per-item ring. Rendered EMPTY on the initial snapshot even for
@@ -3523,7 +3545,7 @@ function renderQueuePanel(job) {
 
   const itemProgressText = isTerminal
     ? 'Finished'
-    : ('Item <span class="mono">' + Math.min(settledCount + 1, items.length) + '</span> of <span class="mono">' + items.length + '</span>');
+    : ('Item <span class="ing-num">' + Math.min(settledCount + 1, items.length) + '</span> of <span class="ing-num">' + items.length + '</span>');
   // Overall batch progress is a PLAIN PERCENTAGE, not a staged ring: the
   // stages of a batch are its files, and settled/total is a real, exact
   // count the server already gives us. Before the first item settles it is
@@ -3551,10 +3573,10 @@ function renderQueuePanel(job) {
         className: 'ing-queue-panel-ring',
       }) +
       '<div class="ing-queue-panel-headtext">' +
-        '<div class="ing-queue-panel-title">Batch ingest — <span class="mono">' + escapeHtml(job.domain || '') + '</span></div>' +
+        '<div class="ing-queue-panel-title">Batch ingest — <span class="ing-name">' + escapeHtml(job.domain || '') + '</span></div>' +
         '<div class="ing-queue-panel-sub">' +
           itemProgressText +
-          ' · <span class="mono">' + escapeHtml(spentLabel) + '</span>' +
+          ' · <span class="ing-num">' + escapeHtml(spentLabel) + '</span>' +
         '</div>' +
       '</div>' +
     '</div>';
