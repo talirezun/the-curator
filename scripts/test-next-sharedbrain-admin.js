@@ -1050,6 +1050,11 @@ function rotateHarness(opts) {
     calls,
     card,
     renders: 0,
+    // Each entry records the render COUNT at the moment the reveal fired,
+    // which is what makes "after the render" assertable rather than
+    // assumed — a reveal that ran first would measure a box that does not
+    // exist yet and silently do nothing.
+    reveals: [],
     fieldValue: o.fieldValue === undefined ? 'sbat_currentcurrent1' : o.fieldValue,
     fieldPresent: o.fieldPresent !== false,
   };
@@ -1060,6 +1065,7 @@ function rotateHarness(opts) {
     'return onRotateAdminToken;';
   const fn = new Function(
     'host', 'ensureCard', 'findConnection', 'render', 'isCurrentMount', 'document', 'fetch', 'state',
+    'revealShownAdminToken',
     src
   )(
     host,
@@ -1076,7 +1082,8 @@ function rotateHarness(opts) {
       const r = o.response || { status: 200, body: { ok: true, admin_token: 'sbat_brandnewbrandnew', rotated: true } };
       return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
     },
-    host.state
+    host.state,
+    (connId) => { host.reveals.push({ afterRenders: host.renders, connId }); }
   );
   return { run: () => fn('tok', connection.id), host, calls, card, connection };
 }
@@ -1096,6 +1103,14 @@ function rotateHarness(opts) {
     'the NEW token is held in card state for the shown-once box (unchanged behaviour)');
   ok(h.card.message === 'Admin token rotated. The previous token no longer works.', 'and the outcome says so');
   ok(h.card.error === false, 'a clean rotation is not an error');
+  // F-09. The shown-once box is the one thing on this screen that cannot be
+  // shown twice, and it can render inside a collapsed <details> below a card
+  // metres long — so preserving the reader's position (which render() now
+  // does for every call site) is right and is NOT enough here.
+  ok(h.host.reveals.length === 1, 'the freshly-minted token is SCROLLED INTO VIEW exactly once');
+  ok(h.host.reveals[0].connId === 'c1', '…for this connection\'s own card');
+  ok(h.host.reveals[0].afterRenders === h.host.renders && h.host.renders > 0,
+    '…and AFTER the render that draws it, so it measures a box that exists');
 }
 {
   // THE GATE. A connection with no admin token must not be able to reach the

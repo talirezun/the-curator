@@ -168,6 +168,11 @@ function freshState() {
     consent: false,
     saveInProgress: false,
 
+    // The discard guard (see dismissDecision()). A dismiss gesture on a
+    // wizard the user has typed into raises this instead of closing; a
+    // SECOND gesture then closes, so nobody is trapped by it.
+    discardConfirmOpen: false,
+
     // Admin path
     slugManuallyEdited: false,
     generatedInviteToken: null,
@@ -255,11 +260,270 @@ const STEP_PANELS = {
   join:   ['step-1', 'step-2', 'step-3', 'step-4', 'step-5'],
   create: ['admin-step-1', 'admin-step-2', 'step-3', 'step-4', 'step-5'],
 };
+// STEP 3 IS "Your token", NOT "PAT". Three letters of GitHub jargon labelled
+// the step that decides who can and cannot join, and nothing on screen said
+// what a PAT is or whose it is. "Your token" answers both — and the
+// possessive is the load-bearing half, because join's step 1 is the ADMIN's
+// invite token and step 3 is the contributor's OWN credential. The two are
+// one word apart in the labels and are told apart by the headings.
 const STEP_LABELS = {
-  join:   ['Token', 'Access', 'PAT', 'Domains', 'Save'],
-  create: ['Setup', 'Invite', 'PAT', 'Domains', 'Save'],
+  join:   ['Token', 'Access', 'Your token', 'Domains', 'Save'],
+  create: ['Setup', 'Invite', 'Your token', 'Domains', 'Save'],
 };
+
+const STEP_TOTAL = 5;
 const ALL_PANEL_IDS = Array.from(new Set([...STEP_PANELS.join, ...STEP_PANELS.create]));
+
+
+// ── The decision layer, written as pure functions on purpose ─────────────
+//
+// Everything below is a decision this wizard makes that a person met in the
+// live run and got wrong, or could not get out of. Each one is a function of
+// its arguments and touches no DOM, because the alternative — a condition
+// spelled inline inside a click handler — is exactly the shape this repo
+// keeps finding untested (a `//` comment satisfies a source scan; only an
+// executed function proves what it decides). scripts/test-next-sharedbrain-
+// wizard.js drives every one of them, both directions.
+
+/** "Step 3 of 5". The wizard had five progress pips and no number: a pip row
+ *  says WHERE you are only if you can already count the pips, and it says
+ *  nothing at all to a screen reader beyond the label. Empty (not "Step 0 of
+ *  5") for a step outside the range, so a future sixth panel cannot render a
+ *  confident lie. */
+function stepCountLabel(n, total) {
+  const t = Number.isFinite(total) ? total : STEP_TOTAL;
+  const step = Number(n);
+  if (!Number.isFinite(step) || step < 1 || step > t) return '';
+  return 'Step ' + step + ' of ' + t;
+}
+
+/** The `owner` half of an `owner/name` repo, or '' when there isn't one.
+ *  Reads the invite metadata rather than any field the user typed, because
+ *  the repo the token must reach is the one the INVITE names. */
+function repoOwnerOf(meta) {
+  const repo = meta && typeof meta.repo === 'string' ? meta.repo : '';
+  const owner = repo.split('/')[0] || '';
+  return owner.trim();
+}
+
+/** THE COHORT-KILLER, IN ONE SENTENCE.
+ *
+ *  GitHub's fine-grained token page defaults **Resource owner** to the
+ *  signed-in personal account. When the cohort repo belongs to an
+ *  organisation — which is the normal case for a cohort — the repository
+ *  simply IS NOT IN THE LIST, with no error and no explanation, and the
+ *  person concludes the invitation never arrived. That is where the live run
+ *  stalled, and no copy anywhere in the app named the field.
+ *
+ *  ONE sentence, TWO renderings (plain text and HTML with the owner
+ *  emphasised) — via `wrap`, so the wording cannot drift between them. The
+ *  fallback names the field rather than the value when the metadata has no
+ *  repo: a step whose whole job is "look for THIS owner" must not print an
+ *  empty name and read as satisfied. */
+function resourceOwnerSentence(meta, wrap) {
+  const w = typeof wrap === 'function' ? wrap : (v) => v;
+  const owner = repoOwnerOf(meta);
+  const subject = owner || 'the account or organisation that owns the cohort repository';
+  return 'Choose ' + w(subject) + ' as the resource owner, or the repository will not appear.';
+}
+
+/** The expiry warning, stated as a consequence rather than as advice.
+ *  GitHub's default is 30 days and the app never mentioned it, so every
+ *  contributor's connection was one month from silently failing. */
+const PAT_EXPIRY_WARNING =
+  'GitHub’s default is 30 days; on that day your pushes stop with no notice — ' +
+  'pick the longest your organisation allows, and put the date in your calendar.';
+
+/** The request the "Check token" button (and the debounced check behind the
+ *  field) issues — built as data so a suite can assert its SHAPE without a
+ *  network. Refusals carry a CODE, not prose, because the same refusal reads
+ *  differently mid-paste and after a deliberate press (see PAT_REFUSAL). */
+function patCheckRequest(meta, rawPat) {
+  const pat = typeof rawPat === 'string' ? rawPat.trim() : '';
+  if (!pat) return { ok: false, code: 'empty' };
+  // The server's own floor (routes/sharedbrain.js: "pat is required
+  // (fine-grained PAT, 20-400 chars)"). Refusing here means a half-pasted
+  // token never becomes a 400 the user has to interpret.
+  if (pat.length < 20) return { ok: false, code: 'short' };
+  const repo = meta && typeof meta.repo === 'string' ? meta.repo : '';
+  if (!repo) return { ok: false, code: 'no-meta' };
+  return {
+    ok: true,
+    code: 'ready',
+    url: '/api/sharedbrain/validate-pat',
+    method: 'POST',
+    // EXACTLY the two fields the route reads. Nothing else may be added
+    // here: this body carries a live credential to localhost, and every
+    // extra field is one more thing to audit.
+    body: { repo, pat },
+  };
+}
+
+const PAT_REFUSAL = {
+  // Mid-paste. `empty` is deliberately silent — clearing the field is not an
+  // error, and a red box for it would train people to ignore the red box.
+  typing: {
+    empty: null,
+    short: ['checking', 'Token looks too short — keep pasting.'],
+    'no-meta': ['error', 'Lost the invite details — go back to step 1.'],
+  },
+  // A deliberate press must always answer, including for an empty field.
+  button: {
+    empty: ['error', 'Paste your token into the field first, then press Check token.'],
+    short: ['error', 'That is too short to be a GitHub token — paste the whole thing, then press Check token.'],
+    'no-meta': ['error', 'Lost the invite details — go back to step 1.'],
+  },
+};
+
+/** GitHub's verdict, turned into the one message both entry points show.
+ *  Before this there was one copy inside the debounce; the Check button
+ *  would have been a second, and two renderings of one verdict is the drift
+ *  shape this repo keeps recording. */
+function patVerdict(j, meta) {
+  if (!j || typeof j !== 'object') {
+    return { kind: 'error', message: 'GitHub’s answer could not be read. Press Check token to try again.' };
+  }
+  if (!j.valid) {
+    return { kind: 'error', message: j.error || 'Token rejected by GitHub.' };
+  }
+  if (!j.hasWriteAccess) {
+    return {
+      kind: 'warn',
+      message: 'Token works but is read-only. You can continue as a read-only member — ' +
+        'you’ll be able to Pull the collective wiki, but not push contributions. ' +
+        'To contribute, re-create the token with Contents: Read AND write, then re-paste.',
+    };
+  }
+  return {
+    kind: 'ok',
+    message: 'Token verified. Authenticated against ' +
+      (j.repoFullName || (meta && meta.repo) || 'the repository') + '.',
+  };
+}
+
+/** Continue is enabled on ok AND on warn — a read-only member is a real,
+ *  supported outcome (v3.0.4). Only an error blocks. */
+function patVerdictAccepts(verdict) {
+  return !!(verdict && (verdict.kind === 'ok' || verdict.kind === 'warn'));
+}
+
+/** F-14. Editing the invite token after a PAT was checked invalidates that
+ *  check (H1: the verdict belongs to the repo it was checked against). The
+ *  state half was already correct and INVISIBLE: the field still showed a
+ *  token, the green verdict still showed, and the only signal was Continue
+ *  going grey on a panel the user was not looking at. This is the sentence
+ *  that says why — null when there was nothing to clear, so an untouched
+ *  step 3 never accuses the user of losing something. */
+const INVITE_EDIT_RESET_NOTICE =
+  'You changed the invite token, so the access token below was cleared — it had been checked against the ' +
+  'previous repository, and that answer says nothing about this one. Paste it again and press Check token.';
+
+function inviteEditResetNotice(hadPat) {
+  return hadPat ? INVITE_EDIT_RESET_NOTICE : null;
+}
+
+/** Plain words for the two server refusals a person actually meets on step 1.
+ *  The route's own prose is written for its API consumers ("could not decode
+ *  payload"), and it is not this wizard's to edit — so it is TRANSLATED at
+ *  the one place it reaches a human, and anything unrecognised is passed
+ *  through verbatim rather than flattened into a generic message. */
+function plainInviteError(serverError) {
+  const raw = typeof serverError === 'string' ? serverError.trim() : '';
+  if (!raw) return 'That invite token could not be read. Ask your admin to send it again.';
+  if (/could not decode payload/i.test(raw)) {
+    return 'That invite token is damaged — it looks like part of it was lost in copying. ' +
+      'Copy it again from your admin’s message, including the whole line.';
+  }
+  if (/supports up to v/i.test(raw)) {
+    return raw + ' Update The Curator (Settings → Updates), then paste the token again.';
+  }
+  return raw;
+}
+
+/** What counts as "the user has typed something they would lose".
+ *  Split in two on purpose: `dirtySignals()` reads the DOM and state,
+ *  `isDirty()` decides — so the decision is drivable with no DOM at all.
+ *
+ *  BRANCH IS COMPARED AGAINST ITS DEFAULT, not against empty: the field
+ *  ships pre-filled with `main`, so an emptiness test would call every
+ *  freshly-opened admin wizard dirty and put a confirm in front of a person
+ *  who typed nothing.
+ *
+ *  A GENERATED INVITE COUNTS, and it is the most important entry: by then
+ *  the admin token has been minted and SHOWN ONCE, and it is persisted only
+ *  by the save on step 5. Closing there loses it with no way back. */
+const DIRTY_TEXT_FIELD_IDS = [
+  'sbw-invite-token', 'sbw-admin-repo', 'sbw-admin-name',
+  'sbw-admin-shared-domain', 'sbw-pat-input', 'sbw-display-name',
+];
+const DEFAULT_BRANCH = 'main';
+
+function isDirty(sig) {
+  if (!sig || typeof sig !== 'object') return false;
+  return !!(
+    (Number(sig.typedFields) > 0) ||
+    sig.branchChanged ||
+    sig.validatedPat ||
+    (Number(sig.selectedDomains) > 0) ||
+    sig.generatedInvite ||
+    sig.consent
+  );
+}
+
+/** The one function every dismiss gesture asks — Escape, the scrim, the
+ *  Close (x) and both Cancel buttons. Same discipline as isSaveBlocking(),
+ *  which it subsumes: one place answers "may this close now", so the four
+ *  gestures cannot disagree.
+ *
+ *  `confirmOpen` returning 'close' is what stops the guard becoming a trap:
+ *  a second Escape (or a second scrim click) leaves. */
+function dismissDecision({ saveInProgress, dirty, confirmOpen }) {
+  if (saveInProgress) return 'blocked';
+  if (confirmOpen) return 'close';
+  return dirty ? 'confirm' : 'close';
+}
+
+function discardConfirmText(sig) {
+  const base = 'Discard what you typed? Nothing here has been saved yet.';
+  return (sig && sig.generatedInvite)
+    ? base + ' Your admin token is not saved either — it is stored only when you finish step 5, and it cannot be shown again.'
+    : base;
+}
+
+/** ENTER ADVANCES THE STEP. It did not, anywhere: the panels are not a
+ *  <form>, so nothing submitted, and every step change moves focus to the
+ *  panel's <h3> — where Enter did nothing at all.
+ *
+ *  Returns the id of the step's primary button, or null to leave the key
+ *  alone. The nulls are the interesting part:
+ *   · BUTTON / A — the browser already activates those; intercepting would
+ *     fire the WRONG control (the focused Cancel would run Continue).
+ *   · TEXTAREA / SELECT — Enter means newline / open, and this wizard would
+ *     be stealing it.
+ *   · checkbox / radio — Space toggles them; Enter here would let the
+ *     CONSENT box commit a credential write while it is being read.
+ *   · mid-save, or with the discard guard up — the gesture belongs to the
+ *     thing already on screen. */
+const PRIMARY_BUTTON_IDS = {
+  join:   ['sbw-step1-next', 'sbw-step2-next', 'sbw-step3-next', 'sbw-step4-next', 'sbw-step5-save'],
+  create: ['sbw-admin-step1-next', 'sbw-admin-step2-next', 'sbw-step3-next', 'sbw-step4-next', 'sbw-step5-save'],
+};
+
+function primaryButtonId(mode, step) {
+  const ids = PRIMARY_BUTTON_IDS[mode === 'create' ? 'create' : 'join'];
+  const n = Number(step);
+  if (!Number.isFinite(n) || n < 1 || n > ids.length) return null;
+  return ids[n - 1];
+}
+
+function enterTargetId({ mode, step, tag, type, saveInProgress, discardConfirmOpen }) {
+  if (saveInProgress || discardConfirmOpen) return null;
+  const t = String(tag || '').toUpperCase();
+  if (t === 'BUTTON' || t === 'A' || t === 'TEXTAREA' || t === 'SELECT') return null;
+  const inputType = String(type || '').toLowerCase();
+  if (t === 'INPUT' && (inputType === 'checkbox' || inputType === 'radio')) return null;
+  return primaryButtonId(mode, step);
+}
 
 function byId(id) { return root ? root.querySelector('#' + id) : null; }
 function qsa(sel) { return root ? Array.from(root.querySelectorAll(sel)) : []; }
@@ -401,13 +665,95 @@ function closeWizard() {
 // it rather than re-deriving its own copy of the condition.
 function isSaveBlocking() { return !!(root && state.saveInProgress); }
 
+// The gesture side of dismissDecision(). Every dismiss path calls this and
+// nothing else decides: Escape, the scrim, the Close (x) and both Cancel
+// buttons. Before this, a scrim click on a wizard with a repository name, a
+// checked token and a minted admin token in it closed instantly and silently
+// — the admin token is minted at step 2 and PERSISTED only by the save at
+// step 5, so that click destroyed a credential that cannot be shown again.
+function requestDismiss() {
+  if (!root) return;
+  const decision = dismissDecision({
+    // isSaveBlocking() stays the ONE answer to "is a credential write in
+    // flight" (M3). This function widens the question from "may this
+    // close" to "what should this gesture do"; it does not re-derive M3's
+    // half of it.
+    saveInProgress: isSaveBlocking(),
+    dirty: isDirty(dirtySignals()),
+    confirmOpen: state.discardConfirmOpen,
+  });
+  if (decision === 'blocked') return;   // M3: a credential write is in flight
+  if (decision === 'confirm') { showDiscardConfirm(); return; }
+  closeWizard();
+}
+
+/** Reads the fields and the wizard state. Split from isDirty() so the
+ *  DECISION is drivable with no DOM — see isDirty's own comment. */
+function dirtySignals() {
+  const val = (id) => {
+    const el = byId(id);
+    return el && typeof el.value === 'string' ? el.value.trim() : '';
+  };
+  const branch = val('sbw-admin-branch');
+  return {
+    typedFields: DIRTY_TEXT_FIELD_IDS.filter((id) => val(id) !== '').length,
+    branchChanged: branch !== '' && branch !== DEFAULT_BRANCH,
+    validatedPat: !!state.pat,
+    selectedDomains: state.selectedDomains ? state.selectedDomains.size : 0,
+    generatedInvite: !!state.generatedInviteToken,
+    consent: !!state.consent,
+  };
+}
+
+function showDiscardConfirm() {
+  const bar = byId('sbw-discard');
+  if (!bar) { closeWizard(); return; }  // no bar to show ⇒ never trap the user in the wizard
+  state.discardConfirmOpen = true;
+  const text = byId('sbw-discard-text');
+  if (text) text.textContent = discardConfirmText(dirtySignals());
+  bar.classList.remove('sbw-hidden');
+  // The card scrolls (it is a sheet with its own max-height), so a bar under
+  // the header can be off screen at the moment it matters.
+  if (typeof bar.scrollIntoView === 'function') bar.scrollIntoView({ block: 'nearest' });
+  const yes = byId('sbw-discard-yes');
+  if (yes && typeof yes.focus === 'function') yes.focus();
+}
+
+function hideDiscardConfirm() {
+  state.discardConfirmOpen = false;
+  const bar = byId('sbw-discard');
+  if (bar) bar.classList.add('sbw-hidden');
+}
+
 // v3.0.4 (L16) parity: Escape closes; Tab cycles within the wizard card.
 function onWizardKeydown(e) {
   if (!root) return;
   if (e.key === 'Escape') {
     e.preventDefault();
-    if (isSaveBlocking()) return; // M3 fix — see isSaveBlocking's comment
-    closeWizard();
+    // Every dismiss gesture asks the same question — see requestDismiss().
+    // The save block that used to live here is now one arm of it.
+    requestDismiss();
+    return;
+  }
+  if (e.key === 'Enter') {
+    const active = document.activeElement;
+    if (!active || !root.contains(active)) return;
+    const id = enterTargetId({
+      mode: state.mode,
+      step: state.step,
+      tag: active.tagName,
+      type: active.type,
+      saveInProgress: state.saveInProgress,
+      discardConfirmOpen: state.discardConfirmOpen,
+    });
+    if (!id) return;
+    const btn = byId(id);
+    // A DISABLED PRIMARY IS A DELIBERATE NO. Continue is grey while a token
+    // is unchecked or a domain unpicked, and Enter must mean exactly what
+    // clicking means — nothing — rather than a second, looser way in.
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    btn.click();
     return;
   }
   if (e.key !== 'Tab') return;
@@ -443,9 +789,20 @@ function goToStep(n, myGen) {
   if (active) active.classList.remove('sbw-hidden');
 
   // Rule 1 — link population happens on ENTRY, here, not on leaving the
-  // previous panel.
+  // previous panel. The resource-owner sentence joins the same rule for the
+  // same reason: it is derived from the invite metadata, which admin step 1
+  // only sets when it mints the token, so composing it any earlier prints
+  // the fallback on a panel that could have named the owner.
   if (activeId === 'step-2') refreshStep2Links();
-  if (activeId === 'step-3') refreshPatCreateLink();
+  if (activeId === 'step-3') { refreshPatCreateLink(); refreshPatStepCopy(); }
+
+  const counter = byId('sbw-stepcount');
+  if (counter) counter.textContent = stepCountLabel(n, STEP_TOTAL);
+
+  // Any real step change answers the discard question by itself — the user
+  // is carrying on. Hiding it HERE rather than in each navigation handler
+  // is the same chokepoint argument as rule 1's link population.
+  hideDiscardConfirm();
 
   const labels = STEP_LABELS[state.mode];
   qsa('.sbw-pip').forEach((el) => {
@@ -483,6 +840,10 @@ function wizardShellHtml(mode) {
           '<div class="sbw-header-icon">' + icon('users', 22) + '</div>' +
           '<h2 class="sbw-title" id="sbw-title">' + escapeHtml(title) + '</h2>' +
           '<p class="sbw-subtitle">' + escapeHtml(subtitle) + '</p>' +
+          // Filled by goToStep(). Empty in the markup rather than "Step 1 of
+          // 5", so a shell that somehow never reached goToStep() shows no
+          // number at all instead of a stale one.
+          '<p class="sbw-stepcount" id="sbw-stepcount" aria-live="polite"></p>' +
         '</div>' +
 
         '<div class="sbw-progress">' +
@@ -493,6 +854,19 @@ function wizardShellHtml(mode) {
               '<span class="sbw-pip-label" data-label="step' + n + '"></span>' +
             '</div>'
           )).join('') +
+        '</div>' +
+
+        // The discard guard. Rendered once, hidden, and revealed by a
+        // dismiss gesture on a wizard the user has typed into — see
+        // dismissDecision(). It sits ABOVE the panels so it reads as chrome
+        // rather than as one step's control, and showDiscardConfirm()
+        // scrolls it into view because the card scrolls.
+        '<div class="sbw-discard sbw-hidden" id="sbw-discard" role="alertdialog" aria-labelledby="sbw-discard-text">' +
+          '<span id="sbw-discard-text"></span>' +
+          '<div class="sbw-discard-actions">' +
+            '<button type="button" class="btn btn-secondary btn-xs" id="sbw-discard-yes">Discard</button>' +
+            '<button type="button" class="btn btn-ghost btn-xs" id="sbw-discard-no">Keep editing</button>' +
+          '</div>' +
         '</div>' +
 
         panelStep1() +
@@ -511,7 +885,8 @@ function panelStep1() {
   return (
     '<div id="sbw-panel-step-1" class="sbw-panel">' +
       '<h3>Paste your invite token</h3>' +
-      '<p class="sbw-hint">Your cohort admin should have shared a token starting with <code>sbi_</code>. It carries the repo name and metadata — no credentials.</p>' +
+      '<p class="sbw-hint">Your cohort admin should have sent you a token starting with <code>sbi_</code>. ' +
+        'It names the GitHub <strong>repository</strong> — the shared folder the cohort’s wiki lives in — and carries no password of any kind.</p>' +
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-invite-token">Invite token</label>' +
         '<input type="text" id="sbw-invite-token" class="sbw-input mono" placeholder="sbi_..." autocomplete="off" spellcheck="false">' +
@@ -522,7 +897,7 @@ function panelStep1() {
           '<dt>Brain name</dt><dd data-field="name"></dd>' +
           '<dt>GitHub repo</dt><dd class="mono" data-field="repo"></dd>' +
           '<dt>Branch</dt><dd class="mono" data-field="branch"></dd>' +
-          '<dt>Shared domain slug</dt><dd class="mono" data-field="shared_domain"></dd>' +
+          '<dt>Folder in the repo</dt><dd class="mono" data-field="shared_domain"></dd>' +
         '</dl>' +
       '</div>' +
       '<div id="sbw-step1-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
@@ -538,7 +913,8 @@ function panelStep2() {
   return (
     '<div id="sbw-panel-step-2" class="sbw-panel sbw-hidden">' +
       '<h3>Confirm GitHub access</h3>' +
-      '<p class="sbw-hint">Before we can connect, your admin needs to have invited you as a collaborator on the repo. GitHub sent you an email — accept it now if you haven’t.</p>' +
+      '<p class="sbw-hint">Before we can connect, your admin has to add you as a <strong>collaborator</strong> — someone GitHub lets read and write that repository. ' +
+        'GitHub emails an invitation you have to accept; nothing works until you do.</p>' +
       '<div class="sbw-access-card">' +
         '<div class="sbw-access-icon">' + icon('alertCircle', 20) + '</div>' +
         '<div class="sbw-access-text">' +
@@ -559,8 +935,9 @@ function panelStep2() {
 function panelAdminStep1() {
   return (
     '<div id="sbw-panel-admin-step-1" class="sbw-panel sbw-hidden">' +
-      '<h3>Set up a new Shared Brain</h3>' +
-      '<p class="sbw-hint">First create a <strong>private</strong> GitHub repository for your cohort (any name works). You’ll paste its full name below. Then invite each cohort member as a collaborator on that repo — that’s how GitHub grants them write access.</p>' +
+      '<h3>Name your Shared Brain and its repository</h3>' +
+      '<p class="sbw-hint">First create a <strong>private repository</strong> on GitHub for your cohort — a repository is a folder GitHub stores for you, with a history of every change. Any name works; you’ll paste its full name below. ' +
+        'Then add each member as a <strong>collaborator</strong>, which is how GitHub grants them the right to write to it.</p>' +
       '<a href="https://github.com/new" target="_blank" rel="noopener" class="btn btn-secondary sbw-link-btn">' + icon('plus', 14) + ' Open GitHub → create a new private repo</a>' +
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-admin-repo">Repository <span class="sbw-label-note">(owner/name)</span></label>' +
@@ -573,14 +950,14 @@ function panelAdminStep1() {
       '</div>' +
       '<div class="sbw-field-row">' +
         '<div class="sbw-field">' +
-          '<label class="sbw-label" for="sbw-admin-shared-domain">Folder inside the repo <span class="sbw-label-note">(auto-filled)</span></label>' +
-          '<input type="text" id="sbw-admin-shared-domain" class="sbw-input mono" placeholder="(auto from brain name)" autocomplete="off" spellcheck="false">' +
+          '<label class="sbw-label" for="sbw-admin-shared-domain">Folder inside the repo <span class="sbw-label-note">(filled in from the brain name — you can change it)</span></label>' +
+          '<input type="text" id="sbw-admin-shared-domain" class="sbw-input mono" placeholder="spring-2026-ml-cohort" autocomplete="off" spellcheck="false">' +
           '<span class="sbw-help">Where wiki pages live: <code>collective/&lt;this&gt;/wiki/</code>. Each contributor sees this as <code>shared-&lt;this&gt;</code> in their domain list.</span>' +
         '</div>' +
         '<div class="sbw-field">' +
           '<label class="sbw-label" for="sbw-admin-branch">Branch</label>' +
           '<input type="text" id="sbw-admin-branch" class="sbw-input mono" value="main" autocomplete="off" spellcheck="false">' +
-          '<span class="sbw-help">Almost always <code>main</code>.</span>' +
+          '<span class="sbw-help">A branch is one line of history inside the repository. A new repository has one, called <code>main</code> — keep that unless your cohort agreed otherwise.</span>' +
         '</div>' +
       '</div>' +
       '<div class="sbw-field">' +
@@ -643,14 +1020,19 @@ function panelAdminStep2() {
 function panelStep3() {
   return (
     '<div id="sbw-panel-step-3" class="sbw-panel sbw-hidden">' +
-      '<h3>Create your access token</h3>' +
-      '<p class="sbw-hint">This token is <strong>yours</strong> — it identifies your contributions. The admin never sees it. Other contributors never see it.</p>' +
+      '<h3>Create your GitHub access token</h3>' +
+      '<p class="sbw-hint">A <strong>token</strong> is a password-like string GitHub gives you so The Curator can read and write the cohort’s repository on your behalf. ' +
+        'This one is <strong>yours</strong> — it identifies your contributions. The admin never sees it. Other contributors never see it.</p>' +
       '<ol class="sbw-steps">' +
-        '<li>Click the button below to open GitHub’s token creation page. The name will be prefilled.</li>' +
-        '<li>Under <strong>Repository access</strong>, choose <strong>Only select repositories</strong> → pick the cohort repo.</li>' +
-        '<li>Under <strong>Permissions</strong>, click <strong>+ Add permissions</strong> → add <strong>Contents</strong> → set to <strong>Read and write</strong>.</li>' +
-        '<li>Scroll down → click <strong>Generate token</strong>.</li>' +
-        '<li>Copy the token (starts with <code>github_pat_</code>) and paste it here.</li>' +
+        '<li>Click the button below. It opens GitHub’s <strong>fine-grained token</strong> page with the name already filled in.</li>' +
+        // THE TWO STEPS THAT DECIDED WHETHER A COHORT WORKED, AND WERE NOT
+        // ON SCREEN. Resource owner is filled by refreshPatStepCopy() on
+        // panel entry (rule 1) from the invite's own repo.
+        '<li><strong>Resource owner</strong> — <span id="sbw-pat-owner" data-field="resource-owner"></span></li>' +
+        '<li><strong>Expiration</strong> — ' + escapeHtml(PAT_EXPIRY_WARNING) + '</li>' +
+        '<li><strong>Repository access</strong> — choose <strong>Only select repositories</strong>, then pick the cohort repo.</li>' +
+        '<li><strong>Permissions</strong> — click <strong>+ Add permissions</strong>, add <strong>Contents</strong>, and set it to <strong>Read and write</strong>.</li>' +
+        '<li>Scroll down, click <strong>Generate token</strong>, and copy it — it starts with <code>github_pat_</code> and GitHub shows it only once.</li>' +
       '</ol>' +
       '<a id="sbw-pat-create-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="btn btn-primary sbw-link-btn sbw-link-btn-primary">Open GitHub to create my token →</a>' +
       '<div class="sbw-field" style="margin-top:16px">' +
@@ -658,6 +1040,11 @@ function panelStep3() {
         '<div class="sbw-input-row">' +
           '<input type="password" id="sbw-pat-input" class="sbw-input mono" placeholder="github_pat_..." autocomplete="off" spellcheck="false">' +
           '<button type="button" class="btn btn-ghost sbw-toggle-vis" data-target="sbw-pat-input" title="Show/hide" aria-label="Show or hide the token">' + icon('dotRing', 14) + '</button>' +
+          // A CHECK THE USER CAN ASK FOR. The debounced check behind the
+          // field is silent about itself: paste something wrong and the
+          // only signal is a grey Continue. This button issues the same
+          // request and answers in the same place.
+          '<button type="button" class="btn btn-secondary" id="sbw-pat-check">Check token</button>' +
         '</div>' +
         '<div id="sbw-pat-validation" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '</div>' +
@@ -736,19 +1123,22 @@ function panelStep5() {
 // ── Chrome: close / back / cancel / password-visibility toggles ──────────
 
 function bindChrome() {
-  // M3 fix: all three checks below route through isSaveBlocking() — see
-  // its own comment for why a save in progress must refuse every dismiss
-  // path, not just Escape.
-  byId('sbw-close')?.addEventListener('click', () => { if (isSaveBlocking()) return; closeWizard(); });
-  byId('sbw-scrim')?.addEventListener('click', (e) => { if (isSaveBlocking()) return; if (e.target.id === 'sbw-scrim') closeWizard(); });
+  // M3 fix, now one layer up: all three dismiss paths below route through
+  // requestDismiss(), which reads isSaveBlocking() — see its own comment
+  // for why a save in progress must refuse every dismiss path, not just
+  // Escape. requestDismiss() adds the discard guard on top of that.
+  byId('sbw-close')?.addEventListener('click', () => requestDismiss());
+  byId('sbw-scrim')?.addEventListener('click', (e) => { if (e.target.id === 'sbw-scrim') requestDismiss(); });
+
+  byId('sbw-discard-yes')?.addEventListener('click', () => closeWizard());
+  byId('sbw-discard-no')?.addEventListener('click', () => hideDiscardConfirm());
 
   qsa('[data-sbw-action]').forEach((btn) => {
     const action = btn.dataset.sbwAction;
     btn.addEventListener('click', () => {
       const myGen = wizardGen;
       if (action === 'close') {
-        if (isSaveBlocking()) return; // M3 fix
-        closeWizard();
+        requestDismiss();
       } else if (action === 'back') {
         const n = state.step;
         if (n > 1) goToStep(n - 1, myGen); // link population runs inside goToStep — rule 1
@@ -779,11 +1169,18 @@ function bindStep1() {
     const mySeq = ++state.step1Seq; // rule 3: anything in flight is now stale
     const myGen = wizardGen;
     nextBtn.disabled = true;
+    // F-14: read BEFORE setInviteMetadata, which resets the verdict — so
+    // "was there anything to clear" is asked while the answer still exists.
+    const hadPat = hasPatToClear();
     // H1 fix: goes through setInviteMetadata (not a direct assignment) so
     // editing the token also invalidates any PAT verdict obtained for
     // whatever repo the field previously held — see that function's
     // comment for why this alone isn't the whole guarantee.
     setInviteMetadata(null);
+    // …and this is the half the user can SEE. H1 cleared the verdict in
+    // state and left the token in the field with a green "verified" line
+    // above it, both describing a repository this invite no longer names.
+    onInviteTokenEdited(hadPat);
     statusEl.classList.add('sbw-hidden');
     preview.classList.add('sbw-hidden');
     const token = input.value.trim();
@@ -799,7 +1196,7 @@ function bindStep1() {
         const j = await r.json();
         if (mySeq !== state.step1Seq || !isFresh(myGen)) return;
         if (!j.valid) {
-          statusEl.textContent = j.error || 'Invite token is invalid.';
+          statusEl.textContent = plainInviteError(j.error);
           statusEl.className = 'sbw-status sbw-status-error';
           statusEl.classList.remove('sbw-hidden');
           return;
@@ -813,7 +1210,7 @@ function bindStep1() {
         nextBtn.disabled = false;
       } catch (err) {
         if (mySeq !== state.step1Seq || !isFresh(myGen)) return;
-        statusEl.textContent = 'Could not parse token: ' + err.message;
+        statusEl.textContent = 'Could not reach the Curator server to read that token: ' + err.message;
         statusEl.className = 'sbw-status sbw-status-error';
         statusEl.classList.remove('sbw-hidden');
       }
@@ -821,6 +1218,41 @@ function bindStep1() {
   });
 
   nextBtn.addEventListener('click', () => goToStep(2, wizardGen));
+}
+
+/** Is there a checked token, or a token in the field, that a change of
+ *  invite would invalidate? Reads the field as well as the state, because
+ *  a half-typed token nobody has checked yet is still something the user
+ *  would be confused to see survive a change of repository. */
+function hasPatToClear() {
+  const input = byId('sbw-pat-input');
+  return !!(state.pat || state.patValidation || (input && input.value));
+}
+
+function onInviteTokenEdited(hadPat) {
+  // Anything already in flight for the OLD repo is now stale. The sequence
+  // bump is what makes that true for a response that has already left.
+  state.patSeq += 1;
+  clearTimeout(state.patDebounce);
+
+  const input = byId('sbw-pat-input');
+  if (input) input.value = '';
+  const next = byId('sbw-step3-next');
+  if (next) next.disabled = true;
+
+  const validation = byId('sbw-pat-validation');
+  if (!validation) return;
+  const notice = inviteEditResetNotice(hadPat);
+  if (notice) {
+    validation.className = 'sbw-status sbw-status-warn';
+    validation.textContent = notice;
+    validation.classList.remove('sbw-hidden');
+  } else {
+    // Nothing was cleared, so say nothing. A notice here would accuse the
+    // user of losing something on their first keystroke of step 1.
+    validation.classList.add('sbw-hidden');
+    validation.textContent = '';
+  }
 }
 
 // ── Step 2: confirm GitHub access ─────────────────────────────────────────
@@ -851,12 +1283,26 @@ function refreshPatCreateLink() {
   }
 }
 
+// The resource-owner sentence, composed on panel ENTRY (rule 1) from the
+// invite's own repo. The ONE dynamic value is escaped at the sink; the
+// sentence itself comes from resourceOwnerSentence() so the plain-text and
+// HTML renderings cannot drift apart.
+function refreshPatStepCopy() {
+  const el = byId('sbw-pat-owner');
+  if (!el) return;
+  el.innerHTML = resourceOwnerSentence(
+    state.inviteMetadata,
+    (value) => '<strong>' + escapeHtml(value) + '</strong>'
+  );
+}
+
 // ── Step 3: PAT paste + live validation ───────────────────────────────────
 
 function bindStep3() {
   const input = byId('sbw-pat-input');
   const validation = byId('sbw-pat-validation');
   const nextBtn = byId('sbw-step3-next');
+  const checkBtn = byId('sbw-pat-check');
   if (!input) return;
 
   function setValidation(kind, message) {
@@ -865,68 +1311,88 @@ function bindStep3() {
     validation.classList.remove('sbw-hidden');
   }
 
-  input.addEventListener('input', () => {
-    clearTimeout(state.patDebounce);
+  function clearVerdict() {
+    // Rule 4, in one place: no PAT is held without a CURRENT valid verdict
+    // for the CURRENT repo (H1). Called on every keystroke and on every
+    // refusal, so the "checked" state can never outlive what earned it.
+    state.pat = '';
+    state.patValidation = null;
+    state.patValidatedRepo = null;
+    nextBtn.disabled = true;
+  }
+
+  // ONE checker, TWO triggers: the debounce behind the field and the
+  // explicit "Check token" button. They differ ONLY in `source`, which
+  // selects the refusal copy (a half-typed token mid-paste is not an
+  // error; the same token after a deliberate press is). Two copies of this
+  // — one per trigger — is the drift this file already records twice.
+  async function runPatCheck(source) {
     const mySeq = ++state.patSeq;
     const myGen = wizardGen;
-    nextBtn.disabled = true;
-    state.pat = '';               // rule 4: cleared until a fresh valid verdict
-    state.patValidation = null;
-    state.patValidatedRepo = null; // H1 fix
+    const req = patCheckRequest(state.inviteMetadata, input.value);
+
+    if (!req.ok) {
+      clearVerdict();
+      const refusal = (PAT_REFUSAL[source] || PAT_REFUSAL.button)[req.code];
+      if (refusal) setValidation(refusal[0], refusal[1]);
+      else { validation.classList.add('sbw-hidden'); validation.textContent = ''; }
+      return;
+    }
+
+    setValidation('checking', 'Checking your token against GitHub…');
+    try {
+      const r = await fetch(req.url, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+      });
+      const j = await r.json();
+      if (mySeq !== state.patSeq || !isFresh(myGen)) return;
+
+      const verdict = patVerdict(j, state.inviteMetadata);
+      setValidation(verdict.kind, verdict.message);
+      if (!patVerdictAccepts(verdict)) { clearVerdict(); return; }
+
+      // Accepted (valid, or valid-but-read-only) → store it, and record
+      // the repo it was checked against — REQ's repo, not whatever the
+      // metadata says now, so the two can never disagree (H1).
+      state.patValidation = j;
+      state.pat = req.body.pat;
+      state.patValidatedRepo = req.body.repo;
+      nextBtn.disabled = false;
+    } catch (err) {
+      if (mySeq !== state.patSeq || !isFresh(myGen)) return;
+      clearVerdict();
+      setValidation('error', 'Could not reach the Curator server: ' + err.message);
+    }
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(state.patDebounce);
+    const mySeq = ++state.patSeq;   // rule 3: anything in flight is now stale
+    const myGen = wizardGen;
+    clearVerdict();
+
     const pat = input.value.trim();
-
-    if (!pat) {
-      validation.classList.add('sbw-hidden');
-      return;
-    }
+    if (!pat) { validation.classList.add('sbw-hidden'); validation.textContent = ''; return; }
     if (pat.length < 20) {
-      setValidation('checking', 'Token looks too short — keep pasting.');
+      const refusal = PAT_REFUSAL.typing.short;
+      setValidation(refusal[0], refusal[1]);
       return;
     }
 
-    state.patDebounce = setTimeout(async () => {
-      if (mySeq !== state.patSeq || !isFresh(myGen)) return; // L4 fix: gate the SEND, not just the response
-      const meta = state.inviteMetadata;
-      if (!meta) {
-        setValidation('error', 'Lost the invite metadata — go back to step 1.');
-        return;
-      }
-      setValidation('checking', 'Checking your token against GitHub…');
-      try {
-        const r = await fetch('/api/sharedbrain/validate-pat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repo: meta.repo, pat }),
-        });
-        const j = await r.json();
-        if (mySeq !== state.patSeq || !isFresh(myGen)) return;
-
-        if (!j.valid) {
-          setValidation('error', j.error || 'Token rejected by GitHub.');
-          return;
-        }
-        // Valid → store it (rule 4: only on a valid/warn verdict), and
-        // record which repo it was checked against (H1 fix) — this is
-        // what currentValidatedPat()/isReadOnlyVerdict() key on.
-        state.patValidation = j;
-        state.pat = pat;
-        state.patValidatedRepo = meta.repo;
-
-        if (!j.hasWriteAccess) {
-          setValidation('warn',
-            'Token works but is read-only. You can continue as a read-only member — ' +
-            'you’ll be able to Pull the collective wiki, but not push contributions. ' +
-            'To contribute, re-create the token with Contents: Read AND write, then re-paste.');
-          nextBtn.disabled = false;
-          return;
-        }
-        setValidation('ok', 'Token verified. Authenticated against ' + (j.repoFullName || meta.repo) + '.');
-        nextBtn.disabled = false;
-      } catch (err) {
-        if (mySeq !== state.patSeq || !isFresh(myGen)) return;
-        setValidation('error', 'Could not reach the Curator server: ' + err.message);
-      }
+    state.patDebounce = setTimeout(() => {
+      // L4 fix: gate the SEND, not just the response.
+      if (mySeq !== state.patSeq || !isFresh(myGen)) return;
+      runPatCheck('typing');
     }, 400);
+  });
+
+  // The button answers immediately — no debounce, and it cancels a pending
+  // one so the same token is not checked twice.
+  checkBtn?.addEventListener('click', () => {
+    clearTimeout(state.patDebounce);
+    runPatCheck('button');
   });
 
   nextBtn.addEventListener('click', () => {
@@ -1256,11 +1722,11 @@ function bindAdminStep1() {
     }
     if (!name) { fail('Display name is required.'); return; }
     if (!/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(sharedDomain)) {
-      fail('Shared domain slug: lowercase letters, digits, hyphens, underscores. No spaces.');
+      fail('Folder name: use letters, digits, hyphens or underscores — no spaces, and it has to start with a letter or a digit.');
       return;
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..')) {
-      fail('Branch must be a valid git ref name (letters, digits, ., _, -, / — no spaces, no ".." segments).');
+      fail('Branch name: use letters, digits, dots, hyphens, underscores or slashes — no spaces, and no “..”. Most cohorts want “main”.');
       return;
     }
 

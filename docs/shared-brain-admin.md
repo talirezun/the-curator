@@ -42,14 +42,38 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
 3. Paste your **admin token** — the `sbat_…` credential shown once at brain setup (see §9). **If you do not have it, you cannot revoke, and there is no button that will issue you a new one.** Since v3.43.0 the rotate endpoint requires the CURRENT token; a connection holding no admin token is refused with `403 no_admin_token`. Re-run the brain-setup wizard to issue and save a fresh one.
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
-5. Click **Permanently revoke this contributor**. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
+5. Click **Permanently revoke this contributor** — the red button, which stays disabled until all three of the steps above are satisfied and tells you which one is missing. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
 
-The follow-up checklist appears **only on a clean run**. If anything failed, the
-card renders the failure as an error and prefixes it with `Error: `, so what you
-actually read is *"Error: ⚠ ERASURE INCOMPLETE …"* or *"Error: Erasure completed
-… but the revocation did NOT finish cleanly"*, listing each numbered problem.
+The panel is laid out as the three numbered steps it enforces — **1 · Who**, **2 · Admin token**, **3 · Confirm** — and the confirmation phrase is deliberately never filled in for you.
 
-**Read which headline you got — they mean different things:**
+The result renders as an **outcome panel inside the card** — not as a one-line
+error message. This was written down wrongly before v3.44.0 (it described a
+`card.message` prefixed with `Error: `, which is how the *push/pull/synthesise*
+actions report and is not how revocation has reported since v3.43.0), so read
+what is actually on screen:
+
+- a **headline** in one of four exact wordings (below),
+- a **counts row** — *"N contributions deleted · N pages removed · N rebuilt"*,
+- a **numbered list** of anything that failed, one line each,
+- **notices** where they apply: whether the revocation-in-progress marker is
+  still set, whether the audit record was written, and — on a clean run only —
+  *"Certifiable: this result is safe to certify to the data subject as a
+  completed erasure."*
+
+The follow-up checklist appears **only on a clean run**.
+
+**Read which headline you got — they mean different things.** There are exactly
+four, and a run that produced no result at all is one of them:
+
+| Headline | What it means |
+|---|---|
+| *"Revocation complete."* | Clean. Certifiable. |
+| *"Erasure completed, but the revocation did NOT finish cleanly."* | The data IS gone; a later step failed. |
+| *"⚠ ERASURE INCOMPLETE — this contributor's data has NOT been fully removed."* | Data survived. Do not certify. |
+| *"Erasure completeness was NOT confirmed by the server."* | The run finished without saying whether the erasure completed. Treat as incomplete until re-run. |
+| *"Revocation did not report a result — treat this contributor's data as NOT erased."* | The stream ended with no terminal result (a dropped connection, a crash). Re-run it. |
+
+The two that carry a real cost of misreading:
 
 - ***"⚠ ERASURE INCOMPLETE — this contributor's data has NOT been fully
   removed"*** — some of their data survived (`erasure_complete: false`). Do

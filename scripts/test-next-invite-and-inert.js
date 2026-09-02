@@ -563,7 +563,25 @@ for (const [name, body] of Object.entries({
   ok(UNBUILT.some((v) => 'a planted coming soon string'.includes(v)),
     'control: the unbuilt-claim detector FIRES on a planted string');
 }
-ok(src.shared.includes('Exporting your Shared Brain data — coming soon.'), 'shared: the export note reworded to "coming soon"');
+// WAS: an assertion that this note says "coming soon". A dated promise is
+// exactly the vocabulary §8 forbids everywhere else in this file, and the
+// note was making one for a feature nobody has scheduled. The honest answer
+// is also the more useful one — there is no export button, and there is
+// nothing to export FROM, because both halves are already plain markdown on
+// the user's own disk. Pinned by what it must SAY and what it must not.
+{
+  const note = stripComments(src.shared);
+  ok(!/coming soon/i.test(note),
+    'shared: no "coming soon" promise remains in the view');
+  ok(/There is no export button/.test(note),
+    'shared: …and the export note says so outright rather than implying one is on the way');
+  ok(/read-only mirror domain/.test(note) && /own domains/.test(note),
+    'shared: …and it names BOTH halves of the data the user already has locally');
+  // Control: the detector can fire — otherwise a stripComments over-reach
+  // would report a clean sweep over an empty string.
+  ok(/coming soon/i.test('a planted coming soon string'),
+    'control: the "coming soon" detector FIRES on a planted string');
+}
 /* ── THE NOTE NAMED AN ACTION THE SHELL DOES NOT OFFER ────────────────────
    This assertion's own label is "tells the user what to actually DO", and the
    string it pinned failed that test: the shell has no control called

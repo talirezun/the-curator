@@ -67,31 +67,72 @@ You CANNOT proceed without accepting the GitHub collaborator invitation. The Cur
 
 ### Step-by-step wizard
 
-In the **Shared Brain** rail view, on the **📨 I have an invite token** card, click **Join →**. A modal wizard appears with a 5-step progress bar (Token → Access → PAT → Domains → Save).
+In the **Shared Brain** rail view, on the **📨 I have an invite token** card, click **Join →**. A
+wizard sheet comes down from the top of the window with a 5-step progress bar
+(Token → Access → Your token → Domains → Save) and a **Step N of 5** counter under the title.
+
+Two things about the wizard as a whole, because they are not obvious:
+
+- **Enter advances the step.** With the cursor in any field — or straight after a step change,
+  when focus sits on the panel's heading — pressing Enter is the same as clicking the step's main
+  button, *when that button is enabled*. A greyed-out Continue stays greyed out; Enter is not a
+  second, looser way past a check.
+- **Closing is guarded once you have typed something.** Pressing Escape, clicking the dimmed
+  background or pressing ✕ asks *"Discard what you typed? Nothing here has been saved yet."*
+  first. Repeat the gesture, or click **Discard**, and it closes. This matters most on the admin
+  path, where an admin token has been shown once by step 2 and is stored only when you finish
+  step 5.
 
 #### Step 1 — Token
 
-Paste your invite token (`sbi_...`) into the field. After ~300ms a green preview appears showing the brain name, repo URL, branch, and shared domain. Click **Continue →**.
+Paste your invite token (`sbi_...`) into the field. After ~300ms a green preview appears showing
+the brain name, the repository, the branch and the folder inside the repository. Click
+**Continue →**.
+
+If you come back and **change** this token later, the wizard clears the access token you pasted on
+step 3 and says why: that token was checked against the *previous* repository, and that answer says
+nothing about this one. Paste it again and press **Check token**.
 
 #### Step 2 — Access
 
 The wizard reminds you to accept the GitHub email invitation. Click the **Open the repo on GitHub** link to verify you can see the repo. If you can, click **"I've accepted — continue →"**. If you can't (404 or "you don't have access"), go back to your email and accept the invitation, then click the link again.
 
-#### Step 3 — PAT (your personal access token)
+#### Step 3 — Your token (your GitHub access token)
 
-This is the most technical step. Take your time.
+This is the most technical step, and it is the one that stops cohorts. Take your time.
 
-1. Click the **Open GitHub to create my token →** button. It opens GitHub's fine-grained PAT page in a new tab. The token name is prefilled (`Curator Shared Brain - <Brain Name>`).
-2. On the GitHub page:
-   - **Resource owner**: your personal account
-   - **Repository access**: choose **Only select repositories** → click the dropdown → pick the cohort repo
-   - **Repository permissions**: click **+ Add permissions** → search "Contents" → select it → set access to **Read and write** (NOT just read)
-   - Leave Metadata: Read-only (GitHub auto-adds this)
-   - Scroll to bottom → **Generate token**
+A **token** is a password-like string GitHub gives you so The Curator can read and write the
+cohort's repository on your behalf. It is **yours**: it identifies your contributions, the admin
+never sees it, and no other contributor sees it.
+
+1. Click the **Open GitHub to create my token →** button. It opens GitHub's **fine-grained token**
+   page in a new tab, with the name prefilled (`Curator Shared Brain - <Brain Name>`). Fine-grained
+   is the only kind this works with — a classic token will not do.
+2. On the GitHub page, in order:
+   - **Resource owner** — choose **the account or organisation that owns the cohort repository**.
+     The wizard names it for you, taking it from the invite token (*"Choose acme-labs as the
+     resource owner, or the repository will not appear"*). **This is the step that most often goes
+     wrong**, because GitHub defaults this field to your own personal account: if the repository
+     belongs to an organisation and you leave the default, the repository is simply **absent** from
+     the picker in the next step — no error, no explanation. It then looks exactly like a
+     collaborator invitation that never arrived.
+   - **Expiration** — **GitHub's default is 30 days.** On that day your pushes stop, with no
+     notice from GitHub and no warning inside The Curator. Pick the longest expiry your
+     organisation allows, and **put the date in your calendar**. If your organisation permits it,
+     *No expiration* is a legitimate choice for a cohort that runs for a year.
+   - **Repository access** — choose **Only select repositories** → click the dropdown → pick the
+     cohort repo. (If it is not listed, go back to **Resource owner**.)
+   - **Repository permissions** — click **+ Add permissions** → search "Contents" → select it →
+     set access to **Read and write** (NOT just read).
+   - Leave Metadata: Read-only (GitHub adds this itself).
+   - Scroll to the bottom → **Generate token**.
 3. GitHub shows the token (`github_pat_...`) **once**. Copy it immediately.
 4. Switch back to The Curator wizard and paste into the **"Paste your token here"** field.
 
-Within ~400ms the wizard validates the token against the cohort repo. Three possible outcomes:
+The wizard checks the token against the cohort repo about 400ms after you stop typing. You can
+also ask for the check yourself with the **Check token** button beside the field — useful when you
+have pasted something and are not sure whether anything happened. Either way the answer appears in
+the same place, in the same words. Three possible outcomes:
 
 | Result | What it means | What to do |
 |---|---|---|
@@ -179,16 +220,16 @@ You can do this before OR after running the admin wizard. Order doesn't matter �
 
 ### Step C — Run the admin wizard
 
-In the Curator → **Shared Brain** rail view → on the **⚙ I'm starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → PAT → Domains → Save**.
+In the Curator → **Shared Brain** rail view → on the **⚙ I'm starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → Your token → Domains → Save**.
 
 #### Step 1 — Setup
 
-Fill in the form:
+The panel is headed **"Name your Shared Brain and its repository"**. Fill in the form:
 
 - **Repository (owner/name)**: paste `<owner>/<name>` from Step A
 - **Brain name**: a friendly label your contributors will see (e.g. "Spring 2026 ML Cohort"). NOT a URL or slug — humans-only.
-- **Folder inside the repo**: auto-fills from the brain name. Where collective pages live in the repo (`collective/<folder>/wiki/`). Each contributor's machine sees this domain as `shared-<folder>/`. Override only if you want a specific slug.
-- **Branch**: almost always `main`.
+- **Folder inside the repo**: filled in from the brain name, and you can change it. Where collective pages live in the repo (`collective/<folder>/wiki/`). Each contributor's machine sees this domain as `shared-<folder>/`. Override only if you want a specific slug.
+- **Branch**: a branch is one line of history inside the repository. A new repository has one, called `main` — keep that unless your cohort agreed otherwise.
 - **Data handling terms**: pick `contributor_retains` (educational/cohort default) or `organisational` (enterprise IP transfer). **Cannot be changed after invites go out** — re-issuing would require everyone to re-consent.
 
 Click **Continue →**.
@@ -205,7 +246,7 @@ Click **Set up my contribution →** to continue. You're now setting up YOUR own
 
 #### Steps 3-5 — same as contributor flow
 
-Steps 3-5 of the admin path are identical to the contributor flow's steps 3-5: create your own PAT, pick your contributing domains, consent. Follow [§2 above](#2--contributor-setup-join-an-existing-shared-brain) from "Step 3 — PAT" onward.
+Steps 3-5 of the admin path are identical to the contributor flow's steps 3-5: create your own PAT, pick your contributing domains, consent. Follow [§2 above](#2--contributor-setup-join-an-existing-shared-brain) from "Step 3 — Your token" onward — including the **Resource owner** and **Expiration** warnings, which apply to the admin's own token exactly as they do to everyone else's.
 
 ### Step D — Brief your contributors
 
@@ -277,6 +318,24 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 **"Token verified ✓" never appears even though the token looks right**
 - Most common cause: the admin hasn't added you as a collaborator yet, or you haven't accepted the email invitation.
 - Open the repo URL in a new browser tab. If you see 404 or "you don't have access", that's the problem.
+
+**My pushes worked for a month and then stopped**
+- Your GitHub token has almost certainly expired. Fine-grained tokens expire on the date chosen
+  when they were created, GitHub's default is 30 days, and neither GitHub nor The Curator warns
+  you beforehand.
+- Check it: **Shared Brain** → your connection card → **Your access token** → **Check now**. If
+  GitHub rejects the stored token, the card says so.
+- The fix is a new token: create one on GitHub (same steps as wizard step 3), then use **Leave this
+  Shared Brain** at the bottom of the card and re-join with your invite. The setup wizard is the
+  only place that accepts a token — nothing else in the app asks for one. Leaving removes the
+  connection only; your local files, including the read-only mirror, stay exactly as they are.
+- Next time, pick a longer expiry and put the date in your calendar.
+
+**Check now says "Reached GitHub, but this brain holds no contribution records yet"**
+- That is an honest "cannot tell", not a failure. The check reads the cohort's contribution records
+  with your stored token; when nobody has pushed yet there is nothing to read, and GitHub answers
+  the same way for a repository your token cannot see as for one that is simply empty. It becomes
+  conclusive as soon as anyone in the cohort has pushed.
 
 **"Token is read-only" warning**
 - You created the PAT with **Contents: Read-only**. If you intend to contribute, regenerate with **Contents: Read AND write** and paste again. If you're joining a Pull-only (read-only) tier, this is expected — since v3.0.4 you can click **Continue** and save; your card shows a **read-only member** pill and only the Pull button.
@@ -350,6 +409,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | Run synthesis (admin) | **Shared Brain** → connection card → "Run synthesis (admin)" (main action row, beside Push and Pull) |
 | See cohort size / your share | **Shared Brain** → connection card → **"Cohort & sharing details"** |
 | Revoke a contributor (admin) | **Shared Brain** → connection card → **"Admin controls — admin token & contributor revocation"** (shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
+| Check whether your access token still works | **Shared Brain** → connection card → **"Your access token"** → **Check now** |
 | Leave the brain on this machine | **Shared Brain** → connection card footer → **"Leave this Shared Brain"** (removes the connection only; your local files, including the read-only mirror, stay) |
 
 > Through v3.40.0 the same actions lived in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else), in the pre-redesign shell at `/old`. That shell was deleted in v3.41.0.

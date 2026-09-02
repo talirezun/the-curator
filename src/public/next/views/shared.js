@@ -158,6 +158,15 @@ import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, escapeHtml, icon,
   isCurrentMount, reportAsyncMountFailure, reportAsyncActionFailure,
   beginDomainWrite, isDomainWriteBusy, getDomainWriteLabel, onWriteGateChange,
+  // The shell's own reading-position primitive (settings.js's chokepoint,
+  // same function, imported not copied). setMain() replaces #view-root
+  // wholesale and `.main` is the scroll container, so EVERY render here —
+  // and this view re-renders on every SSE frame of a push, a pull, a
+  // synthesis and a revoke — sent the reader back to the top. On the
+  // shown-once admin token that is not an annoyance but a data loss: the
+  // token is displayed, the next render scrolls it off screen, and it can
+  // never be displayed again.
+  preserveMainScroll,
 } from '../app.js';
 import { openSharedBrainWizard, closeSharedBrainWizardIfOpen } from './shared-brain-wizard.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
@@ -204,6 +213,11 @@ function ensureCard(id) {
       synthesizeConfirmOpen: false,
       leaveConfirmOpen: false,
       cohort: null,                // null = not loaded | 'loading' | {members, selfFellowId, mirrorStats} | {error}
+
+      // "Is the stored access token still good?" — see renderTokenCheck().
+      // Never holds a token: only a verdict object {kind, message}.
+      tokenChecking: false,
+      tokenCheck: null,
 
       // ── Admin controls (see the "Admin controls" section below) ────────
       // adminTokenProvisioned: a successful rotate makes the revoke
@@ -383,9 +397,15 @@ async function refreshConnections(token) {
 // ── Render ───────────────────────────────────────────────────────────────
 
 function render(token) {
-  renderSidebar(token);
-  renderMain(token);
-  wireListeners(token);
+  // ONE chokepoint, exactly as settings.js does it: ~30 call sites reach
+  // this function and none of them should have to remember. wireListeners
+  // is inside the wrapper because it runs against the markup this render
+  // just wrote — moving it out would rebind against the previous DOM.
+  preserveMainScroll(() => {
+    renderSidebar(token);
+    renderMain(token);
+    wireListeners(token);
+  });
 }
 
 function renderSidebar(token) {
@@ -526,6 +546,101 @@ function formatRelativeTime(iso, neverLabel) {
   return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+
+// ── Is the stored access token still good? ───────────────────────────────
+//
+// WHY THIS EXISTS. A fine-grained GitHub token expires on a date chosen when
+// it was created, and GitHub's own default is 30 days. Nothing in this app
+// ever said so, and nothing anywhere told a member their token had died:
+// pushes simply started failing, months after anyone remembered making one.
+//
+// WHY IT ASKS THE MEMBER DIRECTORY AND NOT /validate-pat. POST /validate-pat
+// is the wizard's checker and takes the token IN THE REQUEST BODY. This
+// screen does not have one and must not: GET /list masks every credential
+// (routes/sharedbrain.js: "The full PAT is NEVER returned in any list/get
+// response"), which is the property that makes the browser side of this
+// feature safe. GET /:id/members is the one existing route that exercises
+// the STORED token against the real repository — the same call the cohort
+// panel already makes — so the check is a genuine end-to-end use of the
+// credential rather than an assertion about it.
+//
+// WHAT THAT COSTS, STATED: the answer is not always conclusive, and the
+// classifier says so rather than rounding up to "fine". GitHub answers 404
+// for a repository a token cannot see, and the adapter reads a 404 tree as
+// an EMPTY one — so "reached, zero contributions" cannot be told apart from
+// "cannot see the repo at all". That is one honest verdict, not a green
+// tick. It resolves itself the moment anyone in the cohort has pushed.
+function classifyTokenCheck({ ok, error, memberCount, repoLabel }) {
+  const where = repoLabel ? String(repoLabel) : 'the repository';
+  const text = typeof error === 'string' ? error : '';
+  if (ok === true) {
+    const n = Number(memberCount);
+    if (Number.isFinite(n) && n > 0) {
+      return {
+        kind: 'ok',
+        message: 'The stored token reached ' + where + ' just now and read ' +
+          n + ' contributor record' + (n === 1 ? '' : 's') + '. It has not expired.',
+      };
+    }
+    return {
+      kind: 'unknown',
+      message: 'Reached GitHub, but this brain holds no contribution records yet — so this check cannot ' +
+        'tell a working token from one that has lost access to ' + where + '. It becomes conclusive as ' +
+        'soon as anyone in the cohort has pushed.',
+    };
+  }
+  // The adapter's own codes first, then the raw statuses they are built from,
+  // so a message that carries only one of the two still classifies.
+  if (/SHARED_BRAIN_AUTH|SHARED_BRAIN_FORBIDDEN|bad credentials|\b401\b|\b403\b/i.test(text)) {
+    return {
+      kind: 'rejected',
+      message: 'GitHub rejected the stored token. That is what an EXPIRED fine-grained token looks like; ' +
+        'a revoked one, or one whose access to ' + where + ' was withdrawn, looks the same. Create a new ' +
+        'token on GitHub, then use Leave this Shared Brain below and re-join with your invite — the setup ' +
+        'wizard is the only place that accepts a token.',
+    };
+  }
+  return {
+    kind: 'unreachable',
+    message: 'Could not run the check: ' + (text || 'the request failed') +
+      '. That is a failure of the CHECK, not a verdict on the token — try again in a moment.',
+  };
+}
+
+// Shown for GitHub-backed connections only: a local-folder brain has no
+// token, so a control asking about one would be answering a question the
+// user never had.
+function tokenCheckApplies(conn) {
+  return !!(conn && conn.storage_type === 'github');
+}
+
+function renderTokenCheck(conn, card) {
+  if (!tokenCheckApplies(conn)) return '';
+  const verdict = card.tokenCheck;
+  return (
+    '<div class="sb-admin-block sb-token-check">' +
+      '<div class="sb-admin-row">' +
+        '<div class="sb-admin-row-text">' +
+          '<div class="sb-admin-row-title">Your access token</div>' +
+          '<p class="sb-admin-hint">The GitHub token you pasted when you joined. Fine-grained tokens ' +
+            'expire on the date you chose when you created one — when that day comes, Push and Pull stop ' +
+            'working and GitHub sends no warning. This reads the cohort’s contribution records with ' +
+            'the stored token; it costs no AI credits.</p>' +
+        '</div>' +
+        '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="token-check"' +
+          (card.tokenChecking ? ' disabled' : '') + '>' +
+          (card.tokenChecking ? 'Checking…' : 'Check now') +
+        '</button>' +
+      '</div>' +
+      (verdict
+        ? '<p class="sb-token-check-verdict sb-token-check-' + escapeHtml(verdict.kind) + '" aria-live="polite">' +
+            escapeHtml(verdict.message) +
+          '</p>'
+        : '') +
+    '</div>'
+  );
+}
+
 function renderCard(conn) {
   const card = ensureCard(conn.id);
   const busy = !!card.acting;
@@ -583,6 +698,8 @@ function renderCard(conn) {
         '<span><span class="sb-card-stat-label">Domains</span><span class="sb-name">' + escapeHtml(domainsLabel) + '</span></span>' +
         '<span><span class="sb-card-stat-label">Data handling</span><span>' + escapeHtml(dataHandlingLabel) + '</span></span>' +
       '</div>' +
+
+      renderTokenCheck(conn, card) +
 
       (!readOnly && (pendingCount > 0 || retryCount > 0)
         ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
@@ -797,7 +914,11 @@ function renderCohort(conn, card) {
         networkBody +
         '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Use <b>Leave this Shared Brain</b> at the bottom of this card, then re-join with a fresh invite, to change the selection.</div>' +
         '<div class="sb-card-cohort-row sb-card-cohort-note">No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.</div>' +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Exporting your Shared Brain data — coming soon.</div>' +
+        // NOT "coming soon" — this project has shipped enough dated
+        // promises to know better, and the honest answer is more useful
+        // than the promise: both halves of the data are already ordinary
+        // markdown on this computer.
+        '<div class="sb-card-cohort-row sb-card-cohort-note">There is no export button. There is also nothing locked up: what you contributed is the markdown in your own domains, and the collective wiki is the read-only mirror domain — both are plain files in your knowledge folder.</div>' +
       '</div>' +
     '</details>'
   );
@@ -1350,14 +1471,31 @@ function renderRevokeOutcomeHtml(outcome) {
 // to see the result of, so this must be called AFTER every re-render that
 // can move it — never right after the first render, which is provably too
 // early.
-function revealRevokeOutcome(connId) {
-  const el = document.querySelector('.sb-card[data-conn-id="' + connId + '"] .sb-outcome');
+function revealInCard(connId, selector) {
+  const el = document.querySelector('.sb-card[data-conn-id="' + connId + '"] ' + selector);
   if (!el || typeof el.getBoundingClientRect !== 'function') return false;
   const r = el.getBoundingClientRect();
   if (r.height === 0 && r.width === 0) return false;
   if (r.top >= 0 && r.bottom <= window.innerHeight) return false; // already readable
   if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
   return true;
+}
+
+function revealRevokeOutcome(connId) {
+  return revealInCard(connId, '.sb-outcome');
+}
+
+// F-09. preserveMainScroll (see render()) keeps the reader where they were,
+// which is the right default and is NOT sufficient here: the shown-once
+// token appears inside a <details> that may have been collapsed, below a
+// card that may be metres long. "Where you were" can be nowhere near the
+// one thing that cannot be shown twice. This is the counterpart to that
+// rule — the same argument app.js makes for revealInMain existing beside
+// preserveMainScroll — and it does nothing when the box is already on
+// screen, because moving a page the reader did not ask to move is its own
+// defect.
+function revealShownAdminToken(connId) {
+  return revealInCard(connId, '.sb-token-box');
 }
 
 // ── Admin controls: render ────────────────────────────────────────────────
@@ -1732,6 +1870,8 @@ async function onRotateAdminToken(token, connId) {
     if (isCurrentMount(token)) {
       state.expandedAdmin.add(connId);
       render(token);
+      // AFTER the render, so it measures the box that now exists.
+      revealShownAdminToken(connId);
     }
   }
 }
@@ -1759,6 +1899,36 @@ function copyShownAdminToken(token, connId) {
     }
   } catch { /* fall through to the manual message */ }
   done('Could not copy automatically — select the token below and copy it by hand.', true);
+}
+
+// Deliberately does NOT take card.acting: this reads the collective's
+// contribution records and writes nothing, so it must neither block a Push
+// nor be blocked by one. Re-entry is refused on its own flag, exactly as
+// onShowInvite does.
+async function onCheckStoredToken(token, connId) {
+  const card = ensureCard(connId);
+  if (card.tokenChecking) return;
+  const conn = findConnection(connId);
+  if (!tokenCheckApplies(conn)) return;   // re-checked at the ACTION, not only in the render
+
+  const repoLabel = conn.github_repo_owner + '/' + conn.github_repo_name;
+  card.tokenChecking = true;
+  card.tokenCheck = null;
+  render(token);
+
+  let outcome;
+  try {
+    const res = await fetch('/api/sharedbrain/' + connId + '/members');
+    const data = await res.json().catch(() => ({}));
+    outcome = res.ok
+      ? classifyTokenCheck({ ok: true, memberCount: Array.isArray(data.members) ? data.members.length : 0, repoLabel })
+      : classifyTokenCheck({ ok: false, error: data && data.error, repoLabel });
+  } catch (err) {
+    outcome = classifyTokenCheck({ ok: false, error: err.message, repoLabel });
+  }
+  card.tokenChecking = false;
+  card.tokenCheck = outcome;
+  if (isCurrentMount(token)) render(token);
 }
 
 // Re-derive and show the invite token.
@@ -2113,6 +2283,7 @@ function onCardButton(token, connId, action) {
     case 'synthesize-cancel': card.synthesizeConfirmOpen = false; render(token); return;
     case 'synthesize-confirm': card.synthesizeConfirmOpen = false; startAction(token, connId, 'synthesize'); return;
     case 'unskip': onUnskip(token, connId); return;
+    case 'token-check': onCheckStoredToken(token, connId).catch(reportAsyncActionFailure); return;
     case 'leave-open': card.leaveConfirmOpen = true; render(token); return;
     case 'leave-cancel': card.leaveConfirmOpen = false; render(token); return;
     case 'leave-confirm': onLeave(token, connId); return;
