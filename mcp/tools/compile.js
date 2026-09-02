@@ -33,6 +33,7 @@ import { generateText } from '../../src/brain/llm.js';
 import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 import { acquireFileLock, isFileLocked } from '../../src/brain/write-registry.js';
+import { invalidateGraph } from '../graph.js';
 
 // Hard caps — defense against runaway LLM output. Generous enough to never
 // bite a real compile; small enough that a confused or malicious model can't
@@ -446,7 +447,24 @@ export async function compileToWikiHandler(args, storage) {
   // additional_pages — optional, validated per-item
   const extra = Array.isArray(additional_pages) ? additional_pages : [];
   if (extra.length + 1 > MAX_PAGES) {
-    return { ok: false, error: `Too many pages: ${extra.length + 1} requested, max ${MAX_PAGES} per call.` };
+    // The refusal used to stop at the number, and the obvious next move is a
+    // trap: splitting into two calls that REUSE THE TITLE produces TWO summary
+    // pages for one source. The idempotency slug is
+    // `<title>-<date>-<4hex(corpus)>` and the corpus includes additional_pages
+    // (see the hash below), so a different page set is a different hash, a
+    // different slug, and no collision to refuse — the guard that exists to
+    // prevent a duplicate summary cannot see this case at all. Say so here,
+    // because this is the one moment the caller is deciding what to do next.
+    return {
+      ok: false,
+      error:
+        `Too many pages: ${extra.length + 1} requested, max ${MAX_PAGES} per call. ` +
+        `Split the material by TOPIC into separate compile_to_wiki calls, and give each call ` +
+        `its own DISTINCT title. Do not reuse one title across the calls: the summary page is ` +
+        `keyed on title + date + content, so a second call with the same title and a different ` +
+        `page set writes a SECOND summary page for the same source rather than extending the ` +
+        `first. Entity and concept pages are safe to spread across calls — they merge on write.`,
+    };
   }
   for (let i = 0; i < extra.length; i++) {
     const p = extra[i];
@@ -688,6 +706,16 @@ export async function compileToWikiHandler(args, storage) {
     // crashed / errored compile doesn't leave a stale lock that blocks the
     // next call until the 30-minute TTL.
     try { await releaseFileLock(); } catch { /* best-effort */ }
+
+    // Drop mcp/graph.js's cached read of this domain. Without it, the very
+    // next get_node / search_wiki / get_backlinks in the SAME conversation
+    // answers from a graph built before this compile and reports the page we
+    // just wrote as absent — the cache's own file-count invalidation could
+    // not fire inside its 10-minute TTL. Deliberately in `finally`, not on
+    // the success path: a compile that threw after writePage() has changed
+    // the wiki too, and a cache that is merely REBUILT is never wrong, only
+    // slower.
+    try { invalidateGraph(domain); } catch { /* never let a cache drop fail a write */ }
   }
   return mcpResult;
 }
