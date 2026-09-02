@@ -1464,8 +1464,13 @@ body.guide-docked .main {
    allowed: the light value is CORRECT for the surface it was written for.
    The bug is the pairing, so the fix belongs on the pairing.
 
-   Measured: --inset-hi has exactly ONE consumer in the whole /next tree
-   (the rule above), so no other surface is affected today.
+   Measured, and re-measured after the material pass: --inset-hi had exactly
+   ONE consumer in the whole /next tree (the rule above) and now has ZERO —
+   `var(--inset-hi)` appears nowhere in /next outside tokens/shape.css and
+   these two notes. The token is retained rather than removed because
+   tokens/ is frozen and because its LIGHT value is still the correct device
+   for a raised light surface, should one want it; what it must not do is
+   land on a saturated accent fill.
 
    The shell always stamps data-theme both ways (app.js applyTheme) and dark
    lives at bare :root, so `[data-theme="light"]` is complete and there must
@@ -1482,8 +1487,9 @@ body.guide-docked .main {
    the IDENTICAL 1.44:1 against their own fill — tuned to equal PERCEIVED
    lift rather than to equal alpha, which is the entire argument for two
    values under one name. So the light theme gets the same lit edge the dark
-   theme gets, instead of getting nothing, and --inset-hi keeps its one
-   existing consumer and its authored meaning.
+   theme gets, instead of getting nothing, and --inset-hi is left with no
+   consumer at all rather than a wrong one — its authored meaning intact and
+   its definition untouched.
 
    The note above is kept in full rather than trimmed to fit the fix: it is
    the record of how a correct token and a correct component produced a
