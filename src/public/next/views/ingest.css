@@ -123,7 +123,9 @@
   text-align: center;
   color: var(--text-2);
   font: var(--type-body-sm);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
 }
 /* Hover steps to --text now that the resting state is --text-2 — otherwise the
@@ -188,7 +190,9 @@
 
 .ing-browse-link {
   color: var(--accent-text);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -214,7 +218,9 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font: inherit;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
@@ -479,7 +485,9 @@
   border: none;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   padding: 4px 0;
   text-decoration: underline;
   text-decoration-style: dotted;
@@ -600,7 +608,9 @@
      its aria-label, so it is a graphic at 4.33 dark / 3.87 light, over the 3:1
      floor and under the 4.5 text floor that does not apply to it. */
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .ing-queue-file-remove:hover { background: var(--danger-tint); color: var(--danger-text); }
@@ -643,7 +653,9 @@
   font-size: var(--text-sm);
   color: var(--text-2);
   margin-bottom: 18px;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .ing-queue-confirm-actions { display: flex; gap: 9px; flex-wrap: wrap; }

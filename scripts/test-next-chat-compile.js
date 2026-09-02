@@ -455,7 +455,11 @@ section('4. buildCompileOutcomeHtml()/formatBytesChat() — the change-list card
   ok(!full.includes('chat-compile-change-empty'), 'the empty-state message does NOT render when pages were actually written');
   ok(full.includes('entities/foo.md'), 'created page path is present');
   ok(full.includes('concepts/bar.md'), 'updated page path is present');
-  ok(full.includes('+<span class="mono">3</span> bullet'), 'bulletsAdded detail renders for an updated page');
+  // `mono` -> `chat-num` in the design pass: the span exists to keep a ticking
+  // count from reflowing the words beside it, which is TABULAR FIGURES, not a
+  // monospace face. The assertion still pins the same thing — that the count
+  // is wrapped and rendered — against the class that now does that job.
+  ok(full.includes('+<span class="chat-num">3</span> bullet'), 'bulletsAdded detail renders for an updated page');
   ok(full.includes('Key Facts, Related'), 'sectionsChanged is rendered');
   ok(full.includes('Compiled to wiki: My Conversation'), 'the title is rendered');
 

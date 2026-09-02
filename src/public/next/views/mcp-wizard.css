@@ -74,7 +74,9 @@
      dark / 4.14 light — clears 3:1 with room, and the dim resting state is what
      the :hover step below is built on. */
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .mcpw-close:hover { background: var(--surface-hover); color: var(--text); }
@@ -214,7 +216,9 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-inset);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .mcpw-choice.mcpw-hidden { display: none; }
 .mcpw-choice:hover { border-color: var(--border-strong); }
@@ -359,7 +363,7 @@
 .mcpw-result-steps li { margin-bottom: 4px; }
 
 .mcpw-stderr { margin-top: 10px; font-size: var(--text-xs); }
-.mcpw-stderr summary { cursor: pointer; color: var(--text-2); }
+.mcpw-stderr summary { cursor: default; user-select: none; -webkit-user-select: none; color: var(--text-2); }
 .mcpw-stderr pre {
   margin: 8px 0 0;
   max-height: 160px;

@@ -41,7 +41,9 @@
   color: var(--text-2);
   font-family: inherit;
   font-size: var(--text-2xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .mem-refresh:hover { background: var(--surface-hover); color: var(--text); }
@@ -62,7 +64,9 @@
   color: inherit;
   font-family: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), transform var(--t-press);
 }
 .mem-row:hover { background: var(--surface-hover); }
@@ -597,7 +601,9 @@
   align-items: center;
   gap: 8px;
   padding: 11px 14px;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   list-style: none;
   font-size: var(--text-sm);
   color: var(--text-2);

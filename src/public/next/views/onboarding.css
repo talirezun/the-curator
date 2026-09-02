@@ -127,7 +127,9 @@
      3:1 floor that governs it, and the :hover step to --text below depends on
      this resting state being the dim one. */
   color: var(--text-3);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .obp-dismiss:hover { background: var(--surface-hover); color: var(--text); }

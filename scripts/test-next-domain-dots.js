@@ -107,7 +107,17 @@ const domainsCss = readFileSync(DOMAINS_CSS, 'utf8');
 const shellCss = readFileSync(SHELL_CSS, 'utf8');
 const colorCss = readFileSync(COLOR_CSS, 'utf8');
 const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
-const tokenCss = `${colorCss}\n${materialCss}`;
+/* views/domains.css JOINS THE TOKEN TABLE, and that is a real widening of
+   what this suite reads rather than a convenience. The three derived rungs
+   this file has always carried as literals (`#16768C`/`#438126`/`#925E13`)
+   are now declared ONCE as `--dm-ink-entity`/`-concept`/`-summary` and
+   referenced by both the row dots below AND `.dm-stat-value`, because two
+   rules needing one colour is what a name is for. A table built from the
+   tokens/ files alone resolves those three to NULL and §5 stops grading the
+   three dots it exists for — so the view's own custom properties are read
+   too, concatenated LAST because index.html links views/ after tokens/ and
+   `:root` in a view file therefore wins the same tie in the browser. */
+const tokenCss = `${colorCss}\n${materialCss}\n${domainsCss}`;
 
 let passed = 0, failed = 0;
 const ok = (cond, label) => { if (cond) { passed++; console.log(`  ✓ ${label}`); } else { failed++; console.log(`  ✗ ${label}`); } };
@@ -284,8 +294,15 @@ function compositeOver(top, bottom) {
  *
  * If chrome is ever moved to OVERLAP content, this model stops holding and the
  * honest fix is to fail here rather than to composite over the wrong bottom.
+ *
+ * `bottomHex` NAMES THAT BOTTOM, and it is not optional decoration. A row's
+ * hover and selected fills are now `--mat-row-hover` / `--mat-row-active` —
+ * alpha overlays that composite onto the SIDEBAR PLANE, which is itself a
+ * composite over `--canvas`. Compositing them straight onto `--canvas`
+ * instead skips a layer and reports a contrast the screen never shows. The
+ * default stays `--canvas` so the plane itself resolves as before.
  */
-function resolveSurface(value, primary, base) {
+function resolveSurface(value, primary, base, bottomHex = null) {
   const direct = resolveColor(value, primary, base);
   if (direct) return direct;
   // Walk the var() chain by hand so a translucent terminal value survives.
@@ -302,9 +319,9 @@ function resolveSurface(value, primary, base) {
   }
   const top = parseRgba(v);
   if (!top || top.a >= 1) return null;
-  const canvas = parseRgba(resolveColor('var(--canvas)', primary, base));
-  if (!canvas) return null;
-  return compositeOver(top, canvas);
+  const bottom = parseRgba(bottomHex || resolveColor('var(--canvas)', primary, base));
+  if (!bottom) return null;
+  return compositeOver(top, bottom);
 }
 
 // ── §1 helper controls ─────────────────────────────────────────────────────
@@ -420,10 +437,19 @@ section('§5 Every dot clears the 3:1 non-text floor, both themes, every row sta
  *     paints the TRANSLUCENT `--mat-sidebar` rather than the opaque
  *     `--surface`. `resolveSurface` composites it over `--canvas`; the
  *     justification for that bottom is on the helper.
- *   · `.dm-row:hover`   paints `--surface-hover`.
- *   · `.dm-row.active`  paints `--surface-active`  ← the worst case, and the
+ *   · `.dm-row:hover`   paints `--mat-row-hover`.
+ *   · `.dm-row.active`  paints `--mat-row-active`  ← the worst case, and the
  *     one an arithmetic check against `--surface` alone would miss (2.17 vs
  *     the 1.85 a browser reads on the selected row).
+ *
+ * THE LAST TWO WERE `--surface-hover` / `--surface-active` UNTIL THE MATERIAL
+ * PASS. An opaque fill on a translucent plane replaces the material for the
+ * width of the row — the blur stops and the hover reads as a hole rather than
+ * as a lit row — so both moved onto the alpha overlays AppKit uses, which
+ * composite ONTO the plane instead of covering it. That is why they are now
+ * resolved with the sidebar plane as their bottom rather than the canvas:
+ * skipping that layer would report a ratio the screen never shows.
+ *
  * All three are READ OFF DISK below rather than hardcoded, so a change to any
  * of those rules moves this check with it.
  */
@@ -437,7 +463,12 @@ const BACKDROP_TOKENS = [];
   const activeBg = declFor(domainsCss, '.dm-row.active', 'background');
   ok(hoverBg !== null, `.dm-row:hover background read from disk (${hoverBg})`);
   ok(activeBg !== null, `.dm-row.active background read from disk (${activeBg})`);
-  BACKDROP_TOKENS.push(['row on sidebar', sidebarBg], ['row hovered', hoverBg], ['row SELECTED', activeBg]);
+  // The third element is the BOTTOM to composite onto: null means `--canvas`
+  // (correct for the plane itself), `sidebarBg` means "onto the plane".
+  BACKDROP_TOKENS.push(
+    ['row on sidebar', sidebarBg, null],
+    ['row hovered', hoverBg, sidebarBg],
+    ['row SELECTED', activeBg, sidebarBg]);
 }
 
 const FLOOR_NON_TEXT = 3.0;
@@ -458,8 +489,9 @@ for (const theme of THEMES) {
 for (const theme of THEMES) {
   eq(resolvedSlots[theme.name].length, slotCount, `${theme.name}: all ${slotCount} slots resolved`);
   for (const { cls, hex } of resolvedSlots[theme.name]) {
-    for (const [label, token] of BACKDROP_TOKENS) {
-      const bg = resolveSurface(token, theme.tokens, DARK_TOKENS);
+    for (const [label, token, bottomTok] of BACKDROP_TOKENS) {
+      const bottom = bottomTok ? resolveSurface(bottomTok, theme.tokens, DARK_TOKENS) : null;
+      const bg = resolveSurface(token, theme.tokens, DARK_TOKENS, bottom);
       ok(bg !== null, `${theme.name}: backdrop "${label}" resolves (${token} -> ${bg})`);
       if (!bg) continue;
       const cr = contrast(hex, bg);
@@ -474,8 +506,10 @@ for (const theme of THEMES) {
   const worst = (name) => {
     let lo = Infinity, at = '';
     for (const { cls, hex } of resolvedSlots[name]) {
-      for (const [label, token] of BACKDROP_TOKENS) {
-        const bg = resolveSurface(token, name === 'dark' ? DARK_TOKENS : LIGHT_TOKENS, DARK_TOKENS);
+      for (const [label, token, bottomTok] of BACKDROP_TOKENS) {
+        const T = name === 'dark' ? DARK_TOKENS : LIGHT_TOKENS;
+        const bottom = bottomTok ? resolveSurface(bottomTok, T, DARK_TOKENS) : null;
+        const bg = resolveSurface(token, T, DARK_TOKENS, bottom);
         if (!bg) continue;
         const cr = contrast(hex, bg);
         if (cr < lo) { lo = cr; at = `.${cls} on ${label}`; }
@@ -484,14 +518,32 @@ for (const theme of THEMES) {
     return { lo: r2(lo), at };
   };
   const wLight = worst('light'), wDark = worst('dark');
-  eq(wLight.lo, 3.44, `light: worst dot reads 3.44 (${wLight.at})`);
-  eq(wDark.lo, 6.77, `dark: worst dot reads 6.77 (${wDark.at}) — unchanged by this fix`);
-  // The FLOORS the material pass was verified against, kept separate from the
-  // exact ratchet above on purpose: the ratchet reports drift while it still
-  // passes, these two fail. A palette edit is allowed to move 6.77; it is not
-  // allowed to move it under 5.99.
-  ok(wDark.lo >= 5.99, `dark: worst dot ${wDark.lo} still clears the 5.99 floor the material pass was verified at`);
-  ok(wLight.lo >= 3.01, `light: worst dot ${wLight.lo} still clears the 3.01 floor the material pass was verified at`);
+  /* ── BOTH RATCHETS MOVED, AND THE MOVE IS A FINDING, NOT A RELAXATION ────
+     They were 3.44 (light) and 6.77 (dark), both measured against an OPAQUE
+     `--surface-active` on the selected row. That fill was replaced by
+     `--mat-row-active`, the alpha overlay AppKit uses, because an opaque fill
+     on a translucent plane stops the blur for the width of the row and reads
+     as a hole rather than as a lit row.
+
+     An overlay by definition moves the selected row FURTHER from the plane
+     than a hand-picked surface colour did — +10% white on dark, +10% ink on
+     light — and every one of these dots is a MID-TONE, so both directions
+     cost contrast. Recomputed against the real stack (overlay over plane over
+     canvas, rather than overlay over canvas, which skipped a layer):
+         dark   6.77 -> 5.49      light  3.44 -> 3.07
+     Both still clear WCAG 1.4.11's 3:1 floor for a non-text indicator, which
+     is the requirement. THE LIGHT MARGIN IS 0.07 AND IT IS WRITTEN DOWN
+     RATHER THAN ROUNDED AWAY: the worst reading is `.dm-row-dot-4`
+     (`--teal-600`) on a selected row, and the palette has no `--teal-700` to
+     step it to. If a future palette edit needs headroom here, that missing
+     rung is where it comes from — not from this number.
+
+     The floors below are re-derived from the readings above, and they are
+     still floors: the ratchet reports drift while it passes, these two fail. */
+  eq(wLight.lo, 3.07, `light: worst dot reads 3.07 (${wLight.at}) — was 3.44 on the opaque --surface-active`);
+  eq(wDark.lo, 5.49, `dark: worst dot reads 5.49 (${wDark.at}) — was 6.77 on the opaque --surface-active`);
+  ok(wDark.lo >= 5.4, `dark: worst dot ${wDark.lo} still clears 5.4`);
+  ok(wLight.lo >= 3.0, `light: worst dot ${wLight.lo} still clears WCAG 1.4.11's 3:1 floor for a non-text indicator`);
 }
 {
   /* AN INDEPENDENT CHECK ON THE COMPOSITE MODEL ITSELF.

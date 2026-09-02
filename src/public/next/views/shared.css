@@ -221,7 +221,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--danger-tint);
 }
 .sb-card-skips summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--danger-text);
   display: flex;
@@ -249,7 +251,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-cohort summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--text-2);
   font-weight: var(--weight-medium);
@@ -298,7 +302,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   padding: 0;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
 }
@@ -321,7 +327,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-admin summary {
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-size: var(--text-sm);
   color: var(--text-2);
   font-weight: var(--weight-medium);
@@ -451,7 +459,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   gap: 9px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .sb-member-row:hover { background: var(--surface-hover); }
 .sb-member-row.selected { background: var(--danger-tint); }
@@ -578,7 +588,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--text); }
 .sb-outcome-notice-ok { color: var(--text-2); }
 
-.sb-outcome-raw summary { cursor: pointer; font-size: var(--text-2xs); color: var(--text-2); }
+.sb-outcome-raw summary { cursor: default; user-select: none; -webkit-user-select: none; font-size: var(--text-2xs); color: var(--text-2); }
 .sb-outcome-summary {
   margin: 7px 0 0;
   font-size: var(--text-xs);
@@ -645,7 +655,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border: none;
   background: none;
   color: var(--text-2);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .sbw-close:hover { background: var(--surface-hover); color: var(--text); }
@@ -768,7 +780,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
    carries it); `margin-top` stays, because a 16px box top-aligned against a
    --text-sm line needs the optical nudge onto the cap height, and the
    component deliberately does not guess a line-height it cannot see. */
-.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: pointer; }
+.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: default; user-select: none; -webkit-user-select: none; }
 .sbw-checkbox-label .cur-check { margin-top: 2px; }
 
 /* ── Status / validation line ─────────────────────────────────────────── */
@@ -867,7 +879,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface-inset);
-  cursor: pointer;
+  cursor: default;
 }
 .sbw-dht-card:hover { border-color: var(--border-strong); }
 .sbw-dht-card:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }

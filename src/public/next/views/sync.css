@@ -22,7 +22,9 @@
   padding: 0 14px;
   border-radius: 5px;
   border: none;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   font-family: inherit;
   font-size: 12.5px;
   font-weight: var(--weight-medium);
@@ -291,7 +293,9 @@
   padding: 0;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   text-decoration: underline;
   text-decoration-color: var(--border-strong);
 }
