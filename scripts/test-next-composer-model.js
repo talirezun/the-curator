@@ -3207,7 +3207,11 @@ section('§13  THE WORKING SET — a short list that hides nothing');
         `${what}: and it is the browse row`);
       ok(!!browse[0] && browse[0].label.includes(String(n)),
         `${what}: naming the TRUE total (${n}), not the number of rows shown`);
-      ok(Array.isArray(cfg.actionValues) && cfg.actionValues.includes(browse[0].value),
+      // GUARDED. Under the mutation that re-gates the browse row on
+      // `ws.collapsed`, `browse[0]` is undefined and this line threw a
+      // TypeError — so the suite reddened by CRASHING rather than by naming
+      // what broke, which is the shape this repo records at v3.24.1.
+      ok(!!browse[0] && Array.isArray(cfg.actionValues) && cfg.actionValues.includes(browse[0].value),
         `${what}: and its value is declared as an ACTION, so choosing it cannot become "pick this model"`);
       // A model row must NEVER be an action — that is what stops "selecting a
       // model" silently becoming "run a handler and keep the old model".

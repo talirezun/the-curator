@@ -748,8 +748,13 @@
 .provider-row-unavailable .provider-key-field,
 .provider-row-unavailable .provider-state { color: var(--text-3); }
 .provider-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* 168px, not 140. MEASURED IN A BROWSER: at 140 the OpenRouter row's vendor
+   line ("One key onto many vendors") wrapped to two lines, which pushed that
+   one row 14px taller than the other two and broke the group's rhythm — the
+   thing an inset grouped list exists to establish. 168 is the widest of the
+   three vendor strings at --text-sm plus the row's own left padding. */
 .provider-name-block {
-  width: 140px;
+  width: 168px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -762,9 +767,16 @@
    this is metadata about the row's identity; the sans face because a vendor is
    a name, not a literal. */
 .provider-vendor { font-size: var(--text-sm); color: var(--text-3); }
+/* CAPPED, and the slack goes to the PILL. `flex: 1` with no ceiling let the
+   masked key — a row of bullets carrying no information at all — absorb every
+   pixel of a wide window, so on a 948px main column the status and the action
+   were pinned to the far right with 300px of dots between them and the name.
+   The field is as wide as it needs to be to show a masked key; the rest of the
+   row belongs to the two things a person acts on. */
 .provider-key-field {
-  flex: 1;
-  min-width: 150px;
+  flex: 1 1 150px;
+  max-width: 260px;
+  min-width: 120px;
   padding: var(--space-4) var(--space-4);
   border-radius: 6px;
   background: var(--surface-inset);
@@ -805,6 +817,9 @@
    scripts/test-next-ui-polish.js §3 holds this. */
 .provider-pill {
   flex: none;
+  /* Takes the row's slack, so the status and the actions travel together at
+     the right edge instead of drifting apart as the window widens. */
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
@@ -847,7 +862,11 @@
 .provider-state-muted { color: var(--text-2); }
 .provider-state-icon { display: inline-flex; color: var(--success-text); }
 .provider-state-icon svg { display: block; }
-.provider-row-actions { display: flex; gap: 6px; flex: none; }
+/* `margin-left: auto` here too, so that when the row DOES wrap — a narrow
+   window, or the Largest text scale — the actions land at the right edge of
+   the second line rather than under the provider's name, where a primary
+   button reads as belonging to the label above it. */
+.provider-row-actions { display: flex; gap: 6px; flex: none; margin-left: auto; }
 
 /* ── "Test this key" verdict (v3.15.0) ────────────────────────────────────
    A SIBLING of .provider-row, not a child: the row is a single-line flex
@@ -2332,3 +2351,30 @@
   gap: var(--space-4);
 }
 .settings-shelf-title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--text); }
+
+/* ── THE TWO "WAITING" BLOCKS LOOK THE SAME, BECAUSE THEY ARE THE SAME ───
+   Found by rendering, not by reading: block 2's empty state inherited
+   `.build-current`'s solid card and accent left rule while block 3's used the
+   dashed `.settings-empty-card`, so two blocks saying the identical thing —
+   "connect a provider above and I can answer" — sat one above the other in two
+   different visual registers, and the solid one read as the more urgent. It is
+   not; neither is a problem, both are a step not yet taken. The accent rule and
+   the fill are for a card that is STATING something, which this one is not. */
+.build-current.build-current-none {
+  background: transparent;
+  border: 1px dashed var(--control-edge-quiet);
+  border-left: 1px dashed var(--control-edge-quiet);
+  box-shadow: none;
+}
+.build-current-none .build-current-head {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+.build-current-none .build-current-why { color: var(--text-3); }
+/* EXCEPT the keyed-but-nothing-measured arm, which IS stating something: your
+   key works and nothing behind it can do this job. That one keeps the amber
+   rule, because it is the only empty state with a cause worth naming. */
+.build-current.build-current-none.build-current-warn {
+  border-left: 3px solid var(--attention-text);
+}

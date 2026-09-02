@@ -218,10 +218,14 @@ const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) =>
 const SECTION_INFO = {
   providers: {
     html: true,
-    text: 'There are two jobs here. <strong>One model builds your wiki</strong> — ingest, '
-        + 'Health scans and Compile all share it, and it has to be one somebody has measured '
-        + 'doing that job. <strong>Chat</strong> can use any model you have connected, and you '
-        + 'pick it per message.',
+    // UPDATED with the four-block page: the old text said "there are two jobs
+    // here", which was true of the previous layout and is now one number short
+    // of what the reader sees numbered down the page in front of them.
+    text: 'Four steps, in order. <strong>Connect a provider</strong>, then choose the <strong>one '
+        + 'model that builds your wiki</strong> — ingest, Health scans and Compile all share it, '
+        + 'and it has to be one somebody has measured doing that job. <strong>Chat</strong> can '
+        + 'use anything you have connected and you pick it per message, in the composer. The last '
+        + 'block is the whole catalogue, for looking things up.',
   },
   mcp: {
     html: true,
@@ -2659,9 +2663,18 @@ function buildLaneFacts(k) {
     source,
     // `=== true`, never truthiness — the route sends a real boolean and
     // anything else is a wire anomaly that must not read as "your pick is in
-    // force". A `fallback` source is not honoured by definition.
-    honoured: source === 'fallback' ? false
-      : (Object.hasOwn(raw, 'selectedHonoured') ? raw.selectedHonoured === true : true),
+    // force". An ABSENT field reads as honoured, because a payload that names
+    // a model and says nothing about a pin is describing a model that is
+    // running.
+    //
+    // THERE IS NO `source === 'fallback' ? false` SPECIAL CASE, and its
+    // absence is deliberate. It was written, and a mutation flipping it to
+    // `true` came back GREEN: nothing on the fallback path reads `honoured` —
+    // both the copy and the warn treatment branch on the SOURCE — so it was a
+    // field agreeing with another field, which is the two-descriptions-of-one-
+    // fact shape this file keeps recording. `honoured` now means exactly
+    // `selectedHonoured` and nothing else.
+    honoured: Object.hasOwn(raw, 'selectedHonoured') ? raw.selectedHonoured === true : true,
     measuredBy: (f.measured === 'curator' || f.measured === 'user') ? f.measured
       : (f.measured === true ? 'curator' : null),
     priceIn: num(f.priceIn),
@@ -3405,11 +3418,23 @@ function renderBuildBlock(k, crossBusy) {
     popupHtml = renderListboxHtml(cfg);
   }
 
+  // ── ONE EMPTY STATEMENT, NOT TWO ───────────────────────────────────────
+  // With no model and no candidates, `renderBuildCurrent` already renders the
+  // empty card that names the action — connect something, or measure something.
+  // `renderBuildList`'s own empty sentence then landed directly underneath it
+  // saying the same thing in different words, which reads as two problems.
+  // Found by rendering the page, not by reading it. The list still renders its
+  // empty sentence in the state that is genuinely different: a model IS
+  // building the wiki and there is nothing else to switch to.
+  const listHtml = (b || cands.length > 0)
+    ? renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId,
+        ownedByRow ? errAt : '', ownedByRow ? errText : '')
+    : '';
+
   const body =
     renderBuildCurrent(k, pickDisabled, { popupHtml }) +
     errHtml +
-    renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId,
-      ownedByRow ? errAt : '', ownedByRow ? errText : '');
+    listHtml;
 
   // ── THE LEDE CARRIES THE *WHY ONE MODEL*, AND THE ONE CONSEQUENCE ──────
   // "They always share one" is not a flourish: without it a reader looks for a
