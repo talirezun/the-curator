@@ -92,8 +92,10 @@ the app is read-only over working state by design, and it must stay that way.
 | The native `Menu` template — Phase 1's whole surface | `desktop/lib/tray-menu.js` | **Built**, per §1.4 |
 | The generated template-image glyph (ring / filled) | `desktop/lib/tray-icon.js` | **Built** |
 | The **save pulse** — 28 buckets of 6 hours over a 7-day window, computed from journal `at` values the index already parsed | `src/brain/tray-summary.js` (`computePulse`) | **Built.** Phase 3 material, arrived early and in a different shape — see deviation 6 |
-| The pulse **drawn**, as a **55 × 14-point colour RGBA PNG** on one menu item's `icon`, folding the producer's 28 buckets two-to-one into **14 twelve-hour cells** | `desktop/lib/pulse-strip.js` | **Built.** Shipped first at 83 × 11 alpha-only; see deviations 6 and 9 |
-| A **recency dot** per row — `ageBucket()`'s five states drawn as a green/amber/grey ladder, `unknown` drawn as nothing | `desktop/lib/menu-dots.js` | **Built.** Not in §1.5's plan in this form; see deviation 9 |
+| The pulse **drawn**, as a **55 × 15-point colour RGBA PNG** on one menu item's `icon`, folding the producer's 28 buckets two-to-one into **14 twelve-hour cells**, with a baseline axis, a day ruler and amber handover caps | `desktop/lib/pulse-strip.js` | **Built.** Shipped first at 83 × 11 alpha-only, then 55 × 14 with a colour ramp; see deviations 6, 9 and 10 |
+| A **recency mark** per row — `ageBucket()`'s five states drawn as a **draining clock** in teal/amber/grey, `unknown` drawn as nothing | `desktop/lib/menu-dots.js` | **Built.** Not in §1.5's plan in this form; see deviations 9 and 10 |
+| A **per-row submenu** — Open in The Curator · Copy resume prompt · Copy handoff as Markdown · Reveal current.md in Finder | `desktop/lib/tray-menu.js`, `desktop/lib/resume-prompt.js`, `src/brain/tray-summary.js` (`getHandoffMarkdown`) | **Built.** Not in any section below; see deviation 10 |
+| **`previousHarness`** and **`saveHarnesses`** on the index row, and **`harnessChanges`** / **`harnessCount`** on the pulse | `src/brain/working-state.js`, `src/brain/tray-summary.js` | **Built.** Both opt-in behind `withSaveTimes`, so the MCP index payload is unchanged |
 | Two `type: 'header'` section captions — **Save pulse** and **Recent scopes** — replacing the two separators that sat in the same places | `desktop/lib/tray-menu.js` | **Built.** See deviation 9 |
 | A hard width budget — `MENU_WIDTH_POINTS` 260 spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** See deviation 9 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
@@ -102,7 +104,7 @@ the app is read-only over working state by design, and it must stay that way.
 
 ### What deviated from the plan, and why
 
-Nine deviations. Each one is a decision taken at build time against a section
+Ten deviations. Each one is a decision taken at build time against a section
 below, and the section below is left as it was written.
 
 1. **`tray-only` does not hide the Dock icon.** §1.8 argued for
@@ -300,6 +302,67 @@ tray's normal operating state, **effectively inert**. Closing it needs either a
 non-fetching accessor in `brain/sync.js` or a deliberate on-open fetch that
 serialises against `pull()` — both real work, neither in this change.
 
+10. **The row layout was inverted, the strip became a timeline, the marks became
+    sectors, and rows grew submenus — none of which is in any section below.**
+    All of it came from a photograph of the shipped v3.38.0 menu and from one
+    sentence about who this is for: *a developer orchestrating agents across
+    several harnesses must know, in a fraction of a second, whether context is
+    being carried correctly.*
+
+    - **Line one is `scope-topic · age` and nothing else.** The photograph showed
+      `project… — alices-macbook-pro·9f3c · 18 hr ago` — the tail was composed at
+      full length and the identity got the remainder with a floor of 8, so a
+      12-character harness survived and the scope was annihilated. Every
+      provenance token moved to the `sublabel`. Measured over the same rows,
+      **46 → 35 characters**, and all five had been clipped to the floor.
+    - **`MENU_WIDTH_POINTS` 260 → 285 and `ROW_ICON_POINTS` 11 → 13.** 260 was
+      set from two reference apps *before any row had ever been drawn*, and what
+      it was fixing was a 517-point menu.
+    - **The bar HEIGHT now carries the save count**, reversing §1.5's refusal —
+      see the note below, because the reasoning matters more than the change.
+    - **The strip gained a baseline axis, a day ruler and amber handover caps.**
+      The caps are the only mark in the widget that answers the purpose sentence
+      directly: you can see where the baton was passed.
+    - **The five recency states became a draining clock** — full disc, ¾, ½, ¼,
+      small dot — because three of the five were rings differing by 0.5pt of
+      radius, which is one device pixel at 1x.
+    - **Rows became submenu parents**, because a row cannot address a
+      work-stream (deviation 4 below) and the clipboard is the route the menu
+      does have.
+
+    **Three things §1.5 and §7 refused are still refused**: per-harness lanes
+    (two lanes inside 15pt give 7pt each and the bar ladder needs 12), per-row
+    sparklines, and promoting the standing brief's age to a menu row.
+
+    **And the sketch this was built from was WRONG in one place, which is worth
+    recording.** It proposed keying machine identity on `isThisHost` *above* the
+    installation id, arguing the DHCP hostname flap was "still caught by the id
+    arm underneath". It is not: only one of the two folders matches today's host
+    slug, so the pair lands in two buckets — the phantom second computer
+    deviation 9's work removed, reasserted by the fix meant to remove a
+    different one. The id arm comes first and `isThisHost` marks an id as local.
+
+### The height refusal, and why lifting it is not a reversal of the argument
+
+§1.5 refused to put the save count in the bar height, on the ground that a
+rising and falling column chart reads as a productivity graph — *save frequency
+is a property of the skill's capture cadence, not of work done.* **That ground
+is real, it still holds, and it is still asserted as copy.**
+
+What lifting it corrects is that the SHIPPED alternative broke it in substance
+while honouring it in form. A five-rung colour ramp encodes the identical
+quantity in the one channel that is illegible at three points of width — the
+number was being drawn either way, just invisibly — and `activeLevel` capped at
+**five** while real twelve-hour cells hold **3 to 18**, so the ramp sat pinned
+at saturation and every active cell was the same dark green. That is the fence
+in the maintainer's screenshot.
+
+There were two honest positions — do not encode the count, or encode it where it
+can be read — and the build took the second. The progress-bar reading is now
+defeated **structurally**: a baseline axis and a day ruler make the picture a
+time series, and the label says *saves per 12 hours*, never *activity* and never
+*progress*. **The refusal on RANKING survives verbatim.**
+
 ### Still a plan, in the order §6 put them
 
 | Phase | State |
@@ -307,7 +370,7 @@ serialises against `pull()` — both real work, neither in this change.
 | **0** — two fields on the store's index row | **Shipped** in v3.34.0 |
 | **1** — tray + native menu, `window` default | **Shipped** |
 | **2** — popover panel + per-scope popup + budget bar + recency pips | **Not built.** §1.7's tier rule (*the widget renders the journal; the app renders the handoff*) and §1.7's hard constraint are the contract it must be built to |
-| **3** — bucketed event strip | **PARTLY BUILT — see deviations 6 and 9.** One **aggregate** strip shipped, in the **top-level menu**, drawn at 14 × 12 hours over 7 days from a producer that still buckets at 28 × 6 hours. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
+| **3** — bucketed event strip | **PARTLY BUILT — see deviations 6, 9 and 10.** One **aggregate** strip shipped, in the **top-level menu**, drawn at 14 × 12 hours over 7 days from a producer that still buckets at 28 × 6 hours. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
 
 Two items §6 raised that are **not** part of the widget and are still open:
 gating the two shell `setInterval`s on `document.hidden` (§2.7 rec 1) — **now
@@ -316,8 +379,18 @@ measuring the GPU process (§2.7 rec 2), **still not measured**.
 
 ### What has never been rendered, and this is the honest limit
 
-**No tray icon has ever appeared on any machine.** `new Tray()` has never been
-called. What is proven is data: the row model, the menu template, the 3×3 mode
+**Nothing in the redesigned menu has been photographed.** An earlier arrangement
+was driven through a real `Tray` and `Menu.buildFromTemplate` on one machine and
+`screencapture` returned a black frame; nothing since has been seen at all. Four
+things this revision adds are unproven in a way the earlier ones were not: that
+macOS draws a **submenu** on a tray menu item, that `clipboard.writeText` lands
+from a menu handler while the menu is dismissing, that `shell.showItemInFolder`
+opens on a path that may not exist, and that the small second line under each row
+draws (`sublabel` needs macOS 14.4, where `type: 'header'` needs 14 — that floor
+is now stated in the user documentation rather than implied).
+
+**And the older statement, which still holds.** `new Tray()` has never been
+called by any test. What is proven is data: the row model, the menu template, the 3×3 mode
 transitions and the glyph's actual decoded pixels are executed and asserted by
 `scripts/test-tray-shell.js`, `scripts/test-tray-summary.js` and
 `scripts/test-background-mode.js`. What is **not** proven is everything that

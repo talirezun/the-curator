@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
@@ -64,7 +64,8 @@ import {
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
 } from './lib/window-state.js';
 import { buildTrayModel, liveExpiresInMs, MAX_ROWS } from './lib/tray-model.js';
-import { buildTrayMenuTemplate, trayToolTip } from './lib/tray-menu.js';
+import { buildTrayMenuTemplate, trayToolTip, ID_ROW_RESUME, ID_ROW_HANDOFF, ID_ROW_REVEAL } from './lib/tray-menu.js';
+import { composeResumePrompt, composeHandoffMarkdown } from './lib/resume-prompt.js';
 import { decideRemoteCheck, remoteAnswerIsRenderable } from './lib/tray-remote.js';
 import { trayIconPngs } from './lib/tray-icon.js';
 import { resolveBackgroundMode, resolveTrayPlan, planModeTransition } from './lib/background-mode.js';
@@ -160,6 +161,9 @@ let configWatcher = null;
 /** The data layer's `getTraySummary`, resolved once in boot(). Null means the
  *  function is not available, which the menu SAYS rather than hides. */
 let getTraySummary = null;
+/** The store's sanitised handoff reader, for the row submenu's clipboard
+ *  actions. Null on a build whose store does not export one. */
+let getHandoffMarkdown = null;
 let traySummaryError = null;
 /** The two halves of the multi-machine signal, resolved once in boot():
  *  `getRemoteStatus` from brain/sync.js (the check) and `noteRemoteStatus`
@@ -344,6 +348,7 @@ async function boot() {
       : null;
     const resolved = await resolveTraySummary();
     getTraySummary = resolved.fn;
+    getHandoffMarkdown = resolved.handoff;
     traySummaryError = resolved.error;
     await resolveRemoteCheck();
     startConfigWatch(configFile);
@@ -902,13 +907,23 @@ async function resolveTraySummary() {
     const spec = pathToFileURL(path.join(APP_ROOT, 'src', ...rel)).href;
     try {
       const mod = await import(spec);
-      if (typeof mod.getTraySummary === 'function') return { fn: mod.getTraySummary, error: null };
+      if (typeof mod.getTraySummary === 'function') {
+        return {
+          fn: mod.getTraySummary,
+          // Taken from the SAME module object, so the shell can never end up
+          // with a summary from one build and a handoff reader from another.
+          // Optional: a build whose store predates the submenu keeps its tray
+          // and loses one clipboard action, which `runRowAction` reports.
+          handoff: typeof mod.getHandoffMarkdown === 'function' ? mod.getHandoffMarkdown : null,
+          error: null,
+        };
+      }
       tried.push(`${rel.join('/')}: loaded, no getTraySummary export`);
     } catch (err) {
       tried.push(`${rel.join('/')}: ${(err && err.message) || String(err)}`);
     }
   }
-  return { fn: null, error: tried.join('; ') };
+  return { fn: null, handoff: null, error: tried.join('; ') };
 }
 
 /**
@@ -1083,6 +1098,7 @@ function renderTrayFromSnapshot() {
     onOpenMemory: () => openMemoryView(null),
     onOpenApp: () => revealWindow(),
     onOpenSettings: () => { openSettingsView(); },
+    onRowAction: (row, action) => { void runRowAction(row, action); },
     makeIcon: menuImage,
   })));
 
@@ -1174,6 +1190,68 @@ function trayImage(state) {
 /** Open the app on a scope. There is NO second reader in the shell. */
 async function openScopeInApp(row) {
   await openMemoryView(row && row.project ? row.project : null);
+}
+
+/**
+ * A row's submenu action — WIRING ONLY.
+ *
+ * Three Electron calls (`clipboard.writeText`, `shell.showItemInFolder`) and
+ * nothing else. Every decision — what the prompt says, what the document
+ * contains, how a path is built, what is disclosed — is in
+ * `lib/resume-prompt.js` and `src/brain/tray-summary.js`, both of which the
+ * offline suite executes for real. `main.js` cannot be imported by `npm test`,
+ * so anything put here can only ever be source-scanned; that is the reason
+ * there is as little of it as possible.
+ *
+ * THERE IS NO SECOND READER HERE. The handoff text comes from the store's own
+ * `getHandoffMarkdown`, which delegates to `readWorkingState` and therefore
+ * carries the read-side sanitiser. `readFile` on `current.md` would be four
+ * obvious lines and would put unsanitised text on a clipboard.
+ *
+ * Never throws: this is a menu handler, and an unhandled rejection in one is a
+ * crash in a process whose whole job is to be quietly present.
+ */
+async function runRowAction(row, action) {
+  try {
+    if (action === ID_ROW_RESUME) {
+      clipboard.writeText(composeResumePrompt(row, { domainsDir: await domainsDirOrNull() }));
+      return;
+    }
+    if (action === ID_ROW_HANDOFF) {
+      const doc = getHandoffMarkdown
+        ? await getHandoffMarkdown(row.project, row.scope, row.machine) : null;
+      const text = doc && doc.ok ? composeHandoffMarkdown(doc) : null;
+      // A refusal is SAID, not swallowed: a Copy that quietly does nothing is
+      // indistinguishable from a Copy that worked, and the user finds out by
+      // pasting the previous contents of their clipboard into a model.
+      if (!text) {
+        dialog.showErrorBox('Nothing to copy',
+          'No handoff has been saved for this work-stream yet, or it could not be read.');
+        return;
+      }
+      clipboard.writeText(text);
+      return;
+    }
+    if (action === ID_ROW_REVEAL) {
+      const root = await domainsDirOrNull();
+      if (!root || !row.machine) return;
+      shell.showItemInFolder(
+        path.join(root, row.project, 'state', row.scope, row.machine, 'current.md'));
+    }
+  } catch { /* a menu handler must not take the process with it */ }
+}
+
+/** The knowledge folder, from the app's OWN config module. Resolved per call
+ *  for the same reason `paths.js` forbids a top-level getter: the user can move
+ *  it from Settings while the app is running. */
+async function domainsDirOrNull() {
+  try {
+    const cfg = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'config.js')).href);
+    return typeof cfg.getDomainsDir === 'function' ? cfg.getDomainsDir() : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

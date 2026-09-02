@@ -21,15 +21,17 @@
  * ── THE ORDER OF THE MENU IS THE DESIGN ────────────────────────────────────
  *
  *   1  the headline answer          "Last save · 4 min ago"
- *   2  where that save was          "curator · main"
+ *   2  who wrote it                 "claude-code · opus-4"
  *   -  header                       "Save pulse"
- *   2b the save pulse               a drawn strip + "7 days · 65 saves"
+ *   2b the save pulse               a drawn strip + "5 days known · 79 saves · 2 tools"
  *   -  header                       "Recent scopes"
  *   3  up to FIVE rows              newest first, flat, not grouped, each with
- *                                   a recency dot in its icon gutter
+ *                                   a recency mark in its icon gutter and a
+ *                                   four-item submenu
  *   3b the overflow                 "More in Agent Memory… (6)" — clickable
  *   -  separator
- *   4  notices, only when true      waiting handoffs; harness collisions
+ *   4  notices, only when true      waiting handoffs; a machine that saved
+ *                                   after this one; harness collisions
  *   -  separator
  *   5  Open Agent memory…  ·  Open The Curator  ·  Settings…
  *   -  separator
@@ -95,6 +97,46 @@
  *  Labels are user-visible copy and will change; ids are a contract. */
 export const ID_HEADLINE = 'tray-headline';
 export const ID_HEADLINE_WHERE = 'tray-headline-where';
+
+/**
+ * ── THE PER-ROW SUBMENU: THE ROUTE THE MENU ACTUALLY HAS ───────────────────
+ *
+ * Clicking a row opens the app on the row's PROJECT and cannot open its SCOPE:
+ * the memory view's scope picker carries no routing attribute, and `data-view`
+ * / `data-mem-project` are the only two dispatch attributes there are. That
+ * limit has been recorded since v3.35.0 and is not fixed here.
+ *
+ * So the submenu offers the route the menu DOES have — THE CLIPBOARD. Two of
+ * its four items put the work-stream into a form an agent can act on:
+ * `Copy resume prompt` for an agent that can reach the MCP or the filesystem,
+ * and `Copy handoff as Markdown` for one that can reach neither and needs the
+ * document itself pasted in.
+ *
+ * These are SUFFIXES appended to the row's own id, never bare constants, so a
+ * handler is told which row it was invoked from by the id it receives — the
+ * template is plain data and a caller must be able to address one item without
+ * matching on a label a release will reword.
+ */
+export const ID_ROW_OPEN = 'open';
+export const ID_ROW_RESUME = 'resume';
+export const ID_ROW_HANDOFF = 'handoff';
+export const ID_ROW_REVEAL = 'reveal';
+
+/** Every action a row's submenu offers, in the order it offers them. Exported
+ *  so the shell and the suite enumerate the same list rather than two lists
+ *  that agree today. */
+export const ROW_ACTIONS = [
+  [ID_ROW_OPEN, 'Open in The Curator'],
+  [ID_ROW_RESUME, 'Copy resume prompt'],
+  [ID_ROW_HANDOFF, 'Copy handoff as Markdown'],
+  [ID_ROW_REVEAL, 'Reveal current.md in Finder'],
+];
+
+/** A submenu item's id: `<row id>:<action>`. One place, so the shell's parser
+ *  and the builder cannot drift. */
+export function rowActionId(rowId, action) {
+  return String(rowId) + ':' + String(action);
+}
 export const ID_HEADER_PULSE = 'tray-header-pulse';
 export const ID_HEADER_ROWS = 'tray-header-rows';
 export const ID_PULSE = 'tray-pulse';
@@ -171,6 +213,39 @@ function header(id, label) {
 const sep = { type: 'separator' };
 
 /**
+ * One row's submenu.
+ *
+ * The header names the work-stream, because a submenu that opens beside five
+ * near-identical rows has to say which one it belongs to — and the row's own
+ * label is off to the left, under the pointer, not in the submenu.
+ *
+ * `Reveal current.md in Finder` is offered on EVERY row including a foreign
+ * one, and that is correct rather than sloppy: a handoff pulled from another
+ * computer is a real file in this checkout's own `state/` folder, which is
+ * exactly the file somebody debugging a sync question wants to open. The shell
+ * decides what to do when the path is not there; a menu that hid the item would
+ * be answering a filesystem question it has not asked.
+ */
+function rowSubmenu(row, onOpenScope, onRowAction) {
+  const items = [header(rowActionId(row.id, 'header'), row.scopeShort || row.scope || '')];
+  for (const [action, label] of ROW_ACTIONS) {
+    items.push({
+      id: rowActionId(row.id, action),
+      label,
+      // `Open` keeps its own dedicated handler rather than being routed through
+      // `onRowAction`: it is the one action that existed before this submenu
+      // did, it has a shell function of its own, and putting it through a
+      // string-dispatched channel would make an existing behaviour depend on a
+      // switch statement matching a constant.
+      click: action === ID_ROW_OPEN
+        ? () => onOpenScope(row)
+        : () => onRowAction(row, action),
+    });
+  }
+  return items;
+}
+
+/**
  * @param {object} model  a `buildTrayModel()` result.
  * @param {object} o
  * @param {string}   [o.appName]
@@ -188,14 +263,18 @@ const sep = { type: 'separator' };
 export function buildTrayMenuTemplate(model, o = {}) {
   const {
     appName = 'The Curator',
-    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, makeIcon,
+    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, onRowAction, makeIcon,
   } = o;
 
   // Every handler is required. A menu item wired to `undefined` throws at
   // CLICK time — i.e. in front of the user, weeks later — so it is refused
   // here, at build time, where the suite sees it. Same rule as lib/menu.js.
+  //
+  // `onRowAction` joins them rather than being optional: an OPTIONAL handler
+  // means a submenu that silently does nothing, which is worse than a menu that
+  // refuses to build in front of a developer.
   for (const [name, fn] of Object.entries({
-    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings,
+    onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, onRowAction,
   })) {
     if (typeof fn !== 'function') {
       throw new Error(`buildTrayMenuTemplate: ${name} must be a function, got ${typeof fn}`);
@@ -218,16 +297,29 @@ export function buildTrayMenuTemplate(model, o = {}) {
     enabled: true,
     click: onOpenMemory,
   });
-  if (headline && headline.where) {
-    const whereFull = headline.whereFull && headline.whereFull !== headline.where
+  // ── THE HEADLINE'S SECOND LINE IS `harness · model` ─────────────────────
+  //
+  // It used to be `project · scope`, which the first ROW below it already shows
+  // in full — the drop-constant rule, applied to the one line whose whole job
+  // is to add something the line above it does not have. `harness · model`
+  // answers "which agent, and which LLM, last touched anything", which nothing
+  // else in this menu answers.
+  //
+  // `where` is the FALLBACK, not a second line: a store whose newest save named
+  // neither tool nor model has nothing to say here, and `project · scope` is
+  // better than a blank. The project and scope remain on this item's TOOLTIP
+  // either way, which is where they were already reachable.
+  const secondLine = headline ? (headline.who || headline.where) : null;
+  if (secondLine) {
+    const full = headline.whereFull && headline.whereFull !== secondLine
       ? headline.whereFull : null;
     template.push({
       id: ID_HEADLINE_WHERE,
-      label: '    ' + headline.where,
+      label: '    ' + secondLine,
       // A statement about the line above it, not a second action.
       enabled: false,
-      // The uncompacted project · scope, whenever the compaction changed it.
-      ...(whereFull ? { toolTip: whereFull } : {}),
+      // The uncompacted project · scope this save belongs to.
+      ...(full ? { toolTip: full } : {}),
     });
   }
 
@@ -309,12 +401,20 @@ export function buildTrayMenuTemplate(model, o = {}) {
         id: row.id,
         label: row.label,
         // macOS draws `sublabel` as a dimmer second line. A platform that does
-        // not simply drops it, which is exactly why every fact a person needs
-        // is on the LABEL and the sublabel carries only the agent's own prose.
+        // not simply drops it, which is why the two facts a person cannot do
+        // without — the work-stream and its age — are on the LABEL.
         ...(row.sublabel ? { sublabel: row.sublabel } : {}),
         ...(dot ? { icon: dot } : {}),
         ...(row.toolTip ? { toolTip: row.toolTip } : {}),
-        click: () => onOpenScope(row),
+        // ── A SUBMENU PARENT CARRIES NO `click` ─────────────────────────
+        //
+        // On macOS, clicking an item that has a submenu OPENS THE SUBMENU; a
+        // `click` beside it is either ignored or fires on hover-through
+        // depending on the AppKit path, and either way it is a handler nobody
+        // can predict. `Open in The Curator` is the FIRST submenu item so the
+        // old one-click behaviour is one keystroke away, in the position the
+        // pointer is already travelling to.
+        submenu: rowSubmenu(row, onOpenScope, onRowAction),
       });
     }
     if (m.truncatedNote) {
@@ -431,6 +531,9 @@ export function flattenTrayMenu(template, trail = []) {
 export function trayToolTip(model, appName = 'The Curator') {
   const headline = model && model.headline ? model.headline : null;
   if (!headline) return appName;
+  // The WORK-STREAM, not the second line the menu draws. A hover on the icon is
+  // answering "where am I", and `harness · model` answers a different question
+  // that the menu itself is one click away from showing.
   const where = headline.where ? ' (' + headline.where + ')' : '';
   const brief = model && model.brief ? model.brief : null;
   // Only when the age is actually known. A brief whose age could not be

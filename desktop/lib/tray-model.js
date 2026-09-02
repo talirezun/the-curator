@@ -149,10 +149,10 @@ export const MAX_ROWS = 5;
 // here has ever been rendered and there is no width API in Electron or in
 // AppKit's maximum direction to ask:
 //
-//   MENU_WIDTH_POINTS     260  the target for the whole item, edge to edge
+//   MENU_WIDTH_POINTS     285  the target for the whole item, edge to edge
 //   MENU_CHROME_POINTS     36  the leading state column plus trailing padding
 //   MENU_ICON_GAP_POINTS    4  the bearing between an icon and its title
-//   ROW_ICON_POINTS        11  the gutter a row's recency dot occupies
+//   ROW_ICON_POINTS        13  the gutter a row's recency dot occupies
 //   MENU_CHAR_POINTS      6.5  the average glyph advance of the menu font
 //
 // `MENU_CHAR_POINTS` is pulse-strip.js's own stated assumption and is READ FROM
@@ -160,10 +160,28 @@ export const MAX_ROWS = 5;
 // It is the single largest source of error in everything below, which is why
 // `labelBudgetChars` takes it as a PARAMETER and the suite reports the budget
 // across the whole plausible range instead of asserting one number.
-export const MENU_WIDTH_POINTS = 260;
+//
+// ── 260 -> 285, AND THE REASON IS THAT 260 WAS SET BEFORE ANYTHING EXISTED ──
+//
+// 260 came from iStat Menus (~270) and Little Snitch (~240) and was chosen
+// BEFORE a single row had ever been drawn. What it was fixing was a 517-point
+// menu, and it fixed it: the shipped menu measures about 259 and the
+// maintainer's complaint about it is no longer width. 285 is 6% over his own
+// wider reference app and buys FOUR characters on every row — which is what
+// pays for the topic-first layout below, where line one carries the scope name
+// and the age and nothing may push either of them out.
+export const MENU_WIDTH_POINTS = 285;
 export const MENU_CHROME_POINTS = 36;
 export const MENU_ICON_GAP_POINTS = 4;
-export const ROW_ICON_POINTS = 11;
+// ── 11 -> 13, AND IT IS THE MARK THAT NEEDED IT, NOT THE BOX ────────────────
+//
+// At 11pt the largest recency mark was r 3.0 — a 6-point drawing inside an
+// 11-point box — and three of the five states were rings separated by 0.5pt of
+// radius, which is ONE DEVICE PIXEL at 1x. 13 keeps the odd-canvas argument
+// (see menu-dots.js: an even canvas centres a circle on a pixel corner, so the
+// smallest filled dot has no opaque pixel anywhere) and gives the ladder room
+// to be a ladder.
+export const ROW_ICON_POINTS = 13;
 
 /** pulse-strip.js's assumption, not a second one. Defaulted only so a sibling
  *  module that has not landed yet cannot take this one down. */
@@ -212,12 +230,41 @@ export const PLAIN_LABEL_CHARS = labelBudgetChars(0);
  * to import, which is a width that changes for a reason having nothing to do
  * with the width.
  *
- * It is 11 because that is `menu-dots.js`'s own `DOT_POINTS`, and the suite
+ * It is 13 because that is `menu-dots.js`'s own `DOT_POINTS`, and the suite
  * PINS it against that module rather than trusting this sentence: a reservation
  * smaller than the thing reserved is a budget that is quietly wrong on every
  * row.
  */
 export const ROW_LABEL_CHARS = labelBudgetChars(ROW_ICON_POINTS);
+
+/**
+ * The floor a scope topic is never clipped below.
+ *
+ * Ten characters, and it is a real decision rather than a defensive one: a
+ * scope clipped to two characters is not a shorter row, it is an unreadable
+ * one. A pathological age string is allowed to push the row a little past the
+ * budget rather than destroy the name — and `composeLabel`'s final clip catches
+ * that case, so nothing ever renders unbounded.
+ */
+export const TOPIC_MIN_CHARS = 10;
+
+/**
+ * The fewest characters of the agent's own sentence the sublabel will settle
+ * for before it starts dropping PROVENANCE tokens.
+ *
+ * Fourteen is roughly two words. Below that the headline stops being a sentence
+ * and becomes a stub — `assertLoad…` says less than nothing — so the tokens
+ * beside it give way first. It is a FLOOR the drop loop aims at, not a
+ * guarantee: a row whose non-droppable tokens alone fill the line keeps them
+ * and loses the headline to the tooltip, because a handover mark and a
+ * completeness warning outrank a sentence the app shows in full one click away.
+ */
+export const MIN_HEADLINE_CHARS = 14;
+
+/** How much of a model id reaches a label. The exact string is in the tooltip;
+ *  this is the family token, and 10 characters holds the longest one the
+ *  familyOfModel rule below can produce (`gemini-2.5`). */
+export const MODEL_LABEL_CHARS = 10;
 
 /** The "where" line under the headline, which is indented four spaces. */
 export const WHERE_LABEL_CHARS = PLAIN_LABEL_CHARS - 4;
@@ -451,14 +498,77 @@ export function installIdPart(machine) {
  * holds a harness or a machine — untouched. One field, two questions, and only
  * the width question changes here.
  */
-export function machineIdentityKey(scope) {
+export const THIS_MAC_KEY = 'mac:@this';
+
+/**
+ * ── THE PROPOSAL FOR THIS FUNCTION WAS WRONG, AND THE HOLE IS WORTH KEEPING ─
+ *
+ * The design sketch said: prefer `host:@this` when `isThisHost` is true, and
+ * "a hostname that flapped under DHCP (`mac-9f3c1a` vs
+ * `alices-macbook-pro-9f3c1a`) is still caught by the id arm underneath."
+ *
+ * IT IS NOT. Those two folders are one installation whose hostname changed, so
+ * only ONE of them matches today's host slug — the flapped one takes the host
+ * arm, the other falls through to `id:9f3c1a`, and the pair lands in two
+ * buckets. That is precisely the phantom second computer v3.37.0 removed,
+ * reasserted by the fix that was supposed to remove a different one, on the
+ * maintainer's own store.
+ *
+ * So the ID ARM COMES FIRST, because an installation id is the strongest
+ * evidence available and it already unifies a flapped hostname. `isThisHost`
+ * then does the job it is genuinely needed for: it MARKS AN ID AS BELONGING TO
+ * THIS MAC, through `localIds` — so a second installation on this computer
+ * collapses into the same identity as the first, which is the whole of D2's
+ * real content, without splitting anything the id arm had already joined.
+ *
+ * @param {object|string} scope
+ * @param {Set<string>} [localIds]  installation ids known to be THIS computer,
+ *   computed once over the shown rows by `buildTrayModel`. Omitted, this
+ *   degrades to the id-only comparison, which is the safe direction: it can
+ *   report two identities where there is one (a slightly wider menu) and never
+ *   one where there are two (a foreign handoff rendered as local).
+ */
+export function machineIdentityKey(scope, localIds) {
   const m = typeof scope === 'string' ? scope : (scope && typeof scope.machine === 'string' ? scope.machine : null);
   const id = installIdPart(m);
-  if (id) return 'id:' + id;
-  // No parseable id on either side. `isThisMachine` is then the only evidence
-  // there is, and a bare folder name is the fallback below it.
-  if (scope && typeof scope === 'object' && scope.isThisMachine === true) return '@this';
+  if (id) return (localIds instanceof Set && localIds.has(id)) ? THIS_MAC_KEY : 'id:' + id;
+  // No parseable id. The producer's two identity facts are all the evidence
+  // there is, and a bare folder name is the fallback below them.
+  if (scope && typeof scope === 'object'
+      && (scope.isThisHost === true || scope.isThisMachine === true)) return THIS_MAC_KEY;
   return m ? 'name:' + m : '@unknown';
+}
+
+/**
+ * The installation ids that belong to THIS computer, over a set of rows.
+ *
+ * ── WHY THE TWO FACTS ARE UNIONED RATHER THAN RANKED ───────────────────────
+ *
+ * They fail in opposite directions and neither is sufficient alone.
+ *
+ *   `isThisMachine`  an INSTALLATION match (exact, or the same trailing id).
+ *                    False for a second installation on this Mac — which is
+ *                    the maintainer's own configuration, and is what made every
+ *                    row of his menu print a machine name.
+ *   `isThisHost`     a HOSTNAME-SLUG match. False for a folder written before
+ *                    the hostname flapped under DHCP, which is the other half
+ *                    of the same store.
+ *
+ * Either one being true says this row came from this computer, so the union is
+ * the answer and the id it carries is an id this Mac owns. Every other row
+ * sharing that id is then this Mac too, whichever of the two facts it happens
+ * to satisfy — which is what joins the flapped folder to the current one and
+ * the app's own installation to the agents'.
+ */
+export function localInstallIds(scopes) {
+  const out = new Set();
+  for (const s of Array.isArray(scopes) ? scopes : []) {
+    if (!s || typeof s !== 'object') continue;
+    if (s.isThisHost !== true && s.isThisMachine !== true) continue;
+    const id = installIdPart(typeof s.machine === 'string' ? s.machine : null);
+    if (id) out.add(id);
+  }
+  return out;
 }
 
 /** The disambiguator appended when two VISIBLE rows share a host part —
@@ -609,6 +719,59 @@ export function scopeCandidates(scope) {
  *  looser `\d+-\d+-\d+` would eat the front of a scope like `3-2-1-launch`. */
 export const SCOPE_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}-/;
 
+// ── Models ──────────────────────────────────────────────────────────────────
+
+/**
+ * Vendor words that are not the model's identity.
+ *
+ * `claude-haiku-4-5` names one model and one vendor; `haiku-4` is the half a
+ * reader recognises. A `vendor/model` prefix (the OpenRouter form) is stripped
+ * the same way, before splitting.
+ */
+const MODEL_VENDOR_WORDS = new Set(['claude', 'anthropic', 'google', 'openai', 'models', 'meta', 'mistral']);
+
+/**
+ * The FAMILY token for a model id — what reaches a menu row.
+ *
+ * The rule: drop a leading `vendor/` path segment, split on hyphens, drop a
+ * leading vendor WORD, keep the first segment, and keep the SECOND one too when
+ * it begins with a digit and is at most three characters — the generation.
+ *
+ *   claude-haiku-4-5        -> haiku-4
+ *   opus-4-6                -> opus-4
+ *   gemini-3-pro            -> gemini-3
+ *   gemini-2.5-flash-lite   -> gemini-2.5
+ *   anthropic/sonnet-4-6    -> sonnet-4
+ *
+ * ── WHY THE GENERATION IS KEPT, AGAINST THE PROPOSAL'S OWN EXAMPLE ─────────
+ *
+ * The design sketch rendered `opus-4-6` as `opus`. Dropping the generation is
+ * fine until two rows differ ONLY by it — `gemini-2.5` beside `gemini-3` — at
+ * which point the drop-constant rule looks at two identical family tokens,
+ * concludes the model distinguishes nothing, and removes it from both rows.
+ * A shortening that can erase the very difference it is being shown for is the
+ * wrong shortening, so the generation stays and the rule stays uniform across
+ * vendors: a per-vendor special case is the drift this file keeps recording.
+ *
+ * The EXACT model string is in the row's tooltip, always and unshortened.
+ */
+export function familyOfModel(model) {
+  if (typeof model !== 'string') return null;
+  const flat = model.trim().toLowerCase();
+  if (!flat) return null;
+  const bare = flat.slice(flat.lastIndexOf('/') + 1);
+  const parts = bare.split('-').filter(Boolean);
+  if (!parts.length) return null;
+  // Only ONE leading vendor word is dropped, and only when something follows
+  // it: `claude` on its own is the best name available for a row and must not
+  // shorten to nothing.
+  if (parts.length > 1 && MODEL_VENDOR_WORDS.has(parts[0])) parts.shift();
+  let out = parts[0];
+  const gen = parts[1];
+  if (gen && gen.length <= 3 && /^\d/.test(gen)) out += '-' + gen;
+  return clip(out, MODEL_LABEL_CHARS);
+}
+
 // ── Text helpers ────────────────────────────────────────────────────────────
 
 /** Collapse whitespace and clip, with a VISIBLE ellipsis. A headline is the
@@ -675,6 +838,18 @@ export const REMOTE_CHECK_FAILED = 'Could not check GitHub handoffs';
 function collisionText(r) {
   return 'Two harnesses are writing ' + r.project + ' · ' + r.scope;
 }
+
+/**
+ * The sublabel's completeness warning, and it is the ONLY save verdict that
+ * reaches a label.
+ *
+ * `lastSaveKind` has five values. `trimmed` means the store could not hold the
+ * whole handoff, which is the one thing a widget about carrying context must
+ * not hide. `clipped` — a shortened one-line SUMMARY over a handoff stored in
+ * full — stays silent, because v3.39.0 exists precisely because those two were
+ * being reported with one alarm, and re-collapsing them here would undo it.
+ */
+export const SUBLABEL_TRIMMED = 'handoff trimmed';
 
 export const PULSE_LABEL_NOUN = 'Save pulse · ';
 
@@ -815,6 +990,61 @@ function collisionNotices(rows) {
     });
   }
   return out;
+}
+
+/**
+ * `<machine> saved after this Mac` — a handoff is waiting for you, stated as a
+ * fact rather than as an instruction.
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  AGENT CLOCKS ONLY. A FILE CLOCK HERE WOULD FIRE ON EVERY `git pull`.     ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ *
+ * `ageSource: 'file'` is this disk's mtime, and Personal Sync rewrites mtime on
+ * checkout — so every handoff that arrives over sync reads as brand new the
+ * instant it lands. A notice built on that would announce "the other computer
+ * just saved" at the moment YOU pulled, every time, forever. Rows whose age
+ * came from the file clock are therefore not merely deprioritised here; they
+ * are not counted on either side of the comparison.
+ *
+ * ── AND IT IS `isThisHost`, NOT `isThisMachine` ────────────────────────────
+ *
+ * A second installation on this Mac is this Mac. Comparing on installations
+ * would make the maintainer's own repo checkout "another computer" and put a
+ * permanent line in his menu saying a machine he is sitting at saved after
+ * himself. See `machineIdentityKey`.
+ *
+ * ── AND BOTH SIDES MUST EXIST ──────────────────────────────────────────────
+ *
+ * "After this Mac" is meaningless when this Mac has written nothing with an
+ * agent clock: there is no "after". That case renders NOTHING rather than a
+ * degraded sentence — a user with a fresh install and a synced repo is not
+ * behind, they simply have not started.
+ *
+ * @param {Array} rows  the built rows, newest first
+ */
+export function newerElsewhereNotice(rows) {
+  const usable = (Array.isArray(rows) ? rows : [])
+    .filter((r) => r && r.ageSource === 'agent' && typeof r.ageSeconds === 'number');
+  const local = usable.filter((r) => r.isThisHost === true);
+  const foreign = usable.filter((r) => r.isThisHost !== true);
+  if (!local.length || !foreign.length) return null;
+  // Smallest age = newest. Both sides came from agent clocks, so this compares
+  // two agents' own timestamps and never two filesystems'.
+  const newestLocal = Math.min(...local.map((r) => r.ageSeconds));
+  const best = foreign.reduce((a, b) => (b.ageSeconds < a.ageSeconds ? b : a));
+  if (!(best.ageSeconds < newestLocal)) return null;
+  const name = best.machineShort || best.machine;
+  if (!name) return null;
+  const text = name + ' saved after this Mac';
+  return {
+    kind: 'newer-elsewhere',
+    machine: best.machine,
+    text: clip(text, PLAIN_LABEL_CHARS),
+    // The tooltip names the work-stream, because "which computer" without
+    // "which work-stream" is not yet actionable.
+    full: text + ' — ' + best.project + ' · ' + best.scope + ', ' + best.ageText,
+  };
 }
 
 /**
@@ -1031,7 +1261,10 @@ export function buildTrayModel(summary, opts = {}) {
   // Machine: dropped when every shown row is the same computer. Rows sharing a
   // trailing installation id ARE one computer — that is `tray-summary.js`'s own
   // comparison, not a second opinion about hardware.
-  const machineIdentities = new Set(shown.map(machineIdentityKey));
+  // Computed over the SHOWN rows, once. See `localInstallIds` for why the two
+  // producer facts are unioned rather than ranked.
+  const localIds = localInstallIds(shown);
+  const machineIdentities = new Set(shown.map((s) => machineIdentityKey(s, localIds)));
   const showMachine = machineIdentities.size > 1;
 
   // ── THE PROVENANCE SLOT, DECIDED ACROSS THE WHOLE SHOWN SET ─────────────
@@ -1049,58 +1282,145 @@ export function buildTrayModel(summary, opts = {}) {
   // renders — and a row is moved off it only to avoid printing a machine name.
   const precisions = shown.map(() => null);
 
-  // ── WHAT THE SLOT HOLDS, AND WHY THE ORDER IS THIS ORDER ───────────────
+  // ── LINE ONE CARRIES NO PROVENANCE, AND THIS ARRAY IS HOW IT CAN ────────
   //
-  // A LOCAL row shows the harness, because the machine is constant by
-  // definition on a row from here and the harness is what differs when two
-  // agent tools run side by side. A REMOTE row shows the machine, because "the
-  // other computer did this" is the news and which harness is running over
-  // there is somebody else's business. That inversion is unchanged.
-  //
-  // What is new is the third arm: a remote row whose machine carries NO
-  // information — every visible row is the same computer — falls back to the
-  // harness rather than printing a name that separates nothing. On the
-  // maintainer's own store both components are constant, so the slot is empty
-  // and a row reads `scope · age`. That is the 74-character label becoming a
-  // 32-character one, and no fact left the row: both are in the tooltip.
-  const provenances = shown.map((s) => {
-    if (s.isThisMachine === true) return showHarness ? harnessOf(s) : null;
-    if (showMachine) return machineOf(s);
-    // The machine is constant across every visible row, so it distinguishes
-    // nothing and goes. It does NOT fall back to the harness: a harness printed
-    // on a row from another computer says that tool is running HERE, which is
-    // the one thing the two-meaning slot exists to prevent.
-    //
-    // The exception is a row whose machine is UNKNOWN. "unknown machine" is not
-    // a name that failed to distinguish, it is a FACT about the row, and it is
-    // also what keeps the collision resolver from filling an empty slot with a
-    // harness further down.
-    return str(s.machine) ? null : machineOf(s);
-  });
+  // Every row starts at `null`: `topic · age` and nothing else. The COLLISION
+  // RESOLVER below is the only writer, and it writes only when two rows would
+  // otherwise render the identical line — at which point a token on line one is
+  // the least-bad answer, because two indistinguishable rows are not a shorter
+  // list, they are a broken one.
+  const provenances = shown.map(() => null);
 
-  const identityOf = (s) => {
-    const scp = str(s.scope) || '(unnamed)';
-    return (showProject ? (str(s.project) || '(unnamed)') + ' · ' : '') + (scopeLabels.get(scp) || scp);
-  };
+  // Model: the same rule again, over the FAMILY token that would be rendered
+  // rather than over the raw id — a row is not distinguished by a difference
+  // nobody can see, and `familyOfModel` is deliberately shaped so the
+  // generation survives into that token (see its docblock).
+  const familyOf = (s) => familyOfModel(str(s.model));
+  const modelFamilies = shown.map(familyOf);
+  const showModel = !(modelFamilies.length > 0
+    && modelFamilies.every((m) => m !== null)
+    && new Set(modelFamilies).size === 1);
 
-  // ── THE BUDGET IS SPENT ON THE SCOPE, NEVER ON THE AGE ─────────────────
+  // ── LINE ONE IS IDENTITY AND TIME. NOTHING ELSE MAY STAND THERE. ────────
   //
-  // A row is `[project · ]scope[ — provenance] · age`, and a blind clip of the
-  // finished string would eat the AGE — the one token the whole widget exists
-  // to show, and the last one in the line. So everything except the identity is
-  // composed FIRST, and the identity is given whatever budget is left.
+  // The photograph that produced this release shows `project…` — eight
+  // characters of an identity, beside an intact `alices-macbook-pro·9f3c`. The
+  // arithmetic that produced it is not subtle: the old composer built the TAIL
+  // first, at full length, and handed the identity whatever was left with a
+  // floor of 8. Nothing bounded the tail, so a 22-character machine name and a
+  // 9-character age spent 35 of a 32-character budget and the scope was
+  // annihilated — while a 12-character harness, being IN the tail, survived
+  // whole.
   //
-  // The floor of 8 characters is a real decision rather than a defensive one: a
-  // scope clipped to two characters is not a shorter row, it is an unreadable
-  // one, so a pathological provenance is allowed to push the row past the
-  // budget instead of destroying the name. The final `clip` below catches that
-  // case so nothing ever renders unbounded.
+  // THE FIX IS AN ORDERING, NOT A BIGGER NUMBER. The scope topic and the age
+  // are the two things a person opens this menu to read, so they are the only
+  // two things on line one, and the age — which is short, bounded, and the
+  // whole point — is never clipped. Everything else moves to the SUBLABEL,
+  // which macOS draws in a smaller face and which therefore has more room.
+  //
+  // `provenance` survives as a parameter for exactly ONE caller: the collision
+  // resolver below, which restores a token to line one when two rows would
+  // otherwise render identically. It is null on every ordinary row.
   const composeLabel = (s, age, provenance, precision, budget = ROW_LABEL_CHARS) => {
     const tail = (provenance ? ' — ' + provenance : '') + ' · ' + ageText(age, sourceOf(s), precision);
-    const identity = identityOf(s);
+    const scp = str(s.scope) || '(unnamed)';
+    const topic = scopeLabels.get(scp) || scp;
     const room = budget - tail.length;
-    const head = identity.length <= room ? identity : (clip(identity, Math.max(8, room)) || identity);
+    const head = topic.length <= room ? topic : (clip(topic, Math.max(TOPIC_MIN_CHARS, room)) || topic);
     return head + tail;
+  };
+
+  /**
+   * ── LINE TWO: WHO, THEN WHAT THEY SAID ──────────────────────────────────
+   *
+   * `[handoff trimmed · ][harness[ ← previous]][ · machine][ · project][ · model] — headline`
+   *
+   * ── TOKENS ARE DROPPED WHOLE, NEVER CLIPPED ────────────────────────────
+   *
+   * `son…` is not a shorter `sonnet-4`; it is a different string, and a reader
+   * cannot tell whether it was shortened or is simply what the field said. So
+   * when the line will not fit, a whole token leaves and the rest stay intact —
+   * and everything that leaves is in the row's tooltip, which is the absolute
+   * rule this file has held since v3.37.0.
+   *
+   * ── THE DROP ORDER IS AN IMPORTANCE ORDER, LOWEST FIRST ────────────────
+   *
+   *   model    → which LLM. Interesting, never decisive.
+   *   project  → already on the headline's own second line when one project
+   *              dominates, and constant across rows the moment it matters
+   *              least.
+   *   machine  → WHICH COMPUTER, and it is only present at all when the rows
+   *              disagree about that. It outranks the two above it.
+   *   harness  → WHICH TOOL. The last to go, because "was that Claude Code or
+   *              opencode" is the question this widget was built to answer.
+   *
+   * ── TWO TOKENS ARE NOT DROPPABLE, AND BOTH ARE WARNINGS ────────────────
+   *
+   * A handover mark (`antigravity ← claude-code`) and `handoff trimmed` are
+   * facts about whether context survived, which is the widget's ONE job. They
+   * outrank the sentence beside them: if the line will not hold both, the
+   * headline gives way, because the app shows the headline in full one click
+   * away and shows neither of these anywhere.
+   *
+   * The handover mark also rides on the harness token REGARDLESS of the
+   * drop-constant rule, and that is load-bearing: two rows can both END on
+   * `claude-code` while one of them changed hands, so `showHarness` is false
+   * and the harness token would be dropped — taking the only evidence of the
+   * handover with it.
+   */
+  const composeSublabel = (s, budget = MAX_HEADLINE_CHARS) => {
+    const prev = str(s.previousHarness);
+    const harness = str(s.harness);
+    // The mark is drawn only when BOTH ends are named. `? ← claude-code` would
+    // be a handover to nobody.
+    const handover = prev && harness && prev !== harness ? harness + ' ← ' + prev : null;
+    // `isThisHost`, NOT `isThisMachine` — a second installation on this Mac is
+    // this Mac, and naming it is how the maintainer's own menu came to report a
+    // computer that does not exist. See machineIdentityKey.
+    const foreign = s.isThisHost !== true;
+
+    const tokens = [];
+    // Not droppable, and FIRST: a save the store had to trim is the one thing a
+    // reader must see before they trust the sentence beside it.
+    if (s.kind === 'trimmed') tokens.push({ key: 'trimmed', text: SUBLABEL_TRIMMED });
+    if (handover) tokens.push({ key: 'harness', text: handover });
+    else if (showHarness && harness) tokens.push({ key: 'harness', text: harness, drop: 4 });
+    if (foreign && showMachine) {
+      const m = machineLabels.get(s.machine) || str(s.machine);
+      if (m) tokens.push({ key: 'machine', text: m, drop: 3 });
+    }
+    if (showProject) tokens.push({ key: 'project', text: str(s.project) || '(unnamed)', drop: 2 });
+    if (showModel) {
+      const fam = familyOf(s);
+      if (fam) tokens.push({ key: 'model', text: fam, drop: 1 });
+    }
+
+    const headline = clip(s.headline, budget);
+    const kept = tokens.slice();
+    const whoOf = () => kept.map((t) => t.text).join(' · ');
+    // Lowest `drop` rank first, and a token with no rank is never considered.
+    // Stops the moment the headline clears its floor — dropping a token that
+    // buys nothing is width spent for no reading.
+    for (let rank = 1; rank <= 4; rank++) {
+      if (!headline) break;
+      if (budget - whoOf().length - 3 >= MIN_HEADLINE_CHARS) break;
+      const i = kept.findIndex((t) => t.drop === rank);
+      if (i >= 0) kept.splice(i, 1);
+    }
+    const who = whoOf();
+    // The SURVIVING token keys, returned beside the text so the row record can
+    // report what line two actually says rather than inferring it from a
+    // substring search. `showsMachine` was derived from the LABEL's provenance
+    // slot, which is now empty on every ordinary row — a field that quietly
+    // became always-false is worse than one that was never there.
+    const keys = new Set(kept.map((t) => t.key));
+    if (!who) return { text: headline, keys };
+    const room = budget - who.length - 3;
+    // Under eight characters the headline is not a shortened sentence, it is
+    // noise on a line that is already carrying facts. It goes whole, to the
+    // tooltip, and the tokens are clause-clipped so nothing renders unbounded.
+    if (!headline || room < 8) return { text: clipClauses(who, budget), keys };
+    return { text: who + ' — ' + clip(headline, room), keys };
   };
 
   /**
@@ -1122,7 +1442,7 @@ export function buildTrayModel(summary, opts = {}) {
    * `<machine>` folders under one id — or, failing that, when they name the
    * same folder. See `machineIdentityKey`.
    */
-  const machineKey = machineIdentityKey;
+  const machineKey = (s) => machineIdentityKey(s, localIds);
 
   // ── AND THEN THE COLLISION GUARD, WHICH IS WHY IT IS TWO PASSES ─────────
   //
@@ -1200,10 +1520,14 @@ export function buildTrayModel(summary, opts = {}) {
       const machines = new Set(idxs.map((i) => str(shown[i].machine)));
       for (const i of idxs) {
         if (provenances[i] !== null) continue;
-        // A REMOTE row falls back to its machine and never to a harness, for
-        // the reason stated on `provenances` above — the collision resolver
-        // must not be a second door to the label the slot exists to prevent.
-        provenances[i] = machines.size > 1 || shown[i].isThisMachine !== true
+        // A row from ANOTHER COMPUTER falls back to its machine and never to a
+        // harness: a harness printed on a foreign row says that tool is running
+        // HERE, which is the one reading this slot must never produce. Decided
+        // on `isThisHost`, the same question `composeSublabel` asks — two
+        // notions of "this machine" inside one function is the drift shape this
+        // file exists to record, and here it would be VISIBLE, as a row whose
+        // sublabel says the harness and whose label says the machine.
+        provenances[i] = machines.size > 1 || shown[i].isThisHost !== true
           ? machineOf(shown[i])
           : (str(shown[i].harness) || 'unknown harness');
         progressed = true;
@@ -1254,8 +1578,17 @@ export function buildTrayModel(summary, opts = {}) {
     const machineShort = machineLabels.get(s.machine) || str(s.machine);
     const provenance = provenances[idx];
     const bucket = ageBucket(age);
+    const isThisHost = s.isThisHost === true;
+    const model = str(s.model);
+    const previousHarness = str(s.previousHarness);
+    // v3.39.0 built FIVE verdicts to say whether a save lost content, and the
+    // tray rendered NONE of them. Only `trimmed` reaches a label: v3.39.0's own
+    // finding is that a `clipped` headline is a shortened SUMMARY and not lost
+    // content, so badging it would re-commit the defect that release fixed.
+    const kind = str(s.kind);
 
     const scopeShort = scopeLabels.get(scope) || scope;
+    const sub = composeSublabel(s);
 
     return {
       id: 'tray-row-' + idx,
@@ -1264,7 +1597,15 @@ export function buildTrayModel(summary, opts = {}) {
       machine: str(s.machine),
       machineShort,
       harness,
+      previousHarness,
+      model,
+      modelFamily: familyOfModel(model),
+      kind,
       isThisMachine,
+      // WHICH COMPUTER, as opposed to which INSTALLATION. Carried onto the row
+      // because the shell needs it to decide what a row's submenu can offer and
+      // the suite needs it to assert the identity rule.
+      isThisHost,
       harnessShared: s.harnessShared === true,
       bucket,
       ageSeconds: age,
@@ -1279,10 +1620,30 @@ export function buildTrayModel(summary, opts = {}) {
       // essential facts are on the LABEL and never only on the sublabel).
       scopeShort,
       showsProject: showProject,
-      showsProvenance: provenance !== null,
-      showsMachine: provenance !== null && provenance === machineOf(s),
+      // ── REDEFINED, AND DELIBERATELY NOT BY A SUBSTRING SEARCH ────────
+      //
+      // These used to describe the LABEL's provenance slot. Line one no longer
+      // has one on an ordinary row, so read against the label they would be
+      // false everywhere and would look like a working field. They now describe
+      // LINE TWO, and they are taken from the set of tokens `composeSublabel`
+      // actually kept — a machine folder named `claude-code` would fool a
+      // substring test and cannot fool this.
+      showsProvenance: sub.keys.size > 0,
+      showsMachine: sub.keys.has('machine'),
+      showsHarness: sub.keys.has('harness'),
+      showsModel: sub.keys.has('model'),
+      // Line one carries a provenance token ONLY when the collision resolver
+      // put one there. Reported separately, because "the label had to name a
+      // computer" is a different and rarer fact from "line two names one".
+      labelProvenance: provenance,
       label: composeLabel(s, age, provenance, precisions[idx]),
-      sublabel: clip(s.headline, MAX_HEADLINE_CHARS),
+      // ── LINE TWO IS NO LONGER JUST THE HEADLINE ─────────────────────
+      //
+      // It carries the provenance the label used to, plus the two warnings
+      // (`handoff trimmed`, `harness ← previous`) that answer whether context
+      // survived. See composeSublabel for the drop order and for why the two
+      // warnings outrank the sentence.
+      sublabel: sub.text,
       // ── THE RECENCY DOT ─────────────────────────────────────────────
       //
       // The row's bucket, as a drawn image spec, or null. It is the SAME
@@ -1313,7 +1674,26 @@ export function buildTrayModel(summary, opts = {}) {
       toolTip: [
         project + ' · ' + scope,
         s.machine ? 'machine: ' + s.machine : null,
+        // ── THE FACT IS KEPT; IT STOPS BEING NEWS ────────────────────
+        //
+        // A second installation on this Mac is no longer named on any line —
+        // that is what stopped the maintainer's menu printing a computer that
+        // does not exist. It is still TRUE, and a user debugging why two rows
+        // for one scope exist needs it, so it lands here with the reason
+        // spelled out rather than as a bare folder name.
+        isThisHost && !isThisMachine && s.machine
+          ? 'other install on this Mac: ' + s.machine : null,
         harness ? 'harness: ' + harness : null,
+        // Non-null only when the last two saves came from different tools —
+        // the handover this widget exists to make visible, stated in full here
+        // because the row's own mark is an arrow and four words.
+        previousHarness && harness
+          ? 'the save before it came from ' + previousHarness : null,
+        // The EXACT string, never the family token the label carries.
+        model ? 'model: ' + model : null,
+        kind === 'trimmed'
+          ? 'this save did not all fit — part of the handoff was not stored'
+          : null,
         source === 'agent' && str(s.writtenAt) ? 'written: ' + str(s.writtenAt) : null,
         source === 'file'
           ? 'this age is the file timestamp on this disk, which git rewrites on checkout, not the agent’s clock'
@@ -1359,6 +1739,28 @@ export function buildTrayModel(summary, opts = {}) {
     };
   };
 
+  /**
+   * ── THE HEADLINE'S SECOND LINE: `harness · model` ───────────────────────
+   *
+   * It used to repeat `project · scope`, which the very next row already shows
+   * in full, three pixels below — the drop-constant rule again, one layer up.
+   * `harness · model` answers a question nothing else in the menu answers:
+   * WHICH AGENT AND WHICH LLM last touched anything at all.
+   *
+   * It costs nothing: both values are already on the row the headline is built
+   * from. Where the model is unknown the line is just the harness; where
+   * neither is known the line is ABSENT rather than a placeholder, because a
+   * second line reading "unknown · unknown" is width spent to say nothing.
+   *
+   * `project · scope` is not lost — it is `whereFull`, on this item's tooltip.
+   */
+  const whoOfSave = (harness, model) => {
+    const h = str(harness);
+    const fam = familyOfModel(str(model));
+    const text = [h, fam].filter(Boolean).join(' · ');
+    return text ? clip(text, WHERE_LABEL_CHARS) : null;
+  };
+
   let headline;
   if (ls && lsAge !== null) {
     const w = whereOf(ls.project, ls.scope);
@@ -1367,6 +1769,7 @@ export function buildTrayModel(summary, opts = {}) {
       ageSeconds: lsAge,
       ageSource: lsSource,
       text: clip('Last save · ' + ageText(lsAge, lsSource), PLAIN_LABEL_CHARS),
+      who: whoOfSave(ls.harness, ls.model),
       where: w.text,
       whereFull: w.full,
       bucket: ageBucket(lsAge),
@@ -1379,6 +1782,7 @@ export function buildTrayModel(summary, opts = {}) {
       ageSeconds: r.ageSeconds,
       ageSource: r.ageSource,
       text: clip('Last save · ' + r.ageText, PLAIN_LABEL_CHARS),
+      who: whoOfSave(r.harness, r.model),
       where: w.text,
       whereFull: w.full,
       bucket: r.bucket,
@@ -1390,6 +1794,7 @@ export function buildTrayModel(summary, opts = {}) {
       // NOT "just now", and not a blank. The menu says out loud that it does
       // not know, which is a different sentence from "nothing has been saved".
       text: 'Last save · time unknown',
+      who: whoOfSave(rows[0].harness, rows[0].model),
       where: w.text,
       whereFull: w.full,
       bucket: 'unknown',
@@ -1400,6 +1805,7 @@ export function buildTrayModel(summary, opts = {}) {
       // The empty state is the FIRST thing a new user sees and it must not
       // read like an error. A failed read is a different sentence again.
       text: ok ? 'No agent memory yet' : 'Agent memory could not be read',
+      who: null,
       where: null,
       bucket: 'unknown',
     };
@@ -1429,6 +1835,8 @@ export function buildTrayModel(summary, opts = {}) {
   const notices = [];
   const remote = remoteNotice(summary && summary.remote);
   if (remote) notices.push(remote);
+  const newerElsewhere = newerElsewhereNotice(rows);
+  if (newerElsewhere) notices.push(newerElsewhere);
   notices.push(...deduped.derived);
   // A last-resort net on the TEXT, kept for warnings that carry no code at all
   // (main.js pushes bare strings on its own failure paths). It is a backstop

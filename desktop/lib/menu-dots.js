@@ -57,22 +57,35 @@
  * ladder in ink, and the ladder is the part that survives with the colour
  * removed:
  *
- *   live    filled disc, r 3.0pt      28.3pt² of ink
- *   warm    ring,        r 3.0pt      18.1
- *   today   ring,        r 2.5pt      13.5
- *   cool    ring,        r 2.0pt       9.4
- *   cold    filled dot,  r 1.2pt       4.5
+ *   live    full disc,  r 5.0pt      78.5pt² of ink
+ *   warm    ¾ disc,     r 5.0pt      58.9
+ *   today   ½ disc,     r 5.0pt      39.3
+ *   cool    ¼ disc,     r 5.0pt      19.6
+ *   cold    filled dot, r 2.0pt      12.6
  *
  * Strictly decreasing, and the suite asserts it from the shipped geometry
- * rather than from this comment. `live` is the one state whose recognition
- * changes what a person does next — something is being written right now — and
- * it is the only FILLED disc at full size, so it is separable from everything
- * else without reference to colour at all. `cold` returns to a filled shape at
- * 16% of `live`'s area, which no viewer will confuse with it.
+ * rather than from this comment.
  *
- * The ring/disc vocabulary is deliberately the tray glyph's own: `tray-icon.js`
- * draws a ring always and fills the centre when live. A user who has learned
- * the glyph has already learned the dot.
+ * ── A DRAINING CLOCK, AND WHY IT REPLACED THE RINGS ────────────────────────
+ *
+ * The shipped ladder was a full disc and then three RINGS separated by 0.5pt of
+ * radius. At 1x that is ONE DEVICE PIXEL between `warm`, `today` and `cool` —
+ * three of the five states, differing by a pixel, inside an 11pt box whose
+ * largest mark was a 6pt drawing. The ladder existed in the arithmetic and not
+ * on the screen.
+ *
+ * A SECTOR carries the same ordering at a size a person can see: the disc
+ * drains anticlockwise from full, through three-quarters, half and a quarter,
+ * to a small solid dot. Every step is a quarter of the circle — a difference
+ * measured in whole quadrants rather than in pixels — and the shape reads as
+ * a quantity even in a thumbnail.
+ *
+ * `live` is the one state whose recognition changes what a person does next
+ * (something is being written RIGHT NOW), and it is the only complete disc, so
+ * it is separable from everything else without reference to colour at all.
+ * `cold` returns to a filled shape at 16% of `live`'s area, which no viewer
+ * will confuse with it, and which keeps the coldest state from being a sliver
+ * that reads as damage.
  *
  * ── NOT A TEMPLATE IMAGE ───────────────────────────────────────────────────
  *
@@ -120,42 +133,61 @@ import {
  * transparent centre rather than a half-covered smudge, and the disc/ring
  * distinction — the one that does not need colour — survives at 1x.
  *
- * 11pt also leaves 2.5pt of margin around the largest mark (r 3.0pt), which
- * stops the disc sitting flush against the gutter's edge.
+ * ── 11 -> 13, AND THE BOX GREW BECAUSE THE MARK HAD TO ─────────────────────
+ *
+ * The sector ladder needs a circle large enough that a quarter of it is still
+ * a shape. At r 3.0 in an 11pt box, a quarter-disc is a 3x3-point wedge — nine
+ * square points at 1x, which is a smudge. 13pt takes the radius to 5.0 and the
+ * quarter-disc to 19.6pt², and still leaves 1.5pt of margin so the full disc is
+ * not flush against the gutter's edge.
+ *
+ * The odd-canvas argument is unchanged and is why it is 13 and not 12 or 14:
+ * the centre lands at 6.5, the middle of pixel 6, so `cold`'s small filled dot
+ * has a solid core and the sector boundaries fall on the centre pixel rather
+ * than between two of them.
  */
-export const DOT_POINTS = 11;
+export const DOT_POINTS = 13;
 
 /**
  * Every colour drawn by this module, per theme.
  *
  * MEASURED, NOT PICKED. Each value clears 3:1 (WCAG 2.2 1.4.11, the NON-TEXT
  * floor) against all three backgrounds of its theme's band in `rgba-png.js`'s
- * `MENU_BG_BAND`. Nominal / worst case:
+ * `MENU_BG_BAND`. Worst of the three:
  *
- *   LIGHT   hot  #0F5A2C   7.06 / 6.08
- *           mid  #9A5D06   4.51 / 3.88
- *           cold #7B7B82   3.56 / 3.06
+ *   LIGHT   hot  #15704F   4.42     teal, the design system's success hue
+ *           mid  #8A5F19   4.10     attention
+ *           cold #6B6B80   3.79     neutral
  *
- *   DARK    hot  #4FD97F   7.67 / 6.25
- *           mid  #C89522   5.16 / 4.20
- *           cold #85858C   3.80 / 3.10
+ *   DARK    hot  #4FD3A4   6.05     teal-400
+ *           mid  #EDBB63   6.43     summary-400
+ *           cold #A8A8BC   4.86     ink-200
  *
- * Apple's own `systemGreen` `#34C759` was measured at about 1.8:1 against white
- * and is NOT here. A palette is not correct because a platform vendor ships it.
+ * Apple's own `systemGreen` `#34C759` was measured at about 1.6:1 against a
+ * light menu and is NOT here. A palette is not correct because a platform
+ * vendor ships it, and that value is kept as the suite's anti-vacuity control.
  *
- * ── THE LUMINANCE LADDER IS PART OF THE MEANING ────────────────────────────
+ * ── THE LUMINANCE LADDER IS NO LONGER THE WEIGHT LADDER, AND SHOULD NOT BE ─
  *
- * Within each theme the three contrast ratios are ordered hot > mid > cold, so
- * a warmer row is a HEAVIER mark. That is theme-independent even though the
- * direction is not: in a light menu heavier means darker, in a dark menu
- * heavier means brighter, and "more contrast against its own background" is the
- * single rule that expresses both. The suite asserts that ordering rather than
- * asserting a lightness, because a lightness assertion would be true in one
- * theme and inverted in the other.
+ * This module used to require `hot > mid > cold` in contrast, so that a warmer
+ * row was a HEAVIER mark. That was the right rule when all five marks were
+ * nearly the same size and colour was doing the work of the ladder.
+ *
+ * The sector geometry above now carries weight explicitly — 78.5pt² of ink down
+ * to 12.6, a 6:1 range — and it does so in the ALPHA CHANNEL, where it survives
+ * a viewer who cannot resolve the colours at all. Ranking the palette by
+ * contrast on top of that would be a second, far weaker ladder pointed at the
+ * same fact, and it would rule out the design system's own hues for a reason
+ * that no longer holds: in dark, `summary-400` (6.43) is brighter than
+ * `teal-400` (6.05), and nothing about that makes `today` read heavier than
+ * `warm` when `warm` is drawn with 50% more ink.
+ *
+ * So the palette's requirement is a FLOOR, not an ordering, and the suite
+ * asserts the ink ladder instead — see `dotInkArea` and the alpha-only section.
  */
 export const DOT_PALETTE = {
-  light: { hot: '#0F5A2C', mid: '#9A5D06', cold: '#7B7B82' },
-  dark: { hot: '#4FD97F', mid: '#C89522', cold: '#85858C' },
+  light: { hot: '#15704F', mid: '#8A5F19', cold: '#6B6B80' },
+  dark: { hot: '#4FD3A4', mid: '#EDBB63', cold: '#A8A8BC' },
 };
 
 /**
@@ -167,16 +199,23 @@ export const DOT_PALETTE = {
  * rule as the save-status strip's dashed ring, where "we don't know" is not
  * step 0.
  *
- * `stroke` is the ring's wall thickness in points; a `null` stroke is a filled
- * shape. Radii and strokes are in points and scale with the representation, so
- * 1x and 2x are one drawing at two resolutions.
+ * `turns` is the FRACTION OF THE DISC that is drawn, from 1 (whole) down to
+ * 0.25 (a quadrant). The disc drains anticlockwise from the top-right, so the
+ * bottom-left quadrant — the last one standing — is the one `cool` keeps.
+ * Radii are in points and scale with the representation, so 1x and 2x are one
+ * drawing at two resolutions rather than two drawings that happen to look
+ * alike.
  */
 export const DOT_INK = {
-  live: { tone: 'hot', radius: 3.0, stroke: null },
-  warm: { tone: 'hot', radius: 3.0, stroke: 1.2 },
-  today: { tone: 'mid', radius: 2.5, stroke: 1.1 },
-  cool: { tone: 'cold', radius: 2.0, stroke: 1.0 },
-  cold: { tone: 'cold', radius: 1.2, stroke: null },
+  live: { tone: 'hot', radius: 5.0, turns: 1 },
+  warm: { tone: 'hot', radius: 5.0, turns: 0.75 },
+  today: { tone: 'mid', radius: 5.0, turns: 0.5 },
+  cool: { tone: 'cold', radius: 5.0, turns: 0.25 },
+  // The ONE state that is not a sector. A one-eighth wedge would be a sliver
+  // that reads as a rendering fault rather than as a quantity, so the coldest
+  // mark returns to a solid shape at 16% of `live`'s area — small, definite,
+  // and unmistakable for the full disc.
+  cold: { tone: 'cold', radius: 2.0, turns: 1 },
 };
 
 /** The order the ladder is asserted in — warmest first. Exported so the suite
@@ -215,10 +254,35 @@ export function dotPalette(opts) {
 export function dotInkArea(bucket) {
   const ink = DOT_INK[bucket];
   if (!ink) return 0;
-  const outer = Math.PI * ink.radius * ink.radius;
-  if (ink.stroke === null) return outer;
-  const inner = Math.max(0, ink.radius - ink.stroke);
-  return outer - Math.PI * inner * inner;
+  // A sector's area is its fraction of the whole disc, exactly. There is no
+  // approximation here and no rim to account for: the boundaries are two radii
+  // and an arc, and `paintShape` antialiases the arc without changing the area
+  // the geometry describes.
+  return ink.turns * Math.PI * ink.radius * ink.radius;
+}
+
+/**
+ * Is (dx, dy) inside the drawn part of a `turns` sector?
+ *
+ * The disc DRAINS ANTICLOCKWISE FROM THE TOP-RIGHT — quadrant order top-right,
+ * top-left, bottom-left, bottom-right in the sense a clock hand sweeps
+ * backwards — so `0.75` loses the top-right, `0.5` keeps the bottom half, and
+ * `0.25` keeps the bottom-left.
+ *
+ * Quadrant-aligned by construction rather than by an angle comparison: every
+ * shipped value is a whole quarter, and testing signs of dx/dy is exact where
+ * an `atan2` against a floating-point boundary is not — a sector edge landing a
+ * hair either side of a pixel centre is what makes a half-disc's straight edge
+ * look wobbly.
+ *
+ * Note the screen's y axis points DOWN, so "above the centre" is `dy < 0`.
+ */
+function inSector(dx, dy, turns) {
+  if (turns >= 1) return true;
+  const top = dy < 0, right = dx > 0;
+  if (turns >= 0.75) return !(top && right);          // lose the top-right
+  if (turns >= 0.5) return !top;                      // keep the bottom half
+  return !top && !right;                              // keep the bottom-left
 }
 
 /** The RGBA canvas for one bucket at one scale factor. */
@@ -230,12 +294,11 @@ export function dotCanvas(bucket, scale, palette) {
 
   const c = (DOT_POINTS / 2) * s;
   const outer = ink.radius * s;
-  const inner = ink.stroke === null ? 0 : Math.max(0, ink.radius - ink.stroke) * s;
 
   paintShape(canvas, hexToRgb(palette[ink.tone]), (x, y) => {
     const dx = x - c, dy = y - c;
-    const r2 = dx * dx + dy * dy;
-    return r2 <= outer * outer && r2 >= inner * inner;
+    if (dx * dx + dy * dy > outer * outer) return false;
+    return inSector(dx, dy, ink.turns);
   });
 
   return canvas;

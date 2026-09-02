@@ -83,6 +83,10 @@ import { stat } from 'fs/promises';
 import { listDomains } from './files.js';
 import {
   listWorkingScopes,
+  // The store's own READ path, imported rather than reimplemented — see
+  // `getHandoffMarkdown` at the foot of this file for why a second reader here
+  // would be a route to a clipboard that bypasses the read-side sanitiser.
+  readWorkingState,
   resolveInsideState,
   machineId,
   hostSlug,
@@ -208,20 +212,55 @@ export function computePulse(pairs, now = Date.now()) {
   let oldestCounted = null;      // oldest event INSIDE the window
   let oldestSeen = null;         // oldest event at all, window or not
 
+  // ── THE HANDOVER TRACK, WHICH IS THE ONE MARK THAT ANSWERS THE PURPOSE ──
+  //
+  // `harnessChanges[i]` is true when, inside cell `i`, a save came from a
+  // DIFFERENT tool than the save immediately before it in the same work-stream.
+  // That is the only thing this widget draws that speaks directly to "is
+  // context being carried correctly from harness to harness".
+  //
+  // A boolean per cell, never a count: two handovers in twelve hours and one
+  // handover in twelve hours prompt the same action, and a count would invite
+  // an intensity ramp on a quantity nobody can act on.
+  const harnessChanges = new Array(PULSE_BUCKET_COUNT).fill(false);
+  // Distinct tools among the saves INSIDE the window. Not "in the store" — a
+  // tool that last wrote a month ago is not one of the tools taking turns this
+  // week, and saying "2 tools" about that would be a claim the window cannot
+  // support.
+  const harnessesInWindow = new Set();
+
   for (const p of Array.isArray(pairs) ? pairs : []) {
     // A pair with no journal fed nothing. It is not counted as a pair that
     // reported zero saves, because it did not report anything.
     if (!p || !Array.isArray(p.saveTimes)) continue;
     pairsCounted++;
     if (p.journalTailTruncated === true) pairsTruncated++;
-    for (const t of p.saveTimes) {
-      if (!Number.isFinite(t)) continue;
+    // Index-aligned with `saveTimes` by construction in `journalFacts`. Read
+    // defensively anyway: a producer that stops supplying it must cost the
+    // handover marks and never the whole strip.
+    const who = Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null;
+    // The tool that wrote the PREVIOUS save in THIS work-stream. Per pair,
+    // never global: two scopes running side by side alternate in the merged
+    // timeline without either one having changed hands, and a global cursor
+    // would draw a handover mark on every other cell of a busy week.
+    let prevWho = null;
+    p.saveTimes.forEach((t, i) => {
+      if (!Number.isFinite(t)) return;
+      const h = who && typeof who[i] === 'string' && who[i] ? who[i] : null;
+      // Taken BEFORE the window test, so a handover whose second half lands
+      // inside the window is still recognised as a handover — the comparison
+      // needs the save before it, and that one is often older than the window.
+      const changed = h !== null && prevWho !== null && h !== prevWho;
+      if (h !== null) prevWho = h;
       if (oldestSeen === null || t < oldestSeen) oldestSeen = t;
-      if (t <= windowStart) { eventsOutsideWindow++; continue; }
-      buckets[bucketIndex(t, now, bucketMs)]++;
+      if (t <= windowStart) { eventsOutsideWindow++; return; }
+      const cell = bucketIndex(t, now, bucketMs);
+      buckets[cell]++;
+      if (changed) harnessChanges[cell] = true;
+      if (h !== null) harnessesInWindow.add(h);
       events++;
       if (oldestCounted === null || t < oldestCounted) oldestCounted = t;
-    }
+    });
   }
 
   // NULL ONLY WHEN THERE ARE NO JOURNALS AT ALL. A store that has journals but
@@ -242,6 +281,11 @@ export function computePulse(pairs, now = Date.now()) {
     windowSeconds: PULSE_WINDOW_SECONDS,
     bucketSeconds: PULSE_BUCKET_SECONDS,
     buckets,
+    // One boolean per bucket, same length and same anchoring as `buckets`.
+    harnessChanges,
+    // How many DISTINCT tools wrote inside the window. 0 when no save named
+    // one — which is not "one tool", and the label must not say so.
+    harnessCount: harnessesInWindow.size,
     events,
     eventsOutsideWindow,
     pairsCounted,
@@ -445,6 +489,49 @@ function chooseClock(row) {
     // 'file' over a null number.
     ageSource: useAgent ? 'agent' : (fileAt !== null ? 'file' : null),
   };
+}
+
+/**
+ * `computePulse`, but a throw costs the PICTURE and never the summary.
+ *
+ * ── FOUND BY A MUTATION, AND IT IS A REAL GAP RATHER THAN A HYPOTHETICAL ───
+ *
+ * `getTraySummary` documents itself as NEVER THROWING, because a menubar that
+ * renders an exception is one the user reads as "the app is broken". Every
+ * other risky step in it is inside a `try` — and `computePulse` was called bare
+ * from the returned object literal, so an exception anywhere inside it took the
+ * whole call with it.
+ *
+ * That was survivable while the pulse was arithmetic over an array of numbers.
+ * It stopped being survivable when the pulse grew a SECOND untrusted array
+ * (`saveHarnesses`) whose alignment with the first is a contract another module
+ * keeps: the widget's own guarantee should not depend on that contract holding.
+ *
+ * A mutation deleting one declaration inside the loop reddened the suite by
+ * CRASHING rather than by a named assertion — this project's recorded v3.24.1
+ * shape — and the crash escaped `getTraySummary` exactly as the docblock says
+ * it cannot. This is that hole, closed, with the failure DISCLOSED rather than
+ * swallowed: a null pulse draws no strip, and a warning says why.
+ *
+ * EXPORTED PURELY AS A TEST SEAM, and a mutation forced it — the same reason
+ * and the same wording as `machineIdentity` above. `getTraySummary` builds its
+ * own `pulseInput` from real store rows, so there is no way to hand the guard a
+ * pair that throws through the front door; driving this function directly is
+ * the only honest way to prove the catch is reached rather than merely written.
+ */
+export function safePulse(pairs, now, warnings) {
+  try {
+    return computePulse(pairs, now);
+  } catch (err) {
+    warnings.push({
+      code: 'pulse-unavailable',
+      message: 'The save pulse could not be computed, so no heartbeat is shown.',
+      detail: err && err.message ? String(err.message).slice(0, 200) : null,
+    });
+    // NULL, never an empty strip. 28 zeroes would be a confident claim that
+    // nothing was saved this week, made by a computation that failed.
+    return null;
+  }
 }
 
 /** Absolute ms for ordering. Not an age — ages come from two different `now`s. */
@@ -659,6 +746,11 @@ export async function getTraySummary(opts = {}) {
       // list can never be describing different sets.
       pulseInput.push({
         saveTimes: Array.isArray(p.saveTimes) ? p.saveTimes : null,
+        // Index-aligned with saveTimes; carried so the strip can mark the
+        // cells in which the baton changed hands. Never re-derived here — the
+        // alignment is the store's guarantee and a second derivation would be
+        // a second opinion about it.
+        saveHarnesses: Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null,
         journalTailTruncated: p.journalTailTruncated === true,
       });
       if (!identityResolved) {
@@ -685,6 +777,16 @@ export async function getTraySummary(opts = {}) {
         scope: p.scope,
         machine: p.machine,
         harness: typeof p.harness === 'string' ? p.harness : null,
+        // WHICH MODEL wrote it. Already on the index row since v3.34.0 and
+        // dropped here until now — the field-drop class this repo guards
+        // behaviourally in test-working-state-disclosure.js, committed by the
+        // consumer rather than the store, which is exactly where it always
+        // happens. It rides on the SUBLABEL, never the row label: line one is
+        // identity and time.
+        model: typeof p.model === 'string' ? p.model : null,
+        // The tool that wrote the save BEFORE the last one, and non-null only
+        // when the two differ — see journalFacts. This is the handover fact.
+        previousHarness: typeof p.previousHarness === 'string' ? p.previousHarness : null,
         headline: typeof p.headline === 'string' ? p.headline : null,
         // What the last save's own notes say about whether it was complete.
         // null means "there is no journal line, so we do not know" — NOT
@@ -791,6 +893,11 @@ export async function getTraySummary(opts = {}) {
     scope: shown[0].scope,
     machine: shown[0].machine,
     harness: shown[0].harness,
+    // The headline's second line is `harness · model`, so the model has to
+    // reach this projection too. Projected EXPLICITLY, like every other field
+    // here — which is what makes a drop visible to the disclosure guard rather
+    // than silent.
+    model: shown[0].model,
     writtenAt: shown[0].writtenAt,
     writtenAgeSeconds: shown[0].writtenAgeSeconds,
     ageSource: shown[0].ageSource,
@@ -824,7 +931,7 @@ export async function getTraySummary(opts = {}) {
     // on every pair READ, not on the rows that survived `limit`. Costs no
     // file I/O of its own: the timestamps were already parsed to compute each
     // row's age and were previously discarded.
-    pulse: computePulse(pulseInput, now),
+    pulse: safePulse(pulseInput, now, warnings),
     brief: lastSave ? await briefFor(lastSave.project, now) : null,
     remote: readRemoteObservation(now),
     warnings,
@@ -870,5 +977,92 @@ async function briefFor(project, now) {
     };
   } catch {
     return null;                       // no brief — the normal case, not an error
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The handoff, as one pasteable document
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch one (project, scope, machine)'s handoff for the widget's
+ * `Copy handoff as Markdown` action.
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  THIS IS A DELEGATION, AND THE DELEGATION IS THE WHOLE POINT              ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ *
+ * `readWorkingState` is the store's own read path, and it is where
+ * `neutraliseProtocol` runs on the way OUT — the read-side sanitiser that
+ * defangs protocol-shaped markup a saved handoff may be carrying, without
+ * deleting anything (a real handoff routinely holds URLs and shell commands).
+ *
+ * A second reader here — `readFile` on `state/<scope>/<machine>/current.md`,
+ * which is four lines and obviously correct — would be a path that reaches a
+ * CLIPBOARD, and therefore a model's context, WITHOUT that sanitiser. It would
+ * also duplicate `resolveInsideState`, the module's sole path chokepoint, and
+ * the duplicate would be the one nobody audits. So this function opens no file
+ * of its own and holds no path of its own; it names the record it wants and
+ * lets the store read it.
+ *
+ * The bytes are NOT capped here either, and that is deliberate rather than an
+ * omission: the store already bounds `current.md` at `MAX_STATE_BYTES` (48 KB)
+ * and the brief at `MAX_BRIEF_BYTES` (32 KB), and a second, smaller cap applied
+ * on the way to a clipboard would silently truncate a handoff a user asked for
+ * IN FULL. The size is REPORTED instead, so the caller can disclose it.
+ *
+ * NEVER THROWS, for the same reason `getTraySummary` does not: this is called
+ * from a menu handler, and an unhandled rejection there is a crash in a process
+ * whose whole job is to be quietly present.
+ *
+ * @param {string} project
+ * @param {string} scope
+ * @param {string} [machine]  omit for the most recently written machine
+ * @returns {Promise<{ok: boolean, reason?: string, project?: string,
+ *   scope?: string, machine?: string|null, brief?: string|null,
+ *   current?: string|null, bytes?: number, writtenAt?: string|null,
+ *   harness?: string|null, model?: string|null, sanitised?: boolean}>}
+ */
+export async function getHandoffMarkdown(project, scope, machine) {
+  try {
+    const state = await readWorkingState(project, {
+      scope,
+      ...(typeof machine === 'string' && machine ? { machine } : {}),
+      // One line is all the provenance footer needs, and the journal is the
+      // heaviest thing this read can pull. Asking for the whole default page
+      // of entries to use one of them would be paying for 19 records to throw
+      // them away.
+      journalLimit: 1,
+    });
+    if (!state || state.ok !== true) {
+      return { ok: false, reason: (state && state.reason) || 'unreadable' };
+    }
+    const cur = state.current && state.current.present === true ? state.current : null;
+    const newest = state.journal && Array.isArray(state.journal.entries) && state.journal.entries.length
+      ? state.journal.entries[0] : null;
+    return {
+      ok: true,
+      project,
+      scope: state.scope || scope,
+      machine: state.machine || null,
+      // The owner's own instructions (tier 1) and the session handoff (tier 2)
+      // are returned as SEPARATE fields, never pre-joined. They carry different
+      // authority — the brief is followed, the handoff is verified — and the
+      // composer downstream is what states that difference in words. Joining
+      // them here would make the distinction unrecoverable.
+      brief: state.brief && state.brief.present === true ? state.brief.text : null,
+      current: cur ? cur.text : null,
+      bytes: cur && Number.isInteger(cur.bytes) ? cur.bytes : 0,
+      // The AGENT's clock where the journal had one, so a pasted handoff dates
+      // itself by when it was written and not by when it was pulled.
+      writtenAt: cur && typeof cur.writtenAt === 'string' ? cur.writtenAt : null,
+      harness: newest && typeof newest.harness === 'string' ? newest.harness : null,
+      model: newest && typeof newest.model === 'string' ? newest.model : null,
+      // Disclosed rather than hidden: the store escaped something on the way
+      // out, and a reader pasting this into a model should be told so.
+      sanitised: !!(cur && cur.sanitisedOnRead === true),
+    };
+  } catch (err) {
+    return { ok: false, reason: (err && err.code) ? String(err.code) : 'error' };
   }
 }

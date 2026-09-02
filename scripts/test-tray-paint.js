@@ -29,7 +29,8 @@
  *   §3   the strip draws in COLOUR and is not a template image
  *   §4   ACTIVE / EMPTY / UNKNOWN differ in real pixels, in BOTH themes
  *   §5   the height ladder — the signal that survives without colour
- *   §6   cadence is in the ramp, is capped, and never claims more
+ *   §5b  the axis, the day ruler and the handover caps — decoded
+ *   §6   cadence is in the HEIGHT, is capped, and never claims more
  *   §7   the recency dots: five buckets, three colours, one ink ladder
  *   §8   the dots' pixels, decoded, in both themes
  *   §9   1x and 2x are one drawing at two resolutions
@@ -51,7 +52,7 @@
  *  - THAT A MENU ITEM ICON RENDERS IN COLOUR AT ALL is reported from an
  *    Electron menu built by hand on this machine; this suite cannot re-derive
  *    it and does not claim to.
- *  - WHETHER THE THREE DOT COLOURS ARE PERCEPTIBLY DIFFERENT AT 11pt to a
+ *  - WHETHER THE THREE DOT COLOURS ARE PERCEPTIBLY DIFFERENT AT 13pt to a
  *    viewer with a colour vision deficiency is NOT asserted, and neither is
  *    legibility at 3pt inside an inverted, highlighted menu row. A contrast
  *    ratio computed against a background token is not the same claim as
@@ -205,14 +206,23 @@ section('§2 every shipped colour clears the non-text floor, over a band');
   const worst = (h, theme) => Math.min(...rgba.MENU_BG_BAND[theme].map(
     (bg) => contrast.contrastRatio(hex(h), hex(bg))));
 
+  // -- REVISED: the strip palette lost its five-rung ramp ----------------
+  //
+  // The save count moved from a COLOUR RAMP into the BAR HEIGHT, so the strip
+  // ships three colours per theme instead of seven. The check itself is
+  // unchanged: every value shipped, recomputed from the shipped hex, against
+  // the hardest background in its own band. The COUNT is now DERIVED from the
+  // palette objects rather than typed, so a colour added tomorrow is checked
+  // without anyone editing this line — the previous literal 20 would have
+  // silently stopped covering a new entry.
   const shipped = [];
   for (const theme of ['light', 'dark']) {
-    strip.STRIP_PALETTE[theme].active.forEach((h, i) => shipped.push([`strip active ${i + 1}`, theme, h]));
-    shipped.push(['strip empty', theme, strip.STRIP_PALETTE[theme].empty]);
-    shipped.push(['strip unknown', theme, strip.STRIP_PALETTE[theme].unknown]);
+    for (const [role, h] of Object.entries(strip.STRIP_PALETTE[theme])) shipped.push([`strip ${role}`, theme, h]);
     for (const tone of ['hot', 'mid', 'cold']) shipped.push([`dot ${tone}`, theme, dots.DOT_PALETTE[theme][tone]]);
   }
-  eq(shipped.length, 20, 'twenty colours ship — ten per theme — and every one of them is checked');
+  eq(shipped.length, Object.keys(strip.STRIP_PALETTE.light).length * 2 + 6,
+    `every shipped colour is checked (${shipped.length} of them), and the count is DERIVED from the palettes rather than typed`);
+  ok(shipped.length >= 12, 'CONTROL — there really are colours to check, so the loop below is not vacuous');
 
   for (const [name, theme, h] of shipped) {
     const w = worst(h, theme);
@@ -227,6 +237,13 @@ section('§2 every shipped colour clears the non-text floor, over a band');
     `CONTROL: Apple's own systemGreen #34C759 FAILS in light (${contrast.round2(worst('#34C759', 'light')).toFixed(2)}:1) — a vendor palette is not an audit`);
   ok(worst('#3A3A3C', 'dark') < FLOOR,
     'CONTROL: a colour equal to the dark band\'s own background FAILS, so the check is not passing everything');
+  // The two theme-inversion controls the design table names. A palette is
+  // chosen per theme, and using the WRONG theme's value must FAIL rather than
+  // merely look wrong — which is what makes the per-theme split a measurement.
+  ok(worst(strip.STRIP_PALETTE.dark.bar, 'light') < FLOOR,
+    `CONTROL: the DARK bar violet ${strip.STRIP_PALETTE.dark.bar} fails on a LIGHT menu (${contrast.round2(worst(strip.STRIP_PALETTE.dark.bar, 'light')).toFixed(2)}:1)`);
+  ok(worst(strip.STRIP_PALETTE.light.bar, 'dark') < FLOOR,
+    `CONTROL: and the LIGHT bar violet ${strip.STRIP_PALETTE.light.bar} fails on a DARK one (${contrast.round2(worst(strip.STRIP_PALETTE.light.bar, 'dark')).toFixed(2)}:1)`);
 
   // The nominal background is inside the band, so the band is a superset of the
   // point check rather than a different one.
@@ -235,24 +252,27 @@ section('§2 every shipped colour clears the non-text floor, over a band');
       `the ${theme} band contains its own nominal background ${rgba.MENU_BG[theme]}`);
   }
 
-  // UNKNOWN is HEAVIER than EMPTY, in both themes. Carried over from the alpha
-  // version: making "no data" the faintest thing on the strip would encode it
-  // as "even less than nothing".
+  // -- REMOVED, WITH THE REASON, RATHER THAN QUIETLY DROPPED -------------
+  //
+  // Two assertions stood here and both were about palette entries that no
+  // longer exist:
+  //
+  //   "UNKNOWN is heavier than EMPTY"  — both were BAR colours. Empty and
+  //      unknown cells no longer draw a bar at all; the distinction is now
+  //      SOLID versus DOTTED on the axis, which is texture rather than weight,
+  //      and it is asserted in the alpha channel in 4 and 11 where it belongs.
+  //   "the ACTIVE ramp rises monotonically" — there is no ramp. The count is in
+  //      the height, which 5 measures off decoded pixels; a five-shade ladder
+  //      at three points of width was the thing the maintainer reported as a
+  //      fence, and asserting its monotonicity was asserting the wrong property
+  //      of the right idea.
+  //
+  // What replaces them does not depend on the palette at all: the axis must
+  // clear the floor BY ITSELF, so the known/unknown reading survives even if
+  // every bar were invisible.
   for (const theme of ['light', 'dark']) {
-    const e = worst(strip.STRIP_PALETTE[theme].empty, theme);
-    const u = worst(strip.STRIP_PALETTE[theme].unknown, theme);
-    ok(u > e, `${theme}: UNKNOWN (${contrast.round2(u).toFixed(2)}:1) is heavier than EMPTY (${contrast.round2(e).toFixed(2)}:1) — "no data" is not "even less than nothing"`);
-  }
-
-  // The ACTIVE ramp is MONOTONE in contrast, so a busier bucket is always a
-  // heavier mark — in a light menu that means darker, in a dark menu brighter,
-  // and "more contrast against its own background" is the one rule for both.
-  for (const theme of ['light', 'dark']) {
-    const ramp = strip.STRIP_PALETTE[theme].active.map((h) => worst(h, theme));
-    ok(ramp.every((v, i) => i === 0 || v > ramp[i - 1]),
-      `${theme}: the ACTIVE ramp rises monotonically (${ramp.map((v) => contrast.round2(v).toFixed(2)).join(' < ')})`);
-    ok(ramp[0] > worst(strip.STRIP_PALETTE[theme].empty, theme),
-      `${theme}: and even ONE save outweighs an empty bucket, so a single save is a mark and not a shade`);
+    ok(worst(strip.STRIP_PALETTE[theme].axis, theme) >= FLOOR,
+      `${theme}: the axis clears the floor on its own, so "did this store exist" is readable without the bars`);
   }
 }
 
@@ -273,14 +293,12 @@ section('§3 the strip draws in COLOUR and is not a template image');
     const cell = strip.drawnCells(mixedPulse())[I_ACTIVE];
     eq([cell.state, cell.count], ['active', 2],
       `${theme}: drawn cell ${I_ACTIVE} folds two one-save buckets into one two-save cell`);
-    const px = pixel(d, I_ACTIVE * PITCH, strip.BAR_TOP);
-    // GUARDED. If the fixture's drawn cell is not the ACTIVE one this expects,
-    // the assertion above has already reddened by name; indexing the ramp with
-    // a level of 0 would then throw, and a suite that reddens by CRASHING
-    // reports that something broke rather than which property was lost.
-    const want = strip.STRIP_PALETTE[theme].active[cell.level - 1] || null;
-    eq(want === null ? null : px, want === null ? 'an ACTIVE cell' : [...hex(want), 255],
-      `${theme}: it decodes to exactly ${want || '(no active cell at that index)'}, fully opaque`);
+    // SAMPLED JUST ABOVE THE AXIS, which is inside every bar whatever its
+    // height. The previous sample point was `BAR_TOP` — the top of a band every
+    // bar filled — and bars now have five different heights.
+    const px = pixel(d, I_ACTIVE * PITCH, strip.AXIS_Y - 1);
+    const want = strip.STRIP_PALETTE[theme].bar;
+    eq(px, [...hex(want), 255], `${theme}: it decodes to exactly ${want}, fully opaque`);
 
     // NOT greyscale. The v3.37.0 encoder pinned every colour channel at 0; if
     // that ever came back this is the assertion that would say so.
@@ -312,10 +330,17 @@ section('§4 ACTIVE / EMPTY / UNKNOWN differ in real pixels, in BOTH themes');
 // this project's named defect, and on the maintainer's store half the strip is
 // UNKNOWN, so it is not a corner nobody reaches.
 {
+  // -- THE RULER ROW IS EXCLUDED, AND THAT IS NOT A CONVENIENCE ----------
+  //
+  // The day ruler is a GLOBAL overlay whose ticks fall on day boundaries, not a
+  // property of a cell — and today's tick is deliberately double width. So two
+  // cells in the same state legitimately differ in the ruler row, and a control
+  // asserting "two ACTIVE cells render identically" would red for the ruler
+  // rather than for anything about the cells. The ruler has its own section.
   const column = (d, i, scale = 1) => {
     const pitch = (strip.CELL_POINTS + strip.GAP_POINTS) * scale;
     const out = [];
-    for (let y = 0; y < d.height; y++) {
+    for (let y = 0; y <= strip.AXIS_Y * scale; y++) {
       for (let x = i * pitch; x < i * pitch + strip.CELL_POINTS * scale; x++) out.push(pixel(d, x, y).join(','));
     }
     return out.join('|');
@@ -354,59 +379,175 @@ section('§5 the height ladder — the signal that survives without colour');
 // is the guard on that strengthening.
 {
   const d = png.decodePng(strip.renderPulseStrip(mixedPulse(), { dark: false }).buffer);
+  // Measured over the BARS AND THE AXIS only. The ruler is a global overlay and
+  // has its own section; counting it here would add a pixel to some columns and
+  // not to others for a reason having nothing to do with the cell.
   const colHeight = (i) => {
     let n = 0;
-    for (let y = 0; y < d.height; y++) if (pixel(d, i * PITCH, y)[3] > 0) n++;
+    for (let y = 0; y <= strip.AXIS_Y; y++) if (pixel(d, i * PITCH, y)[3] > 0) n++;
     return n;
   };
   const ha = colHeight(I_ACTIVE), he = colHeight(I_EMPTY), hu = colHeight(I_UNKNOWN);
 
-  eq([ha, he, hu], [12, 3, 1], 'the three marks are 12pt, 3pt and 1pt tall, measured off the decoded pixels');
-  ok(ha > he && he > hu, 'a strictly decreasing ladder — the strip is legible with the colour removed entirely');
-  ok(ha >= he * 3, `ACTIVE is at least three times an EMPTY stub (${ha} against ${he}), not a shade of it`);
+  // -- REVERSED: 12 / 3 / 1 IS GONE, AND SO IS WHAT IT MEASURED ---------
+  //
+  // WAS: `[ha, he, hu] === [12, 3, 1]` — every ACTIVE bar was full height, an
+  // EMPTY was a 3pt stub and an UNKNOWN a 1pt hairline. All three changed:
+  //
+  //  - ACTIVE height is now the SAVE COUNT (3/5/7/9/12pt), so a fixed 12 would
+  //    assert the opposite of the feature. This fixture's active cell holds two
+  //    saves, which is rung 2.
+  //  - EMPTY draws NO bar; it is the axis and nothing else, which is one pixel.
+  //  - UNKNOWN draws no bar either; it is the axis DOTTED, so it differs from
+  //    EMPTY horizontally rather than vertically — which sections 4 and 11
+  //    measure, in the alpha channel, where that distinction lives.
+  //
+  // What survives verbatim is the RULE the old numbers were serving: the three
+  // states are separable by SHAPE with the colour discarded.
+  eq(ha, 1 + strip.barHeightPoints(2),
+    `an ACTIVE cell holding 2 saves is ${ha}px tall including the axis — the height IS the count`);
+  eq(he, 1, 'an EMPTY cell is the axis and nothing else — one pixel');
+  ok(hu <= 1, 'and an UNKNOWN cell is the axis DOTTED, so its sampled column may be empty at that x');
+  ok(ha > he, 'a strictly decreasing ladder — the strip is legible with the colour removed entirely');
 
-  // Both quiet marks sit on the BASELINE, so the strip still reads as one
-  // timeline across the boundary rather than as two unrelated drawings.
-  const bottom = d.height - strip.BAR_TOP - 1;
-  ok(pixel(d, I_EMPTY * PITCH, bottom)[3] > 0, 'the EMPTY stub is on the baseline row');
-  ok(pixel(d, I_UNKNOWN * PITCH, bottom)[3] > 0, 'and so is the UNKNOWN hairline');
-  ok(pixel(d, I_EMPTY * PITCH, strip.BAR_TOP)[3] === 0, 'neither reaches the top of the band — the EMPTY stub does not');
-  ok(pixel(d, I_UNKNOWN * PITCH, strip.BAR_TOP)[3] === 0, 'and neither does the UNKNOWN hairline');
+  // Every bar sits ON the axis, so the strip reads as one timeline rather than
+  // as floating marks.
+  ok(pixel(d, I_ACTIVE * PITCH, strip.AXIS_Y - 1)[3] > 0, 'a bar reaches down to the row above the axis');
+  ok(pixel(d, I_ACTIVE * PITCH, strip.AXIS_Y)[3] > 0, 'and the axis itself is drawn beneath it');
+  ok(pixel(d, I_EMPTY * PITCH, strip.AXIS_Y)[3] > 0, 'an EMPTY cell still carries the axis — the timeline is continuous');
+  ok(pixel(d, I_EMPTY * PITCH, strip.AXIS_Y - 1)[3] === 0, 'and nothing above it');
 
-  // The gaps are real gaps, and the strip is not flush against the row.
-  let gapClear = true, topClear = true, bottomClear = true;
-  for (let y = 0; y < d.height; y++) if (pixel(d, PITCH - 1, y)[3] !== 0) gapClear = false;
+  // The gaps between BARS are real gaps. The AXIS deliberately crosses them —
+  // a baseline broken every fourth pixel is fourteen ticks, not a timeline.
+  let barGapClear = true, topClear = true, axisGapInked = 0;
+  for (let y = 0; y < strip.AXIS_Y; y++) if (pixel(d, PITCH - 1, y)[3] !== 0) barGapClear = false;
   for (let x = 0; x < d.width; x++) if (pixel(d, x, 0)[3] !== 0) topClear = false;
-  for (let x = 0; x < d.width; x++) if (pixel(d, x, d.height - 1)[3] !== 0) bottomClear = false;
-  ok(gapClear, 'the gap between two bars is transparent at every row');
-  ok(topClear, 'the top row is clear — the bars do not touch the row above');
-  ok(bottomClear, 'and so is the bottom row');
+  for (let x = PITCH - 1; x < d.width; x += PITCH) if (pixel(d, x, strip.AXIS_Y)[3] > 0) axisGapInked++;
+  ok(barGapClear, 'the gap between two bars is transparent at every row ABOVE the axis');
+  ok(topClear, 'the top row is clear — only a 12pt bar could reach it, and this fixture has none');
+  ok(axisGapInked > 5, `the AXIS crosses the gaps (${axisGapInked} of them inked) — it is one baseline, not fourteen ticks`);
 
-  eq([strip.HEIGHT_POINTS, strip.BAR_BOTTOM - strip.BAR_TOP], [14, 12],
-    'the image is 14pt tall with a 12pt band — inside the 16pt a menu row accommodates without growing');
+  eq([strip.HEIGHT_POINTS, strip.BAR_MAX_POINTS, strip.AXIS_Y, strip.RULER_Y], [15, 12, 12, 14],
+    'the image is 15pt tall: a 12pt bar band, the axis at 12, a blank row, and the ruler at 14');
+  ok(strip.HEIGHT_POINTS <= 16,
+    'and it is inside the 16pt a menu row accommodates without growing');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5b the axis, the day ruler and the handover caps — decoded');
+//
+// These three marks are what turn a row of bars into a TIME SERIES, which is
+// how the productivity reading is defeated structurally rather than by refusal.
+// Every one of them is asserted against real pixels.
+{
+  const b = new Array(28).fill(0);
+  b[8] = 2; b[9] = 1;        // -> drawn 4, ACTIVE, 3 saves
+  b[26] = 4; b[27] = 4;      // -> drawn 13, ACTIVE, 8 saves, the newest cell
+  const changes = new Array(28).fill(false);
+  changes[9] = true;         // -> drawn 4 carries a handover cap
+  const withCaps = pulseFixture({
+    buckets: b, events: 11, firstKnownBucket: 4, coversWholeWindow: false,
+    harnessChanges: changes, harnessCount: 2,
+  });
+  const cells = strip.drawnCells(withCaps);
+  eq([cells[4].state, cells[4].count, cells[4].changed], ['active', 3, true],
+    'CONTROL — drawn cell 4 is ACTIVE and carries a handover, so the cap assertions below are not vacuous');
+  eq(cells[13].changed, false,
+    'CONTROL — and cell 13 is ACTIVE with NO handover, which is the pair the cap is measured against');
+
+  for (const dark of [false, true]) {
+    const theme = dark ? 'dark' : 'light';
+    const d = png.decodePng(strip.renderPulseStrip(withCaps, { dark }).buffer);
+    const pal = strip.STRIP_PALETTE[theme];
+
+    // THE CAP is the top CAP_POINTS rows of the bar, in the cap ink.
+    const top4 = strip.AXIS_Y - strip.barHeightPoints(3);
+    eq(pixel(d, 4 * PITCH, top4), [...hex(pal.cap), 255],
+      `${theme}: the top of a handover bar is the cap colour ${pal.cap}`);
+    eq(pixel(d, 4 * PITCH, top4 + strip.CAP_POINTS), [...hex(pal.bar), 255],
+      `${theme}: and CAP_POINTS below it the bar is back to ${pal.bar} — the cap is a notch, not a recolour`);
+    const top13 = strip.AXIS_Y - strip.barHeightPoints(8);
+    eq(pixel(d, 13 * PITCH, top13), [...hex(pal.bar), 255],
+      `${theme}: CONTROL — a bar with NO handover has no cap, so the assertion above is about the flag and not about the top of every bar`);
+
+    // THE AXIS: solid under a known cell, dotted under an unknown one, and the
+    // texture is the SAME INK on both sides so the distinction is shape only.
+    const known = [], unknown = [];
+    for (let x = 0; x < 4 * PITCH - 1; x++) unknown.push(pixel(d, x, strip.AXIS_Y)[3] > 0 ? 1 : 0);
+    for (let x = 6 * PITCH; x < 8 * PITCH; x++) known.push(pixel(d, x, strip.AXIS_Y)[3] > 0 ? 1 : 0);
+    ok(known.every((v) => v === 1), `${theme}: the axis is SOLID under known cells`);
+    ok(unknown.includes(0) && unknown.includes(1), `${theme}: and DOTTED under unknown ones`);
+    eq(pixel(d, 0, strip.AXIS_Y).slice(0, 3), hex(pal.axis),
+      `${theme}: the dotted axis uses the SAME ink as the solid one, so "before this store existed" is texture and never a fainter colour`);
+
+    // THE DAY RULER: one tick per day, TODAY'S DOUBLED.
+    const ticks = [];
+    for (let x = 0; x < d.width; x++) if (pixel(d, x, strip.RULER_Y)[3] > 0) ticks.push(x);
+    eq(ticks.length, 8, `${theme}: the ruler draws 7 day boundaries, the last of them two pixels wide`);
+    eq([ticks[ticks.length - 2], ticks[ticks.length - 1]], [48, 49],
+      `${theme}: and TODAY'S tick is the double-width one at the newest end`);
+    let blank = true;
+    for (let x = 0; x < d.width; x++) if (pixel(d, x, strip.AXIS_Y + 1)[3] !== 0) blank = false;
+    ok(blank, `${theme}: the row between the axis and the ruler is EMPTY, so the two do not merge into one thick line`);
+  }
+
+  // THE RULER IS DERIVED FROM THE DRAWN SPAN, NEVER HARDCODED TO 2.
+  eq(strip.cellsPerDay(withCaps), 2, 'two twelve-hour cells make a day');
+  eq(strip.cellsPerDay(pulseFixture({ buckets: new Array(29).fill(0) })), 4,
+    'an unmergeable 29-bucket producer draws SIX-hour cells, so a day is four of them — the ruler follows the picture');
+  eq(strip.cellsPerDay(pulseFixture({ bucketSeconds: 0 })), 0,
+    'and a span it cannot divide the day by draws NO ruler, rather than a scale nobody can trust');
+
+  // A HANDOVER FLAG ON A CELL WITH NO BAR IS IGNORED, not drawn on nothing.
+  const bogus = pulseFixture({
+    buckets: new Array(28).fill(0), harnessChanges: new Array(28).fill(true),
+  });
+  ok(strip.drawnCells(bogus).every((c) => c.changed === false),
+    'a handover flag on an EMPTY cell is dropped — a handover implies a save, and a producer contradicting itself must not make this file invent a bar');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§6 cadence is in the ramp, is capped, and never claims more');
 {
+  // -- REVERSED, AND THE RUNG BOUNDARIES MOVED WITH IT -------------------
+  //
+  // WAS: `activeLevel` was LINEAR and capped at five (`activeLevel(3) === 3`,
+  // `activeLevel(5) === ACTIVE_LEVELS`), driving a five-shade colour ramp.
+  //
+  // Measured twelve-hour counts on the maintainer's real store run 3 to 18, so
+  // a linear cap at five sat pinned at saturation and every active cell was the
+  // same dark green — the fence he reported. The ladder is LOG-ISH now
+  // (1 / 2-3 / 4-6 / 7-12 / 13+) and it drives HEIGHT, which is legible at
+  // three points of width where a shade is not.
   eq(strip.activeLevel(1), 1, 'one save is the first rung');
-  eq(strip.activeLevel(3), 3, 'three saves is the third');
-  eq(strip.activeLevel(5), strip.ACTIVE_LEVELS, 'five saves reaches the top rung');
-  eq(strip.activeLevel(500), strip.ACTIVE_LEVELS, 'and a pathological bucket SATURATES rather than redefining what busy looks like');
-  eq(strip.activeLevel(0), 1, 'a non-positive count degrades to the first rung rather than indexing off the ramp');
-  eq(strip.STRIP_PALETTE.light.active.length, strip.ACTIVE_LEVELS, 'the light ramp has exactly ACTIVE_LEVELS rungs');
-  eq(strip.STRIP_PALETTE.dark.active.length, strip.ACTIVE_LEVELS, 'and so does the dark one');
+  eq(strip.activeLevel(3), 2, 'three saves is the SECOND — the ladder is log-ish, not linear');
+  eq(strip.activeLevel(6), 3, 'six is the third');
+  eq(strip.activeLevel(12), 4, 'twelve the fourth');
+  eq(strip.activeLevel(13), strip.ACTIVE_LEVELS, 'and thirteen reaches the top rung');
+  eq(strip.activeLevel(500), strip.ACTIVE_LEVELS, 'a pathological bucket SATURATES rather than redefining what busy looks like');
+  eq(strip.activeLevel(0), 1, 'a non-positive count degrades to the first rung rather than indexing off the ladder');
+  eq(strip.BAR_HEIGHTS.length, strip.ACTIVE_LEVELS, 'there is exactly one drawn height per rung');
+  ok(strip.BAR_HEIGHTS.every((v, i) => i === 0 || v > strip.BAR_HEIGHTS[i - 1]),
+    `and the heights rise strictly (${strip.BAR_HEIGHTS.join(' < ')}pt)`);
+  eq(strip.BAR_HEIGHTS[strip.ACTIVE_LEVELS - 1], strip.BAR_MAX_POINTS,
+    'the top rung fills the whole band, so the tallest bar is the band and not an arbitrary number');
+  ok(strip.BAR_HEIGHTS[0] > 1,
+    'and the bottom rung is clear of the 1pt axis, so ONE SAVE never reads as a thick baseline');
 
-  // CADENCE IS NOT IN THE HEIGHT. A column chart whose bars rise and fall reads
-  // as a productivity graph, which is the recorded refusal.
+  // CADENCE IS IN THE HEIGHT, and this is the assertion that reversed. See the
+  // module header: the refusal was being honoured in form and broken in
+  // substance, because the colour ramp encoded the identical quantity in the
+  // one channel that is illegible at 3pt.
   const b = new Array(28).fill(0);
   b[0] = 1; b[1] = 0;      // -> drawn 0, one save
   b[2] = 9; b[3] = 0;      // -> drawn 1, nine saves
   const d = png.decodePng(strip.renderPulseStrip(pulseFixture({ buckets: b, events: 10 }), { dark: false }).buffer);
-  const h = (i) => { let n = 0; for (let y = 0; y < d.height; y++) if (pixel(d, i * PITCH, y)[3] > 0) n++; return n; };
-  eq([h(0), h(1)], [12, 12], 'a nine-save cell is exactly as TALL as a one-save cell — height is not a count');
-  ok(JSON.stringify(pixel(d, 0, 4)) !== JSON.stringify(pixel(d, PITCH, 4)),
-    'but it is a different COLOUR, so the difference survives into the pixels');
+  const h = (i) => { let n = 0; for (let y = 0; y < strip.AXIS_Y; y++) if (pixel(d, i * PITCH, y)[3] > 0) n++; return n; };
+  eq([h(0), h(1)], [strip.barHeightPoints(1), strip.barHeightPoints(9)],
+    `a nine-save cell is TALLER than a one-save cell (${h(1)}pt against ${h(0)}pt) — the height IS the count`);
+  ok(h(1) > h(0), 'CONTROL — strictly taller, so the comparison above is not two equal numbers agreeing');
+  eq(pixel(d, 0, strip.AXIS_Y - 1).slice(0, 3), pixel(d, PITCH, strip.AXIS_Y - 1).slice(0, 3),
+    'and they are the SAME colour — one hue for every bar, because the count left the palette entirely');
 
   // Untrusted input degrades, never throws.
   eq(strip.pulseCells(pulseFixture({ buckets: [null, 'x', -4, 2] })).map((c) => c.state),
@@ -426,9 +567,17 @@ section('§6 cadence is in the ramp, is capped, and never claims more');
   ok(words.includes('save'), 'CONTROL: it does say "save", so the scan is looking at real text');
   // The legend names SHAPES, not only colours — a legend reading "green means
   // saves" is useless to the viewer who most needs it.
+  // REVISED WORDING, SAME RULE. The legend named the marks it had — "tall green
+  // bar / low grey stub / baseline hairline" — and two of those three marks no
+  // longer exist. It names the marks that DO: bar height, a solid baseline, a
+  // dotted one, and the amber cap.
   const tip = strip.pulseToolTip(pulseFixture({ buckets: b, events: 10 }));
-  ok(/bar/.test(tip) && /stub/.test(tip) && /hairline/.test(tip),
-    'and the legend names the three SHAPES, so it does not depend on the reader seeing colour');
+  ok(/bar height/i.test(tip) && /solid baseline/i.test(tip) && /dotted baseline/i.test(tip),
+    'and the legend names the SHAPES, so it does not depend on the reader seeing colour');
+  ok(/amber cap/i.test(tip) && /took over/i.test(tip),
+    'including the handover cap, which is the one mark that answers what this widget is for');
+  ok(/saves per 12 hours/i.test(tip) && !/activity/i.test(tip),
+    'the legend says "saves per 12 hours" and never "activity" — a cadence, never a productivity reading');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -461,19 +610,54 @@ section('§7 the recency dots: five buckets, three colours, one ink ladder');
   const areas = dots.DOT_ORDER.map((b) => dots.dotInkArea(b));
   ok(areas.every((v, i) => i === 0 || v < areas[i - 1]),
     `the ink ladder is STRICTLY decreasing (${areas.map((a) => a.toFixed(1)).join(' > ')} pt²) — the signal that survives without colour`);
-  ok(dots.DOT_INK.live.stroke === null && dots.DOT_INK.warm.stroke !== null,
-    'LIVE is the only filled disc at full size, so the one state that changes what you do is separable by shape alone');
+  // -- REVISED: rings became SECTORS, so `stroke` became `turns` ---------
+  //
+  // WAS: `live.stroke === null && warm.stroke !== null` — a filled disc against
+  // a ring. Three of the five states were rings differing by 0.5pt of radius,
+  // which is ONE DEVICE PIXEL at 1x, so the ladder existed in the arithmetic
+  // and not on the screen. The disc now DRAINS by quarter turns, and the same
+  // property is asserted over the fraction drawn.
+  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].turns), [1, 0.75, 0.5, 0.25, 1],
+    'the disc drains a quarter at a time, and COLD returns to a solid shape at a smaller radius');
+  ok(dots.DOT_INK.live.turns === 1 && dots.DOT_INK.live.radius > dots.DOT_INK.cold.radius,
+    'LIVE is the only FULL disc at full size, so the one state that changes what you do next is separable by shape alone');
+  ok(dots.DOT_ORDER.slice(0, 4).every((b, i, a) => i === 0 || dots.DOT_INK[b].turns < dots.DOT_INK[a[i - 1]].turns),
+    'and the four sector states are a strictly draining clock, each a whole quadrant apart rather than half a point of radius');
   ok(dots.dotInkArea('cold') < dots.dotInkArea('live') * 0.25,
     `and COLD, which is also filled, is under a quarter of LIVE's area (${dots.dotInkArea('cold').toFixed(1)} against ${dots.dotInkArea('live').toFixed(1)})`);
 
-  // The luminance ladder: a warmer row is a heavier mark, in BOTH themes, even
-  // though "heavier" means darker in one and brighter in the other.
+  // -- REVERSED, AND THIS ONE IS A DELIBERATE WEAKENING OF THE PALETTE ---
+  //
+  // WAS: `hot > mid > cold` in contrast, in both themes, so a warmer row was a
+  // heavier mark. That was the right rule when all five marks were nearly the
+  // same SIZE and colour was doing the ladder's work.
+  //
+  // The sector geometry now carries weight explicitly — 78.5pt² of ink down to
+  // 12.6, a 6:1 range, asserted above and again in section 11 in the ALPHA
+  // CHANNEL, where it survives a viewer who cannot resolve the colours at all.
+  // Requiring a luminance ordering ON TOP of that is a second, far weaker
+  // ladder pointed at the same fact, and it rules out the design system's own
+  // hues for a reason that has stopped applying: in dark, summary-400 (6.43) is
+  // brighter than teal-400 (6.05), and nothing about that makes `today` read
+  // heavier than `warm` when `warm` is drawn with 50% more ink.
+  //
+  // What is required instead is a FLOOR — checked in section 2 for every value
+  // — plus the three tones being genuinely DIFFERENT, so the palette
+  // accelerates the ladder rather than contradicting it.
   for (const theme of ['light', 'dark']) {
     const bg = hex(rgba.MENU_BG[theme]);
     const r = ['hot', 'mid', 'cold'].map((t) => contrast.contrastRatio(hex(dots.DOT_PALETTE[theme][t]), bg));
-    ok(r[0] > r[1] && r[1] > r[2],
-      `${theme}: hot > mid > cold in contrast (${r.map((v) => contrast.round2(v).toFixed(2)).join(' > ')}) — warmth is ink weight in either appearance`);
+    ok(r.every((v) => v >= rgba.CONTRAST_FLOOR_NON_TEXT),
+      `${theme}: all three tones clear the floor (${r.map((v) => contrast.round2(v).toFixed(2)).join(', ')}) — a floor, not an ordering`);
+    eq(new Set(['hot', 'mid', 'cold'].map((t) => dots.DOT_PALETTE[theme][t])).size, 3,
+      `${theme}: and the three tones are three different colours, so the palette accelerates the ink ladder rather than flattening it`);
   }
+  // The INK ladder is the one that has to be monotone, and it is asserted above
+  // from the shipped geometry. Restated here as the replacement for what was
+  // removed, so the section does not merely lose an assertion.
+  ok(dots.dotInkArea('warm') > dots.dotInkArea('today')
+    && dots.dotInkArea('today') > dots.dotInkArea('cool'),
+    'the WEIGHT ladder is carried by ink area, which is theme-independent and colour-independent');
 
   // Every band has words, so the colour is never the only way to learn it.
   for (const b of dots.DOT_ORDER) {
@@ -498,14 +682,25 @@ section('§8 the dots\' pixels, decoded, in both themes');
         `${theme} ${b}: decodes to an ${dots.DOT_POINTS}x${dots.DOT_POINTS} RGBA image`);
       eq(spec.template, false, `${theme} ${b}: and is NOT a template image`);
 
-      // The centre says filled-or-ring, which is the shape signal. This is the
-      // assertion that caught the even-canvas defect: on a 10pt canvas the
-      // centre lands on a pixel CORNER and neither branch of this was true.
+      // -- REVISED: the centre is a COVERAGE ladder, not a binary ------
+      //
+      // WAS: filled-or-hollow, because the marks were a disc and three rings.
+      // A SECTOR covers the centre pixel in proportion to how much of the disc
+      // it draws, so the centre alpha is itself the ladder — and that is a
+      // stronger assertion than the old one, because it distinguishes all four
+      // sector states rather than only disc-versus-ring.
+      //
+      // The even-canvas argument the old assertion was protecting is unchanged
+      // and is asserted below on `cold`: on an even canvas the centre lands on
+      // a pixel CORNER and the smallest filled dot has no opaque pixel at all.
       const mid = (dots.DOT_POINTS - 1) / 2;
       const centre = pixel(d, mid, mid);
-      const filled = dots.DOT_INK[b].stroke === null;
-      ok(filled ? centre[3] === 255 : centre[3] === 0,
-        `${theme} ${b}: the centre is ${filled ? 'INKED (a disc)' : 'HOLLOW (a ring)'} — the distinction that does not need colour`);
+      if (dots.DOT_INK[b].turns === 1) {
+        eq(centre[3], 255, `${theme} ${b}: a FULL disc has a solid centre pixel — the odd-canvas guarantee`);
+      } else {
+        ok(centre[3] > 0 && centre[3] < 255,
+          `${theme} ${b}: a sector covers its centre pixel PARTIALLY (alpha ${centre[3]}), in proportion to the fraction drawn`);
+      }
 
       // EVERY inked pixel carries the shipped RGB; only alpha varies, because
       // `paintShape` writes the colour and puts coverage in alpha alone. That
@@ -529,6 +724,15 @@ section('§8 the dots\' pixels, decoded, in both themes');
       seen.add(d.data.toString('base64'));
     }
     eq(seen.size, 5, `${theme}: all five dots are DIFFERENT images — none of the five states renders as another`);
+
+    // THE CENTRE-COVERAGE LADDER, over the four sector states. This is the
+    // draining clock, measured in decoded pixels rather than asserted from the
+    // geometry that produced it.
+    const mid = (dots.DOT_POINTS - 1) / 2;
+    const centres = ['live', 'warm', 'today', 'cool'].map(
+      (b) => pixel(png.decodePng(dots.renderRecencyDot(b, { dark }).buffer), mid, mid)[3]);
+    ok(centres.every((v, i) => i === 0 || v < centres[i - 1]),
+      `${theme}: the centre coverage drains strictly (${centres.join(' > ')}) — the disc emptying, in real pixels`);
   }
 
   // CONTROL on that set comparison: the same bucket twice IS one image.
@@ -548,18 +752,40 @@ section('§9 1x and 2x are one drawing at two resolutions');
 {
   const s = strip.renderPulseStrip(mixedPulse(), { dark: true });
   const d1 = png.decodePng(s.buffer), d2 = png.decodePng(s.buffer2x);
-  eq([d1.width, d1.height], [55, 14], 'the strip is 55 x 14 points at 1x — NARROWER than the 83 x 11 it replaces, and taller');
-  eq([d2.width, d2.height], [110, 28], 'and exactly double at 2x');
-  eq([s.widthPoints, s.heightPoints], [55, 14], 'and it DECLARES the 1x size, which is what Electron draws it at');
+  eq([d1.width, d1.height], [55, 15], 'the strip is 55 x 15 points at 1x — the extra point over 14 is the day ruler');
+  eq([d2.width, d2.height], [110, 30], 'and exactly double at 2x');
+  eq([s.widthPoints, s.heightPoints], [55, 15], 'and it DECLARES the 1x size, which is what Electron draws it at');
   ok(!s.buffer.equals(s.buffer2x), 'the two buffers are different bytes');
 
-  // Same drawing: the 2x image at (2x, 2y) is the 1x image at (x, y), for every
-  // pixel of a mark that has no antialiased rim.
-  let matched = 0;
+  // -- REVISED: ONE ROW IS DELIBERATELY NOT SCALED, AND IT IS THE POINT --
+  //
+  // WAS: every 1x pixel reproduced at (2x, 2y), with no exceptions. That held
+  // while every mark was a point-sized rectangle. The UNKNOWN axis is dashed in
+  // DEVICE PIXELS — one on, one off, at both scales — because a point-based
+  // dash becomes 2-on-2-off at 2x, which at this size reads as a slightly
+  // lighter SOLID line rather than as a dotted one, and the whole distinction
+  // it carries would evaporate on exactly the displays most people have.
+  //
+  // So the identity is asserted everywhere it should hold, the exception is
+  // MEASURED rather than waved through, and it is required to be confined to
+  // the axis row under unknown cells.
+  const cells1x = strip.drawnCells(mixedPulse());
+  const dottedX = new Set();
+  cells1x.forEach((c, i) => {
+    if (c.state !== 'unknown') return;
+    for (let x = i * PITCH; x < i * PITCH + PITCH && x < d1.width; x++) dottedX.add(x);
+  });
+  ok(dottedX.size > 8, `CONTROL — the fixture really has a dotted region (${dottedX.size}px), so the exception below is exercised`);
+  let matched = 0, mismatchesOutside = 0, mismatchesInDash = 0;
   for (let y = 0; y < d1.height; y++) for (let x = 0; x < d1.width; x++) {
-    if (JSON.stringify(pixel(d1, x, y)) === JSON.stringify(pixel(d2, x * 2, y * 2))) matched++;
+    if (JSON.stringify(pixel(d1, x, y)) === JSON.stringify(pixel(d2, x * 2, y * 2))) { matched++; continue; }
+    if (y === strip.AXIS_Y && dottedX.has(x)) mismatchesInDash++;
+    else mismatchesOutside++;
   }
-  eq(matched, d1.width * d1.height, 'and every 1x pixel is reproduced at (2x, 2y) — one drawing, two resolutions');
+  eq(mismatchesOutside, 0,
+    `every 1x pixel outside the dashed axis is reproduced at (2x, 2y) — one drawing, two resolutions (${matched} matched)`);
+  ok(mismatchesInDash > 0,
+    `and the ${mismatchesInDash} that differ are ALL in the dashed axis row, where the texture is one DEVICE pixel at both scales by design`);
 
   for (const b of dots.DOT_ORDER) {
     const spec = dots.renderRecencyDot(b, { dark: false });
@@ -569,9 +795,19 @@ section('§9 1x and 2x are one drawing at two resolutions');
     // A circle is antialiased, so pixel identity is not the right check; the
     // CENTRE is, because it is either fully inside the mark or fully outside it
     // at both resolutions.
-    const m1 = (dots.DOT_POINTS - 1) / 2, m2 = dots.DOT_POINTS - 1;
-    eq(pixel(e1, m1, m1)[3] === 255, pixel(e2, m2, m2)[3] === 255,
-      `${b}: and its centre is filled-or-hollow identically at both resolutions`);
+    // REVISED: a single centre pixel is the wrong probe for a sector, because
+    // at 2x the pixel nearest the centre lies wholly inside ONE quadrant and is
+    // therefore all-or-nothing where the 1x pixel straddles four. The TOTAL INK
+    // is the scale-invariant property, and it is the one the ladder is built
+    // on: 2x must carry about four times the coverage of 1x.
+    const coverage = (d) => {
+      let sum = 0;
+      for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) sum += pixel(d, x, y)[3];
+      return sum / 255;
+    };
+    const ratio = coverage(e2) / coverage(e1);
+    ok(ratio > 3.7 && ratio < 4.3,
+      `${b}: the 2x drawing carries ${ratio.toFixed(2)}x the ink of the 1x one — one drawing at two resolutions, not two that look alike`);
   }
 
   ok(s.buffer.length < 4096 && s.buffer2x.length < 8192,
@@ -610,9 +846,11 @@ section('§11 COLOUR DISCARDED — every state readable in the alpha channel alo
 // If this section were hard to write, that would itself be the finding. It was
 // not, because the shape ladder was designed in before the palette was.
 {
+  // Bars and axis only — see section 4 for why the global day ruler is not a
+  // property of a cell and must not enter a cell-versus-cell comparison.
   const alphaOnly = (d, i) => {
     const out = [];
-    for (let y = 0; y < d.height; y++) {
+    for (let y = 0; y <= strip.AXIS_Y; y++) {
       for (let x = i * PITCH; x < i * PITCH + strip.CELL_POINTS; x++) out.push(pixel(d, x, y)[3]);
     }
     return out.join(',');
@@ -677,8 +915,8 @@ section('§12 the merge, and the width budget it was bought with');
   eq(strip.drawnCells(pulseFixture()).length, 14, 'so 14 cells are drawn');
   eq(strip.renderPulseStrip(pulseFixture(), { dark: false }).widthPoints, 55,
     'which is 55pt — against the 83pt it replaces, a 34% saving');
-  eq([strip.CELL_POINTS * (strip.HEIGHT_POINTS - 2 * strip.BAR_TOP), 2 * 9], [36, 18],
-    'and an ACTIVE cell carries 36pt² of ink against the old 18 — twice, in two-thirds the width');
+  eq(strip.CELL_POINTS * strip.BAR_MAX_POINTS, 36,
+    'and a FULL ACTIVE cell carries 36pt² of ink against the 18 of the 83pt strip — twice, in two-thirds the width');
 
   // THE MERGE FAILS SAFE. A bucket count with no useful divisor must draw MORE
   // cells, never fold the week into two.
@@ -697,8 +935,11 @@ section('§12 the merge, and the width budget it was bought with');
   eq(cells[5].state, 'empty',
     'but one straddling the boundary is KNOWN — the reading that claims less about how young the store is');
   const b2 = new Array(28).fill(0); b2[11] = 3;
+  // REVISED IN TWO PLACES, both consequences of shipped changes rather than of
+  // this assertion: the cell record gained `changed`, and three saves is now
+  // the SECOND rung rather than the third (the ladder is log-ish).
   eq(strip.drawnCells(pulseFixture({ buckets: b2, firstKnownBucket: 11 }))[5],
-    { index: 5, state: 'active', count: 3, level: 3 },
+    { index: 5, state: 'active', count: 3, level: 2, changed: false },
     'and a straddling cell carries the SUM of its known sources, at the rung that sum earns');
 
   // THE LEGEND FOLLOWS THE PICTURE. A tooltip saying "per 6 hours" beside a

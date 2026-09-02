@@ -41,6 +41,10 @@
  *   §17  sections, the two pictures, and the items that are now reachable
  *   §18  main.js wiring for the theme and the images — source scan, weak
  *   §19  cross-file pins against the modules that DRAW the two pictures
+ *   §20  the topic-first budget, over three fixtures including the READER'S
+ *   §21  line two: whole-token dropping, and the two warnings that outrank prose
+ *   §22  the per-row submenu, the headline's second line, and the new notice
+ *   §23  main.js wiring for the submenu — source scan, weak like §11
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
  *
@@ -117,7 +121,14 @@ try {
   process.exit(1);
 }
 
-const NOOPS = { onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {} };
+const NOOPS = {
+  onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {},
+  // Required since the per-row submenu landed: every handler is refused at
+  // BUILD time rather than at click time, so a suite that omits one gets an
+  // exception here instead of a menu that silently does nothing in front of a
+  // user weeks later.
+  onRowAction() {},
+};
 const NOW = new Date('2026-08-31T14:32:00');
 
 /** The absolute timestamp a row of the given age carries, as the data layer
@@ -142,15 +153,23 @@ function summary(over = {}) {
     ok: true,
     lastSave: { project: 'alpha', scope: 'main', writtenAt: atAge(30), writtenAgeSeconds: 30, ageSource: 'agent' },
     scopes: [
+      // `isThisHost` rides beside `isThisMachine` because the REAL producer
+      // emits both on every row (`...ident` in tray-summary.js), and the two
+      // answer different questions — which INSTALLATION, and which COMPUTER.
+      // A fixture carrying only the first is the writer's view, which is the
+      // one configuration in which the reader's-view defect is invisible.
       { project: 'alpha', scope: 'main', machine: 'laptop-a1b2c3', harness: 'harness-one',
+        model: 'opus-4-6',
         writtenAt: atAge(30), writtenAgeSeconds: 30, ageSource: 'agent', headline: 'wired the tray bounds',
-        isThisMachine: true, harnessShared: false },
+        isThisMachine: true, isThisHost: true, harnessShared: false },
       { project: 'alpha', scope: 'research', machine: 'laptop-a1b2c3', harness: 'harness-two',
+        model: 'opus-4-6',
         writtenAt: atAge(1080), writtenAgeSeconds: 1080, ageSource: 'agent', headline: 'redid the section',
-        isThisMachine: true, harnessShared: true },
+        isThisMachine: true, isThisHost: true, harnessShared: true },
       { project: 'beta', scope: 'main', machine: 'studio-9f8e7d', harness: 'harness-two',
+        model: 'opus-4-6',
         writtenAt: atAge(10800), writtenAgeSeconds: 10800, ageSource: 'file', headline: 'rewrote the serialiser',
-        isThisMachine: false, harnessShared: false },
+        isThisMachine: false, isThisHost: false, harnessShared: false },
     ],
     brief: null,
     remote: null,
@@ -244,10 +263,37 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
 
   // THE SLOT WITH TWO MEANINGS. On a local row it holds the harness; on a
   // remote row it holds the machine.
-  ok(m.rows[0].label.includes('harness-one'), 'a LOCAL row shows the harness');
-  ok(!m.rows[0].label.includes('laptop'), 'a LOCAL row does NOT show the machine — it is constant, and therefore noise');
-  ok(m.rows[2].label.includes('studio'), 'a REMOTE row shows the machine');
-  ok(!m.rows[2].label.includes('harness-two'), 'a REMOTE row does NOT show the harness — that is the other computer\'s business');
+  // ── REVERSED: THE SLOT MOVED TO LINE TWO ─────────────────────────────
+  //
+  // WAS: these four read `m.rows[N].label`. Line one now carries the scope
+  // topic and the age and NOTHING ELSE, because the photograph that produced
+  // this release showed an identity clipped to `project…` beside an intact
+  // 22-character machine name — the tail was composed at full length and the
+  // identity got the remainder. The slot itself is unchanged in MEANING; it is
+  // on the SUBLABEL, which macOS draws in a smaller face and which therefore
+  // has the room the label did not.
+  ok(m.rows[0].sublabel.includes('harness-one'), 'a LOCAL row shows the harness — on line two');
+  ok(!m.rows[0].label.includes('harness-one'), '…and never on line one, which is identity and time only');
+  ok(!m.rows[0].sublabel.includes('laptop'), 'a LOCAL row does NOT show the machine — it is constant, and therefore noise');
+  ok(m.rows[2].sublabel.includes('studio'), 'a REMOTE row shows the machine');
+  // ── REVERSED, AND THE ARGUMENT IS THE LAYOUT ─────────────────────────
+  //
+  // WAS: a remote row must NOT name a harness, because the slot held EITHER a
+  // harness OR a machine, so a harness on a foreign row read as "that tool is
+  // running HERE".
+  //
+  // Line two is not one slot; it is a list, and the machine is IN it. `opencode
+  // · talis-mac-mini` cannot be misread as a local tool, because the computer
+  // it ran on is the very next token. What the old rule protected against was
+  // an AMBIGUITY that the layout has removed, and continuing to suppress the
+  // harness would now drop a real fact for a reason that has stopped applying.
+  //
+  // The rule that survives verbatim: the machine on a foreign row is decided by
+  // `isThisHost` and is never dropped while the rows disagree about it.
+  ok(m.rows[2].sublabel.includes('harness-two'),
+    'a REMOTE row may ALSO name its harness, because the machine beside it removes the ambiguity that rule protected against');
+  ok(m.rows[2].sublabel.indexOf('studio') < m.rows[2].sublabel.indexOf('harness-two') === false,
+    '…and the harness leads, with the machine after it — the order the drop rule ranks them in');
 
   // THE PRECONDITION THE FOUR ASSERTIONS ABOVE NOW CARRY, made explicit so a
   // future fixture edit cannot make them vacuous in silence. Since the width
@@ -737,14 +783,29 @@ section('§6 the menu template: order, the always-present items, and Quit');
     ok(threw, `a missing ${missing} is refused at build time, not weeks later in front of the user`);
   }
 
-  // Rows are actionable and carry the click.
-  const rowItems = items.filter((i) => typeof i.id === 'string' && i.id.startsWith('tray-row-'));
-  eq(rowItems.length, 3, 'every row is a menu item');
-  ok(rowItems.every((i) => typeof i.click === 'function'), 'and every one of them is clickable');
+  // ── REVERSED, and the reason is the per-row submenu ──────────────────
+  //
+  // WAS: `rowItems.length === 3` over the FLATTENED template, and
+  // `every(i => typeof i.click === 'function')`. Both were correct before rows
+  // grew submenus and both are wrong after.
+  //
+  //  - `flattenTrayMenu` RECURSES, so each row now contributes itself plus a
+  //    header and four actions — 18 nodes whose ids start with `tray-row-`, not
+  //    3. The count is taken over the TOP LEVEL of the template instead, which
+  //    is the thing "every row is a menu item" was ever about.
+  //  - A submenu PARENT deliberately carries no `click`: on macOS a click on it
+  //    opens the submenu, and a handler beside that is one nobody can predict.
+  //    `Open in The Curator` is the first submenu item and carries it.
+  const rowItems = t.filter((i) => typeof i.id === 'string' && /^tray-row-\d+$/.test(i.id));
+  eq(rowItems.length, 3, 'every row is a TOP-LEVEL menu item');
+  ok(rowItems.every((i) => typeof i.click !== 'function'),
+    'and NONE of them carries a click — a submenu parent opens its submenu, so a handler beside that would fire unpredictably');
+  ok(rowItems.every((i) => Array.isArray(i.submenu) && i.submenu.length === menu.ROW_ACTIONS.length + 1),
+    'each row carries a submenu of its four actions under a header naming the work-stream');
   {
     let got = null;
     const t2 = menu.buildTrayMenuTemplate(m, { ...NOOPS, onOpenScope: (r) => { got = r; } });
-    menu.flattenTrayMenu(t2).find((i) => i.id === 'tray-row-2').click();
+    menu.flattenTrayMenu(t2).find((i) => i.id === menu.rowActionId('tray-row-2', menu.ID_ROW_OPEN)).click();
     eq(got && [got.project, got.scope], ['beta', 'main'],
       'clicking a row hands the shell THAT row — the third one, not the first');
   }
@@ -1306,8 +1367,12 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
     'CONTROL — a genuinely different installation id is a different identity');
   eq(model.installIdPart('laptop-a1b2c3'), 'a1b2c3', 'the id is the WHOLE trailing segment, not a four-character display suffix');
   eq(model.installIdPart('build-box'), null, 'a hostname whose last word is not hex carries no id');
-  eq(model.machineIdentityKey({ machine: 'build-box', isThisMachine: true }), '@this',
-    'and with no id on either side the only evidence left is isThisMachine');
+  eq(model.machineIdentityKey({ machine: 'build-box', isThisMachine: true }), model.THIS_MAC_KEY,
+    'and with no id on either side the producer\'s two identity facts are the only evidence left');
+  eq(model.machineIdentityKey({ machine: 'build-box', isThisHost: true }), model.THIS_MAC_KEY,
+    '…either of them, because they fail in opposite directions and neither is sufficient alone');
+  eq(model.machineIdentityKey({ machine: 'build-box' }), 'name:build-box',
+    'CONTROL — with NEITHER fact it is a foreign folder, so the two assertions above are not vacuous');
 
   const reader = model.buildTrayModel(readerStore(), { now: NOW });
   eq(reader.rows.length, 5, 'CONTROL — five rows were built, so the assertions below are not vacuous');
@@ -1334,8 +1399,13 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
       harness: 'claude-code', writtenAt: atAge(400), writtenAgeSeconds: 400,
       ageSource: 'agent', headline: 'h', isThisMachine: false },
   ]), { now: NOW });
-  ok(twoMachines.rows.some((r) => /studio/.test(r.label)),
-    'a genuinely second installation brings the machine name straight back');
+  // REVERSED ONLY IN WHICH LINE IT READS: the machine moved to the sublabel
+  // with every other provenance token. The RULE — a second computer brings the
+  // name back — is unchanged and is the point of the assertion.
+  ok(twoMachines.rows.some((r) => /studio/.test(r.sublabel)),
+    'a genuinely second computer brings the machine name straight back — on line two');
+  ok(twoMachines.rows.every((r) => !/studio|laptop|notebook/.test(r.label)),
+    '…and never onto line one, which no amount of provenance may reach');
   ok(twoMachines.rows.filter((r) => r.showsMachine).length === twoMachines.rows.length,
     '…on every row, because "which computer" is only answerable if every row answers it');
 
@@ -1562,13 +1632,33 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   // honesty caveat — is 23, so it was cut back to `4 days known…`. The strip
   // folded to 55 points and the budget became 25. This asserts the ARITHMETIC
   // rather than the outcome, so it stays honest if the strip changes again.
-  const longestReading = '4 days known · 69 saves';
-  ok(longestReading.length <= model.labelBudgetChars(55),
-    `the producer's longest reading (${longestReading.length} chars) fits the ${model.labelBudgetChars(55)}-character budget a 55pt strip leaves`);
-  ok(longestReading.length > model.labelBudgetChars(83),
-    `CONTROL: at the strip's earlier 83 points it did NOT (${model.labelBudgetChars(83)} chars), so the budget really is what the picture leaves over`);
-  eq(model.clipClauses(longestReading, model.labelBudgetChars(55)), longestReading,
-    '…and it therefore passes through the clause clip untouched');
+  // ── REVISED, AND THE ANSWER MOVED: the reading grew a clause ─────────
+  //
+  // WAS: the producer's longest form was `4 days known · 69 saves` (23) and the
+  // control was that the earlier 83-point strip did not leave room for it. At
+  // 285 points an 83-point strip leaves 24, so that control can no longer fail
+  // and would have passed vacuously for the rest of its life.
+  //
+  // The real question also changed, because `· N tools` is a new clause and it
+  // is the LAST one — so it is the first thing `clipClauses` drops. Both cases
+  // are asserted rather than one being hidden behind the other.
+  const ordinary = 'Save pulse · 7 days · 69 saves · 2 tools';
+  const youngest = 'Save pulse · 4 days known · 69 saves · 2 tools';
+  const stripBudget = model.labelBudgetChars(55);
+  const fits = (t) => model.stripPulseNoun(t).length <= stripBudget;
+  ok(fits(ordinary),
+    `the ordinary reading with a tools clause (${model.stripPulseNoun(ordinary).length} chars) fits the ${stripBudget}-character budget a 55pt strip leaves`);
+  ok(!fits(youngest),
+    `CONTROL: the young-store form (${model.stripPulseNoun(youngest).length}) does NOT, so the budget is a real constraint and not decoration`);
+  // AND WHEN IT DOES NOT FIT, WHAT GOES IS A WHOLE CLAUSE. `69 s…` would be a
+  // DIFFERENT FACT — plausibly `69 seconds` — which is worse than less of one.
+  const clipped = model.clipClauses(model.stripPulseNoun(youngest), stripBudget);
+  ok(clipped.endsWith('…') && !/\d+ s…/.test(clipped),
+    `…and it is cut on a clause boundary: "${clipped}"`);
+  ok(clipped.includes('4 days known'),
+    '…keeping the honesty caveat, which is the clause a reader most needs');
+  eq(model.clipClauses(model.stripPulseNoun(ordinary), stripBudget), model.stripPulseNoun(ordinary),
+    '…while the form that DOES fit passes through the clause clip untouched');
 
   ok(!/^Save pulse/.test(pulseItem.label || ''),
     'the constant noun comes off the label, because the section header above it now carries that word');
@@ -1728,6 +1818,561 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
   } else {
     ok(pins >= 2, `CONTROL: ${pins} cross-file pins actually executed, so this section is not passing on an absent module`);
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§20 the topic-first budget, over three fixtures including the READER\'S');
+//
+// ── THE PHOTOGRAPH THIS SECTION EXISTS FOR ─────────────────────────────────
+//
+// The maintainer's own menu rendered `project…` — eight characters of a scope
+// name — beside an intact 22-character machine tag. The arithmetic was not
+// subtle: the old composer built the TAIL at full length and handed the
+// identity whatever was left, floored at 8. A 12-character harness survived
+// because it was IN the tail; the scope was annihilated because it was not.
+//
+// Line one is now identity and time, and nothing else may stand there. This
+// section measures that over three row sets, and the third is the one that
+// matters most: every tray fixture before v3.38.0 took the WRITER'S view, which
+// is the single configuration in which the reader's-view defect is invisible.
+{
+  const at = (sec) => new Date(NOW.getTime() - sec * 1000).toISOString();
+  const R = (over) => ({
+    project: 'projects', machine: 'alpha-macbook-pro-a1b2c3', harness: 'harness-one',
+    model: 'demo-4-6', ageSource: 'agent', isThisMachine: true, isThisHost: true, ...over,
+  });
+  const build = (scopes) => model.buildTrayModel({ ok: true, scopes, total: scopes.length }, { now: NOW });
+  const widest = (m) => Math.max(...m.rows.map((r) => r.label.length));
+
+  // ── FIXTURE 1: the real rows, reconstructed from the photograph ────────
+  const REAL = [
+    R({ scope: 'session-2026-09-02-tray-widget-redesign', writtenAt: at(600),
+      headline: 'Reworked the pulse strip geometry and the row budget' }),
+    R({ scope: 'session-2026-09-01-save-kind-verdict', writtenAt: at(18 * 3600),
+      harness: 'harness-two', previousHarness: 'harness-one', model: 'other-3-pro',
+      machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: false,
+      headline: 'classifySaveNotes gained a fifth verdict' }),
+    R({ scope: 'session-2026-08-30-design-conformance-pre-native', writtenAt: at(18.5 * 3600),
+      machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: false,
+      headline: 'Design conformance pass before the native shell' }),
+    R({ scope: 'session-2026-08-29-installer-gate', writtenAt: at(3 * 86400),
+      machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: false, kind: 'trimmed',
+      headline: 'assertLoadable now names the failure mode' }),
+    R({ scope: 'session-2026-08-28-product-overview', writtenAt: at(4 * 86400),
+      machine: 'alpha-notebook-9f3c1a', isThisMachine: false,
+      headline: 'Wrote docs/product-overview.md end to end' }),
+  ];
+  const real = build(REAL);
+  eq(real.rows.length, 5, 'CONTROL — five real rows were built');
+  ok(widest(real) <= model.ROW_LABEL_CHARS,
+    `real rows: the widest label is ${widest(real)}, inside the ${model.ROW_LABEL_CHARS}-character budget`);
+  ok(real.rows.every((r) => !/macbook|notebook|harness-|demo-4-6|projects/.test(r.label)),
+    'and NO provenance token of any kind reached line one');
+
+  // THE DEFECT, MEASURED, and deliberately measured over the READER'S rows
+  // below rather than these: `isThisMachine` was FALSE on every one of the
+  // maintainer's rows, so every one of them printed a machine name, and that is
+  // the configuration the photograph was taken in. Reconstructed here — tail
+  // first at full length, identity gets the remainder, floored at 8, at the old
+  // 32-character budget — so the improvement is measured against what shipped
+  // rather than against a memory of it.
+  const legacyLabel = (raw, names, ageText) => {
+    const tail = ' — ' + (names.get(raw.machine) || raw.machine) + ' · ' + ageText;
+    const identity = model.scopeCandidates(raw.scope)[0];
+    const room = 32 - tail.length;              // ROW_LABEL_CHARS at 260pt / 11pt dot
+    return (identity.length <= room ? identity : model.clip(identity, Math.max(8, room))) + tail;
+  };
+
+  // ── FIXTURE 2: adversarial — 2 projects x 2 harnesses x 2 machines ─────
+  const ADV = [
+    R({ project: 'alpha', scope: 'session-2026-09-02-tray-widget-redesign', writtenAt: at(120),
+      headline: 'Row budget rewritten to lead with the topic' }),
+    R({ project: 'alpha', scope: 'session-2026-09-02-mcp-resume-prompt', writtenAt: at(41 * 60),
+      harness: 'harness-two', model: 'other-3-pro', headline: 'Drafted the resume-prompt copy' }),
+    R({ project: 'beta', scope: 'session-2026-09-01-webhook-retries', writtenAt: at(6 * 3600),
+      machine: 'buildbox-9f31aa', isThisMachine: false, isThisHost: false,
+      harness: 'harness-three', model: 'third-4-6',
+      headline: 'Retry budget lands; idempotency keys still open' }),
+    R({ project: 'beta', scope: 'session-2026-08-31-settlement-reconciliation', writtenAt: at(2 * 86400),
+      machine: 'studio-c40b17', isThisMachine: false, isThisHost: false, ageSource: 'file',
+      harness: 'harness-four', model: 'other-3-flash', headline: 'Settlement reconciliation spike' }),
+    R({ project: 'alpha', scope: 'session-2026-08-30-design-conformance-pre-native', writtenAt: at(3 * 86400),
+      machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: false, headline: 'Design conformance pass' }),
+  ];
+  const adv = build(ADV);
+  eq(adv.rows.length, 5, 'CONTROL — five adversarial rows were built');
+  ok(widest(adv) <= model.ROW_LABEL_CHARS,
+    `adversarial rows: the widest label is ${widest(adv)}, still inside the budget — with an 18-character age on one of them`);
+  ok(adv.rows.some((r) => r.ageText.startsWith('changed ')),
+    'CONTROL — one row really does carry the long "changed N days ago" form, which is the worst case for the budget');
+  ok(adv.rows.every((r) => r.label.endsWith(r.ageText)),
+    'the AGE is never clipped on any row — it is the one token the widget exists to show');
+
+  // ── FIXTURE 3: THE READER'S VIEW, and it is REQUIRED ───────────────────
+  //
+  // The app's own installation id is NOT the id its agents write under. On this
+  // configuration `isThisMachine` is false on every row, which is exactly the
+  // configuration v3.38.0 was judged in and no fixture had ever taken.
+  const READER = REAL.map((r) => ({ ...r, isThisMachine: false }));
+  const reader = build(READER);
+  eq(reader.rows.length, 5, 'CONTROL — five reader-view rows were built');
+  ok(reader.rows.every((r) => r.isThisMachine === false),
+    'CONTROL — and every one of them is a FOREIGN installation, which is the whole point of this fixture');
+  ok(reader.rows.some((r) => r.isThisHost === true),
+    'CONTROL — while at least one is this HOST, which is the distinction that rescues it');
+  eq(reader.rows.map((r) => r.showsMachine), [false, false, false, false, false],
+    'NO row names a machine: one computer, two installations, and `isThisHost` is what says so');
+  ok(widest(reader) <= model.ROW_LABEL_CHARS,
+    `reader's view: the widest label is ${widest(reader)} — the same budget, from the side that reads it`);
+  eq(widest(reader), widest(real),
+    'and the two views measure IDENTICALLY, which is the property v3.38.0 did not have');
+
+  // ── THE TWO-INSTALLATION CASE, WHICH IS WHAT `localIds` IS FOR ────────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN. Replacing `localInstallIds`
+  // with an empty set, and deleting the `localIds` arm of `machineIdentityKey`,
+  // both passed every fixture in this file — because no fixture had TWO
+  // DIFFERENT installation ids that are both this Mac. That is the maintainer's
+  // own configuration (an installed .app and a repo checkout, one computer) and
+  // it is the whole reason the arm exists.
+  //
+  // The observable is the COLLISION RESOLVER: two rows for one scope at one
+  // coarse age. If the menu thinks they are one computer it separates them by a
+  // FINER AGE; if it thinks they are two, it puts machine names back on line
+  // one — reasserting a computer that does not exist, on the two widest lines
+  // in the menu. That is the v3.37.0 defect, and this is the fixture for it.
+  const twoInstalls = build([
+    R({ scope: 'session-2026-08-30-shared', writtenAt: at(122400),
+      machine: 'alpha-macbook-pro-acb035', isThisMachine: false, isThisHost: true, headline: 'h' }),
+    R({ scope: 'session-2026-08-30-shared', writtenAt: at(129600),
+      machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: true, isThisHost: true, headline: 'h' }),
+  ]);
+  eq(new Set(twoInstalls.rows.map((r) => model.installIdPart(r.machine))).size, 2,
+    'CONTROL — the two rows really do carry two DIFFERENT installation ids');
+  eq(new Set(twoInstalls.rows.map((r) => model.machineIdentityKey(
+    r, model.localInstallIds(twoInstalls.rows)))).size, 1,
+    '…and both resolve to ONE identity, because both are this Mac');
+  ok(twoInstalls.rows.every((r) => !/acb035|9f3c1a|macbook/.test(r.label)),
+    'so NEITHER row names a machine — one computer is not two');
+  ok(twoInstalls.rows[0].label !== twoInstalls.rows[1].label,
+    'the two rows still read differently, which is the whole reason the resolver runs');
+  ok(twoInstalls.rows.every((r) => r.agePrecision === 'hour'),
+    '…and they were separated by escalating the AGE, not by naming hardware');
+  // AND THE CONTROL THAT MAKES IT NON-VACUOUS: with the ids NOT marked local,
+  // the same key really does split them, which is what the mutation did.
+  eq(new Set(twoInstalls.rows.map((r) => model.machineIdentityKey(r))).size, 2,
+    'CONTROL — with no localIds the same two rows are TWO identities, so the arm above is doing real work');
+
+  // AND THE BEFORE-AND-AFTER, on those same reader rows.
+  const names = model.shortMachineNames(READER.map((r) => r.machine));
+  const legacy = reader.rows.map((r) => legacyLabel(
+    READER.find((x) => x.scope === r.scope && x.machine === r.machine), names, r.ageText));
+  const wasWidest = Math.max(...legacy.map((l) => l.length));
+  ok(wasWidest > widest(reader),
+    `the same rows composed the OLD way run to ${wasWidest} characters against ${widest(reader)} now`);
+  ok(legacy.some((l) => l.includes('…')) && reader.rows.every((r) => r.label.length <= model.ROW_LABEL_CHARS),
+    'and the rows whose SCOPE the old arithmetic clipped are inside the budget now without one');
+  ok(legacy.filter((l) => /^\S{1,8}…/.test(l)).length > 0,
+    `CONTROL — the old arithmetic really did clip a scope to its 8-character floor (${legacy.filter((l) => /^\S{1,8}…/.test(l)).length} of ${legacy.length} rows), which is the photograph`);
+
+  // ── NOTHING A BUDGET REMOVED IS UNREACHABLE ────────────────────────────
+  //
+  // Per row, against the RAW input rather than against the model's own copy of
+  // it. This is the absolute rule every lever in this file is held to.
+  let checked = 0;
+  for (const set of [[REAL, real], [ADV, adv], [READER, reader]]) {
+    const [raw, m] = set;
+    for (const r of m.rows) {
+      const src = raw.find((x) => x.scope === r.scope && x.machine === r.machine);
+      ok(r.toolTip.includes(src.machine), `row ${checked}: the full machine folder is in the tooltip`);
+      ok(r.toolTip.includes(src.scope), `row ${checked}: the FULL scope, date prefix and all`);
+      ok(r.toolTip.includes(src.harness), `row ${checked}: the harness`);
+      ok(r.toolTip.includes(src.project), `row ${checked}: the project`);
+      ok(r.toolTip.includes('model: ' + src.model),
+        `row ${checked}: and the EXACT model string, not the family token the label carries`);
+      checked++;
+    }
+  }
+  eq(checked, 15, `all ${checked} rows across three fixtures were checked, so the loop is not vacuous`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§21 line two: whole-token dropping, and the two warnings that outrank prose');
+{
+  const at = (sec) => new Date(NOW.getTime() - sec * 1000).toISOString();
+  const R = (over) => ({
+    project: 'projects', machine: 'laptop-a1b2c3', harness: 'harness-one',
+    model: 'demo-4-6', ageSource: 'agent', isThisMachine: true, isThisHost: true,
+    writtenAt: at(600), headline: 'a reasonably long agent sentence about the work', ...over,
+  });
+  const build = (scopes) => model.buildTrayModel({ ok: true, scopes, total: scopes.length }, { now: NOW });
+
+  // EVERY sublabel is inside the budget, on every fixture in this file.
+  const mixed = build([
+    R({ scope: 'a' }), R({ scope: 'b', harness: 'harness-two', model: 'other-3-pro' }),
+    R({ scope: 'c', project: 'other', machine: 'studio-9f8e7d', isThisMachine: false, isThisHost: false }),
+  ]);
+  ok(mixed.rows.every((r) => r.sublabel.length <= model.MAX_HEADLINE_CHARS),
+    `every sublabel fits the ${model.MAX_HEADLINE_CHARS}-character budget the smaller face buys`);
+
+  // ── TOKENS GO WHOLE, LOWEST PRIORITY FIRST ─────────────────────────────
+  //
+  // `son…` is not a shorter `sonnet-4`; it is a different string, and a reader
+  // cannot tell whether it was shortened or is what the field said.
+  const crowded = build([
+    R({ scope: 'a', project: 'payments-reconciliation', headline: 'x'.repeat(200) }),
+    R({ scope: 'b', project: 'settlement-adapter', harness: 'harness-two', model: 'other-3-pro',
+      machine: 'buildbox-9f8e7d', isThisMachine: false, isThisHost: false, headline: 'y'.repeat(200) }),
+  ]);
+  ok(crowded.rows.every((r) => r.showsProvenance),
+    'CONTROL — both rows really do carry provenance, so the drop assertions below are not about empty lines');
+  ok(crowded.rows.every((r) => r.showsHarness),
+    'under pressure the HARNESS survives on every row — it is the last token to go');
+  ok(crowded.rows.every((r) => !r.showsModel),
+    'and the MODEL is the first to be dropped, because it is interesting and never decisive');
+  ok(crowded.rows.every((r) => r.toolTip.includes('model: ')),
+    'while the tooltip still names it in full, which is what makes dropping it safe');
+  // NO TOKEN IS LEFT AS A FRAGMENT. Measured over the WHO half of the line —
+  // everything before the em dash — because the headline after it is prose and
+  // is legitimately clipped with a visible ellipsis.
+  ok(crowded.rows.every((r) => !r.sublabel.split(' — ')[0].includes('…')),
+    'no token is left as a FRAGMENT — a dropped token leaves nothing behind, and never an ellipsis mid-word');
+  ok(crowded.rows.every((r) => r.sublabel.includes('…')),
+    'CONTROL — the sublabel IS being clipped somewhere, so the assertion above is about where and not about whether');
+
+  // ── THE HANDOVER MARK IGNORES THE DROP-CONSTANT RULE, ON PURPOSE ───────
+  //
+  // Two rows can both END on the same harness while one of them changed hands,
+  // so `showHarness` is false and the token would be dropped — taking the only
+  // evidence of the handover with it.
+  const handover = build([
+    R({ scope: 'a' }),
+    R({ scope: 'b', previousHarness: 'harness-two', writtenAt: at(900) }),
+  ]);
+  ok(handover.rows.every((r) => r.harness === 'harness-one'),
+    'CONTROL — both rows END on the same harness, so the drop-constant rule would remove it');
+  ok(!handover.rows[0].sublabel.includes('harness-one'),
+    'and on the row with no handover it IS removed');
+  ok(handover.rows[1].sublabel.includes('harness-one ← harness-two'),
+    'but the row that changed hands draws the mark anyway — the fact this whole widget exists for');
+  ok(handover.rows[1].toolTip.includes('the save before it came from harness-two'),
+    'with the same fact spelled out in the tooltip, where there is room for a sentence');
+
+  // ── `handoff trimmed`, AND ONLY FOR `trimmed` ──────────────────────────
+  //
+  // v3.39.0 built five verdicts to say whether a save lost content and the tray
+  // rendered none of them. Only `trimmed` means content did not fit; `clipped`
+  // is a shortened one-line SUMMARY over a handoff stored in full, and badging
+  // it would re-commit the defect that release fixed.
+  const kinds = build([
+    R({ scope: 'a', kind: 'trimmed' }), R({ scope: 'b', kind: 'clipped', writtenAt: at(700) }),
+    R({ scope: 'c', kind: 'complete', writtenAt: at(800) }),
+    R({ scope: 'd', kind: null, writtenAt: at(900) }),
+  ]);
+  ok(kinds.rows[0].sublabel.startsWith(model.SUBLABEL_TRIMMED),
+    'a TRIMMED save is badged, and the badge leads the line');
+  ok(kinds.rows.slice(1).every((r) => !r.sublabel.includes(model.SUBLABEL_TRIMMED)),
+    'and clipped, complete and unknown are all silent — a shortened summary is not lost content');
+  ok(kinds.rows[0].toolTip.includes('part of the handoff was not stored'),
+    'with the tooltip saying what it means rather than leaving two words to be interpreted');
+
+  // ── THE FLOOR: warnings outrank the sentence ───────────────────────────
+  const squeezed = build([
+    R({ scope: 'a', kind: 'trimmed', previousHarness: 'harness-two',
+      harness: 'harness-one', project: 'alpha', headline: 'z'.repeat(200) }),
+    R({ scope: 'b', project: 'beta', harness: 'other', writtenAt: at(700), headline: 'w'.repeat(200) }),
+  ]);
+  ok(squeezed.rows[0].sublabel.includes(model.SUBLABEL_TRIMMED)
+    && squeezed.rows[0].sublabel.includes('←'),
+    'when the line will not hold everything, BOTH warnings stay and the HEADLINE gives way');
+  ok(!squeezed.rows[0].sublabel.includes('zzz'),
+    '…which is what "gives way" means: the agent\'s sentence is not on this row at all');
+  ok(squeezed.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS,
+    '…and the line is still inside its budget');
+  ok(squeezed.rows[0].toolTip.length > squeezed.rows[0].sublabel.length,
+    '…with the tooltip carrying more than the row could');
+
+  // ── AND THE PATHOLOGICAL CASE, STATED RATHER THAN ENGINEERED AROUND ────
+  //
+  // The store caps a harness name at MAX_META_CHARS = 80. Two of those plus the
+  // trimmed badge cannot fit any menu row, and `clipClauses` then drops from the
+  // END — which is where the handover mark is. So a store with absurd harness
+  // names loses the ARROW from the row and keeps it in the tooltip. That is the
+  // honest degradation for an input no real harness produces (the longest in
+  // the wild is `claude-code`, at eleven characters), and it is asserted rather
+  // than left to be discovered.
+  const absurd = build([
+    R({ scope: 'a', kind: 'trimmed', harness: 'h'.repeat(40), previousHarness: 'g'.repeat(40) }),
+    R({ scope: 'b', harness: 'other', writtenAt: at(700) }),
+  ]);
+  ok(absurd.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS,
+    'a pathological harness name never renders unbounded');
+  ok(absurd.rows[0].sublabel.endsWith('…'),
+    '…the clip is VISIBLE, so a reader knows something was dropped');
+  ok(absurd.rows[0].sublabel.startsWith(model.SUBLABEL_TRIMMED),
+    '…the completeness badge is what survives, because it leads the line');
+  ok(absurd.rows[0].toolTip.includes('the save before it came from'),
+    '…and the handover is still reachable, in the tooltip, in a full sentence');
+
+  // The model family is a token, never the raw id.
+  eq(model.familyOfModel('claude-haiku-4-5'), 'haiku-4', 'a vendor prefix is dropped and the generation kept');
+  eq(model.familyOfModel('opus-4-6'), 'opus-4', 'and a bare family keeps its generation');
+  eq(model.familyOfModel('gemini-2.5-flash-lite'), 'gemini-2.5', 'a decimal generation survives intact');
+  eq(model.familyOfModel('anthropic/sonnet-4-6'), 'sonnet-4', 'a vendor PATH prefix is dropped too');
+  eq(model.familyOfModel('claude'), 'claude', 'a single vendor word is NOT shortened to nothing');
+  for (const junk of [undefined, null, 42, '', '   ', {}]) {
+    eq(model.familyOfModel(junk), null, `and ${JSON.stringify(junk) ?? String(junk)} has no family`);
+  }
+  ok(model.familyOfModel('a'.repeat(80)).length <= model.MODEL_LABEL_CHARS,
+    'a pathological model id is capped rather than becoming the whole line');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§22 the per-row submenu, the headline\'s second line, and the new notice');
+{
+  const at = (sec) => new Date(NOW.getTime() - sec * 1000).toISOString();
+  const m = model.buildTrayModel({
+    ok: true, total: 2,
+    lastSave: { project: 'projects', scope: 'main', writtenAt: at(600), ageSource: 'agent',
+      harness: 'harness-one', model: 'demo-4-6' },
+    scopes: [
+      { project: 'projects', scope: 'main', machine: 'laptop-a1b2c3', harness: 'harness-one',
+        model: 'demo-4-6', writtenAt: at(600), ageSource: 'agent', headline: 'h',
+        isThisMachine: true, isThisHost: true },
+      { project: 'projects', scope: 'other', machine: 'studio-9f8e7d', harness: 'harness-two',
+        model: 'demo-4-6', writtenAt: at(60), ageSource: 'agent', headline: 'h2',
+        isThisMachine: false, isThisHost: false },
+    ],
+  }, { now: NOW });
+
+  let lastAction = null;
+  const t = menu.buildTrayMenuTemplate(m, {
+    ...NOOPS, onRowAction: (row, action) => { lastAction = [row.scope, action]; },
+  });
+  const rowItem = t.find((i) => i.id === 'tray-row-0');
+  ok(!!rowItem, 'CONTROL — a row item exists to inspect');
+
+  // THE FOUR IDS ARE A CONTRACT, addressable without matching a label.
+  const ids = rowItem.submenu.filter((i) => i.type !== menu.MENU_HEADER_TYPE).map((i) => i.id);
+  eq(ids, menu.ROW_ACTIONS.map(([a]) => menu.rowActionId('tray-row-0', a)),
+    'the submenu carries exactly the four action ids, in the declared order');
+  eq(rowItem.submenu[0].type, menu.MENU_HEADER_TYPE,
+    'under a HEADER naming the work-stream, because a submenu opens beside five near-identical rows');
+  eq(rowItem.submenu[0].label, m.rows[0].scopeShort, '…and it names THIS row');
+  ok(rowItem.submenu.every((i) => i.type === menu.MENU_HEADER_TYPE || typeof i.click === 'function'),
+    'every action carries a click handler');
+  ok(typeof rowItem.click !== 'function',
+    'while the PARENT carries none — on macOS a click on it opens the submenu, and a handler beside that fires unpredictably');
+
+  // OPEN keeps its own dedicated handler; the other three go through one seam.
+  let opened = null;
+  const t2 = menu.buildTrayMenuTemplate(m, {
+    ...NOOPS, onOpenScope: (r) => { opened = r.scope; },
+    onRowAction: (row, action) => { lastAction = [row.scope, action]; },
+  });
+  // Rows are NEWEST FIRST, so `other` (60s) is row 0 and `main` (600s) is row 1.
+  // Driven on row 1 deliberately: a handler wired to the wrong row is invisible
+  // when the row you test is the first one.
+  eq(m.rows[1].scope, 'main', 'CONTROL — row 1 is the OLDER scope, so a first-row-only wiring bug would show');
+  const sub2 = t2.find((i) => i.id === 'tray-row-1').submenu;
+  sub2.find((i) => i.id === menu.rowActionId('tray-row-1', menu.ID_ROW_OPEN)).click();
+  eq(opened, 'main', 'Open in The Curator reaches onOpenScope with the row it belongs to');
+  for (const action of [menu.ID_ROW_RESUME, menu.ID_ROW_HANDOFF, menu.ID_ROW_REVEAL]) {
+    lastAction = null;
+    sub2.find((i) => i.id === menu.rowActionId('tray-row-1', action)).click();
+    eq(lastAction, ['main', action], `${action} reaches onRowAction with the row AND the action`);
+  }
+
+  // A MISSING onRowAction is refused at BUILD time, like every other handler.
+  {
+    const partial = { ...NOOPS };
+    delete partial.onRowAction;
+    let threw = false;
+    try { menu.buildTrayMenuTemplate(m, partial); } catch (e) { threw = /must be a function/.test(e.message); }
+    ok(threw, 'a missing onRowAction is refused at build time — an optional one is a submenu that silently does nothing');
+  }
+
+  // QUIT IS STILL A ROLE, and the submenu did not open a second door to exit.
+  const flat = menu.flattenTrayMenu(t);
+  const quit = flat.find((i) => i.id === menu.ID_QUIT);
+  eq(quit.role, 'quit', 'Quit is STILL role:quit after the submenu work');
+  eq(typeof quit.click, 'undefined', 'and STILL carries no click handler');
+  ok(flat.filter((i) => i.role).every((i) => typeof i.click !== 'function'),
+    'and no item in the whole template — submenus included — pairs a role with a handler');
+
+  // ── THE HEADLINE'S SECOND LINE ─────────────────────────────────────────
+  eq(m.headline.who, 'harness-one · ' + model.familyOfModel('demo-4-6'),
+    'the headline\'s second line is `harness · model`, not the project and scope the first row already shows');
+  ok(m.headline.who.includes('demo-4') && !m.headline.who.includes('demo-4-6'),
+    '…with the model as its FAMILY token, the exact string being a tooltip fact');
+  const whereItem = flat.find((i) => i.id === menu.ID_HEADLINE_WHERE);
+  eq(whereItem.label, '    ' + m.headline.who, 'and the menu renders it');
+  ok(whereItem.toolTip.includes('projects') && whereItem.toolTip.includes('main'),
+    'with project · scope still reachable, on that item\'s tooltip');
+  // It FALLS BACK rather than vanishing when neither is known.
+  const anon = model.buildTrayModel({
+    ok: true, total: 1,
+    scopes: [{ project: 'p', scope: 's', machine: 'm-a1b2c3', writtenAt: at(60), ageSource: 'agent' }],
+  }, { now: NOW });
+  eq(anon.headline.who, null, 'a save naming neither tool nor model has no second line of its own');
+  ok(anon.headline.where, '…and falls back to project · scope rather than rendering a blank');
+
+  // ── `<machine> saved after this Mac` ───────────────────────────────────
+  const notice = m.notices.find((n) => n.kind === 'newer-elsewhere');
+  ok(!!notice, 'a genuinely foreign row newer than every local one produces the notice');
+  ok(notice.text.startsWith('studio') && /saved after this Mac/.test(notice.text),
+    `and it names the machine: "${notice ? notice.text : ''}"`);
+  ok(notice.full.includes('projects · other'),
+    'with the work-stream on its tooltip, because "which computer" alone is not yet actionable');
+  ok(notice.text.length <= model.PLAIN_LABEL_CHARS, 'and it fits the plain-item budget');
+
+  // IT MUST NEVER FIRE OFF A FILE CLOCK. git rewrites mtime on checkout, so a
+  // file-clock notice would announce "the other computer just saved" at the
+  // moment YOU pulled, every time, forever.
+  const fileClock = model.buildTrayModel({
+    ok: true, total: 2,
+    scopes: [
+      { project: 'p', scope: 'remote', machine: 'studio-9f8e7d', writtenAt: at(60),
+        ageSource: 'file', isThisMachine: false, isThisHost: false, headline: 'h' },
+      { project: 'p', scope: 'local', machine: 'laptop-a1b2c3', writtenAt: at(9000),
+        ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
+    ],
+  }, { now: NOW });
+  eq(fileClock.notices.filter((n) => n.kind === 'newer-elsewhere').length, 0,
+    'a remote row on the FILE clock produces NOTHING — mtime is the moment of the pull, not of the save');
+
+  // AND "AFTER THIS MAC" NEEDS A THIS-MAC TO BE AFTER.
+  const noLocal = model.buildTrayModel({
+    ok: true, total: 1,
+    scopes: [{ project: 'p', scope: 'remote', machine: 'studio-9f8e7d', writtenAt: at(60),
+      ageSource: 'agent', isThisMachine: false, isThisHost: false, headline: 'h' }],
+  }, { now: NOW });
+  eq(noLocal.notices.filter((n) => n.kind === 'newer-elsewhere').length, 0,
+    'and a store with no local agent-clock row produces nothing either — there is no "after"');
+  // ── A SECOND INSTALLATION COUNTS AS LOCAL WHEN DECIDING "AFTER" ──────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN. Swapping the local filter from
+  // `isThisHost` to `isThisMachine` passed everything, because every fixture set
+  // the two together. It is wrong on the maintainer's own store: his newest
+  // saves come from an installation that is NOT the app's, so an
+  // `isThisMachine` filter would ignore them and announce that another computer
+  // had got ahead every time one had merely saved earlier.
+  const secondInstall = model.buildTrayModel({
+    ok: true, total: 3,
+    scopes: [
+      // The other computer, in the middle.
+      { project: 'p', scope: 'remote', machine: 'studio-9f8e7d', writtenAt: at(3600),
+        ageSource: 'agent', isThisMachine: false, isThisHost: false, headline: 'h' },
+      // This Mac, but NOT this installation — and the NEWEST thing in the store.
+      { project: 'p', scope: 'agents', machine: 'laptop-9f3c1a', writtenAt: at(600),
+        ageSource: 'agent', isThisMachine: false, isThisHost: true, headline: 'h' },
+      // This installation, and older than the remote row.
+      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(7200),
+        ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
+    ],
+  }, { now: NOW });
+  eq(secondInstall.notices.filter((n) => n.kind === 'newer-elsewhere').length, 0,
+    'a second INSTALLATION on this Mac counts as this Mac — its save is newer, so no other computer got ahead');
+  ok(secondInstall.rows.some((r) => r.isThisHost && !r.isThisMachine),
+    'CONTROL — the fixture really does carry a this-host, other-installation row');
+  ok(secondInstall.rows.some((r) => !r.isThisHost),
+    'CONTROL — and a genuinely foreign one, so the comparison had two sides to make');
+  // The same store with that row REMOVED does produce the notice, which is what
+  // proves the assertion above is about the row and not about the fixture.
+  const withoutSecond = model.buildTrayModel({
+    ok: true, total: 2,
+    scopes: [
+      { project: 'p', scope: 'remote', machine: 'studio-9f8e7d', writtenAt: at(3600),
+        ageSource: 'agent', isThisMachine: false, isThisHost: false, headline: 'h' },
+      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(7200),
+        ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
+    ],
+  }, { now: NOW });
+  eq(withoutSecond.notices.filter((n) => n.kind === 'newer-elsewhere').length, 1,
+    'CONTROL — drop that row and the notice DOES fire, so the check above can fail');
+
+  // A SECOND INSTALLATION ON THIS MAC IS NOT ANOTHER MAC.
+  const sameMac = model.buildTrayModel({
+    ok: true, total: 2,
+    scopes: [
+      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(60),
+        ageSource: 'agent', isThisMachine: false, isThisHost: true, headline: 'h' },
+      { project: 'p', scope: 'repo', machine: 'laptop-a1b2c3', writtenAt: at(9000),
+        ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
+    ],
+  }, { now: NOW });
+  eq(sameMac.notices.filter((n) => n.kind === 'newer-elsewhere').length, 0,
+    'a second INSTALLATION on this Mac never triggers it — that is the phantom computer this release removes');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§23 main.js wiring for the submenu — source scan, WEAK like §11');
+//
+// `desktop/main.js` cannot be imported, evaluated or run by `npm test`:
+// Electron is deliberately not an offline dependency. Everything below proves
+// a line was WRITTEN and nothing about what it does. That is why the decisions
+// are in `lib/resume-prompt.js` and `src/brain/tray-summary.js`, which the
+// suite executes for real, and why main.js holds only the three Electron calls
+// it cannot give away.
+{
+  const src = read(path.join(DESKTOP, 'main.js'));
+  const code = stripJsComments(src);
+  ok(/function runRowAction/.test(code),
+    'CONTROL — the stripper leaves real code behind (a scan over an empty string passes everything)');
+
+  ok(/onRowAction:\s*\(row, action\)/.test(code), 'the menu is given an onRowAction handler');
+  for (const id of ['ID_ROW_RESUME', 'ID_ROW_HANDOFF', 'ID_ROW_REVEAL']) {
+    ok(new RegExp(`action === ${id}`).test(code), `${id} is dispatched by its exported CONSTANT, not by a retyped string`);
+  }
+  ok(/import \{[^}]*ID_ROW_RESUME[^}]*\} from '\.\/lib\/tray-menu\.js'/.test(code.replace(/\n/g, ' ')),
+    '…and those constants are IMPORTED from tray-menu.js, so a rename cannot leave the shell matching a dead value');
+  ok(/composeResumePrompt|composeHandoffMarkdown/.test(code),
+    'the two composers are imported rather than reimplemented here');
+  ok(/clipboard\.writeText/.test(code), 'clipboard.writeText is the copy call');
+  ok(/shell\.showItemInFolder/.test(code), 'and shell.showItemInFolder is the reveal call');
+  // ── AND BOTH ARE IMPORTED, WHICH THE FIRST DRAFT WAS NOT ─────────────
+  //
+  // `clipboard` was USED and never imported. Node's ESM loader does not resolve
+  // a bare identifier at parse time, so `node --check` passed, every offline
+  // suite passed, and the failure would have been a `ReferenceError` at CLICK
+  // time — in front of the user, in a handler whose catch would have swallowed
+  // it into a Copy that silently did nothing. Found by reading the import line,
+  // not by any assertion, which is why there is now an assertion.
+  const electronImport = (code.match(/import \{([^}]*)\} from 'electron'/) || [])[1] || '';
+  ok(/\bclipboard\b/.test(electronImport),
+    'and `clipboard` is IMPORTED from electron — a used-but-unimported binding fails at click time, not at build time');
+  ok(/\bshell\b/.test(electronImport) && /\bdialog\b/.test(electronImport),
+    '…as are `shell` and `dialog`, the other two the submenu handler reaches for');
+  ok(electronImport.length > 40, 'CONTROL — the import list was really found and is not an empty match');
+
+  // NO SECOND READER. The whole argument for delegating to the store is that
+  // this path ends at a clipboard, and a `readFile` on current.md would reach it
+  // without the read-side sanitiser.
+  // Narrowed to what the rule actually forbids. main.js legitimately reads its
+  // own config and its own package.json; what it must never do is open a
+  // WORKING-STATE file, because that path ends at a clipboard and would bypass
+  // the store's read-side sanitiser.
+  ok(!/current\.md/.test(code.replace(/path\.join\([^)]*'current\.md'\)/g, '')) || /showItemInFolder/.test(code),
+    'CONTROL — the only mention of current.md is the Finder reveal, which opens nothing');
+  ok(!/readFile\w*\([^)]*state[^)]*\)/.test(code),
+    'and main.js READS no state file of its own — the handoff comes from the store\'s sanitised read');
+  ok(/getHandoffMarkdown/.test(code),
+    'CONTROL — it reaches the store\'s reader by name, so the assertion above is about a real alternative');
+
+  // THE SAFETY PROPERTY, RE-ASSERTED AFTER THE CHANGE. A new code path that
+  // could reach app.exit() would walk past the write guard `before-quit` runs.
+  // Measured INSIDE the new function rather than over the whole file: main.js
+  // has pre-existing, legitimate `app.exit()` call sites (the single-instance
+  // guard and the fatal-boot path), and asserting a file-wide zero would be an
+  // assertion about them rather than about the submenu.
+  const fnStart = code.indexOf('async function runRowAction');
+  ok(fnStart > 0, 'CONTROL — runRowAction is findable in the stripped source');
+  const fnBody = code.slice(fnStart, code.indexOf('\n}', fnStart));
+  ok(fnBody.length > 200, `CONTROL — and the extracted body is real (${fnBody.length} chars), not an empty slice`);
+  ok(!/app\.exit|process\.exit|app\.quit/.test(fnBody),
+    'the submenu handler reaches NO exit path — a hand-rolled quit would walk past the write guard before-quit runs');
+  ok(!/role:\s*'quit'[^}]*click/.test(code), 'and no quit role anywhere is paired with a handler');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

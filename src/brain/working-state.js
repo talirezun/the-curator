@@ -2222,6 +2222,20 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
   // saves, which is a measurement. "There is no journal" is a different fact
   // and is expressed by `readPairJournalFacts` returning null here instead.
   if (withSaveTimes) facts.saveTimes = [];
+  // ── THE TWO HARNESS-CONTINUITY FIELDS, UNDER THE SAME GATE, AND WHY ──────
+  //
+  // `previousHarness` answers "did the baton change hands on the last save?"
+  // and `saveHarnesses` is what lets a consumer place a change IN TIME. Both
+  // are computed from lines this function already parses, so they cost no I/O
+  // and no second traversal — the same argument `saveTimes` makes.
+  //
+  // They are OPT-IN for the same reason `saveTimes` is, and it is not style:
+  // `scripts/test-tray-pulse.js` §3 pins this function's DEFAULT output as a
+  // serialisation captured at commit 8272a08, key order included, precisely so
+  // the MCP index payload — which is under a 400 KB budget — cannot grow a
+  // field per row for a consumer that has no use for it. Adding either of
+  // these to the literal above would red that pin, correctly.
+  if (withSaveTimes) { facts.saveHarnesses = []; facts.previousHarness = null; }
   if (!Array.isArray(entries) || !entries.length) return facts;
   facts.entriesScanned = entries.length;
 
@@ -2270,7 +2284,15 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
     // unusable contributes NOTHING rather than contributing `now`.
     if (withSaveTimes && e && isIsoish(e.at)) {
       const ms = Date.parse(e.at);
-      if (Number.isFinite(ms)) facts.saveTimes.push(ms);
+      if (Number.isFinite(ms)) {
+        facts.saveTimes.push(ms);
+        // PUSHED IN THE SAME BRANCH, so the two arrays are index-aligned by
+        // construction rather than by a length check somewhere downstream. A
+        // save with no named harness contributes `null` and NOT a skipped
+        // slot: dropping it would silently shift every later harness onto the
+        // wrong timestamp, which is the one way this pair can lie.
+        facts.saveHarnesses.push(h);
+      }
     }
   }
   const distinct = [];
@@ -2290,6 +2312,28 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
   // says what the rule MEANS, and it is what still holds if the transition
   // count is ever loosened to 1 (a mutation removing THAT clause reds).
   facts.harnessShared = distinct.length > 1 && switches >= 2;
+
+  // ── `previousHarness` — THE BATON, AND ONLY WHEN IT ACTUALLY CHANGED ─────
+  //
+  // The question it answers is narrow and literal: DID THE LAST TWO SAVES IN
+  // THIS WORK-STREAM COME FROM DIFFERENT TOOLS? That is the fact the widget
+  // renders as `antigravity ← claude-code`, and it is the one thing the whole
+  // widget exists for — you can see where the baton was passed.
+  //
+  // It is NOT `harnesses[1]`. `harnesses` is DISTINCT and newest-first over the
+  // whole tail, so on a store where one tool worked, another took over, and the
+  // first came back, `harnesses[1]` names a tool that has not touched this
+  // scope for days — a handover that did not happen, stated as if it had.
+  //
+  // NULL is the answer in three different cases and that is deliberate: the
+  // last save named no harness (nothing is known), there is only one named
+  // save (nothing to compare), or the two agree (no handover). All three mean
+  // "do not draw an arrow", and none of them is worth distinguishing on a menu
+  // row — the journal itself carries the detail.
+  if (withSaveTimes && facts.harness !== null && named.length > 1
+      && named[named.length - 2] !== facts.harness) {
+    facts.previousHarness = named[named.length - 2];
+  }
   return facts;
 }
 
@@ -2311,7 +2355,15 @@ async function readPairJournalFacts(project, scopeDir, machine, now, opts = {}) 
   // every other absent-versus-zero pair.
   const absent = () => {
     const f = journalFacts(null, now, opts);
-    if (withSaveTimes) { f.saveTimes = null; f.journalTailTruncated = false; }
+    if (withSaveTimes) {
+      f.saveTimes = null;
+      // NULL for the same reason and by the same rule: `[]` would say "read the
+      // journal, found no named tools", and there is no journal to have read.
+      // Kept in step with saveTimes so the aligned pair is aligned in its
+      // ABSENCE too, rather than one being null beside an empty array.
+      f.saveHarnesses = null;
+      f.journalTailTruncated = false;
+    }
     return f;
   };
   const jAbs = resolveInsideState(project, `${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
@@ -2522,6 +2574,11 @@ export async function listWorkingScopes(project, opts = {}) {
     if (withSaveTimes) {
       p.saveTimes = f.saveTimes;                       // epoch ms, oldest first; null = no journal
       p.journalTailTruncated = f.journalTailTruncated;
+      // Index-aligned with `saveTimes` — see journalFacts. A consumer that
+      // wants "which tool wrote the save at t" reads the same subscript.
+      p.saveHarnesses = f.saveHarnesses;
+      // Non-null ONLY when the last two saves came from different tools.
+      p.previousHarness = f.previousHarness ?? null;
     }
   }
 

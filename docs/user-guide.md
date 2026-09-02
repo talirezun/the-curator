@@ -608,20 +608,21 @@ flowchart LR
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Last save · 44 min ago                                  │  ① the answer, first
-│      menubar-widget-design                               │  ② where
+│      claude-code · opus-4                                │  ② who wrote it
 │  ── Save pulse ─────────────────────────────────────────  │
-│  ▁▁▁▁▁▁▂█▇█ ▁▃▆   4 days known · 70 saves                │  ②b the last 7 days
+│  ▁▂█▇█▃▆  ┈┈┈───────   5 days known · 79 saves · 2 tools │  ②b the last 7 days
 │  ── Recent scopes ──────────────────────────────────────  │
-│  ● menubar-widget-des… · 44 min ago                      │
-│      v3.37.0 SHIPPED and its GitHub Release p…           │  ③ up to 5 rows,
-│  ○ native-prep-and-rel… · 15 hr ago                      │     newest first,
-│      FOUR RELEASES SHIPPED (v3.31-v3.34). Mac…           │     each with a dot
-│  ○ design-conformance-… · 38 hr ago                      │
-│      7 of 11 issues + ramp + machine-id fix M…           │
+│  ● menubar-widget-design · 44 min ago                 ▸  │
+│      claude-code · opus-4 — v3.37.0 SHIPPED and it…      │  ③ up to 5 rows,
+│  ◕ save-kind-verdict · 15 hr ago                      ▸  │     newest first,
+│      antigravity ← claude-code — classifySaveNote…       │     each with a mark
+│  ◑ design-conformance-pre… · 38 hr ago                ▸  │     and a submenu
+│      handoff trimmed · claude-code — 7 of 11 issu…       │
 │  More in Agent Memory… (6)                               │  ④ a cap, disclosed
 ├──────────────────────────────────────────────────────────┤
 │  14 handoffs waiting on GitHub                           │  ⑤ notices, only
-│  Two agent tools are writing notes…                      │     when true
+│  studio saved after this Mac                             │     when true
+│  Two agent tools are writing notes…                      │
 ├──────────────────────────────────────────────────────────┤
 │  Open Agent Memory…                                      │
 │  Open The Curator                                        │  ⑥ always here,
@@ -635,34 +636,43 @@ flowchart LR
 
 *Abbreviated — three rows are drawn above where the real menu shows five, and the notice lines
 appear only when they apply. Everything else is always in that order. **Save pulse** and
-**Recent scopes** are real macOS section headers, not drawn rules; the pulse and the row dots are
-real drawn images, not text — the blocks above are the closest a page of text can get.*
+**Recent scopes** are real macOS section headers, not drawn rules; the pulse and the row marks are
+real drawn images, not text — the blocks above are the closest a page of text can get. The `▸` on
+each row is macOS's own submenu arrow.*
 
-> **The rows are shorter than they used to be, and nothing was thrown away.** Measured on a real
-> store, the menu's widest line came down from **74 characters to 41**. Four things get dropped, and
-> each one **only while it distinguishes nothing**: the project name when only one project has
-> state, a leading `session-` on a work-stream name, the tool name when every row shows the same
-> tool, and the computer name when every row came from the same computer. Every one of them comes
-> straight back the moment it starts telling you something — a second project, a second tool, a
-> second machine. Anything still too long is cut with an **…**, and the cut always falls on the
-> work-stream name, never on the age: *`menubar-widget-des… · 44 min ago`* keeps the one token the
-> whole widget exists to show.
+> **The first line of a row is the work-stream and the time, and nothing else may stand there.**
+> That is a change, and it came from a photograph of the previous version: a row read
+> *`project… — alices-macbook-pro·9f3c · 18 hr ago`*. The work-stream name — the thing you were
+> looking for — had been cut to eight characters, while a twenty-two-character computer name
+> survived whole, because everything after the name was composed at full length first and the name
+> got whatever was left. **Measured on the same rows, the widest line came down from 46 characters
+> to 35, and no work-stream name is cut at all.**
+>
+> Everything that used to crowd that line — the tool, the computer, the project, the model — is now
+> on the **second line**, which macOS draws in a smaller face and which therefore has more room.
+> Each of those is still dropped **only while it distinguishes nothing**: the project when one
+> project has state, the tool when every row shows the same tool, the computer when every row came
+> from the same computer, the model when they all used the same one. When even the second line will
+> not hold everything, tokens are dropped **whole, lowest priority first** — model, then project,
+> then computer, then tool — because `son…` is not a shorter `sonnet-4`, it is a different word.
 >
 > **And nothing a cut removed becomes unreachable. Hover the row and you get all of it** — the full
-> `project · work-stream`, the machine folder, the tool, and the exact timestamp. That is an
-> absolute rule rather than a courtesy, and it applies everywhere a budget bites: the line under the
-> headline carries the uncompacted name on hover, and a notice long enough to be clipped carries its
-> whole sentence. A notice that already fits carries no tooltip at all, because a tooltip repeating
-> the label word for word is noise.
+> `project · work-stream`, the machine folder, the tool, the exact model string and the exact
+> timestamp.
+>
+> That is an absolute rule rather than a courtesy, and it applies everywhere a budget bites: the
+> line under the headline carries the project and work-stream on hover, and a notice long enough to
+> be clipped carries its whole sentence. A notice that already fits carries no tooltip at all,
+> because a tooltip repeating the label word for word is noise.
 
 | | What it is | Why it is where it is |
 |---|---|---|
 | ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
-| ② | Which project and work-stream that save was | A statement about the line above, not a second action |
+| ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ①. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ③ | Up to **five** work-streams, newest first, **flat — not grouped by project**, each with a small [recency dot](#the-recency-dot) | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping. It was eight; five plus a real overflow line reads better in a menu this narrow |
+| ③ | Up to **five** work-streams, newest first, **flat — not grouped by project**, each with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do) | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping. It was eight; five plus a real overflow line reads better in a menu this narrow |
 | ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
-| ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub |
+| ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
 | ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. It is what makes a reading that has silently stopped updating visible as stale, and it is the moment the [pulse strip](#reading-the-save-pulse) is a picture of |
 
@@ -673,17 +683,35 @@ real drawn images, not text — the blocks above are the closest a page of text 
 Every row is the same shape:
 
 ```
-notes · main — claude-code · 4 min ago
-    wired the remote observation and its 5-minute window
+main · 4 min ago
+    claude-code · opus-4 — wired the remote observation and its window
 ```
-`project · work-stream — who · when`, and underneath, **the agent's own one-line summary of what it did**.
+**Line one is `work-stream · when`, and nothing else is ever allowed onto it.** Line two is
+*who wrote it* and then **the agent's own one-line summary of what it did**.
 
-**The `who` column changes meaning depending on where the save came from, and that is deliberate.**
+**Line two can carry up to six things, and each appears only when it is telling you something.**
 
-| The save came from… | `who` shows | Why |
-|---|---|---|
-| **This computer** | the **agent tool** — `claude-code`, `opencode`, `cursor` | The machine name would be the same on every row, so it tells you nothing. Which *tool* wrote it is exactly what differs when two are running side by side |
-| **Another computer** | the **machine** — `studio`, `laptop` | Now it inverts completely. *"The other computer did this"* is the news; which tool is running over there is not your problem right now |
+| On line two | When it appears |
+|---|---|
+| **`handoff trimmed`** | Only when the last save **did not all fit** and part of the handoff was not stored. [More below](#when-a-save-did-not-all-fit) |
+| **`opencode ← claude-code`** | Only when **the last two saves in that work-stream came from different tools** — the baton changed hands. The arrow points from who wrote it to who wrote it before |
+| **the tool** — `claude-code`, `opencode`, `cursor` | Unless every visible row shows the same one |
+| **the computer** — `studio`, `laptop` | Only on a row from **another computer**, and only when the rows disagree about which computer they came from |
+| **the project** | Only when more than one project has state |
+| **the model** — `opus-4`, `gemini-2.5`, `haiku-4` | Unless every visible row used the same one. It is the family and the generation; the exact string is on hover |
+
+> **A row from another computer can now name its tool as well as its machine, and that is a
+> change.** It used to be one or the other: naming a tool on a foreign row could be misread as
+> *that tool is running here*. Line two is a list rather than a single slot, so the computer is
+> right there beside the tool — `opencode · studio` cannot be misread — and suppressing the tool
+> would now be dropping a real fact to avoid an ambiguity that no longer exists.
+
+> <a id="when-a-save-did-not-all-fit"></a>**`handoff trimmed` appears for exactly one of the five
+> save verdicts.** It means the store could not hold the whole handoff and some of it was not
+> written — the one thing a widget about carrying context must not hide. A save whose one-line
+> *summary* was shortened while the handoff itself was stored in full is **silent here**, because
+> those two are different facts and reporting them with one alarm is the defect v3.39.0 exists to
+> fix. Hover the row and it says which happened, in a sentence.
 
 **And the `when` column tells you which clock it came from.**
 
@@ -713,50 +741,120 @@ Every row in **Recent scopes** carries a small mark to its left. It is a **band*
 
 | Mark | Colour | It means |
 |---|---|---|
-| **●** a filled disc | green | **Being written right now** — within the last **2 minutes** |
-| **◯** a large ring | green | Saved within the last **half hour** |
-| **◦** a medium ring | amber | Saved **earlier today** — between half an hour and **12 hours** ago |
-| **·** a small ring | grey | Saved **in the last week** |
-| **▪** a tiny filled dot | grey | **Older than a week** |
+| **●** a full disc | teal | **Being written right now** — within the last **2 minutes** |
+| **◕** three quarters of a disc | teal | Saved within the last **half hour** |
+| **◑** half a disc | amber | Saved **earlier today** — between half an hour and **12 hours** ago |
+| **◔** a quarter of a disc | grey | Saved **in the last week** |
+| **▪** a small filled dot | grey | **Older than a week** |
 | *(nothing at all)* | — | **No save time is known** for this work-stream |
+
+**It is a clock draining.** That is a change: the marks used to be a disc and three rings that
+differed by half a point of radius — **one screen pixel** between three of the five states, which
+is a ladder that exists in the arithmetic and not on the screen. A quarter of a circle is a
+difference you can see in a thumbnail, and the mark itself grew from 11 points square to 13 so a
+quarter of it is still a shape rather than a smudge.
 
 **Why five marks share three colours.** Green covers both *right now* and *the last half hour* on purpose: a menu you open by hand will essentially never land inside the two-minute live window, so a green reserved for that alone would spend the strongest colour in the set on the state you almost never see, and everything would be amber or grey in practice. **Half an hour is the point at which the handoff stops being in your head** — which is the thing the colour is actually being asked about. At the other end, three days ago and three weeks ago call for the same thing from you — read it properly before you touch it — so a third shade between them would be a distinction with no consequence.
 
-**The colour is never the only signal.** Green and amber are the classic hard pair for the commonest kinds of colour blindness, so the five marks are also a ladder of *how much ink is on the screen*, biggest to smallest, and the one state that changes what you do next — something is being written **right now** — is the only large filled disc. You can read the whole ladder with the colour removed. **Hover a row** and the band is also stated in words.
+**The colour is never the only signal.** Teal and amber are a hard pair for the commonest kinds of colour blindness, so the five marks are also a ladder of *how much ink is on the screen* — 78, 59, 39, 20 and 13 square points, strictly downward — and the one state that changes what you do next, something is being written **right now**, is the only complete disc. You can read the whole ladder with the colour removed entirely, which is exactly how the automated tests check it. **Hover a row** and the band is also stated in words.
 
 > **A row with no known save time gets no mark at all — deliberately.** It does not get the faintest, oldest-looking dot. *We do not know when this was saved* and *this was saved a long time ago* are different claims, and drawing the second when only the first is true would be inventing a fact. The row's own label says *"time unknown"*, and the space where the dot would be stays empty.
+
+### What a row can do
+
+<a id="what-a-row-can-do"></a>Every work-stream row has a **submenu** — hover it and four items
+appear.
+
+| Item | What it does |
+|---|---|
+| **Open in The Curator** | Opens the app on Agent memory, at that project. This is what clicking the row used to do, and it is still the first thing under the pointer |
+| **Copy resume prompt** | Puts a short **instruction** on your clipboard: paste it into a fresh agent session and it knows how to fetch this work-stream's state for itself |
+| **Copy handoff as Markdown** | Puts the **document itself** on your clipboard — your standing brief and the session handoff, in full |
+| **Reveal current.md in Finder** | Opens a Finder window with the handoff file selected |
+
+**The two Copy items exist because a menu cannot open a work-stream.** Clicking a row lands on the
+*project*; the work-stream picker inside the app has no address the menu can dial. The clipboard is
+the route the menu does have — and it happens to be the more useful one, because what you usually
+want at that moment is to hand the work-stream to an agent rather than to look at it.
+
+**They are for two different agents.**
+
+*Copy resume prompt* is for an agent that can reach your knowledge itself — through the my-curator
+MCP, or failing that by opening the file. It is a few short paragraphs that name the project, the
+work-stream, the MCP tool to call, and the file path to fall back on, and it ends by telling the
+agent to save the **complete** state back when it runs low on context.
+
+*Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
+the standing brief and the handoff, as two clearly separated sections. **It is not capped**: the
+store already bounds a handoff at 48 KB and a brief at 32 KB, and a second, smaller cap here would
+quietly cut a document you asked for in full. The size is shown on hover instead, so an 80 KB paste
+is never a surprise.
+
+> **Both of them say, in the same words, which half you are supposed to obey.** The handoff and the
+> journal are **recorded data to verify**; the standing brief is **your own instructions and is
+> followed**. That distinction is the whole of how the memory layer is meant to be read, and a paste
+> that lost it would hand a model a document with no way to tell them apart.
+>
+> **And the handoff is read through the store, not off the disk.** The Curator escapes
+> protocol-shaped markup on the way *out* of a file, because a handoff that arrived over sync from
+> another machine was not necessarily written by your own tools. Copying it goes through that same
+> read, and says so at the bottom of the document when anything was escaped.
 
 ### Reading the save pulse
 
 Under the **Save pulse** header, one line carries a small drawn strip — **14 marks, one per twelve hours, covering the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up to. (The strip used to draw 28 marks at six hours each; it was folded to half the marks and twice the width per mark so the picture could be made **narrower and much more visible at the same time**. Nothing about what is counted changed.)
 
 ```
-▁▁▁▁▁▁ ▂█▇█ ▁▃▆     4 days known · 70 saves
-└─ before ─┘└── what actually happened ──┘
-   this store
-   existed
+                      ▃ █ ▅ █
+              ▂   ▄   █ █ █ █
+┈┈┈┈┈┈┈┈┈─────────────────────      5 days known · 79 saves · 2 tools
+╵   ╵   ╵   ╵   ╵   ╵   ╵  ╵╵
+└ before ┘ └──── what actually happened ────┘
+  this store
+  existed
 ```
 
-**There are three kinds of mark, and telling two of them apart is the whole point.**
+**There are four kinds of mark, and telling the first two apart is the whole point.**
 
 | Mark | What it means |
 |---|---|
-| **A tall green bar** | Saves landed in that twelve-hour block. **The darker the green, the more saves** — one save is already a clear mark, and five or more is the darkest it goes |
-| **A low grey stub** — about a quarter the height | That twelve hours **existed and nothing was saved.** A quiet evening |
-| **A grey hairline on the baseline** — thinner still | **Your store did not exist yet.** Not "quiet" — *unknown* |
+| **A solid baseline** running the width | The timeline. Solid means **your store existed** for that stretch |
+| **A dotted baseline** | **Your store did not exist yet.** Not "quiet" — *unknown* |
+| **A violet bar** standing on the baseline | Saves landed in that twelve-hour block. **The taller the bar, the more saves** — the ladder is 1, 2–3, 4–6, 7–12, 13 or more |
+| **An amber cap** on the top of a bar | **A different agent tool took over** inside that twelve hours. This is the one mark that answers *did the baton get passed cleanly* |
 
-> **Why the third one has its own shape rather than just being fainter.** *Nothing happened* and
-> *we have no idea* are opposite claims, and a strip that draws them the same way is lying about
-> half of itself. This is not an edge case: a store three and a half days old fills **half its
-> marks** with "did not exist yet". The difference is carried in **height** — 12 points against
-> 3 against 1 — because at three points wide, two similar shades of grey are the same shade. And
-> "did not exist yet" is deliberately drawn *heavier* than "quiet", not fainter: making *no data*
-> the faintest thing on the strip would encode it as **even less than nothing**.
+Below the baseline, **one tick per day**, with **today's drawn double width** so the last day is
+findable without counting.
+
+> **The bar height is the save count, and that is a reversal worth explaining.** The previous strip
+> refused to put the count in the height, on the ground that a rising and falling column chart reads
+> as a productivity graph. That ground is real and it still holds — but the version that shipped put
+> the identical number into a five-step **colour ramp** instead, which at three points wide is
+> illegible, and which saturated at five saves while real twelve-hour blocks hold three to eighteen.
+> The result was the fence in the maintainer's screenshot: every active block the same dark green.
 >
-> **The colours are measured, not picked.** Every one of them clears the 3:1 contrast floor for
-> non-text against the menu backgrounds it can be drawn on, and the lightest *green* is checked to
-> be heavier than a *grey stub* — because a block holding one save must never read as quieter than
-> a block holding none. An earlier palette failed exactly that and the test caught it, not the eye.
+> The count is now drawn where it can be read, and the productivity reading is defeated by
+> **structure** rather than by refusal — the baseline and the day ticks make the picture a
+> *timeline*, and the sentence beside it says **saves per 12 hours**, never *activity* and never
+> *progress*. **A tall bar still means "checked in often", never "a good day".** How often an agent
+> saves is an instruction you gave it, not an outcome it earned.
+
+> **Why "did not exist yet" has its own texture rather than just being fainter.** *Nothing happened*
+> and *we have no idea* are opposite claims, and a strip that draws them the same way is lying about
+> half of itself. This is not an edge case: a store three and a half days old spends **half its
+> width** on "did not exist yet". The difference is **solid versus dotted** — a texture, not a
+> shade — and both are drawn in the *same ink*, so it survives being read by someone who cannot see
+> the colours at all.
+>
+> **The colours are measured, not picked.** Every one clears the 3:1 contrast floor for non-text
+> against every menu background it can be drawn on, in both light and dark appearance, and the
+> automated tests recompute all of it from the values actually shipped — including three colours
+> that are **required to fail**, so a check that could never fail cannot pass for one that works.
+
+> **`· 2 tools`** appears on the sentence only when **more than one** agent tool wrote inside the
+> week. One tool is silent, because a token on every row of every single-tool store distinguishes
+> nothing; and *zero* is silent too, because it means no save named a tool — an absence, not a
+> measurement of none.
 
 **The sentence beside it never claims more than the picture can support.**
 
@@ -936,7 +1034,7 @@ Named so you do not go looking:
 - **Judging your week by it.** Covered above and worth repeating because it is the most tempting misreading: darkness is **how often**, never **how well**.
 - **Per-tool or per-work-stream history.** The strip is one lane over everything. A lane per tool — *"are Claude Code and opencode taking turns in this scope?"* — is designed and **not built**; it needs a surface the menu does not have. See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
-- **Reading the handoff.** Clicking a row opens **the app**, on Agent memory, at that project — it does not render the document in the menu, and there is deliberately no second reader. A handoff runs to fifteen thousand characters or more; there is no honest way to put that in a menu bar. (It lands on the *project*, not the individual work-stream — pick the work-stream from the picker once you are there.)
+- **Reading the handoff *in the menu*.** A handoff runs to fifteen thousand characters or more; there is no honest way to draw that in a menu bar, and the menu does not try. What it will do is **hand it to you**: the row's submenu can [copy the whole document, or a prompt that fetches it](#what-a-row-can-do). Clicking the row itself opens the app, on Agent memory, at that **project** — not the individual work-stream, which the picker there is for.
 - **Watching progress.** A save is not partly done; it has happened or it has not. There is no progress bar and there will not be one.
 - <a id="automatic-sync-is-not-built"></a>**Syncing by itself.** The widget observes; it never pushes or pulls. Automatic sync has been researched and **is not built** — the finding was that automatic *push* is safe and automatic *pull* is not (a pull rewrites files under you and prefers the remote on a conflict), so the recommendation is automatic push by explicit opt-in, with pull staying a decision you make. Until any of that exists, syncing is a button you press in the [Sync view](#15-sync-across-computers).
 - **A richer panel** — a card per work-stream, how full a handoff is getting, a strip of recent activity per tool. All designed, **none built.** See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
@@ -985,7 +1083,10 @@ Stated plainly rather than left for you to discover.
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
 | **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put five of them legibly |
 | **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At twelve hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
-| **A row click opens the project, not the work-stream.** | You land on Agent memory at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly |
+| **A row click opens the project, not the work-stream.** | You land on Agent memory at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
+| **Nothing in the redesigned menu has been photographed.** | Every mark in it — the draining-clock recency marks, the violet bars, the dotted baseline, the day ruler, the amber handover caps — is generated and inspected pixel by pixel by the automated tests, and its contrast is arithmetic over those decoded pixels. What no test can prove is how any of it looks on a real menu bar. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
+| **The row submenus have never been opened.** | That macOS draws a submenu on a menu bar item at all, that the four items appear where you expect, and that **Copy** actually lands on the clipboard while the menu is dismissing, are all unproven here — Electron is not something the tests can run. The composing is executed and checked; the copying is not |
+| **macOS 14 or later is assumed for two things.** | The two section headers and the small second line under each row are macOS 14 affordances (the second line needs 14.4). On an older macOS the headers should degrade to dimmed caption lines and the second line may simply not draw — in which case the work-stream and the age, which are on the *first* line, are still there. Neither degradation has been observed |
 
 ---
 

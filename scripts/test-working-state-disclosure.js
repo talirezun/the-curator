@@ -656,6 +656,205 @@ section('9  TIER 1 IS NOT TIER 2 — the brief carries the OWNER\'S authority');
     '…and does not warn about earlier-session text that was never returned');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('10  THE TRAY IS A CONSUMER TOO — and it has dropped a field already');
+// ─────────────────────────────────────────────────────────────────────────
+// `src/brain/tray-summary.js` projects the store's index rows into the
+// menubar widget's row shape BY EXPLICIT FIELD ASSIGNMENT, which is the exact
+// construction this whole suite exists for. And it has already committed the
+// defect once: `model` was computed by `journalFacts`, carried on the index
+// row since v3.34.0, and silently dropped by the tray's projection — so the
+// widget could not say which LLM wrote a handoff, for two releases, while the
+// value sat one function away.
+//
+// Four fields are checked END TO END here — store, then producer, then the
+// row model the menu is built from — because the drop can happen at either
+// layer and a check at only one of them proves nothing about the other.
+//
+//   model            which LLM wrote it
+//   lastSaveKind     whether the save was complete (arrives as `kind`)
+//   isThisHost       which COMPUTER, as opposed to which INSTALLATION
+//   previousHarness  whether the baton changed hands on the last save
+{
+  const P_TRAY = 'zz-tray';
+  mkDomain(P_TRAY);
+  // TWO saves under one scope from DIFFERENT tools, which is the only shape
+  // that can produce a non-null `previousHarness` — the fact is defined as
+  // "the last two saves disagreed", so a one-save fixture would make every
+  // assertion below vacuously true about a null.
+  await saveWorkingState(P_TRAY, {
+    scope: 'handover', headline: 'first half', nowState: 'n',
+    harness: 'harness-one', model: 'demo-model-4-6',
+  });
+  await saveWorkingState(P_TRAY, {
+    scope: 'handover', headline: 'second half', nowState: 'n',
+    harness: 'harness-two', model: 'demo-model-4-6',
+  });
+
+  const idx = await listWorkingScopes(P_TRAY, { withSaveTimes: true });
+  const pair = idx.scopes.find((x) => x.scope === 'handover');
+  ok(!!pair, 'PRECONDITION: the store lists the seeded work-stream', JSON.stringify(idx.scopes?.length));
+  ok(pair.harness === 'harness-two', 'the store records the LAST tool that wrote', pair.harness);
+  ok(pair.previousHarness === 'harness-one',
+    'and the one before it, because the two differ — the handover fact', String(pair.previousHarness));
+  ok(pair.model === 'demo-model-4-6', 'and the model', String(pair.model));
+  ok(Array.isArray(pair.saveHarnesses) && pair.saveHarnesses.length === pair.saveTimes.length,
+    'saveHarnesses is INDEX-ALIGNED with saveTimes, so "which tool wrote the save at t" is answerable',
+    JSON.stringify([pair.saveHarnesses, pair.saveTimes]));
+
+  // The producer, imported once for the whole block.
+  const TSmod = await import('../src/brain/tray-summary.js');
+
+  // ── A HANDOVER NEEDS TWO SIDES, AND THE CURSOR IS PER WORK-STREAM ────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN: dropping the `prevWho !== null`
+  // half of the test made a stream's FIRST save a handover — from nothing — and
+  // every assertion above survived it, because a store that HAS handovers still
+  // has handovers when you add spurious ones. The property that discriminates is
+  // the store that has NONE.
+  const nowMs = Date.parse('2026-08-30T12:00:00.000Z');
+  const t = (h) => nowMs - h * 3600 * 1000;
+  const oneTool = TSmod.computePulse(
+    [{ saveTimes: [t(20), t(10), t(2)], saveHarnesses: ['harness-one', 'harness-one', 'harness-one'] }], nowMs);
+  ok(oneTool.harnessChanges.every((v) => v === false),
+    'a work-stream written entirely by ONE tool carries NO handover marks — a first save is not a handover from nothing',
+    JSON.stringify(oneTool.harnessChanges.filter(Boolean).length));
+  ok(oneTool.harnessCount === 1, 'CONTROL — one tool is still COUNTED, so the strip knows who wrote it', String(oneTool.harnessCount));
+  const changedOnce = TSmod.computePulse(
+    [{ saveTimes: [t(20), t(2)], saveHarnesses: ['harness-one', 'harness-two'] }], nowMs);
+  ok(changedOnce.harnessChanges.filter(Boolean).length === 1,
+    'CONTROL — a genuine change IS marked, exactly once, so the assertion above is not vacuously empty',
+    JSON.stringify(changedOnce.harnessChanges.filter(Boolean).length));
+
+  // TWO WORK-STREAMS, each written by ONE tool, but by DIFFERENT tools. A
+  // global cursor would see them alternating in the merged timeline and mark a
+  // handover in each — a baton passed that nobody passed.
+  const twoStreams = TSmod.computePulse([
+    { saveTimes: [t(20), t(6)], saveHarnesses: ['harness-one', 'harness-one'] },
+    { saveTimes: [t(15), t(3)], saveHarnesses: ['harness-two', 'harness-two'] },
+  ], nowMs);
+  ok(twoStreams.harnessChanges.every((v) => v === false),
+    'two work-streams on two different tools carry NO handover marks — the cursor is per stream, never across the merged timeline',
+    JSON.stringify(twoStreams.harnessChanges.filter(Boolean).length));
+  ok(twoStreams.harnessCount === 2,
+    'CONTROL — while BOTH tools are counted, so the strip still says two tools are at work',
+    String(twoStreams.harnessCount));
+
+  // ── THE ALIGNMENT IS A CONTRACT, AND AN UNNAMED SAVE MUST HOLD IT ────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN: guarding the push with
+  // `if (h)` passed everything, because every entry in the fixture above names
+  // a harness. Skipping a slot shifts every LATER harness onto the wrong
+  // timestamp — the one way this pair can lie, and it lies silently.
+  const NOW_MS = Date.parse('2026-08-30T12:00:00.000Z');
+  const L = (at, h) => ({ at, headline: 'h', harness: h, model: 'm' });
+  const gappy = WS.journalFacts([
+    L('2026-08-30T09:00:00.000Z', 'harness-one'),
+    L('2026-08-30T10:00:00.000Z', null),
+    L('2026-08-30T11:00:00.000Z', 'harness-two'),
+  ], NOW_MS, { withSaveTimes: true });
+  ok(gappy.saveHarnesses.length === gappy.saveTimes.length,
+    'a save with NO named harness still takes its slot, so the two arrays stay index-aligned',
+    JSON.stringify(gappy.saveHarnesses));
+  ok(gappy.saveHarnesses[1] === null,
+    '…and that slot is NULL rather than being skipped, which would shift every later harness onto the wrong timestamp',
+    JSON.stringify(gappy.saveHarnesses));
+  ok(gappy.saveHarnesses[2] === 'harness-two',
+    'CONTROL — the harness after the gap is still on its own timestamp', JSON.stringify(gappy.saveHarnesses));
+
+  // ── A HANDOVER THAT DID NOT HAPPEN MUST NOT BE DRAWN ─────────────────
+  //
+  // CHASED FROM A MUTATION THAT CAME BACK GREEN: deriving `previousHarness`
+  // from `harnesses[1]` — the second DISTINCT tool, newest-first — passed the
+  // two-save fixture above, because with exactly two saves the two formulas
+  // agree. They diverge the moment one tool saves twice in a row, which is the
+  // ordinary case: `harnesses[1]` then names a tool that has not touched this
+  // scope for days and asserts a handover on the LAST save that never occurred.
+  const settled = WS.journalFacts([
+    L('2026-08-30T09:00:00.000Z', 'harness-one'),
+    L('2026-08-30T10:00:00.000Z', 'harness-two'),
+    L('2026-08-30T11:00:00.000Z', 'harness-two'),
+  ], NOW_MS, { withSaveTimes: true });
+  ok(settled.harnesses.length === 2,
+    'CONTROL — two distinct tools DID write in this window, so `harnesses[1]` exists and is non-null',
+    JSON.stringify(settled.harnesses));
+  ok(settled.previousHarness === null,
+    'but the LAST TWO saves came from the same tool, so no handover is claimed — the fact is about the last save, not about the week',
+    String(settled.previousHarness));
+  const handed = WS.journalFacts([
+    L('2026-08-30T10:00:00.000Z', 'harness-two'),
+    L('2026-08-30T11:00:00.000Z', 'harness-one'),
+  ], NOW_MS, { withSaveTimes: true });
+  ok(handed.previousHarness === 'harness-two',
+    'CONTROL — and when they DO differ it is named, so the assertion above is not vacuously null',
+    String(handed.previousHarness));
+  ok(WS.journalFacts([L('2026-08-30T11:00:00.000Z', 'harness-one')], NOW_MS,
+    { withSaveTimes: true }).previousHarness === null,
+    'a single save claims no handover either — there is nothing to compare it to');
+
+  // ── AND NONE OF IT IS DROPPED BY THE TRAY'S OWN PROJECTION ────────────
+  const sum = await TSmod.getTraySummary({ limit: 20 });
+  const srow = sum.scopes.find((r) => r.project === P_TRAY && r.scope === 'handover');
+  ok(!!srow, 'PRECONDITION: getTraySummary lists it too', JSON.stringify(sum.scopes.map((r) => r.scope)));
+  ok(srow.model === 'demo-model-4-6', 'the producer forwards `model` — the field it dropped for two releases', String(srow.model));
+  ok(srow.previousHarness === 'harness-one', 'and `previousHarness`', String(srow.previousHarness));
+  ok(typeof srow.kind === 'string', '`kind` (the save verdict) survives as a string', String(srow.kind));
+  ok(typeof srow.isThisHost === 'boolean', 'and `isThisHost` as a boolean, not as an absence', String(srow.isThisHost));
+
+  // The pulse's two derived facts, which exist only because saveHarnesses does.
+  ok(Array.isArray(sum.pulse?.harnessChanges) && sum.pulse.harnessChanges.length === sum.pulse.buckets.length,
+    'the pulse carries one handover flag per bucket, the same length as the counts themselves',
+    JSON.stringify([sum.pulse?.harnessChanges?.length, sum.pulse?.buckets?.length]));
+  ok(sum.pulse.harnessChanges.some((v) => v === true),
+    'and this store really did change hands, so the flag is not uniformly false', JSON.stringify(sum.pulse.harnessChanges));
+  ok(sum.pulse.harnessCount === 2, 'two distinct tools wrote inside the window', String(sum.pulse?.harnessCount));
+
+  // ── A THROW INSIDE THE PULSE COSTS THE PICTURE, NEVER THE SUMMARY ────
+  //
+  // FOUND BY A MUTATION THAT REDDENED BY CRASHING rather than by a named
+  // assertion — this project's recorded v3.24.1 shape. `getTraySummary`
+  // documents itself as NEVER THROWING, and `computePulse` was called bare from
+  // the returned object literal, so an exception inside it escaped. Driven here
+  // with input that makes the real function throw, through the real call site.
+  const poison = { get saveTimes() { throw new Error('poisoned pair'); } };
+  let threw = false;
+  try { TSmod.computePulse([poison], Date.now()); } catch { threw = true; }
+  ok(threw, 'CONTROL — this input really does make computePulse throw, so the guard below is exercised');
+  const guarded = [];
+  // CALLED INSIDE A TRY, so a guard that RETHROWS reds this section by name
+  // rather than by killing the run. A suite that dies reports that something
+  // broke; it does not report which property was lost.
+  let safe = 'the guard rethrew';
+  try { safe = TSmod.safePulse([poison], Date.now(), guarded); } catch { /* recorded below */ }
+  ok(safe !== 'the guard rethrew',
+    'the guard CATCHES — it does not rethrow, which would escape getTraySummary and take the menubar with it');
+  ok(safe === null,
+    'the guard returns NULL — not an empty strip, which would be a confident claim that nothing was saved this week');
+  ok(guarded.length === 1 && guarded[0].code === 'pulse-unavailable',
+    'and DISCLOSES the failure as a warning rather than swallowing it', JSON.stringify(guarded));
+  ok(typeof guarded[0].detail === 'string' && guarded[0].detail.includes('poisoned'),
+    'naming what went wrong, so it is debuggable rather than merely absent', JSON.stringify(guarded[0]));
+  const fine = [];
+  ok(TSmod.safePulse([{ saveTimes: [Date.now()] }], Date.now(), fine) !== null && fine.length === 0,
+    'CONTROL — an ordinary pair still produces a pulse and no warning, so the guard is not swallowing the happy path');
+
+  // ── THEN THE ROW MODEL, WHICH IS A THIRD PLACE IT COULD BE LOST ──────
+  const { buildTrayModel } = await import('../desktop/lib/tray-model.js');
+  const trayRow = buildTrayModel(sum).rows.find((r) => r.project === P_TRAY && r.scope === 'handover');
+  ok(!!trayRow, 'PRECONDITION: the row survives into the menu model');
+  ok(trayRow.model === 'demo-model-4-6', 'the ROW carries the model', String(trayRow.model));
+  ok(trayRow.previousHarness === 'harness-one', 'and the previous harness', String(trayRow.previousHarness));
+  ok(typeof trayRow.kind === 'string', 'and the save verdict', String(trayRow.kind));
+  ok(typeof trayRow.isThisHost === 'boolean', 'and the host fact', String(trayRow.isThisHost));
+  // AND IT REACHES A SURFACE. A field forwarded to a row nobody renders is the
+  // same defect one layer further on — which is exactly how `isThisHost` came
+  // to exist with one reference in the whole repository: its own definition.
+  ok(trayRow.sublabel.includes('harness-two') && trayRow.sublabel.includes('harness-one'),
+    'and the handover is DRAWN — `harness-two ← harness-one` on the row itself', trayRow.sublabel);
+  ok(trayRow.toolTip.includes('model: demo-model-4-6'),
+    'with the exact model string in the tooltip', trayRow.toolTip);
+}
+
 console.log(`\n${'═'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) {
@@ -663,3 +862,4 @@ if (failed) {
   for (const f of failures) console.log(`  ✗ ${f.label}\n    └─ ${f.detail}`);
 }
 process.exit(failed ? 1 : 0);
+
