@@ -1,0 +1,7 @@
+{
+  "OFFLINE": [
+    "test-alpha.js"
+  ],
+  "LIVE_CI": [],
+  "LIVE_LOCAL": []
+}

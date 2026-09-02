@@ -1,0 +1,8 @@
+{
+  "OFFLINE": [
+    "test-alpha.js",
+    "test-vanished.js"
+  ],
+  "LIVE_CI": [],
+  "LIVE_LOCAL": []
+}

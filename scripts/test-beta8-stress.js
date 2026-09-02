@@ -558,12 +558,31 @@ console.log('\n11. EXDEV defense — tempfile lives in same dir as target\n');
 // ── 12. End-to-end via files.js — atomic writePage doesn't truncate ────────
 console.log('\n12. End-to-end — writePage via files.js still produces clean content\n');
 {
-  // files.js resolves the domains path through config.getDomainsDir() which
-  // prefers .curator-config.json over env. We resolve it at runtime so the
-  // test works whether or not the user has a config file set.
-  const { getDomainsDir } = await import('../src/brain/config.js');
+  // ── ISOLATION, and why this section had none for four years ─────────────
+  //
+  // files.js resolves the domains path through config.getDomainsDir(), which
+  // prefers .curator-config.json over env — so on a configured machine (which
+  // the maintainer's is) this section used to CREATE A DOMAIN IN THE REAL
+  // KNOWLEDGE BASE and delete it again on the way out. That is the exact
+  // pre-beta.21 defect the runner's own docs record, still live in the one
+  // suite of 28 that never got the seam; the `try/finally` cleanup made it
+  // invisible rather than harmless, and a crash or a SIGKILL between the two
+  // leaves a `beta8stress-<pid>` folder in the user's domains list, inside
+  // Personal Sync's git work tree, ready to be committed and pushed.
+  //
+  // __setDomainsDirOverride() is the in-process seam (checked BEFORE config,
+  // unlike DOMAINS_PATH, which loses to a configured domainsPath and silently
+  // no-ops on a real install). Nothing here spawns a server, so the in-process
+  // form is the right one. Restored in the finally, so no later section
+  // inherits a redirected path.
+  const { getDomainsDir, __setDomainsDirOverride } = await import('../src/brain/config.js');
   const { createDomain, writePage, wikiPath } = await import('../src/brain/files.js');
+  const isolatedDomains = await mkdtemp(path.join(tmpdir(), 'curator-beta8-domains-'));
+  __setDomainsDirOverride(isolatedDomains);
   const baseDir = getDomainsDir();
+  assertTrue(baseDir === isolatedDomains,
+    'ISOLATION: the domains dir is the throwaway tempdir, not the real knowledge base',
+    `got ${baseDir}`);
   const domainName = `beta8stress-${process.pid}`;
   try {
     await createDomain(domainName, 'Beta8 Stress', 'Testing atomic writes', 'tech');
@@ -574,8 +593,10 @@ console.log('\n12. End-to-end — writePage via files.js still produces clean co
     assertTrue(content.length > 50, 'wiki page has expected length', `got ${content.length} chars`);
     assertTrue(content.includes('# Test Entity'), 'wiki page contains heading');
   } finally {
-    // Clean up our test domain so we don't pollute the user's real list
-    await rm(path.join(baseDir, domainName), { recursive: true, force: true });
+    // The tempdir goes wholesale; the override is lifted so nothing after this
+    // section runs against a redirected path.
+    await rm(isolatedDomains, { recursive: true, force: true });
+    __setDomainsDirOverride(null);
   }
 }
 
