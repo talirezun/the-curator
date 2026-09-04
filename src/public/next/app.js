@@ -2325,6 +2325,128 @@ document.addEventListener('keydown', (e) => {
   if (state.reader) { closeReader(); return; }
 });
 
+// ── "Another Curator is running over this same folder" ──────────────────
+//
+// THE REPORT. The maintainer ran the repo checkout (`npm start`, port 3333)
+// and the packaged Mac app at the same time, both pointed at ONE domains
+// folder. One ingest failed outright and the next took close to an hour, and
+// nothing in either window said the two were sharing a folder. Until
+// desktop/lib/port.js started picking an ephemeral port, a port collision had
+// been preventing this BY ACCIDENT; that file's own docblock calls the change
+// "a REDUCTION in protection" and asks for a deliberate replacement. This is
+// the user-facing half of it (src/brain/instance-probe.js is the mechanism).
+//
+// IT IS A BANNER, NOT A REFUSAL — the maintainer's explicit choice. Running
+// both is legitimate while both installs exist; what was missing was knowing.
+//
+// SHELL-LEVEL, not a view's. It must survive navigate(), so it is written
+// into #main ABOVE #view-root rather than through setMain(), whose target
+// #view-root is replaced wholesale on every navigation.
+//
+// ONE FETCH PER PAGE LOAD, from boot(). Deliberately no timer: the condition
+// it reports is "you launched two apps", which does not change second by
+// second, and this shell already carries two interval pollers whose cost was
+// argued line by line. A checkout started AFTER the window is open is
+// therefore not seen until the next reload — stated rather than glossed.
+//
+// WHY INLINE STYLES RATHER THAN A CLASS. Every colour here is an existing
+// design token (--attention / --attention-tint / --attention-text), so the
+// banner is theme-aware in both directions and scripts/test-css-tokens.js
+// scans these var() references in this file exactly as it scans the views'.
+// The reason it is not a rule in shell.css is ownership: this change does not
+// own that stylesheet. Promoting it to a class is a clean follow-up for the
+// chrome pass and changes nothing about the markup.
+const INSTANCE_BANNER_ID = 'instance-banner';
+const INSTANCE_BANNER_DISMISS_KEY = 'curator-next-instance-banner-dismissed-v1';
+const INSTANCE_DOCS_URL =
+  'https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#two-installs-one-knowledge-folder';
+
+// sessionStorage, not localStorage: "dismissed for this session" is exactly
+// what sessionStorage means, and a permanent dismissal would silence the
+// warning for every future double-launch too. Every access is wrapped —
+// private mode and a blocked storage partition both throw on ACCESS, not just
+// on write, and this must never be able to stop boot().
+function instanceBannerDismissed() {
+  try { return sessionStorage.getItem(INSTANCE_BANNER_DISMISS_KEY) === '1'; }
+  catch { return false; }   // fail towards SHOWING: the warning is the point
+}
+
+function dismissInstanceBanner() {
+  try { sessionStorage.setItem(INSTANCE_BANNER_DISMISS_KEY, '1'); } catch { /* nothing to persist */ }
+  const el = document.getElementById(INSTANCE_BANNER_ID);
+  if (el) el.remove();
+}
+
+/**
+ * Render (or remove) the banner. Pure w.r.t. the DOM it is handed a list for —
+ * exported so a suite can drive it with a canned server answer rather than
+ * asserting on the shape of the source that renders it.
+ */
+export function renderInstanceBanner(others) {
+  const existing = document.getElementById(INSTANCE_BANNER_ID);
+  if (existing) existing.remove();
+
+  const list = Array.isArray(others) ? others : [];
+  if (list.length === 0) return;
+  if (instanceBannerDismissed()) return;
+
+  const main = document.getElementById('main');
+  const viewRoot = document.getElementById('view-root');
+  if (!main || !viewRoot) return;
+
+  // Same sentence the server writes to the log and the same sentence an
+  // ingest error appends, built from the same fields — three surfaces
+  // describing one situation must never word it differently.
+  const who = list
+    .map(o => (o && o.port ? String(o.kind) + ' on port ' + o.port : String(o.kind || 'another Curator')))
+    .join(', and ');
+
+  const wrap = document.createElement('div');
+  wrap.id = INSTANCE_BANNER_ID;
+  wrap.className = 'main-inner';
+  wrap.style.paddingBottom = '0';
+  wrap.innerHTML =
+    '<div role="status" style="display:flex;gap:var(--space-4);align-items:flex-start;' +
+      'padding:var(--space-6) var(--space-8);border-radius:var(--radius-lg);' +
+      'border:1px solid var(--attention);background:var(--attention-tint)">' +
+      '<span style="color:var(--attention-text);flex:none;line-height:0;margin-top:2px">' +
+        icon('alertTriangle', 14) + '</span>' +
+      '<div style="flex:1;min-width:0;font:var(--type-body-sm);color:var(--text-2)">' +
+        '<div style="color:var(--attention-text);font-weight:600">' +
+          'Another Curator is running over this same knowledge folder (' + escapeHtml(who) + ').' +
+        '</div>' +
+        'Two apps writing at once can corrupt an ingest — quit one before ingesting. ' +
+        '<a href="' + INSTANCE_DOCS_URL + '" target="_blank" rel="noopener" ' +
+          'style="color:var(--accent-text)">Two installs, one knowledge folder</a>' +
+      '</div>' +
+      '<button type="button" class="btn btn-ghost" id="instance-banner-dismiss">Dismiss</button>' +
+    '</div>';
+
+  main.insertBefore(wrap, viewRoot);
+  const btn = document.getElementById('instance-banner-dismiss');
+  if (btn) btn.addEventListener('click', dismissInstanceBanner);
+}
+
+/**
+ * Ask the server once. Fire-and-forget, and NEVER throws or rejects — the same
+ * contract (and the same reason) as refreshSyncBadge above: boot() calls it
+ * without awaiting, and a throw there would stop markBooted() and paint
+ * index.html's full-page recovery panel for every user.
+ */
+export async function checkOtherInstances() {
+  let others = [];
+  try {
+    const res = await fetch('/api/config/instances');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ok && Array.isArray(data.others)) others = data.others;
+    }
+  } catch {
+    others = [];   // could not find out — say nothing rather than guess
+  }
+  try { renderInstanceBanner(others); } catch { /* shell missing/detached */ }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────
 
 function boot() {
@@ -2378,6 +2500,12 @@ function boot() {
   // interval — see armSyncBadgeWakeHandler's own comment for why an
   // immediate refresh on every wake is safe here.
   armSyncBadgeWakeHandler();
+
+  // "Another Curator is running over this same knowledge folder." ONE fetch,
+  // no timer — see the section above boot() for why a poll was not added.
+  // Fire-and-forget for the markBooted() reason documented below: the
+  // function is async and never throws, and it is not awaited.
+  checkOtherInstances();
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs

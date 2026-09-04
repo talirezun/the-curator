@@ -487,9 +487,20 @@ key beats writing a one-shot importer for three secret files, is
 [D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
 
 > **Running both at once over one folder** is possible and is not guarded
-> against. See [§ Two installs, one knowledge folder](user-guide.md#two-installs-one-knowledge-folder)
+> against — but since v3.46.0 both windows SAY so, with a banner naming the other
+> copy and its port ("Another Curator is running over this same knowledge folder
+> … quit one before ingesting"). It is **advisory**: nothing is refused, nothing
+> is locked, and dismissing it lasts for that window only. See
+> [§ Two installs, one knowledge folder](user-guide.md#two-installs-one-knowledge-folder)
 > — including the part people get caught by, which is that **closing the browser
 > tab does not stop the browser install's server**.
+>
+> The banner exists because the protection used to be an ACCIDENT. Both copies
+> wanted port 3333, so the second one died on startup. The packaged app now picks
+> a free port instead — otherwise it would refuse to start on any machine already
+> running a checkout — and `desktop/lib/port.js` records that this was a real
+> reduction in protection, to be replaced deliberately. This is that replacement.
+> It detects the situation; it does not prevent it.
 
 ---
 

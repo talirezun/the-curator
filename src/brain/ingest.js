@@ -26,6 +26,7 @@ import { writeFileAtomic } from './atomic-write.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, hashRawSource } from './raw-store.js';
+import { listOtherInstances, describeOthers } from './instance-probe.js';
 
 /**
  * v3.0.1-beta.1 — deterministic summary slug computed from the source filename.
@@ -484,6 +485,50 @@ function makeProgress(onProgress) {
   return (pct, message, type = 'progress') => {
     onProgress?.({ type, pct, message });
   };
+}
+
+/**
+ * `m:ss` (or `h:mm:ss` past an hour) for a duration in milliseconds.
+ *
+ * A REAL ingest reached ~an hour on the maintainer's machine — MAX_RETRIES=4
+ * with a Retry-After clamped to 60s is up to ~180s of sleeping per LLM call,
+ * a batch can make up to three calls (batch → per-page → concise), and an
+ * 80,000-char source is 25+ batches. Nothing bounds that, and nothing narrated
+ * it, so it presented as a hang. The hour is still possible; this is what
+ * makes it legible while it happens.
+ */
+export function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/**
+ * The trailing "· 12:07 elapsed · 41 AI calls" fragment appended to long-run
+ * progress messages.
+ *
+ * `narrate` is `{ startedAt, calls }` — `calls` is a FUNCTION, not a number,
+ * because it is read at emission time from the usage accumulator that every
+ * provider call (retries and fallback-chain rungs included) already feeds. A
+ * snapshotted number would report the count as of whenever the closure was
+ * built, which on a batch loop is always stale.
+ *
+ * Returns '' for a null narrate, so every call site is safe to write
+ * unconditionally and nothing in the pipeline has to branch.
+ */
+function progressTail(narrate) {
+  if (!narrate || typeof narrate !== 'object') return '';
+  let calls = null;
+  try { calls = typeof narrate.calls === 'function' ? narrate.calls() : null; } catch { calls = null; }
+  const parts = [];
+  if (Number.isFinite(narrate.startedAt)) {
+    parts.push(`${formatElapsed(Date.now() - narrate.startedAt)} elapsed`);
+  }
+  if (Number.isFinite(calls)) parts.push(`${calls} AI call${calls === 1 ? '' : 's'}`);
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
 // ── Phase 2: page content (batched) ──────────────────────────────────────────
@@ -1924,7 +1969,12 @@ Tags: stub, type/${pagePath.startsWith('entities/') ? 'entity' : 'concept'}
  *   This function touches no filesystem, so injecting the LLM makes the whole
  *   multi-phase orchestration testable offline. Production callers pass nothing.
  */
-async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText, signal = null) {
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText, signal = null, narrate = null) {
+  // `narrate` is `{ startedAt, calls, otherInstances }` — see progressTail().
+  // Optional and defaulted, so every existing caller (including
+  // scripts/test-ingest-prompt-slimming.js, which calls this positionally
+  // through __testing) is byte-identical in behaviour without it.
+  const tail = () => progressTail(narrate);
   // Cancellation checkpoints are placed immediately BEFORE each LLM call and at
   // the top of each batch, so a cancel costs at most one in-flight call rather
   // than the remaining 10-40 of a large multi-phase ingest.
@@ -1961,7 +2011,12 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath),
       MULTI_PHASE_OUTLINE_TOKENS,
       'json',
-      (msg) => progress(12, msg, 'wait'),
+      // A retry wait is narrated with WHICH phase is waiting and for how long
+      // the whole ingest has been running. llm.js's own text ("rate limited —
+      // retrying in 60s… (attempt 2/3)") says nothing about where in the
+      // ingest you are, which on a 25-batch run is the only thing that tells
+      // a user whether to wait or cancel.
+      (msg) => progress(12, `Phase 1 (page plan) — ${msg}${tail()}`, 'wait'),
       { onUsage: outlineProbe.onUsage, signal }
     )).trim();
   } catch (genErr) {
@@ -2002,7 +2057,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     // It has to be, for two reasons: it reports the REAL number of provider calls
     // (retries and fallback-chain rungs mean "one extra call" is a guess), and if
     // the retry fails we throw, so a warning pushed here would never be seen.
-    progress(13, 'Phase 1: retrying…', 'wait');
+    progress(13, `Phase 1 (page plan): retrying with a stricter prompt…${tail()}`, 'wait');
     throwIfCancelled(signal);
 
     const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath)
@@ -2018,7 +2073,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     try {
       outlineRaw2 = (await llm(
         schema, strictPrompt, MULTI_PHASE_OUTLINE_TOKENS, 'json',
-        (msg) => progress(13, msg, 'wait'),
+        (msg) => progress(13, `Phase 1 (page plan, retry) — ${msg}${tail()}`, 'wait'),
         { onUsage: retryProbe.onUsage, signal }
       )).trim();
     } catch (genErr2) {
@@ -2105,16 +2160,53 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     if (!outline) {
       // Both attempts failed (parse and/or token-limit) — throw a clean,
       // actionable error the UI can show.
-      throw new Error(
-        `⚠ The AI could not produce a usable plan for this source after two attempts — ` +
-        `usually a transient AI-provider issue, or a source so dense the outline overflowed ` +
-        `the model's output limit (not a problem with The Curator or your file). ` +
-        `What to do: (1) try Ingest again — LLM output is non-deterministic, the next attempt ` +
-        `usually succeeds; (2) if the issue persists, split the source PDF into smaller parts ` +
-        `(e.g. by chapter) and ingest each separately, or convert the PDF to a .md file first ` +
-        `with cleaner text; (3) temporarily switch to a different AI provider in Settings ` +
-        `(Anthropic Claude often handles edge cases differently from Gemini).`
-      );
+      //
+      // ── WHY THE CAUSES ARE IN THIS ORDER, AND NOT THE OLD ONE ────────────
+      //
+      // This message used to lead with "usually a transient AI-provider
+      // issue" and put the outline overflow second. That reading is not
+      // supported by anything measured here, and it sends the user to the
+      // remedy least likely to work (press Ingest again) first.
+      //
+      // What the code actually does: this arm is reachable ONLY when both
+      // attempts failed with an output-token limit, a JSON parse failure, or
+      // a response carrying no usable page array. A 429 / 503 / auth /
+      // network error is re-thrown UNCHANGED further up (`if
+      // (!isOutputTokenLimit(genErr)) throw genErr`) with the provider's own
+      // rate-limit or outage wording, and never reaches this sentence. So the
+      // one cause a transient provider blip could produce here is a truncated
+      // response that failed to parse — real, but strictly the minority arm.
+      //
+      // And MULTI_PHASE_OUTLINE_TOKENS' own block comment records the
+      // measurement: over 180 real ingests, overflow correlates with SOURCE
+      // CHARACTER (repetitive, dense text triggering runaway generation), not
+      // with page count, index size or source length. Leading with that is
+      // leading with what was measured; the remedies are reordered to match,
+      // so the FIRST thing offered is the one that addresses the FIRST cause.
+      let msg =
+        `⚠ The AI could not produce a usable plan for this source after two attempts. ` +
+        `The most likely cause is that the planning step ran past the model's response-length ` +
+        `limit on a dense source — a limit of the model, not a problem with The Curator or ` +
+        `your file. (A malformed response from a momentary provider hiccup is the less likely ` +
+        `alternative; a genuine outage or rate limit would have been reported in its own words.) ` +
+        `What to do: (1) split the source into smaller parts (e.g. by chapter) and ingest each ` +
+        `separately, or convert the PDF to a .md file first with cleaner text; (2) try Ingest ` +
+        `again — LLM output is non-deterministic, so a second attempt sometimes succeeds on the ` +
+        `same file; (3) temporarily switch to a different AI provider in Settings ` +
+        `(Anthropic Claude often handles edge cases differently from Gemini).`;
+      // Named LAST and separately, because it is a CONTRIBUTING condition and
+      // not the cause — saying "another app was running" first would send the
+      // user to quit an app when the source is what needs splitting. It is
+      // still worth one sentence: two instances share one API key and
+      // therefore one rate-limit quota, so the retries this ingest just spent
+      // were competing with the other copy's.
+      const who = describeOthers(narrate && narrate.otherInstances);
+      if (who) {
+        msg += ` Note: another Curator (${who}) was running over this same knowledge folder ` +
+               `during this ingest. Two copies share one API key and one rate-limit quota, and ` +
+               `two ingests writing at once can interfere — quit one and try again.`;
+      }
+      throw new Error(msg);
     }
   }
 
@@ -2174,7 +2266,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const batchPct = Math.round(20 + (batchNum / totalBatches) * 58);
     console.error(`[ingest] Phase 2 — batch ${batchNum}/${totalBatches} (${batch.length} pages)...`);
-    progress(batchPct, `Phase 2: writing content, batch ${batchNum} of ${totalBatches}…`);
+    progress(batchPct, `Phase 2: writing content, batch ${batchNum} of ${totalBatches}…${tail()}`);
 
     // The batch LLM call and its JSON parse are handled separately so the two
     // recoverable failures (output-token-limit, malformed JSON) fall back to
@@ -2194,7 +2286,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         batchParts.prefix + batchParts.suffix,
         MULTI_PHASE_BATCH_TOKENS,
         'json',
-        (msg) => progress(batchPct, msg, 'wait'),
+        (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches} — ${msg}${tail()}`, 'wait'),
         { onUsage, cachePrefixChars: cacheAcrossBatches ? batchParts.prefix.length : 0, signal }
       )).trim();
     } catch (genErr) {
@@ -2253,7 +2345,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
             singleParts.prefix + singleParts.suffix,
             MULTI_PHASE_SINGLE_PAGE_TOKENS,
             'json',
-            (msg) => progress(batchPct, msg, 'wait'),
+            (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches}, page ${singlePage.path} — ${msg}${tail()}`, 'wait'),
             { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0, signal }
           )).trim();
         } catch (singleGenErr) {
@@ -2281,7 +2373,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
               singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE,
               MULTI_PHASE_SINGLE_PAGE_TOKENS,
               'json',
-              (msg) => progress(batchPct, msg, 'wait'),
+              (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches}, page ${singlePage.path} (shorter retry) — ${msg}${tail()}`, 'wait'),
               { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0, signal }
             )).trim();
           } catch (conciseErr) {
@@ -2402,6 +2494,18 @@ const MULTI_PHASE_INPUT_THRESHOLD = 15_000;
 export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null, opts = {}) {
   const progress = makeProgress(onProgress);
   const signal = (opts && opts.signal && typeof opts.signal.aborted === 'boolean') ? opts.signal : null;
+  // Wall-clock zero for every "N:SS elapsed" the pipeline reports. Taken here,
+  // at the true start of the user's ingest, NOT at the start of multi-phase —
+  // the number a user compares against their own patience is how long since
+  // they pressed the button.
+  const ingestStartedAt = Date.now();
+  // TEST-ONLY LLM SEAM, the same pattern and the same rationale as
+  // compile.js's `opts.generateText` and ingestMultiPhase's trailing `llm`
+  // param: it lets a suite drive the REAL orchestration — including the
+  // pre-flight size check that must fire BEFORE the first paid call — offline
+  // and for free. Production callers pass nothing, so this is `generateText`
+  // and every path is byte-identical to before.
+  const llm = (opts && typeof opts.llm === 'function') ? opts.llm : generateText;
   // Cancelled before we started (the user clicked Cancel in the window between
   // the worker selecting this item and the ingest beginning).
   throwIfCancelled(signal);
@@ -2494,6 +2598,55 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     progress(8, `⚠ Source truncated to ${TEXT_CAP.toLocaleString()} chars — see warnings.`);
   }
 
+  // ── PRE-FLIGHT: say it BEFORE the money is spent ──────────────────────────
+  //
+  // The maintainer's failed ingest was a ~98 KB source capped to 80,000 chars,
+  // and the only thing the app said before spending anything was "Saving
+  // source file…". The failure then arrived after the planning call, phrased
+  // as though the provider had hiccupped.
+  //
+  // This is the ONE fact worth having before the first paid call: a source at
+  // the cap is the size class where the page-planning step is most likely to
+  // run past the model's response limit, and the remedy (split it) is far
+  // cheaper to apply BEFORE an ingest than after a failed one. It is a
+  // heads-up, not a refusal — the ingest proceeds exactly as before.
+  //
+  // THRESHOLD is the cap minus 10%, so a source that is merely NEAR the cap
+  // is covered too; a source over the cap is covered by definition (it is
+  // also already warned about by the truncation entry above, which says a
+  // different thing — what was DROPPED, rather than what may FAIL).
+  //
+  // It goes through the standard `warnings[]` contract (CLAUDE.md: "if the
+  // pipeline drops, redirects, renames, or flattens something ... it MUST push
+  // a user-visible entry into warnings[]" — the same channel, used here for a
+  // risk rather than an edit) AND through `progress`, because a run that
+  // THROWS never returns its warnings array and the progress stream is the
+  // only surface that survives a failure.
+  const PREFLIGHT_WARN_CHARS = Math.round(TEXT_CAP * 0.9);
+  if (fullText.length >= PREFLIGHT_WARN_CHARS) {
+    const atOrOver = truncated ? 'over' : 'close to';
+    const preflight =
+      `This source is ${fullText.length.toLocaleString()} characters — ${atOrOver} the ` +
+      `${TEXT_CAP.toLocaleString()}-character limit The Curator sends to the AI. Sources this ` +
+      `size are where the page-planning step is most likely to run past the model's ` +
+      `response-length limit. If this ingest fails while planning, split the source into ` +
+      `smaller parts (e.g. by chapter) and ingest each separately.`;
+    console.warn(`[ingest] ⚠ ${preflight}`);
+    warnings.push(preflight);
+    progress(9, preflight);
+  }
+
+  // Is a SECOND Curator serving this same knowledge folder right now? Read
+  // once, here, before any paid call, for two consumers: the outline-failure
+  // message (which names it as a contributing condition) and nothing else.
+  //
+  // Deliberately NOT a refusal and deliberately not a warning of its own —
+  // the shell's banner is where the user is told to quit one; repeating it in
+  // every ingest's warnings list would make an ordinary, deliberate
+  // configuration look like a per-ingest defect. Never throws.
+  let otherInstances = [];
+  try { otherInstances = await listOtherInstances(); } catch { otherInstances = []; }
+
   // v3.0.1-beta.1: scan the source for explicit author markers. The LLM's
   // REQUIRED COVERAGE rule asks it to include the originator, but real LLM
   // runs sometimes omit the author when the source is heavily technical and
@@ -2560,7 +2713,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   if (!singlePassFailed) try {
     throwIfCancelled(signal);
     progress(15, 'AI is analyzing the document…');
-    const raw = (await generateText(
+    const raw = (await llm(
       schema,
       buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath),
       65536,
@@ -2589,7 +2742,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
         throwIfCancelled(signal);
         progress(15, 'Retrying with brevity constraints…');
 
-        const raw2 = (await generateText(
+        const raw2 = (await llm(
           schema,
           buildPrompt(today, index, promptFiles, originalName, text, true, isOverwrite, summaryPath),
           65536,
@@ -2633,7 +2786,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       progress(10, 'Large document — switching to multi-phase ingest…');
     }
     throwIfCancelled(signal);
-    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints, promptFiles, usage.onUsage, generateText, signal);
+    result = await ingestMultiPhase(
+      schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath,
+      warnings, originatorHints, promptFiles, usage.onUsage, llm, signal,
+      // The narration context. `calls` is a function so every emission reads
+      // the LIVE count from the accumulator every provider call already feeds.
+      { startedAt: ingestStartedAt, calls: () => usage.totals.calls, otherInstances },
+    );
   } else {
     // v3.0.1-beta.1: single-pass also runs through the outline validator so a
     // missing/non-canonical summary page is patched the same way as multi-phase.
