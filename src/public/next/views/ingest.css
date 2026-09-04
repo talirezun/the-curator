@@ -169,6 +169,28 @@
   font-weight: var(--weight-medium);
   color: var(--text);
 }
+/* ── THE DRAG COPY IS SWAPPED BY CSS, NOT BY RE-RENDERING ────────────────
+   Both sentences ship in the markup and this rule picks one. That is not a
+   micro-optimisation: while a file is held over the zone, the ONE thing the
+   view is allowed to change is `.ing-drop-zone-active` on the root element.
+   Replacing the copy in JS would mean touching a node the pointer is over
+   mid-drag, and re-rendering the zone from state — which is what the view
+   used to do — destroyed the drop target on the first `dragover` and made
+   the whole feature inert in the Mac app. See views/ingest.js's
+   renderDropZoneHtml and its drag block.
+
+   `display` rather than `visibility` on the headline, because exactly one of
+   the two is ever laid out and the line height is identical either way.
+   The sub-line uses `visibility` instead (below) so its box keeps its height
+   and the panel does not reflow the instant a drag arrives. */
+.ing-drop-hot { display: none; }
+.ing-drop-zone-active .ing-drop-idle { display: none; }
+.ing-drop-zone-active .ing-drop-hot { display: inline; }
+/* The "or browse your files" line is a CLICK affordance, and a pointer
+   holding a file cannot click. It is hidden while a drag is live — but by
+   `visibility`, so the row it occupies stays exactly as tall as it was and
+   the headline above it does not jump. */
+.ing-drop-zone-active .ing-drop-sub { visibility: hidden; }
 /* --text-2, NOT --text-3. Measured in a real browser at this exact
    nesting: --text-3 gives 4.33 dark / 3.87 light against --surface-inset,
    under the 4.5:1 AA floor for normal text in BOTH themes. --text-2

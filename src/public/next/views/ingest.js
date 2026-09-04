@@ -236,6 +236,13 @@ function freshState() {
     queueStreamError: null,       // banner text on a stream failure
     queueCancelConfirmOpen: false,
     queueActionBusy: null,        // 'pause' | 'resume' | 'cancel' | null — THIS click's own round-trip only; the authoritative post-response state always comes from queueJob.pauseRequested/cancelRequested/status
+    // The user dropped files while a batch panel was on screen — i.e. onto a
+    // surface with no drop zone, so nothing was added. Set by the
+    // document-level drop guard, cleared the moment the advice it carries
+    // stops applying (the panel is dismissed, or a new selection begins).
+    // It exists because the alternative is SILENCE after a deliberate user
+    // action, which is the exact complaint this release started from.
+    queueDropIgnored: false,
   };
 }
 
@@ -291,6 +298,12 @@ const ACTIVITY_POLL_IDLE_MS = 15000;
 let activityPollTimer = null;
 let activityWakeHandler = null;
 let activityInFlight = false;
+// The document-level drag guards' remover (see installDocumentDragGuards).
+// Held at module scope for the same reason activityWakeHandler is: they are
+// installed ONCE per mount in onEnter — never in wireListeners, which runs on
+// every render and would stack a new set of listeners each time — and the
+// teardown is the only thing that can take them off again.
+let removeDocumentDragGuards = null;
 // Separate from `elapsedTimerId`, which belongs to runIngest and is cleared
 // in its `finally`. Merging the two would mean one teardown path deciding the
 // lifetime of two clocks with different owners.
@@ -389,6 +402,13 @@ registerView('ingest', {
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', activityWakeHandler);
     scheduleActivityPoll(mountToken);
 
+    // Drop anywhere in the view, and refuse the browser's navigate-to-the-file
+    // default everywhere else. Installed HERE and not in wireListeners for the
+    // reason the variable's own comment gives: wireListeners runs on every
+    // render, and document listeners added there would accumulate.
+    if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
+    removeDocumentDragGuards = installDocumentDragGuards(mountToken);
+
     return () => {
       // Deliberately does NOT abort an in-flight SINGLE-FILE fetch. A
       // single-file ingest has no cancel semantics anywhere in this app
@@ -429,6 +449,10 @@ registerView('ingest', {
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', activityWakeHandler);
         activityWakeHandler = null;
       }
+      // Document-level drag guards go with the view. Left behind, they would
+      // keep swallowing file drops — and keep answering isCurrentMount with a
+      // dead token — for the life of the page.
+      if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
       renderedActivitySignature = null;
 
       // Write-gate subscription cleanup — a torn-down mount must stop
@@ -1627,15 +1651,29 @@ function renderIngestForm() {
 // mention batching (shown only in the single-file idle state, where a
 // user might not know dropping 2+ files does something different).
 function renderDropZoneHtml({ disabled, multiHint }) {
+  // ── BOTH SENTENCES ARE IN THE MARKUP AT ONCE, AND CSS PICKS ONE ────────
+  //
   // Drag-over is a DIFFERENT sentence, not a restyle of the same one: the
   // idle copy tells you what this surface takes, the active copy tells you
   // what letting go will do. Both are one line; nothing reflows the panel.
-  const headline = state.dragActive
-    ? 'Release to add'
-    : (multiHint ? 'Drop a source here' : 'Drop more files here');
-  const sub = state.dragActive
-    ? '&nbsp;'
-    : ('or <label for="ing-file-input" class="ing-browse-link">browse your files</label>');
+  //
+  // They used to be chosen HERE, off `state.dragActive`, which meant the
+  // copy could only change by re-rendering — and re-rendering is what broke
+  // drag-and-drop outright in the Mac app (see wireListeners' drag block for
+  // the full account: setMain() replaces #view-root's innerHTML, so the very
+  // node the pointer is holding a file over was destroyed on the first
+  // dragover). Emitting both spans and letting `.ing-drop-zone-active` in
+  // ingest.css decide which is visible means the ONLY thing a drag has to
+  // change is one class on the zone's root element. Nothing under the cursor
+  // is destroyed, replaced, or even mutated — and in particular the
+  // `<label for="ing-file-input">` inside `.ing-drop-sub` survives, which an
+  // innerHTML swap of that line would not have.
+  //
+  // `state.dragActive` still decides the ROOT CLASS, so a render that
+  // happens for an unrelated reason mid-drag (a write-gate change, a poll)
+  // repaints the zone in the state the drag is actually in rather than
+  // snapping it back to idle.
+  const idleHeadline = multiHint ? 'Drop a source here' : 'Drop more files here';
 
   // ALLOWED_EXT is the same array pickSingleFile validates against, so this
   // line cannot claim a format the picker would then refuse. Rendered from
@@ -1646,15 +1684,25 @@ function renderDropZoneHtml({ disabled, multiHint }) {
 
   const batchHint = multiHint
     ? '<div class="ing-drop-batch-hint">2 or more files at once starts a batch</div>'
-    : '<div class="ing-drop-batch-hint">These are added to the batch you already started</div>';
+    : '<div class="ing-drop-batch-hint">Dropping more files adds them to the batch you already started</div>';
 
   return (
     '<div class="ing-drop-zone' + (state.dragActive ? ' ing-drop-zone-active' : '') + '" id="ing-drop-zone"' +
       ' role="button" tabindex="0"' +
-      ' aria-label="Choose a file to ingest, or drop one here">' +
+      // The accessible name follows the surface. At the confirm gate this
+      // control ADDS to a batch that already exists, and announcing it as
+      // "choose a file to ingest" there described a different control.
+      ' aria-label="' + (multiHint
+        ? 'Choose a file to ingest, or drop one here'
+        : 'Choose more files to add to this batch, or drop them here') + '">' +
       '<span class="ing-drop-icon">' + icon('upload', 26) + '</span>' +
-      '<div class="ing-drop-headline">' + headline + '</div>' +
-      '<div class="ing-drop-sub">' + sub + '</div>' +
+      '<div class="ing-drop-headline">' +
+        '<span class="ing-drop-idle">' + escapeHtml(idleHeadline) + '</span>' +
+        '<span class="ing-drop-hot">Release to add</span>' +
+      '</div>' +
+      '<div class="ing-drop-sub">' +
+        'or <label for="ing-file-input" class="ing-browse-link">browse your files</label>' +
+      '</div>' +
       '<div class="ing-drop-formats">Accepts ' + formats + '</div>' +
       batchHint +
       '<input type="file" id="ing-file-input" accept=".txt,.md,.pdf" multiple hidden' + (disabled ? ' disabled' : '') + ' />' +
@@ -2257,6 +2305,137 @@ function formatElapsedMs(ms) {
 // file-header comment for why: nothing can re-mount between a real user
 // event firing and the very next line of JS running).
 
+/**
+ * The ONE writer of `state.dragActive`, and the only thing a live drag is
+ * allowed to change on screen.
+ *
+ * It paints the LIVE node — `classList.toggle` on the zone's root — instead
+ * of calling render(). That is the whole fix for the reported "drag and drop
+ * does nothing" defect; wireListeners' drag block carries the full account of
+ * why a render mid-drag destroys the drop target. Everything else the drag
+ * state affects (the headline swap, the hidden "browse your files" line) is
+ * expressed in ingest.css off this one class, so there is nothing else to
+ * update and no child node to replace.
+ *
+ * The equality guard stays — not to make a render rare, but because
+ * `dragover` fires dozens of times a second and there is no reason to touch
+ * the DOM on frames where nothing changed.
+ *
+ * Looks the zone up by id rather than closing over a node: this is called
+ * from the document-level guards and from handleSelectedFiles as well as
+ * from the zone's own listeners, and in the queue-panel state there is no
+ * zone at all — the state flag is still worth keeping straight so the next
+ * render of a zone starts from the truth.
+ */
+function setDragActive(next) {
+  const on = !!next;
+  if (state.dragActive === on) return;
+  state.dragActive = on;
+  const zone = document.getElementById('ing-drop-zone');
+  if (zone) zone.classList.toggle('ing-drop-zone-active', on);
+}
+
+/**
+ * Does this drag carry FILES (as opposed to a text selection, a link being
+ * dragged inside the app, or an editor's own drag)?
+ *
+ * `dataTransfer.types` is a DOMStringList in older engines and a frozen array
+ * in current ones; both answer to Array.from. Reading `.files` here would be
+ * useless — it is deliberately empty until `drop` — so the type list is the
+ * only signal available during dragenter/dragover, which is exactly when the
+ * document-level guard has to decide whether to intervene.
+ */
+function dragCarriesFiles(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt) return false;
+  let types = [];
+  try { types = Array.from(dt.types || []); } catch { return false; }
+  return types.indexOf('Files') !== -1;
+}
+
+/**
+ * Document-level drag guards, installed ONCE per mount (onEnter) and removed
+ * in the teardown — never from wireListeners, which runs on every render.
+ *
+ * TWO jobs, and the second is the one that matters most:
+ *
+ *  1. A file dropped anywhere in the Ingest view — the sidebar, the header,
+ *     the gap beside the zone — is treated as a drop on the zone, provided a
+ *     zone is actually on screen. Aiming a file at a 168px target is the
+ *     kind of precision a desktop app should not ask for, and the answer to
+ *     "did I hit it?" should never be "the app went blank".
+ *
+ *  2. A file dropped anywhere at all is REFUSED rather than left to the
+ *     browser. The default action for a file dropped on a page is to
+ *     navigate to it: in Electron that takes the window off the app with no
+ *     error and no way back except relaunching. That is a hazard on EVERY
+ *     view, not just this one — but this view is the only place a user has
+ *     any reason to be dragging a file, so this is where it is closed, and
+ *     desktop/main.js's will-navigate guard is the layer that covers the
+ *     rest.
+ *
+ * Deliberately scoped to drags that carry files: a text selection dragged
+ * inside a textarea must keep working, so a non-file drag is not touched.
+ */
+function installDocumentDragGuards(mountToken) {
+  if (typeof document === 'undefined') return null;
+
+  const overGuard = (e) => {
+    if (!isCurrentMount(mountToken)) return;
+    if (!dragCarriesFiles(e)) return;
+    // Refusing the default is what stops the navigation, so it happens for
+    // every file drag over this view whether or not a zone is on screen.
+    e.preventDefault();
+    try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch { /* not settable here */ }
+  };
+
+  const dropGuard = (e) => {
+    if (!isCurrentMount(mountToken)) return;
+    if (!dragCarriesFiles(e)) return;
+    e.preventDefault();
+    setDragActive(false);
+    // Inside the zone the zone's own listener has already handled it — this
+    // handler sees the same event on the way up. Doing the work twice would
+    // add every dropped file to the batch twice.
+    const zone = document.getElementById('ing-drop-zone');
+    if (zone && e.target && typeof e.target.closest === 'function' && e.target.closest('#ing-drop-zone')) return;
+    // No zone on screen (a batch is live or terminal-undismissed, or the
+    // domain list failed to load) — the drop is not ACTED on. Silently
+    // mutating a running batch's file list from a stray drop would be worse
+    // than ignoring it, and the navigation is refused either way. But it is
+    // not swallowed SILENTLY: a batch panel says so, because a user who has
+    // just dragged three files onto the app is owed an answer.
+    if (!zone) {
+      if (state.queueJob && !state.queueDropIgnored) {
+        state.queueDropIgnored = true;
+        render(mountToken);
+      }
+      return;
+    }
+    handleSelectedFiles(mountToken, e.dataTransfer && e.dataTransfer.files);
+  };
+
+  // A drag that ends outside the window — released over Finder, or
+  // cancelled with Escape — fires no dragleave at the zone in every engine.
+  // Without this the zone can be left reading "Release to add" over a drag
+  // that is already over.
+  const endGuard = () => { if (isCurrentMount(mountToken)) setDragActive(false); };
+
+  document.addEventListener('dragenter', overGuard);
+  document.addEventListener('dragover', overGuard);
+  document.addEventListener('drop', dropGuard);
+  document.addEventListener('dragend', endGuard);
+  if (typeof window !== 'undefined') window.addEventListener('blur', endGuard);
+
+  return () => {
+    document.removeEventListener('dragenter', overGuard);
+    document.removeEventListener('dragover', overGuard);
+    document.removeEventListener('drop', dropGuard);
+    document.removeEventListener('dragend', endGuard);
+    if (typeof window !== 'undefined') window.removeEventListener('blur', endGuard);
+  };
+}
+
 function wireListeners() {
   // The domain picker. Hydrated from the SAME builder the markup came from
   // (domainListboxCfg), so the mounted control and the rendered one cannot
@@ -2277,31 +2456,69 @@ function wireListeners() {
   const dropZone = document.getElementById('ing-drop-zone');
   const fileInput = document.getElementById('ing-file-input');
   if (dropZone) {
-    // `dragover` fires CONTINUOUSLY (many times a second) while a file is
-    // held over the zone, and render() here replaces the whole main column
-    // and sidebar via innerHTML. Re-rendering only when the flag actually
-    // CHANGES is not an optimisation for its own sake: repainting the very
-    // element the pointer is over, dozens of times a second, is how a drag
-    // gets dropped on the floor. Same guard on dragleave.
-    const setDragActive = (next) => {
-      if (state.dragActive === next) return;
-      state.dragActive = next;
-      render(myMountToken);
+    // ── THE DROP TARGET MUST SURVIVE THE WHOLE DRAG SESSION ─────────────
+    //
+    // THE DEFECT (reported from the Mac app: "dragging files from Finder
+    // onto the drop zone does nothing", while Choose files worked for one
+    // file and for many). `dragover` fires CONTINUOUSLY while a file is held
+    // over the zone. The first one called setDragActive(true), which called
+    // render() — and render() goes renderMain -> setMain, which replaces
+    // #view-root's innerHTML wholesale. So the element the pointer was
+    // holding a file over was DESTROYED by the drag's own first event, and
+    // rebuilt as a different node.
+    //
+    // The old comment here knew the shape of the hazard ("repainting the
+    // very element the pointer is over ... is how a drag gets dropped on
+    // the floor") and then answered it with a guard that only stops the
+    // repaint from happening MANY times. Once is enough to break it. Worse,
+    // it made the destruction self-sustaining: Chromium dispatches
+    // `dragleave` at the old target when the drag target changes, that
+    // listener flipped the flag back to false and rendered AGAIN, and the
+    // next dragover flipped it true and rendered a third time. Every frame
+    // of the drag replaced the node under the cursor, so the `drop` never
+    // landed on an attached element and the browser fell through to its
+    // default action — which, for a file dropped on a page, is to NAVIGATE
+    // to it. In a browser tab that shows the file; in Electron it silently
+    // takes the window off the app (hence "nothing happens").
+    // desktop/main.js now refuses that navigation as well — belt and
+    // braces, and see its will-navigate comment for why both halves exist.
+    //
+    // THE RULE, therefore: while a drag is in progress this view MUTATES,
+    // it never re-renders. setDragActive toggles ONE class on the live zone
+    // (the copy swap is CSS — see renderDropZoneHtml and ingest.css), and
+    // nothing else in the subtree is touched.
+    //
+    // `dragenter` is registered and preventDefault'd rather than left out.
+    // The HTML drag-and-drop model determines the current target element
+    // from whether `dragenter` was cancelled; browsers are more forgiving
+    // than the spec and usually accept a dragover-only zone, but a target
+    // that answers only half the handshake is relying on that forgiveness,
+    // and it costs one line not to. `dropEffect = 'copy'` is what makes the
+    // OS draw a copy cursor instead of the "no entry" badge, which is the
+    // feedback a user reads BEFORE letting go.
+    const accept = (e) => {
+      e.preventDefault();
+      // Read-only in some drag phases in some engines; never worth throwing.
+      try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch { /* not settable here */ }
     };
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); setDragActive(true); });
-    // The zone now has CHILD elements (icon, headline, sub, formats line),
-    // and dragleave fires when the pointer crosses from the zone onto any
-    // of them. `relatedTarget` is the node being entered, so a move that
-    // stays inside the zone is not a leave — without this the active state
-    // strobes while the user is still holding the file over the target.
+    dropZone.addEventListener('dragenter', (e) => { accept(e); setDragActive(true); });
+    dropZone.addEventListener('dragover', (e) => { accept(e); setDragActive(true); });
+    // The zone has CHILD elements (icon, headline, sub, formats line), and
+    // dragleave fires when the pointer crosses from the zone onto any of
+    // them. `relatedTarget` is the node being entered, so a move that stays
+    // inside the zone is not a leave — without this the active state strobes
+    // while the user is still holding the file over the target.
     dropZone.addEventListener('dragleave', (e) => {
       if (e.relatedTarget && dropZone.contains(e.relatedTarget)) return;
       setDragActive(false);
     });
     dropZone.addEventListener('drop', (e) => {
       e.preventDefault();
-      state.dragActive = false;
-      handleSelectedFiles(myMountToken, e.dataTransfer.files);
+      // Through setDragActive, not a bare assignment: the flag and the class
+      // on screen are one fact, and writing the flag alone is what left the
+      // zone reading "Release to add" after a drop that carried no files.
+      setDragActive(false);
+      handleSelectedFiles(myMountToken, e.dataTransfer && e.dataTransfer.files);
     });
     dropZone.addEventListener('click', (e) => {
       if (e.target.closest('label')) return; // the <label for=...> already opens the picker natively
@@ -2392,7 +2609,17 @@ function wireListeners() {
 // the accumulate behaviour itself.
 function handleSelectedFiles(token, fileList) {
   const incoming = Array.from(fileList || []);
-  if (incoming.length === 0) return;
+  if (incoming.length === 0) {
+    // A drop can genuinely carry nothing this view can use — a folder on some
+    // platforms, a dragged-out mail attachment that never materialises — and
+    // a cancelled picker fires `change` with an empty list too. The early
+    // return was correct; what was missing is that it left `state.dragActive`
+    // wherever the drop had put it, so the zone sat on "Release to add" over
+    // a drag that had already ended. setDragActive is a no-op when the flag
+    // is already false, so the ordinary picker path costs nothing.
+    setDragActive(false);
+    return;
+  }
 
   if (!state.queueModeActive) {
     if (incoming.length === 1 && !state.file) {
@@ -2711,6 +2938,7 @@ function resetQueueSelection(token) {
   state.queueBudgetInput = '';
   state.queueOverwriteInput = false;
   state.queueSubmitError = null;
+  state.queueDropIgnored = false;
   // Ported carve-out from app.js's own resetQueueSelection: never clear a
   // batch that's still genuinely LIVE — only a lingering TERMINAL one.
   // Not reachable today (Clear all only ever renders at the confirm gate,
@@ -3122,6 +3350,10 @@ function dismissQueuePanel(token) {
   state.queueJob = null;
   state.queueCancelConfirmOpen = false;
   state.queueStreamError = null;
+  // The advice in that note is "dismiss this and drop them again", which is
+  // what just happened. Leaving it up would tell the user to do a thing they
+  // have already done.
+  state.queueDropIgnored = false;
   render(token);
 }
 
@@ -3586,6 +3818,21 @@ function renderQueuePanel(job) {
         renderStatus({ state: 'danger', title: 'Lost the live connection to this batch', detail: state.queueStreamError }) +
       '</div>'
     : '';
+  // Files were dropped onto this panel, which has no drop zone. Say what
+  // happened and what to do instead, rather than leaving the drag to
+  // disappear — the whole point of the guard that caught it. `isTerminal`
+  // picks the recovery sentence, because the two states have different ones.
+  const dropIgnoredHtml = state.queueDropIgnored
+    ? '<div class="ing-status-block">' +
+        renderStatus({
+          state: 'attention',
+          title: 'Those files were not added',
+          detail: isTerminal
+            ? 'This batch has finished. Dismiss it to get the drop zone back, then drop them again.'
+            : 'A batch is already running, and files cannot be added to one once it has started. Wait for it to finish, then drop them into the new batch.',
+        }) +
+      '</div>'
+    : '';
   const pausedHtml = job.status === 'paused' ? renderQueuePausedBanner(job) : '';
   const doneHtml = isTerminal ? renderQueueDoneSummary(job) : '';
   const { noticeHtml, controlsHtml } = computeQueueInFlight(job);
@@ -3606,7 +3853,7 @@ function renderQueuePanel(job) {
 
   const listHtml = '<ul class="ing-queue-item-list">' + items.map((item) => renderQueueItemRow(item, { jobTerminal: isTerminal })).join('') + '</ul>';
 
-  return headerHtml + streamErrorHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
+  return headerHtml + streamErrorHtml + dropIgnoredHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────

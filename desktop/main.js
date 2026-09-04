@@ -1640,6 +1640,51 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // ── The window never leaves the app ──────────────────────────────────────
+  //
+  // THE CASE THIS EXISTS FOR IS A DROPPED FILE. The default action for a file
+  // dropped anywhere on a page is to NAVIGATE to it, and that default is what
+  // a drop zone's `preventDefault` is suppressing. Miss the zone by a few
+  // pixels — or hit a zone whose listeners are broken, which is exactly the
+  // v3.46 Ingest defect this shipped alongside — and Electron loads
+  // `file:///Users/…/whatever.pdf` into the main window. There is no address
+  // bar, no Back that a user would think to reach for, and no error: the app
+  // is simply gone until it is relaunched. The renderer-side guards in
+  // views/ingest.js are the first layer and cover the view where dragging is
+  // a thing users do; this is the layer that covers every other view, every
+  // drag of a link or an image, and any renderer bug that gets past the first.
+  //
+  // SAME-ORIGIN IS ALLOWED THROUGH, and the app relies on that: Settings'
+  // post-update `location.reload()` and the boot-failure panel's reload button
+  // both stay on `baseUrl`. In-app view changes never reach here at all — the
+  // /next shell navigates with the history API, which fires no `will-navigate`.
+  //
+  // An external http(s) URL is opened in the real browser rather than merely
+  // refused, matching setWindowOpenHandler above: the two paths differ only in
+  // whether the page asked for a new window, and a user who clicks a link
+  // should get the same outcome either way. Anything else — file:, data:,
+  // blob: — is refused outright and nothing is offered, because there is no
+  // honest destination for it.
+  const staysInApp = (url) => {
+    if (!baseUrl) return false;
+    try { return new URL(url).origin === new URL(baseUrl).origin; } catch { return false; }
+  };
+  const refuseForeignNavigation = (event, url) => {
+    if (staysInApp(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  };
+  mainWindow.webContents.on('will-navigate', refuseForeignNavigation);
+  // `will-frame-navigate` (Electron >= 22) covers iframes, which
+  // `will-navigate` does not. The app ships no iframe today, so this is a
+  // guard against a future one rather than a fix for anything live — and it is
+  // registered defensively, because a listener for an event name a build does
+  // not emit is inert, whereas assuming the event exists is not something this
+  // file can test (Electron is never loaded by the offline suite).
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    refuseForeignNavigation(details, details && details.url);
+  });
+
   mainWindow.loadURL(baseUrl);
 }
 // ── Restart ──────────────────────────────────────────────────────────────────

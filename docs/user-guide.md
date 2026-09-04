@@ -1305,6 +1305,12 @@ flowchart TD
 
 **The drop zone answers two different questions.** Hovering it looks one way — *you could drop here* — and dragging a file over it looks another, louder way — *let go and this happens*. They are deliberately distinct states, not one highlight doing double duty.
 
+**Dragging from Finder works, and you don't have to hit the zone exactly.** Drop a file **anywhere in the Ingest view** — the drop zone, the destination list beside it, the space around them — and it lands in the same place as if you had aimed at the zone. Dropping **two or more files at once starts a batch**, exactly as picking several from the file browser does; the two routes go through the same code, so anything true of one is true of the other.
+
+> **If you are on a version before v3.46 and drag does nothing, that is a known defect, not your machine.** Dragging over the zone destroyed the very element you were dragging onto, so the drop never registered — and because nothing then handled the drop, the app could navigate itself to the file and appear to vanish. Both halves are fixed: the zone now stays put for the whole drag, and the Mac app refuses to navigate away from itself. Until you update, **browse your files** / **Choose files** is the reliable route and handles multi-file batches perfectly well.
+
+**Dropping files onto a batch that is already running does nothing — and says so.** Once a batch has started, files cannot be added to it (see *Batch ingest* below for why processing is strictly one at a time), so a drop onto the running batch panel is refused with a short note telling you to wait for it to finish, or — if it has already finished — to **Dismiss** it and drop again. It is never silently swallowed.
+
 ### Batch ingest — queue many files at once
 
 If you select **two or more files**, The Curator switches from the single-file flow above into a **batch queue**: one durable, resumable job that ingests every file, one at a time, and survives you closing the browser tab or even restarting the app. Selecting a single file still uses the plain flow described above — nothing about it changes.
