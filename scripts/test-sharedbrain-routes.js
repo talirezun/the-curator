@@ -639,21 +639,80 @@ try {
       'member entry carries short id + display name');
   }
 
-  // admin-token rotate (provision → rotate; masked in listings)
+  // admin-token rotate — v3.43.0 REMOVED provisioning. Before v3.43.0, a
+  // connection with no admin_token could mint one from this route with no
+  // proof of possession at all (that is exactly how a plain contributor
+  // rotated-then-revoked the cohort admin in the v3.42.0 live run). Rotate
+  // now goes through the same adminTokenGate as revoke: a token-less
+  // connection is refused 403 `no_admin_token` and NEVER provisioned one,
+  // and rotating an existing token requires supplying the CURRENT token.
+  // These assertions test the current contract instead of the retired
+  // provisioning behaviour.
   let p5AdminToken;
   {
-    const r = await request('POST', `/${p5Id}/admin-token/rotate`);
-    assertEq(r.status, 200, 'POST /:id/admin-token/rotate responds 200');
+    // The p5 connection was created above with no admin_token — this is the
+    // "plain contributor" shape rotate must now refuse outright.
+    const r = await request('POST', `/${p5Id}/admin-token/rotate`, {});
+    assertEq(r.status, 403, 'rotate on a token-less connection → 403');
+    assertEq(r.body.code, 'no_admin_token', 'error code is no_admin_token');
+
+    const list0 = await request('GET', '/list');
+    const mine0 = (list0.body.connections || []).find(c => c.id === p5Id);
+    assert(mine0 && mine0.has_admin_token === false, 'list carries has_admin_token: false for a token-less connection');
+  }
+
+  {
+    // Mint the connection's first admin token the way the product does —
+    // POST /generate-invite mints it at brain-setup time, and /save is what
+    // persists it (see the route's own v3.43.0 comment block). There is no
+    // PATCH route, so /save is called again with the full connection
+    // (fetched from /list, which is masked but has nothing to mask here —
+    // local storage carries no github_pat/fellow_token) plus the new token.
+    const invite = await request('POST', '/generate-invite', {
+      repo: 'talirezun/curator-sharedbrain-preflight', name: 'Phase 5 Admin',
+      shared_domain: 'work-ai',
+    });
+    assertEq(invite.status, 200, 'generate-invite for the admin-token lifecycle');
+    const mintedToken = invite.body.admin_token;
+    assert(/^sbat_[0-9a-f]{40}$/.test(mintedToken || ''), 'generate-invite mints a sbat_ token');
+
+    const { pending_pages, has_admin_token, ...current } =
+      (await request('GET', '/list')).body.connections.find(c => c.id === p5Id);
+    const resaved = await request('POST', '/save', { connection: { ...current, admin_token: mintedToken } });
+    assertEq(resaved.status, 200, 'save persists the freshly-minted admin_token onto the existing connection');
+
+    const list1 = await request('GET', '/list');
+    const mine1 = (list1.body.connections || []).find(c => c.id === p5Id);
+    assert(mine1 && mine1.has_admin_token === true, 'list now carries has_admin_token: true');
+
+    p5AdminToken = mintedToken;
+  }
+
+  {
+    // Proof of possession, not mere existence: rotate refuses with no token…
+    const noToken = await request('POST', `/${p5Id}/admin-token/rotate`, {});
+    assertEq(noToken.status, 403, 'rotate with no token in the body → 403');
+    assertEq(noToken.body.code, 'admin_token_required', 'error code is admin_token_required');
+
+    // …and refuses a wrong token.
+    const wrongToken = await request('POST', `/${p5Id}/admin-token/rotate`,
+      { admin_token: 'sbat_' + '0'.repeat(40) });
+    assertEq(wrongToken.status, 403, 'rotate with a mismatched token → 403');
+    assertEq(wrongToken.body.code, 'admin_token_mismatch', 'error code is admin_token_mismatch');
+
+    // The correct current token rotates cleanly to a NEW, different token.
+    const r = await request('POST', `/${p5Id}/admin-token/rotate`, { admin_token: p5AdminToken });
+    assertEq(r.status, 200, 'rotate with the correct current token responds 200');
     assert(/^sbat_[0-9a-f]{40}$/.test(r.body.admin_token || ''), 'rotate returns a sbat_ token');
-    assertEq(r.body.rotated, false, 'first rotate reports rotated: false (provisioning)');
-    const oldToken = r.body.admin_token;
-    const r2 = await request('POST', `/${p5Id}/admin-token/rotate`);
-    assertEq(r2.body.rotated, true, 'second rotate reports rotated: true');
-    assert(r2.body.admin_token !== oldToken, 'rotation issues a different token');
-    p5AdminToken = r2.body.admin_token;
-    const list = await request('GET', '/list');
-    const mine = (list.body.connections || []).find(c => c.id === p5Id);
-    assert(mine && /…$/.test(mine.admin_token || ''), 'admin_token is masked in listings');
+    assertEq(r.body.rotated, true, 'rotate reports rotated: true');
+    assert(r.body.admin_token !== p5AdminToken, 'rotation issues a different token');
+
+    const oldToken = p5AdminToken;
+    p5AdminToken = r.body.admin_token;
+
+    const list2 = await request('GET', '/list');
+    const mine2 = (list2.body.connections || []).find(c => c.id === p5Id);
+    assert(mine2 && /…$/.test(mine2.admin_token || ''), 'admin_token is masked in listings');
 
     // The rotated-away token must no longer authorise a revoke.
     const stale = await request('POST', `/${p5Id}/revoke`, {
