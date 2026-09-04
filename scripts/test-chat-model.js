@@ -1978,8 +1978,23 @@ section('18. Usage record — the tokens that price an answer, reported or absen
       eq(JSON.stringify(msg.usage), JSON.stringify(r.usage),
         'the persisted counts are byte-identical to the returned ones (one figure, two surfaces)');
       // Appended LAST, so an untouched message serialises byte-identically.
-      eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage',
-        'usage is the LAST key — existing keys keep their order and their bytes');
+      //
+      // ── UPDATED DELIBERATELY IN v3.46.0, WITH THE REASON ────────────────
+      // `citationTitles` was appended after `usage` — the SAME rule this
+      // assertion exists to enforce, applied to the next field. It is not
+      // spliced in beside `citations` (where it reads more naturally) for
+      // exactly the reason `usage` is not: every assistant message already on
+      // a user's disk must keep its key order and its bytes, and a field
+      // inserted in the middle rewrites all of them on the next write.
+      //
+      // It is present HERE because this fixture's answer cites
+      // `entities/foo.md`, which exists on disk with a `# Foo` heading — so a
+      // title WAS resolvable. It is absent when none is (see section 21),
+      // which is why the assertion below is not simply the same list again.
+      eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles',
+        'usage keeps its place and citationTitles is the LAST key — existing keys keep their order and their bytes');
+      eq(JSON.stringify(msg.citationTitles), '{"entities/foo.md":"Foo"}',
+        'and the persisted map names the cited page by its H1, not by its path');
       // It carries ONLY the four counts: nothing else riding on the usage
       // payload (provider/model, or whatever llm.js adds next) may leak into a
       // conversation record and out over the wire.
@@ -2515,6 +2530,252 @@ section('20. Two PUBLISHED facts — optional, additive, and never derived');
       && fieldOf('zzfact/absent:free', 'contextLength') === null,
       'and an entry publishing neither carries null for both — absent is absent, on the dynamic path too');
     setOpenRouterCatalogue([]);
+  }
+}
+
+// ── 21. Citation titles: the chip shows the page's NAME ─────────────────────
+section('21. Citation titles — the map that turns a path into a page name');
+{
+  /*
+   * A citation chip read `entities/tali-rezun.md`. The page is called
+   * `Dr Tali Rezun` and every other surface in the app says so — the wiki
+   * reader's header, the MCP's get_node, Obsidian. The chip was the one place
+   * that showed the filename.
+   *
+   * WHAT THIS SECTION PROVES, and why each part is here rather than assumed:
+   *
+   *   (a) the map is built from the page's own `# Heading`, through the SAME
+   *       deriveTitle the wiki reader uses — not a second regex;
+   *   (b) a page with NO heading falls back to a humanised slug, and that
+   *       string is character-for-character what the CLIENT would have
+   *       produced on its own. If those two ever diverge, an old thread and a
+   *       new one label the same chip differently and the fallback stops being
+   *       invisible;
+   *   (c) a cited path that is not a real page gets NO entry — the map omits
+   *       rather than guesses, and `citations` still carries the path;
+   *   (d) nothing at all resolvable ⇒ `null`, not `{}`;
+   *   (e) it survives the round trip to disk AND is absent from messages
+   *       written before this change — the backward-compatibility half.
+   */
+  const { buildCitationTitles } = __testing;
+
+  // ── (a)+(b)+(c)+(d): the pure builder, driven directly ─────────────────
+  {
+    const pages = [
+      { path: 'entities/tali-rezun.md',
+        content: '---\ntype: entity\ntags: [x]\n---\n# Dr Tali Rezun\n\n## Key Facts\n- A person.\n' },
+      { path: 'entities/iea.md',
+        content: '---\ntype: entity\n---\n# International Energy Agency\n\nProse.\n' },
+      // NO `# Heading` anywhere in the body — the fallback case.
+      { path: 'concepts/two-worlds-of-code.md',
+        content: '---\ntype: concept\n---\n## Definition\n\nSomething without an H1.\n' },
+      // An explicit frontmatter title, which deriveTitle honours first.
+      { path: 'summaries/some-source.md',
+        content: '---\ntype: summary\ntitle: The Energy Report\n---\n# Ignored Heading\n\nBody.\n' },
+    ];
+
+    const m = buildCitationTitles(
+      ['entities/tali-rezun.md', 'entities/iea.md', 'concepts/two-worlds-of-code.md',
+       'summaries/some-source.md', 'entities/never-written.md'],
+      pages
+    );
+    ok(m !== null && typeof m === 'object', 'buildCitationTitles returns a map when anything resolves');
+    eq(m['entities/tali-rezun.md'], 'Dr Tali Rezun',
+      '★ the title comes from the page\'s own H1, not from its filename');
+    eq(m['entities/iea.md'], 'International Energy Agency',
+      '★ …including where the slug could NEVER have produced it — this is why the server resolves it');
+    eq(m['summaries/some-source.md'], 'The Energy Report',
+      'an explicit frontmatter title wins over the H1 (deriveTitle\'s own precedence, reused not re-implemented)');
+
+    // (b) THE FALLBACK PARITY ASSERTION. `titleFromSlug` is lifted out of the
+    // shipping VIEW source, not retyped here — if the two rules ever drift,
+    // this goes red rather than the drift shipping invisibly.
+    const chatViewSrc = readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8');
+    const tfsMatch = /function titleFromSlug\(slug\) \{\n([\s\S]*?)\n\}/.exec(chatViewSrc);
+    ok(!!tfsMatch, 'the view\'s titleFromSlug is findable (a rename must not silently skip this check)');
+    const clientTitleFromSlug = new Function('slug', tfsMatch[1]);
+    eq(m['concepts/two-worlds-of-code.md'], 'Two Worlds Of Code',
+      '★ a page with no H1 falls back to the humanised slug');
+    eq(m['concepts/two-worlds-of-code.md'], clientTitleFromSlug('two-worlds-of-code'),
+      '★ …and it is BYTE-IDENTICAL to what the client would render unaided — the fallback is invisible');
+
+    // (c) OMISSION, NEVER A GUESS.
+    ok(!Object.prototype.hasOwnProperty.call(m, 'entities/never-written.md'),
+      '★ a cited path with no page on disk gets NO entry — the client humanises it, the server does not invent it');
+    eq(Object.keys(m).length, 4, 'exactly the four resolvable paths are in the map');
+
+    // (d) NOTHING RESOLVABLE ⇒ null.
+    eq(buildCitationTitles(['entities/ghost.md'], pages), null,
+      'nothing resolvable ⇒ null, never an empty object on the wire');
+    eq(buildCitationTitles([], pages), null, 'no citations ⇒ null');
+    eq(buildCitationTitles(['entities/iea.md'], []), null, 'no pages ⇒ null');
+    eq(buildCitationTitles(null, pages), null, 'a non-array citation list ⇒ null, not a throw');
+
+    // A malformed page record must not take the turn down: this map is built
+    // AFTER the provider has been paid and BEFORE the answer is persisted.
+    let threw = null;
+    try {
+      buildCitationTitles(['entities/iea.md'], [null, { path: 'entities/iea.md' }, { content: 'x' }, ...pages]);
+    } catch (e) { threw = e; }
+    ok(threw === null, 'a malformed page record is skipped, never thrown on (this runs after the money is spent)');
+  }
+
+  // ── (e) THE BUILDER'S RECORD RULE ──────────────────────────────────────
+  {
+    const base = ['role', 'content', 'citations'];
+    const withTitles = buildAssistantMessage('a', ['e/f.md'], 'anthropic', 'claude-haiku-4-5',
+      null, { 'e/f.md': 'Eff' });
+    eq(Object.keys(withTitles).filter(k => !base.includes(k)).join(','), 'provider,model,citationTitles',
+      'citationTitles is appended after the fields that came before it');
+    eq(JSON.stringify(withTitles.citationTitles), '{"e/f.md":"Eff"}', 'and carries the map');
+
+    for (const [label, input] of [
+      ['null', null], ['undefined', undefined], ['an empty object', {}],
+      ['an array', ['e/f.md']], ['a string', 'Eff'],
+      ['a map whose only value is blank', { 'e/f.md': '   ' }],
+      ['a map whose only value is not a string', { 'e/f.md': 42 }],
+    ]) {
+      const msg = buildAssistantMessage('a', ['e/f.md'], null, null, null, input);
+      ok(!Object.prototype.hasOwnProperty.call(msg, 'citationTitles'),
+        `citationTitles (${label}): the key is OMITTED — absent means "no titles", never an empty shape`);
+    }
+    // A fresh literal, so nothing riding on the caller's object reaches disk.
+    const src = { 'e/f.md': 'Eff', sneaky: { nested: true } };
+    const built = buildAssistantMessage('a', [], null, null, null, src);
+    ok(built.citationTitles !== src, 'the recorded map is a fresh object, not the caller\'s');
+    ok(!('sneaky' in built.citationTitles), '…and a non-string value is dropped rather than carried through');
+    // The five-argument call — every existing call site — is unchanged.
+    const legacyShape = buildAssistantMessage('a', ['e/f.md'], 'anthropic', 'claude-haiku-4-5', null);
+    ok(!Object.prototype.hasOwnProperty.call(legacyShape, 'citationTitles'),
+      'a five-argument call serialises exactly as it did before this change');
+  }
+}
+
+// ── 21b. …and the whole way through a real sendMessage, to disk and back ────
+section('21b. Citation titles — driven through the real transport, read back off disk');
+{
+  /*
+   * Section 21 drives the pure builder. This one drives `sendMessage` itself,
+   * because the field has to survive four hand-offs the pure function cannot
+   * see: extraction from the answer, the builder call, `writeConversation`,
+   * and `readConversation`. Every assertion below reads the message BACK OFF
+   * DISK — the same discipline section 18 applies to the token counts, and for
+   * the same reason: a title that exists only in the live return would label
+   * the chip on the turn you watched arrive and show a file path the moment
+   * you reopened the thread.
+   *
+   * The wiki here is deliberately awkward: one page with an H1 that the slug
+   * could not have produced, one page with NO H1 at all, and one citation
+   * pointing at a page that does not exist.
+   */
+  const savedUD = process.env.CURATOR_TEST_USER_DATA_DIR;
+  const savedM = process.env.LLM_MODEL;
+  const savedEnvG = process.env.GEMINI_API_KEY;
+  const savedEnvA = process.env.ANTHROPIC_API_KEY;
+  const realErr = console.error;
+  const tmpUD = mkdtempSync(path.join(os.tmpdir(), 'curator-citetitle-ud-'));
+  const tmpDom = mkdtempSync(path.join(os.tmpdir(), 'curator-citetitle-dom-'));
+  const DOMAIN = 'zzcite';
+  try {
+    delete process.env.LLM_MODEL;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CURATOR_TEST_USER_DATA_DIR = tmpUD;
+    writeFile(path.join(tmpUD, '.curator-config.json'), JSON.stringify({
+      anthropicApiKey: 'zz-fake-anthropic-key-for-tests',
+      activeProvider: 'anthropic',
+    }) + '\n');
+    __setDomainsDirOverride(tmpDom);
+
+    mkdirSync(path.join(tmpDom, DOMAIN, 'wiki', 'entities'), { recursive: true });
+    mkdirSync(path.join(tmpDom, DOMAIN, 'wiki', 'concepts'), { recursive: true });
+    mkdirSync(path.join(tmpDom, DOMAIN, 'conversations'), { recursive: true });
+    writeFile(path.join(tmpDom, DOMAIN, 'CLAUDE.md'), '# zzcite schema\n');
+    // The slug says `iea`; the page says what it is actually called. This is
+    // the pair the whole feature exists for.
+    writeFile(path.join(tmpDom, DOMAIN, 'wiki', 'entities', 'iea.md'),
+      '---\ntype: entity\n---\n# International Energy Agency\n\n## Key Facts\n- Publishes energy data.\n');
+    // No H1 anywhere. The client would humanise this slug on its own; the
+    // server must produce the SAME string rather than something else.
+    writeFile(path.join(tmpDom, DOMAIN, 'wiki', 'concepts', 'water-footprint.md'),
+      '---\ntype: concept\n---\n## Definition\n\nNo heading on this page.\n');
+
+    let answerText =
+      'The agency [source: entities/iea.md] measures it [source: concepts/water-footprint.md] ' +
+      'and so does [source: entities/does-not-exist.md].';
+    __setAnthropicClientFactory(() => ({
+      messages: {
+        stream: () => ({
+          finalMessage: async () => ({
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: answerText }],
+            usage: { input_tokens: 611, output_tokens: 97,
+                     cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+          }),
+        }),
+      },
+    }));
+    console.error = () => {};
+
+    const r = await sendMessage(DOMAIN, null, 'Who measures this?', { provider: 'anthropic' });
+    const conv = await readConversation(DOMAIN, r.conversationId);
+    const msg = conv.messages.filter(m => m.role === 'assistant').pop();
+
+    ok(r.citationTitles && typeof r.citationTitles === 'object',
+      'sendMessage RETURNS a citationTitles map');
+    eq(msg.citationTitles && msg.citationTitles['entities/iea.md'], 'International Energy Agency',
+      '★ the PERSISTED record names the page by its heading — a reopened thread labels the chip the same way');
+    eq(JSON.stringify(msg.citationTitles), JSON.stringify(r.citationTitles),
+      'the persisted map is byte-identical to the returned one (one label, two surfaces)');
+    eq(msg.citationTitles['concepts/water-footprint.md'], 'Water Footprint',
+      'a page with no H1 is named from its slug — the same string the client falls back to');
+    ok(!Object.prototype.hasOwnProperty.call(msg.citationTitles, 'entities/does-not-exist.md'),
+      '★ a citation with no page behind it is OMITTED from the map…');
+    ok(r.citations.includes('entities/does-not-exist.md'),
+      '…while still appearing in `citations`, so the chip is rendered and the user can see what was claimed');
+    eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles',
+      'citationTitles is the LAST key on the persisted record');
+
+    // NOTHING RESOLVABLE ⇒ THE KEY IS ABSENT, and an ANSWER WITH NO CITATIONS
+    // must not carry an empty map either. Both are the "absent means absent"
+    // rule this file applies to `model` and `usage`.
+    answerText = 'A claim with no sources at all.';
+    const r2 = await sendMessage(DOMAIN, null, 'And nothing else?', { provider: 'anthropic' });
+    const conv2 = await readConversation(DOMAIN, r2.conversationId);
+    const msg2 = conv2.messages.filter(m => m.role === 'assistant').pop();
+    eq(r2.citationTitles, null, 'an answer citing nothing returns citationTitles === null');
+    ok(!Object.prototype.hasOwnProperty.call(msg2, 'citationTitles'),
+      '…and its persisted record does not carry the key at all');
+    eq(Object.keys(msg2).join(','), 'role,content,citations,provider,model,usage',
+      '…so a citation-free answer serialises exactly as it did before this change');
+
+    // BACKWARD COMPATIBILITY: a message written before this change has no map
+    // and must be read back untouched — no defaulting, no migration-on-read.
+    const LEGACY_ID = '99999999-8888-7777-6666-555555555555';
+    writeFile(path.join(tmpDom, DOMAIN, 'conversations', LEGACY_ID + '.json'), JSON.stringify({
+      id: LEGACY_ID, title: 'Before titles', createdAt: '2026-01-01T00:00:00.000Z', domain: DOMAIN,
+      messages: [
+        { role: 'user', content: 'old question' },
+        { role: 'assistant', content: 'old answer', citations: ['entities/iea.md'] },
+      ],
+    }, null, 2));
+    const legacy = await readConversation(DOMAIN, LEGACY_ID);
+    const oldMsg = legacy.messages[1];
+    eq(Object.keys(oldMsg).join(','), 'role,content,citations',
+      '★ a pre-v3.46.0 message reads back with NO citationTitles — absent means "this predates titles"');
+    eq(oldMsg.citationTitles, undefined,
+      'and nothing back-fills it, even though the page it cites has a resolvable title on disk');
+  } finally {
+    console.error = realErr;
+    __setAnthropicClientFactory(null);
+    __setDomainsDirOverride(null);
+    if (savedUD === undefined) delete process.env.CURATOR_TEST_USER_DATA_DIR;
+    else process.env.CURATOR_TEST_USER_DATA_DIR = savedUD;
+    if (savedM === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedM;
+    if (savedEnvG === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedEnvG;
+    if (savedEnvA === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedEnvA;
+    rmSync(tmpUD, { recursive: true, force: true });
+    rmSync(tmpDom, { recursive: true, force: true });
   }
 }
 

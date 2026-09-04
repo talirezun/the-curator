@@ -1660,7 +1660,13 @@ The **Length** selector controls how much detail you get back. It's independent 
 
 Your choice sticks between questions and across restarts (it's remembered in your browser). The three settings are reliably ordered — **Concise** is the shortest, **Detailed** the longest — and "Detailed" is more thorough but **never** dumps your whole domain (the same guardrails that keep answers focused apply at every length). Tip: start on **Balanced**; drop to **Concise** when you just want the answer, switch to **Detailed** when you're going deep on a topic.
 
-Answers render with proper formatting — headings, **bold**, bullet lists, and code are shown styled rather than as raw Markdown, and citations appear as tidy `[source: …]` chips.
+Answers render with proper formatting — headings, **bold**, bullet lists, and code are shown styled rather than as raw Markdown, and citations appear as tidy chips under the answer.
+
+**Chips name the page, not the file (v3.46.0+).** A chip used to read `entities/tali-rezun.md`; it now reads **Dr Tali Rezun** — the page's own title, taken from its first `# Heading` (or an explicit `title:` in its frontmatter), beside the coloured dot that says whether it is an entity, a concept or a summary. Hover a chip to see the file path it opens, and click it to open the page in the reader. Three things worth knowing:
+
+- A page with **no heading** is named from its filename, tidied up (`water-footprint.md` → *Water Footprint*) — the same label chips have always shown.
+- **Answers you asked before upgrading keep their old labels.** The titles are stored with the answer, and nothing rewrites conversations you already have; ask the question again and the new answer's chips are named.
+- The `[source: …]` marks **inside the answer text** still show the path. They are the model's own inline references, and they are unchanged.
 
 The chat adapts its answer shape to your question: a **decision** question ("which of these should I write — recommend one") gets a direct recommendation up front with a few supporting citations; a **list** question ("list all articles by X", "how many sources do I have?") gets a focused, de-duplicated list; everything else gets a synthesised answer. You don't need to do anything to trigger this — just phrase the question naturally. If you ever want the exhaustive list behind a focused answer, ask a follow-up like "now list every related page".
 
@@ -1674,7 +1680,7 @@ Chat is the app's default view — it's what you land on. It has three parts:
 - **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. On the right of that bar you'll see how much is in scope, e.g. *"3,336 pages in scope"* — and, once a conversation has a question in it, the **Compile to Wiki** button.
 - **The thread and the composer** below it.
 
-An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation to open it.
+An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation chip (named for the page, since v3.46.0) to open it.
 
 ![The Chat view. A left panel headed "Chat" holds a "New chat" button, a conversation search box and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by a "Compile to Wiki" button and the readout "3,416 pages in scope". Below it a user question sits in a bubble on the right; the answer beneath it is labelled "THE CURATOR · GLM 5.3 Flash · $0.0037" and renders as a Markdown table comparing five articles against their connections, with wiki concept links highlighted inline and page citations such as "summaries/…md" shown in small monospaced text. At the bottom the composer reads "Ask Articles…" with a model dropdown, a length dropdown reading "Detailed", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 

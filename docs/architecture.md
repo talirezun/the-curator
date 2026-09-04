@@ -1611,13 +1611,19 @@ src/brain/chat.js
       │     Returns: markdown answer with [source: path] citation tags
       ├─ 8. stripCatalogueEcho() — remove any residual bare-file-path blob
       ├─ 9. Parse [source: ...] tags → deduplicated citation list
+      ├─ 9b. buildCitationTitles() — resolve each cited path to the page's own
+      │      title (deriveTitle: frontmatter `title:` → first `# Heading` →
+      │      humanised slug) from the wiki ALREADY in memory at step 3. No
+      │      extra file read; a path with no page behind it is OMITTED, and the
+      │      whole map is null when nothing resolves.
       ├─ 10. Append user + assistant messages to conversation (the assistant
       │      message additionally carries `provider`/`model`/`usage` when the
-      │      onUsage payload validated — see Conversation persistence below)
+      │      onUsage payload validated, and `citationTitles` when any title
+      │      resolved — see Conversation persistence below)
       └─ 11. Save conversation JSON to domains/<domain>/conversations/<id>.json
 
 HTTP response → { conversationId, isNew, title, answer, citations: [...],
-                   responseStyle, provider, model, usage }
+                   citationTitles, responseStyle, provider, model, usage }
   // `model` and `usage` describe the model that ANSWERED, not the one
   // requested; both are null when nothing valid was reported. See
   // "Per-answer cost" under Model selection, above.
@@ -1647,7 +1653,8 @@ Each conversation is a JSON file:
     { "role": "assistant", "content": "RAG stands for…", "citations": ["concepts/rag.md"],
       "provider": "anthropic", "model": "claude-opus-5",
       "usage": { "inputTokens": 998, "outputTokens": 247,
-                 "cachedReadTokens": 0, "cacheWriteTokens": 0 } }
+                 "cachedReadTokens": 0, "cacheWriteTokens": 0 },
+      "citationTitles": { "concepts/rag.md": "Retrieval-Augmented Generation" } }
   ]
 }
 ```
@@ -2260,7 +2267,7 @@ Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:dom
 ```js
 sendMessage(domain, conversationId, userMessage, opts = {})
   // opts: { responseStyle, provider, model, signal, onDelta }
-  → Promise<{ conversationId, isNew, title, answer, citations[],
+  → Promise<{ conversationId, isNew, title, answer, citations[], citationTitles,
               responseStyle, provider, model, usage }>
   // `model` is the model that ANSWERED (taken from the last onUsage payload),
   // not the one requested — so it is correct across both an allow-list refusal

@@ -984,6 +984,90 @@ section('§10  STOPPING A STREAMED TURN  ★ the abort now lands somewhere else'
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§11  THE CITATION TITLE MAP REACHES THE THREAD  ★ on BOTH transports');
+// ═════════════════════════════════════════════════════════════════════════
+/* `citationTitles` is what makes a citation chip read `International Energy
+   Agency` instead of `entities/iea.md`. The server sends it; the renderer uses
+   it (test-next-chat-streaming.js §8); THIS section is the plumbing in
+   between — the one hand-off neither of those covers.
+
+   IT IS DRIVEN ON BOTH TRANSPORTS, and that is the point. `src/routes/chat.js`
+   emits the terminal frame as `emit({ type: 'done', ...result })` — the whole
+   sendMessage result, spread un-enumerated — so the field needs nothing added
+   on the streaming side. "Needs nothing added" is a claim about code that was
+   not written, which is exactly the kind of claim that is true until it is
+   quietly not; so the SSE arm below feeds the field through a REAL
+   ReadableStream, the REAL shared/sse.js frame reader and the REAL
+   `consumeChatStream`, and asserts it arrives. If someone ever enumerates that
+   spread, this goes red on the transport that would break. */
+{
+  const DONE = {
+    answer: 'The agency measures it.',
+    conversationId: 'conv-1',
+    citations: ['entities/iea.md'],
+    citationTitles: { 'entities/iea.md': 'International Energy Agency' },
+  };
+
+  // ── The JSON path ──────────────────────────────────────────────────────
+  {
+    const s = makeSandbox({ mode: 'ok', payload: DONE });
+    s.doc.getElementById('chat-input').value = 'who?';
+    await s.api.sendCurrentMessage();
+    const last = s.state.thread[s.state.thread.length - 1];
+    ok(last && last.role === 'assistant', 'JSON path: an assistant entry was pushed');
+    ok(last && last.citationTitles
+       && last.citationTitles['entities/iea.md'] === 'International Energy Agency',
+      '★ JSON path: citationTitles lands on the thread entry the renderer reads');
+  }
+
+  // ── The SSE path, through the real frame reader ────────────────────────
+  {
+    const s = makeSandbox({
+      mode: 'sse',
+      payload: [
+        { type: 'reasoning', text: 'thinking' },
+        { type: 'content', text: 'The agency ' },
+        { type: 'done', ...DONE },
+      ],
+    });
+    s.doc.getElementById('chat-input').value = 'who?';
+    await s.api.sendCurrentMessage();
+    const last = s.state.thread[s.state.thread.length - 1];
+    ok(last && last.citationTitles
+       && last.citationTitles['entities/iea.md'] === 'International Energy Agency',
+      '★ SSE path: the SAME map arrives on the `done` frame — the route\'s un-enumerated spread carries it');
+    ok(last.content === DONE.answer,
+      'CONTROL: and the entry still takes `data.answer`, so this arm really did go through the stream');
+  }
+
+  // ── ABSENT MEANS ABSENT ────────────────────────────────────────────────
+  // A server that resolved no titles sends nothing. The entry must carry null,
+  // not `undefined` and not `{}` — the renderer's fallback branches on it, and
+  // this is also the shape of every response from a version before the field
+  // existed, which the client must survive without a version check.
+  {
+    const s = makeSandbox({ mode: 'ok', payload: { answer: 'a', conversationId: 'conv-1', citations: ['entities/x.md'] } });
+    s.doc.getElementById('chat-input').value = 'q';
+    await s.api.sendCurrentMessage();
+    const last = s.state.thread[s.state.thread.length - 1];
+    ok(last.citationTitles === null,
+      '★ a response with no citationTitles yields null on the entry — the renderer humanises the slug');
+    ok(Array.isArray(last.citations) && last.citations[0] === 'entities/x.md',
+      'CONTROL: …while the citation itself is carried as it always was, so the chip is still rendered');
+  }
+
+  // A non-object value from the wire is refused rather than stored: the
+  // renderer would then do a property read on a string or an array.
+  for (const [label, bad] of [['a string', 'nope'], ['a number', 7], ['false', false]]) {
+    const s = makeSandbox({ mode: 'ok', payload: { answer: 'a', conversationId: 'conv-1', citations: [], citationTitles: bad } });
+    s.doc.getElementById('chat-input').value = 'q';
+    await s.api.sendCurrentMessage();
+    const last = s.state.thread[s.state.thread.length - 1];
+    ok(last.citationTitles === null, `citationTitles (${label}) is refused at the boundary and stored as null`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {

@@ -104,6 +104,48 @@ function typeChipClass(folder) {
   return 'chat-chip-plain';
 }
 
+/* ── THE CHIP SHOWS THE PAGE'S NAME, THE PATH STAYS ON THE ELEMENT ────────
+   A chip read `entities/tali-rezun.md`. It now reads `Dr Tali Rezun`, and the
+   path it opens is unchanged: `data-cite` still carries it (that is what the
+   click handler and `GET /api/wiki/:domain/page` need) and so does the `title`
+   attribute (the hover tooltip — chat.css's truncation rule says so in as many
+   words). The LABEL is the only thing that changed.
+
+   THE TITLE COMES FROM THE SERVER, and it must, because the only way to know a
+   page is called `IEA` and not `International Energy Agency` is to read its
+   first `# Heading` — src/brain/chat.js's `buildCitationTitles` does that from
+   the wiki it has already loaded, and persists the map on the message so a
+   REOPENED thread labels the same chip the same way.
+
+   THIS FALLBACK IS NOT A NEW BRANCH — IT IS THE SHIPPED ONE. Every chat answer
+   written before this change has no `citationTitles`, and a chip whose page was
+   deleted or whose path the model invented has no entry in it. Both land here,
+   on the humanised basename. It is deliberately character-for-character the
+   last-resort branch of wiki-read.js's `deriveTitle` (and of `titleFromSlug`
+   beside it), so a page with no `# Heading` gets the SAME label whether the
+   server resolved it or the client fell back — the two paths are
+   indistinguishable on screen, which is the property that makes an old thread
+   look untouched rather than degraded. */
+function titleFromSlug(slug) {
+  return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function citationLabel(citePath, titles) {
+  const p = String(citePath || '');
+  // Object.hasOwn, not truthiness: a citation path of `constructor` or
+  // `toString` would otherwise read a FUNCTION off the prototype chain. The
+  // typeof check below would catch it, but the own-property check is the rule
+  // this codebase already applies to every map keyed by untrusted strings
+  // (see normalizeResponseStyle) and it states the intent rather than relying
+  // on a second guard to clean up after it.
+  if (titles && typeof titles === 'object' && Object.hasOwn(titles, p)) {
+    const t = titles[p];
+    if (typeof t === 'string' && t.trim()) return t.trim();
+  }
+  const slug = p.split('/').pop().replace(/\.md$/i, '');
+  return slug ? titleFromSlug(slug) : p;
+}
+
 function isSameLocalDay(isoA, isoB) {
   const a = new Date(isoA), b = new Date(isoB);
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -287,7 +329,7 @@ const state = {
   // indistinguishable from having mis-clicked.
   bulkNotice: null,
   activeConversationId: null,
-  thread: [],             // [{role, content, citations?, error?}]
+  thread: [],             // [{role, content, citations?, citationTitles?, error?}]
   sending: false,
   // Outcome of the last STOPPED turn: {text} or null. Rendered at the foot of
   // the thread.
@@ -1282,6 +1324,15 @@ async function sendCurrentMessage() {
       // differently for the same server bug.
       content: data.answer,
       citations: data.citations || [],
+      // `{path: title}` for the chips under this answer. Arrives on the JSON
+      // body and, identically, on the SSE `done` frame — src/routes/chat.js
+      // spreads the WHOLE sendMessage result into that frame un-enumerated, so
+      // there is nothing to add on the streaming side and no second place for
+      // this field to be forgotten. It is the SAME object the server just
+      // persisted onto the message, which is what makes the live thread and a
+      // reloaded thread label the same chip the same way. Null when the server
+      // resolved no titles; the renderer humanises the slug in that case.
+      citationTitles: (data.citationTitles && typeof data.citationTitles === 'object') ? data.citationTitles : null,
       // `data.model` is the model that ANSWERED, measured by the server from
       // the provider's own usage payload (src/brain/chat.js `usedModel`) —
       // not an echo of what we asked for. A missing/blank value stays null:
@@ -5702,12 +5753,22 @@ function renderThreadOnly(token, opts) {
       );
     }
     const citations = Array.isArray(m.citations) ? [...new Set(m.citations)] : [];
+    // Present on answers written from v3.46.0 on; absent on every earlier one.
+    // No defaulting and no migration-on-read — citationLabel's fallback IS the
+    // old behaviour, so an old thread renders exactly as it used to.
+    const citeTitles = (m.citationTitles && typeof m.citationTitles === 'object') ? m.citationTitles : null;
     const chips = citations.map(c => {
       const folder = folderOfPath(c);
+      // STILL DERIVED FROM THE PATH, not from the label: the dot's colour is
+      // the page's TYPE, and the type lives in the first path segment. That is
+      // the reason the path had to stay on the element rather than being
+      // swapped out for the title.
+      const label = citationLabel(c, citeTitles);
       return (
         '<button class="chat-cite-chip ' + typeChipClass(folder) + '" data-cite="' + escapeHtml(c) + '"' +
+          ' data-cite-title="' + escapeHtml(label) + '"' +
           ' title="' + escapeHtml(c) + '">' +
-          '<span class="chat-type-dot"></span><span>' + escapeHtml(c) + '</span>' +
+          '<span class="chat-type-dot"></span><span>' + escapeHtml(label) + '</span>' +
         '</button>'
       );
     }).join('');
@@ -5764,7 +5825,13 @@ function renderThreadOnly(token, opts) {
   // is safe here — `c` is a plain filename from the API's `citations` array,
   // passed through escapeHtml (which escapes quotes) for attribute context.
   el.querySelectorAll('[data-cite]').forEach(elm => {
-    elm.addEventListener('click', () => openWikiReader(elm.dataset.cite, null));
+    // The label is handed over as openWikiReader's `titleHint`, so the reader's
+    // LOADING header says the same thing the chip said instead of a basename
+    // that then changes under the reader's eye when the fetch lands. Read off
+    // the element rather than recomputed: the chip that was clicked is the one
+    // record of what this row is labelled, and recomputing it here would be a
+    // second copy of citationLabel's rule to keep in step.
+    elm.addEventListener('click', () => openWikiReader(elm.dataset.cite, elm.dataset.citeTitle || null));
   });
   // Delegated click for inline "[source: ...]" mentions inside the rendered
   // answer text (M3 fix). These never carry a data-cite attribute — the path
