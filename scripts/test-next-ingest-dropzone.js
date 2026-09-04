@@ -56,6 +56,11 @@
  *      imported, evaluated or run here.
  * §10  ANTI-VACUITY. Every extraction and every dispatch is proven to have
  *      reached something.
+ * §11  THE ZONE'S OWN dragenter/dragover are gated on dragCarriesFiles too,
+ *      not just the document-level guard: a text-only drag dispatched
+ *      directly on the zone (guards: false, so §8's document filter cannot
+ *      cover for it) leaves it idle, with a same-mount file-drag positive
+ *      control proving the handlers still fire at all.
  *
  * ── NOT ENFORCED, named rather than implied away ─────────────────────────
  *  - THIS IS A MODEL, NOT A BROWSER. It cannot prove what Chromium does with
@@ -749,6 +754,52 @@ section('§10  The copy swap is CSS, and the anti-vacuity floor');
   eq(wired.length, types.length,
     '§10 ANTI-VACUITY — all four drag listeners are really attached to the ' +
     'parsed zone (' + wired.join(', ') + ')');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11  A text-only drag over the ZONE does not activate it');
+// ═════════════════════════════════════════════════════════════════════════
+// MOUNTED WITHOUT THE DOCUMENT GUARDS (see mount()'s comment on §3) — with
+// them on, the document-level dragCarriesFiles check would leave the zone's
+// OWN dragenter/dragover handlers unexercised, and this section would be
+// green whether or not the zone's own gate existed.
+//
+// THE DEFECT this reproduces: CDP Input.dispatchDragEvent driving the real
+// Electron app with a drag carrying no files (dataTransfer.types ===
+// ['text/plain'], files.length 0) still put .ing-drop-zone-active on the
+// zone and showed "Release to add". wireListeners' dragenter/dragover
+// handlers called accept() + setDragActive(true) unconditionally — no
+// dragCarriesFiles(e) check — even though installDocumentDragGuards' own
+// overGuard already filtered on it. The zone's handlers are independent
+// listeners on the same element, not a pass-through of the document guard's
+// decision, so the document-level filter never protected the zone.
+{
+  const { dom, zone } = mount({ guards: false });
+  const textDrag = fakeTransfer([], ['text/plain']);
+
+  const enter = dom.dispatch(zone(), 'dragenter', { dataTransfer: textDrag });
+  ok(!enter.defaultPrevented,
+    '§11 a text-only dragenter on the zone is NOT cancelled — the zone leaves ' +
+    'the browser default (e.g. a text drop into a focused field) alone');
+  ok(!zone().classList.contains('ing-drop-zone-active'),
+    '§11 …and the zone stays idle after dragenter — this is the assertion the ' +
+    'reported defect fails');
+
+  const over = dom.dispatch(zone(), 'dragover', { dataTransfer: textDrag });
+  ok(!over.defaultPrevented, '§11 …and a text-only dragover is not cancelled either');
+  ok(!zone().classList.contains('ing-drop-zone-active'),
+    '§11 …and the zone is still idle after dragover — "Release to add" never shows');
+
+  // Positive control on the SAME mount: a real file drag still activates the
+  // zone through these same handlers, so the greens above are the gate
+  // working, not the handlers having silently stopped firing at all.
+  const fileDrag = fakeTransfer([fakeFile('a.pdf', 1000)]);
+  const fileEnter = dom.dispatch(zone(), 'dragenter', { dataTransfer: fileDrag });
+  ok(fileEnter.defaultPrevented,
+    '§11 CONTROL — a file dragenter on the same zone IS cancelled …');
+  ok(zone().classList.contains('ing-drop-zone-active'),
+    '§11 CONTROL — …and DOES activate the zone, proving §11\'s greens above are ' +
+    'the dragCarriesFiles gate, not dead handlers');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

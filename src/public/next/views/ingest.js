@@ -2496,13 +2496,34 @@ function wireListeners() {
     // and it costs one line not to. `dropEffect = 'copy'` is what makes the
     // OS draw a copy cursor instead of the "no entry" badge, which is the
     // feedback a user reads BEFORE letting go.
+    //
+    // Both handlers are gated on dragCarriesFiles(e) — the same check the
+    // document-level drag guards (below in this file) use. Without it, a
+    // drag with no files at all (a text selection, a link, an editor's own
+    // drag — `dataTransfer.types` has no 'Files' entry) still activated the
+    // zone: `dragenter`/`dragover` fire regardless of payload, so
+    // accept()/setDragActive(true) ran unconditionally, cancelling a plain
+    // text drag and flipping the zone to "Release to add" over a drag it can
+    // never turn into a file. A non-file drag now falls through untouched —
+    // no preventDefault, no dropEffect, no active state — leaving the
+    // browser's own default handling (e.g. a text drop into a focused field)
+    // intact. `drop` keeps handling every payload unconditionally:
+    // handleSelectedFiles already treats an empty/absent FileList as "nothing
+    // usable" (see §7's "carrying nothing" case), so gating it here would
+    // only duplicate that check for no benefit.
     const accept = (e) => {
       e.preventDefault();
       // Read-only in some drag phases in some engines; never worth throwing.
       try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch { /* not settable here */ }
     };
-    dropZone.addEventListener('dragenter', (e) => { accept(e); setDragActive(true); });
-    dropZone.addEventListener('dragover', (e) => { accept(e); setDragActive(true); });
+    dropZone.addEventListener('dragenter', (e) => {
+      if (!dragCarriesFiles(e)) return;
+      accept(e); setDragActive(true);
+    });
+    dropZone.addEventListener('dragover', (e) => {
+      if (!dragCarriesFiles(e)) return;
+      accept(e); setDragActive(true);
+    });
     // The zone has CHILD elements (icon, headline, sub, formats line), and
     // dragleave fires when the pointer crosses from the zone onto any of
     // them. `relatedTarget` is the node being entered, so a move that stays
