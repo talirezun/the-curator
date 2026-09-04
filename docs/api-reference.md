@@ -2779,6 +2779,58 @@ with the ref those actually use. There is no endpoint that writes it.
 
 ---
 
+## GET /api/config/instances
+
+**Is another copy of The Curator serving this same knowledge folder right now?** (v3.46.0.) No
+body, no side effects, no network, no LLM. One `readdir` of a directory holding one small JSON file
+per live process, plus a `kill(pid, 0)` liveness probe per file.
+
+The `/next` shell calls this **once per page load** and renders a dismissible banner when the list
+is non-empty. It is deliberately not on a timer: the condition it reports is "you launched two
+apps", which does not change second by second.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "domainsPath": "/Users/you/the-curator/domains",
+  "othersTotal": 1,
+  "others": [
+    { "pid": 4123, "port": 51234, "kind": "the Mac app", "startedAt": 1788504930160 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok` | `true` when the registry could be read. `false` means *we could not find out* — never *nobody else is running* |
+| `domainsPath` | The resolved knowledge folder this answer is about |
+| `othersTotal` | The **honest** count of other live instances, before the array cap |
+| `others` | Up to 10 of them. **This process is always excluded** — a banner must never fire for the app the user is looking at |
+| `others[].pid` | The other copy's process id. Reported deliberately: this is a loopback-only single-user app, and the pid is the one thing that lets a user find and quit it |
+| `others[].port` | The port it bound, or `null` if it did not record one |
+| `others[].kind` | Plain words: `the Mac app` · `an installed app` · `a terminal checkout` |
+| `others[].startedAt` | Epoch ms |
+
+The per-instance shape is an **explicit allow-list**, never a spread of the stored record (the
+v3.3.0 `toWire()` rule), and `othersTotal` rides alongside the capped array so a cap can never be
+mistaken for a measurement (v3.17.0's rule).
+
+**Never 500s.** A registry that cannot be read answers `200` with `ok: false`, an empty `others`
+and an `error` string. A detection endpoint that threw would make the client's banner logic the
+thing that breaks.
+
+**What this does NOT do.** Nothing is refused, locked, or blocked. Two Curators over one folder is
+a supported configuration (see
+[user-guide.md § Two installs, one knowledge folder](user-guide.md#two-installs-one-knowledge-folder));
+this endpoint only makes it visible. One known false positive: if a Curator was force-killed and
+the OS re-used its pid, a stale record can read as live. A clean quit removes its own record, so
+this is rare, and the design prefers it to a heartbeat that could lapse and go silent while two
+apps really were writing.
+
+---
+
 ## POST /api/config/background-mode
 
 Sets the app's menu bar mode. Mac-app only in effect — a browser install has no menu bar presence,

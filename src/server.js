@@ -22,7 +22,8 @@ import writeStatusRouter from './routes/write-status.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
-import { ensureDefaultDomainsDir } from './brain/config.js';
+import { ensureDefaultDomainsDir, getDomainsDir } from './brain/config.js';
+import { registerInstance, listOtherInstances, describeOthers } from './brain/instance-probe.js';
 import { describeInstall } from './brain/install-mode.js';
 import { planRestart } from './brain/restart.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
@@ -411,6 +412,36 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
       console.warn(`⚠️  ${err.message}`);
       logWarn('server', `Started at http://localhost:${PORT}, but provider info could not be resolved: ${err.message}`);
     }
+
+    // ── Announce this instance, and say who else is already here ────────────
+    //
+    // ADVISORY ONLY. This never refuses a start and never blocks a write —
+    // two Curators over one knowledge folder is a configuration the
+    // maintainer explicitly wants while both installs exist
+    // (desktop/lib/port.js records that decision). What was missing was any
+    // way for either copy to KNOW, which is how an ingest that failed and an
+    // ingest that took an hour both read as "the app is broken".
+    //
+    // Registration happens INSIDE the listen callback, not at module scope,
+    // for the same reason the OpenRouter auto-sync below does: the port is
+    // only real once the bind succeeded, and a marker naming a port nothing
+    // is listening on is worse than no marker. It is also the point at which
+    // a bind RETRY has already resolved, so the recorded port is the one in
+    // force.
+    //
+    // Fire-and-forget and cannot throw — instance-probe.js absorbs every
+    // error and degrades to "nobody else is here".
+    registerInstance({ domainsDir: getDomainsDir(), port: PORT, version })
+      .then(() => listOtherInstances(getDomainsDir()))
+      .then((others) => {
+        const who = describeOthers(others);
+        if (!who) return;
+        const msg = `Another Curator is already serving this knowledge folder (${who}). ` +
+                    `Two copies writing at once can corrupt an ingest — quit one before ingesting.`;
+        console.error(`[The Curator] ${msg}`);
+        logWarn('server', msg);
+      })
+      .catch(() => { /* never surfaces — detection must not affect startup */ });
 
     // ── Keep the Claude Desktop launcher current ────────────────────────────
     //

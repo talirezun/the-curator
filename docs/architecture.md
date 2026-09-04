@@ -601,6 +601,8 @@ That works with no change in `src/` because `src/server.js` builds `ALLOWED_ORIG
 
 **What that costs, because it is a reduction and not a neutral change:** port collision was accidentally doing a second job — stopping two copies of The Curator writing into one `domains/` folder. `requestSingleInstanceLock()` in `main.js` now guards that explicitly, and it is taken *before* the window and before the server import so the losing instance never binds a port, never touches the wiki and never paints. But that lock covers two copies of the **desktop app**; it does not cover "desktop app + `npm start` checkout", which are different executables holding different locks and will now coexist over one `domains/` folder.
 
+That gap is what [`src/brain/instance-probe.js`](#srcbraininstance-probejs-v3460) closes in v3.46.0 — by **detecting** it and saying so, not by preventing it. The maintainer explicitly wants both to be able to run while both installs exist, so the replacement for the accident is a banner rather than a refusal.
+
 **Why the window must load `http://127.0.0.1:<port>` and never `file://` or a custom scheme:** a page loaded from `file://` or `curator://` sends `Origin: null`. The server's cross-origin guard tests `if (origin && !ALLOWED_ORIGINS.has(origin))`, and the **string** `"null"` is truthy — so `Origin: null` is not *absent*, it is *present and not allow-listed*, and every `POST`/`PUT`/`DELETE`/`PATCH` is refused with 403. Ingest, chat, compile, sync and settings would all break, presenting as "the UI loads and nothing works" rather than as a header problem.
 
 ### What the shell adds that a browser tab has no equivalent for
@@ -2104,6 +2106,33 @@ In-memory + file-based coordination layer that prevents destructive operations (
 
 The file lock is what lets the MCP server (separate child process spawned by Claude Desktop) coordinate with the Curator web server. The in-memory registry is faster and authoritative for the web server's own routes; the file lock is the cross-process boundary.
 
+### `src/brain/instance-probe.js` (v3.46.0)
+
+**"Is another copy of The Curator serving THIS knowledge folder right now?"** Advisory only: it refuses no start, blocks no write, and takes no lock. It is the deliberate replacement for the port collision that used to prevent "desktop app + `npm start` checkout" by accident (see [§ The port is dynamic](#the-port-is-dynamic-and-the-guards-move-with-it)).
+
+| Export | Description |
+|--------|-------------|
+| `registerInstance({domainsDir, port, version})` | Publishes this process's marker. Called from `src/server.js` **inside the `listen()` callback**, so the recorded port is one that is actually bound and any EADDRINUSE retry has already resolved. Never throws. |
+| `unregisterInstance(domainsDir)` | Removes it. Also done synchronously on `process.on('exit')`, so a clean quit leaves nothing behind. |
+| `listInstances(domainsDir)` / `listOtherInstances(domainsDir)` | Every live instance / everyone but this process. Clears dead and unparseable records as it reads. |
+| `describeOthers(others)` | The ONE sentence fragment shared by the startup log, the shell banner and the ingest error, so three surfaces cannot word one situation differently. |
+| `describeThisInstance()` | Plain words — `the Mac app` (Electron), `an installed app` (bundle), `a terminal checkout`. |
+| `getInstanceRegistryRoot()` / `bucketName()` / `canonicalDomainsPath()` | Path resolution, exported for the suite. |
+
+**Layout.** `<shared root>/instances/<16 hex of sha256(realpath(domainsDir))>/<pid>.json`.
+
+**The location is the load-bearing decision.** The marker is deliberately **NOT** inside `domains/`, even though the domains folder is the thing the two installs share. `getDomainsDir()` is Personal Sync's git work-tree and `push()` runs `git add -A`; `DOMAINS_GITIGNORE_RULES` in `sync.js` has **no root-level rule** that would cover a new dotfile at `domains/.instance-lock` (`*/raw/`, `*/.mcp-write-log.jsonl` and `*/.write-lock` are all one level down; only `.DS_Store` and `.ingest-queue/` match at the root, and both name something else). A marker there would be committed, pushed, pulled onto every other machine and counted in the sync badge. Same class as `.DS_Store` in v3.0.16 and `.write-lock` in v3.0.15.
+
+**And not `getUserDataDir()` either**, which forks on install form — APP_ROOT for a checkout, Application Support for a bundle — so two installs would register in two places and neither would ever see the other. The root is `getAppSupportDir()/instances`, **unconditionally**, exactly as `getLogsDir()` and `getMcpLauncherDir()` already resolve. Test seams, highest first: `__setInstanceRegistryRootOverride()`, `CURATOR_TEST_INSTANCE_DIR`, an isolated user-data dir, then the shared default.
+
+**The hash buckets; the recorded path decides.** The directory name is a hash only so an arbitrary path can be a directory name. Every record carries its own `domainsPath` and a reader keeps a record only when that string is equal to its own canonical domains path — so a hash collision cannot manufacture a false alarm.
+
+**Liveness is `process.kill(pid, 0)`**, the same probe `write-registry.js` uses, and a dead pid's record is unlinked on sight. There is no heartbeat and no TTL: the marker is written once at startup and a server may legitimately run for days. The residual inaccuracy is **PID REUSE** after a `kill -9` — the banner can appear with nothing behind it. Accepted knowingly: the cost is one dismissible sentence, while a heartbeat that lapses would produce the opposite error (silence while two apps really are writing), which is the expensive direction.
+
+**Why `link(2)` when nothing is exclusive.** Each instance owns its own filename, so there is no contention — this must never become a mutex. The primitive is borrowed from `write-registry.js` for its *other* property: `link` publishes the name and the content in one instant, so no reader can see a zero-byte marker, fail to parse it, and — by this module's own "unparseable = junk" rule — delete a live instance's record.
+
+**Consumers.** `src/server.js` (register + a one-line startup warning), `GET /api/config/instances` (the shell's banner, one fetch per page load, no timer), and `src/brain/ingest.js` (read once before the first paid call; named only in the outline-failure message, as a contributing condition, never as a per-ingest warning).
+
 ### `src/brain/ingest.js`
 
 ```js
@@ -2112,7 +2141,10 @@ ingestFile(domain, filePath, originalName, isOverwrite?, onProgress?, opts = {})
       title: string,
       pagesWritten: string[],
       changes: ChangeRecord[],   // v2.5.0+: per-file {canonPath, status, bytesBefore, bytesAfter, sectionsChanged, bulletsAdded}
-      warnings: string[],        // v3.0.1+: truncation, validator patches, stub pages
+      warnings: string[],        // v3.0.1+: truncation, validator patches, stub pages;
+                                 // v3.46.0+: a PRE-FLIGHT entry when the source is at or
+                                 // within 10% of the 80,000-char cap, pushed (and emitted on
+                                 // the progress stream) BEFORE the first paid call
       truncated: boolean,        // v3.0.1+: was the source > 80k chars?
     }>
   // opts.signal — AbortSignal (v3.4.0+): checked FIRST in every LLM-reachable

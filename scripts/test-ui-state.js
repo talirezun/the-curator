@@ -211,6 +211,8 @@ const STAYS = {
     'per-device convenience with a safe default (balanced); chat.js normalises any absent or unrecognised value.',
   'curator-chat-model-provider':
     'per-device convenience; normalised server-side on every message, so an absent value falls back to the global provider.',
+  'curator-next-instance-banner-dismissed-v1':
+    'NOT localStorage at all — app.js writes it to sessionStorage, deliberately. It records that the user dismissed the "another Curator is running over this same knowledge folder" banner FOR THIS SESSION, and the whole point is that the next launch asks again: the condition it reports is a live pair of running processes on ONE machine, so a value that travelled to another machine (or survived a restart on this one) would silence a warning about a hazard that is by definition local and current. Moving it to the server would convert a per-session dismissal into a permanent one, which is the opposite of what it means.',
   // Present only inside a PROSE COMMENT in views/domains.js, which records
   // that both were deleted for writing state nothing read. They are counted
   // here so the census does not fail on a key that is already gone.

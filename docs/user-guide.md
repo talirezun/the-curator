@@ -3099,6 +3099,47 @@ a merge can silently replace an edited page. Details in
 simultaneously, and two copies writing one wiki at the same moment is not a case either
 of them guards against. Each one protects itself, not the other.
 
+**Since v3.46.0 the app at least SAYS so.** When a second Curator is serving the same
+folder, both windows show a banner at the top of the screen:
+
+> ⚠️ Another Curator is running over this same knowledge folder (a terminal checkout on
+> port 3333). Two apps writing at once can corrupt an ingest — quit one before ingesting.
+
+Read the banner literally. It is **advisory and nothing else**:
+
+- It **does not stop anything.** No refusal, no disabled button, no lock. Both copies
+  keep running and both can still ingest — the banner is information, not a guard,
+  because running both is a legitimate thing to do while you are trying the app.
+- **Dismissing it lasts for that window only.** Reopen the app, or reload the page,
+  and it comes back if the other copy is still running. There is no "don't show this
+  again", deliberately: the thing it reports is live, so silencing it permanently
+  would silence it for a day when it mattered.
+- It is checked **once when the screen loads**, not continuously. If you start the
+  second copy *after* this window was already open, reload the page (or reopen the
+  app) to see the banner.
+- It names the **kind** of the other copy and, where it has one, its **port** — which
+  together are usually enough to know which window to go and quit. The other copy's
+  process id is available too, in the app's log file.
+
+It can also be **wrong in one direction**, and only one: if a Curator was force-killed
+(a crash, `kill -9`) and macOS later re-used its process id for something unrelated, the
+banner can appear when nothing is actually running. A normal quit clears the record on
+the way out, so this is rare. It cannot fail the other way round by design — if the app
+cannot find out, it says nothing rather than guessing.
+
+The record it reads lives in
+`~/Library/Application Support/The Curator/instances/`, **not** in your `domains/`
+folder — so it is never committed, never pushed, and never appears in your sync
+pending-changes count.
+
+**Ingests now say where they are.** A large source takes many AI calls, and a rate-limit
+pause can add minutes of waiting per call, so a long run used to look like a hang. The
+progress line now reads, for example, `Phase 2: writing content, batch 7 of 26… ·
+12:07 elapsed · 41 AI calls`, and a pause says which batch it is waiting on. And before
+the first AI call, a source at or near the 80,000-character limit gets a heads-up: that
+is the size where the page-planning step is most likely to run out of room, and
+splitting the source is much cheaper to do before an ingest than after a failed one.
+
 > ⚠️ **The part that surprises people: closing the browser tab does NOT stop the browser
 > install's server.** It keeps running in the background at near-zero CPU — that is
 > documented, deliberate behaviour, and it is why clicking the Dock icon reopens

@@ -4,6 +4,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames } from '../brain/config.js';
+import { getDomainsDir } from '../brain/config.js';
+import { listOtherInstances } from '../brain/instance-probe.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -428,6 +430,72 @@ router.get('/', (_req, res) => {
     backgroundMode: getBackgroundMode(),
     backgroundModes: backgroundModeNames(),
   });
+});
+
+/**
+ * GET /api/config/instances — is another copy of The Curator serving this
+ * same knowledge folder?
+ *
+ * ── Why this is its own endpoint rather than a field on GET /api/config ─────
+ *
+ * The shell fetches this ONCE per page load, from boot(). It is deliberately
+ * NOT a new poll — there is no timer behind it — and it is deliberately not
+ * bolted onto an endpoint that already has a pinned contract:
+ *
+ *   • GET /api/config/ui-state is the only config GET the shell already makes
+ *     at load, and scripts/test-ui-state.js compares its field set against
+ *     UI_STATE_SPEC field for field. An extra field there is a red suite and,
+ *     worse, a second meaning inside a contract whose whole subject is four
+ *     durable preferences.
+ *   • GET /api/config (directly above) is read by the Settings view on demand,
+ *     not at boot, so a field there would never reach a user who never opens
+ *     Settings — which is every user this banner exists for.
+ *
+ * ── Cost ────────────────────────────────────────────────────────────────────
+ *
+ * One readdir of a directory that holds one small JSON file per live process
+ * (realistically 1-2), plus a `kill(pid, 0)` per file. No network, no LLM, no
+ * wiki read. Safe on a load path.
+ *
+ * ── Wire shape is an explicit allow-list ────────────────────────────────────
+ *
+ * Never a spread of the stored record (the v3.3.0 toWire() rule). `kind` is a
+ * fixed internal vocabulary and `port`/`pid` are numbers; the array is capped
+ * and the honest total rides alongside so a cap can never be mistaken for a
+ * measurement (v3.17.0's rule).
+ *
+ * `pid` IS reported. This is a loopback-only, single-user app and the pid is
+ * the one thing that lets a user actually find and quit the other copy.
+ *
+ * Never 500s: a registry that cannot be read is "we could not find out",
+ * reported as `ok: false` with an empty list, because a detection endpoint
+ * that throws would make the shell's banner logic the thing that breaks.
+ */
+export const MAX_LISTED_INSTANCES = 10;
+
+router.get('/instances', async (_req, res) => {
+  try {
+    const domainsDir = getDomainsDir();
+    const all = await listOtherInstances(domainsDir);
+    res.json({
+      ok: true,
+      domainsPath: domainsDir,
+      othersTotal: all.length,
+      others: all.slice(0, MAX_LISTED_INSTANCES).map(o => ({
+        pid: Number.isFinite(o.pid) ? o.pid : null,
+        port: Number.isFinite(o.port) ? o.port : null,
+        kind: typeof o.kind === 'string' ? o.kind.slice(0, 60) : 'another Curator',
+        startedAt: Number.isFinite(o.startedAt) ? o.startedAt : null,
+      })),
+    });
+  } catch (err) {
+    res.json({
+      ok: false,
+      others: [],
+      othersTotal: 0,
+      error: err && err.message ? String(err.message).slice(0, 200) : 'unknown',
+    });
+  }
 });
 
 /**
