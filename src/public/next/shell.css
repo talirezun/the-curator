@@ -1319,7 +1319,15 @@ body.guide-docked .main {
      between a bare `.btn` and any variant. */
   background: transparent;
   color: var(--text);
-  border: 1px solid transparent;
+  /* --btn-border-w IS THE SAME 1px, GIVEN A NAME, AND THE NAME IS LOAD-BEARING
+     Every gloss device on a filled button has to cover the BORDER box, and the
+     only way to express "the border box" from an absolutely positioned overlay
+     is a negative inset of exactly this width (see the ::before block below).
+     Written as two independent `1px` literals, a future edit to one of them
+     re-opens the ring defect silently. scripts/test-next-button-chrome.js
+     parses both and requires them to be the same expression. */
+  --btn-border-w: 1px;
+  border: var(--btn-border-w) solid transparent;
   /* ── HOVER IN IS FASTER THAN HOVER OUT, AND THAT ASYMMETRY IS THE POINT ─
      The base rule carries the OUT duration (--t-hover-out, 120ms = the
      existing --dur-fast, so no new number enters here) and the :hover rule
@@ -1368,15 +1376,136 @@ body.guide-docked .main {
   transition: opacity var(--t-hover-out);
 }
 .btn { position: relative; }
+
+/* ── THE RING AROUND EVERY PRIMARY BUTTON, AND WHY IT WAS GEOMETRY ────────
+   REPORTED, with a screenshot of the dark-theme "Choose files" button: "a
+   visible ring/border drawn around the button, outside the fill — looks like
+   something is broken, we fixed this once already."
+
+   It is NOT the v3.24.2 phantom top line (that was --inset-hi at 0.90 on
+   light, retired above) and it is NOT the focus ring (`.btn` declares no
+   `:focus` rule; the ring is `:focus-visible` only, in tokens/base.css). It
+   is one CSS rule interacting with one CSS rule:
+
+     .btn         border: 1px solid transparent
+     .btn::before position: absolute; inset: 0
+
+   An absolutely positioned box's containing block is its parent's PADDING
+   box, so `inset: 0` stops one pixel short of the visible edge — and an
+   `inset` box-shadow is likewise clipped to the padding box. So the face
+   gradient, --gloss-specular and --gloss-shade ALL stopped 1px inside, and
+   the button's own `background-color` painted that 1px frame RAW.
+
+   MEASURED, by decoding painted pixels at 2x rather than by reading the
+   rules (dark, `.btn-primary`, column through the button's centre):
+     top    edge row rgb(124, 90,245)   interior rgb(160,135,247)   1.575:1
+     bottom edge row rgb(124, 90,245)   interior rgb( 89, 65,177)   1.647:1
+   A uniform band of un-modulated accent around a modulated face: a drawn
+   outline. Light was the same shape (1.584:1 top, 1.225:1 bottom).
+
+   THE FIX IS THE INSET, NOT THE BORDER. Dropping `border: 1px solid
+   transparent` from the filled variants would also work and was refused: the
+   note on `.btn` above records that the transparent border is what keeps the
+   box geometry identical between a bare `.btn` and any variant, and removing
+   it makes every primary button 2px narrower than every secondary one.
+   So the OVERLAY grows to the border box instead, and the two INSET devices
+   move onto that overlay — a pseudo-element has no border of its own, so its
+   padding box IS its border box and nothing can be clipped short again.
+   `border-radius: inherit` becomes correct in the same move: 7px on a box
+   whose radius really is 7px, instead of 7px on the 6px-radius padding box.
+
+   --gloss-contact stays on the ELEMENT, because it is the only one of the
+   four that is drawn OUTSIDE the box: the element's box-shadow is now what
+   the object casts on the world, and the ::before is the object's own face.
+
+   AFTER, same measurement, same column:
+     top    edge row rgb(160,135,247)   interior rgb(160,135,247)   1.000:1
+     bottom edge row rgb( 89, 65,177)   interior rgb( 89, 65,177)   1.000:1 */
 .btn-primary::before,
-.btn-danger-solid::before { opacity: 1; }
+.btn-danger-solid::before {
+  opacity: 1;
+  inset: calc(var(--btn-border-w) * -1);
+  box-shadow: var(--gloss-specular), var(--gloss-shade);
+  transition: opacity var(--t-hover-out), box-shadow var(--t-hover-out);
+}
+.btn-primary:hover::before,
+.btn-danger-solid:hover::before {
+  box-shadow: var(--gloss-specular-hi), var(--gloss-shade-hi);
+  transition: opacity var(--t-hover-in), box-shadow var(--t-hover-in);
+}
+/* .btn-secondary is deliberately NOT in the two rules above. Its border is
+   REAL and opaque (--control-edge), so its padding box is exactly where its
+   face should stop — there is no raw fill for a ring to be made of, and
+   growing the face over that edge would tint the one device carrying WCAG
+   1.4.11 for the whole variant. Measured on the shipping build: its "ring"
+   is --control-edge at 2.37:1 dark / 3.70:1 light, which is the edge doing
+   its job, not the defect. Its specular and contact therefore also stay on
+   the element, where the padding-box clip is the correct behaviour. */
 .btn-secondary::before { opacity: 1; background: var(--gloss-face-quiet); }
 /* Pressed inverts: the face goes away entirely, which is what makes the
-   inset well below read as the surface going IN rather than as a darker
-   button. */
+   inset well read as the surface going IN rather than as a darker button.
+   For the two FILLED variants the overlay is kept at opacity 1 and given the
+   well instead, so the pressed state covers the border box for the same
+   reason the rest state does — --gloss-pressed's second shadow is literally
+   `inset 0 0 0 1px`, i.e. a 1px ring, and clipped to the padding box it was
+   drawing that ring one pixel in from the edge. Measured before the move it
+   was 1.05:1 dark / 1.02:1 light against the fill — invisible, and left
+   inconsistent it is the next reader's trap. */
 .btn-primary:active::before,
-.btn-secondary:active::before,
-.btn-danger-solid:active::before { opacity: 0; }
+.btn-danger-solid:active::before { background: none; box-shadow: var(--gloss-pressed); }
+.btn-secondary:active::before { opacity: 0; }
+
+/* ── THE HOVER SHEEN — "some glass overlay animation, smooth, native" ─────
+   REPORTED alongside the ring: hover "barely changes anything".
+
+   It did not change much, and the reason is recorded on --accent-hover in
+   tokens/material.css: on DARK the hover fill is byte-identical to the rest
+   fill, because white on any violet lighter than --violet-500 fails AA on a
+   13px/500 label. So the whole of hover was --gloss-specular going 0.22 ->
+   0.34: one CSS pixel of a 32px control.
+
+   The sheen is a second overlay covering the same border box, carrying a
+   top-lit dome that fades in over --t-hover-in (110ms) and out over
+   --t-hover-out (120ms) — the kit's existing asymmetry, no new duration. It
+   is a HIGHLIGHT, not a colour change: the fill still does not move on dark.
+
+   WHY IT DOES NOT COST THE LABEL ITS AA. --gloss-sheen reaches alpha 0 at
+   10.24px of the 32px layer (the border box IS --control-md under
+   `box-sizing: border-box`), and the tallest glyph on a centred 13px/500
+   label starts at ~10.7px. Decoded from real pixels: the last row on which
+   hover differs from rest is CSS y 9.5, and over every row the glyphs occupy
+   the hover composite is byte-IDENTICAL to the rest composite (1.000:1), so
+   hover cannot move the label's backdrop at all. The token carries the
+   arithmetic; scripts/test-next-design-kit.js recomputes it from the token
+   values, and scripts/test-next-button-chrome.js carries the rule that the
+   sheen may only be reached by the two filled variants.
+
+   NO SHEEN ON GHOST, AI OR THE TINTED DANGER OUTLINE — the same rule the
+   gloss face already follows, and the reason this is an ::after on two
+   selectors rather than on `.btn`: those variants have no ::after at all, so
+   the exclusion is structural rather than a value that could be overridden.
+   `.btn-secondary` is excluded too: it is a raised object, but its hover
+   already moves its whole fill (--surface-raised -> --surface-hover), so it
+   needs no second device and a quiet sheen there would only dilute what the
+   sheen MEANS on the two buttons that cannot move their fill. */
+.btn-primary::after,
+.btn-danger-solid::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--btn-border-w) * -1);
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--gloss-sheen);
+  opacity: 0;
+  transition: opacity var(--t-hover-out);
+}
+.btn-primary:hover::after,
+.btn-danger-solid:hover::after { opacity: 1; transition: opacity var(--t-hover-in); }
+/* A press is the object going IN. A specular dome on a pressed control is
+   the one combination that reads as broken, so the sheen leaves at the same
+   80ms the well arrives on. */
+.btn-primary:active::after,
+.btn-danger-solid:active::after { opacity: 0; transition: opacity var(--t-press); }
 /* ── PRESS ────────────────────────────────────────────────────────────────
    Was `translateY(0.5px)` — measured live in the running app at 0.4716px,
    i.e. sub-pixel at 1x, so on a standard display it either rounded away or
@@ -1446,16 +1575,24 @@ body.guide-docked .main {
    HOVER RAISES THE SPECULAR AND LIFTS; on dark the FILL does not move at
    all, because white on --violet-400 is 3.05:1 and no violet lighter than
    --violet-500 (4.53:1) clears the 4.5 floor. That is the whole reason gloss
-   is structural here and not decoration — see --accent-hover. */
+   is structural here and not decoration — see --accent-hover.
+
+   THE THREE INSET DEVICES NO LONGER LIVE ON THIS RULE. --gloss-specular and
+   --gloss-shade moved onto `.btn-primary::before`, which covers the BORDER
+   box; an inset shadow on the element is clipped to the PADDING box and was
+   leaving a 1px ring of raw --accent all the way round. The full measurement
+   is on the ::before block above. What is left here is the one device that is
+   drawn outside the box — the contact shadow — and on hover the --elev-2
+   lift that replaces it. */
 .btn-primary {
   background-color: var(--accent);
   color: var(--text-on-accent);
-  border: 1px solid transparent;
-  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--gloss-contact);
+  border: var(--btn-border-w) solid transparent;
+  box-shadow: var(--gloss-contact);
 }
 .btn-primary:hover {
   background-color: var(--accent-hover);
-  box-shadow: var(--gloss-specular-hi), var(--gloss-shade), var(--elev-2);
+  box-shadow: var(--elev-2);
 }
 
 /* ── THE PHANTOM LINE ACROSS THE TOP OF EVERY PRIMARY BUTTON ─────────────
@@ -1586,15 +1723,21 @@ body.guide-docked .main {
 
    Hover and press move SATURATION and BRIGHTNESS rather than the hue,
    because there is no second red rung in this system and minting one to
-   serve two states would be a token added to serve a hover. */
+   serve two states would be a token added to serve a hover.
+
+   Same split as .btn-primary: the two INSET devices are on the ::before that
+   covers the border box, because this variant carries the identical
+   `border: 1px solid transparent` + filled background and therefore carried
+   the identical 1px ring of raw --danger-fill. Measured before the fix, dark:
+   top edge rgb(216,59,80) against interior rgb(227,112,127) = 1.478:1. */
 .btn-danger-solid {
   background-color: var(--danger-fill);
   color: var(--text-on-accent);
-  border: 1px solid transparent;
-  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--gloss-contact);
+  border: var(--btn-border-w) solid transparent;
+  box-shadow: var(--gloss-contact);
 }
 .btn-danger-solid:hover {
-  box-shadow: var(--gloss-specular-hi), var(--gloss-shade), var(--elev-2);
+  box-shadow: var(--elev-2);
   filter: saturate(1.06);
 }
 
@@ -1643,9 +1786,14 @@ body.guide-docked .main {
    boundary findable over the same 80ms. The face gradient is dropped to 0 by
    the ::before rules above, so the surface reads as going IN.
    .btn-danger still gets no background step, for the reason below. */
-.btn-primary:active { background-color: var(--accent-active); box-shadow: var(--gloss-pressed); }
+/* The two FILLED variants take --gloss-pressed on their ::before instead (see
+   the block beside .btn::before), because that overlay covers the BORDER box
+   and an inset shadow on the element does not. `box-shadow: none` here is the
+   deliberate removal of the contact shadow — a pressed object is not casting
+   one — and is what the ::before's well replaces. */
+.btn-primary:active { background-color: var(--accent-active); box-shadow: none; }
 .btn-secondary:active { background-color: var(--surface-active); box-shadow: var(--gloss-pressed); }
-.btn-danger-solid:active { box-shadow: var(--gloss-pressed); filter: brightness(0.90); }
+.btn-danger-solid:active { box-shadow: none; filter: brightness(0.90); }
 .btn-danger:active { box-shadow: var(--gloss-pressed); }
 .btn-ai:active { background-color: var(--accent-tint-strong); box-shadow: var(--gloss-pressed); }
 .btn-ghost:active { background-color: var(--surface-active); color: var(--text); }
