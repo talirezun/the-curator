@@ -351,9 +351,60 @@ ok(/relatedTarget/.test(wire || '') && /dropZone\.contains\(/.test(wire || ''),
   'dragleave ignores a relatedTarget INSIDE the zone — the zone now has child ' +
   'elements, and without this the drag-over state strobes while the user is ' +
   'still holding the file over the target');
-ok(/const setDragActive[\s\S]{0,200}state\.dragActive === next/.test(wire || ''),
-  'dragover only re-renders when the flag actually CHANGES — dragover fires ' +
-  'continuously, and render() replaces the element the pointer is over');
+
+// ── THE ASSERTION THAT USED TO STAND HERE WAS SATISFIED BY THE DEFECT ────
+// It read: "dragover only re-renders when the flag actually CHANGES", and it
+// was green throughout the whole life of the bug the maintainer reported —
+// dragging a file from Finder onto the zone did nothing in the Mac app. ONE
+// re-render is enough to destroy the drop target: render() -> renderMain ->
+// setMain replaces #view-root's innerHTML, so the node the pointer is holding
+// a file over stops existing on the drag's first event. A test that pins "at
+// most once" cannot see a defect whose whole content is "once".
+//
+// What is asserted instead is the property that actually protects the
+// feature: NO drag handler may call render() at all. That is a real
+// behavioural claim about this file — scripts/test-next-ingest-dropzone.js
+// EXECUTES the same rule against a DOM and a dispatched drag, and this scan
+// is the cheap always-on half of it.
+{
+  const dragBlock = /const accept = \(e\) => \{[\s\S]*?dropZone\.addEventListener\('drop'[\s\S]*?\n    \}\);/.exec(wire || '');
+  ok(!!dragBlock, '§4 CONTROL — the drag-handler block was located in wireListeners()');
+  if (dragBlock) {
+    ok(!/\brender\(/.test(dragBlock[0]),
+      '§4 NO drag handler calls render() — a re-render mid-drag replaces ' +
+      '#view-root wholesale and destroys the element the pointer is over, ' +
+      'which is the reported "drag and drop does nothing" defect');
+    ok(/addEventListener\('dragenter'/.test(dragBlock[0]),
+      '§4 a `dragenter` handler exists — the drag-and-drop model decides the ' +
+      'current target element from whether dragenter was cancelled');
+    ok(/dropEffect = 'copy'/.test(dragBlock[0]),
+      '§4 dropEffect is set to copy, so the OS draws a copy cursor rather ' +
+      'than the "no entry" badge while the file is over the target');
+    ok(/setDragActive\(false\);\s*\n\s*handleSelectedFiles/.test(dragBlock[0]),
+      '§4 drop clears the drag state through setDragActive (which repaints ' +
+      'the live node) rather than writing state.dragActive on its own, and ' +
+      'routes the files to the SAME handleSelectedFiles the picker uses');
+  }
+}
+// setDragActive is now a module-level function that MUTATES the live node.
+{
+  const sda = extractFunction(js, 'setDragActive');
+  ok(!!sda, '§4 CONTROL — setDragActive() extracted');
+  if (sda) {
+    ok(/classList\.toggle\('ing-drop-zone-active'/.test(sda),
+      '§4 setDragActive toggles the class on the LIVE zone — the one thing a ' +
+      'drag is allowed to change on screen');
+    ok(!/\brender\(/.test(sda),
+      '§4 …and never renders');
+    ok(/state\.dragActive === on/.test(sda),
+      '§4 …guarded on an actual change, because dragover fires dozens of ' +
+      'times a second');
+  }
+  ok((js.match(/state\.dragActive\s*=[^=]/g) || []).length === 1,
+    '§4 state.dragActive has exactly ONE writer (setDragActive) — the drop ' +
+    'handler used to assign it directly and skip the repaint, which is what ' +
+    'left the zone reading "Release to add" after an empty drop');
+}
 
 // ── §5 — the accepted-format copy cannot outrun the validator ───────────
 console.log('\n§ 5  Accepted formats are rendered FROM the validator\'s own list');
