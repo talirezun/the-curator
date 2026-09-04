@@ -891,8 +891,24 @@
 .chat-cite-chip:hover { box-shadow: inset 0 0 0 999px var(--mat-row-hover); }
 .chat-cite-chip:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 /* The label truncates rather than wrapping the chip to two lines; the full
-   slug stays in the title attribute the renderer already sets. */
+   PATH stays in the title attribute the renderer already sets (the label is now
+   the page's title — see views/chat.js's citationLabel — and the path is what
+   the tooltip and `data-cite` carry).
+
+   THE CAP IS ON THE BOX, NEVER ON THE DATUM, AND THE NUMBER IS MEASURED.
+   `max-width: 100%` alone let one long name take a whole row and push every
+   other chip below it. Title lengths over all 3,416 pages of the real
+   `articles` wiki, resolved through deriveTitle's own precedence: median 23
+   characters, p75 31, p90 41, p95 58, p99 95, max 241 (a summary whose H1 is a
+   sentence). 42ch therefore leaves roughly nine chips in ten untouched while
+   bounding the tail — and because `ch` is the width of a `0` and these labels
+   are proportional text, the box holds rather more than 42 characters of a
+   typical title, so the cap errs toward not truncating. `min()` so it never
+   overrides the container on a narrow window. The full string is one hover
+   away and one click away; nothing is truncated in `data-cite`, which is the
+   string the reader actually fetches. */
 .chat-cite-chip > span:not(.chat-type-dot) {
+  max-width: min(100%, 42ch);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

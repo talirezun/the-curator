@@ -846,6 +846,10 @@ of the guard.
   "title": "First message truncated to 60 chars…",
   "answer": "…markdown with [source: concepts/rag.md] citation tags…",
   "citations": ["concepts/rag.md", "summaries/rag-survey.md"],
+  "citationTitles": {
+    "concepts/rag.md": "Retrieval-Augmented Generation",
+    "summaries/rag-survey.md": "A Survey of Retrieval-Augmented Generation"
+  },
   "responseStyle": "balanced",
   "persisted": true,
   "provider": null,
@@ -870,6 +874,19 @@ of the guard.
   instead, so multi-turn context is unchanged — the thread simply does not
   survive a restart, and this field says so rather than leaving the user to
   discover it. It is `true` everywhere else.
+- `citationTitles` (v3.46.0+) is `{ "<citation path>": "<page title>" }` — the
+  display name of each cited page, so a chip can read *Retrieval-Augmented
+  Generation* instead of `concepts/rag.md`. Titles come from the page's own
+  frontmatter `title:` or its first `# Heading`, via the same `deriveTitle` that
+  `GET /api/wiki/:domain/page` uses, resolved from the wiki `sendMessage` has
+  already read — no extra file access. **It is a partial map, deliberately:** a
+  cited path with no page behind it (a slug the model invented, a page since
+  deleted) is **omitted** rather than guessed at, and the client humanises the
+  basename for it — the label every chip had before this field existed. The
+  whole field is `null` when nothing resolved; it is never `{}`. It is also
+  **persisted on the assistant message**, appended after `usage`, so a reopened
+  thread labels the same chip the same way; assistant messages written before
+  v3.46.0 do not carry it and are not migrated.
 - `provider` is what was **asked for** — `null` means "the global active
   provider was used".
 - `model` is the model that **answered**, read out of the provider's own usage
@@ -892,7 +909,7 @@ data: {"type":"reasoning","text":"…"}
 
 data: {"type":"content","text":"…"}
 
-data: {"type":"done","conversationId":"…","isNew":false,"title":"…","answer":"…","citations":[…],"responseStyle":"balanced","persisted":true,"provider":null,"model":"…","usage":{…}}
+data: {"type":"done","conversationId":"…","isNew":false,"title":"…","answer":"…","citations":[…],"citationTitles":{…},"responseStyle":"balanced","persisted":true,"provider":null,"model":"…","usage":{…}}
 
 data: {"type":"error","message":"…"}
 ```

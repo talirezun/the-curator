@@ -14,6 +14,14 @@ import { generateText, isOfferableModel } from './llm.js';
 import * as llmModule from './llm.js';
 import { getApiKeys } from './config.js';
 import { tokenize } from './sharedbrain-delta.js';
+// deriveTitle / parseFrontmatter are REUSED, not re-derived. buildPrompt below
+// already carries its own `/^#{1,3}\s+(.+)/m` H1 scrape for the catalogue, and a
+// SECOND, subtly different title rule is exactly how the chip under an answer
+// and the header of the page that chip opens start disagreeing about what the
+// page is called — the reader gets its title from getWikiPage(), which is
+// deriveTitle. Both are pure, dependency-free and already stdout-silent (that
+// module is on the MCP's import graph and says so).
+import { deriveTitle, parseFrontmatter } from './wiki-read.js';
 import {
   readSchema,
   readWikiPages,
@@ -887,6 +895,59 @@ export function normalizeChatModel(provider, model) {
 }
 
 /**
+ * `{ '<citation path>': '<page title>' }` for the pages an answer cited.
+ * Pure; exported for testing.
+ *
+ * WHY THIS EXISTS. A citation chip read `entities/tali-rezun.md` — a path, in
+ * the smallest text on the view, twenty of them under one answer. The page has
+ * a name (`Dr Tali Rezun`) and the chip is the only place in the app that
+ * refused to use it. The maintainer's complaint was legibility.
+ *
+ * THE TITLE IS RESOLVED HERE, ON THE SERVER, AND FOR ONE REASON: this is the
+ * only place that has both the citation list and the page CONTENT. The client's
+ * cheap alternative — `GET /api/wiki/:domain/list` — deliberately derives its
+ * labels from the SLUG ONLY and reads no file (see the contract note above
+ * `listWikiInventory`), so it can never say `IEA` for `international-energy-
+ * agency.md`. Meanwhile `readWikiPages(domain)` has ALREADY read every page in
+ * this domain, in memory, a few hundred lines above — the whole wiki, not the
+ * scored subset that went into the prompt. So the map costs a Map build and one
+ * `deriveTitle` per citation (3-7 of them), and NO additional file read. The
+ * task brief anticipated a disk fallback for "cited pages not in the loaded
+ * set"; there is no such set — `pages` IS every page — so a miss here means the
+ * model cited a path that does not exist on disk, which has no title to find.
+ *
+ * A MISS IS AN OMISSION, NEVER A GUESS. A path that is not a real page (a
+ * hallucinated slug, or the comma-joined two-path citation an LLM occasionally
+ * writes inside one `[source: …]`) gets no entry at all. The client then
+ * humanises the basename, which is what it did for EVERY chip before this
+ * change — so the fallback is the shipped behaviour, not a new untested branch.
+ *
+ * NULL, NOT `{}`, WHEN THERE IS NOTHING. An empty map is a key on the wire and
+ * a key in every persisted message that says nothing; absent means "no titles",
+ * which is precisely what the client's fallback already handles.
+ */
+export function buildCitationTitles(citations, pages) {
+  if (!Array.isArray(citations) || citations.length === 0) return null;
+  if (!Array.isArray(pages) || pages.length === 0) return null;
+  const byPath = new Map();
+  for (const p of pages) {
+    if (p && typeof p.path === 'string' && typeof p.content === 'string') byPath.set(p.path, p.content);
+  }
+  const out = {};
+  for (const c of citations) {
+    if (typeof c !== 'string' || !c) continue;
+    const content = byPath.get(c);
+    if (typeof content !== 'string') continue;
+    const slug = c.split('/').pop().replace(/\.md$/i, '');
+    if (!slug) continue;
+    const { frontmatter, body } = parseFrontmatter(content);
+    const title = deriveTitle(frontmatter, body, slug);
+    if (typeof title === 'string' && title.trim()) out[c] = title.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * Build the assistant message RECORD that is persisted into the conversation
  * JSON. Pure; exported for testing.
  *
@@ -940,13 +1001,42 @@ export function normalizeChatModel(provider, model) {
  * scale. The new keys are appended AFTER the existing ones so an untouched
  * message serialises byte-identically to before.
  */
-export function buildAssistantMessage(content, citations, servedProvider, servedModel, servedUsage) {
+export function buildAssistantMessage(content, citations, servedProvider, servedModel, servedUsage, citationTitles) {
   const msg = { role: 'assistant', content, citations };
   if (typeof servedProvider === 'string' && servedProvider) msg.provider = servedProvider;
   if (typeof servedModel === 'string' && servedModel) msg.model = servedModel;
   const usage = normalizeReportedUsage(servedUsage);
   if (usage) msg.usage = usage;
+  // ── citationTitles IS PERSISTED, AND THAT IS THE WHOLE POINT ────────────
+  // A title map derived only from the live `sendMessage` return would give the
+  // chips names for as long as the tab stayed open and file paths the moment
+  // the thread was reopened from disk — the same chip, two labels, depending on
+  // how you arrived at it. That is the defect the `usage` field above records
+  // in its own docblock, and it applies here for the same reason.
+  //
+  // APPENDED LAST, like `usage` before it, so an assistant message written
+  // before this change serialises byte-identically to before. There is
+  // deliberately NO read-side defaulting: absent means "this answer predates
+  // titles", and the renderer humanises the slug exactly as it always did.
+  //
+  // A FRESH LITERAL WITH STRING VALUES ONLY. Same rule as normalizeReportedUsage
+  // returning its own object: this record goes to disk AND over the wire, so
+  // nothing riding on the caller's map may leak into it.
+  const titles = normalizeCitationTitles(citationTitles);
+  if (titles) msg.citationTitles = titles;
   return msg;
+}
+
+/** The `{path: title}` map as it is allowed to be recorded, or null. Own
+ *  properties only, string values only, empty ⇒ null. */
+function normalizeCitationTitles(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
+  const out = {};
+  for (const k of Object.keys(t)) {
+    const v = t[k];
+    if (typeof k === 'string' && k && typeof v === 'string' && v.trim()) out[k] = v.trim();
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /**
@@ -1227,6 +1317,10 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
 
   const citations = [...answer.matchAll(/\[source:\s*([^\]]+)\]/g)].map(m => m[1].trim());
   const uniqueCitations = [...new Set(citations)];
+  // Built from `pages` — the FULL in-memory wiki read at the top of this
+  // function, not the scored subset that went into the prompt — so a citation
+  // the model produced from the catalogue alone still gets its real title.
+  const citationTitles = buildCitationTitles(uniqueCitations, pages);
 
   // ── THE PERSISTENCE RULE, STATED SO NOBODY "IMPROVES" IT ────────────────
   //
@@ -1293,7 +1387,7 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // the user is left looking at is whatever the consumer does with the error.
   // That is a consumer concern and it is not an argument about this write.
   conversation.messages.push({ role: 'user', content: userMessage });
-  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage));
+  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage, citationTitles));
   if (persist) await writeConversation(domain, conversation);
   else writeEphemeral(domain, conversation);
 
@@ -1303,6 +1397,12 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     title: conversation.title,
     answer,
     citations: uniqueCitations,
+    // The display name of each cited page, or null when none could be
+    // resolved. Carried BESIDE `citations` rather than folded into it: the
+    // array's shape is the one thing every existing consumer (including
+    // scripts/test-beta13-chat-live.js's quality asserts) reads, and a citation
+    // whose page has no title must still appear as a citation.
+    citationTitles,
     responseStyle,
     // Present and TRUE on every ordinary turn, so a consumer reads one field
     // rather than inferring persistence from the domain name. False means the
@@ -1345,4 +1445,4 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, buildCitationTitles };
