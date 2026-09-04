@@ -406,8 +406,52 @@
   --gloss-specular-hi:    inset 0 1px 0 rgba(255,255,255,0.34);   /* hover */
   --gloss-specular-quiet: inset 0 1px 0 rgba(255,255,255,0.07);
   --gloss-shade:          inset 0 -1px 0 rgba(0,0,0,0.24);
+  --gloss-shade-hi:       inset 0 -1px 0 rgba(0,0,0,0.32);       /* hover */
   --gloss-contact:        0 1px 1.5px rgba(0,0,0,0.40);
   --gloss-pressed:        inset 0 1px 3px rgba(0,0,0,0.36), inset 0 0 0 1px rgba(0,0,0,0.10);
+
+  /* ── THE HOVER SHEEN — A FOURTH DEVICE, AND THE ONLY ONE THAT MOVES ────
+     REPORTED: "hover barely changes anything" on the primary button.
+     Measured on the shipping build: on DARK the hover moves the fill NOT AT
+     ALL (--accent-hover aliases --violet-500, which IS --accent — see the
+     [CHANGE] note above; white on any lighter violet fails AA), so the only
+     thing hover changed was --gloss-specular 0.22 -> 0.34, i.e. ONE CSS pixel
+     out of thirty-two. Two device rows of an 88-row capture. That is the
+     complaint, exactly.
+
+     THE CONSTRAINT THAT SHAPES THIS TOKEN. White on --violet-500 measures
+     4.528:1 against a 4.5 floor (13px/500 label). The luminance budget before
+     the label drops below AA is L 0.18187 -> 0.18333, and a flat white wash
+     at alpha 0.01 already costs 0.00387 — so a sheen of ANY useful strength
+     laid across the whole face would take the label under AA. A sheen that is
+     brightest at the top and reaches ZERO before the cap-height of the label
+     does not, and that is also what a specular highlight physically IS on a
+     glossy pill: the top of the curve catches the light, the middle does not.
+
+     GEOMETRY, DERIVED RATHER THAN EYEBALLED. The layer is the button's BORDER
+     box, which under the tree-wide `box-sizing: border-box` is exactly
+     --control-md — 32px, NOT 32 + 2 x the border. A 13px/500 label centred on
+     it puts the cap top at ~10.7px (content box 30px from y=1, a 13px line box
+     centred in it, baseline ~19.9, cap height ~0.71em). The ellipse is
+     therefore ry = 36% of 32px = 11.52px centred at -4% (-1.28px), so the last
+     stop reaches alpha 0 at 10.24px — just above the tallest glyph. rx = 72%
+     so the light falls off toward the ends rather than reading as a printed
+     band.
+
+     Verified by decoding painted pixels rather than by this arithmetic, and
+     the pixels are what corrected it (an earlier draft of this note said 34px
+     and 10.88): on the dark primary, the LAST row where hover differs from
+     rest is CSS y 9.5, and from y 10.0 to the bottom the two are byte-
+     identical. Over every row the glyphs occupy the hover composite equals the
+     rest composite exactly — hover cannot move the label's backdrop at all.
+
+     0.26 peak is a LIT DOME, not a fill change: it composites to rgb(158,133,
+     247) at the very top row, and it is smooth, so it reads as the specular
+     spreading downward rather than as a second line. */
+  --gloss-sheen: radial-gradient(72% 36% at 50% -4%,
+                   rgba(255,255,255,0.26) 0%,
+                   rgba(255,255,255,0.11) 52%,
+                   rgba(255,255,255,0)   100%);
 
   /* The sunken well. Named because it is the FIELD's half of the gloss
      vocabulary and the kit inlined it as a literal in three places. */
@@ -563,8 +607,23 @@
   --gloss-specular-hi:    inset 0 1px 0 rgba(255,255,255,0.26);
   --gloss-specular-quiet: inset 0 1px 0 rgba(255,255,255,0.90);
   --gloss-shade:          inset 0 -1px 0 rgba(0,0,0,0.10);
+  --gloss-shade-hi:       inset 0 -1px 0 rgba(0,0,0,0.15);
   --gloss-contact:        0 1px 1px rgba(16,16,26,0.13);
   --gloss-pressed:        inset 0 1px 3px rgba(16,16,26,0.22), inset 0 0 0 1px rgba(16,16,26,0.06);
+
+  /* The sheen, restated — the same GEOMETRY (it is derived from --control-md
+     and the label's cap height, both theme-invariant) at the same ratio to
+     this theme's specular as dark's: 0.22 -> 0.26 there, 0.18 -> 0.22 here.
+     Light's hover DOES move the fill (--accent violet-600 -> --accent-hover
+     violet-500), so the sheen is the second half of a change that already
+     reads, rather than the whole of it. Restated in full rather than
+     inherited because a themed name defined only at :root paints its DARK
+     value onto the light theme — the cascade rule this file's §1 guard and
+     scripts/test-next-design-kit.js both enforce. */
+  --gloss-sheen: radial-gradient(72% 36% at 50% -4%,
+                   rgba(255,255,255,0.22) 0%,
+                   rgba(255,255,255,0.09) 52%,
+                   rgba(255,255,255,0)   100%);
   --gloss-well:           inset 0 1px 2px rgba(16,16,26,0.12);
   --gloss-well-quiet:     inset 0 1px 2px rgba(16,16,26,0.09);
 
@@ -636,6 +695,11 @@
     --gloss-specular-hi: none;
     --gloss-specular-quiet: none;
     --gloss-shade: none;
+    /* The hover sheen and the deepened shade are gloss, so they go flat with
+       the rest of it. Hover is still carried: the lift (--elev-2) and, on
+       light, the fill step survive this query untouched. */
+    --gloss-shade-hi: none;
+    --gloss-sheen: none;
     --control-edge: var(--text-3);          /* #8F8FA5 — 5.98:1 vs --surface-raised */
     --control-edge-quiet: var(--text-3);
     --hairline-strong: rgba(255,255,255,0.24);

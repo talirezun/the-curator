@@ -71,8 +71,20 @@
  *    has at least one class that receives a `border` declaration.
  *  - `.btn` itself carries a neutral baseline (background + color + border),
  *    so a variant-less `.btn` can never fall through to UA chrome again.
- *  - `.btn-primary` keeps var(--inset-hi) AND suppresses it under
- *    [data-theme="light"].
+ *  - `.btn-primary` no longer consumes --inset-hi, and the light-theme
+ *    suppression it once needed is gone (§2).
+ *  - THE RING (v3.46.0). `.btn`'s 1px transparent border is named
+ *    --btn-border-w; the two FILLED gloss variants read that same name for
+ *    their border AND for the negative inset that puts their gloss overlay on
+ *    the BORDER box; --gloss-specular / --gloss-shade / --gloss-pressed are on
+ *    that overlay and NOT on the element, where an inset shadow is clipped to
+ *    the padding box and leaves a 1px frame of raw fill. `.btn-secondary` is
+ *    excluded, and the exclusion is asserted rather than left to be tidied up.
+ *  - THE HOVER SHEEN (§5, v3.46.0). Reachable from exactly two selectors,
+ *    declared only by shell.css, absent as an ::after from every non-raised
+ *    variant, animated only through --t-hover-in/out (whose --dur-* names a
+ *    reduced-motion block zeroes — followed, not grepped), and the dark hover
+ *    fill still equals the dark rest fill.
  *  - `.btn-danger` is defined generically in shell.css with all three of
  *    background / color / border.
  *  - `.chat-conv-delete` declares border AND padding, declares NO box-shadow
@@ -399,15 +411,113 @@ ok(!!primaryBase, '.btn-primary base rule exists in shell.css');
    shade is the body gradient's dark foot, the contact is the 1px shadow that
    seats the button on its surface — and losing any one of them is a distinct
    visual regression that a whole-declaration regex would report as the same
-   failure. */
-const primaryShadow = primaryBase ? (/box-shadow\s*:\s*([^;}]+)/.exec(primaryBase.body) || [])[1] : null;
-ok(primaryShadow !== null, `.btn-primary declares a box-shadow (${primaryShadow})`);
-for (const device of ['--gloss-specular', '--gloss-shade', '--gloss-contact']) {
-  ok(!!primaryShadow && new RegExp(`var\\(\\s*${device}\\s*\\)`).test(primaryShadow),
-    `.btn-primary's box-shadow carries var(${device})`);
+   failure.
+
+   WHAT MOVED, AND WHY THE ASSERTION MOVED WITH IT (the ring defect, v3.46.0).
+   The two INSET devices are no longer on the element. An inset box-shadow is
+   clipped to the PADDING box, and `.btn` carries `border: 1px solid
+   transparent`, so the specular and the shade both stopped 1px short of the
+   visible edge while `background-color` painted that 1px frame raw. Decoded
+   from painted pixels at 2x, dark, column through the button's centre:
+     BEFORE  top edge rgb(124,90,245) vs interior rgb(160,135,247)  1.577:1
+             bot edge rgb(124,90,245) vs interior rgb( 89, 65,177)  1.647:1
+     AFTER   top edge rgb(160,135,247) vs the brightest top row     1.002:1
+             bot edge rgb( 90, 65,177) vs the darkest  bottom row   1.000:1
+   So they live on `.btn-primary::before`, whose `inset: calc(var(
+   --btn-border-w) * -1)` puts it on the BORDER box — a pseudo-element has no
+   border of its own, so nothing can clip its shadows short again.
+
+   The three devices are therefore asserted across the variant's OWN rules
+   (element + ::before) AND placed: the two inset ones must be on the overlay
+   that covers the border box, the outer one must be on the element. Asserting
+   only "all three appear somewhere" would pass the exact configuration that
+   produced the report. */
+const glossVariants = ['btn-primary', 'btn-danger-solid'];
+
+/** Every shell.css rule whose selector names `cls`, split by pseudo-element. */
+function variantRules(cls) {
+  const rs = rulesFor(cls, 'shell.css');
+  /* A selector belonging to `cls` and ending in `pseudo` — written as a
+     STARTS-WITH plus ENDS-WITH rather than a substring test, because
+     `.btn-primary:hover::before` does not contain `.btn-primary::before` and
+     an includes() check silently reported the hover and press rules as
+     absent (caught by this suite going red rather than by reading). */
+  const pseudoRules = (pseudo) => rs.filter(r => r.selector.split(',').some((s) => {
+    const t = s.trim();
+    return t.startsWith(`.${cls}`) && t.endsWith(pseudo);
+  }));
+  return {
+    base: rs.find(r => r.selector.split(',').some(s => s.trim() === `.${cls}`)),
+    before: pseudoRules('::before'),
+    after: pseudoRules('::after'),
+    all: rs,
+  };
 }
+const declValue = (body, prop) => (new RegExp(`(?:^|[;{])\\s*${prop}\\s*:\\s*([^;}]+)`).exec(body) || [])[1] || null;
+const carries = (decl, token) => !!decl && new RegExp(`var\\(\\s*${token}\\s*\\)`).test(decl);
+
+const primaryShadow = primaryBase ? declValue(primaryBase.body, 'box-shadow') : null;
+ok(primaryShadow !== null, `.btn-primary declares a box-shadow (${primaryShadow})`);
+ok(carries(primaryShadow, '--gloss-contact'),
+  ".btn-primary's own box-shadow carries var(--gloss-contact) — the one device drawn OUTSIDE the box");
+ok(!carries(primaryShadow, '--gloss-specular') && !carries(primaryShadow, '--gloss-shade'),
+  '…and NOT the two inset devices: on the element they are clipped to the padding box, which IS the ring defect');
 ok(!!primaryShadow && !/var\(\s*--inset-hi\s*\)/.test(primaryShadow),
   '.btn-primary no longer consumes --inset-hi — the token is untouched, the PAIRING is what was fixed');
+
+/* ── THE GEOMETRY, ASSERTED AS A RELATION RATHER THAN AS A NUMBER ─────────
+   `inset: -1px` is only correct while the border is 1px. Both are written as
+   var(--btn-border-w), and this pins that they are the SAME expression rather
+   than two literals that can drift apart — the drift shape this repo names
+   over and over. A future 2px border then moves the overlay with it. */
+const btnBaseRule = rulesFor('btn', 'shell.css').find(r => r.selector.split(',').some(s => s.trim() === '.btn'));
+ok(!!btnBaseRule && /--btn-border-w\s*:\s*1px/.test(btnBaseRule.body),
+  '.btn defines --btn-border-w (1px)');
+ok(!!btnBaseRule && carries(declValue(btnBaseRule.body, 'border'), '--btn-border-w'),
+  "…and .btn's own border shorthand READS it, so the name is the single source of the width");
+
+for (const cls of glossVariants) {
+  const v = variantRules(cls);
+  ok(!!v.base && carries(declValue(v.base.body, 'border'), '--btn-border-w'),
+    `.${cls}'s border width reads var(--btn-border-w)`);
+
+  const beforeBase = v.before.find(r => !/:hover|:active|:focus|:disabled/.test(r.selector));
+  const inset = beforeBase ? declValue(beforeBase.body, 'inset') : null;
+  ok(!!inset && /var\(\s*--btn-border-w\s*\)/.test(inset) && /\*\s*-1|-1\s*\*|calc\(\s*-/.test(inset),
+    `.${cls}::before covers the BORDER box — inset is the NEGATIVE of --btn-border-w (${inset})`);
+
+  const beforeShadow = beforeBase ? declValue(beforeBase.body, 'box-shadow') : null;
+  for (const device of ['--gloss-specular', '--gloss-shade']) {
+    ok(carries(beforeShadow, device),
+      `.${cls}::before carries var(${device}) — drawn over the border box, not clipped one pixel in`);
+  }
+  const hoverBefore = v.before.find(r => /:hover/.test(r.selector));
+  ok(!!hoverBefore && carries(declValue(hoverBefore.body, 'box-shadow'), '--gloss-specular-hi'),
+    `.${cls}:hover::before raises the specular (the device that already carried hover on dark)`);
+  const activeBefore = v.before.find(r => /:active/.test(r.selector));
+  ok(!!activeBefore && carries(declValue(activeBefore.body, 'box-shadow'), '--gloss-pressed'),
+    `.${cls}:active::before takes --gloss-pressed — its inner 1px ring lands on the border box too`);
+}
+
+/* ── .btn-secondary IS DELIBERATELY EXCLUDED, AND THE EXCLUSION IS PINNED ──
+   Its border is REAL and opaque (--control-edge), so its padding box is
+   exactly where its face should stop; there is no raw fill for a ring to be
+   made of, and growing the face over that edge would tint the one device
+   carrying WCAG 1.4.11 for the whole variant. Measured on the shipping build,
+   dark: its "ring" is --control-edge at 2.37:1 top / 3.24:1 bottom against the
+   fill — the edge doing its job. Recording this as an assertion means a future
+   "make it consistent" pass has to argue with a measurement. */
+{
+  const sec = variantRules('btn-secondary');
+  const secBefore = sec.before.find(r => !/:hover|:active/.test(r.selector));
+  const secInset = secBefore ? declValue(secBefore.body, 'inset') : null;
+  ok(secBefore && (secInset === null || /^0$/.test(secInset.trim())),
+    `.btn-secondary::before stays on the PADDING box (inset ${secInset === null ? 'inherited from .btn::before = 0' : secInset}) — its opaque --control-edge is the edge`);
+  ok(!!sec.base && carries(declValue(sec.base.body, 'border'), '--control-edge'),
+    '…and that border is --control-edge, i.e. opaque and load-bearing, not the transparent one');
+  ok(!!sec.base && carries(declValue(sec.base.body, 'box-shadow'), '--gloss-specular-quiet'),
+    '…so its own inset specular correctly STAYS on the element, where the padding-box clip is right');
+}
 
 const lightSuppress = primaryRules.filter(r =>
   /\[data-theme\s*=\s*["']light["']\]/.test(r.selector) &&
@@ -538,6 +648,115 @@ ok(bareOccurrences([{ file: 'probe', line: 0, raw: 'zzz-alpha btn-secondary',
 
 ok(classGetsBorder('btn-primary') && !classGetsBorder('zzz-definitely-absent'),
   'control: classGetsBorder discriminates a real class from an absent one');
+
+// ─────────────────────────────────────────────────────────────────────────
+// §5 — THE HOVER SHEEN (v3.46.0)
+// ─────────────────────────────────────────────────────────────────────────
+/*
+ * REPORTED with the ring: hover "barely changes anything" on the primary
+ * button, and the request was "some glass overlay animation, something nice,
+ * smooth, native to Mac OS".
+ *
+ * The reason hover did nothing is structural and recorded on --accent-hover:
+ * on DARK the hover fill is BYTE-IDENTICAL to the rest fill, because white on
+ * any violet lighter than --violet-500 fails AA on a 13px/500 label. So the
+ * whole of hover was --gloss-specular 0.22 -> 0.34: one CSS pixel of a 32px
+ * control. The sheen is a second overlay carrying a top-lit dome.
+ *
+ * WHAT IS ENFORCED HERE, and why each one is the behaviour rather than the
+ * spelling:
+ *  a. the sheen is reachable from EXACTLY the two filled gloss variants — the
+ *     set is DERIVED from the tree (every rule anywhere under /next that reads
+ *     var(--gloss-sheen)) and compared for set equality, so a sheen added to
+ *     .btn-ghost in some view stylesheet reds this;
+ *  b. it is an ::after, i.e. ghost / ai / tinted-danger have no sheen layer at
+ *     ALL rather than one at opacity 0 that a later rule could reveal;
+ *  c. its transitions name --t-hover-in / --t-hover-out and contain no literal
+ *     duration, and those tokens resolve to --dur-* names that a
+ *     prefers-reduced-motion block zeroes — asserted by FOLLOWING the chain,
+ *     not by looking for the string "prefers-reduced-motion";
+ *  d. the dark hover fill still equals the dark rest fill. If someone
+ *     "improves" hover by lightening the fill again, the sheen stops being
+ *     necessary and the label drops below AA — that is D1, and it is the whole
+ *     reason this device exists.
+ */
+section('§5 — the hover sheen: scope, motion, and the fill that must not move');
+
+{
+  const sheenRules = RULES.filter(r => /var\(\s*--gloss-sheen\s*\)/.test(r.body));
+  const sheenSelectors = new Set();
+  for (const r of sheenRules) for (const s of r.selector.split(',')) sheenSelectors.add(s.trim());
+  const expected = new Set(['.btn-primary::after', '.btn-danger-solid::after']);
+  const extra = [...sheenSelectors].filter(s => !expected.has(s));
+  ok(sheenRules.length > 0, `--gloss-sheen has consumers (${sheenRules.length} rule(s))`);
+  ok(extra.length === 0,
+    extra.length === 0
+      ? 'the sheen is reachable from EXACTLY .btn-primary::after and .btn-danger-solid::after'
+      : 'the sheen leaked onto: ' + extra.join(', '));
+  ok(expected.size === [...expected].filter(s => sheenSelectors.has(s)).length,
+    '…and both of them really do read it (the set is equal, not merely a subset)');
+  ok(sheenRules.every(r => r.file === 'shell.css'),
+    '…and only shell.css declares it — the control kit owns its own hover, no view may add one');
+
+  // (b) STRUCTURAL EXCLUSION. A variant with no ::after cannot be given a
+  // sheen by an opacity override; assert the non-gloss variants declare none.
+  for (const cls of ['btn-ghost', 'btn-ai', 'btn-danger', 'btn-secondary']) {
+    const after = rulesFor(cls, 'shell.css')
+      .filter(r => r.selector.split(',').some(s => s.trim().includes(`.${cls}::after`)));
+    ok(after.length === 0,
+      `.${cls} declares NO ::after — ghost, tinted and outline variants are not raised objects, so they get no gloss`);
+  }
+
+  // (c) MOTION. Follow the chain rather than grepping for the media query.
+  const afterBase = RULES.find(r => r.file === 'shell.css'
+    && r.selector.split(',').some(s => s.trim() === '.btn-primary::after')
+    && /var\(\s*--gloss-sheen\s*\)/.test(r.body));
+  const afterHover = RULES.find(r => r.file === 'shell.css'
+    && r.selector.split(',').some(s => s.trim() === '.btn-primary:hover::after'));
+  const outT = afterBase ? declValue(afterBase.body, 'transition') : null;
+  const inT = afterHover ? declValue(afterHover.body, 'transition') : null;
+  ok(!!outT && /var\(\s*--t-hover-out\s*\)/.test(outT) && !/\d+m?s/.test(outT),
+    `the sheen leaves on var(--t-hover-out) with no literal duration (${outT})`);
+  ok(!!inT && /var\(\s*--t-hover-in\s*\)/.test(inT) && !/\d+m?s/.test(inT),
+    `…and arrives on var(--t-hover-in) — the kit's existing 110-in / 120-out asymmetry (${inT})`);
+
+  const motionCss = readFileSync(path.join(NEXT, 'tokens/motion.css'), 'utf8');
+  const materialCss = readFileSync(path.join(NEXT, 'tokens/material.css'), 'utf8');
+  const bothTokens = stripComments(motionCss + '\n' + materialCss);
+  // --t-hover-in / --t-hover-out -> the --dur-* names they compose.
+  const durOf = (name) => (new RegExp(`${name}\\s*:\\s*var\\(\\s*(--dur-[\\w-]+)\\s*\\)`).exec(bothTokens) || [])[1] || null;
+  const durIn = durOf('--t-hover-in'), durOut = durOf('--t-hover-out');
+  ok(!!durIn && !!durOut, `both hover pairings resolve to duration tokens (${durIn}, ${durOut})`);
+  // …and both of those names are set to 0 inside SOME reduced-motion block.
+  const reduceBlocks = [...bothTokens.matchAll(/@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{([\s\S]*?)\n\}/g)]
+    .map(m => m[1]).join('\n');
+  const zeroed = (n) => new RegExp(`${n}\\s*:\\s*0m?s`).test(reduceBlocks);
+  ok(zeroed(durIn) && zeroed(durOut),
+    `reduced motion zeroes both (${durIn}, ${durOut}) — the sheen appears instantly instead of animating, with no rule of its own`);
+  // Anti-vacuity: the same predicate must report a name that is NOT zeroed.
+  ok(!zeroed('--dur-shimmer'),
+    'control: the same predicate says --dur-shimmer is NOT zeroed (it deliberately is not) — so the two above are a reading, not a match-anything');
+  ok(reduceBlocks.length > 0,
+    'control: at least one reduced-motion block was actually parsed out of the token files');
+
+  // (d) THE FILL THAT MUST NOT MOVE. Re-derived from the token files, per theme.
+  const lightAt = stripComments(materialCss).indexOf('[data-theme="light"]');
+  const darkBlock = stripComments(materialCss).slice(0, lightAt);
+  const dHover = (/--accent-hover\s*:\s*var\(\s*(--[\w-]+)\s*\)/.exec(darkBlock) || [])[1];
+  ok(dHover === '--violet-500',
+    `dark --accent-hover is still ${dHover} — the same rung as --accent, so hover does NOT lighten the fill (white on --violet-400 is 3.05:1)`);
+  const colorCss = stripComments(readFileSync(path.join(NEXT, 'tokens/color.css'), 'utf8'));
+  const dAccent = (/--accent\s*:\s*var\(\s*(--[\w-]+)\s*\)/.exec(colorCss) || [])[1];
+  ok(dAccent === dHover,
+    `…and dark --accent is the SAME rung (${dAccent}) — this equality is what makes the sheen structural rather than decorative`);
+
+  const primaryHover = rulesFor('btn-primary', 'shell.css')
+    .find(r => r.selector.split(',').some(s => s.trim() === '.btn-primary:hover'));
+  ok(!!primaryHover && carries(declValue(primaryHover.body, 'box-shadow'), '--elev-2'),
+    '.btn-primary:hover still LIFTS (--elev-2) — the sheen is the highlight, the lift is the elevation');
+  ok(!!primaryHover && !carries(declValue(primaryHover.body, 'box-shadow'), '--gloss-contact'),
+    '…and drops the contact shadow while lifted, rather than stacking both');
+}
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

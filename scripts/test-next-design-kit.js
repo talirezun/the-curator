@@ -35,6 +35,8 @@
  *   5  --control-edge >= 3:1 against every surface a control rests on (D4),
  *      with the one stated exception measured rather than hidden
  *   6  the specular is a LIT EDGE and not a DRAWN LINE (D3)
+ *   6b the hover sheen is a DOME that stops above the label — with the control
+ *      that the same alpha as a flat wash would break AA (v3.46.0)
  *   7  sidebar plane vs content, in a stated band, both themes
  *   8  switch geometry is derived, not duplicated
  *   9  the two-line material edge appears ONLY on chrome that floats
@@ -380,6 +382,111 @@ section('6. The specular is a LIT EDGE, not a DRAWN LINE (D3)');
     `control: --inset-hi on light is ${insetL} white, which over --accent measures ${drawn}:1 — a drawn line, and the "phantom border" shell.css records`);
   ok(!/--inset-hi\s*:/.test(materialClean),
     'and --inset-hi is NOT redefined by material.css — it is still correct for the light raised surfaces it was authored for; the bug was the pairing, so the fix is on the pairing');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('6b. The hover sheen: a dome that stops above the label (v3.46.0)');
+// ═════════════════════════════════════════════════════════════════════════
+/*
+ * The primary button's hover was reported as barely visible, and the reason is
+ * §3's own finding: on dark the hover fill is byte-identical to the rest fill,
+ * because white on any violet lighter than --violet-500 fails AA. --gloss-sheen
+ * is the device that carries hover instead.
+ *
+ * THE CONSTRAINT IS BRUTAL AND IS RECOMPUTED HERE. White on the dark fill
+ * measures ~4.53:1 against a 4.5 floor, so the luminance budget before the
+ * label drops below AA is a few thousandths — a FLAT white wash of any useful
+ * strength breaks it. The sheen therefore has to be a dome whose alpha reaches
+ * zero above the tallest glyph, and this section proves that BOTH halves are
+ * true: the flat-wash version fails (the control), and the shipped geometry
+ * puts the last stop above the cap top (the assertion).
+ *
+ * Every number below is derived from the token files: --control-md, --text-md
+ * and the gradient's own percentages. Nothing is transcribed.
+ */
+{
+  const parseSheen = (theme, label) => {
+    const raw = resolve(theme, '--gloss-sheen').replace(/\s+/g, ' ');
+    const geo = /radial-gradient\(\s*([\d.]+)%\s+([\d.]+)%\s+at\s+([\d.]+)%\s+(-?[\d.]+)%/.exec(raw);
+    const stops = [...raw.matchAll(/rgba\(255,\s*255,\s*255,\s*([\d.]+)\)\s*([\d.]+)%/g)]
+      .map(m => ({ alpha: +m[1], at: +m[2] }));
+    ok(!!geo, `${label}: --gloss-sheen parses as a radial-gradient with an explicit size and centre`);
+    ok(stops.length >= 3 && stops[0].at === 0 && stops[stops.length - 1].alpha === 0,
+      `${label}: it runs from a peak at 0% to alpha 0 at ${stops.length ? stops[stops.length - 1].at : '?'}%`);
+    return { rx: +geo[1], ry: +geo[2], cx: +geo[3], cy: +geo[4], stops, raw };
+  };
+
+  // The layer covers the button's BORDER box. `box-sizing: border-box` is set
+  // tree-wide, so that box is exactly --control-md — not --control-md plus the
+  // border. Getting this wrong overstates the sheen's reach by 2px, and it is
+  // the error the painted-pixel measurement caught in the first draft.
+  const px = (name) => {
+    const v = resolve(D, name) || '';
+    const m = /(-?[\d.]+)px/.exec(v);
+    return m ? +m[1] : null;
+  };
+  const spaceCss = read('tokens/space.css');
+  const controlMd = +(/--control-md:\s*([\d.]+)px/.exec(spaceCss) || [])[1];
+  const typoCss = read('tokens/typography.css');
+  const textMd = +(/--text-md:\s*calc\(([\d.]+)px/.exec(typoCss) || [])[1];
+  void px;
+  ok(controlMd === 32 && textMd === 13,
+    `the layer and the label are read from the token files (--control-md ${controlMd}px, --text-md ${textMd}px at scale 1)`);
+
+  const borderW = 1;                                  // .btn --btn-border-w
+  const layerH = controlMd;                           // border box, box-sizing: border-box
+  // A line box of height --text-md centred in the content box, with the cap
+  // top one cap-height above the baseline. 0.71em is the conservative end of
+  // the system sans range (0.70-0.72); a SMALLER cap height would put the
+  // glyph top LOWER and make this test easier, so the conservative choice is
+  // the larger one.
+  const contentH = layerH - 2 * borderW;
+  const lineTop = borderW + (contentH - textMd) / 2;
+  const baseline = lineTop + 0.8 * textMd;
+  const capTop = baseline - 0.71 * textMd;
+
+  for (const [theme, name] of [[D, 'dark'], [L, 'light']]) {
+    const s = parseSheen(theme, name);
+    const zeroAt = (s.cy / 100) * layerH + (s.ry / 100) * layerH * (s.stops[s.stops.length - 1].at / 100);
+    ok(zeroAt < capTop,
+      `${name}: the sheen reaches alpha 0 at ${r2(zeroAt)}px, ABOVE the label's cap top at ${r2(capTop)}px — it cannot touch the glyph backdrop`);
+    ok(s.rx < 100,
+      `${name}: rx is ${s.rx}% — the light falls off toward the ends, so it reads as a dome rather than a printed band`);
+  }
+
+  // THE CONTROL, and it is the whole argument for the geometry. Composite the
+  // sheen's PEAK alpha over the fill as a flat wash and grade it: it must FAIL
+  // the 4.5 floor. If it passed, the dome would be decoration rather than the
+  // only way to have a visible hover at all.
+  for (const [theme, name, floorNote] of [[D, 'dark', ''], [L, 'light', ' (on the HOVER fill, --accent-hover)']]) {
+    const s = parseSheen(theme, name);
+    const base = name === 'dark' ? '--accent' : '--accent-hover';
+    const rest = C(theme, '--text-on-accent', base);
+    const washed = composite(toRgb(`rgba(255,255,255,${s.stops[0].alpha})`), toRgb(resolve(theme, base)));
+    const washedRatio = r2(ratio(toRgb(resolve(theme, '--text-on-accent')), washed));
+    ok(rest >= TEXT_FLOOR - 0.2,
+      `${name}: white on the fill${floorNote} measures ${rest}:1 before any sheen`);
+    ok(washedRatio < TEXT_FLOOR,
+      `control: the SAME sheen as a flat wash would put it at ${washedRatio}:1 — under ${TEXT_FLOOR}. The dome is load-bearing, not styling`);
+  }
+
+  // The deepened hover shade only ever darkens, so it cannot cost the label
+  // anything — assert the direction rather than assuming it.
+  const alphaOfShade = (v) => +(/rgba\(0,\s*0,\s*0,\s*([\d.]+)\)/.exec(v || '') || [])[1];
+  for (const [theme, name] of [[D, 'dark'], [L, 'light']]) {
+    const a0 = alphaOfShade(resolve(theme, '--gloss-shade'));
+    const a1 = alphaOfShade(resolve(theme, '--gloss-shade-hi'));
+    ok(Number.isFinite(a0) && Number.isFinite(a1) && a1 > a0,
+      `${name}: --gloss-shade-hi (${a1}) is DARKER than --gloss-shade (${a0}) — a hover device that can only raise contrast`);
+  }
+
+  // Increase Contrast flattens the gloss; the sheen must go with it, or the
+  // one user group that asked for flat surfaces gets an animated highlight.
+  const contrastBlock = (/@media\s*\(\s*prefers-contrast:\s*more\s*\)\s*\{([\s\S]*)\n\}/.exec(stripComments(materialCss)) || [])[1] || '';
+  ok(/--gloss-sheen:\s*none/.test(contrastBlock) && /--gloss-shade-hi:\s*none/.test(contrastBlock),
+    'prefers-contrast: more flattens --gloss-sheen and --gloss-shade-hi with the rest of the gloss');
+  ok(/--gloss-face:\s*none/.test(contrastBlock),
+    'control: the same block really is the one that already flattened --gloss-face (so the match above is not a stray)');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

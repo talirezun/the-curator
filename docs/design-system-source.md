@@ -138,6 +138,85 @@ darkest value the triad allows. Lifting the light triad — the greens especiall
 — would buy a real light plane, and that is a colour-system change with its own
 diff and its own approval.
 
+### The gloss geometry, and the hover sheen (v3.46.0)
+
+Two reports on the same control — the dark-theme primary `Choose files` button:
+a **ring drawn around the button, outside the fill** ("looks like something is
+broken"), and a **hover that barely changes anything**. Both were properties of
+the recipe rather than of any one value, so both fixes are recorded here.
+
+**The ring was geometry, not colour.** `.btn` carries `border: 1px solid
+transparent` (the baseline that stops a variant-less `.btn` falling through to
+Chromium's bevelled UA chrome, and what keeps every variant the same size).
+An absolutely positioned box's containing block is its parent's **padding**
+box, and an `inset` box-shadow is likewise clipped to the padding box — so
+`.btn::before { inset: 0 }` plus `box-shadow: var(--gloss-specular),
+var(--gloss-shade)` on the element left the face gradient *and* both inset
+devices stopping one pixel short, with `background-color` painting that 1px
+frame raw. Measured by decoding painted pixels at 2× on the real button, dark,
+column through its centre:
+
+| | before | after |
+|---|---|---|
+| primary, top edge vs the brightest top row | **1.577:1** | **1.002:1** |
+| primary, bottom edge vs the darkest bottom row | **1.647:1** | **1.000:1** |
+| danger-solid, top / bottom | 1.478 / 1.653 | 1.005 / 1.000 |
+| light primary, top / bottom | 1.584 / 1.225 | 1.002 / 1.000 |
+
+**The fix moves the overlay, not the border.** Dropping the transparent border
+from the filled variants also removes the ring and was refused: it makes every
+primary button 2px narrower than every secondary one, which is the invariant
+`.btn`'s own note records. Instead the border width is named `--btn-border-w`,
+and `.btn-primary::before` / `.btn-danger-solid::before` take
+`inset: calc(var(--btn-border-w) * -1)` — the border box exactly. A
+pseudo-element has no border of its own, so its padding box *is* its border
+box and nothing can clip its shadows short again. `--gloss-specular`,
+`--gloss-shade` and `--gloss-pressed` therefore live on that overlay; the
+element keeps only `--gloss-contact` / `--elev-2`, the devices drawn **outside**
+the box. `border-radius: inherit` becomes correct in the same move: 7px on a
+box whose radius really is 7px, rather than 7px on the 6px-radius padding box.
+
+`.btn-secondary` is **deliberately excluded**. Its border is real and opaque
+(`--control-edge`), so its padding box is exactly where its face should stop;
+its "ring" measures 2.37:1 top / 3.24:1 bottom on dark, which is the edge doing
+its 1.4.11 job. Growing the face over it would tint the one device carrying
+that floor for the whole variant.
+
+**The sheen — `--gloss-sheen`, the fourth device.** Hover on dark had nothing
+to move: `--accent-hover` aliases `--violet-500`, which *is* `--accent` (see
+the redefinition table above — no lighter violet clears 4.5 for the label), so
+the whole of hover was `--gloss-specular` going 0.22 → 0.34, one CSS pixel of a
+32px control. `--gloss-sheen` is a top-lit dome on a second overlay
+(`::after`, the same border box), fading in over `--t-hover-in` (110 ms) and
+out over `--t-hover-out` (120 ms) — the kit's existing asymmetry, no new
+duration — alongside the existing `--elev-2` lift and a slightly deeper
+`--gloss-shade-hi`. The press still inverts to `--gloss-pressed` at 80 ms, and
+the sheen leaves on the same 80 ms, because a specular dome on a pressed
+control is the one combination that reads as broken.
+
+**Why it is a dome and not a wash, in numbers.** White on the dark fill is
+**4.528:1** against a 4.5 floor, so the luminance budget before the label drops
+below AA is ~0.0015 — a flat white wash at the sheen's own peak alpha would put
+it at **2.93:1** dark / **3.14:1** light. The dome instead reaches alpha 0 at
+**10.24px** of the 32px layer (the border box *is* `--control-md` under
+`box-sizing: border-box`), while the tallest glyph of a centred 13px/500 label
+starts at ~**10.7px**. Decoded from painted pixels: the last row on which hover
+differs from rest is CSS y **9.5**, and across every row the glyphs occupy the
+hover composite is **byte-identical** to the rest composite — hover cannot move
+the label's backdrop at all. `scripts/test-next-design-kit.js` §6b recomputes
+all of this from `--control-md`, `--text-md` and the gradient's own
+percentages, and carries the flat-wash failure as its control.
+
+**A pre-existing finding this measurement surfaced, not fixed here.**
+`--gloss-face`'s top stop lightens the fill under the *upper* part of the
+label, so the worst white-on-backdrop reading across the glyph band is
+**4.355:1** on the dark primary at rest — below 4.5, and unchanged by this
+work (it measures 4.355 before and after). The light primary's *hover* fill
+step (`--violet-600` → `--violet-500`) lands at **4.387:1**, likewise
+before and after. Both predate v3.46.0 and both are the face gradient rather
+than the sheen; fixing them means either flattening the face's top stop or
+moving the fill, and neither belongs in a ring fix.
+
 ### `shared/switch.css` — the switch (this release)
 
 Also new, also with no bundle counterpart. macOS draws a two-value choice three
