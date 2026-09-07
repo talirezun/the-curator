@@ -4,32 +4,53 @@
 // read and write over MCP: a standing project brief, a per-scope /
 // per-machine handoff, and an append-only journal of saves.
 //
-// Backend used (read-only, this session — see src/routes/memory.js):
-//   GET /api/memory                         -> { projects: [...] } index
-//   GET /api/memory/:project                -> brief + scope index
-//   GET /api/memory/:project?scope=&machine=&journalLimit=
+// Backend used (see src/routes/memory.js):
+//   GET   /api/memory                       -> { projects: [...] } index,
+//                                              one row per PROJECT, each
+//                                              carrying its `domain`
+//   GET   /api/memory/:domain/:project      -> brief + work-stream index
+//   GET   /api/memory/:domain/:project?scope=&machine=&journalLimit=
 //                                           -> brief + current.md + journal
+//   PATCH /api/memory/:domain/projects/:project  {brief} -> the ONE write
 //
 // ─────────────────────────────────────────────────────────────────────────
-// THIS VIEW NEVER WRITES, AND THAT IS THE FEATURE
+// PROJECTS INSIDE A DOMAIN (v3.48.0)
 // ─────────────────────────────────────────────────────────────────────────
-// The store has exactly one writer — an agent, through the MCP tools. Its
-// whole per-machine layout is safe BECAUSE of that (working-state.js's
-// LAYOUT block: two machines never touch one file, so `git pull -X theirs`
-// has no conflicting hunk to silently resolve away). A browser write path
-// would make the app a second writer to the same files, and would put a
-// human edit behind the last agent's harness/model provenance line.
+// A DOMAIN is where knowledge lives. A PROJECT is a thing you build, and a
+// domain can host several. So the rail's list is GROUPED — domain, then the
+// projects inside it — and the last project you looked at in each domain is
+// remembered, because coming back to the wrong one of five is the whole
+// friction this grouping exists to remove.
 //
-// So: show, do not edit. There is no Save, no inline editor, no textarea,
-// and the route this view calls has no write endpoint to reach even if one
-// were added here. `state/project.md` is plain markdown in the user's own
-// folder — Obsidian opens it. That is the answer, not a gap.
+// Every user-facing word here is the one from the model, not the one from
+// the filesystem: PROJECT, WORK-STREAM (the store calls it a `scope`, and
+// the slug is still shown as one), STANDING BRIEF. "Tier" and a bare
+// "handoff" are never used on screen without saying what they mean.
 //
-// Because nothing here writes, this view does NOT participate in the
-// cross-view write gate (app.js's isAnyWriteBusy / beginDomainWrite) the way
-// Sync and Ingest do. There is no button to disable: an ingest running in
-// another view cannot conflict with a read, and refusing to READ during a
-// write would be inventing a restriction the backend does not enforce.
+// ─────────────────────────────────────────────────────────────────────────
+// THIS VIEW WRITES EXACTLY ONE THING: THE STANDING BRIEF
+// ─────────────────────────────────────────────────────────────────────────
+// Tiers 2 and 3 — the per-(work-stream, machine) handoff and its journal —
+// have exactly one writer, an agent through the MCP tools, and that is what
+// makes the per-machine layout safe (working-state.js's LAYOUT block: two
+// machines never touch one file, so `git pull -X theirs` has no conflicting
+// hunk to silently resolve away). Nothing here can write them; there is no
+// editor, no Save, and no endpoint on the route to reach.
+//
+// The standing brief is a different file with a different owner. It is the
+// HUMAN's — docs/working-state.md has said since v3.17.0 that you edit it by
+// opening `state/<project>/project.md` in Obsidian — and the edit here is
+// that same edit through a nicer door, stamped `authoredBy.kind: 'human'`,
+// which is exactly what the store's own brief-authority reading looks for.
+// It is not written under an agent's provenance line, because it is not
+// written by an agent.
+//
+// Because the brief write is a real write, the Save button IS gated while it
+// is in flight (one at a time, disabled while busy) — but this view still
+// does not participate in the cross-view write gate (app.js's isAnyWriteBusy
+// / beginDomainWrite) the way Sync and Ingest do: an ingest cannot conflict
+// with `state/`, and refusing to read or edit a brief during one would be
+// inventing a restriction the backend does not enforce.
 //
 // ─────────────────────────────────────────────────────────────────────────
 // DESIGN
@@ -140,7 +161,20 @@ function freshState() {
     projects: [],          // GET /api/memory -> projects[]
     indexError: null,
 
+    // WHICH PROJECT, IN WHICH DOMAIN. Two fields, not one composite string:
+    // every request needs them separately, and a composite would have to be
+    // split at each of the four call sites — four places for a parse to
+    // disagree. `activeKey()` builds the comparable form where a comparison
+    // is what is wanted (the post-await "is this still the selection?"
+    // guards), and it is derived, never stored.
+    activeDomain: null,
     activeProject: null,
+    // The standing-brief editor, or null when nothing is being edited.
+    //   { domain, project, text, busy, error, savedAt }
+    // Stamped with its own (domain, project) so a reply that lands after the
+    // user has moved on cannot be applied to a different project's brief —
+    // the same stamp discipline the rest of this view uses for scopes.
+    briefEdit: null,
     // The UNSCOPED read for activeProject: brief + the full scope index.
     // Cached across scope switches so changing scope costs one request.
     projectRead: null,
@@ -234,6 +268,10 @@ const FOCUSABLE_IDS = [
   // REMOVES itself on success (the notice it lives in is gone once the
   // reload lands), so it needs the same fallback treatment as "Show more".
   'mem-refresh', 'mem-reload',
+  // The brief editor. `mem-brief-edit` REMOVES itself when clicked (it is
+  // replaced by the textarea), so it needs the same fallback treatment as
+  // "Show more" below; the textarea is where the user actually is.
+  'mem-brief-edit', 'mem-brief-text', 'mem-brief-save', 'mem-brief-cancel',
 ];
 
 // Where focus goes when the exact control did not come back. "Show more" is
@@ -252,6 +290,14 @@ const FOCUS_FALLBACK = {
   // Without this, focusing that summary and re-rendering would drop focus to
   // <body>: the exact v3.17.1 defect this view's focus handling exists for.
   'mem-fold-about': '[data-tx-explainer="about"] > .tx-explainer-summary',
+  // Clicking Edit replaces the button with the editor, so restoring "by id"
+  // would drop focus every time it worked. The textarea is what the user
+  // asked for.
+  'mem-brief-edit': '#mem-brief-text',
+  // Save and Cancel both dismiss the editor. The Edit button is the nearest
+  // stable control that does the same KIND of thing.
+  'mem-brief-save': '#mem-brief-edit',
+  'mem-brief-cancel': '#mem-brief-edit',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -360,6 +406,66 @@ function schedulePoll(token) {
   }, nextPollDelay());
 }
 
+// ── Identity ─────────────────────────────────────────────────────────────
+//
+// A project is identified by (domain, project). Both are needed, because two
+// domains may each hold a project called `main` — which is not a corner case
+// but the expected shape once a user has more than one domain.
+//
+// `keyOf` exists ONLY for comparison. Every request builds its URL from the
+// two fields separately (see fetchState), so nothing ever has to split this
+// string back apart, and a project slug containing the separator cannot
+// forge another project's identity in a way that matters. It is still built
+// with a character `isSafeSegment` forbids, so two different pairs can never
+// produce one key.
+
+function keyOf(domain, project) {
+  return String(domain) + '/' + String(project);
+}
+
+function activeKey() {
+  return keyOf(state.activeDomain, state.activeProject);
+}
+
+// ── Remembering the last project per domain ──────────────────────────────
+//
+// One localStorage key holding a { domain: project } map. Every access is
+// wrapped: localStorage THROWS on access (not merely returns null) in a
+// Safari private window and under a "block site data" setting, and this is a
+// convenience, so the failure mode has to be "the app forgets", never "the
+// app breaks". The value is validated on read as well as write — it is
+// per-browser state a user can edit, and a bad shape must degrade to no
+// memory rather than to a crash in initialPick.
+
+const LAST_PROJECT_KEY = 'curator-memory-last-project-v1';
+
+export function readRememberedProjects() {
+  try {
+    const raw = localStorage.getItem(LAST_PROJECT_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof k === 'string' && typeof v === 'string' && k && v) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function rememberProject(domain, project) {
+  if (!domain || !project) return;
+  try {
+    const map = readRememberedProjects();
+    map[domain] = project;
+    localStorage.setItem(LAST_PROJECT_KEY, JSON.stringify(map));
+  } catch {
+    /* private window, blocked site data, quota — the app simply forgets */
+  }
+}
+
 // ── Load ─────────────────────────────────────────────────────────────────
 
 /**
@@ -452,7 +558,18 @@ function screenSignature() {
   const briefMark = pr && pr.brief && pr.brief.present
     ? formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds) : null;
 
+  // THE EDITOR IS A PANE TOO, and the same rule applies to it as to the
+  // picker and the save strip: a no-op guard that cannot see a pane is not a
+  // guard for that pane. Only the fields that CHANGE PIXELS are folded in —
+  // notably NOT the draft text, which changes on every keystroke and is
+  // written straight into state without a re-render (see wire()), exactly as
+  // the Domains lifecycle form does, so that the caret survives.
+  const editMark = state.briefEdit
+    ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null]
+    : null;
+
   return JSON.stringify([
+    state.activeDomain,
     state.activeProject,
     state.staleWrite,
     state.indexError,
@@ -463,7 +580,12 @@ function screenSignature() {
     newestMark,
     sharedMark,
     briefMark,
-    state.projects.map((p) => [p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
+    editMark,
+    // The DOMAIN rides in each row, because the rail groups by it: two
+    // projects with the same name in two domains are two different rows, and
+    // a signature that could not tell them apart would skip the render that
+    // moves the selection between them.
+    state.projects.map((p) => [p.domain, p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
   ]);
 }
 
@@ -494,7 +616,8 @@ async function refreshIndex(token) {
 
     // Has anything been written since the read that produced what is on
     // screen? Compared against the read's START time — see detailFetchedAt.
-    const row = state.projects.find((p) => p.project === state.activeProject);
+    const row = state.projects.find((p) => p.domain === state.activeDomain
+      && p.project === state.activeProject);
     const wroteAt = row && row.lastWriteAt ? Date.parse(row.lastWriteAt) : NaN;
     state.staleWrite = Number.isFinite(wroteAt) &&
       state.detailFetchedAt > 0 && wroteAt > state.detailFetchedAt;
@@ -518,7 +641,7 @@ async function refreshIndex(token) {
     // across up to 200 domains, which is why the poll is adaptive at all.
     if (Number.isFinite(wroteAt) && state.activeProject &&
         state.scopesFetchedAt > 0 && wroteAt > state.scopesFetchedAt) {
-      await refreshScopeList(token, state.activeProject);
+      await refreshScopeList(token, state.activeDomain, state.activeProject);
     }
 
     const before = renderedSignature;
@@ -566,10 +689,11 @@ async function refreshIndex(token) {
  * Never throws, and a failed read changes nothing: keep what is on screen
  * and try again on the next tick, the same rule refreshIndex follows.
  */
-async function refreshScopeList(token, project) {
+async function refreshScopeList(token, domain, project) {
   const startedAt = Date.now();
-  const read = await fetchState(project, {}, token);
-  if (!isCurrentMount(token) || state.activeProject !== project) return;
+  const key = keyOf(domain, project);
+  const read = await fetchState(domain, project, {}, token);
+  if (!isCurrentMount(token) || activeKey() !== key) return;
   if (!read.data) return;
   if (!state.scope) return;
   const names = (read.data.scopes || []).map((s) => s.scope);
@@ -588,8 +712,10 @@ async function refreshScopeList(token, project) {
  * snapping back to the newest one the way selectProject does.
  */
 async function reloadActive(token) {
+  const domain = state.activeDomain;
   const project = state.activeProject;
   if (!project) return;
+  const key = keyOf(domain, project);
   const wantScope = state.scope;
   // ONLY a machine the user DELIBERATELY picked, which is what a non-null
   // `state.machine` means: the machine picker's handler is the one place that
@@ -627,8 +753,8 @@ async function reloadActive(token) {
   state.detailLoading = true;
   render(token);
 
-  const read = await fetchState(project, {}, token);
-  if (!isCurrentMount(token) || state.activeProject !== project) return;
+  const read = await fetchState(domain, project, {}, token);
+  if (!isCurrentMount(token) || activeKey() !== key) return;
   state.projectRead = read.data;
   state.detailError = read.error;
 
@@ -647,6 +773,79 @@ async function reloadActive(token) {
   await loadScope(keep, keep === wantScope ? wantMachine : null, token);
 }
 
+/**
+ * Save the standing brief. THE ONLY WRITE THIS VIEW MAKES.
+ *
+ * PATCH, not POST or PUT: it changes one field of an existing project, and
+ * the route takes `{rename?, brief?}` on the same endpoint the Domains view
+ * renames through. Nothing here can reach a work-stream handoff or a
+ * journal — see the header block.
+ *
+ * FOUR PROPERTIES, each of which had to be deliberate:
+ *
+ *   · STAMPED. The edit carries the (domain, project) it was opened on, and
+ *     a reply that lands after the user has moved on is dropped. Without
+ *     that, a slow save landing after a project switch would report success
+ *     over — and re-read — a project the user is no longer looking at.
+ *   · ONE AT A TIME. `busy` disables both buttons and the textarea. A second
+ *     click during a save is a second full-document write, and the last one
+ *     to arrive wins, which is not what the person clicking twice means.
+ *   · REPLACE, NOT MERGE, and the copy says so. The store's brief write is a
+ *     whole-document replace (idempotent, like a scope save), so a partial
+ *     brief silently drops what it omits.
+ *   · A FAILURE KEEPS THE DRAFT. `state.briefEdit` is not cleared on error —
+ *     the text the user typed stays in the box with the reason above it.
+ *     Clearing it would destroy the only copy.
+ */
+async function saveBrief(token) {
+  const e = state.briefEdit;
+  if (!e || e.busy) return;
+  const key = keyOf(e.domain, e.project);
+  e.busy = true;
+  e.error = null;
+  render(token);
+
+  let ok = false;
+  let error = null;
+  try {
+    const res = await fetch(
+      '/api/memory/' + encodeURIComponent(e.domain) + '/projects/' + encodeURIComponent(e.project),
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: e.text }),
+      }
+    );
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    ok = res.ok && !!(data && data.ok);
+    if (!ok) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+
+  if (!isCurrentMount(token)) return;
+  // The reply belongs to the project it was sent for, not to whatever is on
+  // screen now.
+  if (!state.briefEdit || keyOf(state.briefEdit.domain, state.briefEdit.project) !== key) return;
+
+  state.briefEdit.busy = false;
+  if (!ok) {
+    state.briefEdit.error = error;
+    render(token);
+    return;
+  }
+  // Saved: drop the editor and re-read, so the rendered brief, its age and
+  // the sidebar row all come from the server rather than from the draft.
+  state.briefEdit = null;
+  if (activeKey() === key) {
+    await reloadActive(token);
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  } else {
+    render(token);
+  }
+}
+
 async function loadIndex(token) {
   const gate = loadGate;                 // capture: the next mount replaces it
   const got = await fetchIndex(token);
@@ -656,27 +855,68 @@ async function loadIndex(token) {
     state.indexError = got.error;
   }
 
-  // Open on the project whose agent memory is FRESHEST — nearly always the
-  // one the user just came from. The list itself stays in domain order (a
-  // picker that reorders itself between visits is disorienting); only the
-  // initial selection is by recency, and it is computed here rather than
-  // taken as the first row with any state, which would just be alphabetical.
-  // A project with nothing saved is still selectable — "nothing saved yet"
-  // is a real answer worth being able to ask for.
-  const withState = state.projects.filter((p) => p.lastWriteAt);
-  withState.sort((a, b) => String(b.lastWriteAt).localeCompare(String(a.lastWriteAt)));
-  const pick = withState.length ? withState[0] : (state.projects[0] || null);
+  const pick = initialPick(state.projects, readRememberedProjects());
 
   settleGate(gate, () => {
     state.loading = false;
     render(token);
   });
 
-  if (pick) await selectProject(pick.project, token);
+  if (pick) await selectProject(pick.domain, pick.project, token);
 }
 
-async function selectProject(project, token, opts = {}) {
+/**
+ * Which project to open on arrival.
+ *
+ * TWO STEPS, and the order is the point.
+ *
+ *   1. THE DOMAIN IS CHOSEN BY RECENCY — the domain holding the freshest
+ *      save, which is nearly always the one the user just came from. Not by
+ *      list order, which is alphabetical and would open on whatever happens
+ *      to sort first.
+ *   2. THE PROJECT WITHIN IT IS CHOSEN BY MEMORY — the last project the user
+ *      looked at in that domain, if it still exists. Only when there is no
+ *      remembered one does recency decide again.
+ *
+ * That second step is what "remembers the last project per domain" means,
+ * and it is deliberately not global: remembering ONE project across all
+ * domains would send a user who just saved in `articles` to a project in
+ * `clients` because that is where they were yesterday. The domain question
+ * has a fresh, factual answer every time; the project question does not.
+ *
+ * A project with nothing saved is still selectable — "nothing saved yet" is
+ * a real answer worth being able to ask for — so the final fallback is the
+ * first row rather than nothing.
+ *
+ * Pure, and exported through __testing: it is the only part of the arrival
+ * path that makes a decision, and the rest of loadIndex is I/O.
+ */
+export function initialPick(projects, remembered) {
+  const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
+  if (!rows.length) return null;
+  const byRecency = rows.filter((p) => p.lastWriteAt)
+    .slice()
+    .sort((a, b) => String(b.lastWriteAt).localeCompare(String(a.lastWriteAt)));
+  const freshest = byRecency.length ? byRecency[0] : rows[0];
+  const domain = freshest.domain;
+  const want = remembered && typeof remembered === 'object' ? remembered[domain] : null;
+  if (want) {
+    const hit = rows.find((p) => p.domain === domain && p.project === want);
+    if (hit) return hit;
+  }
+  return freshest;
+}
+
+async function selectProject(domain, project, token, opts = {}) {
+  const key = keyOf(domain, project);
+  state.activeDomain = domain;
   state.activeProject = project;
+  // A pending edit belongs to the project it was opened on. Switching
+  // project abandons it — silently, because there is nothing to save: the
+  // draft was never sent, and carrying it onto another project's brief is
+  // the one outcome that could destroy something.
+  state.briefEdit = null;
+  rememberProject(domain, project);
   state.projectRead = null;
   state.detail = null;
   state.detailError = null;
@@ -704,8 +944,8 @@ async function selectProject(project, token, opts = {}) {
     refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
   }
 
-  const read = await fetchState(project, {}, token);
-  if (!isCurrentMount(token) || state.activeProject !== project) return;
+  const read = await fetchState(domain, project, {}, token);
+  if (!isCurrentMount(token) || activeKey() !== key) return;
   state.projectRead = read.data;
   state.detailError = read.error;
 
@@ -715,12 +955,17 @@ async function selectProject(project, token, opts = {}) {
     render(token);
     return;
   }
-  // Newest-first from the store, so [0] is the freshest handoff.
+  // Newest-first from the store, so [0] is the freshest handoff — which is
+  // exactly what the route resolves `scope=latest` to. The name is taken
+  // from the list we already have rather than costing a second request for
+  // the server to tell us the same thing.
   await loadScope(scopes[0].scope, null, token);
 }
 
 async function loadScope(scope, machine, token) {
+  const domain = state.activeDomain;
   const project = state.activeProject;
+  const key = keyOf(domain, project);
   state.scope = scope;
   state.machine = machine;
   // Drop the previous scope's read before painting: keeping it would render
@@ -734,8 +979,8 @@ async function loadScope(scope, machine, token) {
   if (machine) q.machine = machine;
   if (state.journalLimit !== JOURNAL_PAGE) q.journalLimit = String(state.journalLimit);
 
-  const read = await fetchState(project, q, token);
-  if (!isCurrentMount(token) || state.activeProject !== project || state.scope !== scope) return;
+  const read = await fetchState(domain, project, q, token);
+  if (!isCurrentMount(token) || activeKey() !== key || state.scope !== scope) return;
   state.detail = read.data;
   state.detailError = read.error;
   state.detailLoading = false;
@@ -743,10 +988,11 @@ async function loadScope(scope, machine, token) {
 }
 
 /** One fetch shape for both reads. Never throws; returns {data, error}. */
-async function fetchState(project, query, token) {
+async function fetchState(domain, project, query, token) {
   const qs = new URLSearchParams(query).toString();
   try {
-    const res = await fetch('/api/memory/' + encodeURIComponent(project) + (qs ? '?' + qs : ''));
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + (qs ? '?' + qs : ''));
     const data = await res.json();
     if (!isCurrentMount(token)) return { data: null, error: null };
     if (!res.ok || !data.ok) {
@@ -984,6 +1230,64 @@ function restoreFocus() {
   if (!state.detailLoading) pendingFocusId = null;
 }
 
+/**
+ * The rail's project list, GROUPED BY DOMAIN.
+ *
+ * A domain heading above its projects, in the domain order the index
+ * returned. The list itself is deliberately NOT re-sorted by recency: a rail
+ * that reorders itself between visits is disorienting, and recency already
+ * decides the initial SELECTION (see initialPick), which is the place where
+ * "what did I just touch" is actually useful.
+ *
+ * THE HEADING IS A HEADING, NOT A BUTTON. Selecting a domain is not a thing
+ * this screen does — memory belongs to a project — so a clickable domain row
+ * would either do nothing or invent a second selection model. It carries the
+ * domain name and nothing else.
+ *
+ * A domain with exactly one project still gets its heading. Suppressing it
+ * would make the rail change SHAPE when a second project appears, and the
+ * heading is also the only thing on this screen that names which domain a
+ * project lives in.
+ *
+ * Pure and exported through __testing: this is the function the grouping
+ * assertions drive.
+ */
+export function renderProjectGroups(projects, activeDomain, activeProject) {
+  const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
+  const order = [];
+  const byDomain = new Map();
+  for (const p of rows) {
+    const d = p.domain == null ? '' : String(p.domain);
+    if (!byDomain.has(d)) { byDomain.set(d, []); order.push(d); }
+    byDomain.get(d).push(p);
+  }
+  return order.map((domain) => {
+    const inner = byDomain.get(domain).map((p) => {
+      const active = p.domain === activeDomain && p.project === activeProject;
+      const has = p.scopeCount > 0 || p.hasBrief;
+      return (
+        '<button class="mem-row' + (active ? ' active' : '') + (has ? '' : ' mem-row-quiet') + '"' +
+          ' data-mem-domain="' + escapeHtml(domain) + '"' +
+          ' data-mem-project="' + escapeHtml(p.project) + '"' +
+          (active ? ' aria-current="true"' : '') + '>' +
+          // SQUARE, not round — see this file's header comment.
+          '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
+          '<span class="mem-row-main">' +
+            '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
+            '<span class="mem-row-meta">' + escapeHtml(projectMetaLine(p)) + '</span>' +
+          '</span>' +
+        '</button>'
+      );
+    }).join('');
+    return (
+      '<div class="mem-group">' +
+        '<div class="mem-group-head cur-eyebrow">' + escapeHtml(domain) + '</div>' +
+        '<div class="mem-row-list">' + inner + '</div>' +
+      '</div>'
+    );
+  }).join('');
+}
+
 function renderSidebar(token) {
   // NO PARAGRAPH UNDER THE TITLE. v3.20.0 moved this sentence from
   // `.sidebar-hint` into renderDescription, which changed its CLASS and left it
@@ -1029,22 +1333,7 @@ function renderSidebar(token) {
     return;
   }
 
-  const rows = state.projects.map((p) => {
-    const active = p.project === state.activeProject;
-    const has = p.scopeCount > 0 || p.hasBrief;
-    return (
-      '<button class="mem-row' + (active ? ' active' : '') + (has ? '' : ' mem-row-quiet') + '"' +
-        ' data-mem-project="' + escapeHtml(p.project) + '"' +
-        (active ? ' aria-current="true"' : '') + '>' +
-        // SQUARE, not round — see this file's header comment.
-        '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
-        '<span class="mem-row-main">' +
-          '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
-          '<span class="mem-row-meta">' + escapeHtml(projectMetaLine(p)) + '</span>' +
-        '</span>' +
-      '</button>'
-    );
-  }).join('');
+  const rows = renderProjectGroups(state.projects, state.activeDomain, state.activeProject);
 
   // A VISIBLE, KEYBOARD-REACHABLE way to re-ask. The automatic triggers
   // (select, wake, poll) cover the cases we can predict; this covers the one
@@ -1070,9 +1359,9 @@ function renderSidebar(token) {
 
   setSidebar(
     head + projectsHead +
-    '<div class="mem-row-list">' + rows + '</div>' +
+    rows +
     '<div class="mem-sidebar-foot">' + icon('lockAlt', 12) +
-      '<span>Read-only here. Agents write this through MCP.</span></div>',
+      '<span>Agents write the handoffs here through MCP. You write the standing brief.</span></div>',
     token
   );
 }
@@ -1122,6 +1411,14 @@ function renderProject() {
   const header =
     '<div class="mem-project-head">' +
       '<span class="mem-project-mark"></span>' +
+      // DOMAIN THEN PROJECT, with the domain quiet. The project is what the
+      // screen is about; the domain is where it lives, and a user with one
+      // project per domain should be able to read past it. Both are shown
+      // always, because the rail groups by domain and a header that dropped
+      // it would be the only place on screen that could not answer "which
+      // domain is this?".
+      '<span class="mem-project-domain">' + escapeHtml(String(state.activeDomain || '')) + '</span>' +
+      '<span class="mem-project-sep">/</span>' +
       '<span class="mem-project-name">' + escapeHtml(state.activeProject) + '</span>' +
       (d && d.readonly
         ? '<span class="mem-badge mem-badge-quiet">shared mirror</span>'
@@ -1632,10 +1929,10 @@ function renderScopeControls(scopes) {
   if (scopeNames.length > 1) pendingListboxes.push(scopeCfg);
 
   const scopeCtl = scopeNames.length > 1
-    ? '<span class="mem-ctl"><span class="mem-ctl-label" id="mem-scope-label">Scope</span>' +
+    ? '<span class="mem-ctl"><span class="mem-ctl-label" id="mem-scope-label">Work-stream</span>' +
         renderListboxHtml(scopeCfg) + '</span>'
     : (state.scope
-        ? '<span class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
+        ? '<span class="mem-ctl"><span class="mem-ctl-label">Work-stream</span>' +
           '<span class="mem-ctl-static">' + escapeHtml(state.scope) + '</span></span>'
         : '');
 
@@ -1807,22 +2104,106 @@ function renderHandoff() {
   );
 }
 
+/**
+ * The standing-brief editor's markup, or the Edit affordance.
+ *
+ * IT LIVES IN THE FOLD BODY, NEVER IN THE <summary>. An interactive control
+ * inside a <summary> toggles its own section when clicked — the v3.0.1-beta.18
+ * hazard this view's header block records — and the fix used here is the one
+ * that cannot be undone by a later edit: there is no propagation path to
+ * suppress, because the control is not in the summary.
+ *
+ * Read-only mirrors get NO editor at all: the backend refuses the write
+ * (403), and offering a control whose only outcome is a refusal is worse
+ * than not offering it.
+ */
+function renderBriefEditor(read, readonly) {
+  const e = state.briefEdit;
+  if (readonly) return '';
+
+  if (!e) {
+    const has = !!(read && read.brief && read.brief.present);
+    return (
+      '<div class="mem-brief-actions">' +
+        '<button type="button" class="btn btn-secondary" id="mem-brief-edit">' +
+          (has ? 'Edit brief' : 'Write a brief') + '</button>' +
+        renderDescription('The standing brief is yours to write — agents read it, they do not own it. '
+          + 'Saving replaces the whole document, so send the complete brief rather than an addition.') +
+      '</div>'
+    );
+  }
+
+  return (
+    '<div class="mem-brief-editor">' +
+      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error }) : '') +
+      '<label class="mem-brief-label cur-eyebrow" for="mem-brief-text">Standing brief (Markdown)</label>' +
+      '<textarea class="mem-brief-text" id="mem-brief-text" rows="18" spellcheck="true"' +
+        (e.busy ? ' disabled' : '') + '>' + escapeHtml(e.text || '') + '</textarea>' +
+      '<div class="mem-brief-buttons">' +
+        '<button type="button" class="btn btn-primary" id="mem-brief-save"' +
+          (e.busy ? ' disabled' : '') + '>' + (e.busy ? 'Saving…' : 'Save brief') + '</button>' +
+        '<button type="button" class="btn btn-secondary" id="mem-brief-cancel"' +
+          (e.busy ? ' disabled' : '') + '>Cancel</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * A starting brief, offered when there is nothing to edit yet.
+ *
+ * The four headings are the ones the store renders and every agent read
+ * returns, and the closing line says out loud that they are a starting
+ * point rather than a schema — a brief with a "Roadmap" or a "How I want you
+ * to work" section is a real brief, and nothing here rewrites it into these
+ * four.
+ */
+export const BRIEF_TEMPLATE = [
+  '## Standing brief',
+  '',
+  'What this project is, and what "done" looks like.',
+  '',
+  '## Firm decisions — do not re-litigate',
+  '',
+  '- ',
+  '',
+  '## Working model',
+  '',
+  'How the pieces fit together, in a paragraph.',
+  '',
+  '## Pointers to depth',
+  '',
+  '- ',
+  '',
+  '<!-- Add any headings you like — these four are a starting point, not a schema. -->',
+  '',
+].join('\n');
+
 function renderBrief(read, openIt) {
   // The user's own toggle wins over the default when they have expressed one;
   // `undefined` (never touched) falls through to `openIt`, so the "this is the
   // only content on the page" rule below still applies on first paint.
   const remembered = state.openFolds ? state.openFolds.brief : undefined;
   const isOpen = remembered === undefined ? !!openIt : remembered;
-  const openAttr = isOpen ? ' open' : '';
+
+  // An editor that is OPEN forces its fold open, whatever the remembered
+  // state says: a textarea the user is typing into, hidden behind a
+  // collapsed disclosure, is the "clicked Show more and the section shut on
+  // top of it" defect this view already carries a fix for.
+  const editing = !!state.briefEdit;
+  const foldAttr = (isOpen || editing) ? ' open' : '';
+  const readonly = !!(state.detail && state.detail.readonly)
+    || !!(read && read.readonly);
 
   if (!read || !read.brief || !read.brief.present) {
     return (
-      '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
+      '<details class="mem-fold" data-mem-fold="brief"' + foldAttr + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
           '<span>Standing brief</span><span class="mem-fold-meta">not written</span></summary>' +
         '<div class="mem-fold-body">' +
           renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, ' +
             'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.') +
+          renderBriefEditor(read, readonly) +
         '</div>' +
       '</details>'
     );
@@ -1830,7 +2211,7 @@ function renderBrief(read, openIt) {
   const b = read.brief;
   const age = formatAge(b.updatedAt ? Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)) : null);
   return (
-    '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
+    '<details class="mem-fold" data-mem-fold="brief"' + foldAttr + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
         '<span>Standing brief</span>' +
         '<span class="mem-fold-meta"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
@@ -1841,7 +2222,12 @@ function renderBrief(read, openIt) {
         // Same preamble strip as the handoff: this fold's own header already
         // says "Standing brief" and when it was updated, so the document's
         // title and `_Updated: …_` line are duplicate chrome here too.
-        '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble(b.text || '').body) + '</div>' +
+        // The DOCUMENT is hidden while the editor is up: two copies of one
+        // text on screen at once, one of them stale the moment a key is
+        // pressed, is worse than a taller editor.
+        (state.briefEdit ? ''
+          : '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble(b.text || '').body) + '</div>') +
+        renderBriefEditor(read, readonly) +
       '</div>' +
     '</details>'
   );
@@ -2055,22 +2441,27 @@ function renderAbout() {
     open: !!(state.openFolds && state.openFolds.about),
     html: true,
     body:
-      '<p>Agent memory is three files per project, kept in <span class="mono">state/</span> ' +
-      'beside that project’s wiki, and synced with it.</p>' +
+      '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
+      'thing you build inside it, and a domain can hold several. Agent memory is kept per project, in ' +
+      '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
       '<ul class="mem-about-list">' +
         '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
-        'model. One per project, returned on every agent read.</li>' +
-        '<li><b>Current handoff</b> — where things stand right now, per scope and per machine. A ' +
-        '<i>scope</i> is one work-stream, so parallel threads never overwrite each other. Overwritten on ' +
-        'every save, so it never grows stale behind you.</li>' +
+        'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
+        'editor; saving replaces the whole document.</li>' +
+        '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
+        'session, so it starts knowing what you already settled. One per <b>work-stream</b> per machine ' +
+        '(the files call a work-stream a <i>scope</i>), so parallel threads never overwrite each other. ' +
+        'Overwritten on every save, so it never grows stale behind you.</li>' +
         '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
         'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
       '</ul>' +
       '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
-      'other over sync. Reading a scope with no machine named gives you the most recently written one, whichever ' +
-      'machine that was.</p>' +
-      '<p>This screen only reads. Your agents write it through the ' +
-      '<span class="mono">my-curator</span> MCP tools — the files are plain markdown, so a text editor works too.</p>',
+      'other over sync. Reading a work-stream with no machine named gives you the most recently written one, ' +
+      'whichever machine that was.</p>' +
+      '<p>Your agents write the handoff and the journal through the ' +
+      '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
+      'something because an agent observed it. The brief is yours. Everything here is plain markdown, so a ' +
+      'text editor works too.</p>',
   });
 }
 
@@ -2079,11 +2470,54 @@ function renderAbout() {
 function wire(token) {
   document.querySelectorAll('.mem-row[data-mem-project]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      const domain = btn.dataset.memDomain;
       const project = btn.dataset.memProject;
-      if (project === state.activeProject) return;
-      selectProject(project, token, { revalidateIndex: true })
+      // Compared on the PAIR. Two domains can each hold a project called
+      // `main`, and comparing the project name alone would make clicking the
+      // second one do nothing at all.
+      if (keyOf(domain, project) === activeKey()) return;
+      selectProject(domain, project, token, { revalidateIndex: true })
         .catch((err) => reportAsyncMountFailure(token, err));
     });
+  });
+
+  // ── The standing-brief editor ─────────────────────────────────────────
+  const briefEdit = document.getElementById('mem-brief-edit');
+  if (briefEdit) {
+    briefEdit.addEventListener('click', () => {
+      const read = state.projectRead;
+      const present = !!(read && read.brief && read.brief.present);
+      state.briefEdit = {
+        domain: state.activeDomain,
+        project: state.activeProject,
+        // The WHOLE stored document, preamble included — this is an editor,
+        // not a reader, and stripping the title and provenance lines here
+        // would save them away on the next write. renderBrief strips them
+        // for DISPLAY only.
+        text: present ? (read.brief.text || '') : BRIEF_TEMPLATE,
+        busy: false,
+        error: null,
+      };
+      render(token);
+    });
+  }
+
+  const briefText = document.getElementById('mem-brief-text');
+  // Written straight into state on every keystroke, WITHOUT a re-render —
+  // re-rendering here would rebuild the textarea and lose the caret and the
+  // selection. Exactly the pattern views/domains.js's lifecycle form uses,
+  // for the same reason; the save handler reads state, never the DOM, so the
+  // two cannot disagree.
+  briefText?.addEventListener('input', () => {
+    if (state.briefEdit) state.briefEdit.text = briefText.value;
+  });
+
+  document.getElementById('mem-brief-save')?.addEventListener('click', () => {
+    saveBrief(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+  document.getElementById('mem-brief-cancel')?.addEventListener('click', () => {
+    state.briefEdit = null;
+    render(token);
   });
 
   // Record which disclosures are open so the next render can re-open them.
@@ -2151,4 +2585,5 @@ function wire(token) {
 
 export const __testing = {
   formatAge, projectMetaLine, splitHandoffPreamble,
+  keyOf, initialPick, renderProjectGroups, readRememberedProjects, BRIEF_TEMPLATE,
 };

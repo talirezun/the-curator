@@ -2252,25 +2252,68 @@ at 500 chars) when it sent one.
 
 ## Working state — Agent memory (`/api/memory`)
 
-Working state (`domains/<project>/state/`, v3.17.0) is the store behind the `/next` shell's
-**Agent memory** view: a standing project brief, a per-`(scope, machine)` handoff, and an
-append-only journal of saves. Two endpoints, both GET, neither of which writes a byte. Served from
-`src/routes/memory.js` over `src/brain/working-state.js`.
+Working state (`domains/<domain>/state/`, v3.17.0; **projects inside a domain since v3.48.0**) is
+the store behind the `/next` shell's **Agent memory** view and the Domains view's **Projects**
+sub-section: a standing brief per project, a per-`(work-stream, machine)` handoff, and an
+append-only journal of saves. Served from `src/routes/memory.js` over
+`src/brain/working-state.js`.
 
-**There is no write route, and that is a design decision rather than an unfinished path.** The
-store has exactly one writer — an agent, through the MCP's `save_working_state` — and that
-single-writer property is what makes the per-machine layout safe: two machines never write the
-same file, so Personal Sync's `git pull --no-rebase -X theirs` never has a conflicting hunk to
-resolve away silently. A browser write path would make the app a *second* writer to the same
-files. It would also arrive wearing the last agent's harness/model provenance line, and what a
-handoff is worth rests on recording what an *agent* observed. A human editing the brief by hand
-opens `state/project.md` in Obsidian; that is the answer, not a gap.
+**A DOMAIN is where knowledge lives (the wiki). A PROJECT is a thing you build.** A project lives
+in exactly one domain; a domain can host many. Until v3.48.0 this route used the word "project"
+for what was actually a domain — `GET /api/memory` returned one row per domain and called it a
+project — which is why the deprecated alias below exists and why index rows now carry **both** a
+`domain` and a `project`.
 
-Consequences, all deliberate: neither route carries `guardConcurrent` and neither registers a
-write (there is nothing to refuse), and **reads are allowed on read-only `shared-*` Shared Brain
-mirrors**, exactly as `GET /api/wiki/:domain/page` is. The detail read echoes `readonly` so a
-caller can say so out loud — inside a mirror the state can have been written by another *person*
-(see the THREAT MODEL block in `working-state.js`).
+### The route table, and why its order is a correctness property
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/api/memory` | Every project in every domain, newest first |
+| `GET` | `/api/memory/:domain/projects` | One domain's projects |
+| `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
+| `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
+| `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
+| `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
+| `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
+
+A domain slug and a project slug are drawn from the same alphabet, so `/api/memory/lumina` is
+genuinely ambiguous on its face. Express matches by **segment count**, which is what makes the
+disambiguation structural rather than a heuristic. Exactly one literal collides with a legal
+project slug — `projects` itself, which would shadow `GET /:domain/:project` for a project of that
+name — so `projects` (along with `project.md` and `journal.jsonl`) is **refused as a project
+name** by the create and rename routes. A project directory named `projects` created out of band
+is still listed and still readable by every MCP tool; only its own detail URL on this router is
+unreachable. That is a real, small, permanent hole, and hiding it would be worse than the hole.
+
+### Which tiers the app may write
+
+**Tiers 2 and 3 — the per-`(work-stream, machine)` `current.md` and its `journal.jsonl` — have
+exactly one writer: an agent, through the MCP's `save_working_state`.** That single-writer
+property is what makes the per-machine layout safe: two machines never write the same file, so
+Personal Sync's `git pull --no-rebase -X theirs` never has a conflicting hunk to resolve away
+silently. Nothing in this router writes them, and nothing here can — the store functions it calls
+do not reach them. A handoff is worth something because an *agent* observed it, and a human edit
+arriving under the last agent's harness/model provenance line would take that away.
+
+**Tier 1 — `<project>/project.md`, the standing brief — is the human's, and always was.**
+[working-state.md](working-state.md) has said since v3.17.0 that a human edits it by opening it in
+Obsidian; editing it in the app is the same edit through a nicer door, stamped
+`authoredBy.kind: 'human'`. So the write surface here is: create / rename / delete a project, and
+replace a project's brief. Four operations, all tier 1.
+
+**The one property this costs, stated rather than implied away:** `project.md` has no `<machine>`
+segment, so it is the one file in the store where two machines *can* produce a conflicting hunk
+under Personal Sync. That was already true before v3.48.0 (working-state.md § 2 carves it out);
+a second, easier writer makes it easier to reach.
+
+Consequences, all deliberate: the GET routes carry no `guardConcurrent` and register no write
+(there is nothing to refuse), while a **rename or delete** — which moves or removes a directory —
+is refused with `409` while that domain has a write in flight, using the same `isDomainActive`
+predicate as `PUT /api/domains/:domain`. **Reads are allowed on read-only `shared-*` Shared Brain
+mirrors**, exactly as `GET /api/wiki/:domain/page` is; every **write** on a mirror is refused with
+`403`. The detail read echoes `readonly` so a caller can say so out loud — inside a mirror the
+state can have been written by another *person* (see the THREAT MODEL block in
+`working-state.js`).
 
 ### Reading the counts: `scopeCount` means two different things
 
@@ -2319,9 +2362,16 @@ drift from the store's.
 
 "Which of my projects have agent memory, and how fresh is it?" No parameters.
 
-A row is returned for **every** domain, not only the ones that have state. A project with nothing
-saved is a real answer — it is what a user sees before their first agent session — so
-`scopeCount: 0` says that plainly instead of the project being hidden and the view looking broken.
+**One row per PROJECT, across every domain, newest first** (v3.48.0; it was one row per domain).
+A row is returned for **every** project, not only the ones that have state — including a domain
+whose default project has never been saved to. That is a real answer, it is what a user sees
+before their first agent session, and `scopeCount: 0` says it plainly instead of the project being
+hidden and the view looking broken.
+
+Each row is an **allow-list**, not a spread of the store's object: a field the store grows next —
+including anything a fellow's synced file put there — does not reach the wire until it is named
+here. Absent facts come back as `null`/`0`/`[]` rather than `undefined`, so a caller can tell
+"the store looked and there was nothing" from "this server does not have that field".
 
 **Success response** `200 OK`
 
@@ -2330,9 +2380,13 @@ saved is a real answer — it is what a user sees before their first agent sessi
   "ok": true,
   "projects": [
     {
-      "project": "second-brain",
+      "domain": "second-brain",
+      "project": "lumina",
+      "isLegacyDefault": false,
       "hasBrief": true,
       "briefUpdatedAt": "2026-08-20T09:12:44.000Z",
+      "briefAuthoredBy": { "kind": "human" },
+      "layoutWarning": null,
       "scopeCount": 2,
       "distinctScopeCount": 2,
       "savedCopies": 3,
@@ -2369,13 +2423,23 @@ which writes to the slugged path and orphans the original. `0` means "we looked 
 here is addressable" — never "we did not look".
 
 `newestScope`/`newestMachine` exist so a caller can open the freshest handoff in one further
-request instead of a round-trip to discover the scope and a second to read it.
+request instead of a round-trip to discover the scope and a second to read it. (`scope=latest` on
+the detail route does the same job server-side.)
 
 `lastWriteAt`, `ageSeconds` and `headline` are **`null` when nothing has ever been saved** — never
 `0` and never an epoch date. A fact and its absence stay distinguishable.
 
-Capped at `MAX_PROJECTS` (200) rows; `total` reports the real domain count and `truncated` says
-whether the cap bit.
+`isLegacyDefault` marks a project read out of the **pre-v3.48.0 layout** — `state/<scope>/…`
+directly under the domain, with no project folder — which is reported under the domain's own name.
+Readers never move those files, so a legacy tree keeps working with older app versions on other
+machines.
+
+`briefAuthoredBy` is `null` when the store cannot say who wrote the brief (every pre-v3.48.0
+brief, which predates provenance entirely). It is **not** guessed as `owner`: not knowing and
+knowing it is the owner's are two different facts.
+
+Capped at `MAX_PROJECTS` (200) rows; `total` reports the real count and `truncated` says whether
+the cap bit.
 
 **Error responses**
 
@@ -2383,19 +2447,131 @@ whether the cap bit.
 |--------|-----------|
 | `500` | Domain listing or filesystem read error (`{ok: false, error}`) |
 
-### GET /api/memory/:project
+### GET /api/memory/:domain/projects
+
+One domain's projects — the endpoint the Domains view's **Projects** sub-section renders from.
+Rows are exactly the shape above, minus the redundant per-row `domain`.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "domain": "second-brain",
+  "projects": [ "…as above…" ],
+  "total": 3,
+  "truncated": false,
+  "readonly": false,
+  "canWrite": true
+}
+```
+
+**`canWrite` answers the question a view actually has**, in one field rather than two it would
+have to combine: it is `false` when this server's working-state store is older than v3.48.0 (the
+write routes answer `501`) **and** when the domain is a read-only Shared Brain mirror (they answer
+`403`). Rendering a full set of controls whose every button answers `403` is worse than rendering
+none. It is a fact about the server that answered — never a version string used as a proxy for
+one.
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain (`{ok: false, reason: "unknown_domain"}`) |
+| `500` | Filesystem read error |
+
+### POST /api/memory/:domain/projects
+
+Create a project. Body: `{ project, brief? }`. Tier 1 only — it creates the project's directory
+and, if a brief was supplied, its `project.md`. It never touches a work-stream or a journal.
+
+**Success response** `201 Created` — `{ok: true, domain, project, created: true}`.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_project` (fails the store's own `isSafeSegment`: lowercase letters, digits, `.` `_` `-`, up to 64 characters, no `..`), or `reserved_project`, or `brief_too_large` |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain |
+| `409` | The project already exists |
+| `501` | `store_lacks_projects` — this server's working-state store predates v3.48.0 |
+
+Every one of those refusals happens **before the store is called**. An omitted or empty `brief` is
+sent as *absent*, not as an empty string: an empty string is a brief the user wrote nothing in,
+and the store would create the file.
+
+### PATCH /api/memory/:domain/projects/:project
+
+Rename a project, replace its standing brief, or both. Body: `{ rename?, brief? }`; sending
+neither is a `400 nothing_to_do` rather than a silent success.
+
+**Both in one call because they are one gesture in the UI**, and because two requests would leave
+a rename applied with the brief write aimed at the OLD name if the second failed. The rename is
+applied **first** and the brief is written to whatever name the project now has, so a partial
+failure is always *"renamed, brief unchanged"* — visible, and re-runnable.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "domain": "second-brain",
+  "project": "lumina-2",
+  "renamed": { "from": "lumina", "to": "lumina-2" },
+  "briefSaved": true
+}
+```
+
+`renamed` is `null` when nothing was renamed. The brief is written **whole**: the store replaces
+the document rather than merging into it, so a partial brief silently drops what it omits — the
+same "send the complete thing" rule a scope save follows. The write is stamped
+`authoredBy.kind: 'human'`, which is what the store's brief-authority reading looks for.
+
+**A brief larger than `MAX_BRIEF_BYTES` (32 KB) is REFUSED, not trimmed**, and this is the one
+place the route does not defer to the store. The store trims an over-budget write and discloses
+the trim, which is right for an agent near its context limit — a refused handoff is a lost
+handoff — and wrong for a person who typed the text and can see it. The refusal names both
+numbers and nothing is written. The cap is measured in **bytes**: a brief of em-dashes is three
+bytes a character in places.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `nothing_to_do`, `invalid_project`, `reserved_project`, `brief_too_large` |
+| `403` | `readonly` |
+| `404` | Unknown domain, or the project does not exist |
+| `409` | A **rename** while that domain has a write in flight (a rename moves a directory; a brief write on the same busy domain is allowed, because it touches one file an ingest never opens) |
+| `501` | `store_lacks_projects` |
+
+### DELETE /api/memory/:domain/projects/:project
+
+Delete a project: its standing brief, every work-stream handoff under it, and every journal line.
+Those are frequently the only record of decisions nobody wrote down anywhere else. The domain's
+**wiki is not touched**, and there is no in-app undo — with Personal Sync configured a git client
+recovers them, and without it nothing does.
+
+**Body: `{ confirm }`, and it must equal the project name exactly** — case-sensitive, untrimmed.
+The confirmation is enforced **at the route**, not only in the view: a confirmation that lives
+only in a view is a confirmation every other client skips.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `confirm_required` (missing, empty, or not an exact match) or `invalid_project` |
+| `403` | `readonly` |
+| `404` | Unknown domain, or the project does not exist |
+| `409` | A write is in flight on that domain |
+| `501` | `store_lacks_projects` |
+
+### GET /api/memory/:domain/:project
 
 One project's working state. The response is the store's `readWorkingState` result verbatim, plus
-an added `readonly` — deliberately 1:1 with the store rather than reshaped here, because a second
-shape maintained in the route would drift from the one the MCP tools return, and then the app and
-the agent would describe the same file differently.
+`domain`, `project` and `readonly` — deliberately 1:1 with the store rather than reshaped here,
+because a second shape maintained in the route would drift from the one the MCP tools return, and
+then the app and the agent would describe the same file differently.
 
 **Path / query parameters**
 
 | Parameter | Description |
 |-----------|-------------|
-| `project` | Domain slug (path parameter). Resolved against `listDomains()` **before** any filesystem access, so an unknown name never reaches path resolution |
-| `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the scope index instead of a handoff |
+| `domain` | Domain slug. Resolved against `listDomains()` **before** any filesystem access, so an unknown name never reaches path resolution |
+| `project` | Project slug inside that domain. Checked against the store's own `isSafeSegment` before any path is built; an unknown project is a `404`, an unusable name a `400` |
+| `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the work-stream index instead of a handoff. **`latest`** (case-insensitive) resolves server-side to the newest-written work-stream, so a client can open the freshest handoff without first fetching the index to learn its name; on a project with nothing saved it degrades to the scope-less read rather than erroring about a scope the caller never named |
 | `machine` | Optional. With `scope` set and no `machine`, the **most recently written** machine wins — that is what makes cross-machine handoff work — and the response names the machine it chose |
 | `journalLimit` | Optional. Passed to the store **un-clamped on purpose**: the store clamps to `[1, MAX_JOURNAL_ENTRIES]` (50, default 10) itself, and clamping a second time here is the two-copies-of-a-bound shape. A non-numeric value is not passed at all, so the store's default applies |
 
@@ -2530,9 +2706,28 @@ drops that tool's `brief_authority` to `suspect` and withdraws the owner framing
 
 | Status | Condition |
 |--------|-----------|
-| `404` | Unknown domain (`{ok: false, error}`) |
-| `400` | Store refusal — `{ok: false, reason, message}`, with `reason` one of `invalid-project`, `invalid-scope`, `invalid-machine` on this route |
+| `404` | Unknown domain, or the project does not exist in it (`{ok: false, reason: "project_not_found"}`) |
+| `400` | An unusable project name, or a store refusal — `{ok: false, reason, message}`, with `reason` one of `invalid_project`, `invalid-scope`, `invalid-machine` on this route |
 | `500` | Filesystem read error |
+
+### GET /api/memory/:project — DEPRECATED
+
+The v3.17.0–v3.47 detail route, where `:project` meant a **domain**. It is kept for **one
+release**, resolving to that domain's *default project* (the legacy tree, read under the domain's
+own name), and every response carries:
+
+```json
+{
+  "deprecated": true,
+  "deprecationNote": "GET /api/memory/second-brain is deprecated and will be removed after v3.48.0. Use GET /api/memory/second-brain/second-brain.",
+  "replacedBy": "/api/memory/second-brain/second-brain"
+}
+```
+
+It is kept not because anything in this repo still calls it — the `/next` view moved in the same
+release — but because a user's browser can be running a cached older shell against a newer server
+for as long as the tab is open. Otherwise identical to `GET /api/memory/:domain/:project`,
+including `scope=latest`.
 
 ### The store's own contract — reached over MCP, not over HTTP
 

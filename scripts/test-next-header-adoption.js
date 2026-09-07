@@ -343,8 +343,13 @@ section('§5  WHAT WAS CUT HAS NOT RETURNED, IN EITHER SHAPE');
   const m = SRC['memory.js'], s = SRC['sync.js'];
   ok('memory.js: the "read here, written by them" clause stays cut (the foot says it unfolded)',
     !/read here, written by them/.test(m));
+  // v3.48.0 REWORDED this sentence rather than removing it. The foot is still
+  // the unfolded place where "who writes what" is stated — it just states the
+  // split now that the view writes the standing brief, so a bare "Read-only
+  // here" would be FALSE. The property being guarded is unchanged: the fact
+  // lives in the foot, not behind a disclosure.
   ok('memory.js: ...and the sidebar foot really is where that fact lives now',
-    /Read-only here\. Agents write this through MCP\./.test(m));
+    /Agents write the handoffs here through MCP\. You write the standing brief\./.test(m));
   ok('sync.js: the .view-body sentence is gone and has not come back as a description',
     !/class="view-body"/.test(s) && !/lives on your disk and backs up/.test(s));
   ok('sync.js: the sidebar sentence is the header’s info, not a .sidebar-hint div',

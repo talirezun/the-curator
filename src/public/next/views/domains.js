@@ -111,7 +111,7 @@ import { loadUiState, durableStorage } from '../shared/ui-state.js';
 // scripts/test-next-domains-text.js asserts the import AND executes the real
 // render functions; a hand-rolled replacement goes red naming the site.
 import {
-  renderReadoutGroup, renderDescription, renderStatus, renderViewHeader,
+  renderReadoutGroup, renderDescription, renderStatus, renderViewHeader, renderBadge,
 } from '../shared/text.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
@@ -308,6 +308,34 @@ const state = {
   // `undoPath` is the folder we were pointed at BEFORE the switch, present
   // only when there is somewhere to go back to and going back is useful.
   kbNotice: null,
+
+  // ── Projects inside the active domain (v3.48.0) ────────────────────────
+  //
+  // A DOMAIN is where knowledge lives; a PROJECT is a thing you build inside
+  // it, and it is what agent memory is kept per. Loaded from
+  // GET /api/memory/:domain/projects.
+  //
+  // STAMPED WITH ITS SLUG, for exactly the reason state.semanticScan and
+  // state.browse are: `state` here is module-scoped and survives leaving the
+  // view, so an unstamped list could be rendered under a DIFFERENT domain's
+  // heading — and this list carries a Delete button, so the consequence is
+  // not a cosmetic one.
+  //   { slug, loading, error, rows, truncated, canWrite, readonly }
+  projects: null,
+
+  // Project create/rename/delete/brief form state, one at a time. Mirrors
+  // state.lifecycle exactly (same card shape, same busy/error fields, same
+  // "read state, never the DOM" rule) rather than inventing a second
+  // vocabulary for the same job.
+  //   { mode: 'create'|'rename'|'delete'|'brief', slug, project?, name,
+  //     brief, confirmText, busy, error, refusal }
+  projectLc: null,
+
+  // The last "Copy marker line" outcome, or null: { project, ok }.
+  // Cleared on the next render that changes anything else, because a copy
+  // confirmation that outlives the click reads as a state rather than as an
+  // acknowledgement.
+  markerCopied: null,
 };
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
@@ -646,6 +674,12 @@ async function loadDomainsList(token) {
       // ever kept.
       keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, state.activeSlug),
     });
+    // The project list is a cheap read (one stat walk of state/, no LLM and
+    // no network) and it is not paid for, so unlike the semantic scan there
+    // is nothing to preserve across a re-entry: re-ask, always. Not awaited —
+    // it renders itself when it lands, and making the health scan wait on it
+    // would delay the panel above it for no reason.
+    loadProjects(state.activeSlug, token).catch(reportAsyncActionFailure);
   } else render(token);
 }
 
@@ -1875,8 +1909,104 @@ function selectDomain(slug) {
   // on the wrong domain — same two-layer shape as the semantic gate.)
   state.lifecycle = null;
   state.browse = null;
+  // Same rule, same reason, for the project surface: a Delete form left
+  // standing across a domain switch is a destructive action pointing at one
+  // domain while the screen around it describes another. Both layers are
+  // kept here too — the form carries its own `slug`, and the list is stamped
+  // (see activeProjects()) — so neither depends on the other being
+  // remembered.
+  state.projectLc = null;
+  state.projects = null;
+  state.markerCopied = null;
   render(myMountToken);
   loadHealth(slug, myMountToken).catch(reportAsyncActionFailure);
+  loadProjects(slug, myMountToken).catch(reportAsyncActionFailure);
+}
+
+// ── Projects inside a domain (v3.48.0) ─────────────────────────────────────
+//
+// WHY THIS LIVES ON THE DOMAIN CARD AND NOT IN AGENT MEMORY. Creating,
+// renaming and deleting a project is domain ADMINISTRATION — the same kind
+// of act as creating a domain, and it belongs beside it. Agent memory is
+// where you READ what the agents left; it edits the one thing that is yours
+// (the standing brief) and nothing else.
+//
+// WHAT A PROJECT COSTS TO DELETE, stated because the button is right here:
+// its standing brief, every work-stream handoff under it and every journal
+// line. Those are frequently the only record of decisions that were never
+// written down anywhere else, and there is no in-app undo (see GIT_UNDO_WARN
+// — with Personal Sync configured a git client recovers them, and without it
+// nothing does). So Delete takes a TYPED confirmation, and the route
+// enforces the same confirmation independently: a confirmation that lives
+// only in a view is a confirmation every other client skips.
+
+/**
+ * The starting brief offered by "Create project", and by the brief editor
+ * when there is nothing to edit yet.
+ *
+ * The four headings are the ones the store renders and every agent read
+ * returns. The closing line is load-bearing rather than decorative: a real
+ * brief carries whatever headings its owner wants (the maintainer's own has
+ * "Roadmap" and "How I want you to work"), and nothing in the store rewrites
+ * a brief into these four. Saying so here is what stops the template reading
+ * as a schema.
+ */
+const PROJECT_BRIEF_TEMPLATE = [
+  '## Standing brief',
+  '',
+  'What this project is, and what "done" looks like.',
+  '',
+  '## Firm decisions — do not re-litigate',
+  '',
+  '- ',
+  '',
+  '## Working model',
+  '',
+  'How the pieces fit together, in a paragraph.',
+  '',
+  '## Pointers to depth',
+  '',
+  '- ',
+  '',
+  '<!-- Add any headings you like — these four are a starting point, not a schema. -->',
+  '',
+].join('\n');
+
+/** LAYER 2 of the project list's domain scoping. The ONLY reader of state.projects. */
+function activeProjects() {
+  const p = state.projects;
+  if (!p || !state.activeSlug || p.slug !== state.activeSlug) return null;
+  return p;
+}
+
+async function loadProjects(slug, token) {
+  state.projects = { slug, loading: true, error: null, rows: [], truncated: false, canWrite: false, readonly: false };
+  render(token);
+  try {
+    // fetchJSON THROWS on a non-2xx and returns the parsed body otherwise —
+    // it is this file's one fetch shape and is not re-implemented here.
+    const body = await fetchJSON('/api/memory/' + encodeURIComponent(slug) + '/projects');
+    if (!isCurrentMount(token) || state.activeSlug !== slug) return;
+    state.projects = {
+      slug,
+      loading: false,
+      error: null,
+      rows: Array.isArray(body && body.projects) ? body.projects : [],
+      truncated: !!(body && body.truncated === true),
+      // The SERVER says whether it can write, and the controls render from
+      // that rather than from a version string: a capability is a fact about
+      // the server that answered.
+      canWrite: !!(body && body.canWrite === true),
+      readonly: !!(body && body.readonly === true),
+    };
+  } catch (err) {
+    if (!isCurrentMount(token) || state.activeSlug !== slug) return;
+    state.projects = {
+      slug, loading: false, rows: [], truncated: false, canWrite: false, readonly: false,
+      error: err.message,
+    };
+  }
+  render(token);
 }
 
 // ── Main column ────────────────────────────────────────────────────────────
@@ -2018,6 +2148,12 @@ function renderMain(token) {
     (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
     renderStatCards(counts, pages) +
+    // ABOVE Health and Browse. A project is a thing about the domain itself —
+    // the same kind of fact as its page counts — while Health and the page
+    // browser are about the wiki's contents. It also puts the Projects
+    // section where a user looking for "where does my agent memory live"
+    // will see it without scrolling past a health report.
+    renderProjectsPanel(readonly) +
     renderHealthPanel(domain, readonly) +
     renderBrowsePanel();
 
@@ -2026,9 +2162,248 @@ function renderMain(token) {
   document.getElementById('dm-rename-btn')?.addEventListener('click', () => openLifecycle('rename', domain));
   document.getElementById('dm-delete-btn')?.addEventListener('click', () => openLifecycle('delete', domain));
   bindLifecycleListeners();
+  bindProjectListeners();
   bindKnowledgeListeners();
   bindHealthListeners(domain, readonly);
   bindBrowseListeners();
+}
+
+
+// ── The Projects sub-section ───────────────────────────────────────────────
+
+/**
+ * One project's row in the inset grouped list.
+ *
+ * THE PILL IS A PLAIN WORD, and it says the FACT rather than a state name:
+ * "Standing brief" / "No brief yet", never `configured` / `not set`. The
+ * v3.45.0 Providers pass is the precedent and the reason — a person reading
+ * this row is asking "is there a brief?", and a status vocabulary makes them
+ * translate.
+ *
+ * THE THREE FACTS on the row are the three that answer "is this the project
+ * I mean?": whether the brief exists, when an agent last saved, and which
+ * work-stream that save was in. Nothing else — the whole document lives one
+ * click away in Agent memory, and a row that tried to summarise it would be
+ * a worse version of that screen.
+ *
+ * Pure, and exported through __testing: this is what the row assertions
+ * drive.
+ */
+function renderProjectRow(row, canWrite) {
+  const name = String(row.project == null ? '' : row.project);
+  const brief = row.hasBrief
+    ? renderBadge({ label: 'Standing brief', tone: 'success' })
+    : renderBadge({ label: 'No brief yet', tone: 'neutral' });
+  // relTime takes the ISO string and answers "just now" / "4 hours ago".
+  // `lastWriteAt` is the FILE's clock, which git rewrites on checkout, so a
+  // project synced from another machine dates to the pull — the store also
+  // reports the agent's own clock, and it is preferred where it exists. A
+  // fact and its absence stay distinguishable: "no saves yet" is a real
+  // answer and is never rendered as an age.
+  const savedIso = row.writtenAt || row.lastWriteAt || null;
+  const saved = savedIso ? relTime(savedIso) : null;
+  const facts = [
+    saved ? 'last save ' + saved : 'no saves yet',
+    row.newestScope ? 'newest work-stream ' + row.newestScope : null,
+    row.isLegacyDefault ? 'the domain’s original project' : null,
+  ].filter(Boolean).join(' · ');
+
+  return (
+    '<div class="cur-group-row dm-proj-row">' +
+      '<div class="cur-group-label">' +
+        '<b>' + escapeHtml(name) + ' ' + brief + '</b>' +
+        '<span>' + escapeHtml(facts) + '</span>' +
+      '</div>' +
+      '<div class="cur-group-control">' +
+        '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
+          'Copy marker line</button>' +
+        (canWrite
+          ? '<button class="btn btn-secondary dm-proj-btn" data-proj-rename="' + escapeHtml(name) + '">Rename</button>' +
+            '<button class="btn btn-ghost dm-proj-btn dm-delete-btn" data-proj-delete="' + escapeHtml(name) + '">' +
+              icon('trash', 12) + ' Delete</button>'
+          : '') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * The whole sub-section: caption, rows, and the create control.
+ *
+ * AN INSET GROUPED LIST (`.cur-group`), not a stack of cards. shell.css's own
+ * block says why: a rounded card whose rows are separated by a hairline inset
+ * to the label's x-offset is a macOS settings group, and a gap between
+ * bordered cards is a web form. These rows belong to each other.
+ *
+ * EVERY STATE RENDERS SOMETHING. Loading, failed, empty and read-only each
+ * say what they are, because a section that vanishes when it has nothing to
+ * show is indistinguishable from a section that failed.
+ */
+function renderProjectsPanel(readonly) {
+  // NO `domain` PARAMETER, deliberately, unlike renderHealthPanel beside it.
+  // The only correct source of "which domain's projects" is activeProjects(),
+  // which re-checks the list's own slug stamp against state.activeSlug — so a
+  // domain passed in would be a SECOND answer to that question, free to
+  // disagree with the stamp, on a panel that carries a Delete button.
+  const p = activeProjects();
+  const canWrite = !!(p && p.canWrite) && !readonly;
+
+  let body;
+  if (!p || p.loading) {
+    // A SHAPE-MATCHED SKELETON, not the word "Loading". The kit's own rule
+    // (shell.css's SKELETON ROW block): a placeholder that exists for a few
+    // milliseconds communicates nothing and costs two layout jumps, so the
+    // section keeps its shape and the shapes themselves say content is
+    // coming. Two rows, because that is roughly what a domain has.
+    body = '<div class="cur-group-row" aria-hidden="true">' +
+        '<span class="cur-skeleton dm-proj-skeleton-name"></span></div>' +
+      '<div class="cur-group-row" aria-hidden="true">' +
+        '<span class="cur-skeleton dm-proj-skeleton-name"></span></div>';
+  } else if (p.error) {
+    body = '<div class="cur-group-row"><div class="cur-group-label">' +
+      '<b>Could not read this domain’s projects</b><span>' + escapeHtml(p.error) + '</span></div></div>';
+  } else if (!p.rows.length) {
+    body = '<div class="cur-group-row"><div class="cur-group-label">' +
+      '<b>No projects yet</b><span>A project is a thing you build inside this domain. Agents keep their ' +
+      'working notes per project, so the next session starts knowing what the last one settled.</span>' +
+      '</div></div>';
+  } else {
+    body = p.rows.map((r) => renderProjectRow(r, canWrite)).join('');
+  }
+
+  const truncated = p && p.truncated
+    ? '<div class="cur-group-row"><div class="cur-group-label"><span>Showing the newest ' +
+      p.rows.length + '. Older projects are on disk and still readable by your agents.</span></div></div>'
+    : '';
+
+  const copied = state.markerCopied
+    ? renderStatus({
+        state: state.markerCopied.ok ? 'success' : 'attention',
+        title: state.markerCopied.ok ? 'Marker line copied' : 'Could not copy',
+        detail: state.markerCopied.ok
+          ? 'Paste it into a file called .curator-project at the root of that project’s repository. '
+            + 'An agent that finds it knows which project to resume without being told.'
+          : 'Your browser refused clipboard access. The line is ' + state.markerCopied.line + '.',
+      })
+    : '';
+
+  return (
+    '<div class="dm-projects">' +
+      '<div class="cur-group-title">PROJECTS IN THIS DOMAIN</div>' +
+      renderDescription('A domain is one compounding wiki. A project is a thing you build inside it — ' +
+        'and it is what your agents keep their working notes against, so a new session can pick up where ' +
+        'the last one stopped.') +
+      copied +
+      '<div class="cur-group">' + body + truncated + '</div>' +
+      (canWrite
+        ? '<div class="dm-projects-actions">' +
+            '<button class="btn btn-secondary" id="dm-proj-new-btn">New project</button>' +
+          '</div>'
+        : '') +
+      (readonly
+        ? renderDescription('This is a read-only Shared Brain mirror, so projects here cannot be created, '
+          + 'renamed or deleted. Work in your own contributing domain instead.')
+        : '') +
+      ((p && !p.canWrite && !readonly)
+        ? renderDescription('This server can list projects but not change them. Update The Curator to '
+          + 'create, rename or delete a project from here.')
+        : '') +
+      renderProjectLifecycleCard() +
+    '</div>'
+  );
+}
+
+/**
+ * Create / rename / delete / brief, in the SAME card shape as the domain
+ * lifecycle above it — deliberately, not incidentally. Two forms doing the
+ * same job in two visual languages on one screen is how a user learns that
+ * one of them is more dangerous than it is.
+ *
+ * DELETE TAKES A TYPED CONFIRMATION and domain delete does not, and that
+ * asymmetry is the point rather than an inconsistency: deleting a domain
+ * quotes a page count the user can weigh, while a project's handoffs and
+ * journals have no equivalent number — they are the notes nobody wrote down
+ * anywhere else. The route enforces the same typed confirmation, so this is
+ * not the only thing standing between a click and the loss.
+ */
+function renderProjectLifecycleCard() {
+  const f = state.projectLc;
+  if (!f) return '';
+  const busy = !!f.busy;
+
+  const messages =
+    (f.refusal
+      ? '<div class="dm-lc-refusal">' + icon('alertCircle', 14) +
+        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + '</span></div>'
+      : '') +
+    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + '</span></div>' : '');
+
+  if (f.mode === 'delete') {
+    return (
+      '<div class="dm-lc-card dm-lc-danger">' +
+        '<div class="dm-lc-title">Delete project “' + escapeHtml(f.project) + '”?</div>' +
+        '<div class="dm-lc-body">This removes its standing brief, every work-stream handoff under it, and ' +
+          'every journal line — the notes your agents left for each other. Those are often the only record ' +
+          'of decisions nobody wrote down anywhere else. The wiki in this domain is NOT touched. ' +
+          escapeHtml(GIT_UNDO_WARN) +
+        '</div>' +
+        '<label class="dm-lc-label" for="dm-proj-confirm">Type <span class="mono">' + escapeHtml(f.project) +
+          '</span> to confirm</label>' +
+        '<input class="dm-lc-input mono" id="dm-proj-confirm" type="text" autocomplete="off" value="' +
+          escapeHtml(f.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
+        messages +
+        '<div class="dm-lc-actions">' +
+          '<button class="btn btn-primary dm-lc-danger-btn" id="dm-proj-submit"' +
+            (busy || f.confirmText !== f.project ? ' disabled' : '') + '>' +
+            (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
+          '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  if (f.mode === 'rename') {
+    return (
+      '<div class="dm-lc-card">' +
+        '<div class="dm-lc-title">Rename project “' + escapeHtml(f.project) + '”</div>' +
+        '<div class="dm-lc-body">The folder moves with the name, and everything in it comes along. ' +
+          'Anything that names the old project — a <span class="mono">.curator-project</span> marker in a ' +
+          'repository, or a saved prompt — has to be updated by hand.</div>' +
+        '<label class="dm-lc-label" for="dm-proj-name">New name</label>' +
+        '<input class="dm-lc-input mono" id="dm-proj-name" type="text" value="' + escapeHtml(f.name) + '"' +
+          (busy ? ' disabled' : '') + ' />' +
+        messages +
+        '<div class="dm-lc-actions">' +
+          '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
+            (busy ? 'Renaming…' : 'Rename') + '</button>' +
+          '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  return (
+    '<div class="dm-lc-card">' +
+      '<div class="dm-lc-title">New project</div>' +
+      '<div class="dm-lc-body">The name becomes a folder under <span class="mono">' +
+        escapeHtml(f.slug) + '/state/</span>, so use lowercase letters, digits, dots, hyphens or ' +
+        'underscores. The standing brief below is yours to write — every agent read returns it, and ' +
+        'saving replaces the whole document rather than adding to it.</div>' +
+      '<label class="dm-lc-label" for="dm-proj-name">Name</label>' +
+      '<input class="dm-lc-input mono" id="dm-proj-name" type="text" placeholder="e.g. lumina" value="' +
+        escapeHtml(f.name) + '"' + (busy ? ' disabled' : '') + ' />' +
+      '<label class="dm-lc-label" for="dm-proj-brief">Standing brief <span class="dm-lc-optional">' +
+        '(optional — you can write it later)</span></label>' +
+      '<textarea class="dm-lc-textarea mono" id="dm-proj-brief" rows="14"' + (busy ? ' disabled' : '') + '>' +
+        escapeHtml(f.brief || '') + '</textarea>' +
+      messages +
+      '<div class="dm-lc-actions">' +
+        '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? 'Creating…' : 'Create project') + '</button>' +
+        '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+      '</div>' +
+    '</div>'
+  );
 }
 
 function renderStatCards(counts, pages) {
@@ -2371,6 +2746,209 @@ function renderLifecycleCard() {
       '</div>' +
     '</div>'
   );
+}
+
+
+// ── Project actions ────────────────────────────────────────────────────────
+//
+// Each one targets `form.slug` / `form.project`, never `state.activeSlug` —
+// the same two-layer discipline the domain lifecycle uses. A form that
+// somehow survived a domain switch still could not act on the wrong domain.
+
+function openProjectLifecycle(mode, project) {
+  state.markerCopied = null;
+  state.projectLc = {
+    mode,
+    slug: state.activeSlug,
+    project: project || null,
+    name: mode === 'rename' ? (project || '') : '',
+    brief: mode === 'create' ? PROJECT_BRIEF_TEMPLATE : '',
+    confirmText: '',
+    busy: false,
+    error: null,
+    refusal: null,
+  };
+  render(myMountToken);
+}
+
+function closeProjectLifecycle() {
+  state.projectLc = null;
+  render(myMountToken);
+}
+
+/**
+ * Turn a fetchJSON rejection into { error, refusal }.
+ *
+ * A 4xx the SERVER decided (an invalid or reserved name, a missing typed
+ * confirmation, a mirror, a project that already exists, a store too old) is
+ * a REFUSAL — the request was understood and declined, and the user can act
+ * on the reason. Anything else is an error. The distinction is the same one
+ * classifyDomainError makes, and it is rendered in the same two styles, so a
+ * refusal never reads as a crash.
+ */
+function classifyProjectError(err) {
+  const status = err && typeof err.status === 'number' ? err.status : 0;
+  const msg = (err && err.message) || 'Something went wrong.';
+  if (status >= 400 && status < 500) return { error: null, refusal: msg };
+  return { error: msg, refusal: null };
+}
+
+async function runProjectAction() {
+  const token = myMountToken;
+  const f = state.projectLc;
+  if (!f || f.busy) return;
+
+  const slug = f.slug;
+  let url = '/api/memory/' + encodeURIComponent(slug) + '/projects';
+  let opts;
+  let successText;
+
+  if (f.mode === 'create') {
+    const name = (f.name || '').trim();
+    if (!name) { f.error = 'Give the project a name.'; render(token); return; }
+    opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // An empty brief is sent as ABSENT, not as an empty string: an empty
+      // string is a brief the user wrote nothing in, and the store would
+      // create the file.
+      body: JSON.stringify((f.brief || '').trim() ? { project: name, brief: f.brief } : { project: name }),
+    };
+    successText = 'Created project “' + name + '”.';
+  } else if (f.mode === 'rename') {
+    const name = (f.name || '').trim();
+    if (!name) { f.error = 'Give the project a name.'; render(token); return; }
+    if (name === f.project) { closeProjectLifecycle(); return; }
+    url += '/' + encodeURIComponent(f.project);
+    opts = {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rename: name }),
+    };
+    successText = 'Renamed “' + f.project + '” to “' + name + '”.';
+  } else {
+    // THE TYPED CONFIRMATION IS SENT, not merely checked here. The route
+    // refuses unless it matches, so a client that skipped this box still
+    // cannot delete anything.
+    url += '/' + encodeURIComponent(f.project);
+    opts = {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: f.confirmText }),
+    };
+    successText = 'Deleted project “' + f.project + '”.';
+  }
+
+  f.busy = true; f.error = null; f.refusal = null;
+  render(token);
+
+  let succeeded = false;
+  // The shell-wide write gate, for the same reason the domain lifecycle
+  // takes it: a rename MOVES a directory inside this domain, and Sync's
+  // buttons must be able to say "something is writing here" rather than
+  // handing the user a raw 409.
+  const releaseGate = beginDomainWrite(slug, 'project-' + f.mode);
+  try {
+    await fetchJSON(url, opts);
+    if (!isCurrentMount(token)) return;
+    state.projectLc = null;
+    state.banner = { tone: 'success', text: successText };
+    succeeded = true;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const c = classifyProjectError(err);
+    if (state.projectLc) { state.projectLc.error = c.error; state.projectLc.refusal = c.refusal; }
+  } finally {
+    releaseGate();   // unconditional — a stale mount must not leak the gate
+    if (state.projectLc) state.projectLc.busy = false;
+  }
+
+  if (!isCurrentMount(token)) return;
+  if (succeeded) {
+    // Re-read rather than patching the row in place: rename and delete both
+    // change what the store reports about every remaining project's
+    // ordering, and a hand-patched list is a second description of the same
+    // data, free to disagree with the server's.
+    await loadProjects(slug, token);
+  } else {
+    render(token);
+    revealMessage('.dm-lc-refusal, .dm-lc-error');
+  }
+}
+
+/**
+ * Copy `domain/project` for a `.curator-project` marker file.
+ *
+ * WHAT THE MARKER IS FOR: an agent starting in a repository reads it and
+ * knows which project to resume, instead of guessing or asking. It is a
+ * SKILL-level convention — no server code reads this file — so the only
+ * thing the app owes it is the exact line, which is why this copies rather
+ * than explains.
+ *
+ * `navigator.clipboard` is unavailable on a non-secure origin and can be
+ * refused outright, so the failure path prints the line instead of leaving
+ * the user with a button that silently did nothing.
+ */
+async function copyProjectMarker(project) {
+  const line = state.activeSlug + '/' + project;
+  const token = myMountToken;
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(line);
+    ok = true;
+  } catch { ok = false; }
+  if (!isCurrentMount(token)) return;
+  state.markerCopied = { project, ok, line };
+  render(token);
+}
+
+function bindProjectListeners() {
+  document.getElementById('dm-proj-new-btn')
+    ?.addEventListener('click', () => openProjectLifecycle('create'));
+
+  document.querySelectorAll('[data-proj-rename]').forEach((btn) => {
+    btn.addEventListener('click', () => openProjectLifecycle('rename', btn.dataset.projRename));
+  });
+  document.querySelectorAll('[data-proj-delete]').forEach((btn) => {
+    btn.addEventListener('click', () => openProjectLifecycle('delete', btn.dataset.projDelete));
+  });
+  document.querySelectorAll('[data-proj-marker]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      copyProjectMarker(btn.dataset.projMarker).catch(reportAsyncActionFailure);
+    });
+  });
+
+  const f = state.projectLc;
+  if (!f) return;
+  document.getElementById('dm-proj-cancel')?.addEventListener('click', closeProjectLifecycle);
+
+  // Written straight into state on every keystroke, WITHOUT a re-render, so
+  // the caret survives — the same rule bindLifecycleListeners follows. The
+  // ONE exception is the delete confirmation, which GATES a button and so
+  // has to repaint; it is the only field whose value changes what else is
+  // on screen.
+  const nameEl = document.getElementById('dm-proj-name');
+  nameEl?.addEventListener('input', () => { f.name = nameEl.value; });
+  const briefEl = document.getElementById('dm-proj-brief');
+  briefEl?.addEventListener('input', () => { f.brief = briefEl.value; });
+  const confirmEl = document.getElementById('dm-proj-confirm');
+  confirmEl?.addEventListener('input', () => {
+    f.confirmText = confirmEl.value;
+    render(myMountToken);
+  });
+
+  const submit = document.getElementById('dm-proj-submit');
+  submit?.addEventListener('click', () => {
+    Promise.resolve().then(() => runProjectAction()).catch(reportAsyncActionFailure);
+  });
+  // Enter submits the two text forms. Delete deliberately has no keyboard
+  // shortcut — it is the action with no undo, and the typed confirmation
+  // exists precisely to make it slower.
+  if (f.mode !== 'delete') {
+    nameEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit?.click(); }
+    });
+  }
 }
 
 function bindLifecycleListeners() {

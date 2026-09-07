@@ -831,6 +831,66 @@
   box-shadow: var(--ring-focus);
 }
 
+/* ── PROJECTS INSIDE A DOMAIN (v3.48.0) ──────────────────────────────────
+
+   The section renders as shell.css's inset grouped list (.cur-group): the
+   card and the hairline separator come from there and are NOT re-described
+   here. What this file adds is only what is specific to these rows — the
+   button cluster's wrapping, and the create textarea, which the domain
+   lifecycle has no equivalent of.
+
+   A project row's controls WRAP under the label at narrow widths rather than
+   compressing: three buttons and a name do not fit a 768px column side by
+   side, and a squeezed Delete button beside a truncated project name is the
+   worst possible version of this row.                                      */
+
+.dm-projects { margin-top: 22px; }
+.dm-projects-actions { margin-top: 10px; }
+
+.dm-proj-row .cur-group-label > b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dm-proj-row .cur-group-control { flex-wrap: wrap; justify-content: flex-end; }
+/* Compact, because there are up to three of them per row and the row is a
+   list item rather than a call to action. Height only — the kit owns
+   everything else about a .btn. */
+.dm-proj-btn { height: var(--control-sm); padding: 0 10px; font-size: var(--text-xs); }
+/* The skeleton's one row shape — width and height only; .cur-skeleton in
+   shell.css owns the surface and the shimmer, including its reduced-motion
+   escape. */
+.dm-proj-skeleton-name { display: block; width: 42%; height: 13px; }
+
+@media (max-width: 720px) {
+  .dm-proj-row { flex-direction: column; align-items: stretch; }
+  .dm-proj-row .cur-group-control { justify-content: flex-start; }
+}
+
+/* The create form's brief editor. Same face, border and focus treatment as
+   .dm-lc-input above — it is the same form — but sized for a document, and
+   vertically resizable because the length of a brief is the user's business. */
+.dm-lc-textarea {
+  width: 100%;
+  max-width: 720px;
+  box-sizing: border-box;
+  min-height: 200px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+.dm-lc-textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+
 .dm-lc-templates {
   display: flex;
   flex-wrap: wrap;

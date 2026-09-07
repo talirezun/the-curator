@@ -163,6 +163,11 @@ const gates = { opened: [], released: 0 };
 function render() {}
 function isCurrentMount(t) { return t === myMountToken; }
 function reportAsyncActionFailure() {}
+// v3.48.0: selectDomain also re-asks for the domain's PROJECTS (agent memory
+// is kept per project inside a domain). Stubbed here because this suite is
+// about the semantic-merge gate; the projects load has its own coverage in
+// scripts/test-next-domain-projects.js.
+function loadProjects() { return Promise.resolve(); }
 function beginDomainWrite(domain, label) { gates.opened.push({ domain, label }); return () => { gates.released++; }; }
 function loadEstimates() { return Promise.resolve(); }
 function escapeHtml(s) { return String(s == null ? '' : s); }

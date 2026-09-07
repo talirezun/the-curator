@@ -531,7 +531,21 @@ section('7. The monospace face is spent on LITERALS, not on facts');
        a COUNT does not. The 16 counts, stat values, row metas and health
        chips in this view moved; these 15 did not, and the 31 -> 16 reduction
        is the real measurement (16 slug sites plus the eyebrow). */
-    'views/domains.js': 17,
+    /* v3.48.0 RAISED THIS FROM 17 TO 24, itemised so the raise is an argument
+       rather than a number that moved. The Projects sub-section added seven,
+       and every one is a LITERAL by this section's own rule:
+         · 3 form inputs (`dm-lc-input mono`) — a project name IS a folder
+           slug, typed character by character, and the same rule that keeps a
+           slug in the code face on the health rows applies to typing one;
+         · 1 `dm-lc-textarea mono` — the standing brief is Markdown SOURCE
+           (`## ` headings, list markers, an HTML comment), edited as text, not
+           read as prose. Its sibling editor in views/memory.js takes the same
+           face through --type-mono;
+         · 3 inline spans — the project name the user must RETYPE to confirm a
+           delete, the filename `.curator-project`, and the path
+           `<domain>/state/`. A thing you retype, a filename and a path are the
+           three cases this budget exists for. */
+    'views/domains.js': 24,
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string
