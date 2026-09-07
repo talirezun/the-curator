@@ -81,16 +81,28 @@ export const MCP_SAVE_TOOL = 'save_working_state';
  */
 export function composeResumePrompt(row, opts = {}) {
   const r = row && typeof row === 'object' ? row : {};
+  const domain = text(r.domain);
   const project = text(r.project) || 'the project';
   const scope = text(r.scope) || 'the scope';
-  const machine = text(r.machine);
   const root = text(opts.domainsDir);
-  // The path the store actually uses. `<machine>` is a real folder name and is
-  // named when we have it; when we do not, the placeholder is spelled out
-  // rather than guessed, because guessing it produces a path that does not
-  // exist and an agent that reports the state is missing.
-  const rel = `${project}/state/${scope}/${machine || '<machine>'}/current.md`;
-  const path = root ? joinPath(root, rel) : rel;
+  const path = root ? joinPath(root, stateRelPath(r)) : stateRelPath(r);
+
+  // ── `latest` IS A CLAIM, AND IT IS ONLY MADE WHEN IT IS TRUE ────────────
+  //
+  // A resume prompt that says `scope: "latest"` is telling the agent to resolve
+  // the newest scope of that project ITSELF, which is exactly right for the row
+  // at the top of a project's group and exactly WRONG for the one under it: the
+  // menu shows up to two scopes per project, and "latest" on the second one
+  // names a different work-stream than the row the user clicked. The model
+  // marks the group's newest row (`row.latest`), and this is the only consumer
+  // that needed it.
+  //
+  // Both halves of the prompt agree, always: when `latest` is claimed the MCP
+  // arm says `latest` and the sentence says "latest scope"; when it is not, both
+  // name the scope. A prompt whose two routes resolve differently is worse than
+  // one that only offers a single route.
+  const latest = r.latest === true;
+  const scopeArg = latest ? 'latest' : scope;
 
   const who = [text(r.harness), text(r.model)].filter(Boolean).join(', ');
   const age = text(r.ageText);
@@ -101,15 +113,43 @@ export function composeResumePrompt(row, opts = {}) {
     : age ? `Last saved ${age}. `
       : who ? `Last saved by ${who}. ` : '';
 
+  // ── THE FIRST LINE NAMES BOTH IDENTITIES ───────────────────────────────
+  //
+  // A domain is where knowledge lives and a project is a thing you build, and
+  // from v3.48.0 one domain holds many projects. A prompt that named only the
+  // project would be ambiguous the moment two domains hold a `main`, and the
+  // agent's own resolver refuses to guess between them — `resolveProject`
+  // answers `project_ambiguous` with candidates rather than picking one. So
+  // both are stated, and the domain is named as a qualifier rather than as a
+  // second subject: the project is the thing being resumed.
+  const head = domain
+    ? `Resume project "${project}" (domain "${domain}")`
+    : `Resume project "${project}"`;
+
+  // The MCP call, spelled out. `domain` is included only when we have it: the
+  // tool takes it optionally and searches every domain without it, and naming a
+  // domain we are not sure of would turn a search into a refusal.
+  const args = domain
+    ? `with project "${project}", domain "${domain}" and scope "${scopeArg}".`
+    : `with project "${project}" and scope "${scopeArg}".`;
+
+  // The repo marker, when the row carries one. It is a SKILL-LEVEL convention
+  // — one line, `domain/project`, at a repo root — and naming it here is how a
+  // session that started in the wrong place gets told where it belongs without
+  // the user having to remember the syntax.
+  const marker = text(r.marker) || (domain ? `${domain}/${project}` : null);
+
   return [
-    `Resume work on "${project}", scope "${scope}".`,
+    `${head}, ${latest ? 'latest scope' : `scope "${scope}"`}.`,
     '',
     `First, read the working state: call the my-curator MCP tool ${MCP_TOOL}`,
-    `with project "${project}" and scope "${scope}". Read the standing brief in the`,
-    'same response before acting on the handoff.',
+    args,
+    'Read the standing brief in the same response before acting on the handoff.',
     '',
     'If you have no my-curator MCP but can read files, open:',
     path,
+    ...(marker ? ['', `This work belongs to ${marker} — the line a .curator-project`,
+      'file at the repo root should hold.'] : []),
     '',
     TRUST_FRAMING,
     '',
@@ -117,6 +157,47 @@ export function composeResumePrompt(row, opts = {}) {
     `COMPLETE state back with ${MCP_SAVE_TOOL} under the same project and scope —`,
     'a save overwrites, so save early and often.',
   ].join('\n');
+}
+
+/**
+ * Where one work-stream's `current.md` actually lives, RELATIVE to the
+ * knowledge folder.
+ *
+ * ── TWO LAYOUTS, AND A READER MAY NOT GUESS BETWEEN THEM ───────────────────
+ *
+ * v3.48.0 writes `<domain>/state/<project>/<scope>/<machine>/current.md`. A
+ * store written before it — or by another Mac in a mixed fleet still on
+ * v3.47.0, which Personal Sync carries here unchanged — has no project segment
+ * at all: `<domain>/state/<scope>/<machine>/current.md`. Readers never move
+ * files, so BOTH shapes are live at once and the difference is one directory
+ * level in a path that is pasted into an agent and opened in Finder.
+ *
+ * `isLegacyDefault` is the producer's answer to which one this row is, carried
+ * on the row rather than inferred here: inferring it would mean this module
+ * deciding a filesystem question it cannot see, and the failure mode is an
+ * agent reporting that the state is missing.
+ *
+ * ONE function, used by BOTH the prompt's file arm and the shell's `Reveal
+ * current.md in Finder` — the two places a user is handed a path — so the
+ * menu cannot print one path and open another.
+ *
+ * `<machine>` is a real folder name and is named when we have it; when we do
+ * not, the placeholder is spelled out rather than guessed, because a guessed
+ * segment produces a path that does not exist.
+ */
+export function stateRelPath(row) {
+  const r = row && typeof row === 'object' ? row : {};
+  const domain = text(r.domain) || text(r.project) || 'the project';
+  const project = text(r.project) || 'the project';
+  const scope = text(r.scope) || 'the scope';
+  const machine = text(r.machine) || '<machine>';
+  // A row with no domain at all is a pre-v3.48.0 shape, in which the first
+  // segment WAS the domain and there was no project segment. Treated as legacy
+  // for that reason, not as a default.
+  const legacy = r.isLegacyDefault === true || !text(r.domain);
+  return legacy
+    ? `${domain}/state/${scope}/${machine}/current.md`
+    : `${domain}/state/${project}/${scope}/${machine}/current.md`;
 }
 
 /**
@@ -149,11 +230,15 @@ export function composeHandoffMarkdown(doc) {
   const current = text(d.current);
   if (!brief && !current) return null;
 
+  const domain = text(d.domain);
   const project = text(d.project) || 'unknown project';
   const scope = text(d.scope) || 'unknown scope';
   const out = [];
 
-  out.push(`# Working state — ${project} · ${scope}`);
+  // FULLY QUALIFIED. This document is pasted into a model that has no menu to
+  // look at, so the heading is the only place the pair can appear — and a
+  // handoff headed `main · main` names nothing at all.
+  out.push(`# Working state — ${domain ? domain + ' / ' : ''}${project} · ${scope}`);
   out.push('');
   out.push(TRUST_FRAMING);
   out.push('');

@@ -20,14 +20,14 @@
  *
  * ── THE ORDER OF THE MENU IS THE DESIGN ────────────────────────────────────
  *
- *   1  the headline answer          "Last save · 4 min ago"
+ *   1  the headline answer          "Working on: lumina · 12 min ago"
  *   2  who wrote it                 "claude-code · opus-4"
  *   -  header                       "Save pulse"
  *   2b the save pulse               a drawn strip + "5 days known · 79 saves · 2 tools"
- *   -  header                       "Recent scopes"
- *   3  up to FIVE rows              newest first, flat, not grouped, each with
- *                                   a recency mark in its icon gutter and a
- *                                   four-item submenu
+ *   -  project header               "articles / lumina · 12 min ago · claude-code"
+ *   3  up to TWO rows               newest scope first, each with a recency mark
+ *                                   in its icon gutter and a four-item submenu
+ *   -  … up to THREE such groups, five rows in total
  *   3b the overflow                 "More in Agent Memory… (6)" — clickable
  *   -  separator
  *   4  notices, only when true      waiting handoffs; a machine that saved
@@ -101,9 +101,11 @@ export const ID_HEADLINE_WHERE = 'tray-headline-where';
 /**
  * ── THE PER-ROW SUBMENU: THE ROUTE THE MENU ACTUALLY HAS ───────────────────
  *
- * Clicking a row opens the app on the row's PROJECT and cannot open its SCOPE:
- * the memory view's scope picker carries no routing attribute, and `data-view`
- * / `data-mem-project` are the only two dispatch attributes there are. That
+ * Clicking a row opens the app on the row's PROJECT — from v3.48.0 addressed as
+ * `<domain>/<project>`, which is the string `row.route` carries and the value
+ * the memory view's `data-mem-project` attribute holds. It still cannot open the
+ * row's SCOPE: the scope picker carries no routing attribute, and `data-view` /
+ * `data-mem-project` remain the only two dispatch attributes there are. That
  * limit has been recorded since v3.35.0 and is not fixed here.
  *
  * So the submenu offers the route the menu DOES have — THE CLIPBOARD. Two of
@@ -138,6 +140,20 @@ export function rowActionId(rowId, action) {
   return String(rowId) + ':' + String(action);
 }
 export const ID_HEADER_PULSE = 'tray-header-pulse';
+/**
+ * The generic "Recent scopes" caption.
+ *
+ * ── IT IS THE EMPTY STATE'S HEADER NOW, AND ONLY THAT ─────────────────────
+ *
+ * v3.48.0 groups the rows under PROJECT headers (`buildTrayModel`'s `groups`),
+ * so a store with anything in it draws one header per project instead of this
+ * one. Rendering both would put a caption above a caption on the one surface
+ * with no vertical space, and the project header says strictly more.
+ *
+ * It stays for the EMPTY state, where there is no project to name and the
+ * section still needs to exist — an empty menu whose "nothing yet" line sits
+ * under no heading at all reads as a broken menu rather than an empty one.
+ */
 export const ID_HEADER_ROWS = 'tray-header-rows';
 export const ID_PULSE = 'tray-pulse';
 export const ID_OPEN_MEMORY = 'tray-open-memory';
@@ -378,44 +394,73 @@ export function buildTrayMenuTemplate(model, o = {}) {
     });
   }
 
-  // ── 3. The rows ─────────────────────────────────────────────────────────
+  // ── 3. The rows, under their project ────────────────────────────────────
   //
-  // FLAT AND NEWEST FIRST, not grouped by project. The audience is watching an
-  // agent, and an agent works in one scope at a time — "what has just
-  // happened" is a recency question. Grouping answers a different one, spends
-  // the one surface with no vertical space on headings, and the app's own
-  // Agent memory view already answers it better. The project survives as a
-  // prefix on every row when more than one project has state, so nothing is
-  // lost but the ordering.
+  // GROUPED BY PROJECT, newest project first and newest scope first inside each.
   //
-  // FIVE OF THEM, and the overflow below is a real destination rather than an
-  // apology — see `truncatedNote` in tray-model.js. The cost, stated rather
-  // than mitigated: one busy project can monopolise all five rows. A per-project
-  // quota inside a five-row list is the kind of cleverness that produces two
-  // behaviours and one bug, and the overflow item reaches everything.
+  // It was flat until v3.48.0, and the argument for flat was sound at the time:
+  // "an agent works in one scope at a time, so what has just happened is a
+  // recency question", with the project riding as a token on each row. What
+  // changed is what a project IS. A domain had exactly one state tree, so the
+  // token was usually constant and usually dropped; a domain now holds many
+  // projects, the token would be on every row, and five rows of `· lumina`
+  // spend five lines of WIDTH — the scarcest thing on this menu — to say once
+  // what a header says once.
+  //
+  // The quota that came with it is the other half. v3.42.0 accepted that "one
+  // busy project can monopolise all five rows" because a per-project quota was
+  // "cleverness that produces two behaviours and one bug". That trade inverts
+  // when a project is an afternoon's work rather than a whole domain: the
+  // monopoly becomes the ordinary case, and the overflow item would be the only
+  // thing on screen that ever mentioned the other projects. See MAX_GROUPS in
+  // tray-model.js for the arithmetic and for what it costs in menu height.
   if (rows.length) {
-    template.push(header(ID_HEADER_ROWS, HEADER_ROWS));
-    for (const row of rows) {
-      const dot = image(makeIcon, row.dot);
+    // ── GROUPED, AND THE GROUPING IS THE DATA'S, NOT THIS FILE'S ────────
+    //
+    // `model.groups` holds the SAME row objects `model.rows` does, so a header
+    // and the rows beneath it can never describe different saves. This loop
+    // draws what it is handed and decides nothing: which projects, how many
+    // rows each, what a header says and how it is clipped are all in
+    // `buildTrayModel`, where the offline suite executes them.
+    //
+    // The fallback is one unnamed group holding every row, for a model built
+    // before `groups` existed — a menu that rendered nothing because a field
+    // was missing would be the worst possible reading of "defensive".
+    const groups = m && Array.isArray(m.groups) && m.groups.length
+      ? m.groups
+      : [{ id: ID_HEADER_ROWS, label: HEADER_ROWS, toolTip: null, rows }];
+    for (const group of groups) {
+      const gRows = Array.isArray(group.rows) ? group.rows : [];
+      if (!gRows.length) continue;
       template.push({
-        id: row.id,
-        label: row.label,
-        // macOS draws `sublabel` as a dimmer second line. A platform that does
-        // not simply drops it, which is why the two facts a person cannot do
-        // without — the work-stream and its age — are on the LABEL.
-        ...(row.sublabel ? { sublabel: row.sublabel } : {}),
-        ...(dot ? { icon: dot } : {}),
-        ...(row.toolTip ? { toolTip: row.toolTip } : {}),
-        // ── A SUBMENU PARENT CARRIES NO `click` ─────────────────────────
-        //
-        // On macOS, clicking an item that has a submenu OPENS THE SUBMENU; a
-        // `click` beside it is either ignored or fires on hover-through
-        // depending on the AppKit path, and either way it is a handler nobody
-        // can predict. `Open in The Curator` is the FIRST submenu item so the
-        // old one-click behaviour is one keystroke away, in the position the
-        // pointer is already travelling to.
-        submenu: rowSubmenu(row, onOpenScope, onRowAction),
+        ...header(group.id || ID_HEADER_ROWS, group.label || HEADER_ROWS),
+        // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE. A header clipped to fit
+        // carries its whole reading — the fully-qualified `domain / project`,
+        // the age and the harness — here.
+        ...(group.toolTip && group.toolTip !== group.label ? { toolTip: group.toolTip } : {}),
       });
+      for (const row of gRows) {
+        const dot = image(makeIcon, row.dot);
+        template.push({
+          id: row.id,
+          label: row.label,
+          // macOS draws `sublabel` as a dimmer second line. A platform that
+          // does not simply drops it, which is why the two facts a person
+          // cannot do without — the work-stream and its age — are on the LABEL.
+          ...(row.sublabel ? { sublabel: row.sublabel } : {}),
+          ...(dot ? { icon: dot } : {}),
+          ...(row.toolTip ? { toolTip: row.toolTip } : {}),
+          // ── A SUBMENU PARENT CARRIES NO `click` ───────────────────────
+          //
+          // On macOS, clicking an item that has a submenu OPENS THE SUBMENU; a
+          // `click` beside it is either ignored or fires on hover-through
+          // depending on the AppKit path, and either way it is a handler nobody
+          // can predict. `Open in The Curator` is the FIRST submenu item so the
+          // old one-click behaviour is one keystroke away, in the position the
+          // pointer is already travelling to.
+          submenu: rowSubmenu(row, onOpenScope, onRowAction),
+        });
+      }
     }
     if (m.truncatedNote) {
       // ENABLED. It is the only route to the rows the cap hid, and a disabled
@@ -539,8 +584,16 @@ export function trayToolTip(model, appName = 'The Curator') {
   // Only when the age is actually known. A brief whose age could not be
   // derived contributes nothing rather than "Brief · time unknown", which
   // would spend the clause to say we do not know something nobody asked.
-  const briefPart = brief && brief.ageText && brief.ageSeconds !== null
-    ? ' · Brief · ' + brief.ageText
+  // ── THE CLAUSE IS COMPOSED BY THE MODEL, NOT HERE ─────────────────────
+  //
+  // It used to be `' · Brief · ' + brief.ageText`, assembled at this call site.
+  // From v3.48.0 the clause also has to say WHO wrote the brief — an agent may
+  // now write one on the owner's explicit instruction, and the tier a model is
+  // told to FOLLOW rather than verify is exactly the one where that matters —
+  // so the sentence is `brief.text`, built once in `buildTrayModel`. A second
+  // surface assembling its own would be a second sentence about one fact.
+  const briefPart = brief && brief.text && brief.ageSeconds !== null
+    ? ' · ' + brief.text
     : '';
   return appName + ' — ' + headline.text + where + briefPart;
 }

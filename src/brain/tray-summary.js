@@ -82,17 +82,31 @@
 import { stat } from 'fs/promises';
 import { listDomains } from './files.js';
 import {
-  listWorkingScopes,
-  // The store's own READ path, imported rather than reimplemented — see
-  // `getHandoffMarkdown` at the foot of this file for why a second reader here
-  // would be a route to a clipboard that bypasses the read-side sanitiser.
-  readWorkingState,
   resolveInsideState,
   machineId,
   hostSlug,
   BRIEF_FILENAME,
   INSTALL_ID_RE,
 } from './working-state.js';
+/**
+ * The store, as a NAMESPACE and not as named imports.
+ *
+ * ── WHY, AND IT IS NOT STYLE ──────────────────────────────────────────────
+ *
+ * v3.48.0 splits a domain into PROJECTS, and the store grows `listAllProjects`
+ * / `listProjects` plus a `project` argument on `listWorkingScopes` and
+ * `readWorkingState`. A NAMED import of an export that is not there yet fails
+ * at LINK time and takes the whole module with it — and this module is loaded
+ * by the menubar shell, where a module that fails to import is a widget that is
+ * simply absent, with no error anywhere a user will look. Read off a namespace,
+ * a missing function is a `typeof` check and a degraded reading.
+ *
+ * `readWorkingState` in particular is still the store's own READ path, imported
+ * rather than reimplemented — see `getHandoffMarkdown` at the foot of this file
+ * for why a second reader here would be a route to a clipboard that bypasses
+ * the read-side sanitiser. It is reached through `storeAdapter`, never copied.
+ */
+import * as workingStore from './working-state.js';
 
 /** Rows the panel asks for when it does not say. §1.3's eight-row layout. */
 export const TRAY_DEFAULT_LIMIT = 8;
@@ -622,6 +636,136 @@ function installIdOf(machine) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Projects inside a domain — the v3.48.0 shape, and the legacy one
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * One adapter over the working-state store, so this module speaks ONE shape
+ * whether the store below it knows about projects or not.
+ *
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  A DOMAIN IS WHERE KNOWLEDGE LIVES. A PROJECT IS A THING YOU BUILD.       ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Up to v3.47.0 the store had ONE state tree per domain, and every reader —
+ * this file included — called that tree "the project", because there was
+ * exactly one of them. `getTraySummary` walked `listDomains()` and named the
+ * result `project`. That word was doing two jobs and the widget could not tell
+ * them apart, which is precisely what v3.48.0 splits: `state/<project>/<scope>/
+ * <machine>/current.md`, with the pre-v3.48.0 tree read as a project whose slug
+ * IS the domain name (the "legacy default project").
+ *
+ * ── THE ADAPTER EXISTS FOR TWO REASONS, AND THE SECOND ONE IS THE HONEST ONE ─
+ *
+ *  1. A MIXED FLEET IS THE NORMAL STATE. A user's other Mac may still be on
+ *     v3.47.0, and Personal Sync carries its legacy tree here. Readers never
+ *     move files (that is the contract's rule, not this module's), so the tray
+ *     must render both layouts side by side, on one list, without saying which
+ *     is which — the layout is the store's business and the user's migration
+ *     decision, never a menubar's.
+ *
+ *  2. THIS MODULE IS BUILT AGAINST A STORE THAT IS BEING WRITTEN BESIDE IT.
+ *     Stated plainly rather than implied: the project-aware store lands on
+ *     another branch. Everything here is coded against that API AS SPECIFIED,
+ *     and the legacy arm is what runs — and is tested — until it arrives. The
+ *     two arms are the same code path from `projectRows()` onward, so the
+ *     legacy arm is not a stub that will rot: it is the arm a v3.47.0 tree
+ *     takes forever.
+ *
+ * @param {object} store  the working-state module, or a fake with the same
+ *   shape. INJECTED rather than imported at the call site so the suite can
+ *   drive the project-aware arm offline — the same test-only seam, and the same
+ *   argument, as `compile.js`'s `opts.generateText`.
+ */
+export function storeAdapter(store) {
+  const s = store && typeof store === 'object' ? store : {};
+  // ONE PREDICATE, ASKED ONCE. `listAllProjects` is the function that only
+  // exists in the project-aware store, so its presence is the layout question
+  // answered — and asking it once means the two arms can never be mixed
+  // half-way through one call.
+  const aware = typeof s.listAllProjects === 'function'
+    && typeof s.listWorkingScopes === 'function';
+
+  return {
+    /** Whether the store below knows what a project is. Reported, never
+     *  inferred by a caller from the shape of what comes back. */
+    projectAware: aware,
+
+    /**
+     * Every (domain, project) that has state, newest first.
+     *
+     * The legacy arm answers "every domain is one project named after itself",
+     * which is exactly what the contract says a pre-v3.48.0 tree MEANS. It is
+     * not an approximation of the new answer; it is the new answer for a store
+     * in that shape.
+     */
+    async listProjects() {
+      if (aware) {
+        const res = await s.listAllProjects();
+        const projects = (res && Array.isArray(res.projects) ? res.projects : [])
+          .filter((p) => p && typeof p.domain === 'string' && typeof p.project === 'string');
+        return {
+          projects,
+          truncated: !!(res && res.truncated === true),
+          // The TRUE total, when the store reports one. `null` is "the store
+          // did not say", which is a different fact from a number and is
+          // rendered as one — see the truncation warning below.
+          total: res && Number.isInteger(res.total) ? res.total : null,
+        };
+      }
+      const domains = await listDomains();
+      return {
+        projects: domains.map((d) => ({ domain: d, project: d, isLegacyDefault: true })),
+        truncated: false,
+        total: domains.length,
+      };
+    },
+
+    /** The (scope, machine) index for one project. */
+    async listScopes(domain, project, opts) {
+      return aware ? s.listWorkingScopes(domain, project, opts) : s.listWorkingScopes(domain, opts);
+    },
+
+    /** The store's own sanitised read. NEVER a second reader here — see
+     *  `getHandoffMarkdown`. */
+    async read(domain, project, opts) {
+      return aware ? s.readWorkingState(domain, project, opts) : s.readWorkingState(domain, opts);
+    },
+  };
+}
+
+/**
+ * What a project is CALLED on a widget that has room for one line.
+ *
+ * `domain / project` when the domain holds more than one project, and the bare
+ * project name when it holds exactly one.
+ *
+ * ── WHY THE DOMAIN IS CONDITIONAL AND NOT ALWAYS PRESENT ──────────────────
+ *
+ * The same drop-constant rule the rows already live by: a token identical on
+ * every row it could appear on distinguishes nothing, so it is pure width. A
+ * user whose `articles` domain holds one project called `articles` (the legacy
+ * default) would otherwise read `articles / articles` on every header of every
+ * menu, forever.
+ *
+ * It comes straight back the moment the domain holds two, because at that point
+ * the domain is the only thing that says WHICH `main` you are looking at.
+ *
+ * Computed HERE, in the producer, because the count it depends on is a fact
+ * about the STORE (how many projects that domain holds) and not about the rows
+ * that survived a cap. `desktop/lib/tray-model.js` carries the same expression
+ * as a fallback for a summary that does not supply one, and the suite pins the
+ * two against each other rather than trusting that sentence.
+ */
+export function projectLabel(domain, project, projectsInDomain) {
+  const p = typeof project === 'string' && project ? project : null;
+  const d = typeof domain === 'string' && domain ? domain : null;
+  if (!p) return d || '(unnamed)';
+  if (!d) return p;
+  return Number.isInteger(projectsInDomain) && projectsInDomain > 1 ? `${d} / ${p}` : p;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // The one call
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -665,10 +809,14 @@ export async function getTraySummary(opts = {}) {
   const now = Number.isFinite(opts && opts.now) ? opts.now : Date.now();
   const limit = normaliseLimit(opts && opts.limit);
   const warnings = [];
+  // The store, through the one adapter. `opts.store` is a TEST-ONLY seam and
+  // defaults to the real module — same pattern and same rationale as
+  // `compile.js`'s `opts.generateText`, which is null in production.
+  const store = storeAdapter(opts && opts.store ? opts.store : workingStore);
 
-  let domains = [];
+  let enumerated = { projects: [], truncated: false, total: 0 };
   try {
-    domains = await listDomains();
+    enumerated = await store.listProjects();
   } catch (err) {
     // The domains folder is missing or unreadable. That is a real state (a
     // user who moved it, a disconnected volume) and it is reported as one.
@@ -687,15 +835,36 @@ export async function getTraySummary(opts = {}) {
     };
   }
 
-  const scanned = domains.slice(0, TRAY_MAX_PROJECTS);
-  if (domains.length > scanned.length) {
-    // A cap is disclosed with the true total beside it. It is never allowed
-    // to read as a measurement.
+  const scanned = enumerated.projects.slice(0, TRAY_MAX_PROJECTS);
+  // ── HOW MANY PROJECTS EACH DOMAIN HOLDS ────────────────────────────────
+  //
+  // Counted over the ENUMERATION, not over the rows that survive the row cap:
+  // whether a header must say `articles / lumina` rather than `lumina` is a
+  // question about the store, and answering it from a capped list would make
+  // the label flicker as the cap moved. See `projectLabel`.
+  const perDomain = new Map();
+  // The enumeration row for one (domain, project), kept so the brief's own
+  // facts — which the project-aware store already computed while walking the
+  // tree — do not have to be re-derived by a second reader down here.
+  const projectMeta = new Map();
+  for (const p of scanned) {
+    perDomain.set(p.domain, (perDomain.get(p.domain) || 0) + 1);
+    projectMeta.set(groupKey(p), p);
+  }
+
+  // A cap is disclosed with the true total beside it. It is never allowed to
+  // read as a measurement — and when the store did not report a total, the
+  // message says the total is not known rather than quoting the cap as one.
+  const trueProjectTotal = Number.isInteger(enumerated.total)
+    ? Math.max(enumerated.total, enumerated.projects.length) : null;
+  if (enumerated.projects.length > scanned.length || enumerated.truncated === true) {
     warnings.push({
       code: 'projects-truncated',
-      message: `Scanned the first ${scanned.length} of ${domains.length} projects.`,
+      message: trueProjectTotal !== null
+        ? `Scanned the first ${scanned.length} of ${trueProjectTotal} projects.`
+        : `Scanned the first ${scanned.length} projects; the store did not report how many there are.`,
       scanned: scanned.length,
-      total: domains.length,
+      total: trueProjectTotal,
     });
   }
 
@@ -725,13 +894,26 @@ export async function getTraySummary(opts = {}) {
   // move `events`.
   const pulseInput = [];
 
-  for (const project of scanned) {
+  for (const entry of scanned) {
+    const domain = entry.domain;
+    const project = entry.project;
+    // A LEGACY DEFAULT PROJECT IS NOT A DISPLAY DETAIL. It decides where its
+    // `current.md` actually LIVES (`state/<scope>/…` rather than
+    // `state/<project>/<scope>/…`), which is the path the resume prompt prints
+    // and the path `Reveal in Finder` opens. Carried on the row rather than
+    // re-derived downstream, because downstream has no way to ask.
+    const isLegacyDefault = entry.isLegacyDefault === true
+      // A store that does not say: the legacy tree is the one whose project
+      // slug IS its domain, which is the contract's own definition.
+      || (entry.isLegacyDefault === undefined && project === domain && !store.projectAware);
+    const projectsInDomain = perDomain.get(domain) || 1;
+    const label = projectLabel(domain, project, projectsInDomain);
     let idx;
     try {
       // THE ONLY CALLER THAT ASKS FOR SAVE TIMES. `src/routes/memory.js` and
-      // `mcp/tools/working-state.js` both call this with one argument, so the
-      // MCP index — which is under a 400 KB response budget — is unchanged.
-      idx = await listWorkingScopes(project, { withSaveTimes: true });
+      // `mcp/tools/working-state.js` both call this without it, so the MCP
+      // index — which is under a 400 KB response budget — is unchanged.
+      idx = await store.listScopes(domain, project, { withSaveTimes: true });
     } catch {
       continue;                       // listWorkingScopes does not throw; belt.
     }
@@ -773,7 +955,21 @@ export async function getTraySummary(opts = {}) {
       const clock = chooseClock(p);
       const ident = machineIdentity(p.machine, self, host, hostRe, selfInstallId);
       rows.push({
+        // ── THE TWO IDENTITIES, AND THEY ARE NOT ONE ────────────────────
+        //
+        // `domain` is where the knowledge lives; `project` is the thing being
+        // built. Before v3.48.0 this row carried ONE field called `project`
+        // that held the DOMAIN, because a domain had exactly one state tree.
+        // Both are emitted now, and `project` keeps its name because it now
+        // finally means what it says.
+        domain,
         project,
+        // How the widget names this project on one line. Computed here because
+        // it depends on how many projects the DOMAIN holds, which is a fact
+        // about the store rather than about the rows that survived a cap.
+        projectLabel: label,
+        projectsInDomain,
+        isLegacyDefault,
         scope: p.scope,
         machine: p.machine,
         harness: typeof p.harness === 'string' ? p.harness : null,
@@ -801,7 +997,7 @@ export async function getTraySummary(opts = {}) {
       });
       if (p.harnessShared === true) {
         collisions.push({
-          project, scope: p.scope, machine: p.machine,
+          domain, project, projectLabel: label, scope: p.scope, machine: p.machine,
           harnesses: Array.isArray(p.harnesses) ? p.harnesses : [],
         });
       }
@@ -853,8 +1049,11 @@ export async function getTraySummary(opts = {}) {
       // Named, and nothing else. The remedy — give the two tools separate
       // scopes — is the user's to apply, and a menubar line has no business
       // proposing it in six words.
-      message: `Two agent tools are writing ${c.project} · ${c.scope}.`,
-      project: c.project, scope: c.scope, machine: c.machine, harnesses: c.harnesses,
+      // Named by the SAME label the group header uses, so a user reading the
+      // notice and the header is reading one identity twice, not two.
+      message: `Two agent tools are writing ${c.projectLabel} · ${c.scope}.`,
+      domain: c.domain, project: c.project, projectLabel: c.projectLabel,
+      scope: c.scope, machine: c.machine, harnesses: c.harnesses,
     });
   }
   if (collisions.length > MAX_LISTED_COLLISIONS) {
@@ -889,7 +1088,13 @@ export async function getTraySummary(opts = {}) {
   // of that screen which is correct. The sort already guarantees the newest
   // row survives any limit >= 1, so nothing is lost by binding them together.
   const lastSave = shown.length ? {
+    // Both identities, projected EXPLICITLY like every other field here —
+    // which is what makes a drop visible to the disclosure guard rather than
+    // silent, and is exactly the field-drop class this repo keeps recording.
+    domain: shown[0].domain,
     project: shown[0].project,
+    projectLabel: shown[0].projectLabel,
+    isLegacyDefault: shown[0].isLegacyDefault,
     scope: shown[0].scope,
     machine: shown[0].machine,
     harness: shown[0].harness,
@@ -932,7 +1137,7 @@ export async function getTraySummary(opts = {}) {
     // file I/O of its own: the timestamps were already parsed to compute each
     // row's age and were previously discarded.
     pulse: safePulse(pulseInput, now, warnings),
-    brief: lastSave ? await briefFor(lastSave.project, now) : null,
+    brief: lastSave ? await briefFor(lastSave, projectMeta.get(groupKey(lastSave)) || null, now) : null,
     remote: readRemoteObservation(now),
     warnings,
   };
@@ -964,20 +1169,87 @@ function normaliseLimit(v) {
  * writes it — so mtime is the ONLY clock available and no `ageSource` is
  * emitted. There is nothing here to be honest between.
  */
-async function briefFor(project, now) {
-  const abs = resolveInsideState(project, BRIEF_FILENAME);
+async function briefFor(row, meta, now) {
+  const domain = row && typeof row.domain === 'string' ? row.domain : null;
+  const project = row && typeof row.project === 'string' ? row.project : null;
+  if (!domain || !project) return null;
+
+  const base = {
+    domain,
+    project,
+    projectLabel: row.projectLabel || projectLabel(domain, project, row.projectsInDomain),
+  };
+
+  // ── THE STORE'S ANSWER WINS, WHEN THERE IS ONE ──────────────────────────
+  //
+  // The project-aware store already walked this tree and already knows whether
+  // there is a brief, when it changed, and — the new fact — WHO wrote it. Using
+  // that is not merely cheaper than a second `stat`; it is the only way to get
+  // `authoredBy` without OPENING the file, which this function is documented
+  // never to do.
+  if (meta && typeof meta === 'object' && (meta.hasBrief === true || typeof meta.briefUpdatedAt === 'string')) {
+    if (meta.hasBrief === false) return null;
+    const at = typeof meta.briefUpdatedAt === 'string' ? meta.briefUpdatedAt : null;
+    const ms = at ? Date.parse(at) : NaN;
+    return {
+      ...base,
+      updatedAt: at,
+      // A cap, a clamp and a null, in that order: an unparseable stamp is an
+      // absent age, never a zero. Same rule as `chooseClock`.
+      ageSeconds: Number.isFinite(ms) ? Math.max(0, Math.round((now - ms) / 1000)) : null,
+      // ── WHO WROTE IT, AND WHY THE WIDGET CARES ────────────────────────
+      //
+      // The standing brief is the OWNER'S OWN INSTRUCTIONS — the one tier an
+      // agent is told to follow rather than verify. From v3.48.0 an agent may
+      // write it, but only on the owner's explicit instruction, and the store
+      // records that provenance. A widget that said "brief updated 3 d ago"
+      // over a brief the agent wrote itself would be hiding the one fact that
+      // decides how much authority the document has.
+      //
+      // `'agent'` or `'human'` are carried through; anything else — including
+      // absent, which is every pre-v3.48.0 brief — becomes null and is rendered
+      // as no clause at all rather than as a guess about the author.
+      authoredBy: meta.briefAuthoredBy === 'agent' ? 'agent'
+        : (meta.briefAuthoredBy === 'human' ? 'human' : null),
+    };
+  }
+
+  // ── THE LEGACY ARM: ONE `stat`, NEVER A READ ────────────────────────────
+  //
+  // The brief is TIER C in the widget's ranking: it changes on the order of
+  // weeks, it is up to 32 KB of prose, and its whole value is being read IN
+  // FULL at the start of a session. A menubar surface gets its age and nothing
+  // else, so this deliberately does not open the file — which is also why the
+  // legacy arm can report no `authoredBy`: the provenance lives INSIDE the
+  // document, and a pre-v3.48.0 document has none to find.
+  //
+  // The path is the LEGACY one (`<domain>/state/project.md`) on a legacy
+  // default project and the project's own otherwise, because a reader that
+  // guessed here would report "no brief" for a brief sitting on disk.
+  const rel = row.isLegacyDefault === true ? BRIEF_FILENAME : `${project}/${BRIEF_FILENAME}`;
+  const abs = resolveInsideState(domain, rel);
   if (!abs) return null;
   try {
     const st = await stat(abs);
     if (!st.isFile()) return null;
     return {
-      project,
+      ...base,
       updatedAt: st.mtime.toISOString(),
       ageSeconds: Math.max(0, Math.round((now - st.mtimeMs) / 1000)),
+      authoredBy: null,
     };
   } catch {
     return null;                       // no brief — the normal case, not an error
   }
+}
+
+/** One (domain, project) as a comparable key. NUL-joined so a project named
+ *  `a/b` — which `isSafeSegment` forbids, but a synced tree is not this
+ *  install's to trust — cannot collide with a different pair. */
+export function groupKey(row) {
+  const d = row && typeof row.domain === 'string' ? row.domain : '';
+  const p = row && typeof row.project === 'string' ? row.project : '';
+  return d + '\u0000' + p;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1015,17 +1287,30 @@ async function briefFor(project, now) {
  * from a menu handler, and an unhandled rejection there is a crash in a process
  * whose whole job is to be quietly present.
  *
+ * ── THE SIGNATURE GAINED A `domain`, AND IT IS NOT COSMETIC ───────────────
+ *
+ * Before v3.48.0 the first argument was called `project` and held the DOMAIN,
+ * because a domain had one state tree. It now takes both, in that order, and
+ * routes through `storeAdapter` — so on a store that does not know about
+ * projects the call collapses back to the one-argument form and a legacy tree
+ * still copies. The alternative, keeping one argument and guessing which of the
+ * two it meant, is how the same word came to name two things in the first place.
+ *
+ * @param {string} domain
  * @param {string} project
  * @param {string} scope
  * @param {string} [machine]  omit for the most recently written machine
- * @returns {Promise<{ok: boolean, reason?: string, project?: string,
- *   scope?: string, machine?: string|null, brief?: string|null,
+ * @param {object} [opts]     `opts.store` is the same TEST-ONLY seam
+ *   `getTraySummary` takes, and defaults to the real store.
+ * @returns {Promise<{ok: boolean, reason?: string, domain?: string,
+ *   project?: string, scope?: string, machine?: string|null, brief?: string|null,
  *   current?: string|null, bytes?: number, writtenAt?: string|null,
  *   harness?: string|null, model?: string|null, sanitised?: boolean}>}
  */
-export async function getHandoffMarkdown(project, scope, machine) {
+export async function getHandoffMarkdown(domain, project, scope, machine, opts = {}) {
+  const store = storeAdapter(opts && opts.store ? opts.store : workingStore);
   try {
-    const state = await readWorkingState(project, {
+    const state = await store.read(domain, project, {
       scope,
       ...(typeof machine === 'string' && machine ? { machine } : {}),
       // One line is all the provenance footer needs, and the journal is the
@@ -1042,6 +1327,7 @@ export async function getHandoffMarkdown(project, scope, machine) {
       ? state.journal.entries[0] : null;
     return {
       ok: true,
+      domain,
       project,
       scope: state.scope || scope,
       machine: state.machine || null,

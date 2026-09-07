@@ -85,6 +85,7 @@ section('§0 positive control on the imports');
   ok(typeof rp.composeResumePrompt === 'function', 'composeResumePrompt is exported');
   ok(typeof rp.composeHandoffMarkdown === 'function', 'composeHandoffMarkdown is exported');
   ok(typeof rp.handoffByteNote === 'function', 'handoffByteNote is exported');
+  ok(typeof rp.stateRelPath === 'function', 'stateRelPath is exported');
   ok(typeof TS.getHandoffMarkdown === 'function', 'the store exposes getHandoffMarkdown');
   // PURE. This module must be executable by `npm test`, which means no Electron
   // and no filesystem — and the reason is not tidiness: a `readFile` here would
@@ -108,24 +109,72 @@ section('§1 the resume prompt — both arms, and what it never invents');
 // does not still gets there.
 {
   const row = {
-    project: 'demo', scope: 'session-2026-09-02-widget',
+    domain: 'workshop', project: 'demo', scope: 'session-2026-09-02-widget',
     machine: 'demo-host-a1b2c3', harness: 'harness-one', model: 'demo-model-4-6',
-    ageText: '18 hr ago',
+    ageText: '18 hr ago', latest: true, marker: 'workshop/demo',
   };
   const p = rp.composeResumePrompt(row, { domainsDir: '/tmp/fixture-knowledge' });
+
+  // ── BOTH IDENTITIES, BECAUSE ONE DOES NOT IDENTIFY (v3.48.0) ──────────
+  //
+  // A domain holds many projects, and two domains may each hold a `main`. The
+  // agent's own resolver refuses to guess between them, so the prompt names
+  // both rather than handing it a question it will answer with a refusal.
+  ok(/^Resume project "demo" \(domain "workshop"\), latest scope\.$/m.test(p.split('\n')[0]),
+    'the first line names the project, qualifies it with the domain, and says which scope');
 
   // THE MCP ARM.
   ok(p.includes(rp.MCP_TOOL), `it names the read tool (${rp.MCP_TOOL})`);
   ok(p.includes(rp.MCP_SAVE_TOOL), `and the save tool (${rp.MCP_SAVE_TOOL})`);
-  ok(p.includes('"demo"') && p.includes('"session-2026-09-02-widget"'),
-    'with the project and scope quoted, so an agent passes them verbatim rather than paraphrasing');
+  ok(p.includes('project "demo"') && p.includes('domain "workshop"'),
+    'with the project and domain quoted, so an agent passes them verbatim rather than paraphrasing');
+  ok(p.includes('scope "latest"'),
+    'and the scope is "latest" on the newest row of a project — the agent resolves it, so the prompt cannot go stale between the copy and the paste');
+  ok(!p.includes('scope "session-2026-09-02-widget"'),
+    '…and the literal scope is NOT also passed, which would be two answers to one argument');
 
   // THE NO-MCP ARM. The path is the store's real shape, and the machine segment
   // is a real folder name — a `<machine>` placeholder pasted into an agent
   // produces a path that does not exist and a report that the state is missing.
-  ok(p.includes('/tmp/fixture-knowledge/demo/state/session-2026-09-02-widget/demo-host-a1b2c3/current.md'),
-    'the file arm names the exact path the store uses, under the user\'s own knowledge folder');
+  ok(p.includes('/tmp/fixture-knowledge/workshop/state/demo/session-2026-09-02-widget/demo-host-a1b2c3/current.md'),
+    'the file arm names the exact path the store uses, under the user\'s own knowledge folder, with the PROJECT segment v3.48.0 added');
   ok(/no my-curator MCP/i.test(p), 'and says when to use it');
+
+  // ── THE REPO MARKER ──────────────────────────────────────────────────
+  ok(p.includes('workshop/demo') && /\.curator-project/.test(p),
+    'the prompt names the `.curator-project` marker line, so a session started in the wrong place can be told where it belongs');
+
+  // ── `latest` IS A CLAIM, AND IT IS ONLY MADE WHEN IT IS TRUE ──────────
+  //
+  // The menu shows up to two scopes per project. On the SECOND one, "latest"
+  // resolves to a different work-stream than the row the user clicked — so the
+  // claim is made only for the row the model marked as its group's newest, and
+  // both halves of the prompt agree either way.
+  const second = rp.composeResumePrompt({ ...row, scope: 'older-stream', latest: false });
+  ok(/^Resume project "demo" \(domain "workshop"\), scope "older-stream"\.$/m.test(second.split('\n')[0]),
+    'a row that is NOT its project\'s newest names its own scope on line one');
+  ok(second.includes('scope "older-stream"') && !second.includes('"latest"'),
+    '…and passes that scope to the tool, never "latest", which would resume a different work-stream');
+
+  // ── THE LEGACY LAYOUT HAS NO PROJECT SEGMENT, AND IS NOT GUESSED ──────
+  //
+  // A pre-v3.48.0 tree — including one arriving over Personal Sync from a Mac
+  // still on v3.47.0 — keeps `state/<scope>/<machine>/`. Readers never move
+  // files, so both shapes are live at once.
+  const legacy = rp.composeResumePrompt({
+    domain: 'articles', project: 'articles', scope: 'main',
+    machine: 'demo-host-a1b2c3', isLegacyDefault: true, latest: true,
+  }, { domainsDir: '/tmp/fixture-knowledge' });
+  ok(legacy.includes('/tmp/fixture-knowledge/articles/state/main/demo-host-a1b2c3/current.md'),
+    'a legacy default project keeps the pre-v3.48.0 path, with NO project segment');
+  ok(!legacy.includes('articles/state/articles/'),
+    '…and does not invent one, which would name a directory that does not exist');
+  eq(rp.stateRelPath({ domain: 'd', project: 'p', scope: 's', machine: 'm' }),
+    'd/state/p/s/m/current.md', 'stateRelPath: the v3.48.0 layout');
+  eq(rp.stateRelPath({ domain: 'd', project: 'd', scope: 's', machine: 'm', isLegacyDefault: true }),
+    'd/state/s/m/current.md', 'stateRelPath: the legacy layout');
+  ok(rp.stateRelPath({ project: 'p', scope: 's', machine: 'm' }).startsWith('p/state/s/'),
+    'stateRelPath: a row with no domain at all is the pre-v3.48.0 shape, where the first segment WAS the domain');
 
   // THE TRUST FRAMING, from one constant so the two composers cannot drift.
   ok(p.includes(rp.TRUST_FRAMING), 'the trust framing is present, verbatim from the shared constant');
@@ -142,6 +191,8 @@ section('§1 the resume prompt — both arms, and what it never invents');
   ok(p.includes('Last saved 18 hr ago by harness-one, demo-model-4-6'),
     'the provenance line names the age, the tool and the model when all three are known');
   const bare = rp.composeResumePrompt({ project: 'demo', scope: 'main' });
+  ok(!/domain "/.test(bare),
+    'with no domain known the prompt names none — the tool searches every domain, and a domain we are not sure of turns a search into a refusal');
   ok(!/Last saved/.test(bare),
     'and is ABSENT entirely when none of them is — a prompt line saying "last saved by (unknown)" spends a line to say nothing');
   ok(!/undefined|null|NaN/.test(bare), 'nothing anywhere renders as undefined or null');
@@ -162,7 +213,7 @@ section('§1 the resume prompt — both arms, and what it never invents');
 section('§2 the handoff document — two tiers, kept separate');
 {
   const doc = {
-    project: 'demo', scope: 'main', machine: 'demo-host-a1b2c3',
+    domain: 'workshop', project: 'demo', scope: 'main', machine: 'demo-host-a1b2c3',
     brief: 'Delegate; do not build.',
     current: 'The strip renders and the ruler is derived.',
     writtenAt: '2026-09-02T09:00:00.000Z', harness: 'harness-one', model: 'demo-model-4-6',
@@ -170,8 +221,10 @@ section('§2 the handoff document — two tiers, kept separate');
   };
   const md = rp.composeHandoffMarkdown(doc);
 
-  ok(md.startsWith('# Working state — demo · main'),
-    'the document names the work-stream in its first line');
+  ok(md.startsWith('# Working state — workshop / demo · main'),
+    'the document names the work-stream in its first line, fully qualified — a handoff headed `main · main` names nothing at all');
+  ok(rp.composeHandoffMarkdown({ ...doc, domain: null }).startsWith('# Working state — demo · main'),
+    '…and falls back to the project alone when no domain came with it, rather than printing an empty qualifier');
   ok(md.includes(rp.TRUST_FRAMING), 'and carries the SAME trust framing as the resume prompt, from the same constant');
   ok(md.indexOf(rp.TRUST_FRAMING) < md.indexOf('## Standing brief'),
     '…before either tier, because a model reads the top of a paste as the instruction');
@@ -266,7 +319,10 @@ section('§3 IT IS THE STORE\'S SANITISED READ, not a second reader');
     'CONTROL: the file ON DISK carries the RAW protocol tag, unsanitised — this is the shape a pull leaves');
   ok(onDisk.includes(RAW_URL), 'CONTROL: and the raw URL scheme');
 
-  const got = await TS.getHandoffMarkdown(P, 'main');
+  // FOUR ARGUMENTS SINCE v3.48.0: (domain, project, scope, machine). On a store
+  // that does not know about projects the adapter collapses this back to the
+  // one-argument form, which is what a legacy default project takes.
+  const got = await TS.getHandoffMarkdown(P, P, 'main');
   ok(got.ok === true, 'PRECONDITION: the store returned a handoff', JSON.stringify(got.reason));
   ok(typeof got.current === 'string' && got.current.length > 0, 'PRECONDITION: with a body');
 
@@ -303,12 +359,12 @@ section('§3 IT IS THE STORE\'S SANITISED READ, not a second reader');
     'and an ISO timestamp from the agent\'s clock', String(got.writtenAt));
 
   // ABSENCE IS A REFUSAL, NEVER A THROW: this is called from a menu handler.
-  const missing = await TS.getHandoffMarkdown(P, 'no-such-scope');
+  const missing = await TS.getHandoffMarkdown(P, P, 'no-such-scope');
   ok(missing.ok === true && !missing.current,
     'a scope with no state returns a usable record with no body rather than throwing',
     JSON.stringify(missing));
   eq(rp.composeHandoffMarkdown(missing), null, '…which composes to null, so the shell can say "nothing to copy"');
-  const badProject = await TS.getHandoffMarkdown('../escape', 'main');
+  const badProject = await TS.getHandoffMarkdown('../escape', '../escape', 'main');
   ok(badProject.ok === false, 'an unsafe project name is REFUSED by the store, not resolved',
     JSON.stringify(badProject));
 }
