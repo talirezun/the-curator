@@ -26,6 +26,11 @@
  *  · AND THE CONFIRMATION CAN BE TYPED AT ALL (S9). The gate was always
  *    right; the only way a user had of moving the value was not. See S9's
  *    own block for the defect and for why S4 stayed green throughout.
+ *  · THE CREATE CONTROL BELONGS TO THE GROUP (S10). It is the group's LAST
+ *    row, inside the same `.cur-group`, and there is exactly one of it; the
+ *    create form takes that row's place when it opens. Asserted over a parsed
+ *    TREE, because the substring assertions above cannot express containment
+ *    — which is precisely how it shipped floating below the card.
  *  · EVERY STATE OF THE PANEL RENDERS SOMETHING — loading, failed, empty,
  *    read-only, and "this server is too old". A section that vanishes when it
  *    has nothing to show is indistinguishable from one that failed.
@@ -992,6 +997,219 @@ function mountDeletePanel(dom, project) {
   eq('PRECONDITION -- the typed text still matches exactly', __state().projectLc.confirmText, 'lumina');
   ok('a keystroke while the delete is IN FLIGHT still leaves the button disabled -- the handler applies the whole predicate the renderer does, not just the name match',
     dom.document.getElementById('dm-proj-submit').disabled === true);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S10 -- THE CREATE CONTROL BELONGS TO THE GROUP (real tree)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT, reported by the maintainer from a screenshot ─────────────
+// The rows rendered correctly as an inset group, and "New project" floated
+// BELOW the card on its own -- outside any container, "just thrown
+// somewhere". It was a `.btn` in a `<div class="dm-projects-actions">`
+// SIBLING of the group, so nothing in the markup said the control acted on
+// the list above it.
+//
+// ── WHY NOTHING ABOVE CAUGHT IT ──────────────────────────────────────────
+// S4 asserts `panel.includes('dm-proj-new-btn')` and S8 asserts
+// `panel.includes('class="cur-group"')`. Both are SUBSTRING questions, and a
+// substring cannot express containment: the button was present, the group was
+// present, and the button was outside the group. This section parses the
+// panel into a real tree -- the same parser S9 drives listeners against --
+// and asks the structural question instead.
+//
+// NOT ENFORCED: a tree is not a layout. That the row LOOKS like the rows
+// above it -- the hairline above it, the hover band, the 40px height -- is
+// the orchestrator's rendered pass; what is enforced here is the containment
+// the screenshot showed was missing, plus the CSS contract the row needs.
+
+const hasClass = (n, c) => String(n.attrs.class || '').split(/\s+/).filter(Boolean).includes(c);
+const isInside = (node, ancestor) => {
+  for (let n = node && node.parentNode; n; n = n.parentNode) if (n === ancestor) return true;
+  return false;
+};
+/** Parse a rendered panel into a real tree, using S9's own parser. */
+function parsePanel(html) {
+  const dom = makeDom();
+  dom.viewRoot.innerHTML = html;
+  const all = dom.viewRoot.descendants();
+  const groups = all.filter((n) => hasClass(n, 'cur-group'));
+  return {
+    dom,
+    all,
+    groups,
+    group: groups[0] || null,
+    byId: (id) => all.filter((n) => n.attrs.id === id),
+  };
+}
+
+const WRITABLE = () => freshState({
+  projects: {
+    slug: 'alpha', loading: false, error: null,
+    rows: [ROW({ project: 'lumina' }), ROW({ project: 'field-notes' }), ROW({ project: 'curator' })],
+    truncated: false, canWrite: true, readonly: false,
+  },
+});
+
+{
+  __setState(WRITABLE());
+  const t = parsePanel(renderProjectsPanel(false));
+
+  // CONTROLS FIRST. Every assertion below is about a node's position in a
+  // tree, and all of them pass trivially against a tree that failed to parse.
+  ok('CONTROL -- the panel parsed into a tree with exactly one inset group',
+    t.groups.length === 1, 'found ' + t.groups.length);
+  ok('CONTROL -- the group really holds the three project rows',
+    t.group && t.group.children.filter((n) => hasClass(n, 'dm-proj-row')).length === 3,
+    t.group ? String(t.group.children.length) : 'no group');
+
+  const btns = t.byId('dm-proj-new-btn');
+  eq('there is EXACTLY ONE New project control in the panel', btns.length, 1);
+
+  const btn = btns[0];
+  ok('the New project control is a DESCENDANT of the Projects group -- the reported defect',
+    !!btn && isInside(btn, t.group));
+  ok('...and it is a ROW of that group, not a button parked inside one',
+    !!btn && hasClass(btn, 'cur-group-row'), btn ? btn.attrs.class : 'gone');
+  ok('...a real <button>, so it is reachable by keyboard and announced as an action',
+    !!btn && btn.tagName === 'BUTTON' && btn.attrs.type === 'button');
+  const last = t.group && t.group.children[t.group.children.length - 1];
+  ok('...and it is the LAST child of the group, so the group reads rows-then-action',
+    !!btn && last === btn, last ? last.tagName + '.' + last.attrs.class : 'group empty');
+  ok('...carrying a leading + glyph and the label as separate spans',
+    !!btn && btn.children.some((c) => hasClass(c, 'dm-proj-footer-icon'))
+          && btn.children.some((c) => hasClass(c, 'dm-proj-footer-label')));
+
+  // AND NOTHING IS LEFT OUTSIDE. The old wrapper is gone by name, so a
+  // half-applied revert that re-added the sibling div would be caught even if
+  // the button itself stayed inside.
+  ok('the orphan action wrapper is gone from the view', !renderProjectsPanel(false).includes('dm-projects-actions'));
+  ok('...and from the stylesheet, so no dead rule survives it', !CSS.includes('dm-projects-actions'));
+}
+{
+  // THE FOOTER IS STILL LAST WHEN THE LIST IS TRUNCATED. The truncation note
+  // is itself a row, and it must sit ABOVE the action rather than after it.
+  const s = WRITABLE();
+  s.projects.truncated = true;
+  __setState(s);
+  const t = parsePanel(renderProjectsPanel(false));
+  const btn = t.byId('dm-proj-new-btn')[0];
+  ok('with a truncation note present, the action is still the last row',
+    !!btn && t.group.children[t.group.children.length - 1] === btn);
+  ok('...and the note is inside the group too, above it',
+    t.group.children.length === 5);
+}
+{
+  // THE EMPTY STATE. A domain with no projects is the one where the create
+  // control matters most, and it is the state most likely to be special-cased
+  // into a different shape.
+  __setState(freshState({ projects: { slug: 'alpha', loading: false, error: null, rows: [], canWrite: true, readonly: false } }));
+  const t = parsePanel(renderProjectsPanel(false));
+  const btn = t.byId('dm-proj-new-btn')[0];
+  ok('EMPTY -- the create control is inside the group here too',
+    !!btn && isInside(btn, t.group) && t.group.children[t.group.children.length - 1] === btn);
+}
+{
+  // THE CREATE FORM TAKES THE FOOTER ROW'S PLACE. A form that opened BELOW
+  // the card would re-create the same orphan one step further down.
+  __setState(WRITABLE());
+  openProjectLifecycle('create');
+  const t = parsePanel(renderProjectsPanel(false));
+
+  eq('CREATE OPEN -- the footer button is gone, replaced rather than duplicated',
+    t.byId('dm-proj-new-btn').length, 0);
+  const name = t.byId('dm-proj-name')[0];
+  const submit = t.byId('dm-proj-submit')[0];
+  eq('...and the form is rendered exactly once, so its ids are unique',
+    t.byId('dm-proj-submit').length, 1);
+  ok('the create form is INSIDE the group', !!name && isInside(name, t.group));
+  ok('...its submit button too', !!submit && isInside(submit, t.group));
+  ok('...in the group’s last row, where the control it replaced was',
+    hasClass(t.group.children[t.group.children.length - 1], 'dm-proj-form-row'));
+}
+{
+  // ANTI-VACUITY, and the deliberate asymmetry. Rename and delete are opened
+  // from a ROW's own controls, and their cards stay BELOW the group so the row
+  // being acted on is still on screen. That also proves `isInside` can say no:
+  // if it could not, every assertion above would pass over any tree at all.
+  __setState(WRITABLE());
+  openProjectLifecycle('rename', 'lumina');
+  const t = parsePanel(renderProjectsPanel(false));
+  const submit = t.byId('dm-proj-submit')[0];
+  ok('CONTROL -- the RENAME card renders outside the group, and isInside says so',
+    !!submit && !isInside(submit, t.group));
+  ok('...and the footer row is still there, because rename did not consume it',
+    t.byId('dm-proj-new-btn').length === 1);
+
+  __setState(WRITABLE());
+  openProjectLifecycle('delete', 'lumina');
+  const d = parsePanel(renderProjectsPanel(false));
+  ok('CONTROL -- the DELETE card renders outside the group too',
+    !isInside(d.byId('dm-proj-confirm')[0], d.group));
+}
+{
+  // THE CAPTION IS THE GROUP'S, NOT LOOSE BODY TEXT. It used to render as a
+  // bare sibling between the eyebrow and the card, at x=0 while the eyebrow
+  // sat indented to the row padding -- which is what made it read as text
+  // that had fallen between the two.
+  __setState(WRITABLE());
+  const t = parsePanel(renderProjectsPanel(false));
+  const head = t.all.find((n) => hasClass(n, 'dm-proj-head'));
+  const eyebrow = t.all.find((n) => hasClass(n, 'cur-group-title'));
+  const caption = t.all.find((n) => hasClass(n, 'dm-proj-caption'));
+  ok('the eyebrow and the caption are wrapped in ONE header block',
+    !!head && !!eyebrow && !!caption && isInside(eyebrow, head) && isInside(caption, head));
+  const section = t.all.find((n) => hasClass(n, 'dm-projects'));
+  ok('CONTROL -- the header and the group are siblings under the section',
+    !!section && section.children.includes(head) && section.children.includes(t.group));
+  ok('...and the header comes first', section
+    && section.children.indexOf(head) < section.children.indexOf(t.group));
+  ok('...and the caption is still the shared DESCRIPTION role, not a re-dressed copy',
+    caption && caption.children.some((c) => hasClass(c, 'tx-desc')));
+  ok('...whose sentence is unchanged', /compounding wiki/.test(renderProjectsPanel(false)));
+  // PLACEMENT ONLY. The whole reason the caption keeps the shared role is that
+  // this view must not re-dress it; a font-size or colour on the wrapper is
+  // that happening one edit later.
+  const capRule = /\.dm-proj-caption\s*\{([^}]*)\}/.exec(CSS);
+  ok('CONTROL -- domains.css does place the caption', !!capRule, 'no .dm-proj-caption rule');
+  for (const prop of ['font', 'font-size', 'color', 'border', 'background']) {
+    ok('...and sets no ' + prop + ' on it -- it places the role, it does not dress it',
+      capRule && !new RegExp('(?:^|[;{\\s])' + prop + '\\s*:').test(capRule[1]), capRule && capRule[1]);
+  }
+  ok('...it sets a left offset, so the assertions above are not vacuous',
+    capRule && /margin-left\s*:/.test(capRule[1]));
+}
+{
+  // THE ROW'S CSS CONTRACT. The tree says the button is a row; these say the
+  // row behaves like one -- the states come from the kit's own tokens, the
+  // <button> chrome is off, and the pointer is the app's chrome pointer.
+  const rule = /\.dm-proj-footer\s*\{([^}]*)\}/.exec(CSS);
+  ok('CONTROL -- domains.css carries a .dm-proj-footer rule', !!rule);
+  const body = rule ? rule[1] : '';
+  ok('the row is full width, so the whole band is the target', /width:\s*100%/.test(body));
+  ok('...with the <button> chrome removed rather than fought',
+    /border:\s*0/.test(body) && /background:\s*none/.test(body) && /text-align:\s*left/.test(body));
+  ok('...and `cursor: default`, which is what this app’s chrome uses',
+    /cursor:\s*default/.test(body));
+  ok('hover and press come from the kit surface tokens, not from new colours',
+    /\.dm-proj-footer:hover\s*\{[^}]*var\(--surface-hover\)/.test(CSS)
+    && /\.dm-proj-footer:active\s*\{[^}]*var\(--surface-active\)/.test(CSS));
+  // THE HIT TARGET. macOS's default control target is 28pt and --hit-min
+  // names it; the row's own minimum is the kit's 40. This asserts the FLOOR
+  // is inherited rather than re-declared, because a local min-height here
+  // could only make the band SMALLER than the rows above it.
+  ok('the row declares no min-height of its own -- the kit’s 40px stands',
+    !/min-height/.test(body), body);
+  const shell = readFileSync(join(ROOT, 'src/public/next/shell.css'), 'utf8');
+  const rowRule = /\n\.cur-group-row\s*\{([^}]*)\}/.exec(shell);
+  const minPx = rowRule && /min-height:\s*(\d+)px/.exec(rowRule[1]);
+  ok('...and that inherited minimum clears the 28px hit target',
+    !!minPx && Number(minPx[1]) >= 28, minPx ? minPx[1] + 'px' : 'not found');
+  // Inside `overflow: hidden`, an outset ring on the LAST row is clipped.
+  ok('the focus ring is drawn INSIDE the row, because the group clips',
+    /\.dm-proj-footer:focus-visible\s*\{[^}]*inset[^}]*\}/.test(CSS));
+  ok('CONTROL -- the group really does clip, which is why the ring is inset',
+    /\n\.cur-group\s*\{[^}]*overflow:\s*hidden/.test(shell));
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

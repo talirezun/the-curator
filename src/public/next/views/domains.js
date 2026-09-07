@@ -2300,19 +2300,63 @@ function renderProjectsPanel(readonly) {
       })
     : '';
 
+  // ── THE CREATE CONTROL IS THE GROUP'S FOOTER ROW ────────────────────────
+  // It shipped in v3.48.0 as a `.btn` in a `<div>` BELOW the card, and the
+  // maintainer's report of it is the whole reason this exists: "just thrown
+  // somewhere", floating under the group, outside any container. A grouped
+  // list's create action is the LAST ROW OF THE LIST — that is what macOS's
+  // own inset lists do, and it is what makes the section read as ONE object
+  // (rows, then the action on them) rather than a card with an orphan button
+  // near it.
+  //
+  // A <button> that IS a `.cur-group-row`, not a button inside one: the row
+  // is the affordance, so the whole 40px band is clickable and the kit's own
+  // separator (`.cur-group-row + .cur-group-row::before`) draws above it with
+  // no special case. Everything else about it — the hover, the pressed
+  // state, the `cursor: default` this app's chrome uses — is in domains.css.
+  //
+  // AND THE FORM OPENS IN ITS PLACE. A create form that appeared below the
+  // card would re-create the same orphan, one step further down, so the
+  // footer row is REPLACED by the form inline within the group: the control
+  // and the thing it opens occupy one slot. Rename and delete are opened
+  // from a ROW's own controls and keep their card below the group, which is
+  // where the row they act on can still be seen.
+  const lifecycle = renderProjectLifecycleCard();
+  const createOpen = !!(state.projectLc && state.projectLc.mode === 'create');
+  const footer = createOpen
+    ? '<div class="cur-group-row cur-group-row-stack dm-proj-form-row">' + lifecycle + '</div>'
+    : (canWrite
+      ? '<button type="button" class="cur-group-row dm-proj-footer" id="dm-proj-new-btn">' +
+          '<span class="dm-proj-footer-icon" aria-hidden="true">' + icon('plus', 14) + '</span>' +
+          '<span class="dm-proj-footer-label">New project</span>' +
+        '</button>'
+      : '');
+
   return (
     '<div class="dm-projects">' +
-      '<div class="cur-group-title">PROJECTS IN THIS DOMAIN</div>' +
-      renderDescription('A domain is one compounding wiki. A project is a thing you build inside it — ' +
-        'and it is what your agents keep their working notes against, so a new session can pick up where ' +
-        'the last one stopped.') +
+      // ── THE EYEBROW AND ITS CAPTION ARE ONE HEADER ──────────────────────
+      // The sentence used to render at x=0, hard against the top of the
+      // card, while the eyebrow above it sat indented to the row padding —
+      // so it read as loose body text that had fallen between the two rather
+      // than as the group's own caption. Wrapped and indented to the SAME
+      // x-axis as the eyebrow and as every row label below it, the three
+      // line up and the header reads as the group's.
+      //
+      // The treatment is the shared DESCRIPTION role, unchanged: static
+      // prose explaining what a thing is, at --type-body-sm / --text-2 —
+      // which IS the kit's secondary text (`.cur-group-label > span` carries
+      // the same pair). This view places it; shared/text.css dresses it, and
+      // domains.css may not name a tx- class to do otherwise.
+      '<div class="dm-proj-head">' +
+        '<div class="cur-group-title">PROJECTS IN THIS DOMAIN</div>' +
+        '<div class="dm-proj-caption">' +
+          renderDescription('A domain is one compounding wiki. A project is a thing you build inside it — ' +
+            'and it is what your agents keep their working notes against, so a new session can pick up where ' +
+            'the last one stopped.') +
+        '</div>' +
+      '</div>' +
       copied +
-      '<div class="cur-group">' + body + truncated + '</div>' +
-      (canWrite
-        ? '<div class="dm-projects-actions">' +
-            '<button class="btn btn-secondary" id="dm-proj-new-btn">New project</button>' +
-          '</div>'
-        : '') +
+      '<div class="cur-group">' + body + truncated + footer + '</div>' +
       (readonly
         ? renderDescription('This is a read-only Shared Brain mirror, so projects here cannot be created, '
           + 'renamed or deleted. Work in your own contributing domain instead.')
@@ -2321,7 +2365,10 @@ function renderProjectsPanel(readonly) {
         ? renderDescription('This server can list projects but not change them. Update The Curator to '
           + 'create, rename or delete a project from here.')
         : '') +
-      renderProjectLifecycleCard() +
+      // Rendered ONCE, in one of two places — never both, or the form's ids
+      // (`#dm-proj-name`, `#dm-proj-submit`) would exist twice and
+      // getElementById would wire the listeners to whichever came first.
+      (createOpen ? '' : lifecycle) +
     '</div>'
   );
 }
