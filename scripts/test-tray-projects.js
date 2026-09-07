@@ -567,9 +567,29 @@ eq(twoInOne.model.headline.route, 'workshop/lumina',
   'and the headline carries one too, for the item that opens the app on the newest project');
 
 // THE MARKER, which is the same pair written for a HUMAN to type.
+//
+// IT DOES NOT COLLAPSE, and until v3.48.0 it did — dropping the domain for a
+// domain's own project, so the widget emitted `articles` where the app's own
+// `Copy marker line` emitted `articles/articles` for the very same project.
+// Two lines for one project is one too many, and the bare form is the one the
+// cross-domain project search can refuse: it answers `project_ambiguous` the
+// moment any other domain holds a project of that name. `articles/articles`
+// is the correct line and is asserted as a literal.
 eq(twoInOne.model.rows[0].marker, 'workshop/lumina', 'the `.curator-project` marker line is the same pair…');
-eq(legacyOnly.model.rows[0].marker, 'articles',
-  '…except on a legacy default project, where it COLLAPSES: a marker reading `articles/articles` is correct and reads like a mistake');
+eq(legacyOnly.model.rows[0].marker, 'articles/articles',
+  '…on a legacy default project too: the marker NEVER collapses to a bare domain, because the app\'s own Copy marker line does not and the bare form is the one that can be refused as ambiguous');
+eq(twoInOne.model.rows.map((r) => r.marker),
+  ['workshop/lumina', 'workshop/lumina', 'workshop/lumina', 'workshop/atlas'],
+  '…on every row, from that row\'s own pair');
+// AND THE TWO PRODUCERS AGREE. The app composes `state.activeSlug + '/' +
+// project` in views/domains.js (copyProjectMarker) and the store returns
+// `${domain}/${slug}` as `markerLine`; this is the widget's third copy of the
+// same rule, so it is checked against the shape both of those emit rather
+// than only against itself.
+for (const r of [...twoInOne.model.rows, ...legacyOnly.model.rows]) {
+  eq(r.marker, r.domain + '/' + r.project,
+    `the marker for ${r.domain} · ${r.project} is exactly the pair the app and the store also write`);
+}
 
 {
   // The shell hands the WHOLE ROW to `onOpenScope`, and takes `route` off it —

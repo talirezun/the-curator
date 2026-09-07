@@ -405,6 +405,25 @@ section('§6  save_project_brief — provenance, wholeness, and the mirror refus
     || !/`brief`/.test((back?.content_is_data || '').split('untrusted')[0]),
     'and `brief` is NOT listed among the untrusted fields', String(back?.content_is_data).slice(0, 200));
 
+  // ── THE AGENT READS THE BODY, NOT OUR ENCODING ────────────────────────
+  //
+  // The provenance comment is a store-private encoding whose contents are
+  // ALREADY on this payload in structured form (`authored_by`,
+  // `brief_authority`). Leaving it inside `brief.text` fed a model a raw HTML
+  // comment as the brief's first line — and, because the app seeds its brief
+  // editor from the same field, was one save away from being written back
+  // into the document as body text. Stripped at the store, so this payload,
+  // the app's fold and the app's editor all get the same clean markdown.
+  ok(typeof back?.brief?.text === 'string' && !back.brief.text.includes('<!-- curator-brief'),
+    'brief.text carries NO provenance comment — the model reads the document, not our header',
+    String(back?.brief?.text).slice(0, 120));
+  ok(back?.brief?.text?.includes('## Roadmap'),
+    'CONTROL — …while the document itself is all still there');
+  ok(back?.brief?.authored_by?.kind === 'agent' || back?.brief?.brief_authority === 'commissioned',
+    '…and the fact the comment carried is still on the payload, structured');
+  ok(readFileSync(sp(D1, 'lumina', 'project.md'), 'utf8').startsWith('<!-- curator-brief:'),
+    'CONTROL — the comment is still ON DISK; only the read strips it');
+
   // A hand-typed brief keeps `owner`. Without this control the assertion above
   // would pass over an implementation that called everything `commissioned`.
   const owner = asJson(await callTool('get_working_state', { domain: D1, project: 'atlas' }));

@@ -2936,10 +2936,23 @@ function bindProjectListeners() {
   document.getElementById('dm-proj-cancel')?.addEventListener('click', closeProjectLifecycle);
 
   // Written straight into state on every keystroke, WITHOUT a re-render, so
-  // the caret survives — the same rule bindLifecycleListeners follows. The
-  // ONE exception is the delete confirmation, which GATES a button and so
-  // has to repaint; it is the only field whose value changes what else is
-  // on screen.
+  // the caret survives — the same rule bindLifecycleListeners follows. That
+  // includes the delete confirmation, and the exception this block used to
+  // carve out for it was the defect:
+  //
+  // ── THE TYPED CONFIRMATION COULD NOT BE TYPED ────────────────────────────
+  // It called render() on every keystroke because its value GATES the submit
+  // button. render() replaces `#view-root`'s innerHTML, so the input the user
+  // was typing into was destroyed by the FIRST character; `document
+  // .activeElement` fell back to <body> and every later keystroke went
+  // nowhere. The button therefore never enabled and the project could not be
+  // deleted from the app at all — found by driving the real Electron app.
+  //
+  // The repaint was never needed. The ONLY thing this field changes on screen
+  // is that one button's disabled state, so this sets exactly that, on the
+  // LIVE node, and the input is never rebuilt. (`#dm-browse-filter` genuinely
+  // must repaint — it filters a list — and pays for it with the focus/caret
+  // restore this field no longer needs.)
   const nameEl = document.getElementById('dm-proj-name');
   nameEl?.addEventListener('input', () => { f.name = nameEl.value; });
   const briefEl = document.getElementById('dm-proj-brief');
@@ -2947,7 +2960,10 @@ function bindProjectListeners() {
   const confirmEl = document.getElementById('dm-proj-confirm');
   confirmEl?.addEventListener('input', () => {
     f.confirmText = confirmEl.value;
-    render(myMountToken);
+    const gated = document.getElementById('dm-proj-submit');
+    // The SAME predicate renderProjectLifecycleCard uses, so a repaint from
+    // any other cause agrees with what this handler last painted.
+    if (gated) gated.disabled = !!f.busy || f.confirmText !== f.project;
   });
 
   const submit = document.getElementById('dm-proj-submit');

@@ -809,7 +809,7 @@ What follows is the same as before: the exact MCP call to make — on a project'
 work-stream that call asks for `scope: "latest"`, so the agent does not need the name to be
 right; on any other row it names that row's own work-stream, because `latest` there would open a
 different one. The prompt claims `latest` only where it is true, and its first line and its MCP
-call always agree. Then the file path to fall back on if it has no bridge, the `.curator-project` marker line for this project, and the instruction to save
+call always agree. Then the file path to fall back on if it has no bridge, the `.curator-project` marker line for this project — always `domain/project`, the same line **Copy marker line** in Domains → Projects gives you, including for a domain's own project where both halves are the same word (`acme/acme` is correct) — and the instruction to save
 the **complete** state back when it runs low on context.
 
 *Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
@@ -2040,7 +2040,7 @@ exists, and creating one is a click away. Five controls:
 | **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
 | **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
-| **Copy marker line** | Puts one line on your clipboard — `domain/project` — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
+| **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
 
 **One project on that list cannot be renamed or deleted: the domain's own** — the one named after
 the domain itself, which is where a domain's state lives when you have not made any other project,
@@ -2587,7 +2587,9 @@ installed does with that:
 
 1. **You named a project, so that wins.** If you did not name one, it looks for a
    **`.curator-project`** file in the folder it is working in, or a parent of it — one line,
-   holding `domain/project` or just `project` — and reads that.
+   holding `domain/project` — and reads that. (A bare `project` is still understood, but nothing
+   the app or the widget writes uses it: a name on its own can become ambiguous the day a second
+   domain gets a project of that name, and the agent refuses rather than guesses.)
 2. **If there is still no name, it lists your projects and asks you.** It does not pick one. An
    agent that guesses wrong does not merely read the wrong handoff; the save at the end of that
    session overwrites it.

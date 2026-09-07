@@ -1655,6 +1655,39 @@ function stripBriefProvenance(text) {
 }
 
 /**
+ * The brief's BODY, as every reader should see it.
+ *
+ * ── WHY THE COMMENT IS STRIPPED ON READ, NOT LEFT FOR CONSUMERS ───────────
+ * The comment is ours: the store writes it and the store parses it, and by
+ * the time a reader has the result the same fact is already on `authoredBy`
+ * in structured form. Leaving it on `text` as well meant every consumer had
+ * to know about a private encoding to avoid showing it — and the app's brief
+ * fold did not, so after the first in-app brief write the standing brief
+ * opened with a literal `<!-- curator-brief: authored_by=human on=… -->` as
+ * its first line (found by driving the real Electron app). The same raw text
+ * seeds the in-app brief EDITOR and is what an agent reads as `brief.text`
+ * over MCP, so the same line was one save away from being typed back into the
+ * document as body text, under a second stamped comment.
+ *
+ * Stripping here fixes all three at once, and it is the only place that can:
+ * a fix in the view would leave the editor seed and the MCP read carrying it.
+ *
+ * ── LEGACY PARITY IS EXACT ────────────────────────────────────────────────
+ * A brief with no comment — every brief written before v3.48.0, and every one
+ * a human hand-authored — comes back BYTE-IDENTICAL. The blank line is
+ * consumed only when a comment was actually removed, so this cannot trim a
+ * document whose own first line happens to be blank.
+ */
+function briefBodyForRead(text) {
+  if (typeof text !== 'string' || !text) return text;
+  const stripped = stripBriefProvenance(text);
+  if (stripped === text) return text;
+  // The writer emits `<comment>\n\n<body>`; BRIEF_PROVENANCE_RE eats the
+  // comment's own newline, so exactly one blank line is left behind.
+  return stripped.replace(/^[ \t]*\r?\n/, '');
+}
+
+/**
  * Render the comment for `authoredBy`, or NULL when there is nothing to
  * attribute.
  *
@@ -2133,7 +2166,11 @@ export async function readProjectBrief(domain, project) {
   const clean = neutraliseProtocol(r.text);
   const dups = findDuplicateHeadings(clean, BRIEF_SECTIONS);
   out.present = true;
-  out.text = clean;
+  // `text` is the BODY — the provenance comment is stripped, because the same
+  // fact leaves on `authoredBy` below and a private encoding must not become
+  // furniture in the document. `bytes` deliberately stays the FILE's size,
+  // which is what the size budget and the shrink guard are measured against.
+  out.text = briefBodyForRead(clean);
   out.bytes = r.bytes;
   out.truncated = r.truncated;
   out.updatedAt = r.mtime;
@@ -3860,7 +3897,9 @@ export async function readWorkingState(project, opts = {}) {
       const clean = neutraliseProtocol(r.text);
       const dups = findDuplicateHeadings(clean, BRIEF_SECTIONS);
       out.brief = {
-        present: true, text: clean, bytes: r.bytes, truncated: r.truncated,
+        // The BODY, with the provenance comment stripped — see
+        // briefBodyForRead. `authoredBy` below carries what it said.
+        present: true, text: briefBodyForRead(clean), bytes: r.bytes, truncated: r.truncated,
         updatedAt: r.mtime, sanitisedOnRead: clean !== r.text,
         sanitisedOnReadNote: clean !== r.text ? READ_SANITISE_NOTE : null,
         duplicateHeadings: dups,

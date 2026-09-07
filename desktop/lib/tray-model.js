@@ -2079,14 +2079,26 @@ export function buildTrayModel(summary, opts = {}) {
       projectLabel,
       projectFull: projectFullName(s),
       route: domain ? domain + '/' + project : project,
-      // The marker COLLAPSES for a domain's own default project, where the
-      // project slug IS the domain: a `.curator-project` reading
-      // `articles/articles` is correct and reads like a mistake, and the
-      // marker's own grammar allows the bare project name. `route` deliberately
-      // does NOT collapse — it is compared against the app's own
-      // `data-mem-project`, which is a machine-read attribute rather than
-      // something a person types.
-      marker: (!domain || s.isDefaultProject === true) ? project : domain + '/' + project,
+      // ── THE MARKER NEVER COLLAPSES, AND IT USED TO ────────────────────
+      //
+      // Up to v3.48.0 this dropped the domain for a domain's own project, on
+      // the reading that a `.curator-project` file saying `articles/articles`
+      // is correct but looks like a mistake. That bought tidiness and sold
+      // the one property the marker exists for. The app's own `Copy marker
+      // line` button has always emitted `<domain>/<project>`, so ONE project
+      // had TWO marker lines depending on which surface you copied it from;
+      // and a bare `articles` is resolved by the cross-domain project search,
+      // which refuses rather than guesses the moment any other domain holds a
+      // project of that name — so the collapsed form could turn a marker that
+      // worked into `project_ambiguous` when an unrelated project was created
+      // somewhere else entirely.
+      //
+      // One rule, everywhere: `<domain>/<project>`, always. `articles/articles`
+      // IS the right line for a domain's own project, and the docs say so
+      // rather than the code hiding it. Only a row with no domain at all — a
+      // shape older than v3.48.0 — falls back to the bare project name,
+      // because there is no pair to write.
+      marker: domain ? domain + '/' + project : project,
       // Whether this project's state lives at the domain's state ROOT, with no
       // project segment — which is where the domain's own project lives, both
       // in a tree written before v3.48.0 and in one created today. It decides

@@ -149,7 +149,10 @@ instruction you paste into a fresh agent session, whose first line is the short 
 `Resume project "lumina" (domain "acme"), latest scope.` and which asks for
 `scope: "latest"` on a project's newest work-stream, so a stale name cannot send it to the wrong
 place — on any other row it names that row's own work-stream instead, because `latest` there
-would open a different one; the first line and the MCP call always agree), **Copy handoff
+would open a different one; the first line and the MCP call always agree, and the
+`.curator-project` line it names is always `domain/project` — the same line the app's **Copy
+marker line** gives you, `acme/acme` included where a domain's own project makes both halves the
+same word), **Copy handoff
 as Markdown** (the standing brief and the handoff themselves, for an assistant that cannot reach
 your files), and **Reveal current.md in Finder**. The handoff is copied through the store's own read, so the markup
 escaping that applies to a file which arrived over sync applies to the clipboard too. See

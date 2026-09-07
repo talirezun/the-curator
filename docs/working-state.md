@@ -490,20 +490,23 @@ state yet has no latest scope, and the read says so rather than inventing one.
 ### The `.curator-project` marker
 
 A repository can name its own project. Put a file called **`.curator-project`** at the repo root
-holding one line:
+holding one line, always `domain/project`:
 
 ```
 acme/lumina
 ```
 
-or, where the project name is unambiguous across your domains, just:
-
-```
-lumina
-```
+**That includes a domain's own project, where the two halves are the same word** — `acme/acme` is
+the correct line, not a mistake and not something to tidy. The bare form (`lumina`) is still
+accepted by the skill for a marker somebody typed by hand, but nothing the app or the widget
+writes uses it: a bare name is resolved by the cross-domain project search, which refuses rather
+than guesses the moment a second domain holds a project of that name — so a marker that worked
+could stop working because of a project created somewhere else entirely.
 
 An agent that starts in that folder reads the marker instead of asking you. The Projects list in
-the app has a **Copy marker line** button that gives you the exact line for a project.
+the app has a **Copy marker line** button that gives you the exact line for a project, and the
+menu-bar widget's **Copy resume prompt** names the same line for the same project — one rule, so
+the two can never hand you different answers.
 
 **This is a convention, not a mechanism.** No server code and no MCP tool reads that file. The
 [continuity skill](#the-skill-that-carries-the-capture-discipline) is what reads it, from the
@@ -833,6 +836,12 @@ A brief written through `save_project_brief` carries a provenance comment as its
 `on` is always a full ISO-8601 timestamp, and `harness`, `model` and `commissioned` appear only
 when an agent wrote it — a hand-stamped human line is just
 `<!-- curator-brief: authored_by=human on=… -->`.
+
+**The comment is stored in the file and stripped from every read.** It is the store's own
+encoding, not part of your document, so `brief.text` — what the app's brief fold shows, what
+seeds the app's brief editor, and what an agent gets over MCP — is the markdown without it; what
+it recorded leaves separately on `authoredBy`, parsed. A brief that carries no comment (every
+brief written by hand, and every one written before v3.48.0) reads back byte-identical.
 
 That line is what the authority classifier reads. A brief with no such line, or one recording a
 human author, classifies as `owner`. One recording an **agent** — or an `authored_by` value the

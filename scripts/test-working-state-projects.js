@@ -433,13 +433,87 @@ section('7. Tier 1: whole-markdown briefs, provenance, and the shrink guard');
   assert(typeof rb.authoredBy.at === 'string' && !Number.isNaN(Date.parse(rb.authoredBy.at)),
     '…including a usable timestamp', rb.authoredBy.at);
 
+  // ── THE COMMENT IS STRIPPED FROM `text`, ON EVERY READ ─────────────────
+  //
+  // THE DEFECT (found by driving the real Electron app): the Agent memory
+  // brief fold opened with a literal
+  // `<!-- curator-brief: authored_by=human on=… -->` as its first line after
+  // any in-app brief write. The store returned the raw document as
+  // `brief.text`, so the app's fold, the app's brief EDITOR seed and the
+  // `brief.text` an agent reads over MCP all carried an encoding that is
+  // ours, not the user's — and which is already returned, parsed, on
+  // `authoredBy`. Stripping in the view would have fixed one of those three;
+  // the store fixes all of them, so the assertion lives here.
+  assert(!rb.text.includes('<!-- curator-brief'),
+    'THE READ RETURNS THE BODY: no provenance comment anywhere in brief.text', rb.text.slice(0, 120));
+  assert(rb.text.startsWith('# briefdom'),
+    '…and it opens on the document\'s own first line, with no blank line left where the comment was',
+    JSON.stringify(rb.text.slice(0, 40)));
+  assert(rb.text.includes('## Roadmap') && rb.text.includes('Delegate; do not build.'),
+    '…and nothing but the comment was removed');
+  assert(rb.authoredBy && rb.authoredBy.kind === 'agent',
+    '…while the fact the comment carried still leaves, on authoredBy — stripped, not lost');
+  // CONTROL: the file on disk still HAS the comment. This is a read-side
+  // presentation rule, not a decision to stop recording provenance.
+  assert(/^<!-- curator-brief: /.test(readFileSync(statePath('briefdom', BRIEF_FILENAME), 'utf8')),
+    'CONTROL — the comment is still ON DISK; only the read strips it');
+
+  // THE SAME STRIP ON THE OTHER FRONT DOOR. `readWorkingState` composes its
+  // own brief block rather than calling readProjectBrief, so it is a second
+  // implementation of the same rule and is asserted separately — this is the
+  // one the app view and the MCP `get_working_state` actually read.
+  const wsRead = await readWorkingState('briefdom', { project: 'briefdom' });
+  assert(wsRead.brief && wsRead.brief.present === true,
+    'readWorkingState finds the brief', JSON.stringify(wsRead.brief).slice(0, 120));
+  assert(!wsRead.brief.text.includes('<!-- curator-brief'),
+    '…and returns the body, with no provenance comment — the field the app fold and the MCP read use',
+    wsRead.brief.text.slice(0, 120));
+  assert(wsRead.brief.text === rb.text,
+    '…byte-identical to readProjectBrief\'s, so the two doors cannot show different documents');
+  assert(wsRead.brief.authoredBy && wsRead.brief.authoredBy.kind === 'agent',
+    '…with the provenance still structured on this door too');
+
+  // ── THE EDITOR ROUND TRIP ──────────────────────────────────────────────
+  // The app seeds its brief editor from `brief.text` and saves whatever is in
+  // the box. Before the strip that meant the comment was typed back into the
+  // document AS BODY, under a second stamped comment — one save from becoming
+  // permanent furniture. Driven here with the value a reader now gets.
+  const seeded = await saveProjectBriefText('briefdom', 'briefdom', rb.text, {
+    authoredBy: { kind: 'human' },
+  });
+  assert(seeded.ok, 'saving the editor-seeded text back succeeds');
+  const diskSeeded = readFileSync(statePath('briefdom', BRIEF_FILENAME), 'utf8');
+  assert((diskSeeded.match(/curator-brief:/g) || []).length === 1,
+    'EXACTLY ONE provenance comment after the round trip — the seed carried none in, and the writer stamps one',
+    String((diskSeeded.match(/curator-brief:/g) || []).length));
+  const rbSeeded = await readProjectBrief('briefdom', 'briefdom');
+  assert(rbSeeded.text.trim() === rb.text.trim(),
+    '…and the body survives the round trip unchanged', JSON.stringify(rbSeeded.text.slice(0, 60)));
+  assert(rbSeeded.authoredBy && rbSeeded.authoredBy.kind === 'human',
+    '…carrying THIS write\'s authorship, which parseBriefProvenance still reads off the stored comment');
+
   // A hand-authored file (no comment) is the `owner` reading.
   makeDomain('handdom');
   mkdirSync(statePath('handdom'), { recursive: true });
-  writeFileSync(statePath('handdom', BRIEF_FILENAME), '# hand\n\n## Standing brief\n\nTyped by a person.\n');
+  const handDoc = '# hand\n\n## Standing brief\n\nTyped by a person.\n';
+  writeFileSync(statePath('handdom', BRIEF_FILENAME), handDoc);
   const hb = await readProjectBrief('handdom', 'handdom');
   assert(hb.present && hb.authoredBy === null,
     'a brief with no provenance comment reports authoredBy: null — the hand-authored reading');
+  // LEGACY PARITY, AS AN IDENTITY. Every brief written before v3.48.0 has no
+  // comment, and the strip must be a no-op on those to the byte — a rule that
+  // trimmed a leading blank line unconditionally would silently edit a
+  // document a person hand-wrote.
+  assert(hb.text === handDoc,
+    'a brief with no comment comes back BYTE-IDENTICAL to the file on disk',
+    JSON.stringify(hb.text));
+  const blankFirst = '\n\n# leading blank lines\n\nkept.\n';
+  writeFileSync(statePath('handdom', BRIEF_FILENAME), blankFirst);
+  const hb2 = await readProjectBrief('handdom', 'handdom');
+  assert(hb2.text === blankFirst,
+    '…including one whose own first line IS blank, which a naive strip would eat',
+    JSON.stringify(hb2.text));
+  writeFileSync(statePath('handdom', BRIEF_FILENAME), handDoc);
 
   // An UNRECOGNISED authored_by must not read as human. Missing evidence may
   // not buy authority.

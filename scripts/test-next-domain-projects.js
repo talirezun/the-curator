@@ -23,6 +23,9 @@
  *  · DELETE IS GATED ON AN EXACT TYPED MATCH: the button is disabled until
  *    the typed text equals the project name, the request carries it, and the
  *    route re-checks it independently (see test-next-memory-projects.js).
+ *  · AND THE CONFIRMATION CAN BE TYPED AT ALL (S9). The gate was always
+ *    right; the only way a user had of moving the value was not. See S9's
+ *    own block for the defect and for why S4 stayed green throughout.
  *  · EVERY STATE OF THE PANEL RENDERS SOMETHING — loading, failed, empty,
  *    read-only, and "this server is too old". A section that vanishes when it
  *    has nothing to show is indistinguishable from one that failed.
@@ -41,9 +44,13 @@
  *    the mount is stale — a leaked gate disables Sync's buttons forever.
  *
  * ── NOT ENFORCED (named, not implied away) ───────────────────────────────
- *  · No real DOM and no real browser. `render` is a spy; markup is asserted
- *    as strings. Layout, contrast and the two themes are the orchestrator's
- *    Electron pass.
+ *  · S1-S8 have no DOM: `render` is a spy and markup is asserted as strings.
+ *    S9 is the exception and says so — it builds a DOM MODEL (not jsdom; this
+ *    repo ships zero devDeps) and dispatches real `input` events at the
+ *    shipped `bindProjectListeners`, because the v3.48.0 defect it guards was
+ *    invisible to every string assertion above it. It is still a model:
+ *    layout, contrast, the two themes and what Chromium does with a focused
+ *    node removed mid-edit are the orchestrator's Electron pass.
  *  · The route's own guards are covered by test-next-memory-projects.js.
  *    This file asserts what the VIEW sends and shows.
  *  · `navigator.clipboard` is injected, so this proves what the copy handler
@@ -117,6 +124,7 @@ const FNS = [
   'classifyProjectError',
   'runProjectAction',
   'copyProjectMarker',
+  'bindProjectListeners',
 ];
 
 // The collaborators. Every one is injected and RECORDED, so an assertion can
@@ -133,7 +141,12 @@ const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => 
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 function icon() { return ''; }
-function render() { calls.render++; }
+let renderImpl = null;
+function render() { calls.render++; if (renderImpl) renderImpl(); }
+// The view reaches for a real document. Every section but S9 runs against
+// this inert stand-in (nothing they call touches it); S9 swaps in a real DOM
+// model and drives the shipped listeners against it.
+let document = { getElementById: () => null, querySelectorAll: () => [] };
 function isCurrentMount() { return mounted; }
 function reportAsyncActionFailure() { calls.asyncFailures++; }
 function revealMessage(sel) { calls.revealed.push(sel); }
@@ -170,6 +183,8 @@ try {
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gates.length = 0;
          calls.clipboard.length = 0; calls.asyncFailures = 0; calls.revealed.length = 0; },
        __setFetch: (fn) => { fetchResponder = fn; },
+       __setDocument: (d) => { document = d; },
+       __setRenderImpl: (fn) => { renderImpl = fn; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
   )();
@@ -181,9 +196,10 @@ try {
 const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
   renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
-  classifyProjectError, runProjectAction, copyProjectMarker,
+  classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
   PROJECT_BRIEF_TEMPLATE,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
+  __setDocument, __setRenderImpl,
 } = sandbox;
 
 const ROW = (over) => ({
@@ -728,6 +744,254 @@ section('S8 -- Placement and styling contracts');
     /state\.projects = null/.test(selectDomain) && /state\.projectLc = null/.test(selectDomain),
     selectDomain);
   ok('...and re-asks for the new domain projects', /loadProjects\(/.test(selectDomain));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S9 -- THE TYPED DELETE CONFIRMATION CAN ACTUALLY BE TYPED (real DOM)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT, found by driving the real Electron app ───────────────────
+// The delete confirmation could not be completed. `#dm-proj-confirm`'s input
+// handler called render(), and render() replaces `#view-root`'s innerHTML —
+// so the input the user was typing into was DESTROYED by the first
+// character. `document.activeElement` fell back to <body>, every later
+// keystroke went nowhere, the typed text never reached the project name, the
+// button never enabled, and a project could not be deleted from the app at
+// all.
+//
+// ── WHY EVERY ASSERTION ABOVE STAYED GREEN ───────────────────────────────
+// S4 asserts the button's disabled attribute for a GIVEN `f.confirmText`, by
+// calling the renderer with state already set. That is a statement about the
+// gate, and the gate was never broken — what was broken was the only way a
+// user has of moving `f.confirmText`. Nothing in this file had a DOM, so
+// nothing could dispatch a keystroke. This section is the behavioural half:
+// a DOM model, the SHIPPED bindProjectListeners, and real `input` events.
+//
+// NOT ENFORCED: this is a model, not Chromium. It cannot prove what a real
+// browser does with a focused node that is removed mid-edit; it proves the
+// view no longer removes it. §9d is the anti-vacuity control that the model
+// really would destroy the node if the code repainted.
+
+function makeDom() {
+  let idSeq = 0;
+  let activeElement = null;
+
+  const unescape = (v) => String(v)
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+
+  function el(tag, attrs) {
+    const node = {
+      __id: ++idSeq,
+      tagName: String(tag).toUpperCase(),
+      attrs: attrs || {},
+      children: [],
+      parentNode: null,
+      _listeners: Object.create(null),
+      value: attrs && attrs.value !== undefined ? unescape(attrs.value) : '',
+      disabled: !!(attrs && Object.prototype.hasOwnProperty.call(attrs, 'disabled')),
+      get id() { return node.attrs.id || ''; },
+      get dataset() {
+        const d = {};
+        for (const k of Object.keys(node.attrs)) {
+          if (k.startsWith('data-')) {
+            d[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = unescape(node.attrs[k]);
+          }
+        }
+        return d;
+      },
+      descendants() { return node.children.flatMap((c) => [c, ...c.descendants()]); },
+      // The setter a real innerHTML write is: every descendant is detached,
+      // and focus goes with them. Without the focus half this suite would
+      // report "the keystroke landed" about a node the browser had thrown
+      // away.
+      set innerHTML(html) {
+        const detach = (n) => { n.parentNode = null; n.children.forEach(detach); };
+        if (activeElement && node.descendants().includes(activeElement)) activeElement = null;
+        node.children.forEach(detach);
+        node.children = parseHtml(String(html), node);
+      },
+      addEventListener(type, fn) { (node._listeners[type] = node._listeners[type] || []).push(fn); },
+      focus() { activeElement = node; },
+    };
+    return node;
+  }
+
+  function parseHtml(html, parent) {
+    const roots = [];
+    const stack = [{ node: parent, list: roots }];
+    const re = /<\/?([a-zA-Z0-9]+)((?:\s+[a-zA-Z0-9:_-]+(?:="[^"]*")?)*)\s*\/?>/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (m[0][1] === '/') { if (stack.length > 1) stack.pop(); continue; }
+      const attrs = {};
+      const ar = /([a-zA-Z0-9:_-]+)(?:="([^"]*)")?/g;
+      let a;
+      while ((a = ar.exec(m[2])) !== null) { if (a[1]) attrs[a[1]] = a[2] === undefined ? '' : a[2]; }
+      const node = el(m[1], attrs);
+      const top = stack[stack.length - 1];
+      node.parentNode = top.node;
+      top.list.push(node);
+      if (top.node) top.node.children = top.list;
+      const selfClosing = /\/>$/.test(m[0]) || /^(input|img|br|hr|meta|link)$/i.test(m[1]);
+      if (!selfClosing) stack.push({ node, list: node.children });
+    }
+    return roots;
+  }
+
+  function matches(node, sel) {
+    if (sel.startsWith('#')) return node.attrs.id === sel.slice(1);
+    if (sel.startsWith('[') && sel.endsWith(']')) {
+      return Object.prototype.hasOwnProperty.call(node.attrs, sel.slice(1, -1));
+    }
+    return node.tagName === sel.toUpperCase();
+  }
+
+  function dispatch(target, type) {
+    const e = { type, target, preventDefault() {}, stopPropagation() {} };
+    let n = target;
+    while (n) {
+      (n._listeners[type] || []).slice().forEach((fn) => fn(e));
+      n = n.parentNode;
+    }
+    return e;
+  }
+
+  const body = el('body', {});
+  const viewRoot = el('div', { id: 'view-root' });
+  viewRoot.parentNode = body;
+  body.children.push(viewRoot);
+
+  return {
+    viewRoot,
+    dispatch,
+    get activeElement() { return activeElement; },
+    document: {
+      getElementById: (id) => body.descendants().find((d) => d.attrs.id === id) || null,
+      querySelectorAll: (sel) => body.descendants().filter((d) => matches(d, sel)),
+    },
+  };
+}
+
+/**
+ * ONE KEYSTROKE, the way a browser delivers one: to whatever currently has
+ * focus. Returns false when the character was LOST — which is exactly what
+ * the defect did to every character after the first, and is the reason this
+ * routes through activeElement rather than re-finding the input by id.
+ */
+function typeChar(dom, ch) {
+  const el = dom.activeElement;
+  if (!el || el.tagName !== 'INPUT') return false;
+  el.value += ch;
+  dom.dispatch(el, 'input');
+  return true;
+}
+
+/** Mount the delete panel: paint, wire the SHIPPED listeners, focus the box. */
+function mountDeletePanel(dom, project) {
+  __setState(freshState({
+    projects: {
+      slug: 'alpha', loading: false, error: null,
+      rows: [ROW({ project })], truncated: false, canWrite: true, readonly: false,
+    },
+    projectLc: { mode: 'delete', slug: 'alpha', project, name: '', brief: '', confirmText: '', busy: false, refusal: null, error: null },
+  }));
+  const repaint = () => {
+    dom.viewRoot.innerHTML = renderProjectLifecycleCard();
+    bindProjectListeners();
+  };
+  __setDocument(dom.document);
+  __setRenderImpl(repaint);
+  __reset();
+  repaint();
+  const input = dom.document.getElementById('dm-proj-confirm');
+  if (input) input.focus();
+  return { input, repaint };
+}
+
+{
+  const dom = makeDom();
+  const { input } = mountDeletePanel(dom, 'lumina');
+
+  // §9a CONTROLS. Without these the section could pass over a panel that was
+  // never painted or a focus model that never moved.
+  ok('CONTROL -- the real markup parsed and the confirmation input exists', !!input);
+  ok('CONTROL -- ...and it starts focused, as the user typing into it requires',
+    dom.activeElement === input);
+  const btn0 = dom.document.getElementById('dm-proj-submit');
+  ok('CONTROL -- the Delete button exists and starts disabled on an empty box',
+    !!btn0 && btn0.disabled === true);
+
+  // §9b THE ASSERTION THE DEFECT FAILS. Two characters, delivered to whatever
+  // has focus.
+  const first = typeChar(dom, 'l');
+  const second = typeChar(dom, 'u');
+  ok('the FIRST keystroke reaches the input', first);
+  ok('the SECOND keystroke reaches the input too -- the defect lost every character after the first', second);
+  const still = dom.document.getElementById('dm-proj-confirm');
+  ok('the input is the SAME NODE OBJECT after two keystrokes -- it was never rebuilt',
+    still === input, still ? 'node #' + still.__id + ' vs #' + input.__id : 'gone');
+  ok('...and it still has focus, so there is no caret to restore',
+    dom.activeElement === input);
+  eq('...carrying BOTH characters', still && still.value, 'lu');
+  eq('...and state agrees with the box', __state().projectLc.confirmText, 'lu');
+  eq('NO REPAINT AT ALL while typing -- the repaint was the defect, not the fix',
+    __calls().render, 0);
+
+  // §9c THE GATE OPENS EXACTLY ON THE FULL NAME, driven by real keystrokes on
+  // the live node rather than by setting state and re-rendering.
+  const gate = () => dom.document.getElementById('dm-proj-submit').disabled;
+  ok('a partial name leaves Delete disabled', gate() === true);
+  for (const ch of 'min') typeChar(dom, ch);
+  eq('PRECONDITION -- one character short', __state().projectLc.confirmText, 'lumin');
+  ok('...still disabled', gate() === true);
+  typeChar(dom, 'a');
+  eq('the box now holds the exact project name', __state().projectLc.confirmText, 'lumina');
+  ok('DELETE ENABLES on the exact match -- the button the user could never reach',
+    gate() === false);
+  typeChar(dom, 'x');
+  ok('...and disables again on one character too many, so the gate is an equality and not a prefix',
+    gate() === true);
+  ok('the input survived the whole sequence as one node',
+    dom.document.getElementById('dm-proj-confirm') === input);
+}
+{
+  // §9d ANTI-VACUITY. The claim in §9b is that the node SURVIVES, and it is
+  // worth nothing unless a repaint really would destroy it in this model.
+  // Painting the panel again by hand must produce a DIFFERENT node object and
+  // drop focus -- which is precisely what render() did on every keystroke.
+  const dom = makeDom();
+  const { input, repaint } = mountDeletePanel(dom, 'lumina');
+  typeChar(dom, 'l');
+  repaint();
+  const after = dom.document.getElementById('dm-proj-confirm');
+  ok('CONTROL -- a repaint really does replace the input with a different node',
+    !!after && after !== input);
+  ok('CONTROL -- ...and focus is lost with it, so a keystroke after one would be dropped',
+    dom.activeElement === null);
+  ok('CONTROL -- ...which typeChar reports as a lost character',
+    typeChar(dom, 'u') === false);
+  eq('CONTROL -- the repainted box is re-seeded from state, so state is what survives a repaint',
+    after && after.value, 'l');
+}
+{
+  // §9e A BUSY FORM STAYS DISABLED. The handler applies the same predicate the
+  // renderer does, so a keystroke arriving mid-delete cannot enable the button
+  // the renderer had just disabled.
+  const dom = makeDom();
+  mountDeletePanel(dom, 'lumina');
+  for (const ch of 'lumina') typeChar(dom, ch);
+  ok('PRECONDITION -- enabled on the exact match',
+    dom.document.getElementById('dm-proj-submit').disabled === false);
+  __state().projectLc.busy = true;
+  // The box still holds the EXACT name, so the equality half of the predicate
+  // is satisfied and only `busy` can keep the button shut. Anything less than
+  // this would pass with the busy half deleted.
+  const box = dom.document.getElementById('dm-proj-confirm');
+  dom.dispatch(box, 'input');
+  eq('PRECONDITION -- the typed text still matches exactly', __state().projectLc.confirmText, 'lumina');
+  ok('a keystroke while the delete is IN FLIGHT still leaves the button disabled -- the handler applies the whole predicate the renderer does, not just the name match',
+    dom.document.getElementById('dm-proj-submit').disabled === true);
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

@@ -144,6 +144,27 @@ section('§1 the resume prompt — both arms, and what it never invents');
   ok(p.includes('workshop/demo') && /\.curator-project/.test(p),
     'the prompt names the `.curator-project` marker line, so a session started in the wrong place can be told where it belongs');
 
+  // AND IT NEVER COLLAPSES TO A BARE DOMAIN, INCLUDING FOR A DOMAIN'S OWN
+  // PROJECT. Until v3.48.0 the widget's model emitted `articles` there while
+  // the app's `Copy marker line` emitted `articles/articles` for the same
+  // project — two lines for one project, and the bare one is the form the
+  // cross-domain project search can refuse as ambiguous. Asserted on BOTH
+  // arms: the row that carries a marker, and the row that does not and makes
+  // the fallback compose one.
+  const ownMarked = rp.composeResumePrompt({
+    domain: 'articles', project: 'articles', scope: 'main', machine: 'm',
+    isDefaultProject: true, marker: 'articles/articles',
+  });
+  ok(ownMarked.includes('This work belongs to articles/articles'),
+    'a domain\'s own project names the FULL pair — `articles/articles` is the correct line and is not tidied away');
+  const ownUnmarked = rp.composeResumePrompt({
+    domain: 'articles', project: 'articles', scope: 'main', machine: 'm', isDefaultProject: true,
+  });
+  ok(ownUnmarked.includes('This work belongs to articles/articles'),
+    '…and the fallback for a row carrying no marker composes the same pair, so the two producers cannot disagree');
+  ok(!/belongs to articles —/.test(ownMarked) && !/belongs to articles —/.test(ownUnmarked),
+    '…and neither arm emits the bare domain, which is the collapsed form this release removed');
+
   // ── `latest` IS A CLAIM, AND IT IS ONLY MADE WHEN IT IS TRUE ──────────
   //
   // The menu shows up to two scopes per project. On the SECOND one, "latest"

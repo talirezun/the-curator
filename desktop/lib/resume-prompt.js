@@ -134,9 +134,16 @@ export function composeResumePrompt(row, opts = {}) {
     : `with project "${project}" and scope "${scopeArg}".`;
 
   // The repo marker, when the row carries one. It is a SKILL-LEVEL convention
-  // — one line, `domain/project`, at a repo root — and naming it here is how a
-  // session that started in the wrong place gets told where it belongs without
-  // the user having to remember the syntax.
+  // — one line, `<domain>/<project>`, at a repo root — and naming it here is
+  // how a session that started in the wrong place gets told where it belongs
+  // without the user having to remember the syntax.
+  //
+  // It NEVER collapses to a bare project name, including for a domain's own
+  // project: `articles/articles` is the correct line, the app's `Copy marker
+  // line` button emits the same pair, and the bare form is resolved by the
+  // cross-domain search, which refuses on a collision it cannot see from
+  // here. The fallback below composes the same pair when the row carries no
+  // marker of its own, so the two producers cannot disagree.
   const marker = text(r.marker) || (domain ? `${domain}/${project}` : null);
 
   return [
