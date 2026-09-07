@@ -64,9 +64,9 @@ import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
 } from './lib/window-state.js';
-import { buildTrayModel, liveExpiresInMs, MAX_ROWS } from './lib/tray-model.js';
+import { buildTrayModel, liveExpiresInMs, TRAY_FETCH_ROWS } from './lib/tray-model.js';
 import { buildTrayMenuTemplate, trayToolTip, ID_ROW_RESUME, ID_ROW_HANDOFF, ID_ROW_REVEAL } from './lib/tray-menu.js';
-import { composeResumePrompt, composeHandoffMarkdown } from './lib/resume-prompt.js';
+import { composeResumePrompt, composeHandoffMarkdown, stateRelPath } from './lib/resume-prompt.js';
 import { decideRemoteCheck, remoteAnswerIsRenderable } from './lib/tray-remote.js';
 import { trayIconPngs } from './lib/tray-icon.js';
 import { resolveBackgroundMode, resolveTrayPlan, planModeTransition } from './lib/background-mode.js';
@@ -897,10 +897,18 @@ async function runMenuInstall(action) {
 // proven as data — the template, the model, the pixels, the transitions.
 // desktop/README.md carries the same statement.
 
-/** The row limit asked of the data layer. The model caps again at MAX_ROWS;
- *  asking for exactly what is displayable keeps the index read as small as the
- *  contract allows. */
-const TRAY_ROW_LIMIT = MAX_ROWS;
+/**
+ * The row limit asked of the data layer.
+ *
+ * It WAS `MAX_ROWS` — exactly what the menu displays — and grouping by project
+ * (v3.48.0) makes that wrong: the summary's slice is newest-first across ALL
+ * projects, so asking for five hands back five rows of whichever project saved
+ * most recently and every other project is invisible to the model. The model
+ * cannot group what it was never given. `TRAY_FETCH_ROWS` is the data layer's
+ * own ceiling; the cost is an array rather than I/O, because the same journals
+ * are read for the same pairs whatever the limit is. See its docblock.
+ */
+const TRAY_ROW_LIMIT = TRAY_FETCH_ROWS;
 
 /**
  * Resolve the data layer's `getTraySummary`.
@@ -1208,9 +1216,18 @@ function trayImage(state) {
   return img;
 }
 
-/** Open the app on a scope. There is NO second reader in the shell. */
+/**
+ * Open the app on a row's PROJECT. There is NO second reader in the shell.
+ *
+ * `row.route` is `<domain>/<project>` and is built in `lib/tray-model.js`, which
+ * the offline suite executes — this file cannot be imported by `npm test`, so a
+ * route composed here could only ever be source-scanned. The fallback to the
+ * bare project name is what makes a row from a model that predates `route`
+ * still land somewhere rather than nowhere.
+ */
 async function openScopeInApp(row) {
-  await openMemoryView(row && row.project ? row.project : null);
+  const route = row && (row.route || row.project) ? (row.route || row.project) : null;
+  await openMemoryView(route);
 }
 
 /**
@@ -1239,8 +1256,12 @@ async function runRowAction(row, action) {
       return;
     }
     if (action === ID_ROW_HANDOFF) {
+      // FOUR ARGUMENTS SINCE v3.48.0: the store's first argument used to be
+      // called `project` and held the DOMAIN, because a domain had one state
+      // tree. It takes both now, and the store's own adapter collapses the call
+      // back to the old shape on a store that does not know about projects.
       const doc = getHandoffMarkdown
-        ? await getHandoffMarkdown(row.project, row.scope, row.machine) : null;
+        ? await getHandoffMarkdown(row.domain, row.project, row.scope, row.machine) : null;
       const text = doc && doc.ok ? composeHandoffMarkdown(doc) : null;
       // A refusal is SAID, not swallowed: a Copy that quietly does nothing is
       // indistinguishable from a Copy that worked, and the user finds out by
@@ -1256,8 +1277,13 @@ async function runRowAction(row, action) {
     if (action === ID_ROW_REVEAL) {
       const root = await domainsDirOrNull();
       if (!root || !row.machine) return;
-      shell.showItemInFolder(
-        path.join(root, row.project, 'state', row.scope, row.machine, 'current.md'));
+      // THE PATH IS COMPOSED BY `stateRelPath`, NOT HERE, and that is the whole
+      // point: v3.48.0 has two on-disk layouts live at once (a project segment,
+      // or a legacy tree with none), the resume prompt PRINTS a path and this
+      // OPENS one, and a menu that printed one path and opened another would be
+      // the worst kind of wrong. One pure function, executed by the suite,
+      // answers for both.
+      shell.showItemInFolder(path.join(root, ...stateRelPath(row).split('/')));
     }
   } catch { /* a menu handler must not take the process with it */ }
 }
@@ -1290,7 +1316,23 @@ async function domainsDirOrNull() {
  * shell learns when the coupling has rotted and says so, instead of offering a
  * menu item that silently does nothing.
  *
- * The project name is passed as a JSON string and compared against
+ * ── THE ROUTE IS `<domain>/<project>`, AND IT TRIES THE BARE NAME TOO ──────
+ *
+ * v3.48.0 puts many projects inside one domain, so a project name alone stops
+ * identifying a row: two domains may each hold a `main`. The shell therefore
+ * emits `<domain>/<project>` — `row.route`, composed in `lib/tray-model.js` —
+ * and the memory view's `data-mem-project` carries the same pair.
+ *
+ * IT ALSO ACCEPTS THE BARE PROJECT NAME, and that is deliberate rather than
+ * defensive. The two halves of this coupling ship in one release but are not
+ * one file: a window that has not been reloaded since an update, or a view
+ * still emitting the pre-v3.48.0 attribute, would otherwise take the "no such
+ * row" exit and land the user on an unfiltered view with no explanation. The
+ * fallback is tried SECOND, so an exact `<domain>/<project>` match always wins
+ * and the bare name can never select the wrong domain's project while the right
+ * one is on screen.
+ *
+ * Both forms are passed as JSON strings and compared against
  * `dataset.memProject` — never interpolated into a selector. A project name is
  * user-supplied text, and building a CSS selector out of it would be an
  * injection into code running in the app's own origin.
@@ -1301,14 +1343,22 @@ async function openMemoryView(project) {
   if (mainWindow.webContents.isLoading()) await waitForLoad(mainWindow.webContents);
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
+  // The bare project name, for the fallback comparison. Derived HERE rather than
+  // inside the injected script: the split is a string operation on a value this
+  // process owns, and doing it in the page would put one more line of logic
+  // somewhere no test can execute it.
+  const route = project === null ? '' : String(project);
+  const bare = route.includes('/') ? route.slice(route.indexOf('/') + 1) : route;
   const js =
     '(() => { const rail = document.querySelector("[data-view=\\"memory\\"]");' +
     ' if (!rail) return "no-view";' +
     ' rail.click();' +
-    ' const want = ' + JSON.stringify(project === null ? '' : String(project)) + ';' +
+    ' const want = ' + JSON.stringify(route) + ';' +
+    ' const alt = ' + JSON.stringify(bare) + ';' +
     ' if (!want) return "view";' +
     ' const rows = Array.from(document.querySelectorAll(".mem-row[data-mem-project]"));' +
-    ' const hit = rows.find((el) => el.dataset.memProject === want);' +
+    ' const hit = rows.find((el) => el.dataset.memProject === want)' +
+    '   || (alt && alt !== want ? rows.find((el) => el.dataset.memProject === alt) : null);' +
     ' if (!hit) return "view";' +
     ' hit.click(); return "project"; })()';
 

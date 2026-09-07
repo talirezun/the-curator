@@ -325,7 +325,10 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   ok(!/just now/.test(withNull.rows[0].label), 'an unknown age is NEVER "just now"');
   ok(!/0 /.test(withNull.rows[0].label), 'an unknown age is NEVER a zero');
   eq(withNull.headline.known, false, 'and the headline reports that it does not know');
-  eq(withNull.headline.text, 'Last save · time unknown', 'in words, not as a blank');
+  // v3.48.0: the identity survives an unknown age. Which PROJECT is being built
+  // is known even when when it was last saved is not, and reporting the absence
+  // of one fact as the absence of both would be the honesty rule inverted.
+  eq(withNull.headline.text, 'Working on: gamma · time unknown', 'in words, not as a blank');
 
   // A row with no age sorts LAST rather than being asserted to be the newest.
   const mixed = model.buildTrayModel(summary({
@@ -379,8 +382,8 @@ section('§2b ages are RE-DERIVED at the render clock, not read out of the snaps
 
   ok(a.renderedAtText !== b.renderedAtText,
     'CONTROL — the absolute stamp really does move between the two renders');
-  eq(a.headline.text, 'Last save · just now', 'at the first clock the headline reads the true age');
-  eq(b.headline.text, 'Last save · 40 min ago',
+  eq(a.headline.text, 'Working on: alpha · just now', 'at the first clock the headline reads the true age');
+  eq(b.headline.text, 'Working on: alpha · 40 min ago',
     'FORTY MINUTES LATER, from the SAME snapshot, the headline has moved — this is the defect');
   ok(a.headline.text !== b.headline.text,
     '…so the age under the stamp can no longer be stale while the stamp is fresh');
@@ -467,7 +470,7 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   // THE DEFECT, ASSERTED DIRECTLY: the old mechanism could not have worked.
   ok(!/harness/i.test(realMessage),
     'THE DEFECT — the real warning contains no "harness", so the old /harness/i suppression was DEAD against its only case');
-  ok(realMessage.includes('${c.project}') && realMessage.includes('${c.scope}'),
+  ok(realMessage.includes('${c.projectLabel}') && realMessage.includes('${c.scope}'),
     '…and it does name the scope, so the failure was the regex and not the data');
 
   // THE FIX: the real warning shape now suppresses the derived line.
@@ -577,8 +580,31 @@ section('§2d the standing brief reaches a surface, and it is the tooltip');
   eq(briefIsObject ? withBrief.brief.ageText : '(no brief on the model)', '1 month ago', '…as an AGE');
 
   const tip = menu.trayToolTip(withBrief);
-  ok(tip.includes('Last save'), 'the tooltip still leads with the headline answer');
-  ok(tip.includes('Brief · 1 month ago'), '…and now also answers the second question the maintainer asks');
+  // v3.48.0: the headline names the PROJECT, because "which thing am I
+  // building" stopped having one answer per domain.
+  ok(tip.includes('Working on:'), 'the tooltip still leads with the headline answer');
+  ok(tip.includes('Brief updated 1 month ago'), '…and now also answers the second question the maintainer asks');
+  ok(!/by an agent/.test(tip),
+    'a brief with no recorded author says nothing about one — an absent provenance is not "you wrote it"');
+
+  // ── AND WHEN AN AGENT WROTE IT, THE CLAUSE SAYS SO ──────────────────
+  //
+  // From v3.48.0 an agent may write the standing brief, on the owner's explicit
+  // instruction, and the store records that. The brief is the ONE tier a model
+  // is told to follow rather than verify, so a clause that hid its authorship
+  // would hide the fact that decides how much authority it carries.
+  const agentBrief = model.buildTrayModel(summary({
+    brief: { domain: 'alpha', project: 'alpha', updatedAt: atAge(3 * 86400),
+      ageSeconds: 3 * 86400, authoredBy: 'agent' },
+  }), { now: NOW });
+  ok(menu.trayToolTip(agentBrief).includes('Brief updated 3 days ago by an agent'),
+    'an agent-written brief is named as one, in the same clause as its age');
+  const humanBrief = model.buildTrayModel(summary({
+    brief: { domain: 'alpha', project: 'alpha', updatedAt: atAge(3 * 86400),
+      ageSeconds: 3 * 86400, authoredBy: 'human' },
+  }), { now: NOW });
+  ok(!/by an agent/.test(menu.trayToolTip(humanBrief)),
+    '…and a brief the OWNER wrote carries no such clause — the default needs no announcement');
   ok(!/stale|old|out of date|should/i.test(tip),
     'it states a MEASUREMENT and never a judgement about the user\'s own hand-authored document');
 
@@ -741,7 +767,13 @@ section('§6 the menu template: order, the always-present items, and Quit');
   // approaching the end of the context window, and did we update the scope?" —
   // and it must be answerable without reading past the first line.
   eq(items[0].id, menu.ID_HEADLINE, 'the first item is the headline answer');
-  ok(/^Last save · /.test(items[0].label), `and it reads "${items[0].label}"`);
+  // v3.48.0: it names the PROJECT and then the age. "Last save · 4 min ago"
+  // could not say WHICH thing was saved, because a domain had exactly one state
+  // tree and there was never more than one answer.
+  ok(new RegExp('^' + model.HEADLINE_PREFIX).test(items[0].label),
+    `and it reads "${items[0].label}"`);
+  ok(/ · (just now|\d+ (min|hr|day|days|week|weeks|month|months|year|years) ago|time unknown)$/.test(items[0].label),
+    '…and ends in the age, which is the token a clip may never take');
   eq(items[0].enabled, true,
     'the headline is ENABLED, so it is drawn at full contrast — the one line the widget exists for is not put in the dimmest style available');
   eq(items[1].id, menu.ID_HEADLINE_WHERE, 'the scope it happened in is the second line');
@@ -828,7 +860,7 @@ section('§6 the menu template: order, the always-present items, and Quit');
     'the menu carries its own "Updated HH:MM" stamp, so a stale reading is visible AS stale');
 
   // The tooltip carries the headline, so a hover answers without a click.
-  ok(/Last save/.test(menu.trayToolTip(m)), 'the icon tooltip carries the headline answer');
+  ok(menu.trayToolTip(m).includes(model.HEADLINE_PREFIX), 'the icon tooltip carries the headline answer');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1114,10 +1146,17 @@ section('§11 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
     'turning the tray off stops the watch — the feature must not keep costing after it is switched off');
   ok(!/registerDesktopHost\([\s\S]{0,400}backgroundMode/.test(src),
     'no attempt is made to register a backgroundMode hook: registerDesktopHost THROWS on an unknown name, and its frozen list has four entries');
-  ok(/JSON\.stringify\(project/.test(src),
-    'the project name is JSON-serialised into the injected script, never interpolated into a CSS selector');
+  ok(/JSON\.stringify\(route\)/.test(src) && /JSON\.stringify\(bare\)/.test(src),
+    'BOTH routing strings are JSON-serialised into the injected script, never interpolated into a CSS selector');
   ok(/dataset\.memProject === want/.test(src),
     'and it is compared as a STRING against the dataset, so a project name cannot become code in the app\'s own origin');
+  // v3.48.0: the route is `<domain>/<project>`, with the bare project name as a
+  // SECOND comparison so a window that has not been reloaded since the update
+  // still lands on the right row instead of on an unfiltered view.
+  ok(/dataset\.memProject === alt/.test(src),
+    'and the bare project name is tried as a fallback, in the same string comparison');
+  ok(/const hit = rows\.find\(\(el\) => el\.dataset\.memProject === want\)/.test(src),
+    'the exact domain/project match is tried FIRST, so the fallback can never select another domain\'s project while the right one is on screen');
 
   // The quit guard must be untouched by this feature.
   const raw = read(path.join(DESKTOP, 'main.js'));
@@ -1656,7 +1695,17 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   }));
   const byId = (id) => flat.find((i) => i.id === id);
 
-  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE], [menu.ID_HEADER_ROWS, menu.HEADER_ROWS]]) {
+  // ── THE ROWS' HEADER IS A PROJECT HEADER NOW ─────────────────────────
+  //
+  // `ID_HEADER_ROWS` / "Recent scopes" is the EMPTY state's caption from
+  // v3.48.0; a store with anything in it draws one header per project instead
+  // (see `groups` in tray-model.js). Drawing both would put a caption above a
+  // caption on the surface with no vertical space. The section header
+  // PROPERTIES asserted here — header type, inert, no click — are the ones that
+  // matter, so they are asserted over whichever header this menu actually has.
+  const rowsHeader = flat.find((i) => i.id === 'tray-group-0');
+  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE],
+    [rowsHeader ? rowsHeader.id : menu.ID_HEADER_ROWS, 'first project']]) {
     const h = byId(id) || {};
     ok(byId(id), `the ${label} section header is in the menu`);
     eq(h.type, menu.MENU_HEADER_TYPE, '…as a header type, which is what makes it read as a section');
@@ -2177,8 +2226,29 @@ section('§21 line two: whole-token dropping, and the two warnings that outrank 
     'CONTROL — both rows really do carry provenance, so the drop assertions below are not about empty lines');
   ok(crowded.rows.every((r) => r.showsHarness),
     'under pressure the HARNESS survives on every row — it is the last token to go');
-  ok(crowded.rows.every((r) => !r.showsModel),
-    'and the MODEL is the first to be dropped, because it is interesting and never decisive');
+  // ── THE DROP ORDER, ASSERTED ON THE ROW THAT IS ACTUALLY UNDER PRESSURE ─
+  //
+  // v3.48.0 took the PROJECT token off line two (it is on the group header
+  // above the row now), which removed 20-plus characters of pressure from every
+  // row that carried one. So `every(!showsModel)` stopped being a statement
+  // about the drop ORDER and became a statement about how long the old project
+  // names happened to be. The property worth guarding is the order itself:
+  // the row that cannot fit everything drops the MODEL and keeps the machine
+  // and the harness, and the row that CAN fit everything keeps all three.
+  const pressured = crowded.rows.find((r) => r.showsMachine);
+  const roomy = crowded.rows.find((r) => !r.showsMachine);
+  ok(pressured && roomy, 'CONTROL — the fixture holds one crowded row and one roomy one');
+  ok(pressured && !pressured.showsModel,
+    'the MODEL is the first to be dropped, because it is interesting and never decisive');
+  ok(pressured && pressured.showsMachine && pressured.showsHarness,
+    '…while the machine and the harness, which outrank it, both survive on that same row');
+  ok(roomy && roomy.showsModel,
+    'CONTROL — and a row with room keeps its model, so the drop above is pressure and not a deletion');
+  // AND THE PROJECT IS NOT THERE AT ALL any more — on either row.
+  ok(crowded.rows.every((r) => !new RegExp('\\b' + r.project + '\\b').test(r.sublabel || '')),
+    'no row repeats its project on line two — the group header above it says it once');
+  ok(crowded.groups.every((g) => g.label.includes(g.project)),
+    'CONTROL — and the header really does say it, so the token was moved rather than lost');
   ok(crowded.rows.every((r) => r.toolTip.includes('model: ')),
     'while the tooltip still names it in full, which is what makes dropping it safe');
   // NO TOKEN IS LEFT AS A FRAGMENT. Measured over the WHO half of the line —
@@ -2595,8 +2665,19 @@ section('§24 the collision is decided over the WHOLE ROW, and no age reads in t
     'both rows read `brand-building-social-engine · 21 hr ago` — the whole topic, an age a person reads');
   ok(twins[0].sublabel !== twins[1].sublabel,
     '…and line TWO tells them apart, which is why line one was never in trouble');
-  ok(twins.some((r) => /\bposts\b/.test(r.sublabel)) && twins.some((r) => /\bprojects\b/.test(r.sublabel)),
-    '…by naming the two projects, which is the fact the reader actually needs');
+  // ── THE PROJECT MOVED FROM LINE TWO TO THE GROUP HEADER (v3.48.0) ────
+  //
+  // It used to be a token on each row's second line; the reader now finds it on
+  // the header the row sits under, once per project instead of once per row.
+  // The fact the reader needs is unchanged and so is the assertion's subject:
+  // these two same-topic rows must be attributable to two different projects.
+  ok(twins.every((r) => !new RegExp('\\b' + r.project + '\\b').test(r.sublabel || '')),
+    'neither row repeats its project on line two any more — five rows of `· projects` is width spent to say one thing five times');
+  const twinGroups = twins.map((r) => photo.groups.find((g) => g.key === r.groupKey));
+  ok(twinGroups.every(Boolean) && new Set(twinGroups.map((g) => g.label)).size === 2,
+    '…and each sits under a header naming ITS project, which is the fact the reader actually needs');
+  ok(twinGroups.some((g) => /\bposts\b/.test(g.label)) && twinGroups.some((g) => /\bprojects\b/.test(g.label)),
+    '…and those two headers are `posts` and `projects`, by name');
 
   // ANTI-VACUITY. If the resolver still compared line one alone it would see a
   // collision here, because line one alone IS identical on these two rows.

@@ -130,6 +130,73 @@ const _pulseToolTip = typeof pulseStrip.pulseToolTip === 'function' ? pulseStrip
 // this project's own twice-shipped defect. See `truncatedNote`.
 export const MAX_ROWS = 5;
 
+// ── GROUPS, AND THE ARITHMETIC THAT DECIDES THE SHAPE ───────────────────────
+//
+// v3.48.0 splits a domain into PROJECTS, so a row now belongs to something. The
+// rows are grouped under a project header, and both caps below are CEILINGS —
+// `MAX_ROWS` is what actually binds.
+//
+//   groups                     <= MAX_GROUPS            3
+//   rows within one group      <= MAX_ROWS_PER_GROUP    2
+//   rows in total              <= MAX_ROWS              5
+//
+// 3 x 2 = 6, which is more than 5, so on a store with three busy projects the
+// per-group quota binds and the shape is 2 + 2 + 1.
+//
+// THE QUOTA IS A FLOOR FOR THE OTHER GROUPS, NOT A CEILING ON THE FIRST: rows
+// left unspent after every group has had its two are handed back out in recency
+// order (see `buildTrayModel`). One project therefore still fills all five,
+// which is the ordinary case — a pre-v3.48.0 store has exactly one project per
+// domain — and a hard ceiling would have shipped a five-row menu showing two.
+//
+// ── WHAT IT COSTS IN MENU HEIGHT, STATED RATHER THAN DISCOVERED ────────────
+//
+// The rows section was ONE header ("Recent scopes") plus five rows — six items.
+// It is now up to THREE headers plus five rows — eight. Two items taller, and
+// that is the price of the rows saying which project they belong to; the
+// alternative, a project token on every row's second line, costs five lines of
+// WIDTH to say the same thing three times.
+//
+// ── AND WHY A PER-GROUP QUOTA EXISTS AT ALL ────────────────────────────────
+//
+// v3.42.0 recorded the cost of the flat list plainly: "one busy project can
+// monopolise all five rows", accepted because "a per-project quota inside a
+// five-row list is the kind of cleverness that produces two behaviours and one
+// bug". That trade was right while a "project" WAS a domain — a user has few
+// domains and they are rarely all busy. With projects inside a domain, one
+// afternoon's work in one project produces more scopes than the whole list
+// holds, so the monopoly is the ORDINARY case rather than the pathological one,
+// and the overflow item is the only thing that would ever mention the others.
+export const MAX_GROUPS = 3;
+export const MAX_ROWS_PER_GROUP = 2;
+
+/**
+ * How many rows the SHELL asks the data layer for.
+ *
+ * ── IT IS NOT `MAX_ROWS` ANY MORE, AND THAT IS THE WHOLE POINT ─────────────
+ *
+ * `main.js` used to request exactly five, because the model rendered exactly
+ * five. Grouping breaks that: the model can only put a project on screen if the
+ * summary handed it a row from that project, and the summary's own slice is
+ * newest-first ACROSS ALL PROJECTS. Ask for five, and a project that saved six
+ * times this hour returns five rows of itself and every other project is
+ * invisible — the model would then dutifully render one group and call it the
+ * whole store.
+ *
+ * 40 is `TRAY_MAX_LIMIT` in `src/brain/tray-summary.js`: the largest window that
+ * module is willing to rank, and therefore everything it will ever show anyone.
+ * It is duplicated rather than imported — `desktop/` must not import from
+ * `src/`, which is this file's founding constraint — and PINNED against that
+ * module by a cross-file assertion in the suite, the same trade `MENU_CHAR_POINTS`
+ * and `ROW_ICON_POINTS` already make.
+ *
+ * The cost is an array, not I/O: `listWorkingScopes` reads the same journals for
+ * the same pairs whatever the limit is, and the limit only slices the ranked
+ * result. A store busy enough to fill all forty with one project is still
+ * disclosed, by `hiddenRows` and the overflow item, exactly as before.
+ */
+export const TRAY_FETCH_ROWS = 40;
+
 // ── The width budget ────────────────────────────────────────────────────────
 //
 // ── WHY THIS IS ARITHMETIC AND NOT A HOPE ──────────────────────────────────
@@ -866,6 +933,78 @@ export function scopeCandidates(scope) {
  *  looser `\d+-\d+-\d+` would eat the front of a scope like `3-2-1-launch`. */
 export const SCOPE_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}-/;
 
+// ── Projects ────────────────────────────────────────────────────────────────
+
+/**
+ * What a project is CALLED on a line that has room for one identity.
+ *
+ * `domain / project` when the domain holds more than one project; the bare
+ * project name when it holds exactly one — the drop-constant rule again, one
+ * level up from the row tokens. A user whose `articles` domain holds a single
+ * project called `articles` (the legacy default, whose slug IS its domain)
+ * would otherwise read `articles / articles` on every header of every menu.
+ *
+ * ── THE PRODUCER'S ANSWER WINS, AND THIS IS THE FALLBACK ───────────────────
+ *
+ * `src/brain/tray-summary.js` computes `projectLabel` on every row, because the
+ * count it depends on — how many projects that DOMAIN holds — is a fact about
+ * the store rather than about the rows that survived a cap, and only the
+ * producer can see it. This function is what happens when a summary arrives
+ * without one: the same expression, over the same fields, so a producer that
+ * stops supplying the label costs nothing.
+ *
+ * It is duplicated rather than imported for this module's founding reason —
+ * `desktop/` may not import `src/` — and the suite pins the two against each
+ * other by running BOTH over the same rows, rather than trusting this sentence.
+ */
+export function projectLabelOf(scope) {
+  if (!scope || typeof scope !== 'object') return '(unnamed)';
+  const supplied = str(scope.projectLabel);
+  if (supplied) return supplied;
+  const d = str(scope.domain);
+  const p = str(scope.project);
+  if (!p) return d || '(unnamed)';
+  if (!d) return p;
+  return Number.isInteger(scope.projectsInDomain) && scope.projectsInDomain > 1
+    ? d + ' / ' + p : p;
+}
+
+/** The fully-qualified identity, for a tooltip. Never shortened, never
+ *  conditional — a tooltip has no width problem, and `domain / project` is the
+ *  pair a user needs to type into `.curator-project` or into the app. */
+export function projectFullName(scope) {
+  if (!scope || typeof scope !== 'object') return null;
+  const d = str(scope.domain);
+  const p = str(scope.project);
+  if (d && p) return d + ' / ' + p;
+  return p || d || null;
+}
+
+/**
+ * Which PROJECT a row belongs to, as one comparable key.
+ *
+ * `domain` and `project` both, joined on NUL: two domains may each hold a
+ * project called `main`, and grouping them together would put one project's
+ * saves under another project's header — the identity error this whole release
+ * exists to remove, committed by the code that renders it.
+ */
+export function rowGroupKey(scope) {
+  const d = (scope && typeof scope.domain === 'string' ? scope.domain : '');
+  const p = (scope && typeof scope.project === 'string' ? scope.project : '');
+  return d + "\u0000" + p;
+}
+
+/** The headline's opening words. The menu's first line names the PROJECT now,
+ *  not the age alone: "which thing am I building" is the question a person
+ *  opening this menu has, and v3.47.0's "Last save · 4 min ago" could not
+ *  answer it because there was only ever one answer per domain. */
+export const HEADLINE_PREFIX = 'Working on: ';
+
+/** The floor the headline's project identity is never clipped below, for the
+ *  same reason `TOPIC_MIN_CHARS` exists: a project clipped to two characters is
+ *  not a shorter line, it is an unreadable one. */
+export const HEADLINE_PROJECT_MIN_CHARS = 10;
+
 // ── Models ──────────────────────────────────────────────────────────────────
 
 /**
@@ -982,8 +1121,30 @@ export const REMOTE_CHECK_FAILED = 'Could not check GitHub handoffs';
 
 /** The derived harness-collision line. Long by nature — it names a project and
  *  a scope — so it is clipped for the label and kept whole for the tooltip. */
+/**
+ * The identity a per-work-stream notice is deduped on.
+ *
+ * `domain`, `project` and `scope` — all three, joined on NUL. It was project
+ * and scope, which was right while a "project" WAS a domain and could not
+ * repeat. Two domains may each hold a project called `main` with a scope called
+ * `main`, and deduping on two of the three would silence a real collision in
+ * one domain because an unrelated one had been reported in the other.
+ *
+ * A producer that supplies no domain (anything before v3.48.0) contributes an
+ * empty first segment, which groups exactly as it used to — so the older shape
+ * keeps its old behaviour rather than falling into a bucket with everything.
+ */
+function noticeKey(r) {
+  const d = r && typeof r.domain === 'string' ? r.domain : '';
+  const p = r && typeof r.project === 'string' ? r.project : '';
+  const s = r && typeof r.scope === 'string' ? r.scope : '';
+  return d + '\u0000' + p + '\u0000' + s;
+}
+
 function collisionText(r) {
-  return 'Two harnesses are writing ' + r.project + ' · ' + r.scope;
+  // Named by the SAME label the group header uses, so a user reading the notice
+  // and the header above the row is reading one identity twice, not two.
+  return 'Two harnesses are writing ' + (r.projectLabel || r.project) + ' · ' + r.scope;
 }
 
 /**
@@ -1100,6 +1261,11 @@ function readWarnings(summary) {
     out.push({
       code: typeof w.code === 'string' && w.code ? w.code : null,
       message,
+      // `domain` joins `project` because two domains may each hold a project
+      // called `main`: deduping on the project alone would silence a real
+      // collision in one domain because an unrelated one was reported in the
+      // other. Absent on a pre-v3.48.0 producer, which the key handles.
+      domain: str(w.domain),
       project: str(w.project),
       scope: str(w.scope),
     });
@@ -1125,7 +1291,7 @@ function collisionNotices(rows) {
   const seen = new Set();
   for (const r of rows) {
     if (r.harnessShared !== true) continue;
-    const key = r.project + ' ' + r.scope;
+    const key = noticeKey(r);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
@@ -1190,7 +1356,8 @@ export function newerElsewhereNotice(rows) {
     text: clip(text, PLAIN_LABEL_CHARS),
     // The tooltip names the work-stream, because "which computer" without
     // "which work-stream" is not yet actionable.
-    full: text + ' — ' + best.project + ' · ' + best.scope + ', ' + best.ageText,
+    full: text + ' — ' + (best.projectFull || best.projectLabel || best.project)
+      + ' · ' + best.scope + ', ' + best.ageText,
   };
 }
 
@@ -1230,7 +1397,7 @@ export function newerElsewhereNotice(rows) {
  * @param {boolean} hasTruncatedNote  whether the cap is already disclosed
  */
 function dedupeAgainstSuppliedWarnings(supplied, derived, hasTruncatedNote) {
-  const derivedKeys = new Set(derived.map((d) => d.project + ' ' + d.scope));
+  const derivedKeys = new Set(derived.map(noticeKey));
   const keptSupplied = [];
   const supersededDerived = new Set();
 
@@ -1241,7 +1408,7 @@ function dedupeAgainstSuppliedWarnings(supplied, derived, hasTruncatedNote) {
       // its prose for them — the same reason the code is matched rather than
       // the wording. A collision warning that names a scope we did not derive
       // (it was past the row cap, say) still gets through.
-      const key = (w.project || '') + ' ' + (w.scope || '');
+      const key = noticeKey(w);
       if (derivedKeys.has(key)) supersededDerived.add(key);
       keptSupplied.push(w);
       continue;
@@ -1251,7 +1418,7 @@ function dedupeAgainstSuppliedWarnings(supplied, derived, hasTruncatedNote) {
 
   return {
     supplied: keptSupplied,
-    derived: derived.filter((d) => !supersededDerived.has(d.project + ' ' + d.scope)),
+    derived: derived.filter((d) => !supersededDerived.has(noticeKey(d))),
   };
 }
 
@@ -1333,7 +1500,78 @@ export function buildTrayModel(summary, opts = {}) {
     return a.i - b.i;
   });
 
-  const shownWithAge = withAge.slice(0, maxRows);
+  // ── GROUPING, AND IT HAPPENS BEFORE ANYTHING IS CUT ─────────────────────
+  //
+  // Groups are discovered in the order their NEWEST row appears in the sorted
+  // list, so the group ordering is the same recency ordering the rows already
+  // have and there is no second opinion about what "first" means. Rows are then
+  // handed out two at a time, in that order, until `maxRows` is gone — see the
+  // arithmetic at MAX_GROUPS.
+  //
+  // The flattened result is NOT strictly newest-first any more, and that is the
+  // trade: `shownWithAge[0]` is still the newest save in the store (it is the
+  // first row of the group containing it), which is the one ordering property
+  // the headline depends on, and it is asserted rather than assumed.
+  const maxGroups = Number.isInteger(opts.maxGroups) && opts.maxGroups > 0
+    ? opts.maxGroups : MAX_GROUPS;
+  const rowsPerGroup = Number.isInteger(opts.maxRowsPerGroup) && opts.maxRowsPerGroup > 0
+    ? opts.maxRowsPerGroup : MAX_ROWS_PER_GROUP;
+
+  const groupOrder = [];
+  const groupBuckets = new Map();
+  for (const x of withAge) {
+    const k = rowGroupKey(x.s);
+    if (!groupBuckets.has(k)) { groupBuckets.set(k, []); groupOrder.push(k); }
+    groupBuckets.get(k).push(x);
+  }
+  // ── THE QUOTA IS A FLOOR FOR THE OTHERS, NOT A CEILING ON THE FIRST ─────
+  //
+  // TWO PASSES, and the second one is not a refinement — without it this is a
+  // regression for almost every user who has one today.
+  //
+  //  1. Each chosen group takes up to `rowsPerGroup`. That is what stops one
+  //     busy project eating the whole list while two others go unmentioned.
+  //  2. Anything still unspent is handed back out, one row at a time, in
+  //     recency order. A cap that leaves rows UNUSED is not fairness; it is
+  //     three blank lines and an overflow item.
+  //
+  // The measured case is the ordinary one: a store with a single project — the
+  // legacy default, which is every pre-v3.48.0 install — has exactly one group,
+  // so pass 1 allocates two of the five rows and pass 2 restores the other
+  // three. A hard ceiling would have shipped a five-row menu that shows two.
+  //
+  // This is a deliberate widening of the v3.48.0 contract's "a group shows at
+  // most 2 rows", and it is recorded as one rather than taken quietly.
+  const chosenGroupKeys = groupOrder.slice(0, maxGroups)
+    .filter((k) => groupBuckets.get(k).length > 0);
+  const allocation = new Map(chosenGroupKeys.map((k) => [k, 0]));
+  let budget = maxRows;
+  for (const k of chosenGroupKeys) {
+    if (budget <= 0) break;
+    const take = Math.min(rowsPerGroup, groupBuckets.get(k).length, budget);
+    allocation.set(k, take);
+    budget -= take;
+  }
+  // Round-robin the remainder, so a leftover row goes to the newest project
+  // that can still use one rather than all of them to the first.
+  for (let guard = 0; budget > 0 && guard < maxRows; guard++) {
+    let moved = false;
+    for (const k of chosenGroupKeys) {
+      if (budget <= 0) break;
+      if (allocation.get(k) >= groupBuckets.get(k).length) continue;
+      allocation.set(k, allocation.get(k) + 1);
+      budget--;
+      moved = true;
+    }
+    if (!moved) break;               // every group is exhausted; the store is small
+  }
+  const shownWithAge = [];
+  for (const k of chosenGroupKeys) shownWithAge.push(...groupBuckets.get(k).slice(0, allocation.get(k)));
+  // How many groups the store holds versus how many are on screen. Taken over
+  // the WHOLE supplied set, before any cut — a cap read as a measurement is
+  // this project's own twice-shipped defect, and a "2 of 2 projects" reading on
+  // a store with nine is exactly that.
+  const groupsOnDisk = groupOrder.length;
   const shown = shownWithAge.map((x) => x.s);
   const machineLabels = shortMachineNames(shown.map((s) => s.machine));
   const scopeLabels = shortScopeNames(shown.map((s) => str(s.scope)).filter(Boolean));
@@ -1367,13 +1605,39 @@ export function buildTrayModel(summary, opts = {}) {
   // built below from the RAW values for exactly this reason, and the suite
   // asserts it for every lever.
 
-  // Projects: counted over every scope the summary handed us, not merely the
-  // rows that survived the cap, so a project sitting just past the row limit
-  // still keeps the token on the rows above it. (If the DATA LAYER itself
-  // capped before we saw it, a project hidden past that cap is not rendered
-  // anywhere either, and `truncatedNote` is what points at the full list.)
-  const projectsPresent = new Set(all.map((s) => str(s.project) || '(unnamed)'));
-  const showProject = projectsPresent.size !== 1;
+  // ── THE PROJECT TOKEN LEFT LINE TWO, BECAUSE IT MOVED TO THE HEADER ─────
+  //
+  // Up to v3.47.0 a row's second line carried `· <project>` whenever more than
+  // one project had state, which was the drop-constant rule doing its job on a
+  // flat list. The list is not flat any more: every row now sits under a header
+  // that names its project, three pixels above it. Keeping the token would be
+  // the same fact twice on the one surface with no room for it — the exact
+  // redundancy v3.42.0 removed from the headline's own second line.
+  //
+  // The DOMAIN is not lost with it. `projectLabelOf` puts `domain / project` on
+  // the header whenever the domain holds more than one project, and the row's
+  // tooltip carries the fully-qualified name unconditionally.
+  //
+  // Whether two chosen groups would render the SAME header is decided below,
+  // over the labels that will actually be drawn — not over the raw fields —
+  // because two identical headers are the same defect as two identical rows.
+  const groupLabels = new Map(chosenGroupKeys.map((k) => {
+    const first = groupBuckets.get(k)[0].s;
+    return [k, projectLabelOf(first)];
+  }));
+  {
+    const counts = new Map();
+    for (const l of groupLabels.values()) counts.set(l, (counts.get(l) || 0) + 1);
+    for (const [k, l] of groupLabels) {
+      if (counts.get(l) <= 1) continue;
+      // Two projects in two DIFFERENT domains sharing a name. The producer's
+      // rule ("qualify when the domain holds more than one project") cannot see
+      // this — it is a fact about the other domain — so the qualification is
+      // applied here, to both, over the rendered pair.
+      const full = projectFullName(groupBuckets.get(k)[0].s);
+      if (full) groupLabels.set(k, full);
+    }
+  }
 
   // ── THE RULE, STATED ONCE AND THEN APPLIED THREE TIMES ─────────────────
   //
@@ -1552,7 +1816,10 @@ export function buildTrayModel(summary, opts = {}) {
       const m = machineLabels.get(s.machine) || str(s.machine);
       if (m) tokens.push({ key: 'machine', text: m, drop: 3 });
     }
-    if (showProject) tokens.push({ key: 'project', text: str(s.project) || '(unnamed)', drop: 2 });
+    // NO PROJECT TOKEN. It is on the group header directly above this row —
+    // see the block that computes `groupLabels`. Drop rank 2 is deliberately
+    // left unused rather than renumbered: the ranks are an importance ORDER,
+    // and renumbering them would silently change which token gives way first.
     if (showModel) {
       const fam = familyOf(s);
       if (fam) tokens.push({ key: 'model', text: fam, drop: 1 });
@@ -1733,7 +2000,18 @@ export function buildTrayModel(summary, opts = {}) {
   }
 
   const rows = shownWithAge.map(({ s, age }, idx) => {
+    const domain = str(s.domain);
     const project = str(s.project) || '(unnamed)';
+    const gKey = rowGroupKey(s);
+    const groupIndex = chosenGroupKeys.indexOf(gKey);
+    const projectLabel = groupLabels.get(gKey) || projectLabelOf(s);
+    // Is this row the NEWEST scope of its project? The group's rows arrive in
+    // recency order, so the first one is — and the answer is load-bearing
+    // rather than decorative: the resume prompt says `scope: "latest"` only
+    // when it is true, because on any other row "latest" names a DIFFERENT
+    // scope and the agent would resume the wrong one.
+    const latest = groupIndex >= 0
+      && shownWithAge.findIndex((x) => rowGroupKey(x.s) === gKey) === idx;
     const scope = str(s.scope) || '(unnamed)';
     const source = s.ageSource === 'file' ? 'file' : (s.ageSource === 'agent' ? 'agent' : null);
     const isThisMachine = s.isThisMachine === true;
@@ -1788,7 +2066,33 @@ export function buildTrayModel(summary, opts = {}) {
 
     return {
       id: 'tray-row-' + idx,
+      // ── BOTH IDENTITIES, AND THE ROUTE BUILT FROM THEM ──────────────
+      //
+      // `domain` is where the knowledge lives, `project` is the thing being
+      // built, and neither is derivable from the other. `route` is the string
+      // the shell hands the app's own dispatch attribute (`data-mem-project`)
+      // and `marker` is the line a `.curator-project` file holds — the same
+      // `<domain>/<project>` pair, named twice because they are two contracts
+      // with two other files and either could move without the other.
+      domain,
       project,
+      projectLabel,
+      projectFull: projectFullName(s),
+      route: domain ? domain + '/' + project : project,
+      // The marker COLLAPSES for a legacy default project, where the project
+      // slug IS the domain: a `.curator-project` reading `articles/articles`
+      // is correct and reads like a mistake, and the marker's own grammar
+      // allows the bare project name. `route` deliberately does NOT collapse —
+      // it is compared against the app's own `data-mem-project`, which is a
+      // machine-read attribute rather than something a person types.
+      marker: (!domain || s.isLegacyDefault === true) ? project : domain + '/' + project,
+      // Whether this project's state still lives in the pre-v3.48.0 layout.
+      // It decides the PATH the resume prompt prints and the file `Reveal in
+      // Finder` opens, so it is carried rather than guessed downstream.
+      isLegacyDefault: s.isLegacyDefault === true,
+      groupIndex,
+      groupKey: gKey,
+      latest,
       scope,
       machine: str(s.machine),
       machineShort,
@@ -1815,7 +2119,16 @@ export function buildTrayModel(summary, opts = {}) {
       // line, and a platform that does not simply drops it — which is why the
       // essential facts are on the LABEL and never only on the sublabel).
       scopeShort,
-      showsProject: showProject,
+      // ── `showsProject` IS GONE, AND IT WAS REPLACED RATHER THAN DELETED ─
+      //
+      // It reported whether line two carried a project token. Line two never
+      // carries one now — the group header above the row does — so the field
+      // would have been permanently false while still looking like a working
+      // signal, which is the shape this file already refuses one paragraph
+      // down. `showsDomain` is the question that is still open and still
+      // varies: does the identity above this row need its domain to be
+      // unambiguous?
+      showsDomain: projectLabel.includes(' / '),
       // ── REDEFINED, AND DELIBERATELY NOT BY A SUBSTRING SEARCH ────────
       //
       // These used to describe the LABEL's provenance slot. Line one no longer
@@ -1868,7 +2181,10 @@ export function buildTrayModel(summary, opts = {}) {
       // The tooltip is where the precise facts go — the ones that are true but
       // too long for a row, including BOTH clocks when they disagree.
       toolTip: [
-        project + ' · ' + scope,
+        // FULLY QUALIFIED, always. The header may say `lumina` because the
+        // domain holds one project; a tooltip has no width problem and this is
+        // the pair a user types into `.curator-project` or into the app.
+        (projectFullName(s) || project) + ' · ' + scope,
         s.machine ? 'machine: ' + s.machine : null,
         // ── THE FACT IS KEPT; IT STOPS BEING NEWS ────────────────────
         //
@@ -1923,16 +2239,48 @@ export function buildTrayModel(summary, opts = {}) {
   // so the two cannot disagree about what a scope is called. `whereText` is
   // the compacted form; `whereFull` is kept beside it so the tooltip and any
   // later surface still has the unshortened truth.
-  const whereOf = (proj, scp) => {
-    const p = str(proj), c = str(scp);
-    if (!p && !c) return { text: null, full: null };
+  //
+  // ── AND IT IS THE SCOPE NOW, NOT `project · scope` ──────────────────────
+  //
+  // The headline's FIRST line names the project (see `HEADLINE_PREFIX`), so
+  // repeating it here would be the drop-constant rule broken on the two lines
+  // that sit closest together in the whole menu. What line one cannot say — it
+  // is already carrying an identity and an age — is WHICH WORK-STREAM, so that
+  // is what `where` holds. `whereFull` keeps `domain / project · scope`, which
+  // is the pair every later surface (the item's tooltip, the icon's tooltip)
+  // needs unshortened.
+  const whereOf = (src, scp) => {
+    const c = str(scp);
+    const full = projectFullName(src);
+    if (!c && !full) return { text: null, full: null };
     const short = c ? (scopeLabels.get(c) || c) : null;
     return {
       // Budgeted like every other line. The full form is kept beside it, so
       // nothing a later surface needs has to be re-derived from the short one.
-      text: clip([showProject ? p : null, short].filter(Boolean).join(' · '), WHERE_LABEL_CHARS) || null,
-      full: [p, c].filter(Boolean).join(' · ') || null,
+      text: short ? clip(short, WHERE_LABEL_CHARS) : null,
+      full: [full, c].filter(Boolean).join(' · ') || null,
     };
+  };
+
+  /**
+   * The headline's first line: `Working on: <project> · <age>`.
+   *
+   * ── THE AGE IS NEVER CLIPPED; THE IDENTITY IS ──────────────────────────
+   *
+   * The same ordering `composeLabel` settled for the rows, and for the same
+   * measured reason: composing the whole string and clipping it produces
+   * `Working on: a-long-project-na…`, which loses the one token the line exists
+   * to deliver. The age is short, bounded and the point, so the identity is
+   * sized against it and clipped if anything has to be.
+   */
+  const headlineTextFor = (src, ageSeconds, ageSourceValue) => {
+    const label = projectLabelOf(src);
+    const tail = ' · ' + ageText(ageSeconds, ageSourceValue);
+    const head = HEADLINE_PREFIX + label;
+    const room = PLAIN_LABEL_CHARS - tail.length;
+    if (head.length <= room) return head + tail;
+    const floor = HEADLINE_PREFIX.length + HEADLINE_PROJECT_MIN_CHARS;
+    return (clip(head, Math.max(floor, room)) || head) + tail;
   };
 
   /**
@@ -1957,14 +2305,25 @@ export function buildTrayModel(summary, opts = {}) {
     return text ? clip(text, WHERE_LABEL_CHARS) : null;
   };
 
+  /** The identity fields every non-empty headline carries, from whichever
+   *  record it was built from. Named once so the four arms cannot drift. */
+  const headlineWho = (src) => ({
+    domain: str(src && src.domain),
+    project: str(src && src.project),
+    projectLabel: projectLabelOf(src),
+    projectFull: projectFullName(src),
+    route: str(src && src.domain) ? str(src.domain) + '/' + str(src.project) : str(src && src.project),
+  });
+
   let headline;
   if (ls && lsAge !== null) {
-    const w = whereOf(ls.project, ls.scope);
+    const w = whereOf(ls, ls.scope);
     headline = {
       known: true,
       ageSeconds: lsAge,
       ageSource: lsSource,
-      text: clip('Last save · ' + ageText(lsAge, lsSource), PLAIN_LABEL_CHARS),
+      ...headlineWho(ls),
+      text: headlineTextFor(ls, lsAge, lsSource),
       who: whoOfSave(ls.harness, ls.model),
       where: w.text,
       whereFull: w.full,
@@ -1972,24 +2331,29 @@ export function buildTrayModel(summary, opts = {}) {
     };
   } else if (rows.length && rows[0].ageSeconds !== null) {
     const r = rows[0];
-    const w = whereOf(r.project, r.scope);
+    const w = whereOf(r, r.scope);
     headline = {
       known: true,
       ageSeconds: r.ageSeconds,
       ageSource: r.ageSource,
-      text: clip('Last save · ' + r.ageText, PLAIN_LABEL_CHARS),
+      ...headlineWho(r),
+      text: headlineTextFor(r, r.ageSeconds, r.ageSource),
       who: whoOfSave(r.harness, r.model),
       where: w.text,
       whereFull: w.full,
       bucket: r.bucket,
     };
   } else if (rows.length) {
-    const w = whereOf(rows[0].project, rows[0].scope);
+    const w = whereOf(rows[0], rows[0].scope);
     headline = {
       known: false, ageSeconds: null, ageSource: null,
+      ...headlineWho(rows[0]),
       // NOT "just now", and not a blank. The menu says out loud that it does
       // not know, which is a different sentence from "nothing has been saved".
-      text: 'Last save · time unknown',
+      // The PROJECT is still named: which thing you are building is known even
+      // when when you last saved it is not, and dropping the identity here
+      // would report the absence of one fact as the absence of both.
+      text: headlineTextFor(rows[0], null, null),
       who: whoOfSave(rows[0].harness, rows[0].model),
       where: w.text,
       whereFull: w.full,
@@ -1998,6 +2362,7 @@ export function buildTrayModel(summary, opts = {}) {
   } else {
     headline = {
       known: false, ageSeconds: null, ageSource: null,
+      domain: null, project: null, projectLabel: null, projectFull: null, route: null,
       // The empty state is the FIRST thing a new user sees and it must not
       // read like an error. A failed read is a different sentence again.
       text: ok ? 'No agent memory yet' : 'Agent memory could not be read',
@@ -2064,14 +2429,36 @@ export function buildTrayModel(summary, opts = {}) {
   const briefAge = rawBrief
     ? effectiveAgeSeconds(str(rawBrief.updatedAt), num(rawBrief.ageSeconds), nowMs)
     : null;
+  //
+  // ── AND IT BELONGS TO A PROJECT NOW, WITH AN AUTHOR ────────────────────
+  //
+  // Every project has its own standing brief, so the clause has to say WHICH
+  // brief it is about — and from v3.48.0 an agent may write one, on the owner's
+  // explicit instruction, with the store recording that. The brief is the tier
+  // an agent is told to FOLLOW rather than verify; "brief updated 3 days ago"
+  // over a brief the agent wrote itself would hide the one fact that decides
+  // how much authority the document carries. So the author is named when it is
+  // known, and the clause is silent when it is not — a guess about authorship
+  // is worse here than an absence.
+  const briefAuthor = rawBrief && rawBrief.authoredBy === 'agent' ? 'agent'
+    : (rawBrief && rawBrief.authoredBy === 'human' ? 'human' : null);
   const brief = rawBrief ? {
+    domain: str(rawBrief.domain),
     project: str(rawBrief.project),
+    projectLabel: str(rawBrief.projectLabel) || projectLabelOf(rawBrief),
     ageSeconds: briefAge,
-    // There is only ONE clock for a brief — it is hand-authored and no MCP
-    // tool writes it, so mtime is all there is and the store emits no
-    // `ageSource`. `ageText(age, null)` is therefore the unqualified form,
-    // which is correct: there is no second clock to be honest between.
+    authoredBy: briefAuthor,
+    // Mtime is the only clock a legacy brief has, and the provenance comment is
+    // the only one a v3.48.0 brief adds, so the store emits no `ageSource`.
+    // `ageText(age, null)` is therefore the unqualified form, which is correct:
+    // there is no second clock to be honest between.
     ageText: ageText(briefAge, null),
+    // The whole clause, composed once here rather than in each surface that
+    // shows it — `trayToolTip` had been building it out of a noun and an age,
+    // and a second surface would have built a second sentence.
+    text: briefAge === null ? null
+      : 'Brief updated ' + ageText(briefAge, null)
+        + (briefAuthor === 'agent' ? ' by an agent' : ''),
   } : null;
 
   // ── The pulse ───────────────────────────────────────────────────────────
@@ -2131,12 +2518,78 @@ export function buildTrayModel(summary, opts = {}) {
     toolTip: _pulseToolTip ? _pulseToolTip(rawPulse) : null,
   } : null;
 
+  // ── THE GROUPS, BUILT FROM THE ROWS AND NEVER BESIDE THEM ───────────────
+  //
+  // A group is a VIEW over `rows`, holding the same objects, so a header and
+  // the rows under it can never come to describe different saves — the same
+  // binding `lastSave` and `scopes[0]` already have in the data layer, and for
+  // the same reason. `rows` stays flat and complete: the glyph, the live-expiry
+  // timer and every notice are questions about saves, not about headings.
+  //
+  // The header is `<project> · <age> · <harness>`, clause-clipped, so a budget
+  // takes the harness before the age and the age before the identity — and the
+  // identity, which is the only thing on the line that cannot be recovered from
+  // the rows below it, is never the thing that goes.
+  //
+  // ── A MEASURED COST, RECORDED RATHER THAN DISCOVERED LATER ──────────────
+  //
+  // `workshop / lumina · 12 min ago · claude-code` is 44 characters and the
+  // plain-item budget is 42, so a domain-qualified header with an ordinary
+  // harness name loses the harness clause to the tooltip. That is the budget
+  // working, not failing — but it means the harness reaches the LABEL only on
+  // the shorter cases, and the suite asserts both arms so this cannot be
+  // mistaken for a header that never carries one.
+  //
+  // The budget is `PLAIN_LABEL_CHARS`, the same one an ordinary item gets, and
+  // that is the CONSERVATIVE choice rather than a measured one: AppKit draws a
+  // section header in a smaller face, which would buy roughly seven more
+  // characters at `MENU_SUBLABEL_CHAR_POINTS` — but no header has ever been
+  // photographed, and this project's own rule is that an unmeasured number is
+  // not a number. When one is, this is the line to revisit.
+  const groups = chosenGroupKeys.map((k, gi) => {
+    const members = rows.filter((r) => r.groupIndex === gi);
+    const lead = members[0] || null;
+    const label = groupLabels.get(k) || (lead ? lead.projectLabel : '(unnamed)');
+    const age = lead ? lead.ageText : null;
+    const harness = lead ? lead.harness : null;
+    const full = lead ? (lead.projectFull || lead.projectLabel) : label;
+    return {
+      id: 'tray-group-' + gi,
+      key: k,
+      domain: lead ? lead.domain : null,
+      project: lead ? lead.project : null,
+      projectLabel: label,
+      projectFull: full,
+      route: lead ? lead.route : null,
+      harness,
+      ageText: age,
+      ageSeconds: lead ? lead.ageSeconds : null,
+      ageSource: lead ? lead.ageSource : null,
+      label: clipClauses([label, age, harness].filter(Boolean).join(' · '), PLAIN_LABEL_CHARS),
+      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE. The header's own tooltip
+      // carries the fully-qualified identity and both dropped clauses.
+      toolTip: [full, age, harness].filter(Boolean).join(' · '),
+      rowIds: members.map((r) => r.id),
+      rows: members,
+      // How many of this project's rows the caps hid. Taken from the group's
+      // OWN uncapped bucket, so it is a remainder rather than a guess.
+      hidden: Math.max(0, groupBuckets.get(k).length - members.length),
+    };
+  }).filter((g) => g.rows.length > 0);
+
   return {
     ok,
     empty: rows.length === 0,
     headline,
     pulse,
     rows,
+    // The rows again, as the menu draws them: under a header, newest project
+    // first, newest scope first inside each.
+    groups,
+    // How many projects have state versus how many are on screen. A cap is
+    // disclosed with the true total beside it, never presented as one.
+    groupsOnDisk,
+    groupsHidden: Math.max(0, groupsOnDisk - groups.length),
     notices: notices.slice(0, MAX_NOTICES),
     noticesHidden: Math.max(0, notices.length - MAX_NOTICES),
     truncatedNote,

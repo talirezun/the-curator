@@ -592,6 +592,48 @@ ok(gone.warnings.every(w => w.code !== 'domains-unreadable'),
 setDomains(TMP_DOMAINS);
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§8b PROJECTS — the legacy tree, read as a project named for its domain');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// v3.48.0 splits DOMAIN from PROJECT. Everything above this line is driven
+// against a REAL ON-DISK store in the pre-v3.48.0 layout, which is what every
+// existing install has and what a Mac still on v3.47.0 keeps syncing here — so
+// this section asserts what the data layer says about THAT tree, on disk, and
+// `scripts/test-tray-projects.js` drives the project-aware arm through an
+// injected fake of the store that has not landed on this branch yet.
+setDomains(TMP_DOMAINS);
+{
+  const s = await getTraySummary({ limit: 20 });
+  const row = s.scopes.find((r) => r.scope === 'main' && r.project === 'zulu');
+  ok(row != null, 'CONTROL — the fixture row is present');
+  eq(row.domain, 'zulu', 'a legacy tree\'s row names its DOMAIN…');
+  eq(row.project, 'zulu', '…and its PROJECT, whose slug IS the domain name — that is what a pre-v3.48.0 tree means');
+  eq(row.isLegacyDefault, true,
+    '…and it is MARKED as legacy, which is what decides its on-disk path downstream rather than a guess made there');
+  eq(row.projectLabel, 'zulu',
+    'the label does NOT read `zulu / zulu`: the domain holds one project, so the qualifier distinguishes nothing');
+  eq(row.projectsInDomain, 1, '…and the count that decided it is carried too, so a consumer can re-derive rather than re-walk');
+
+  // The brief still resolves through the LEGACY path (`<domain>/state/project.md`).
+  ok(s.brief != null, 'the standing brief is still found in a legacy tree');
+  eq(s.brief.domain, 'zulu', '…named by domain…');
+  eq(s.brief.project, 'zulu', '…and project');
+  eq(s.brief.authoredBy, null,
+    '…with NO recorded author, because a pre-v3.48.0 brief carries no provenance comment and guessing one would be worse than the absence');
+  ok(!('text' in s.brief) && !('bytes' in s.brief),
+    'and it is still STAT-ed rather than read — a 32 KB document has no place in a menubar payload');
+
+  // The collision warning names the project by the same label the widget's
+  // header uses, and carries the domain so two domains' `main` cannot collide.
+  const c = s.warnings.find((w) => w.code === 'harness-collision');
+  ok(c != null, 'CONTROL — the collision warning is still emitted');
+  eq(c.domain, 'gamma', '…and now carries the domain…');
+  eq(c.projectLabel, 'gamma', '…and the same label the group header will show');
+  ok(c.message.includes('gamma') && c.message.includes('main'),
+    '…so the notice and the header name one identity, not two');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§9  Isolation held');
 // ═══════════════════════════════════════════════════════════════════════════
 eq(fingerprint(), fpBefore, 'the real credential files are byte-identical after the run');

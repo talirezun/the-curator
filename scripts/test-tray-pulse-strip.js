@@ -798,33 +798,49 @@ section('§8 width compaction — three levers, each conditional and each revers
   const build = (scopes, extra = {}) =>
     model.buildTrayModel({ ok: true, scopes, ...extra }, { now: NOW });
 
-  // ── LEVER 1: the project token ─────────────────────────────────────────
+  // ── LEVER 1: the project token, WHICH MOVED IN v3.48.0 ─────────────────
+  //
+  // It was a token on line two, shown when more than one project had state and
+  // dropped when they all agreed. The rows are GROUPED under a project header
+  // now, so the token would be the same fact twice, three pixels apart, on the
+  // one surface with no room for it — and five rows of `· projects` spend five
+  // lines of width to say one thing once. The lever did not weaken; it became
+  // unconditional, because the header made the token redundant in every case
+  // rather than in some of them.
+  //
+  // What these assertions guard is unchanged in substance: the reader can tell
+  // which project a row belongs to, and nothing repeats it.
   const one = build([row({}), row({ scope: 'session-beta', writtenAgeSeconds: 900 })]);
-  ok(!one.rows[0].label.startsWith('projects'), 'ONE project: the project token is dropped');
-  eq(one.rows[0].showsProject, false, 'and the model says so, rather than leaving it to be inferred');
+  ok(!one.rows[0].label.startsWith('projects'), 'ONE project: the project token is not on line one');
+  ok(!/\bprojects\b/.test(one.rows[0].sublabel || ''), '…nor on line two');
+  eq(one.groups.length, 1, '…because there is exactly one group…');
+  eq(one.groups[0].projectLabel, 'projects', '…whose header names the project, once');
 
   // -- REVERSED IN LOCATION, NOT IN RULE: line one is identity and time ---
   //
-  // The project token used to PREFIX the row label. Line one now carries the
-  // scope topic and the age and nothing else — the photograph that produced
-  // this release showed an identity clipped to `project…` because the tail was
-  // composed at full length and the identity got the remainder. Every
-  // provenance token moved to line two; the drop-constant rule that decides
-  // whether each one appears at all is untouched, and that rule is what these
-  // assertions are about.
+  // Line one carries the scope topic and the age and nothing else — the
+  // photograph that produced v3.42.0 showed an identity clipped to `project…`
+  // because the tail was composed at full length and the identity got the
+  // remainder. Every provenance token moved to line two, and the project has
+  // since moved one further, to the header.
   const two = build([row({}), row({ project: 'other', scope: 'session-beta', writtenAgeSeconds: 900 })]);
-  ok(two.rows[0].sublabel.includes('projects'), 'TWO projects: the token comes straight back');
-  ok(!two.rows[0].label.includes('projects'), '…on line TWO, never on line one');
-  eq(two.rows[0].showsProject, true, 'on every row, not only the ones that differ');
+  ok(!two.rows[0].label.includes('projects'), 'TWO projects: neither name is on line one');
+  ok(!/\bprojects\b/.test(two.rows[0].sublabel || ''), '…nor on line two');
+  eq(two.groups.map((g) => g.projectLabel), ['projects', 'other'],
+    '…they are two headers instead, newest project first');
+  eq(two.rows[0].showsDomain, false,
+    'and neither header needs a domain, because these rows carry none — the field says so rather than leaving it to be inferred');
 
-  // Counted over EVERY scope the summary supplied, not merely the shown rows.
+  // A group past the GROUP cap is not rendered, and the cap is disclosed.
   const past = model.buildTrayModel({
     ok: true,
     scopes: [row({}), row({ scope: 'session-beta', writtenAgeSeconds: 900 }),
       row({ project: 'hidden', scope: 'session-gamma', writtenAgeSeconds: 1200 })],
   }, { now: NOW, maxRows: 2 });
   eq(past.rows.length, 2, 'a project past the ROW cap is not rendered');
-  eq(past.rows[0].showsProject, true, 'but it still keeps the token on the rows above it');
+  eq(past.groups.length, 1, '…and neither is its header');
+  eq(past.groupsOnDisk, 2, '…while the TRUE number of projects is still reported, taken before the cut');
+  eq(past.groupsHidden, 1, '…so a cap can never be read as a measurement');
 
   // ── LEVER 2: the session- prefix ───────────────────────────────────────
   eq(model.shortScopeNames(['session-alpha', 'session-beta']).get('session-alpha'), 'alpha',
