@@ -61,6 +61,19 @@
  *      directly on the zone (guards: false, so §8's document filter cannot
  *      cover for it) leaves it idle, with a same-mount file-drag positive
  *      control proving the handlers still fire at all.
+ * §12  THE SINGLE-FILE REMOVE CONTROL (v3.47). Reported: after a pick or a
+ *      drop, the single-file state had a file name and an Ingest button but
+ *      no way to back out short of picking a different file over it — the
+ *      batch list has had a per-row × since it shipped. A real drop selects
+ *      a file; clicking the real × (dispatched through the SAME
+ *      wireListeners this suite already proves survives a drag) clears
+ *      state.file, disables Ingest, resets the hidden <input>'s .value, and
+ *      the control itself disappears along with the file name. Re-dropping
+ *      the identical file afterwards selects it again. The control is
+ *      absent while `state.submitting` — mirroring the disabled Ingest
+ *      button and drop zone for the same state — proven by toggling
+ *      submitting on the SAME mount rather than asserting a fresh one never
+ *      had it.
  *
  * ── NOT ENFORCED, named rather than implied away ─────────────────────────
  *  - THIS IS A MODEL, NOT A BROWSER. It cannot prove what Chromium does with
@@ -77,6 +90,17 @@
  *  - The OS-level drag cursor is not observable from here. §3 asserts
  *    dropEffect is assigned; whether macOS then draws the copy badge is not
  *    something any offline suite can see.
+ *  - §12's KEYBOARD claim is native-button semantics (a real <button
+ *    type="button"> answers Enter/Space with a `click` event on its own —
+ *    the same reliance the batch list's own × has always had, with no
+ *    keydown handler anywhere in this file), not something this model's
+ *    hand-rolled `dispatch` can independently verify; the click itself is
+ *    dispatched directly, as §4/§5 already do for the drop zone. §12 also
+ *    does not attempt to reproduce the real BROWSER quirk the
+ *    `fileInput.value` reset exists for (a native <input type="file"> does
+ *    not fire `change` for an identical re-selection unless `.value` was
+ *    cleared first) — it asserts the reset happened, which is the half a
+ *    model can prove; the real-app check is a human re-picking the same file.
  */
 
 import { readFileSync } from 'node:fs';
@@ -800,6 +824,90 @@ section('§11  A text-only drag over the ZONE does not activate it');
   ok(zone().classList.contains('ing-drop-zone-active'),
     '§11 CONTROL — …and DOES activate the zone, proving §11\'s greens above are ' +
     'the dragCarriesFiles gate, not dead handlers');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12  The single-file remove control');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const { dom, view, zone } = mount();
+  const dt = fakeTransfer([fakeFile('paper.pdf', 4096)]);
+  dom.dispatch(zone(), 'dragenter', { dataTransfer: dt });
+  dom.dispatch(zone(), 'drop', { dataTransfer: dt });
+  eq(view.getState().file && view.getState().file.name, 'paper.pdf', '§12 setup: one file selected');
+
+  const removeBtn = () => dom.document.getElementById('ing-file-remove-btn');
+  const submitBtn = () => dom.document.getElementById('ing-submit-btn');
+  const nameSpan = () => dom.document.querySelector('.ing-file-name');
+
+  ok(!!removeBtn(), '§12 the remove control renders once a file is selected');
+  eq(removeBtn().getAttribute('aria-label'), 'Remove paper.pdf',
+    '§12 …carrying an accessible name that NAMES the file, not a bare "Remove"');
+  ok(removeBtn().classList.contains('ing-queue-file-remove'),
+    '§12 …and reuses the batch list\'s OWN remove class — same 20px glyph, ' +
+    'same 28px hit target, same hover — rather than a second, ' +
+    'independently-styled lookalike');
+  ok(submitBtn().getAttribute('disabled') === null,
+    '§12 setup: Ingest is enabled with a file selected');
+
+  // A stale value, exactly as a real <input type="file"> holds one after a
+  // pick — the property the reset below actually has to CHANGE, not one
+  // that already happens to read empty.
+  const fileInput = dom.document.getElementById('ing-file-input');
+  fileInput.value = 'C:\\fakepath\\paper.pdf';
+
+  dom.dispatch(removeBtn(), 'click', {});
+
+  eq(view.getState().file, null, '§12 clicking × clears state.file');
+  eq(view.getState().fileError, null, '§12 …and any file error along with it');
+  eq(fileInput.value, '',
+    '§12 …and resets the hidden <input>\'s OWN .value — without this a real ' +
+    'file input never fires `change` for the SAME file re-picked twice in a row');
+  ok(!removeBtn(), '§12 …and the control itself is gone from the re-rendered form');
+  ok(!nameSpan(), '§12 …along with the file name it sat beside');
+  ok(submitBtn().getAttribute('disabled') !== null,
+    '§12 …and Ingest is disabled again, exactly as before any file was ever picked');
+
+  // Re-dropping the identical file re-selects it — nothing about having
+  // removed it once leaves the zone refusing that same file a second time.
+  dom.dispatch(zone(), 'drop', { dataTransfer: fakeTransfer([fakeFile('paper.pdf', 4096)]) });
+  eq(view.getState().file && view.getState().file.name, 'paper.pdf',
+    '§12 dropping the SAME file again after removal selects it again');
+  ok(!!removeBtn(), '§12 …and the remove control is back too');
+
+  // Escape does nothing surprising — no listener anywhere in this view binds
+  // it to the file field, so a keydown on the control is simply unhandled,
+  // exactly like every other button here.
+  const before = view.getState().file;
+  dom.dispatch(removeBtn(), 'keydown', { key: 'Escape' });
+  eq(view.getState().file, before, '§12 Escape on the remove control is a no-op — no handler consumes it');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12b  The remove control is withheld while an ingest is running');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const { dom, view, zone } = mount();
+  dom.dispatch(zone(), 'drop', { dataTransfer: fakeTransfer([fakeFile('paper.pdf', 4096)]) });
+  ok(!!dom.document.getElementById('ing-file-remove-btn'),
+    '§12b setup: the control is present with a file selected and no run in flight');
+
+  // The SAME mount, toggled — this proves the render REACTS to the flag,
+  // rather than a fresh mount simply never having had the button for some
+  // unrelated reason.
+  view.setState({ submitting: true });
+  view.render('t');
+  ok(!dom.document.getElementById('ing-file-remove-btn'),
+    '§12b …and once state.submitting flips true the control is gone, even ' +
+    'though state.file is untouched — matching the disabled Ingest button ' +
+    'and the disabled drop zone for the same state');
+  ok(!!dom.document.querySelector('.ing-file-name'),
+    '§12b …while the file NAME itself keeps showing — only the × is withheld');
+
+  view.setState({ submitting: false });
+  view.render('t');
+  ok(!!dom.document.getElementById('ing-file-remove-btn'),
+    '§12b …and it comes back once submitting clears');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

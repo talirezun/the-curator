@@ -1618,7 +1618,7 @@ function renderIngestForm() {
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-file-input">File</label>' +
       renderDropZoneHtml({ disabled: state.submitting, multiHint: true }) +
-      (state.file ? '<span class="ing-file-name">' + escapeHtml(state.file.name) + '</span>' : '') +
+      (state.file ? renderSelectedFileHtml(state.file) : '') +
       (state.fileError ? '<div class="ing-field-error">' + escapeHtml(state.fileError) + '</div>' : '') +
     '</div>' +
     // sparkles marks a token-spending action (design rule) — ingest always
@@ -1642,6 +1642,40 @@ function renderIngestForm() {
         '</div>'
       : '') +
     renderResult()
+  );
+}
+
+// The single-file counterpart to the batch list's per-row × (renderQueueFileListItem).
+// Reported gap: after a pick or drop, there was no way to back out of a
+// single-file selection short of picking a different file over it — the
+// batch list has had a remove control beside every row since it shipped,
+// and the single-file path never got one.
+//
+// The × REUSES `.ing-queue-file-remove` — the exact class the batch row's
+// remove button carries (markup, 20px glyph, hover tint, the 28px hit
+// target grown via a transparent ::before in ingest.css) — rather than a
+// second, independently-styled lookalike. Two remove buttons that happen to
+// agree today is this repo's most reliable way to end up with two that
+// silently stop agreeing (the CLAUDE.md two-controls-one-value lesson,
+// applied to a button instead of a piece of state).
+//
+// Withheld entirely while `state.submitting` — an ingest already reading
+// this file must not let the user pull it out from under the request,
+// matching renderDropZoneHtml's own `disabled: state.submitting` and the
+// Ingest button's `btnDisabled`. Once the run finishes, `runIngest` already
+// clears `state.file` on success (so this whole block stops rendering), and
+// leaves it in place on failure (so the user can remove it and pick again).
+function renderSelectedFileHtml(file) {
+  const name = escapeHtml(file && file.name != null ? file.name : '');
+  const removeBtn = state.submitting
+    ? ''
+    : '<button type="button" class="ing-queue-file-remove" id="ing-file-remove-btn" ' +
+        'title="Remove this file" aria-label="Remove ' + name + '">' + icon('x', 12) + '</button>';
+  return (
+    '<div class="ing-file-selected">' +
+      '<span class="ing-file-name">' + name + '</span>' +
+      removeBtn +
+    '</div>'
   );
 }
 
@@ -2561,6 +2595,12 @@ function wireListeners() {
     fileInput.addEventListener('change', () => handleSelectedFiles(myMountToken, fileInput.files));
   }
 
+  // The single-file remove control — absent from the DOM entirely while
+  // submitting (renderSelectedFileHtml), so this is a plain query-and-wire
+  // like every other button here, not a second disabled-state check.
+  const fileRemoveBtn = document.getElementById('ing-file-remove-btn');
+  if (fileRemoveBtn) fileRemoveBtn.addEventListener('click', () => clearSelectedFile(myMountToken));
+
   const submitBtn = document.getElementById('ing-submit-btn');
   if (submitBtn) submitBtn.addEventListener('click', () => runIngest(myMountToken, false));
 
@@ -2676,6 +2716,29 @@ function pickSingleFile(token, fileList) {
 
   state.file = file;
   state.fileError = null;
+  render(token);
+}
+
+// The single-file counterpart to removeQueueFile — same effect (clear the
+// selection, return the surface to idle) with no name/bytes disambiguation
+// to do, because there is only ever one state.file on this path.
+//
+// Resetting the hidden <input>'s OWN .value is load-bearing, not cosmetic:
+// a file input never fires `change` for the SAME file picked twice in a row
+// unless its value is cleared first, so without this a user who removes a
+// file and then re-drops or re-picks that identical file would see nothing
+// happen — the picker would look broken on the very next attempt.
+//
+// Guarded on state.submitting even though the button that calls this is
+// never rendered while submitting (renderSelectedFileHtml withholds it) —
+// belt and braces against a stale click queued from before a render, the
+// same defensive shape removeQueueFile applies via its own `if (state.queueJob) return;`.
+function clearSelectedFile(token) {
+  if (state.submitting) return;
+  state.file = null;
+  state.fileError = null;
+  const fileInput = document.getElementById('ing-file-input');
+  if (fileInput) fileInput.value = '';
   render(token);
 }
 

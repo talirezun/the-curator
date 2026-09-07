@@ -144,7 +144,11 @@ const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain'
   'domainListboxCfg',
   // The ONE fetch+parse both the initial load and every revalidation use, and
   // the revalidation itself (§7/§8/§12).
-  'fetchDomainStats', 'refreshDomainStats'];
+  'fetchDomainStats', 'refreshDomainStats',
+  // The single-file remove control (§16): the renderer that emits (or
+  // withholds) the × beside the file name, and the state writer its click
+  // calls.
+  'renderSelectedFileHtml', 'clearSelectedFile'];
 const bodies = {};
 for (const name of NEEDED) {
   const body = extractFunction(js, name);
@@ -2029,6 +2033,105 @@ console.log('\n§15  A finished ingest is findable from any domain');
         '§15p CONTROL — an empty or absent activity list yields nothing rather than throwing');
     }
   }
+}
+
+// ── §16 — the single-file remove control (v3.47) ─────────────────────────
+// The maintainer's report: after a pick or a drop, the single-file state had
+// a file name and an Ingest button but no way to back out of it short of
+// picking a different file over it — the batch list has had a per-row ×
+// (removeQueueFile / renderQueueFileListItem) since it shipped, and the
+// single-file path never got one. scripts/test-next-ingest-dropzone.js §12/
+// §12b drives this behaviourally through a real DOM and real dispatched
+// events; this section is the source-level half plus the EXECUTED guard on
+// clearSelectedFile, the one piece of logic small enough to run directly.
+console.log('\n§16  The single-file remove control');
+
+// ── 16a  renderSelectedFileHtml: reuse, identity, and the submitting gate ──
+{
+  const body = bodies.renderSelectedFileHtml;
+  ok(/class="ing-queue-file-remove"/.test(body),
+    '§16a the × reuses the batch list\'s OWN remove class rather than a second, ' +
+    'independently-styled lookalike — same 20px glyph, same 28px hit target, ' +
+    'same hover, for free');
+  ok(/id="ing-file-remove-btn"/.test(body), '§16a …carrying a stable id wireListeners can find');
+  ok(/aria-label="Remove ' \+ name/.test(body),
+    '§16a …with an aria-label that NAMES the file, not a bare "Remove"');
+  ok(/state\.submitting[\s\S]{0,40}\?\s*''/.test(body),
+    '§16a the × is withheld ENTIRELY (not merely disabled) while state.submitting — ' +
+    'matching the disabled Ingest button and the disabled drop zone for the same state');
+  ok(/escapeHtml\(/.test(body), '§16a the file name is escaped before it reaches the DOM (aria-label AND the visible text)');
+}
+ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
+  '§16a renderIngestForm renders the control THROUGH renderSelectedFileHtml, not a ' +
+  'second inline span that could drift from it — there used to be exactly that ' +
+  'inline span, with no remove control at all');
+
+// ── 16b  wireListeners wires the control to clearSelectedFile ───────────
+{
+  const wireBody = extractFunction(js, 'wireListeners');
+  ok(!!wireBody, '§16b CONTROL — wireListeners extracted');
+  ok(/getElementById\('ing-file-remove-btn'\)/.test(wireBody),
+    '§16b wireListeners looks up the control by the SAME id renderSelectedFileHtml emits');
+  ok(/clearSelectedFile\(myMountToken\)/.test(wireBody),
+    '§16b …and its click handler calls clearSelectedFile — the one writer of this ' +
+    'removal, not an inline mutation that could drift from it');
+}
+
+// ── 16c  clearSelectedFile — EXECUTED, not merely read ───────────────────
+// Same technique as §3's pickerSandbox above: the extracted body runs for
+// real inside a `new Function`, closing over a hand-built `state` /
+// `document` / `render` rather than a paraphrase of the logic.
+function runClearSelectedFile(initialState, fileInputStub) {
+  const renderCalls = [];
+  const factory = new Function('initialState', 'fileInputStub', 'renderCalls', `
+    let state = initialState;
+    const document = { getElementById: (id) => (id === 'ing-file-input' ? fileInputStub : null) };
+    function render(token) { renderCalls.push(token); }
+    ${bodies.clearSelectedFile}
+    clearSelectedFile('tok1');
+    return state;
+  `);
+  const state = factory(initialState, fileInputStub, renderCalls);
+  return { state, renderCalls };
+}
+
+{
+  const fileInput = { value: 'C:\\fakepath\\paper.pdf' };
+  const { state, renderCalls } = runClearSelectedFile(
+    { submitting: false, file: { name: 'paper.pdf' }, fileError: 'stale error' },
+    fileInput,
+  );
+  ok(state.file === null, '§16c clears state.file');
+  ok(state.fileError === null, '§16c …and state.fileError, so a stale validation message cannot survive a removal');
+  ok(fileInput.value === '', '§16c …and resets the hidden <input>\'s OWN .value — the property a real file ' +
+    'input needs cleared before it will fire `change` for the same file picked twice in a row');
+  ok(renderCalls.length === 1 && renderCalls[0] === 'tok1',
+    '§16c …and re-renders with the token it was called with, exactly once');
+}
+{
+  // THE GUARD. Not reachable through the shipped UI — renderSelectedFileHtml
+  // never emits the button while state.submitting — so this is belt to that
+  // braces, proven by calling the writer directly with the one state the
+  // control is never supposed to exist in, rather than trusting the render
+  // guard alone to keep it safe forever.
+  const fileInput = { value: 'C:\\fakepath\\paper.pdf' };
+  const original = { name: 'paper.pdf' };
+  const { state, renderCalls } = runClearSelectedFile(
+    { submitting: true, file: original, fileError: null },
+    fileInput,
+  );
+  ok(state.file === original, '§16c the submitting guard refuses to clear a file mid-run');
+  ok(fileInput.value === 'C:\\fakepath\\paper.pdf', '§16c …and never touches the input either');
+  ok(renderCalls.length === 0, '§16c …and never renders');
+}
+{
+  // A defensive null-check with no live caller today (the control only ever
+  // exists once renderIngestForm has already put the input in the DOM) —
+  // proven not to throw, rather than left as an unverified assumption.
+  const { state, renderCalls } = runClearSelectedFile(
+    { submitting: false, file: { name: 'x.md' }, fileError: null }, null);
+  ok(state.file === null, '§16c a missing <input> (defensive branch) still clears the selection…');
+  ok(renderCalls.length === 1, '§16c …and still renders, rather than throwing on a null fileInput');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────
