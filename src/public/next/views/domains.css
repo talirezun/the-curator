@@ -845,7 +845,21 @@
    worst possible version of this row.                                      */
 
 .dm-projects { margin-top: 22px; }
-.dm-projects-actions { margin-top: 10px; }
+
+/* ── THE HEADER: EYEBROW + CAPTION, ON ONE X-AXIS ─────────────────────────
+   The kit gives `.cur-group-title` a left margin of --space-6 so the eyebrow
+   starts where the first row's LABEL starts. The caption below it had no such
+   offset and no gap: it began at x=0 and ended hard against the card, which is
+   why the maintainer read it as body text that had fallen between the eyebrow
+   and the group rather than as the group's own caption.
+
+   PLACEMENT ONLY. No font-size, no colour, no border — the sentence is the
+   shared DESCRIPTION role and shared/text.css dresses it. This file may not
+   even NAME that role's class (test-next-text-system.js fails on the prefix
+   anywhere in this file, comments included), so the margin hangs on a wrapper
+   this view owns. */
+.dm-proj-head { margin-bottom: var(--space-4); }
+.dm-proj-caption { margin-left: var(--space-6); }
 
 .dm-proj-row .cur-group-label > b {
   display: flex;
@@ -862,6 +876,81 @@
    shell.css owns the surface and the shimmer, including its reduced-motion
    escape. */
 .dm-proj-skeleton-name { display: block; width: 42%; height: 13px; }
+
+/* ── THE FOOTER ROW: "NEW PROJECT" ───────────────────────────────────────
+   A <button> that IS a `.cur-group-row`, so the kit owns the band: the 40px
+   minimum height (comfortably past --hit-min's 28), the --space-3/--space-6
+   padding, and the inset hairline the row before it draws above it. What is
+   left for this file is only what a <button> needs in order to stop looking
+   like one — the UA's border, background, centred text and inherited-but-
+   wrong font — plus the two states.
+
+   THE WHOLE ROW IS THE TARGET, which is the reason it is a row rather than a
+   button sitting in one: the pointer lands anywhere along the band and the
+   hover says so. `width: 100%` + `box-sizing: border-box` because a
+   <button> does not stretch to its flex parent the way a <div> does.
+
+   `cursor: default`, per the kit: this is chrome, not a document link, and
+   nothing else in this app's chrome shows a hand.
+
+   NOT `.btn`. A .btn is a raised object with the v3.44.0 gloss on it; this is
+   a row of a list that happens to act when clicked, and giving it a filled
+   face would put a second primary action on a screen that already has one. */
+.dm-proj-footer {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: var(--type-body-sm);
+  text-align: left;
+  cursor: default;
+  /* The other half of the same argument: a label that turns blue and
+     drag-selects when a click starts on it is a web page, not a control. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-appearance: none;
+  appearance: none;
+  /* The kit's row gap is --space-6, the distance between a label and a control
+     at the far end of the row. A glyph and the word it belongs to are one
+     thing, so they sit at the tighter rung. */
+  gap: var(--space-4);
+  transition: background var(--t-state);
+}
+.dm-proj-footer:hover { background: var(--surface-hover); }
+.dm-proj-footer:active { background: var(--surface-active); }
+/* THE RING GOES INWARD, and it is spelled out rather than reusing
+   --ring-focus. `.cur-group` carries `overflow: hidden`, so the outset ring
+   base.css gives every :focus-visible would be CLIPPED at the card's edge on
+   exactly this row — the last one. `inset var(--ring-focus)` cannot be the fix
+   either: the token is a two-shadow LIST and an `inset` keyword prefixes only
+   the first of them. The geometry below is the token's own, drawn inside. */
+.dm-proj-footer:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1.5px var(--ring-keyline),
+    inset 0 0 0 4px var(--ring-halo);
+}
+.dm-proj-footer-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.dm-proj-footer-label { flex: 1; min-width: 0; }
+
+/* The create form, rendered INSIDE the group in the footer row's place. The
+   card chrome comes off — it is already inside a card, and a bordered box
+   within a bordered box is the "second window" shape this project has fixed
+   twice. Everything else about the form (the labels, the inputs, the actions
+   row) is unchanged, so create, rename and delete stay one form in one
+   visual language. */
+.dm-proj-form-row .dm-lc-card {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+}
 
 @media (max-width: 720px) {
   .dm-proj-row { flex-direction: column; align-items: stretch; }
