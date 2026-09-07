@@ -66,6 +66,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *Your brain → your team's brain → your agents' brain. The third layer has shipped, and it automates the one part of my build process I had never managed to stop doing by hand.*
 
+- **[Where Your Context Lives](./articles/where-your-context-lives.md)**  
+  By Dr. Tali Režun  
+  *The Curator becomes a Mac app — three layers of context in one folder you own, a menu bar widget onto your agents' memory, and an honest account of what is still not finished.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -133,6 +137,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {August},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-handoff-writes-itself.md}
+}
+
+@article{rezun2026where-your-context-lives,
+  author = {Režun, Tali},
+  title = {Where Your Context Lives},
+  year = {2026},
+  month = {September},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/where-your-context-lives.md}
 }
 ```
 
