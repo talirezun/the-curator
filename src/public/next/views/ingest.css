@@ -334,9 +334,19 @@
 }
 
 .ing-sidebar-pick-btn { width: 100%; margin: var(--space-5) 0 var(--space-2); justify-content: center; }
+/* Wraps the file name + its remove ×. The margin that used to sit on
+   .ing-file-name itself (spacing it off the drop zone above) moved here —
+   .ing-file-name is now always a row's first child, never a lone sibling. */
+.ing-file-selected {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
 .ing-file-name {
   display: block;
-  margin-top: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--text-xs);
   color: var(--accent-text);
 }

@@ -1294,7 +1294,7 @@ flowchart TD
 
 1. Click **Ingest** in the rail
 2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
-3. Drag your file onto the drop zone — *"Drop a source here / or browse your files"*, with *"2 or more files at once starts a batch"* underneath — or click **browse your files** to pick one
+3. Drag your file onto the drop zone — *"Drop a source here / or browse your files"*, with *"2 or more files at once starts a batch"* underneath — or click **browse your files** to pick one. Changed your mind? A **×** beside the file name removes it before you ingest, so you can pick a different one — including the same file again — without reloading the page.
 4. Click **Ingest**
 5. Wait. A progress bar names the current step ("AI is analyzing the document…") with a percentage and a running timer beside it. This usually takes **15–60 seconds** depending on the document length. Do not close the browser or refresh the page. See *Understanding the progress bar* below if it looks like it's stuck.
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
