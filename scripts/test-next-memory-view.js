@@ -284,31 +284,72 @@ async function call(path, { params = {}, query = {} } = {}) {
 section('§1 — The route is registered READ-ONLY');
 // ═════════════════════════════════════════════════════════════════════════
 
-ok('the router registers exactly 2 routes (index + project)', ROUTES.length === 2, 'got ' + ROUTES.length);
-ok('every registered route is GET-only',
-  ROUTES.every((r) => r.methods.length === 1 && r.methods[0] === 'get'),
-  JSON.stringify(ROUTES.map((r) => [r.path, r.methods])));
-ok('the index route is mounted at "/"', ROUTES.some((r) => r.path === '/'));
-ok('the project route is mounted at "/:project"', ROUTES.some((r) => r.path === '/:project'));
+// ── THE ROUTE TABLE, AS A TABLE ─────────────────────────────────────────
+//
+// v3.48.0 gave this router its first write routes, and the old assertion
+// here — "exactly 2 routes, all GET" — was the guard that said so. It is
+// replaced rather than deleted, and by something STRICTER: the exact set of
+// (method, path) pairs, so a new route of any kind has to be declared here
+// before it can ship. An extra GET was invisible to the old count-and-verbs
+// pair; it is not invisible to this.
+const EXPECTED_ROUTES = [
+  ['get', '/'],
+  ['get', '/:domain/projects'],
+  ['post', '/:domain/projects'],
+  ['patch', '/:domain/projects/:project'],
+  ['delete', '/:domain/projects/:project'],
+  ['get', '/:domain/:project'],
+  ['get', '/:project'],
+];
+const actualRoutes = ROUTES.flatMap((r) => r.methods.map((m) => [m, r.path]));
+eq('the router registers exactly ' + EXPECTED_ROUTES.length + ' (method, path) pairs',
+  actualRoutes.length, EXPECTED_ROUTES.length);
+ok('the route table is exactly the declared one',
+  JSON.stringify(actualRoutes) === JSON.stringify(EXPECTED_ROUTES),
+  JSON.stringify(actualRoutes));
+
+// ── ORDER IS A CORRECTNESS PROPERTY HERE, NOT TIDINESS ──────────────────
+//
+// A domain slug and a project slug are drawn from the same alphabet, so
+// `/:domain/projects` and `/:domain/:project` are both two segments and
+// Express matches them in REGISTRATION order. If the parametric one were
+// registered first, `GET /api/memory/alpha/projects` would be read as "the
+// project called `projects` in domain alpha" and the Domains view's whole
+// list endpoint would 404. Asserted as an index comparison over the real
+// router's own stack.
+const iProjects = actualRoutes.findIndex((r) => r[0] === 'get' && r[1] === '/:domain/projects');
+const iDetail = actualRoutes.findIndex((r) => r[0] === 'get' && r[1] === '/:domain/:project');
+const iAlias = actualRoutes.findIndex((r) => r[0] === 'get' && r[1] === '/:project');
+ok('GET /:domain/projects is registered BEFORE GET /:domain/:project',
+  iProjects >= 0 && iDetail >= 0 && iProjects < iDetail, iProjects + ' vs ' + iDetail);
+ok('the one-segment deprecated alias is registered LAST of the GETs',
+  iAlias === actualRoutes.length - 1, 'index ' + iAlias);
 
 const routeSrc = readFileSync(join(ROOT, 'src/routes/memory.js'), 'utf8');
-// Source-level class guard: no write-shaped call may appear in this file.
-// Deliberately checked as CALLS (`name(`), so the words are still free to
-// appear in the docblock that explains why they must not.
+// ── THE READ ROUTES STILL TOUCH NOTHING, AND THE WRITE ROUTES TOUCH TIER 1
+//    ONLY ─────────────────────────────────────────────────────────────────
+//
+// The class guard is kept and NARROWED rather than dropped. This router may
+// not write a byte itself: every mutation goes through the store, which owns
+// the path chokepoint, the sanitisers and the caps. So the filesystem and
+// wiki-write calls stay forbidden outright...
 for (const forbidden of [
   'writeFile(', 'writeFileSync(', 'appendFile(', 'appendFileSync(', 'mkdir(', 'mkdirSync(',
-  'rm(', 'rmSync(', 'unlink(', 'rename(', 'writePage(', 'saveWorkingState(', 'saveProjectBrief(',
+  'rm(', 'rmSync(', 'unlink(', 'writePage(',
 ]) {
   ok('route source contains no ' + forbidden + ' call', !routeSrc.includes(forbidden));
 }
-for (const verb of ['router.post', 'router.put', 'router.delete', 'router.patch', 'router.all']) {
-  ok('route source registers no ' + verb, !routeSrc.includes(verb));
-}
-// Checked as an IMPORT, not as the word: this file's own docblock explains
-// WHY there is no write-registry registration, and a bare substring scan
-// would fire on that explanation. (It did, on the first run.)
-ok('route source does not IMPORT the write-registry (nothing to guard)',
-  !/^import[^;]*write-registry/m.test(routeSrc));
+// ...and so does the ONE store function that would reach tier 2 or tier 3.
+// This is the assertion that carries the tier boundary: the app writes the
+// standing brief and nothing else, and a handoff written from a browser
+// would arrive wearing the last agent's provenance line.
+ok('route source never calls saveWorkingState( — tiers 2 and 3 stay agent-only',
+  !routeSrc.includes('saveWorkingState('));
+// The write-registry IS imported now, and deliberately: a project rename
+// moves a directory, so it must be refused while this domain has a write in
+// flight — the same predicate PUT /api/domains/:domain uses.
+ok('route source imports the write-registry, because a rename moves a directory',
+  /^import[^;]*write-registry/m.test(routeSrc));
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§2 — GET /api/memory (the index)');
@@ -565,6 +606,15 @@ section('§6 — ESCAPING, through the REAL render functions');
 const XSS = '<img src=x onerror=alert(1)>';
 const ATTR = '" onmouseover="alert(1)';
 
+// The v3.48.0 starting brief, lifted off LIVE SOURCE rather than retyped.
+// A copy typed here would be a second description of the four headings the
+// store renders, free to drift from the one the app actually offers.
+const BRIEF_TEMPLATE_SRC = (() => {
+  const m = /export const BRIEF_TEMPLATE = (\[[\s\S]*?\]\.join\('\\n'\));/.exec(viewSrc);
+  if (!m) throw new Error('BRIEF_TEMPLATE not found in memory.js — the lift below would be a paraphrase');
+  return new Function('return (' + m[1] + ');')();
+})();
+
 function makeRenderers(stateObj) {
   // Every collaborator the render functions close over is injected, so this
   // executes the shipped code rather than a paraphrase of it.
@@ -585,7 +635,16 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderScopeControls', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderHandoff', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderJournal', 'memory.js') + '\n' +
+    // The v3.48.0 brief editor. Lifted WITH renderBrief, because renderBrief
+    // calls it in both of its branches — a stub would leave §6's escaping
+    // battery running past the one control on this screen that writes.
+    'const BRIEF_TEMPLATE = ' + JSON.stringify(BRIEF_TEMPLATE_SRC) + ';\n' +
+    extractFunction(viewSrc, 'renderBriefEditor', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderBrief', 'memory.js') + '\n' +
+    // The rail's grouping renderer, so §14's grouping assertions and §6's
+    // escaping battery both drive the shipped one.
+    extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderProjectGroups', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderAbout', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
     // The five that used to be lifted by NOBODY. renderStaleNotice in
@@ -606,7 +665,8 @@ function makeRenderers(stateObj) {
     extractFunction(listboxSrc, 'renderListboxHtml', 'listbox.js') + '\n' +
     'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
-    'unlistedCount, renderProject, renderSaveStatus, freshnessStep, effectiveSave, pendingListboxes };';
+    'unlistedCount, renderProject, renderSaveStatus, freshnessStep, effectiveSave, ' +
+    'renderBriefEditor, renderProjectGroups, pendingListboxes };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes',
     // The real shared text renderers, so §6's escaping battery runs through
@@ -958,15 +1018,30 @@ ok('a save with no notes renders no note label at all',
   !/mem-j-rej/.test(journalOf([])));
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§8 — The view has no write path');
+section('§8 — The view writes the STANDING BRIEF and nothing else');
 // ═════════════════════════════════════════════════════════════════════════
 
 // STRUCTURAL, NOT A LIST OF LITERAL STRINGS. The five-string version of this
 // scan was defeated by `const M = 'PO' + 'ST'` — a planted write survived it
-// intact. What actually makes this view read-only is that no fetch it issues
-// carries a REQUEST INIT at all: `fetch(url)` with one argument can only ever
-// be a GET, whatever the method name is spelled like. So the argument count is
-// what is asserted, and the method vocabulary is a second, weaker layer.
+// intact. What made this view read-only was that no fetch it issued carried a
+// REQUEST INIT at all: `fetch(url)` with one argument can only ever be a GET,
+// whatever the method name is spelled like.
+//
+// v3.48.0 GAVE THIS VIEW ONE WRITE — the standing brief — so "no init object
+// anywhere" is no longer the property. The replacement is NARROWER rather
+// than weaker, and it is what the tier boundary actually needs:
+//
+//   · EXACTLY ONE fetch call site carries an init object.
+//   · Its method is the LITERAL 'PATCH' — not a variable, not a
+//     concatenation, so the `'PO' + 'ST'` evasion is still refused by
+//     construction.
+//   · Its URL is the projects endpoint, which the route allows to touch
+//     tier 1 only.
+//   · Every OTHER fetch is still single-argument.
+//
+// So a planted `fetch(u, { method: M, body: b })` fails on the count; a
+// planted POST fails on the literal; and a PATCH pointed at a scope read
+// fails on the URL.
 const viewNoComments = stripComments(viewSrc);
 
 /** Every `fetch(` call site's argument list, paren-matched off real source. */
@@ -1005,9 +1080,22 @@ function topLevelArgs(argsSrc) {
 const fetchArgLists = fetchCallArgs(viewNoComments);
 ok('the scan found the view\'s real fetch call sites (it is not vacuous)',
   fetchArgLists.length >= 2, 'found ' + fetchArgLists.length);
-ok('EVERY fetch in the view is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.every((a) => topLevelArgs(a).length === 1),
+const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
+eq('EXACTLY ONE fetch in the view carries a request init', withInit.length, 1);
+ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 1,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
+{
+  const init = topLevelArgs(withInit[0])[1];
+  const url = topLevelArgs(withInit[0])[0];
+  ok('the one write uses a LITERAL PATCH — never a variable or a concatenation',
+    /\bmethod\s*:\s*'PATCH'/.test(init), init.slice(0, 120));
+  ok('the one write targets the PROJECTS endpoint, which reaches tier 1 only',
+    url.includes("'/projects/'") && url.includes('/api/memory/'), url.slice(0, 160));
+  ok('the one write sends only a brief — never a handoff field',
+    /body:\s*JSON.stringify\(\{\s*brief:/.test(init)
+    && !/nowState|nextSteps|observations|traps|decisions/.test(init), init.slice(0, 200));
+}
 // Positive control: the detector must SEE an init object, including one whose
 // method is assembled at runtime — the exact mutation the string list missed.
 ok('self-test: the argument-count scan DOES fire on a runtime-assembled method',
@@ -1015,18 +1103,22 @@ ok('self-test: the argument-count scan DOES fire on a runtime-assembled method',
 ok('self-test: the argument-count scan does NOT fire on a plain read',
   topLevelArgs(fetchCallArgs("await fetch('/api/memory');")[0]).length === 1);
 
-// A request init cannot arrive by any other door either: no `method:` key
-// anywhere in real code (comments stripped, so the docblock explaining the
-// rule cannot satisfy or violate it), and no alternative transport.
-ok('no `method:` property key appears anywhere in the view\'s real code',
-  !/\bmethod\s*:/.test(viewNoComments));
+// A request init cannot arrive by any other door either: the ONLY `method:`
+// key in real code is the brief write's (comments stripped, so the docblock
+// explaining the rule cannot satisfy or violate it), and no alternative
+// transport exists at all.
+{
+  const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]);
+  ok('exactly one `method:` property key appears in the view\'s real code, and it is \'PATCH\'',
+    methods.length === 1 && methods[0] === "'PATCH'", JSON.stringify(methods));
+}
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
   ok('the view never reaches for ' + transport + ' (fetch is not the only way to write)',
     !viewNoComments.includes(transport));
 }
 ok('the view fetches only /api/memory endpoints', (() => {
   const urls = [...viewNoComments.matchAll(/fetch\(\s*'([^']+)'/g)].map((m) => m[1]);
-  const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(project)");
+  const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(domain)");
   return urls.every((u) => u.startsWith('/api/memory')) && built;
 })());
 // Import-scoped for the same reason as the route check above: the view's
@@ -1036,7 +1128,13 @@ ok('the view never IMPORTS a write helper from the shell', (() => {
   const imports = viewSrc.match(/^import\s*\{[\s\S]*?\}\s*from\s*'[^']+';/gm) || [];
   return imports.length > 0 && !imports.some((i) => /beginDomainWrite|registerWrite/.test(i));
 })());
-ok('the view escapes the project slug into the URL', viewSrc.includes('encodeURIComponent(project)'));
+ok('the view escapes BOTH the domain and the project slug into every URL it builds', (() => {
+  // Both segments, at every site: a domain slug reaches the URL now too, and
+  // one un-escaped segment is one path the server has to disambiguate from
+  // an attacker's.
+  const sites = [...viewNoComments.matchAll(/fetch\(\s*'\/api\/memory\/'([\s\S]{0,200}?)\n/g)].map((m) => m[1]);
+  return sites.length >= 2 && sites.every((t) => t.includes('encodeURIComponent'));
+})());
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§9 — Mount-token and timer discipline');
@@ -1250,6 +1348,12 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    // (domain, project) identity. Both are lifted, not stubbed: `activeKey`
+    // is what every post-await "is this still the selection?" guard compares
+    // through, so a stub here would be testing the harness's idea of identity
+    // rather than the view's.
+    extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
     // screenSignature now folds the save-status strip's own readings through
     // effectiveSave + formatAge, so a save into another scope of the same
     // project — or the reading simply ageing into the next band — repaints.
@@ -2087,6 +2191,10 @@ function makeReloader(stateObj, responder) {
   const calls = { urls: [], renders: 0 };
   let mounted = true;
   const body =
+    // (domain, project) identity, lifted rather than stubbed — see the note
+    // in makeRevalidator.
+    extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'reloadActive', 'memory.js') + '\n' +
@@ -2247,7 +2355,291 @@ eq('reloadActive is reachable from the UI exactly where it should be — the Rel
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§16 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
+section('§16 — Projects inside a domain (v3.48.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The rail groups by domain, remembers the last project per domain, and the
+// standing brief gained the one editor this view has. Every function below is
+// lifted from live source and RUN; nothing here reads a source string.
+
+// ── 16a. Identity is the PAIR, never the project name alone ──────────────
+{
+  const idApi = new Function('state',
+    extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
+    'return { keyOf, activeKey };')({ activeDomain: 'alpha', activeProject: 'main' });
+
+  ok('two domains holding a project of the SAME name are two different keys',
+    idApi.keyOf('alpha', 'main') !== idApi.keyOf('beta', 'main'));
+  eq('activeKey reads the live selection', idApi.activeKey(), 'alpha/main');
+  // The separator is a character isSafeSegment forbids, so no project slug
+  // can contain one and forge another pair's key.
+  ok('the key separator is a character a project slug cannot contain',
+    idApi.keyOf('a', 'b') === 'a/b' && !/^[a-z0-9][a-z0-9._-]*$/i.test('a/b'));
+}
+
+// ── 16b. Which project opens on arrival ──────────────────────────────────
+{
+  const pick = new Function(extractFunction(viewSrc, 'initialPick', 'memory.js') +
+    '\nreturn initialPick;')();
+
+  const rows = [
+    { domain: 'alpha', project: 'alpha', lastWriteAt: '2026-09-01T00:00:00.000Z' },
+    { domain: 'beta', project: 'one', lastWriteAt: '2026-09-05T00:00:00.000Z' },
+    { domain: 'beta', project: 'two', lastWriteAt: '2026-09-06T00:00:00.000Z' },
+  ];
+  eq('with nothing remembered, the FRESHEST project wins', pick(rows, {}).project, 'two');
+  eq('...and it is in the freshest domain', pick(rows, {}).domain, 'beta');
+  eq('a remembered project in the freshest domain wins over recency',
+    pick(rows, { beta: 'one' }).project, 'one');
+  // THE MEMORY IS PER DOMAIN, and this is the assertion that says why. A
+  // single global "last project" would send a user who just saved in beta to
+  // whatever they were reading in alpha yesterday.
+  eq('a remembered project in a DIFFERENT domain is ignored',
+    pick(rows, { alpha: 'alpha' }).project, 'two');
+  eq('a remembered project that no longer exists falls back to recency',
+    pick(rows, { beta: 'deleted' }).project, 'two');
+  eq('a project with nothing saved is still selectable when it is all there is',
+    pick([{ domain: 'x', project: 'x', lastWriteAt: null }], {}).project, 'x');
+  eq('no projects at all -> null, never a throw', pick([], {}), null);
+  eq('a junk remembered map degrades to recency', pick(rows, null).project, 'two');
+}
+
+// ── 16c. localStorage is a convenience that must never break the screen ──
+{
+  // The storage key is READ OFF LIVE SOURCE, not retyped: a copy here would
+  // be a second name for one thing, and the pair would keep passing while the
+  // shipped view wrote to a key nothing read back.
+  const KEY = liftConst('LAST_PROJECT_KEY');
+  ok('the storage key was lifted from live source (not vacuous)',
+    typeof KEY === 'string' && KEY.length > 0, String(KEY));
+  function memApi(store) {
+    return new Function('localStorage', 'JSON', 'LAST_PROJECT_KEY',
+      extractFunction(viewSrc, 'readRememberedProjects', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'rememberProject', 'memory.js') + '\n' +
+      'return { readRememberedProjects, rememberProject };')(store, JSON, KEY);
+  }
+  const bin = {};
+  const good = {
+    // Keyed strictly: a write to the wrong key reads back as nothing, which
+    // is what makes the round-trip assertions below real.
+    getItem: (k) => (k === KEY && k in bin ? bin[k] : null),
+    setItem: (k, v) => { bin[k] = String(v); },
+  };
+  const api = memApi(good);
+  api.rememberProject('alpha', 'one');
+  api.rememberProject('beta', 'two');
+  eq('a remembered project round-trips', api.readRememberedProjects().alpha, 'one');
+  eq('...per domain, not globally', api.readRememberedProjects().beta, 'two');
+  api.rememberProject('alpha', 'three');
+  eq('the newest choice replaces the old one', api.readRememberedProjects().alpha, 'three');
+
+  // THROWS, not returns null: Safari's private window and a "block site
+  // data" setting both make the ACCESSOR throw, which is the case a
+  // null-check misses entirely.
+  const hostile = memApi({
+    getItem: () => { throw new Error('site data blocked'); },
+    setItem: () => { throw new Error('site data blocked'); },
+  });
+  let threw = false;
+  try {
+    eq('a throwing localStorage reads as "nothing remembered"',
+      JSON.stringify(hostile.readRememberedProjects()), '{}');
+    hostile.rememberProject('a', 'b');
+  } catch { threw = true; }
+  ok('...and a throwing WRITE is swallowed — the app forgets, it does not break', !threw);
+
+  // A stored value is per-browser state a user can edit by hand.
+  const junk = memApi({ getItem: () => '["not","an","object"]', setItem: () => {} });
+  eq('a stored ARRAY degrades to nothing remembered',
+    JSON.stringify(junk.readRememberedProjects()), '{}');
+  const partial = memApi({ getItem: () => '{"a":"ok","b":42,"c":null}', setItem: () => {} });
+  eq('non-string values are dropped, the usable ones kept',
+    JSON.stringify(partial.readRememberedProjects()), '{"a":"ok"}');
+  const broken = memApi({ getItem: () => '{oh no', setItem: () => {} });
+  eq('unparseable JSON degrades to nothing remembered',
+    JSON.stringify(broken.readRememberedProjects()), '{}');
+}
+
+// ── 16d. The rail groups by domain ───────────────────────────────────────
+{
+  const g = makeRenderers({}).renderProjectGroups;
+  const rows = [
+    { domain: 'alpha', project: 'one', scopeCount: 2, hasBrief: true, lastWriteAt: null },
+    { domain: 'alpha', project: 'two', scopeCount: 0, hasBrief: false, lastWriteAt: null },
+    { domain: 'beta', project: 'one', scopeCount: 1, hasBrief: false, lastWriteAt: null },
+  ];
+  const html = g(rows, 'beta', 'one');
+  eq('one group per domain, not one per row', (html.match(/mem-group-head/g) || []).length, 2);
+  eq('every project still renders a row', (html.match(/data-mem-project=/g) || []).length, 3);
+  ok('each row carries its DOMAIN as well as its project — the click handler needs both',
+    (html.match(/data-mem-domain=/g) || []).length === 3);
+  // THE ACTIVE ROW IS RESOLVED ON THE PAIR. Both domains hold a project
+  // called `one`, so a renderer comparing the name alone marks BOTH.
+  eq('exactly ONE row is active, even though two projects share a name',
+    (html.match(/class="mem-row active"/g) || []).length, 1);
+  ok('...and it is the one in the active DOMAIN, not the first of that name',
+    html.indexOf('mem-row active') > html.indexOf('mem-group-head">beta'));
+  ok('a project with nothing saved renders quiet, not hidden',
+    html.includes('mem-row-quiet') && html.includes('mem-row-mark-off'));
+  ok('a domain with ONE project still gets its heading — the rail must not change shape',
+    (g([rows[2]], null, null).match(/mem-group-head/g) || []).length === 1);
+  eq('no projects renders nothing at all', g([], null, null), '');
+
+  // Escaping, through the shipped renderer.
+  const hostile = g([{ domain: XSS, project: ATTR, scopeCount: 0, hasBrief: false }], null, null);
+  ok('a hostile domain name is escaped', !hostile.includes('<img src=x'));
+  ok('a hostile project name cannot break out of its attribute',
+    !/data-mem-project="[^"]*"\s+onmouseover/.test(hostile));
+}
+
+// ── 16e. The brief editor ────────────────────────────────────────────────
+{
+  const R = makeRenderers({ briefEdit: null });
+  const idle = R.renderBriefEditor({ brief: { present: true, text: 'x' } }, false);
+  ok('with nothing being edited, an Edit control is offered', idle.includes('id="mem-brief-edit"'));
+  ok('...and it says REPLACE rather than implying an append',
+    /replaces the whole document/i.test(idle));
+  ok('with no brief yet, the control invites writing one',
+    /Write a brief/.test(makeRenderers({ briefEdit: null }).renderBriefEditor({ brief: { present: false } }, false)));
+
+  // A MIRROR GETS NO EDITOR. The backend refuses the write, and a control
+  // whose only outcome is a refusal is worse than no control.
+  eq('a read-only Shared Brain mirror is offered no editor at all',
+    R.renderBriefEditor({ brief: { present: true, text: 'x' } }, true), '');
+
+  const editing = makeRenderers({
+    briefEdit: { domain: 'alpha', project: 'main', text: XSS, busy: false, error: null },
+  }).renderBriefEditor({ brief: { present: true, text: 'x' } }, false);
+  ok('the draft is rendered ESCAPED inside the textarea', !editing.includes('<img src=x'));
+  ok('...and the textarea really carries it', editing.includes('id="mem-brief-text"'));
+  ok('Save and Cancel are both offered',
+    editing.includes('id="mem-brief-save"') && editing.includes('id="mem-brief-cancel"'));
+
+  const busy = makeRenderers({
+    briefEdit: { domain: 'a', project: 'b', text: 'draft', busy: true, error: null },
+  }).renderBriefEditor({ brief: { present: true } }, false);
+  eq('while saving, every control is disabled — a second click is a second whole-document write',
+    (busy.match(/ disabled/g) || []).length, 3);
+
+  const failed = makeRenderers({
+    briefEdit: { domain: 'a', project: 'b', text: 'the user typed this', busy: false, error: 'refused' },
+  }).renderBriefEditor({ brief: { present: true } }, false);
+  ok('a failure shows the reason', failed.includes('refused'));
+  ok('...and KEEPS the draft, which is the only copy of it',
+    failed.includes('the user typed this'));
+
+  // THE <summary> HAZARD, over this control specifically: an interactive
+  // element inside a <summary> toggles its own section when clicked. The fold
+  // is rendered by renderBrief, so the check is over ITS output.
+  const fold = makeRenderers({
+    briefEdit: { domain: 'a', project: 'b', text: 'draft', busy: false, error: null },
+    openFolds: {},
+  }).renderBrief({ brief: { present: true, text: '## x\n\nbody', updatedAt: null } }, false);
+  const summaries = [...fold.matchAll(/<summary[\s\S]*?<\/summary>/g)].map((m) => m[0]);
+  ok('the brief fold really emits a <summary> (not vacuous)', summaries.length === 1);
+  ok('no <button>, <textarea> or <input> is inside it',
+    summaries.every((x) => !/<(button|textarea|input|select|a)\b/.test(x)), JSON.stringify(summaries));
+  ok('an open editor FORCES its fold open — a textarea behind a collapsed disclosure is invisible',
+    /<details class="mem-fold" data-mem-fold="brief" open>/.test(fold));
+  ok('...and the rendered document is hidden while the editor is up, so there is one copy on screen',
+    !fold.includes('mem-doc'));
+  // REACHABILITY, and it is not belt-and-braces: a mutation that BUILT the
+  // editor and then dropped it from this branch survived every source-level
+  // scan in the tree, because the <textarea> literal still existed inside
+  // renderBriefEditor. A component that ships unused is the shape this repo
+  // keeps re-learning; the only thing that sees it is an assertion over the
+  // markup the PAGE emits.
+  ok('the editor really reaches the page in the brief-PRESENT branch',
+    fold.includes('id="mem-brief-text"'), fold.slice(0, 300));
+  const emptyFold = makeRenderers({ briefEdit: null, openFolds: {} })
+    .renderBrief({ brief: { present: false } }, true);
+  ok('...and the Write-a-brief control reaches it in the brief-ABSENT branch',
+    emptyFold.includes('id="mem-brief-edit"'), emptyFold.slice(0, 300));
+}
+
+// ── 16f. The brief write itself ──────────────────────────────────────────
+{
+  function makeSaver(stateObj, responder) {
+    const calls = [];
+    let mounted = true;
+    const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'encodeURIComponent',
+      'JSON', 'reloadActive', 'refreshIndex', 'reportAsyncMountFailure',
+      extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'saveBrief', 'memory.js') + '\n' +
+      'return { saveBrief };')(
+      stateObj, () => {}, () => mounted,
+      async (url, init) => { calls.push({ url: String(url), init }); return responder(String(url), init); },
+      encodeURIComponent, JSON,
+      async () => { calls.push({ reloaded: true }); },
+      async () => { calls.push({ refreshed: true }); },
+      () => {});
+    return { ...api, calls, unmount: () => { mounted = false; } };
+  }
+  const okRes = { ok: true, status: 200, json: async () => ({ ok: true, briefSaved: true }) };
+
+  {
+    const st = {
+      activeDomain: 'alpha', activeProject: 'main',
+      briefEdit: { domain: 'alpha', project: 'main', text: '## Standing brief\n\nnew', busy: false, error: null },
+    };
+    const r = makeSaver(st, () => okRes);
+    await r.saveBrief(1);
+    const req = r.calls.find((c) => c.url);
+    eq('the write is a PATCH', req.init.method, 'PATCH');
+    eq('...to the project endpoint, which reaches tier 1 only',
+      req.url, '/api/memory/alpha/projects/main');
+    eq('...carrying the WHOLE brief, because the store replaces rather than merges',
+      JSON.parse(req.init.body).brief, '## Standing brief\n\nnew');
+    eq('...and nothing else', Object.keys(JSON.parse(req.init.body)).join(','), 'brief');
+    eq('the editor closes on success', st.briefEdit, null);
+    ok('...and the screen re-reads rather than trusting the draft',
+      r.calls.some((c) => c.reloaded) && r.calls.some((c) => c.refreshed));
+  }
+  {
+    // A FAILURE MUST NOT DESTROY THE DRAFT.
+    const st = {
+      activeDomain: 'alpha', activeProject: 'main',
+      briefEdit: { domain: 'alpha', project: 'main', text: 'typed by hand', busy: false, error: null },
+    };
+    const r = makeSaver(st, () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: 'too large' }) }));
+    await r.saveBrief(1);
+    ok('a refusal keeps the editor open with the draft intact',
+      st.briefEdit && st.briefEdit.text === 'typed by hand');
+    eq('...and shows the server\'s own reason', st.briefEdit.error, 'too large');
+    eq('...and re-enables the buttons', st.briefEdit.busy, false);
+    ok('...and does NOT re-read (there is nothing new to read)',
+      !r.calls.some((c) => c.reloaded));
+  }
+  {
+    // A SECOND CLICK WHILE BUSY IS NOT A SECOND WRITE.
+    const st = { activeDomain: 'a', activeProject: 'b',
+      briefEdit: { domain: 'a', project: 'b', text: 'x', busy: true, error: null } };
+    const r = makeSaver(st, () => okRes);
+    await r.saveBrief(1);
+    eq('a save while one is already in flight issues no request at all',
+      r.calls.filter((c) => c.url).length, 0);
+  }
+  {
+    // A REPLY THAT LANDS AFTER THE USER MOVED ON IS DROPPED.
+    const st = { activeDomain: 'a', activeProject: 'b',
+      briefEdit: { domain: 'a', project: 'b', text: 'x', busy: false, error: null } };
+    const r = makeSaver(st, () => {
+      // The user switches project while the request is in flight.
+      st.briefEdit = { domain: 'other', project: 'thing', text: 'y', busy: false, error: null };
+      return okRes;
+    });
+    await r.saveBrief(1);
+    ok('the reply is not applied to the project the user moved to',
+      st.briefEdit && st.briefEdit.project === 'thing' && st.briefEdit.text === 'y');
+    ok('...and nothing is re-read under it', !r.calls.some((c) => c.reloaded));
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§17 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
 // ═════════════════════════════════════════════════════════════════════════
 //
 // 17 of this view's 34 top-level functions were never executed by anything and
@@ -2272,6 +2664,9 @@ const EXECUTED = new Set([
   'render', 'captureFocus', 'restoreFocus',
   'screenSignature', 'nextPollDelay', 'stopPoll', 'schedulePoll',
   'fetchIndex', 'fetchState', 'refreshIndex', 'refreshScopeList', 'reloadActive', 'loadScope',
+  // v3.48.0 — projects inside a domain. All eight are lifted and run in §16.
+  'keyOf', 'activeKey', 'initialPick', 'renderProjectGroups',
+  'readRememberedProjects', 'rememberProject', 'renderBriefEditor', 'saveBrief',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on

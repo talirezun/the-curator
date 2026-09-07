@@ -130,6 +130,10 @@ function icon() { return ''; }
 function pluralize(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
 function render() { calls.render++; }
 function loadHealth(slug, token, opts) { calls.loadHealth.push({ slug, token, opts }); return Promise.resolve(); }
+// v3.48.0: selectDomain also re-asks for the domain's PROJECTS (agent memory
+// is kept per project inside a domain). Stubbed and RECORDED rather than
+// silently swallowed, so a change that stopped re-asking is visible here.
+function loadProjects(slug, token) { (calls.loadProjects = calls.loadProjects || []).push({ slug, token }); return Promise.resolve(); }
 function navigate(name) { calls.navigate.push(name); calls.order.push('nav'); }
 function reportAsyncActionFailure(err) { calls.asyncFailures = (calls.asyncFailures || 0) + 1; void err; }
 const shell = { requestChatScope: (s) => { calls.chatScope.push(s); calls.order.push('scope'); } };

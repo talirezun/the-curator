@@ -811,6 +811,97 @@
    component exists to end. They were deleted rather than negotiated, and the
    screen was re-checked in a real browser afterwards.                       */
 
+/* ── PROJECTS INSIDE A DOMAIN (v3.48.0) ──────────────────────────────────
+
+   The rail groups projects under their domain. The heading is a HEADING and
+   not a control: selecting a domain is not something this screen does (memory
+   belongs to a project), so it must not look pressable. Same eyebrow rung as
+   the PROJECTS caption above it, indented to the row's own text x-offset so
+   the heading and the project names it covers share one axis — the inset
+   grouped list's rule, applied to a rail.                                   */
+
+.mem-group + .mem-group { margin-top: var(--space-5); }
+.mem-group-head {
+  /* TYPE AND COLOUR COME FROM `.cur-eyebrow`, which the markup carries. This
+     rule sets POSITION only, and that split is deliberate rather than tidy:
+     this file may not declare `color: var(--text-3)` at all (the guard in
+     scripts/test-next-memory-ingest-text.js §6 counts them, and it is right
+     to — --text-3 is the LABEL rung and this file kept using it for prose).
+     An eyebrow IS a label, so it takes the system's own class instead of a
+     local re-description of it. */
+  padding: 0 var(--space-3) var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* The main pane's header is `domain / project`. The domain is quiet and the
+   separator quieter still, so the eye lands on the project without the
+   domain having to be hidden — the rail groups by it, so a header that
+   dropped it would be the only place on screen that could not answer "which
+   domain is this?". */
+.mem-project-domain {
+  font: var(--type-h3);
+  /* --text-2, not --text-3. It is quieter than the project name beside it,
+     but it is still a NAME the user reads, and this file's rule is that the
+     third rung is for labels only. */
+  color: var(--text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-project-sep { font: var(--type-h3); color: var(--text-faint); }
+
+/* ── THE STANDING-BRIEF EDITOR ───────────────────────────────────────────
+   The one control on this screen that writes. It sits in the fold BODY and
+   never in the <summary> — an interactive control inside a summary toggles
+   its own section when clicked (the v3.0.1-beta.18 hazard), and the fix used
+   is the one no later edit can undo: there is no propagation path, because
+   the control is not there.                                                */
+
+.mem-brief-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.mem-brief-editor { display: flex; flex-direction: column; gap: var(--space-3); }
+.mem-brief-label {
+  /* Same split as .mem-group-head: `.cur-eyebrow` in the markup owns the type
+     and the colour; this owns only that it is a block. */
+  display: block;
+}
+/* A FIELD IS SUNKEN — the kit's inversion of the gloss recipe: an inset well
+   and no specular at all, on --control-edge rather than --border (which
+   measures 1.2:1 and was the only boundary a field had before v3.44.0). The
+   face is the code face, because the content is Markdown the user is
+   editing character by character. */
+.mem-brief-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 220px;
+  resize: vertical;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-edge);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-mono);
+  line-height: 1.6;
+}
+.mem-brief-text:focus,
+.mem-brief-text:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+/* The ONE disabled token, and the cursor with it — a dimmed control that
+   still shows a text caret says "type here" while refusing to. Both come
+   from the kit; a literal opacity here is what scripts/test-next-disabled-state.js
+   counts, and it counted five distinct values before that pass. */
+.mem-brief-text:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+.mem-brief-buttons { display: flex; gap: var(--space-3); }
+
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press travel off; both background steps stay. Last in the file: a media
    query adds no specificity, so it must be declared after the rules it

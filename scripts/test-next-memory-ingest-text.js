@@ -197,8 +197,14 @@ function memRenderers(stateObj) {
   // which git rewrites on checkout, so the byline was dating every synced
   // handoff to the moment of the pull. It falls back to mtime when no journal
   // entry carried a time, which is what the fixtures below exercise.
+  // `renderBriefEditor` joins the list because renderBrief calls it in both
+  // branches (v3.48.0's standing-brief editor). It is LIFTED rather than
+  // stubbed for the same reason everything else here is: a stub would let
+  // this suite's text-role assertions run past markup the shipped screen
+  // emits — and this file's whole subject is which text role a sentence
+  // renders in.
   const body = lift(['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderHandoff',
-    'renderJournal', 'renderBrief', 'renderAbout'], memSrc, 'memory.js');
+    'renderJournal', 'renderBriefEditor', 'renderBrief', 'renderAbout'], memSrc, 'memory.js');
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
     'renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer', body)(
@@ -553,20 +559,45 @@ const NON_TEXT_EXEMPT = { 'ingest.css': ['.ing-queue-file-remove'] };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§7  READ-ONLY — the memory view is still not a second writer');
+section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing else');
 // ═══════════════════════════════════════════════════════════════════════════
-// The store has exactly ONE writer (an agent, over MCP) and its whole
-// per-machine layout is safe BECAUSE of that. Nothing in this pass may have
-// added an edit affordance, and the adopted roles render no control.
-
-ok('memory.js issues no mutating HTTP method',
-  !/method:\s*'(POST|PUT|PATCH|DELETE)'/i.test(memCode),
-  (memCode.match(/method:\s*'[A-Z]+'/g) || []).join(','));
-ok('memory.js renders no <textarea>, no contenteditable, no <form>',
-  !/<textarea|contenteditable|<form\b/i.test(memCode));
-ok('the read-only notice is still stated UNFOLDED in the sidebar, not tucked into the explainer',
-  /Read-only here\. Agents write this through MCP\./.test(memCode) &&
-  !new RegExp('Read-only here[\\s\\S]{0,80}renderExplainer').test(memCode));
+// UNTIL v3.48.0 this section asserted "no mutating method, no textarea, and
+// the sidebar says read-only". That was the right guard for a view with no
+// write path, and it is REPLACED rather than relaxed, because the property
+// that matters was never "no writes" — it was WHICH FILES.
+//
+// Tiers 2 and 3 (the per-(work-stream, machine) handoff and its journal) have
+// exactly one writer, an agent over MCP, and the per-machine layout is safe
+// BECAUSE of that. Tier 1 (the standing brief) is the human's and always was;
+// docs/working-state.md has said since v3.17.0 that you edit it by opening
+// project.md in a text editor.
+//
+// So: exactly one mutating method, it is a PATCH, it goes to the projects
+// endpoint, and it carries a brief and nothing else.
+{
+  const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []);
+  ok('memory.js issues exactly ONE mutating HTTP method', methods.length === 1, methods.join(','));
+  ok('...and it is a PATCH', methods[0] === "method: 'PATCH'", String(methods[0]));
+  ok('...aimed at the PROJECTS endpoint, which reaches tier 1 only',
+    /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
+  ok('...and it never sends a handoff field',
+    !/nowState|nextSteps|observations|traps/.test(memCode));
+  ok('memory.js never calls the tier 2/3 write tool by name',
+    !/saveWorkingState/.test(memCode));
+}
+// The ONE editable control, and it is the brief's. `contenteditable` and
+// `<form>` stay forbidden outright: neither is needed for a textarea, and
+// both are how an edit affordance arrives somewhere nobody was looking.
+{
+  const textareas = (memCode.match(/<textarea/gi) || []);
+  ok('memory.js renders exactly one <textarea>', textareas.length === 1, 'found ' + textareas.length);
+  ok('...and it is the standing-brief editor', /id="mem-brief-text"/.test(memCode));
+  ok('memory.js still renders no contenteditable and no <form>',
+    !/contenteditable|<form\b/i.test(memCode));
+}
+ok('the sidebar still states the split UNFOLDED — who writes what, not tucked into the explainer',
+  /Agents write the handoffs here through MCP\. You write the standing brief\./.test(memCode) &&
+  !new RegExp('Agents write the handoffs here[\\s\\S]{0,80}renderExplainer').test(memCode));
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  POSITIVE CONTROLS — every detector above is shown to FIRE');
