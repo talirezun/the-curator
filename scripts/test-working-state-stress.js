@@ -1414,13 +1414,35 @@ section('10. Disclosure survives its own budget');
     const next = /\n(?=export )/.exec(rest);
     return next ? rest.slice(0, next.index) : rest;
   };
-  for (const [id, fn] of [['10r', 'saveWorkingState'], ['10s', 'saveProjectBrief']]) {
-    const region = exportedRegion(fn);
+  // v3.48.0: the brief's notes are capped one level down. Both front doors of
+  // `saveProjectBrief` now compose a document and hand it to `writeBriefDoc`,
+  // which is the ONE place project.md is written and therefore the one place
+  // the cap can live without the two doors coming to differ. The property is
+  // the same — the cap is applied once, at the end, by finaliseNotes — so the
+  // scan follows the delegation rather than being deleted. A scan that stopped
+  // at the front door would go green while the cap was gone.
+  const regionOf = (name) => {
+    const m = new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, 'm').exec(wsSrc);
+    if (!m) return null;
+    const rest = wsSrc.slice(m.index + m[0].length);
+    const next = /\n(?=(?:export )?(?:async )?function )/.exec(rest);
+    return next ? rest.slice(0, next.index) : rest;
+  };
+  for (const [id, fn] of [['10r', 'saveWorkingState'], ['10s', 'writeBriefDoc']]) {
+    const region = regionOf(fn);
     // Fail loudly rather than scanning an empty string — a scan over null is
     // exactly the vacuous pass the helper module exists to stop.
     assert(region !== null, `${id}-pre: the region for ${fn} was actually located`, 'not found');
     assert(region !== null && /(?<![.\w$])finaliseNotes\s*\(/.test(region),
       `${id}: ${fn} actually calls finaliseNotes — the cap is not left to the pushes`);
+  }
+  // …and that BOTH brief front doors really land in it, so the delegation the
+  // assertion above depends on is asserted rather than assumed.
+  for (const door of ['saveProjectBriefSections', 'saveProjectBriefText']) {
+    const region = regionOf(door);
+    assert(region !== null, `10s-pre: the region for ${door} was actually located`, 'not found');
+    assert(region !== null && /(?<![.\w$])writeBriefDoc\s*\(/.test(region),
+      `10s: ${door} writes through writeBriefDoc — one writer, so the cap cannot differ between the doors`);
   }
   // And nothing may re-introduce a silent cap upstream of it: a `push` that
   // drops notes on the floor is the defect this section exists to prevent.

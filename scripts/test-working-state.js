@@ -683,12 +683,52 @@ section('12. Source guards — the invariants a refactor must not lose');
   // is simply unnecessary: the write target is per-(scope, machine), so the
   // only racers are two savers on the SAME machine for the SAME scope, which
   // the atomic-rename + append-only journal already resolve safely.
-  assert(!/acquireFileLock\s*\(/.test(src),
-    'never CALLS acquireFileLock — a lock is unnecessary here given the per-(scope, machine) write target, not because the lock is unsafe');
-  assert(!/from\s+['"][^'"]*write-registry/.test(src),
-    'does not import write-registry at all');
+  // ── v3.48.0 NARROWED THIS, IT DID NOT DROP IT ──────────────────────────
+  //
+  // The module DOES import write-registry now, and the project-administration
+  // functions (create / rename / delete) and the tier-1 brief write DO take
+  // the lock. Those are a different kind of write: they move or remove a
+  // directory other readers are walking, so "last writer wins" is not a
+  // coherent outcome, and they are user-initiated and retryable, which is what
+  // makes refusing on a held lock acceptable.
+  //
+  // The property this section exists for is unchanged and is now asserted
+  // where it actually lives — INSIDE saveWorkingState. A tier-2 handoff must
+  // never be refused because somebody else holds a lock: an agent at the end
+  // of its context that is refused loses the handoff entirely, and the write
+  // target is per-(scope, machine) anyway, so the only racers are two savers
+  // on one machine for one scope, which the atomic rename and the append-only
+  // journal already resolve safely.
+  //
+  // Scoped to the function body rather than the file, because a file-wide scan
+  // now measures the wrong thing — and a scan that measures the wrong thing
+  // while staying green is this repo's most expensive shape.
+  const saveRegion = (() => {
+    const m = /export async function saveWorkingState\(/.exec(src);
+    if (!m) return null;
+    const rest = src.slice(m.index + m[0].length);
+    const next = /\n(?=export )/.exec(rest);
+    return next ? rest.slice(0, next.index) : rest;
+  })();
+  assert(saveRegion !== null && saveRegion.length > 2000,
+    'PRE: the saveWorkingState region was actually located (a scan over null passes vacuously)',
+    saveRegion === null ? 'not found' : `${saveRegion.length} chars`);
+  assert(saveRegion !== null && !/acquireFileLock\s*\(/.test(saveRegion),
+    'saveWorkingState never CALLS acquireFileLock — a lock is unnecessary there given the per-(scope, machine) write target, and refusing a handoff over a held lock would lose it');
   assert(/exclusive lock since v3\.40\.0/.test(src) && /still not taken here, and deliberately/.test(src),
     'and the CURRENT reason (real lock, deliberately unused, not "it double-grants") is recorded in the source, not just here');
+  // The lock IS taken where a directory moves. Asserted positively so the
+  // narrowing above cannot decay into "nothing takes the lock anywhere".
+  for (const fn of ['createProject', 'renameProject', 'deleteProject']) {
+    const m = new RegExp(`export async function ${fn}\\(`).exec(src);
+    const rest = m ? src.slice(m.index) : '';
+    const region = rest ? rest.slice(0, (/\n(?=export )/.exec(rest.slice(1)) || { index: rest.length }).index + 1) : '';
+    const takesLock = /acquireFileLock\s*\(/.test(region)
+      || /saveProjectBriefText\s*\(/.test(region);   // createProject writes the brief, which locks
+    assert(!!region && takesLock, `${fn} DOES take the write lock (directly or through the brief writer)`);
+  }
+  assert(!/from\s+['"][^'"]*mcp\//.test(src),
+    'still imports nothing from mcp/ — the app must not depend on the stdio child');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

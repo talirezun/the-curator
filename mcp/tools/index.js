@@ -27,9 +27,13 @@ import { getHealthDismissedDefinition,       getHealthDismissedHandler }       f
 import { dismissWikiIssueDefinition,         dismissWikiIssueHandler }         from './dismissed.js';
 import { undismissWikiIssueDefinition,       undismissWikiIssueHandler }       from './dismissed.js';
 
-// Track 7 — portable working state. One read, one write.
+// Track 7 — portable working state. Two reads, two writes (v3.48.0 added the
+// project level: `list_projects` answers "which project", `save_project_brief`
+// writes tier 1 and is instruction-only).
 import { getWorkingStateDefinition,          getWorkingStateHandler }          from './working-state.js';
+import { listProjectsDefinition,             listProjectsHandler }             from './working-state.js';
 import { saveWorkingStateDefinition,         saveWorkingStateHandler }         from './working-state.js';
+import { saveProjectBriefDefinition,         saveProjectBriefHandler }         from './working-state.js';
 
 export const tools = [
   // ── Read tools (v2.3.0+) ────────────────────────────────────────────────────
@@ -48,6 +52,10 @@ export const tools = [
   // Track 7 — resume a previous session's work. Read-only; reads state/,
   // never the wiki graph, so it is unaffected by graph.js's file-count cache.
   { definition: getWorkingStateDefinition,  handler: getWorkingStateHandler },
+  // v3.48.0 — "which project am I resuming?". Registered BEFORE the write
+  // block for the same reason every read tool is: tool ordering nudges a model
+  // to reach for a read first when the intent is exploration.
+  { definition: listProjectsDefinition,     handler: listProjectsHandler },
   // ── Write tools (v2.5.2+) ───────────────────────────────────────────────────
   { definition: compileToWikiDefinition,          handler: compileToWikiHandler },
   { definition: scanWikiHealthDefinition,         handler: scanWikiHealthHandler },
@@ -59,6 +67,10 @@ export const tools = [
   // Track 7 — writes domains/<project>/state/, not the wiki. Carries
   // refuseIfReadonly like every other mutator here.
   { definition: saveWorkingStateDefinition,       handler: saveWorkingStateHandler },
+  // v3.48.0 — tier 1. Instruction-only: its description says in as many words
+  // that it is called when the USER asks, never on the agent's own initiative,
+  // and every write it makes is stamped as agent-authored in the file itself.
+  { definition: saveProjectBriefDefinition,       handler: saveProjectBriefHandler },
 ];
 
 // Response size cap. 1 MB of JSON is ~250 000 tokens — alone it would saturate

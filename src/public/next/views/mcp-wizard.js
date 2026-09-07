@@ -72,7 +72,7 @@
 //      "restart the app" — that error is shown as itself.
 //
 //   7. The tool count is stated correctly and the WRITE tools are named.
-//      Counted from mcp/tools/index.js: 20 tools, of which 5 mutate
+//      Counted from mcp/tools/index.js: 22 tools, of which 6 mutate
 //      something (the five guarded by refuseIfReadonly — compile_to_wiki,
 //      fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue,
 //      save_working_state). The /next MCP section said "seventeen tools,
@@ -116,9 +116,9 @@ import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
 // creates is covered by scripts/test-next-mcp-wizard.js, which imports the
 // real tool table and the real refuseIfReadonly call sites and fails if
 // either number moves without this constant moving with it.
-const TOOL_TOTAL = 20;
-const TOOL_WRITE = 5;
-const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 15
+const TOOL_TOTAL = 22;
+const TOOL_WRITE = 6;
+const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 16
 
 // ── State ────────────────────────────────────────────────────────────────
 
