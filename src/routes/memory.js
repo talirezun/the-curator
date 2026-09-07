@@ -109,7 +109,6 @@
  */
 
 import { Router } from 'express';
-import { stat } from 'fs/promises';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
@@ -117,11 +116,14 @@ import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 const router = Router();
 
 /**
- * Cap on the index listing. Not a store constant — until v3.48.0 the store
- * had no notion of "how many projects" — so it lives here with the rest of
- * this route's own bounds, and is reported through `truncated` rather than
- * hidden. When the store supplies its own cap (MAX_PROJECTS_TOTAL) the
- * store's answer is already capped and this is a second, equal ceiling.
+ * Cap on the index listing, reported through `truncated` rather than hidden.
+ *
+ * The store applies its OWN cap first (`MAX_PROJECTS_TOTAL`, also 200), so
+ * this is a second, equal ceiling and normally does nothing. Both are kept:
+ * neither file should have to know the other's number, and the count each
+ * route returns as `total` is the store's own, taken before either cap — a
+ * cap reported as a measurement is the collapse `distinctScopeCount` exists
+ * one tier down to undo.
  */
 export const MAX_PROJECTS = 200;
 
@@ -142,23 +144,29 @@ export const RESERVED_PROJECT_NAMES = new Set(['projects', 'project.md', 'journa
 // ═════════════════════════════════════════════════════════════════════════
 // THE STORE ADAPTER
 //
-// This router is written against the v3.48.0 store API (listProjects,
-// listAllProjects, createProject, renameProject, deleteProject,
-// readProjectBrief, saveProjectBrief(domain, project, text, opts), and the
-// project-aware forms of listWorkingScopes / readWorkingState).
+// One function per store call, so that if `src/brain/working-state.js` moves
+// again this file is the only thing that moves with it. It is THIN on
+// purpose: the store owns the path chokepoint, the sanitisers, the byte caps
+// and the write lock, and a second opinion about any of them here would be a
+// second thing to keep in step.
 //
-// It also keeps working against the PRE-v3.48.0 store, where a "project" was
-// a domain and there was exactly one per domain. That is not politeness
-// toward an old version: it is what lets this file be built, reviewed and
-// TESTED against the store as it exists today, and it degrades in the only
-// safe direction — a legacy store reports one default project per domain and
-// refuses the tier-1 writes with a named reason, rather than silently
-// writing structured sections over a hand-written brief.
+// ── WHY THIS LAYER IS NOT OPTIONAL, v3.48.0 ─────────────────────────────
+// This router was written against a contract in which the project-aware
+// reads took the project POSITIONALLY — `readWorkingState(domain, project,
+// opts)`. The store that shipped takes it on the OPTIONS object:
+// `readWorkingState(domain, {project, scope, machine, journalLimit})` and
+// `listWorkingScopes(domain, {project, withSaveTimes})`. That mismatch does
+// NOT throw. The store reads `opts.project` off a string, gets `undefined`,
+// and answers happily about the DOMAIN'S OWN project — the wrong tree under
+// the right name, with every assertion green. The tray hit the identical
+// mismatch; see `desktop/tray-summary.js`.
 //
-// Capability is detected ONCE per call from the presence of `listProjects`,
-// not from `Function.length` — a default parameter changes an arity without
-// changing a contract, and a signature probe that is wrong reads WRONG DATA
-// rather than throwing.
+// ── AND WHY THERE IS NO LONGER A SECOND ARM ─────────────────────────────
+// This file carried a fallback for a store with no projects API at all, and
+// a `501 store_lacks_projects` to go with it. The projects API lives in THIS
+// checkout, which the `.app` wraps, so no install can have one half without
+// the other: the arm was one only a fake could reach, and code only a fake
+// reaches is code nothing proves. It is gone, along with the 501.
 // ═════════════════════════════════════════════════════════════════════════
 
 /**
@@ -172,81 +180,17 @@ let storeOverride = null;
 export function __setWorkingStateStoreForTest(store) { storeOverride = store; }
 function ws() { return storeOverride || workingState; }
 
-/** Does this store know about projects inside a domain? */
-function hasProjects(store) { return typeof store.listProjects === 'function'; }
-
-/** The default project of a domain: the legacy tree, read under the domain's own name. */
-function defaultProjectOf(domain) { return domain; }
-
 /**
- * Does this project have a standing brief, and when did it last change?
+ * The default project of a domain: the domain's OWN project, whose slug IS
+ * the domain name and whose tree is the state root itself.
  *
- * Goes through `resolveInsideState`, the store's single path chokepoint, and
- * never builds a path itself. A `project.md` that is a directory, a dangling
- * symlink, or outside the state root all resolve to "no brief" rather than
- * to a throw.
- *
- * Cheap on purpose: the index needs to know a brief EXISTS, not what it
- * says. Reading 32 KB of brief per project to render a one-line row would be
- * the mistake `GET /api/wiki/:domain` makes (14 MB to answer "what pages
- * exist"). Used ONLY on the legacy path; the v3.48.0 store reports
- * `hasBrief`/`briefUpdatedAt` from its own walk.
+ * That is permanent, not a migration waiting to happen: the store's
+ * `projectPrefix` is a pure string comparison and returns '' for it, so no
+ * reader or writer probes the disk to decide which layout a path uses. A
+ * tree written years from now puts the domain's own project in exactly the
+ * same place.
  */
-async function briefStat(store, domain) {
-  const abs = store.resolveInsideState(domain, store.BRIEF_FILENAME);
-  if (!abs) return null;
-  try {
-    const st = await stat(abs);
-    if (!st.isFile()) return null;
-    return { updatedAt: st.mtime.toISOString(), bytes: st.size };
-  } catch {
-    return null;                                   // no brief — the normal case
-  }
-}
-
-/** One index row, built from a legacy (one-project-per-domain) store. */
-async function legacyRow(store, domain) {
-  const idx = await store.listWorkingScopes(domain);
-  const scopes = idx.ok ? idx.scopes : [];
-  const newest = scopes.length ? scopes[0] : null;
-  const brief = await briefStat(store, domain);
-  const distinctScopes = Number.isInteger(idx.distinctScopeCount)
-    ? idx.distinctScopeCount
-    : new Set(scopes.map((r) => r.scope).filter(Boolean)).size;
-  return {
-    domain,
-    project: defaultProjectOf(domain),
-    isLegacyDefault: true,
-    hasBrief: brief !== null,
-    briefUpdatedAt: brief ? brief.updatedAt : null,
-    // A legacy brief predates provenance entirely, so the AUTHORITY is
-    // unknown rather than assumed. `null` is that; 'owner' would be a guess
-    // wearing the store's vocabulary.
-    briefAuthoredBy: null,
-    scopeCount: distinctScopes,
-    distinctScopeCount: distinctScopes,
-    savedCopies: idx.ok ? idx.total : 0,
-    scopesTruncated: idx.ok ? idx.truncated : false,
-    unlistedEntries: idx.ok ? (idx.unlistedEntries || 0) : 0,
-    unlistedReason: (idx.ok && idx.unlistedReason) ? idx.unlistedReason : null,
-    layoutWarning: null,
-    lastWriteAt: newest ? newest.lastWriteAt : null,
-    ageSeconds: newest ? newest.ageSeconds : null,
-    writtenAt: newest ? (newest.writtenAt ?? null) : null,
-    writtenAgeSeconds: newest ? (newest.writtenAgeSeconds ?? null) : null,
-    headline: newest ? newest.headline : null,
-    harness: newest ? (newest.harness ?? null) : null,
-    lastSaveKind: newest ? (newest.lastSaveKind ?? null) : null,
-    lastSaveNotes: newest && Array.isArray(newest.lastSaveNotes) ? newest.lastSaveNotes : [],
-    newestScope: newest ? newest.scope : null,
-    newestMachine: newest ? newest.machine : null,
-    harnessShared: scopes.some((s) => s.harnessShared === true),
-    harnessSharedScopes: scopes.filter((s) => s.harnessShared === true)
-      .slice(0, 10)
-      .map((s) => ({ scope: s.scope, machine: s.machine, harnesses: s.harnesses || [] })),
-    harnessScanned: scopes.length,
-  };
-}
+function defaultProjectOf(domain) { return domain; }
 
 /**
  * Normalise ONE project row for the wire.
@@ -263,8 +207,16 @@ function projectRow(domain, r) {
   return {
     domain,
     project: r.project,
-    isLegacyDefault: r.isLegacyDefault === true,
+    // The STORE's own word. It was `isLegacyDefault` on the contract this
+    // router was written against, which asserted something false: the state
+    // root is not a pre-v3.48.0 leftover awaiting a migration, it is where a
+    // domain's own project lives permanently. Renamed here, in the tray, and
+    // in the views, all in the same release, so no consumer reads a field
+    // that stopped being emitted. (Read `r.isLegacyDefault` too? No: a
+    // fallback to a name nothing emits is a fallback nothing can exercise.)
+    isDefaultProject: r.isDefaultProject === true,
     hasBrief: r.hasBrief === true,
+    briefBytes: Number.isInteger(r.briefBytes) ? r.briefBytes : 0,
     briefUpdatedAt: r.briefUpdatedAt ?? null,
     briefAuthoredBy: r.briefAuthoredBy ?? null,
     scopeCount: Number.isInteger(r.distinctScopeCount) ? r.distinctScopeCount
@@ -282,6 +234,11 @@ function projectRow(domain, r) {
     writtenAgeSeconds: Number.isFinite(r.writtenAgeSeconds) ? r.writtenAgeSeconds : null,
     headline: r.headline ?? null,
     harness: r.harness ?? null,
+    // The store reads the model off the same journal line it reads the
+    // harness off. Dropping one of a pair it computed honestly is this
+    // module's own recorded defect class (CLAUDE.md, memory-layer
+    // invariants), so both cross the wire.
+    model: r.model ?? null,
     lastSaveKind: r.lastSaveKind ?? null,
     lastSaveNotes: Array.isArray(r.lastSaveNotes) ? r.lastSaveNotes : [],
     newestScope: r.newestScope ?? null,
@@ -292,82 +249,126 @@ function projectRow(domain, r) {
   };
 }
 
-/** Every project in one domain, newest first. */
-async function projectsIn(store, domain) {
-  if (hasProjects(store)) {
-    const out = await store.listProjects(domain);
-    const rows = (out && Array.isArray(out.projects) ? out.projects : []).map((r) => projectRow(domain, r));
-    return { projects: rows, truncated: !!(out && out.truncated) };
+/**
+ * Fold the per-work-stream facts into a row the store answers cheaply.
+ *
+ * ── WHAT IS MISSING FROM A STORE ROW, AND WHY IT IS MISSING ──────────────
+ * `listProjects` builds a row from ONE stat sweep and at most ONE journal
+ * tail — the newest pair's — because a Projects list over twenty projects
+ * would otherwise spend twelve hundred tail reads to render twenty headlines.
+ * That is the right trade for the list it was written for.
+ *
+ * Four facts do not survive it, and all four are DISCLOSURES:
+ *
+ *   · `harnessShared` / `harnessSharedScopes` — two different tools writing
+ *     into ONE (scope, machine) folder, where each save overwrites the other's
+ *     work. v3.34.0 added this because the app had been silent about it. It is
+ *     a property of a work-stream's whole journal, so the newest pair's tail
+ *     cannot see it.
+ *   · `harnessScanned` — how many pairs that verdict actually looked at, so a
+ *     cap can never read as a census.
+ *   · `scopesTruncated` / `unlistedEntries` / `unlistedReason` — work-streams
+ *     the store would not list, and why. A handoff sitting in a folder called
+ *     `_wip` is on disk and unread, and the count is the only thing saying so.
+ *
+ * So this route pays for them, on the SHOWN rows only (after the cap), with
+ * one `listWorkingScopes` per row. That is the same call the pre-v3.48.0 index
+ * made once per domain, so the index costs what it has always cost times the
+ * number of projects in a domain — a small number, and bounded above by
+ * MAX_PROJECTS. Dropping the disclosures instead would be cheaper and would be
+ * this module's own recorded defect: a consumer silently dropping a fact the
+ * layer below computed honestly.
+ */
+async function withScopeFacts(store, rows) {
+  const out = [];
+  for (const row of rows) {
+    let idx = null;
+    try { idx = await store.listWorkingScopes(row.domain, { project: row.project }); }
+    catch { idx = null; }
+    const scopes = idx && idx.ok && Array.isArray(idx.scopes) ? idx.scopes : [];
+    out.push({
+      ...row,
+      scopesTruncated: !!(idx && idx.ok && idx.truncated),
+      unlistedEntries: idx && idx.ok && Number.isInteger(idx.unlistedEntries) ? idx.unlistedEntries : 0,
+      unlistedReason: (idx && idx.ok && idx.unlistedReason) || null,
+      harnessShared: scopes.some((sc) => sc.harnessShared === true),
+      harnessSharedScopes: scopes.filter((sc) => sc.harnessShared === true)
+        .slice(0, 10)
+        .map((sc) => ({ scope: sc.scope, machine: sc.machine, harnesses: sc.harnesses || [] })),
+      // The SCANNED set, named as such. It is `scopes.length` — the shown
+      // pairs — and not `savedCopies`, which is the store's uncapped count:
+      // saying the collision scan covered pairs it never opened is the exact
+      // cap-as-census collapse the field exists to prevent.
+      harnessScanned: scopes.length,
+    });
   }
-  return { projects: [projectRow(domain, await legacyRow(store, domain))], truncated: false };
-}
-
-/** Every project in every domain, newest first, capped. */
-async function allProjects(store) {
-  if (typeof store.listAllProjects === 'function') {
-    const out = await store.listAllProjects();
-    const rows = (out && Array.isArray(out.projects) ? out.projects : [])
-      .map((r) => projectRow(r.domain, r));
-    return {
-      projects: rows.slice(0, MAX_PROJECTS),
-      total: rows.length,
-      truncated: rows.length > MAX_PROJECTS || !!(out && out.truncated),
-    };
-  }
-  const domains = await listDomains();
-  const shown = domains.slice(0, MAX_PROJECTS);
-  const rows = [];
-  for (const domain of shown) rows.push(projectRow(domain, await legacyRow(store, domain)));
-  return { projects: rows, total: domains.length, truncated: domains.length > shown.length };
+  return out;
 }
 
 /**
- * One project's state. `opts` is the store's own read options
- * (`scope`, `machine`, `journalLimit`), passed through un-reshaped.
+ * Every project in one domain, newest first.
  *
- * THE SIGNATURE ASSUMPTION IS NAMED HERE, once. The v3.48.0 contract writes
- * the project-aware read as `readWorkingState(domain, project, …)`; this
- * adapter calls `(domain, project, opts)` and the legacy store as
- * `(domain, opts)`. If the store lands on a different shape, THIS function
- * is the only thing that changes.
+ * `total` is the STORE's, which it takes before its own cap, so a truncated
+ * list still reports how many there are. Counting `projects.length` here
+ * would report a CAP as a measurement — the same collapse
+ * `distinctScopeCount` exists to undo one tier down.
+ */
+async function projectsIn(store, domain) {
+  const out = await store.listProjects(domain);
+  if (out && out.ok === false) return { projects: [], total: 0, truncated: false, refusal: out };
+  const rows = await withScopeFacts(
+    store, (out && Array.isArray(out.projects) ? out.projects : []).map((r) => projectRow(domain, r)));
+  return {
+    projects: rows,
+    total: Number.isInteger(out && out.total) ? out.total : rows.length,
+    truncated: !!(out && out.truncated),
+    layoutWarning: (out && out.layoutWarning) || null,
+    unlistedEntries: Number.isInteger(out && out.unlistedEntries) ? out.unlistedEntries : 0,
+    refusal: null,
+  };
+}
+
+/**
+ * Every project in every domain, newest first, capped.
+ *
+ * The store caps at MAX_PROJECTS_TOTAL and this route caps at MAX_PROJECTS.
+ * Both are applied, because they are the same ceiling from two directions and
+ * neither file should have to know the other's number; `total` stays the
+ * store's uncapped count either way.
+ */
+async function allProjects(store) {
+  const out = await store.listAllProjects();
+  const rows = (out && Array.isArray(out.projects) ? out.projects : [])
+    .map((r) => projectRow(r.domain, r));
+  const total = Number.isInteger(out && out.total) ? out.total : rows.length;
+  return {
+    // ENRICHED AFTER THE CAP, never before: the per-row work is bounded by
+    // what is actually returned.
+    projects: await withScopeFacts(store, rows.slice(0, MAX_PROJECTS)),
+    total,
+    truncated: rows.length > MAX_PROJECTS || !!(out && out.truncated),
+    layoutWarning: (out && out.layoutWarning) || null,
+    // HOW MANY DOMAINS WERE LOOKED AT. Load-bearing, not decoration: the store
+    // omits a domain's own project when it has neither a brief nor a save, so
+    // an EMPTY index means either "you have no domains" or "you have domains
+    // and no agent has saved in any of them" — two different first screens,
+    // and without this field the view would have to guess which.
+    domainsScanned: Number.isInteger(out && out.domainsScanned) ? out.domainsScanned : null,
+  };
+}
+
+/**
+ * One project's state.
+ *
+ * THE ONE PLACE THE STORE'S SIGNATURE IS KNOWN. The project rides on the
+ * OPTIONS object — `readWorkingState(domain, {project, scope, machine,
+ * journalLimit})` — and passing it positionally is silent: the store reads
+ * `opts.project` off a string, gets undefined, and answers about the
+ * domain's own project instead. Everything else in `opts` is the store's own
+ * and is passed through un-reshaped.
  */
 async function readState(store, domain, project, opts) {
-  if (hasProjects(store)) return store.readWorkingState(domain, project, opts);
-  if (project !== defaultProjectOf(domain)) {
-    return {
-      ok: false,
-      reason: 'project_not_found',
-      message: `"${project}" is not a project in "${domain}".`,
-    };
-  }
-  return store.readWorkingState(domain, opts);
-}
-
-/**
- * Resolve `scope=latest` to a real scope name.
- *
- * Done here rather than left to the store when the store cannot do it, so
- * the two callers of this router (the view and anything scripted) get one
- * answer. `latest` is the NEWEST-WRITTEN pair's scope, which is `scopes[0]`
- * — the store sorts newest-first and every consumer already relies on it.
- * Returns the input unchanged when it is not the literal `latest`, and null
- * when there is nothing saved at all.
- */
-async function resolveScopeName(store, domain, project, scope) {
-  if (typeof scope !== 'string' || scope.toLowerCase() !== 'latest') return scope;
-  if (typeof store.resolveScope === 'function') {
-    const r = await store.resolveScope(domain, project, 'latest');
-    // The store may answer with a bare name or with a small object; both are
-    // accepted, and anything else degrades to the index walk below rather
-    // than to a throw.
-    if (typeof r === 'string') return r;
-    if (r && typeof r.scope === 'string') return r.scope;
-  }
-  const idx = hasProjects(store)
-    ? await store.listWorkingScopes(domain, project)
-    : await store.listWorkingScopes(domain);
-  const scopes = idx && idx.ok && Array.isArray(idx.scopes) ? idx.scopes : [];
-  return scopes.length ? scopes[0].scope : null;
+  return store.readWorkingState(domain, { ...opts, project });
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -409,46 +410,26 @@ async function refuseMirror(res, domain) {
   return false;
 }
 
-/**
- * The store must be new enough to have the tier-1 write functions.
- *
- * 501 rather than 500: nothing failed, the capability is absent. Named so a
- * caller sees WHICH function is missing instead of a stack trace, and so the
- * legacy path can never fall through into the pre-v3.48.0 `saveProjectBrief`,
- * which takes STRUCTURED sections and would drop every hand-written heading
- * a real brief carries.
- */
-function requireProjectWrites(res, store, fnName) {
-  // `hasProjects` FIRST, and it is not belt-and-braces. The pre-v3.48.0 store
-  // already exports a `saveProjectBrief` — with a DIFFERENT signature — so a
-  // bare `typeof store[fnName] === 'function'` would wave the legacy store
-  // through and then call `saveProjectBrief(domain, project, text, opts)`
-  // against `saveProjectBrief(project, input)`: the domain would be read as
-  // the project, the project string as the input object, every section would
-  // come back undefined, and the store would render an EMPTY brief over the
-  // user's own. A capability probe that can be satisfied by a same-named
-  // function with a different contract is not a capability probe.
-  if (hasProjects(store) && typeof store[fnName] === 'function') return true;
-  res.status(501).json({
-    ok: false,
-    reason: 'store_lacks_projects',
-    error: `This server's working-state store has no ${fnName}(). Projects inside a domain need `
-      + 'v3.48.0 or later of src/brain/working-state.js.',
-  });
-  return false;
-}
-
 // ═════════════════════════════════════════════════════════════════════════
 // GET /api/memory — the index, one row per PROJECT
 // ═════════════════════════════════════════════════════════════════════════
 /**
  * "Which of my projects have agent memory, and how fresh is it?"
  *
- * Returns a row for every project in every domain — including a domain with
- * NOTHING saved, whose default project is reported with `scopeCount: 0`.
- * That is a real, useful answer: it is what a user sees before their first
- * agent session, and hiding it would make the view look broken rather than
- * empty.
+ * ── WHAT IS NOT A ROW, AND WHY THAT CHANGED IN v3.48.0 ──────────────────
+ * Up to v3.47 this route emitted one row per DOMAIN, always, including a
+ * domain with nothing saved at all. The store now decides: `listProjects`
+ * omits a domain's own project when it has NEITHER a brief NOR a save,
+ * because a row describing an empty tree is noise on a screen whose job is
+ * "which project". That answer is not re-litigated here — one description of
+ * "which projects exist", shared by this route, the Domains view's Projects
+ * list and the menu-bar widget, is worth more than this route's own opinion,
+ * and a second opinion maintained in a router is a second thing that drifts.
+ *
+ * The cost is that an EMPTY index is ambiguous — no domains, or domains with
+ * no agent memory yet — so `domainsScanned` rides along and the view says
+ * which. An empty project a user CREATED is still a row: it has a brief,
+ * because `createProject` always writes one.
  *
  * `newestScope`/`newestMachine` exist so the view can open the freshest
  * handoff in ONE request instead of a round-trip to discover the scope and a
@@ -475,8 +456,8 @@ function requireProjectWrites(res, store, fnName) {
 router.get('/', async (_req, res) => {
   try {
     const store = ws();
-    const { projects, total, truncated } = await allProjects(store);
-    res.json({ ok: true, projects, total, truncated });
+    const { projects, total, truncated, layoutWarning, domainsScanned } = await allProjects(store);
+    res.json({ ok: true, projects, total, truncated, layoutWarning, domainsScanned });
   } catch (err) {
     console.error('Memory index error:', err);
     res.status(500).json({ ok: false, error: err.message });
@@ -496,29 +477,37 @@ router.get('/:domain/projects', async (req, res) => {
     const { domain } = req.params;
     if (!await requireDomain(res, domain)) return;
     const store = ws();
-    const { projects, truncated } = await projectsIn(store, domain);
+    const listed = await projectsIn(store, domain);
+    if (listed.refusal) {
+      return res.status(statusForStoreRefusal(listed.refusal)).json(withErrorProse(listed.refusal));
+    }
     const readonly = await isDomainReadonly(domain);
     res.json({
       ok: true,
       domain,
-      projects,
-      total: projects.length,
-      truncated,
+      projects: listed.projects,
+      // The STORE's count, taken before its own cap. `projects.length` here
+      // would report a CAP as a measurement.
+      total: listed.total,
+      truncated: listed.truncated,
+      // Directory entries in this domain's state tree that the store will
+      // not address, and why. Surfaced rather than dropped: a handoff sitting
+      // in a folder called `_wip` is on disk and unread, and the count is the
+      // only thing that says so.
+      unlistedEntries: listed.unlistedEntries,
+      layoutWarning: listed.layoutWarning,
       readonly,
       // Whether a project here can be created, renamed or deleted AT ALL —
       // one field answering the question the view actually has, rather than
-      // two the view would have to combine. It folds in BOTH refusals:
+      // two the view would have to combine.
       //
-      //   · the server's capability (an older working-state store has no
-      //     projects API, and the write routes answer 501), and
-      //   · this domain being a read-only Shared Brain mirror (403).
-      //
-      // Reporting the capability alone would render a full set of controls
-      // on a mirror whose every button answers 403 — a control whose only
-      // outcome is a refusal is worse than no control. And it is a fact
-      // about the server that ANSWERED, never a version string used as a
-      // proxy for one.
-      canWrite: hasProjects(store) && typeof store.createProject === 'function' && !readonly,
+      // Since the capability arm was removed this folds in exactly one
+      // refusal — the domain being a read-only Shared Brain mirror (403) —
+      // and it is KEPT as its own field rather than collapsed into
+      // `!readonly` at the view, because it is the answer to "may I write
+      // here", which is what the view asks, and the two stop being the same
+      // question the moment another refusal is added.
+      canWrite: !readonly,
     });
   } catch (err) {
     console.error('Memory projects error:', err);
@@ -539,7 +528,6 @@ router.post('/:domain/projects', async (req, res) => {
     if (await refuseMirror(res, domain)) return;
 
     const store = ws();
-    if (!requireProjectWrites(res, store, 'createProject')) return;
 
     const body = req.body || {};
     const project = typeof body.project === 'string' ? body.project.trim() : '';
@@ -560,8 +548,19 @@ router.post('/:domain/projects', async (req, res) => {
     const tooBig = briefTooBig(store, brief);
     if (tooBig) return res.status(400).json(tooBig);
 
-    const out = await store.createProject(domain, project, brief ? { brief } : {});
-    if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(out);
+    // The provenance is stamped EXPLICITLY, not left to the store's default.
+    // The default is no provenance comment at all, which `parseBriefProvenance`
+    // reads back as null and `classifyBriefAuthority` grants OWNER authority to
+    // — the right reading for a brief typed by hand, and the same reading this
+    // one deserves, since a person typed it into the app's own editor. Saying
+    // it out loud is better than inheriting it: an agent-written brief is
+    // stamped, so an UNSTAMPED file would otherwise be indistinguishable from
+    // one written before v3.48.0, and this way the file says which it is.
+    const out = await store.createProject(domain, project, {
+      ...(brief ? { brief } : {}),
+      authoredBy: { kind: 'human' },
+    });
+    if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(withErrorProse(out));
     res.status(201).json({ ok: true, domain, project, created: true });
   } catch (err) {
     console.error('Memory create-project error:', err);
@@ -606,8 +605,7 @@ router.patch('/:domain/projects/:project', async (req, res) => {
     let current = project;
 
     if (wantsRename) {
-      if (!requireProjectWrites(res, store, 'renameProject')) return;
-      const next = body.rename.trim();
+        const next = body.rename.trim();
       if (!validProjectName(store, next)) {
         return res.status(400).json({
           ok: false, reason: 'invalid_project',
@@ -630,17 +628,16 @@ router.patch('/:domain/projects/:project', async (req, res) => {
         return res.status(status).json(conflict);
       }
       const out = await store.renameProject(domain, project, next);
-      if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(out);
+      if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(withErrorProse(out));
       current = next;
     }
 
     if (wantsBrief) {
-      if (!requireProjectWrites(res, store, 'saveProjectBrief')) return;
       const tooBig = briefTooBig(store, body.brief);
       if (tooBig) return res.status(400).json({ ...tooBig, renamedTo: wantsRename ? current : undefined });
       const out = await saveBrief(store, domain, current, body.brief);
       if (out && out.ok === false) {
-        return res.status(statusForStoreRefusal(out)).json({ ...out, renamedTo: wantsRename ? current : undefined });
+        return res.status(statusForStoreRefusal(out)).json({ ...withErrorProse(out), renamedTo: wantsRename ? current : undefined });
       }
     }
 
@@ -673,7 +670,6 @@ router.delete('/:domain/projects/:project', async (req, res) => {
     if (await refuseMirror(res, domain)) return;
 
     const store = ws();
-    if (!requireProjectWrites(res, store, 'deleteProject')) return;
     if (!validProjectName(store, project)) {
       return res.status(400).json({
         ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
@@ -693,7 +689,7 @@ router.delete('/:domain/projects/:project', async (req, res) => {
     }
 
     const out = await store.deleteProject(domain, project, { confirm });
-    if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(out);
+    if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(withErrorProse(out));
     res.json({ ok: true, domain, project, deleted: true });
   } catch (err) {
     console.error('Memory delete-project error:', err);
@@ -755,15 +751,21 @@ async function handleDetail(req, res, domain, project, deprecated) {
       });
     }
 
+    // `scope` IS PASSED THROUGH, keyword and all. This route used to resolve
+    // `latest` itself before calling the store, and that was a second copy of
+    // a rule the store already owns — and a copy that DISAGREED with it: the
+    // store resolves an ACTUAL work-stream named `latest` in preference to the
+    // keyword (see LATEST_SCOPE), because opening a different work-stream than
+    // the one named is a correctness bug wearing a helpfulness costume. The
+    // route's copy always meant "newest". Deleted, not fixed twice.
+    //
+    // `latest` over a project with nothing saved resolves to null in the
+    // store, which reads as the scope-less "what exists?" answer — the honest
+    // reply, rather than a 400 about a scope the caller never named. The
+    // response carries `scopeResolvedBy` so a client can tell which of the two
+    // it got.
     const opts = {};
-    if (typeof req.query.scope === 'string' && req.query.scope) {
-      const resolved = await resolveScopeName(store, domain, project, req.query.scope);
-      // `latest` against a project with nothing saved resolves to nothing.
-      // The scope-less read is the honest answer to that — it says what
-      // exists, which is nothing — rather than a 400 about a scope the
-      // caller never named.
-      if (resolved) opts.scope = resolved;
-    }
+    if (typeof req.query.scope === 'string' && req.query.scope) opts.scope = req.query.scope;
     if (typeof req.query.machine === 'string' && req.query.machine) opts.machine = req.query.machine;
     if (req.query.journalLimit != null && req.query.journalLimit !== '') {
       const n = Number(req.query.journalLimit);
@@ -772,8 +774,24 @@ async function handleDetail(req, res, domain, project, deprecated) {
 
     const state = await readState(store, domain, project, opts);
     if (!state.ok) {
-      return res.status(state.reason === 'project_not_found' ? 404 : 400)
-        .json(deprecated ? { ...state, ...deprecationNote(domain, project) } : state);
+      const body = withErrorProse(state);
+      return res.status(statusForStoreRefusal(state))
+        .json(deprecated ? { ...body, ...deprecationNote(domain, project) } : body);
+    }
+    // A NAMED PROJECT THAT IS NOT THERE IS A 404, not a 200 describing an
+    // empty tree. The store answers `ok: true, projectExists: false` on
+    // purpose — it distinguishes "created but empty" from "never created",
+    // which is a distinction its callers need — but over HTTP the two are
+    // different answers to "GET this project", and returning 200 for a name
+    // that does not exist is how a typo renders as a working, blank page.
+    // The domain's OWN project always exists (its tree is the state root),
+    // so this can only fire for a named one.
+    if (state.projectExists === false) {
+      const body = {
+        ok: false, reason: 'project_not_found', domain, project,
+        error: `"${project}" is not a project in "${domain}".`,
+      };
+      return res.status(404).json(deprecated ? { ...body, ...deprecationNote(domain, project) } : body);
     }
 
     const readonly = await isDomainReadonly(domain);
@@ -838,37 +856,91 @@ function briefTooBig(store, text) {
 }
 
 /**
- * Save a brief through whichever writer the store offers.
+ * Save a brief.
  *
- * The v3.48.0 writer takes the WHOLE markdown text, which is the shape that
- * matters: the pre-v3.48.0 `saveProjectBrief(project, {brief, decisions, …})`
- * takes STRUCTURED sections and re-renders the document from them, so it
- * DROPS every hand-written heading a real brief carries (the maintainer's
- * own has "Roadmap" and "How I want you to work"). This adapter therefore
- * refuses to fall back to it — `requireProjectWrites` has already returned
- * 501 on a store that only has the old one, because `hasProjects` is false
- * there and the caller checks it first.
+ * ── WHY `saveProjectBriefText` AND NOT `saveProjectBrief` ────────────────
+ * The store exports both. `saveProjectBrief(project, a, b, c)` DISPATCHES ON
+ * ARGUMENT SHAPE and still accepts its pre-v3.48.0 structured form
+ * `(project, {brief, decisions, …})`, which composes the document from four
+ * known section keys — so any `## ` heading the owner wrote by hand and the
+ * store does not know about (the maintainer's own brief has "Roadmap" and
+ * "How I want you to work") is silently dropped on the next write. The
+ * whole-text writer is named directly so this call site cannot be re-read as
+ * the other one by anybody, including a future shape-dispatcher.
+ *
+ * ── `authoredBy: { kind: 'human' }`, STAMPED RATHER THAN OMITTED ─────────
+ * The store's default is no provenance comment at all, which reads back as
+ * null and is granted OWNER authority — the reading a hand-typed brief gets,
+ * and the correct one here too. It is stated explicitly anyway: an
+ * agent-written brief IS stamped, so an unstamped file is indistinguishable
+ * from one written before v3.48.0, and a file that says what it is beats a
+ * file whose meaning depends on knowing which version wrote it.
+ *
+ * ── `replace: true`, AND THE ONE THING IT GIVES UP ──────────────────────
+ * The store refuses a write that shrinks a brief to under 5% of itself,
+ * because tier 1 is overwritten in place with no journal behind it. That
+ * guard is right for an agent composing a document it cannot see. It is
+ * wrong here, and worse than wrong: the app's editor is SEEDED WITH THE
+ * CURRENT TEXT, so a shrink is something a person did to text on their own
+ * screen and then pressed Save on — and the refusal's own advice ("repeat
+ * the call with replace: true") is advice a person in a browser cannot take.
+ * Advice that cannot be followed is worse than none. An EMPTY brief is still
+ * refused, by `saveProjectBriefText` itself, ahead of the shrink guard and
+ * regardless of this flag.
+ *
+ * The cost, stated: a brief LONGER than the read cap comes into the editor
+ * truncated, and saving it would drop the tail. The view shows "the tail is
+ * not shown" above the box when that is true; the route cannot see it.
  */
 async function saveBrief(store, domain, project, text) {
-  return store.saveProjectBrief(domain, project, text, {
+  return store.saveProjectBriefText(domain, project, text, {
     authoredBy: { kind: 'human' },
+    replace: true,
   });
 }
 
 /**
  * Map a store refusal to an HTTP status.
  *
+ * The store's reasons are HYPHENATED (`unknown-state-project`); this router's
+ * own are underscored (`invalid_project`). Both spellings are listed rather
+ * than normalised, because normalising would mean rewriting the store's
+ * `reason` on the way out and a caller matching on the string it was given by
+ * the store would then stop matching.
+ *
  * Named reasons only. A refusal this router does not recognise is a 400
  * rather than a 500: the store refuses INPUT, and calling an unrecognised
  * refusal a server error would tell the user to retry something that will
- * never succeed.
+ * never succeed. `io` is the exception and is a 500, because it is the one
+ * reason that is genuinely OUR fault and genuinely worth retrying.
  */
 function statusForStoreRefusal(out) {
   const reason = out && typeof out.reason === 'string' ? out.reason : '';
-  if (reason === 'unknown-project' || reason === 'project_not_found') return 404;
+  if (reason === 'unknown-project' || reason === 'unknown-state-project'
+    || reason === 'project_not_found') return 404;
   if (reason === 'readonly') return 403;
-  if (reason === 'exists' || reason === 'project_exists') return 409;
+  if (reason === 'project-exists' || reason === 'project_exists') return 409;
+  // A write lock held by somebody else, and the same status this router's own
+  // in-flight guard uses for the same situation.
+  if (reason === 'locked') return 409;
+  if (reason === 'io') return 500;
   return 400;
+}
+
+/**
+ * The store says `message`; this router says `error`; the shell reads `error`.
+ *
+ * `fetchJSON` in `src/public/next/views/domains.js` renders `body.error` and
+ * falls back to "Request failed (409)". So a store refusal forwarded verbatim
+ * — "a project called X already exists in Y" — reaches the user as a status
+ * code. Both keys are emitted, with `message` untouched, so a client matching
+ * on either keeps working.
+ */
+function withErrorProse(out) {
+  if (!out || typeof out !== 'object') return out;
+  if (typeof out.error === 'string' && out.error) return out;
+  if (typeof out.message !== 'string' || !out.message) return out;
+  return { ...out, error: out.message };
 }
 
 export default router;

@@ -209,10 +209,39 @@ await ws.saveWorkingState('alpha', {
   nowState: 'A different scope.',
   harness: 'cursor', model: 'gpt-5',
 });
-await ws.saveWorkingState('shared-cohort', {
-  scope: 'main', headline: 'Mirror state', nowState: 'From a cohort member.',
-  harness: 'claude-code', model: 'claude-opus-5',
-});
+// THE MIRROR'S STATE IS WRITTEN TO DISK DIRECTLY, and it has to be. This was
+// `saveWorkingState('shared-cohort', …)`, which the store REFUSES with
+// `reason: 'readonly'` — every in-app write surface refuses a Shared Brain
+// mirror — so the mirror fixture had no state at all, and every assertion
+// about it was passing over an empty tree. It went unnoticed because the
+// pre-v3.48.0 index emitted one row per DOMAIN whether or not anything was in
+// it, so "the mirror appears in the index like any other project" was true of
+// a domain with nothing in it. A mirror's state arrives over SYNC, not through
+// a local save, so writing the files is also the honest fixture.
+{
+  const mdir = join(DOMAINS, 'shared-cohort', 'state', 'main', 'cohort-machine-aa11');
+  mkdirSync(mdir, { recursive: true });
+  writeFileSync(join(mdir, 'current.md'),
+    '# Handoff\n\n## Headline\n\nMirror state\n\n## Where things stand\n\nFrom a cohort member.\n');
+  writeFileSync(join(mdir, 'journal.jsonl'), JSON.stringify({
+    saved_at: new Date().toISOString(), headline: 'Mirror state',
+    harness: 'claude-code', model: 'claude-opus-5', kind: 'complete',
+  }) + '\n');
+}
+
+// A PROJECT THAT EXISTS AND HAS NEVER BEEN SAVED TO. `briefed` carries a
+// standing brief and no handoff, which is a real, deliberate configuration —
+// somebody wrote the brief before the first agent session — and it is the row
+// on which "a fact and its absence stay apart" is asserted below. It replaces
+// `blank` in that role: since v3.48.0 the store OMITS a domain's own project
+// when it has neither a brief nor a save, so `blank` is no longer a row at all
+// and cannot carry an assertion about what a row says.
+makeDomain('briefed');
+{
+  const r = await ws.saveProjectBriefText('briefed', 'briefed',
+    '## Standing brief\n\nWritten before the first session.', { authoredBy: { kind: 'human' } });
+  if (!r.ok) throw new Error('fixture: brief-only project could not be created: ' + r.message);
+}
 
 // A SECOND MACHINE under one scope. Without this the fixture has 2 scopes
 // across 2 pairs, so `scopeCount` and the pair count are numerically equal
@@ -360,7 +389,22 @@ const idx = await call('/');
 eq('index responds 200', idx.status, 200);
 ok('index is ok', idx.body && idx.body.ok === true);
 const byName = Object.fromEntries((idx.body.projects || []).map((p) => [p.project, p]));
-eq('index lists every domain, not only those with state', Object.keys(byName).length, 3);
+// ── WHAT IS A ROW, SINCE v3.48.0 ─────────────────────────────────────────
+// The store omits a domain's own project when it has NEITHER a brief NOR a
+// save, because a row describing an empty tree is noise on a screen whose job
+// is "which project". This route defers to that rather than keeping a second
+// opinion — one description of "which projects exist", shared with the Domains
+// view's Projects list and the menu-bar widget. `blank` is therefore absent,
+// and this assertion is the deliberate replacement for "index lists every
+// domain, not only those with state", which described v3.17.0-v3.47.
+eq('the index lists the projects that HAVE something', Object.keys(byName).length, 3);
+ok('...and a domain with neither a brief nor a save is not one of them',
+  !byName.blank, JSON.stringify(Object.keys(byName)));
+// THE OMISSION IS ONLY SAFE IF THE SERVER SAYS IT LOOKED. An empty index would
+// otherwise be indistinguishable from "you have no domains", and the view
+// would tell a user with four domains to create a fifth.
+eq('...while the server says how many domains it scanned, so an EMPTY index is not ambiguous',
+  idx.body.domainsScanned, 4);
 
 // THE PAIRS-vs-WORK-STREAMS DISTINCTION. The fixture is deliberately
 // asymmetric — 2 scopes spread over 3 (scope, machine) pairs — so these two
@@ -379,14 +423,26 @@ ok('alpha carries a headline from the journal', typeof (byName.alpha || {}).head
 ok('alpha names the newest scope so the view can open it in ONE request',
   typeof (byName.alpha || {}).newestScope === 'string' && typeof byName.alpha.newestMachine === 'string');
 
-// A fact and its ABSENCE stay apart — the whole point.
-eq('a project with no state reports scopeCount 0', (byName.blank || {}).scopeCount, 0);
-eq('a project with no state reports lastWriteAt NULL, never an epoch', (byName.blank || {}).lastWriteAt, null);
-eq('a project with no state reports ageSeconds NULL, never 0', (byName.blank || {}).ageSeconds, null);
-eq('a project with no state reports hasBrief false', (byName.blank || {}).hasBrief, false);
-eq('a project with no state reports headline NULL', (byName.blank || {}).headline, null);
+// A fact and its ABSENCE stay apart — the whole point. Asserted on `briefed`,
+// a project that EXISTS (it has a standing brief) and has never been saved to.
+ok('PRECONDITION: the brief-only project is a row at all', !!byName.briefed,
+  JSON.stringify(Object.keys(byName)));
+eq('a project with no saves reports scopeCount 0', (byName.briefed || {}).scopeCount, 0);
+eq('a project with no saves reports lastWriteAt NULL, never an epoch', (byName.briefed || {}).lastWriteAt, null);
+eq('a project with no saves reports ageSeconds NULL, never 0', (byName.briefed || {}).ageSeconds, null);
+eq('a project with no saves reports headline NULL', (byName.briefed || {}).headline, null);
+// "No state saved yet" and "a brief, no sessions yet" are DIFFERENT facts and
+// the row says which: this one HAS a brief.
+eq('...and reports its standing brief, which is why it is a row', (byName.briefed || {}).hasBrief, true);
+// CONTROL: `alpha` differs on every one of those, so the assertions above are
+// about this row rather than about a shape every row happens to have.
+ok('CONTROL: a project WITH saves differs on each of them',
+  byName.alpha.scopeCount > 0 && typeof byName.alpha.lastWriteAt === 'string'
+  && typeof byName.alpha.headline === 'string');
 
 ok('the shared mirror appears in the index like any other project', !!byName['shared-cohort']);
+ok('...with the state that arrived over sync really counted, not an empty shell',
+  (byName['shared-cohort'] || {}).savedCopies === 1, JSON.stringify(byName['shared-cohort']));
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§3 — GET /api/memory/:project (the read)');

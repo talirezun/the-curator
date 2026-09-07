@@ -187,7 +187,7 @@ const {
 } = sandbox;
 
 const ROW = (over) => ({
-  domain: 'alpha', project: 'lumina', isLegacyDefault: false, hasBrief: true,
+  domain: 'alpha', project: 'lumina', isDefaultProject: false, hasBrief: true,
   lastWriteAt: '2026-09-06T12:00:00.000Z', writtenAt: '2026-09-06T12:00:00.000Z',
   newestScope: 'main', ...over,
 });
@@ -330,8 +330,24 @@ section('S3 -- The row: what it says, and what it never says');
   ok('the agent own clock is preferred over the file timestamp',
     synced.includes('REL(2026-09-01T00:00:00.000Z)'), synced);
 
-  const legacy = renderProjectRow(ROW({ isLegacyDefault: true }), true);
-  ok('the domain original project is marked as such', legacy.includes('original project'));
+  // THE DOMAIN'S OWN PROJECT. `isDefaultProject` is the STORE's own field name
+  // (the router's contract called it `isLegacyDefault`, which asserted a
+  // migration that does not exist — the state root is where a domain's own
+  // project lives permanently).
+  const own = renderProjectRow(ROW({ isDefaultProject: true }), true);
+  ok('the domain own project is marked as such', own.includes('own project'), own);
+  // It can be neither renamed nor deleted -- the store refuses both by name --
+  // so the row must not offer either control even on a WRITABLE domain, and
+  // must say why rather than leaving a gap.
+  ok('...and offers neither Rename nor Delete, even though the domain is writable',
+    !own.includes('data-proj-rename') && !own.includes('data-proj-delete'), own);
+  ok('...and says why the two controls are absent',
+    own.includes('cannot be renamed or deleted'), own);
+  ok('...while the marker line is still copyable', own.includes('data-proj-marker'));
+  // CONTROL: the same row without the flag DOES offer them, so the assertion
+  // above is about the flag and not about the row shape.
+  ok('CONTROL: a named project on the same domain still offers both',
+    renderProjectRow(ROW({ isDefaultProject: false }), true).includes('data-proj-rename'));
 }
 {
   const writable = renderProjectRow(ROW(), true);

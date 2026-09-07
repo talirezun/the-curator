@@ -1143,7 +1143,7 @@ The rail, top to bottom:
 | **Chat** | Ask questions of one domain's wiki. This is where the app opens. |
 | **Domains** | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. |
 | **Shared Brain** | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Agent memory** | Working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. Read-only here; agents do the writing. |
+| **Agent memory** | Working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
 | **Ingest** | Drop in PDFs, Markdown or text files. |
 
 Then, at the **bottom of the rail**, separated by a gap:
@@ -1187,15 +1187,20 @@ The one-time "The Curator has a new look." notice and its **Use the previous int
 ### Agent memory — what the screen shows
 
 The **Agent memory** rail item opens a browser for the working state your agents leave for
-each other. Everything on it is **read-only**: agents write this over MCP, and the app shows it.
+each other. Almost all of it is **read-only** — agents write this over MCP and the app shows it —
+with exactly one exception, the **standing brief**, which is your document and has an Edit button.
 
-- **The sidebar lists every domain, and every project inside it** — domains in domain order,
-  projects nested under their domain, each project with its work-stream count and how long ago
-  it was last written to (*"2 scopes · 5 hr ago"*). A domain that has never been saved to is
-  still listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that is
-  a real answer, not a broken row. The screen **opens** on whichever project was written to most
-  recently, which is nearly always the one you just came from, and it remembers the last project
-  you looked at in each domain; the lists themselves do not reorder between visits.
+- **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
+  nested under their domain, each project with its work-stream count and how long ago it was last
+  written to (*"2 scopes · 5 hr ago"*). A project that has a standing brief but has never been
+  saved to is listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that
+  is a real answer, not a broken row. A domain with **neither** a brief nor a save is not listed
+  at all: there is nothing there yet to describe. If nothing at all is listed, the screen says
+  which of the two situations you are in — *no domains*, or domains with no agent memory yet — and
+  never sends you off to create a domain you already have. The screen **opens** on whichever
+  project was written to most recently, which is nearly always the one you just came from, and it
+  remembers the last project you looked at in each domain; the lists themselves do not reorder
+  between visits.
 - **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
   was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
   the model and [§10](#projects-inside-a-domain) for how to add a second project.
@@ -1251,7 +1256,9 @@ it travels with GitHub sync like the rest of your wiki.
 **What the screen does not do:** there are no rollups. Nothing composes a Done/Decided/Blocked
 view across work-streams or across projects, and the only thing it writes is the **standing
 brief** — the handoff and the journal are written by an agent and by nothing else. Editing the
-brief in Obsidian instead still works; it is the same file, `state/<project>/project.md`.
+brief in Obsidian instead still works; it is the same file, `state/<project>/project.md`. A brief
+saved here is stamped as written by a **human**, which is what tells a later agent that the
+directives in it are yours rather than an earlier session's notes.
 
 > 💡 **The write half needs a skill.** Nothing forces an agent to save, so an agent that has never
 > been told the discipline simply never writes and this screen stays empty. The
@@ -2023,7 +2030,9 @@ without sharing one set of agent handoffs. The full model, and when to reach for
 in [§13b](#one-domain-one-project-or-one-more-work-stream).
 
 The **Projects** section on a domain's page lists each project with its standing brief's status,
-when it was last saved to, and which work-stream that was. Four controls:
+when it was last saved to, and which work-stream that was. A domain where nothing has been saved
+and no brief written yet lists **nothing** — there is no project to describe until one of those
+exists, and creating one is a click away. Five controls:
 
 | Control | What it does |
 |---|---|
@@ -2034,15 +2043,18 @@ when it was last saved to, and which work-stream that was. Four controls:
 | **Copy marker line** | Puts one line on your clipboard — `domain/project` — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
 
 **One project on that list cannot be renamed or deleted: the domain's own** — the one named after
-the domain itself, which is where a domain's state lived before v3.48.0 and still lives when you
-have not made any other project. Its folder **is** the domain's state root, so renaming it would
+the domain itself, which is where a domain's state lives when you have not made any other project,
+and where it lived before v3.48.0. Its folder **is** the domain's state root, so renaming it would
 sweep every other project in that domain into the new name, and deleting it would take all of them
-with it. Both controls refuse it rather than warning about it. You can still empty it: delete or
-move the work-streams inside it.
+with it. Its row therefore **does not offer those two buttons at all**, and says why — *"the
+domain's own project — it cannot be renamed or deleted"* — rather than offering a control whose
+only possible outcome is a refusal. **Copy marker line** and **Edit brief** work on it as on any
+other. You can still empty it: delete or move the work-streams inside it.
 
 A domain that had agent memory before v3.48.0 shows **one** project, named after the domain
-itself. Nothing was moved to produce that: the old files are read where they lie, and they keep
-working on any other computer of yours that has not been updated yet.
+itself. Nothing was moved to produce that, and nothing ever will be: that is where a domain's own
+project lives permanently, for a tree written today as much as for one written last year, so the
+old files keep working on any other computer of yours that has not been updated yet.
 
 ![The Domains view. A left panel headed "Domains" with a "New domain" button and a KNOWLEDGE list of six domains, each with a coloured identity dot and a page count; Articles is selected and carries a small dot on the right marking open health issues. The main column is headed "Articles" under the path eyebrow "DOMAINS/ARTICLES/", with Rename and Delete buttons and an "Ask this domain" button. Four stat cards read PAGES 3,410 · ENTITIES 609 · CONCEPTS 2,713 · SUMMARIES 88. Below them a "Wiki health" panel shows "Open issues 20, scanned just now" beside Entities, Concepts, Summaries and Dismissed counts, then a row of category chips — Broken links 17, Orphan pages 3, Cross-folder duplicates 0, Hyphen variants 0, Folder-prefix links 0, Missing backlinks 0. A QUICK MAINTENANCE box offers "Fix 17 broken links $0.0030", "Rescue 3 orphans $0.0027" and "Find duplicate pages", above the sentence "Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet." Collapsed rows for Broken links, Orphan pages and Dismissed sit underneath, and a PAGES section at the bottom offers "Browse pages".](images/curator-domains.png)
 
@@ -2593,7 +2605,7 @@ actually in.
 
 ### Turning it off
 
-**Nothing is saved unless an agent is asked to save it.** There is no background process, no timer and no hook: `domains/<domain>/state/` is created the first time something calls `save_working_state`, and never otherwise. The in-app **Agent memory** view and the routes behind it are read-only, so browsing state cannot create any. If you never ask, a project simply has no state.
+**No handoff is saved unless an agent is asked to save it.** There is no background process, no timer and no hook: a `<scope>/<machine>/current.md` and its journal are written the first time something calls `save_working_state`, and never otherwise. **Browsing** state cannot create any — every read route is a read. The app can write one thing, and only when you click it: a project's **standing brief**, plus the folder that holds it when you create a project in Domains → Projects. If you never ask and never click, a project simply has no state.
 
 That is also why **there is no on/off setting to find** — none is needed for the common case, and none exists. If you want something firmer than *don't ask*, there are three levers, and they get blunter as you go down.
 

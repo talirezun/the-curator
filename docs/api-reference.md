@@ -2363,10 +2363,18 @@ drift from the store's.
 "Which of my projects have agent memory, and how fresh is it?" No parameters.
 
 **One row per PROJECT, across every domain, newest first** (v3.48.0; it was one row per domain).
-A row is returned for **every** project, not only the ones that have state — including a domain
-whose default project has never been saved to. That is a real answer, it is what a user sees
-before their first agent session, and `scopeCount: 0` says it plainly instead of the project being
-hidden and the view looking broken.
+
+**A domain's own project is omitted when it has neither a standing brief nor a save.** That is the
+store's decision, not this route's, and the route defers to it rather than keeping a second opinion:
+one description of "which projects exist" is shared by this route, the Domains view's Projects list
+and the menu-bar widget, and a row describing an empty tree is noise on a screen whose job is
+"which project". A project someone *created* is always a row — `createProject` always writes a
+`project.md`, so it always has a brief. Up to v3.47 this route emitted a row per domain
+unconditionally; that changed in v3.48.0.
+
+The cost is that an empty `projects` array is ambiguous — no domains, or domains with no agent
+memory yet — so **`domainsScanned`** rides along and says how many domains were looked at. A view
+that told a user with four domains they had none would send them to create a fifth.
 
 Each row is an **allow-list**, not a spread of the store's object: a field the store grows next —
 including anything a fellow's synced file put there — does not reach the wire until it is named
@@ -2382,8 +2390,9 @@ here. Absent facts come back as `null`/`0`/`[]` rather than `undefined`, so a ca
     {
       "domain": "second-brain",
       "project": "lumina",
-      "isLegacyDefault": false,
+      "isDefaultProject": false,
       "hasBrief": true,
+      "briefBytes": 4120,
       "briefUpdatedAt": "2026-08-20T09:12:44.000Z",
       "briefAuthoredBy": { "kind": "human" },
       "layoutWarning": null,
@@ -2396,14 +2405,32 @@ here. Absent facts come back as `null`/`0`/`[]` rather than `undefined`, so a ca
       "lastWriteAt": "2026-08-27T18:03:11.000Z",
       "ageSeconds": 5421,
       "headline": "Docs pass — nine false claims corrected, tests green",
+      "harness": "claude-code",
+      "model": "claude-opus-5",
+      "lastSaveKind": "complete",
       "newestScope": "main",
-      "newestMachine": "alices-macbook-pro-9f3c1a20"
+      "newestMachine": "alices-macbook-pro-9f3c1a20",
+      "harnessShared": false,
+      "harnessSharedScopes": [],
+      "harnessScanned": 3
     }
   ],
   "total": 6,
-  "truncated": false
+  "truncated": false,
+  "layoutWarning": null,
+  "domainsScanned": 4
 }
 ```
+
+Elided from the sample for length, and on every row: `writtenAt` / `writtenAgeSeconds` (the
+agent's own clock, `null` where the journal carries none — see below) and `lastSaveNotes`.
+
+`harnessShared` / `harnessSharedScopes` / `harnessScanned` report **two different tools writing
+into one `(scope, machine)` folder**, where each save overwrites the other's work. The store's
+project row cannot see it — it reads one journal tail, the newest pair's, and this is a property
+of a work-stream's whole journal — so this route pays for it with one work-stream index per
+returned row. `harnessScanned` is the number of pairs that verdict actually opened, named
+separately so a cap can never read as a census.
 
 **On this route `scopeCount` counts distinct work-streams**, so it equals `distinctScopeCount`
 and differs from `savedCopies` whenever a scope is saved on more than one machine — one
@@ -2429,10 +2456,20 @@ the detail route does the same job server-side.)
 `lastWriteAt`, `ageSeconds` and `headline` are **`null` when nothing has ever been saved** — never
 `0` and never an epoch date. A fact and its absence stay distinguishable.
 
-`isLegacyDefault` marks a project read out of the **pre-v3.48.0 layout** — `state/<scope>/…`
-directly under the domain, with no project folder — which is reported under the domain's own name.
-Readers never move those files, so a legacy tree keeps working with older app versions on other
-machines.
+`isDefaultProject` marks **the domain's own project**, whose slug *is* the domain name and whose
+tree is the state root itself — `state/<scope>/<machine>/…`, with no project folder. That is where
+it lives permanently, for a tree written today as much as for one written before v3.48.0: the
+store's `projectPrefix` is a pure string comparison and no reader or writer probes the disk to
+decide a layout, so there is no migration, no half-migrated window, and a legacy tree keeps working
+with older app versions on other machines.
+
+It is also **the one project that can be neither renamed nor deleted** — its directory holds every
+named project too, so renaming it would move them all and deleting it would take them all. Both
+refuse with `reason: "default-project"`, and the Domains view renders neither control on that row.
+
+(The field was called `isLegacyDefault` on the route contract this shipped against. That name
+asserted a migration that does not exist, and it was corrected before release — no shipped version
+ever emitted it.)
 
 `briefAuthoredBy` is `null` when the store cannot say who wrote the brief (every pre-v3.48.0
 brief, which predates provenance entirely). It is **not** guessed as `owner`: not knowing and
@@ -2461,17 +2498,23 @@ Rows are exactly the shape above, minus the redundant per-row `domain`.
   "projects": [ "…as above…" ],
   "total": 3,
   "truncated": false,
+  "unlistedEntries": 0,
+  "layoutWarning": null,
   "readonly": false,
   "canWrite": true
 }
 ```
 
-**`canWrite` answers the question a view actually has**, in one field rather than two it would
-have to combine: it is `false` when this server's working-state store is older than v3.48.0 (the
-write routes answer `501`) **and** when the domain is a read-only Shared Brain mirror (they answer
-`403`). Rendering a full set of controls whose every button answers `403` is worse than rendering
-none. It is a fact about the server that answered — never a version string used as a proxy for
-one.
+**`canWrite` answers the question a view actually has** — *may I write here?* — in one field
+rather than one the view would have to derive. Today it is `false` exactly when the domain is a
+read-only Shared Brain mirror, whose write routes answer `403`; rendering a full set of controls
+whose every button answers `403` is worse than rendering none. It is kept as its own field rather
+than collapsed into `!readonly` at the view because it answers the view's question, and the two
+stop being the same question the moment another refusal is added.
+
+`total` is the **store's** count, taken before its own cap, so a truncated list still says how many
+there are. `unlistedEntries` and `layoutWarning` describe what the store would not address in this
+domain's `state/` tree, counted rather than silently skipped.
 
 | Status | Condition |
 |--------|-----------|
@@ -2491,11 +2534,21 @@ and, if a brief was supplied, its `project.md`. It never touches a work-stream o
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | Unknown domain |
 | `409` | The project already exists |
-| `501` | `store_lacks_projects` — this server's working-state store predates v3.48.0 |
 
 Every one of those refusals happens **before the store is called**. An omitted or empty `brief` is
-sent as *absent*, not as an empty string: an empty string is a brief the user wrote nothing in,
-and the store would create the file.
+sent as *absent*, not as an empty string — an empty string is a brief the user wrote nothing in.
+The store then seeds `project.md` from a four-heading template that says it is not a schema, so a
+new project is never invisible to its own store.
+
+The write is stamped **`authoredBy.kind: "human"`** whether the brief was typed or seeded, which is
+what the store's brief-authority reading looks for: a brief that reads as the owner's carries their
+standing instructions, one an agent wrote reads as `commissioned`.
+
+The store adds refusals of its own, forwarded with their `reason` intact and their prose on both
+`message` (the store's key) and `error` (this router's, and the one the shell renders): a name that
+is already a work-stream of the domain's own project, or the domain's own name, is
+`reserved-project`; an existing name is `project-exists`; a write lock held by something else is
+`locked` and answers `409`.
 
 ### PATCH /api/memory/:domain/projects/:project
 
@@ -2524,12 +2577,23 @@ the document rather than merging into it, so a partial brief silently drops what
 same "send the complete thing" rule a scope save follows. The write is stamped
 `authoredBy.kind: 'human'`, which is what the store's brief-authority reading looks for.
 
-**A brief larger than `MAX_BRIEF_BYTES` (32 KB) is REFUSED, not trimmed**, and this is the one
-place the route does not defer to the store. The store trims an over-budget write and discloses
+**A brief larger than `MAX_BRIEF_BYTES` (32 KB) is REFUSED, not trimmed**, and this is one of two
+places the route does not defer to the store. The store trims an over-budget write and discloses
 the trim, which is right for an agent near its context limit — a refused handoff is a lost
 handoff — and wrong for a person who typed the text and can see it. The refusal names both
 numbers and nothing is written. The cap is measured in **bytes**: a brief of em-dashes is three
 bytes a character in places.
+
+**The store's destructive-shrink guard is waived on this route**, which is the other. The store
+refuses a write that cuts a brief to under 5% of itself, because `project.md` is overwritten in
+place with no journal behind it — right for an agent composing a document it cannot see, and wrong
+here: the app's editor is *seeded with the current text*, so a shrink is something a person did to
+text on their own screen. The refusal's own advice — *"repeat the call with `replace: true`"* — is
+advice a person in a browser cannot take, and advice that cannot be followed is worse than none.
+An **empty** brief is still refused (`reason: "empty-brief"`), ahead of the shrink guard and
+regardless of the waiver. The one thing this gives up: a brief longer than the read cap arrives in
+the editor truncated, and saving it drops the tail; the view says *"the tail is not shown"* above
+the box when that is true, and the route cannot see it.
 
 | Status | Condition |
 |--------|-----------|
@@ -2537,7 +2601,6 @@ bytes a character in places.
 | `403` | `readonly` |
 | `404` | Unknown domain, or the project does not exist |
 | `409` | A **rename** while that domain has a write in flight (a rename moves a directory; a brief write on the same busy domain is allowed, because it touches one file an ingest never opens) |
-| `501` | `store_lacks_projects` |
 
 ### DELETE /api/memory/:domain/projects/:project
 
@@ -2556,7 +2619,6 @@ only in a view is a confirmation every other client skips.
 | `403` | `readonly` |
 | `404` | Unknown domain, or the project does not exist |
 | `409` | A write is in flight on that domain |
-| `501` | `store_lacks_projects` |
 
 ### GET /api/memory/:domain/:project
 
@@ -2571,7 +2633,7 @@ then the app and the agent would describe the same file differently.
 |-----------|-------------|
 | `domain` | Domain slug. Resolved against `listDomains()` **before** any filesystem access, so an unknown name never reaches path resolution |
 | `project` | Project slug inside that domain. Checked against the store's own `isSafeSegment` before any path is built; an unknown project is a `404`, an unusable name a `400` |
-| `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the work-stream index instead of a handoff. **`latest`** (case-insensitive) resolves server-side to the newest-written work-stream, so a client can open the freshest handoff without first fetching the index to learn its name; on a project with nothing saved it degrades to the scope-less read rather than erroring about a scope the caller never named |
+| `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the work-stream index instead of a handoff. **`latest`** (case-insensitive) resolves to the newest-written work-stream, so a client can open the freshest handoff without first fetching the index to learn its name; on a project with nothing saved it degrades to the scope-less read rather than erroring about a scope the caller never named. The keyword is passed to the **store**, which owns it — a work-stream *actually named* `latest` wins over the keyword, because opening a different work-stream than the one named is a correctness bug wearing a helpfulness costume. The response reports `scopeResolvedBy` (`exact` \| `latest`) so a caller can tell which happened |
 | `machine` | Optional. With `scope` set and no `machine`, the **most recently written** machine wins — that is what makes cross-machine handoff work — and the response names the machine it chose |
 | `journalLimit` | Optional. Passed to the store **un-clamped on purpose**: the store clamps to `[1, MAX_JOURNAL_ENTRIES]` (50, default 10) itself, and clamping a second time here is the two-copies-of-a-bound shape. A non-numeric value is not passed at all, so the store's default applies |
 
@@ -2707,8 +2769,19 @@ drops that tool's `brief_authority` to `suspect` and withdraws the owner framing
 | Status | Condition |
 |--------|-----------|
 | `404` | Unknown domain, or the project does not exist in it (`{ok: false, reason: "project_not_found"}`) |
-| `400` | An unusable project name, or a store refusal — `{ok: false, reason, message}`, with `reason` one of `invalid_project`, `invalid-scope`, `invalid-machine` on this route |
+| `400` | An unusable project name, or a store refusal — `{ok: false, reason, message, error}`, with `reason` one of `invalid_project`, `invalid-scope`, `invalid-machine` on this route |
 | `500` | Filesystem read error |
+
+A **named** project that was never created is a `404`, not a `200` describing an empty tree. The
+store answers `ok: true, projectExists: false` — it distinguishes *created but empty* from *never
+created*, which its callers need — but over HTTP those are different answers to "GET this project",
+and a `200` for a name that does not exist is how a typo renders as a working, blank page. The
+domain's own project always exists, so this can only fire for a named one.
+
+Store refusals carry their `reason` unchanged (the store's are hyphenated, `unknown-state-project`;
+this router's are underscored, `invalid_project`) and their prose on **both** `message` and
+`error`. Neither is normalised into the other: rewriting the store's `reason` on the way out would
+break a caller matching the string the store gave it, and the shell reads `error`.
 
 ### GET /api/memory/:project — DEPRECATED
 

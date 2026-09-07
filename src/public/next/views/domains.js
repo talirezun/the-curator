@@ -2205,7 +2205,11 @@ function renderProjectRow(row, canWrite) {
   const facts = [
     saved ? 'last save ' + saved : 'no saves yet',
     row.newestScope ? 'newest work-stream ' + row.newestScope : null,
-    row.isLegacyDefault ? 'the domain’s original project' : null,
+    // The store's own word, and its own claim: this is where the domain's
+    // OWN project lives, permanently — not a pre-v3.48.0 leftover waiting
+    // for a migration, which is what "original" invited a reader to think.
+    // It is also the one project that can be neither renamed nor deleted.
+    row.isDefaultProject ? 'the domain’s own project — it cannot be renamed or deleted' : null,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -2217,7 +2221,16 @@ function renderProjectRow(row, canWrite) {
       '<div class="cur-group-control">' +
         '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
           'Copy marker line</button>' +
-        (canWrite
+        // THE DOMAIN'S OWN PROJECT GETS NEITHER CONTROL. Its directory IS the
+        // domain's state root, which holds every named project too, so the
+        // store refuses both by name (`reason: 'default-project'`) — renaming
+        // it would move every other project with it and deleting it would take
+        // them all. Rendering the buttons anyway would put two controls on
+        // screen whose only possible outcome is a refusal, which this view's
+        // own read-only arm already refuses to do. The row's fact line says
+        // why they are missing, so their absence is an answer rather than a
+        // gap.
+        (canWrite && !row.isDefaultProject
           ? '<button class="btn btn-secondary dm-proj-btn" data-proj-rename="' + escapeHtml(name) + '">Rename</button>' +
             '<button class="btn btn-ghost dm-proj-btn dm-delete-btn" data-proj-delete="' + escapeHtml(name) + '">' +
               icon('trash', 12) + ' Delete</button>'

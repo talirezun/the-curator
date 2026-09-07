@@ -1066,6 +1066,28 @@ and the file you type are the same file written the same way. What it costs is s
 the brief now has three routes into it rather than one, which widens the *"two machines editing
 the brief between syncs"* window that has always existed. Edit, then sync.
 
+**The whole of the app's write surface is four HTTP routes**, all in `src/routes/memory.js` and
+all tier 1:
+
+| Route | What it does |
+|---|---|
+| `POST /api/memory/:domain/projects` | Create a project — its folder and its `project.md`, seeded from the template when you typed no brief |
+| `PATCH /api/memory/:domain/projects/:project` | Rename it, replace its standing brief, or both |
+| `DELETE /api/memory/:domain/projects/:project` | Delete it, behind a typed confirmation enforced at the route rather than only in the view |
+| *(reads)* `GET /api/memory`, `…/:domain/projects`, `…/:domain/:project` | Every tier, read-only |
+
+Nothing in that file calls `saveWorkingState` — the one store function that would reach tier 2 or
+tier 3 — and a test asserts the absence rather than trusting the sentence.
+
+**One guard the editor deliberately waives.** The store refuses a brief write that cuts the
+stored text to under 5% of itself, because `project.md` is overwritten in place with nothing
+behind it. That is right for an agent composing a document it cannot see, and wrong for the app:
+the editor is *seeded with the current brief*, so a shrink is something you did to text on your
+own screen — and the refusal's remedy ("repeat the call with `replace: true`") is not something
+you can do from a browser. So the app sets it. An **empty** brief is still refused, and the 32 KB
+ceiling is still refused rather than silently trimmed, which is the opposite trade and made for
+the same reason: you can see the text.
+
 A copyable skeleton is in [project-brief-template.md](project-brief-template.md), including the
 `## Operating directives` convention and the capability-fallback pattern that keeps a directive
 from failing silently in a harness that cannot follow it. The app's Create-project editor is

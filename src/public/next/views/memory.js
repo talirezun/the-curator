@@ -160,6 +160,12 @@ function freshState() {
     loading: true,
     projects: [],          // GET /api/memory -> projects[]
     indexError: null,
+    // HOW MANY DOMAINS THE SERVER LOOKED AT. `null` until the first answer,
+    // and `null` from a server too old to say — which is why the empty state
+    // reads it as three values and not as a number. An empty `projects` means
+    // "no domains" or "domains, none with agent memory", and those are two
+    // different first screens; see renderNoProjects.
+    domainsScanned: null,
 
     // WHICH PROJECT, IN WHICH DOMAIN. Two fields, not one composite string:
     // every request needs them separately, and a composite would have to be
@@ -481,11 +487,20 @@ async function fetchIndex(token) {
     const res = await fetch('/api/memory');
     const data = await res.json();
     if (!isCurrentMount(token)) return null;
-    if (!res.ok || !data.ok) return { projects: [], error: data.error || ('HTTP ' + res.status) };
-    return { projects: data.projects || [], error: null };
+    if (!res.ok || !data.ok) {
+      return { projects: [], domainsScanned: null, error: data.error || ('HTTP ' + res.status) };
+    }
+    return {
+      projects: data.projects || [],
+      // A NUMBER OR NULL, never 0 by default: 0 domains and "the server did
+      // not say" are different facts, and the empty state says something
+      // different for each.
+      domainsScanned: Number.isInteger(data.domainsScanned) ? data.domainsScanned : null,
+      error: null,
+    };
   } catch (err) {
     if (!isCurrentMount(token)) return null;
-    return { projects: [], error: err.message };
+    return { projects: [], domainsScanned: null, error: err.message };
   }
 }
 
@@ -612,6 +627,7 @@ async function refreshIndex(token) {
     if (got.error) return;
 
     state.projects = got.projects;
+    state.domainsScanned = got.domainsScanned;
     state.indexError = null;
 
     // Has anything been written since the read that produced what is on
@@ -852,6 +868,7 @@ async function loadIndex(token) {
   if (!isCurrentMount(token)) return;
   if (got) {
     state.projects = got.projects;
+    state.domainsScanned = got.domainsScanned;
     state.indexError = got.error;
   }
 
@@ -1391,15 +1408,36 @@ function renderMain(token) {
   );
 }
 
+/**
+ * THE EMPTY SCREEN IS TWO DIFFERENT ANSWERS, and they are said differently.
+ *
+ * Since v3.48.0 the store omits a domain's own project when it has neither a
+ * standing brief nor a save, so an empty index no longer means "no domains".
+ * It means one of two things, and telling a user with four domains that they
+ * have none is worse than saying nothing — it sends them to create a fifth.
+ * `domainsScanned` is the server's own count; `null` means a server that did
+ * not say, and that arm claims neither.
+ */
 function renderNoProjects() {
+  const n = state.domainsScanned;
+  const noDomains = n === 0;
+  const title = noDomains ? 'No domains yet' : 'No agent memory yet';
+  // `html: true` because these sentences carry an inline <code>. The caller
+  // owns escaping when it opts in; every value here is a literal or a
+  // server-supplied INTEGER, which is why `n` is checked with Number.isInteger
+  // before it is used and rendered as a count rather than interpolated raw.
+  const body = noDomains
+    ? 'Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
+      'Create a domain first, then point an agent at it — the brief appears here the moment one saves.'
+    : (Number.isInteger(n) && n > 0
+        ? 'Nothing has been saved in ' + (n === 1 ? 'your domain' : 'any of your ' + n + ' domains') + ' yet. '
+        : 'Nothing has been saved yet. ') +
+      'Agent memory lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
+      'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
   return (
     '<div class="empty-card">' +
-      '<div class="empty-title">No domains yet</div>' +
-      // `html: true` because the sentence carries an inline <code>. The caller
-      // owns escaping when it opts in; every value here is a literal.
-      renderDescription('Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
-        'Create a domain first, then point an agent at it — the brief appears here the moment one saves.',
-        { html: true }) +
+      '<div class="empty-title">' + title + '</div>' +
+      renderDescription(body, { html: true }) +
     '</div>'
   );
 }
