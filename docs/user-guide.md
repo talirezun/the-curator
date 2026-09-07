@@ -459,7 +459,7 @@ Two things make this easy to stay on top of:
 
 **If you disconnect the provider that was building**, the lane has to go somewhere, so it moves to the **cheapest model you have connected that we have actually measured** — and the app tells you where it went. Nothing silently stops working, and nothing silently gets more expensive than it needs to be.
 
-**Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → API keys](#api-keys) and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
+**Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → Connect a provider](#1--connect-a-provider) and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
 ---
 
@@ -587,7 +587,7 @@ That is the whole feature. Everything below follows from it.
 
 ```mermaid
 flowchart LR
-    A["Your agent saves<br/>over MCP"] --> B[("domains/&lt;project&gt;/state/")]
+    A["Your agent saves<br/>over MCP"] --> B[("domains/&lt;domain&gt;/state/&lt;project&gt;/")]
     B -->|"a file changed"| C["The Curator notices<br/>~150 ms later"]
     C --> D["The menu bar icon<br/>and its menu update"]
     D --> E["You glance up.<br/>No window, no clicking."]
@@ -609,17 +609,19 @@ flowchart LR
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Last save · 44 min ago                                  │  ① the answer, first
+│  Working on: lumina · 12 min ago                         │  ⓪ which project
+│  Last save · 12 min ago                                  │  ① the answer, first
 │      claude-code · opus-4                                │  ② who wrote it
 │  ── Save pulse ─────────────────────────────────────────  │
 │  ▁▂█▇█▃▆  ┈┈┈───────   5 days known · 79 saves · 2 tools │  ②b the last 7 days
-│  ── Recent scopes ──────────────────────────────────────  │
-│  ● menubar-widget-design · 44 min ago                 ▸  │
-│      claude-code · opus-4 — v3.37.0 SHIPPED and it…      │  ③ up to 5 rows,
-│  ◕ save-kind-verdict · 15 hr ago                      ▸  │     newest first,
-│      antigravity ← claude-code — classifySaveNote…       │     each with a mark
-│  ◑ design-conformance-pre… · 38 hr ago                ▸  │     and a submenu
-│      handoff trimmed · claude-code — 7 of 11 issu…       │
+│  ── acme / lumina · 12 min ago · claude-code ───────────  │  ③ a project header
+│  ● voice-rewrite · 12 min ago                         ▸  │     …then its rows,
+│      opus-4 — voice rewrite landed, campaign next        │     newest first,
+│  ◕ main · 15 hr ago                                   ▸  │     each with a mark
+│      claude-code · opus-4 — model B ruled out            │     and a submenu
+│  ── acme / pricing-model · 38 hr ago · antigravity ─────  │  ③ a second group
+│  ◑ sources-sweep · 38 hr ago                          ▸  │
+│      handoff trimmed — 7 of 11 issues triaged            │
 │  More in Agent Memory… (6)                               │  ④ a cap, disclosed
 ├──────────────────────────────────────────────────────────┤
 │  14 handoffs waiting on GitHub                           │  ⑤ notices, only
@@ -636,11 +638,13 @@ flowchart LR
 └──────────────────────────────────────────────────────────┘
 ```
 
-*Abbreviated — three rows are drawn above where the real menu shows five, and the notice lines
-appear only when they apply. Everything else is always in that order. **Save pulse** and
-**Recent scopes** are real macOS section headers, not drawn rules; the pulse and the row marks are
-real drawn images, not text — the blocks above are the closest a page of text can get. The `▸` on
-each row is macOS's own submenu arrow.*
+*Abbreviated, and the notice lines appear only when they apply. Everything else is always in that
+order. **Save pulse** and each **project header** are real macOS section headers, not drawn rules;
+the pulse and the row marks are real drawn images, not text — the blocks above are the closest a
+page of text can get. The `▸` on each row is macOS's own submenu arrow. A project header reads
+`domain / project` when that domain holds more than one project, and just the project's name when
+it does not — there is no reason to print `acme / acme` at a person. The rows under a header are
+that project's **work-streams**.*
 
 > **The first line of a row is the work-stream and the time, and nothing else may stand there.**
 > That is a change, and it came from a photograph of the previous version: a row read
@@ -672,7 +676,8 @@ each row is macOS's own submenu arrow.*
 | ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
 | ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ①. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ③ | Up to **five** work-streams, newest first, **flat — not grouped by project**, each with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do) | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping. It was eight; five plus a real overflow line reads better in a menu this narrow |
+| ⓪ | **`Working on: <project> · <age>`** — the project that was written to most recently | A person with several projects asks *which one was I in?* before they ask anything else, and until v3.48.0 the menu could not answer it: rows were flat, so the answer had to be inferred from whichever row happened to be at the top |
+| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and at most **two rows** in each, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do) | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
 | ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
 | ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
@@ -699,7 +704,7 @@ main · 4 min ago
 | **`opencode ← claude-code`** | Only when **the last two saves in that work-stream came from different tools** — the baton changed hands. The arrow points from who wrote it to who wrote it before |
 | **the tool** — `claude-code`, `opencode`, `cursor` | Unless every visible row shows the same one |
 | **the computer** — `studio`, `laptop` | Only on a row from **another computer**, and only when the rows disagree about which computer they came from |
-| **the project** | Only when more than one project has state |
+| **the project** | Only when the row's group header does not already say it — normally it does, so this is rare |
 | **the model** — `opus-4`, `gemini-2.5`, `haiku-4` | Unless every visible row used the same one. It is the family and the generation; the exact string is on hover |
 
 > **A row from another computer can now name its tool as well as its machine, and that is a
@@ -739,7 +744,7 @@ main · 4 min ago
 
 ### The recency dot
 
-Every row in **Recent scopes** carries a small mark to its left. It is a **band**, not a number — the exact age is printed on the same row, in words, right beside it.
+Every work-stream row, under whichever project header it sits, carries a small mark to its left. It is a **band**, not a number — the exact age is printed on the same row, in words, right beside it.
 
 | Mark | Colour | It means |
 |---|---|---|
@@ -791,9 +796,17 @@ want at that moment is to hand the work-stream to an agent rather than to look a
 **They are for two different agents.**
 
 *Copy resume prompt* is for an agent that can reach your knowledge itself — through the my-curator
-MCP, or failing that by opening the file. It is a few short paragraphs that name the project, the
-work-stream, the MCP tool to call, and the file path to fall back on, and it ends by telling the
-agent to save the **complete** state back when it runs low on context.
+MCP, or failing that by opening the file. Its first line is the short form a person can also just
+say out loud:
+
+```
+Resume project "lumina" (domain "acme"), latest scope.
+```
+
+What follows is the same as before: the exact MCP call to make — now with `scope: "latest"`, so
+the agent does not need the work-stream's name to be right — the file path to fall back on if it
+has no bridge, the `.curator-project` marker line for this project, and the instruction to save
+the **complete** state back when it runs low on context.
 
 *Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
 the standing brief and the handoff, as two clearly separated sections. **It is not capped**: the
@@ -1087,7 +1100,7 @@ Stated plainly rather than left for you to discover.
 |---|---|
 | **The menu has been photographed exactly once, in light appearance.** | A throwaway probe put the real menu in a real menu bar on 2026-09-02 and captured it. That settled a great deal — the section headers draw, the second line under each row draws, the submenu arrow draws, the colour images are drawn as authored, and the menu is **363.5 points wide**. What it did **not** settle: the **dark** palette, the empty-store menu, the truncation states, whether the tooltip appears on hover, and how the menu bar icon itself is tinted in a light bar. Treat your first launch with it on as a real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
 | **The save pulse and the row dots have been drawn by macOS once, and the picture changed both** | The one capture showed the pulse reading cut short and the quarter mark reading as a sliver; both are fixed here, and the marks now sit inside a faint clock face. Both images are still generated and inspected pixel by pixel by the tests, and their contrast is arithmetic over decoded pixels. What has not been seen is either of them **after** those two fixes, or either of them in **dark** appearance. If a strip or a dot looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
-| **The two section headers draw on macOS 14; below it, nobody knows.** | **Save pulse** and **Recent scopes** use a macOS 14+ menu affordance, and the 2026-09-02 capture shows both drawing correctly as section headers. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but **that fallback has never been observed**. Either way they can never become a clickable item that does nothing |
+| **The section headers draw on macOS 14; below it, nobody knows.** | **Save pulse** and each project header use a macOS 14+ menu affordance, and the 2026-09-02 capture shows a header of that kind drawing correctly. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but **that fallback has never been observed**. Either way they can never become a clickable item that does nothing. There are now more of them, one per project group, so a machine where the fallback is ugly is uglier than it was |
 | **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn. The two are genuinely different questions and are allowed to disagree. What is unproven is that macOS delivers the appearance-changed notification the rebuild listens for |
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
 | **The standing brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of five scarce rows. Hover the icon for it, or open Agent memory for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
@@ -1172,22 +1185,29 @@ The one-time "The Curator has a new look." notice and its **Use the previous int
 The **Agent memory** rail item opens a browser for the working state your agents leave for
 each other. Everything on it is **read-only**: agents write this over MCP, and the app shows it.
 
-- **The sidebar lists every domain**, in domain order, each with its work-stream count and how
-  long ago it was last written to (*"2 scopes · 5 hr ago"*). A domain with nothing saved is still
-  listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that is a real
-  answer, not a broken row. The screen **opens** on whichever project was written to most
-  recently, which is nearly always the one you just came from; the list itself does not reorder
-  between visits.
-- **The main column shows the current handoff** for one work-stream: the one-line headline, how
-  long ago it was saved, which harness and model saved it, and the document itself — where things
-  stand, what is next, what is settled, what to avoid, what is still open.
+- **The sidebar lists every domain, and every project inside it** — domains in domain order,
+  projects nested under their domain, each project with its work-stream count and how long ago
+  it was last written to (*"2 scopes · 5 hr ago"*). A domain that has never been saved to is
+  still listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that is
+  a real answer, not a broken row. The screen **opens** on whichever project was written to most
+  recently, which is nearly always the one you just came from, and it remembers the last project
+  you looked at in each domain; the lists themselves do not reorder between visits.
+- **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
+  was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
+  the model and [§10](#projects-inside-a-domain) for how to add a second project.
+- **The main column shows the current handoff** for one work-stream — the project's most
+  recently written one, unless you pick another: the one-line headline, how long ago it was
+  saved, which harness and model saved it, and the document itself — where things stand, what is
+  next, what is settled, what to avoid, what is still open.
 - **A Scope and a Machine picker** appear when there is more than one of either. Ask for a
   work-stream without picking a machine and you get the most recently written one; if that was a
   different computer, a small **from &lt;machine&gt;** badge says so, because the next steps below it
   were observed somewhere else and local paths may not match.
 - **The standing brief and the session journal** sit behind collapsed sections — the brief because
   it rarely changes, the journal because it is history rather than state. The brief opens by
-  default when there is no handoff yet, since then it is the only content there is.
+  default when there is no handoff yet, since then it is the only content there is, and it
+  carries an **Edit** button: the brief is the project's one human-written tier, and it is the
+  one thing on this screen the app will write.
 
 #### The save-status strip
 
@@ -1221,12 +1241,13 @@ each has something to say**, up to five qualifying lines:
 
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
-markdown under `domains/<project>/state/`, so you can also open it in any editor, and it travels
-with GitHub sync like the rest of your wiki.
+markdown under `domains/<domain>/state/<project>/`, so you can also open it in any editor, and
+it travels with GitHub sync like the rest of your wiki.
 
 **What the screen does not do:** there are no rollups. Nothing composes a Done/Decided/Blocked
-view across scopes or across projects, and nothing here writes — if you want to edit the standing
-brief by hand, open `state/project.md` in Obsidian.
+view across work-streams or across projects, and the only thing it writes is the **standing
+brief** — the handoff and the journal are written by an agent and by nothing else. Editing the
+brief in Obsidian instead still works; it is the same file, `state/<project>/project.md`.
 
 > 💡 **The write half needs a skill.** Nothing forces an agent to save, so an agent that has never
 > been told the discipline simply never writes and this screen stays empty. The
@@ -1987,7 +2008,30 @@ Above the list is **New domain**. Click any row to open that domain in the main 
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 - **Stat cards**: PAGES · ENTITIES · CONCEPTS · SUMMARIES (plus OTHER when non-zero)
 - The **Wiki health** panel — see [§17](#17-wiki-health)
+- The **Projects** section — see just below
 - **PAGES** — a **Browse pages** button that opens the full page list, see [§11](#11-read-a-wiki-page)
+
+### Projects inside a domain
+
+*New in v3.48.0.* A domain is where **knowledge** lives. A **project** is a thing you build with
+that knowledge, and a domain can hold as many as you like — so two builds can share one wiki
+without sharing one set of agent handoffs. The full model, and when to reach for which level, is
+in [§13b](#one-domain-one-project-or-one-more-work-stream).
+
+The **Projects** section on a domain's page lists each project with its standing brief's status,
+when it was last saved to, and which work-stream that was. Four controls:
+
+| Control | What it does |
+|---|---|
+| **New project** | Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
+| **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
+| **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists |
+| **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
+| **Copy marker line** | Puts one line on your clipboard — `domain/project` — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
+
+A domain that had agent memory before v3.48.0 shows **one** project, named after the domain
+itself. Nothing was moved to produce that: the old files are read where they lie, and they keep
+working on any other computer of yours that has not been updated yet.
 
 ![The Domains view. A left panel headed "Domains" with a "New domain" button and a KNOWLEDGE list of six domains, each with a coloured identity dot and a page count; Articles is selected and carries a small dot on the right marking open health issues. The main column is headed "Articles" under the path eyebrow "DOMAINS/ARTICLES/", with Rename and Delete buttons and an "Ask this domain" button. Four stat cards read PAGES 3,410 · ENTITIES 609 · CONCEPTS 2,713 · SUMMARIES 88. Below them a "Wiki health" panel shows "Open issues 20, scanned just now" beside Entities, Concepts, Summaries and Dismissed counts, then a row of category chips — Broken links 17, Orphan pages 3, Cross-folder duplicates 0, Hyphen variants 0, Folder-prefix links 0, Missing backlinks 0. A QUICK MAINTENANCE box offers "Fix 17 broken links $0.0030", "Rescue 3 orphans $0.0027" and "Find duplicate pages", above the sentence "Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet." Collapsed rows for Broken links, Orphan pages and Dismissed sit underneath, and a PAGES section at the bottom offers "Browse pages".](images/curator-domains.png)
 
@@ -2258,17 +2302,24 @@ That gap opens every time you change **session, agent, model, harness or machine
 A small **working-state brief** per project, held as plain markdown inside the domain:
 
 ```
-domains/<project>/state/
-  project.md                            the standing brief — what this project is
-  <workstream>/<machine>/current.md     the handoff — where things stand right now
-  <workstream>/<machine>/journal.jsonl  one line per save, append-only
+domains/<domain>/state/
+  <project>/project.md                            the standing brief — what this project is
+  <project>/<workstream>/<machine>/current.md     the handoff — where things stand right now
+  <project>/<workstream>/<machine>/journal.jsonl  one line per save, append-only
 ```
+
+**A domain holds many projects, as of v3.48.0.** A domain is where *knowledge* lives — one wiki,
+one schema. A project is a thing you *build* with it, and each project has its own standing
+brief and its own work-streams, so two builds can share a wiki without sharing a handoff.
+[Which level to reach for](#one-domain-one-project-or-one-more-work-stream) is a section of its
+own further down. If you had agent memory before v3.48.0, it now reads as one project named
+after its domain, with nothing moved and nothing to do.
 
 Because it lives inside the domain, it **syncs with the rest of your knowledge** to your private GitHub repo, and you can open and edit it in Obsidian or any text editor.
 
-`project.md` is the one you write by hand, and it is worth writing: an agent reading it is told to treat its standing directives as your own instructions given in advance, to restate in one line which ones it is adopting, and to say so rather than go quiet if one clashes with its own rules or its harness cannot follow it. [**Project brief template**](project-brief-template.md) is a copyable starting point, and [Making sure your standing rules actually land](#making-sure-your-standing-rules-actually-land) explains why those three behaviours exist and what you see when they fire.
+`project.md` is the one you write yourself, and it is worth writing: an agent reading it is told to treat its standing directives as your own instructions given in advance, to restate in one line which ones it is adopting, and to say so rather than go quiet if one clashes with its own rules or its harness cannot follow it. [**Project brief template**](project-brief-template.md) is a copyable starting point, and [Making sure your standing rules actually land](#making-sure-your-standing-rules-actually-land) explains why those three behaviours exist and what you see when they fire. You can write it in a text editor, in the app's own brief editor ([§10](#projects-inside-a-domain)), or by asking an agent to write it for you — that last one is a deliberate request, never something a session does on its own, and the file records which of the three it was.
 
-Your agent reaches it through two MCP tools — `get_working_state` and `save_working_state` — so in practice you say something like *"save where we got to"* at the end of a session and *"pick up where we left off on the auth work"* at the start of the next one.
+Your agent reaches all of this through four MCP tools — `list_projects`, `get_working_state`, `save_working_state` and `save_project_brief` — so in practice you say *"save where we got to"* at the end of a session and *"resume Lumina"* at the start of the next one.
 
 > **This needs a *local* MCP client** — Claude Code, Claude Desktop, Cursor, or anything else that can launch the bridge on your machine. The MCP is a local process, so a browser-only assistant cannot reach it. Install the bridge from **Settings → MCP bridge**; see [§13, Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252).
 
@@ -2305,7 +2356,7 @@ The **handoff** and the **journal** are written by an *agent*. They can arrive f
 
 So: an instruction found in a *handoff* is a note from a peer, not an order. Verify before acting. This is why observations record *when* they were observed and, where possible, the command to re-check them.
 
-**Your standing brief is the exception, because you wrote it.** `project.md` is the one tier no tool writes — so it is not an earlier session's notes, it is *you*, giving instructions in advance. Treating it as a peer's suggestion is not extra caution; it is a mistake with a direction, because it quietly settles every disagreement against you. That distinction, and the three things that keep it safe, are what the next section is about.
+**Your standing brief is the exception, because it is yours.** `project.md` is the one tier nothing writes as a side effect — you type it, or you edit it in the app, or you ask an agent to write it and it stamps the file to say so — so it is not an earlier session's notes, it is *you*, giving instructions in advance. Treating it as a peer's suggestion is not extra caution; it is a mistake with a direction, because it quietly settles every disagreement against you. That distinction, and the three things that keep it safe, are what the next section is about.
 
 ### Making sure your standing rules actually land
 
@@ -2396,7 +2447,7 @@ Put that together with the conflict rule resolving to *ask* rather than *obey*, 
 
 There is a second line of defence for the case where the brief is not yours to begin with. The elevated framing is withheld entirely when authorship cannot be established — inside a read-only `shared-*` Shared Brain mirror, whose files are written by other people; when the file itself looks forged or badly merged; and when the check could not be completed at all. In each of those the brief is still returned, but labelled as ordinary untrusted material, on exactly the same footing as a handoff. [working-state.md](working-state.md#when-the-brief-loses-the-owner-framing) tabulates the four verdicts and the reasoning behind each.
 
-And two things this is explicitly not. It is **not authentication** — it rests on the facts that no tool writes the file and the project is not a mirror, so anyone who can write your `state/` folder can write your brief. And it is **not a claim that the brief is true**: a brief goes stale, so anything it asserts about the code, the tests or the state of the world is re-verified before it is relied on. Authority over *how to work* was never authority over *what is the case*.
+And two things this is explicitly not. It is **not authentication** — it rests on the facts that nothing writes the file as a side effect of a session and the domain is not a mirror, so anyone who can write your `state/` folder can write your brief. And it is **not a claim that the brief is true**: a brief goes stale, so anything it asserts about the code, the tests or the state of the world is re-verified before it is relied on. Authority over *how to work* was never authority over *what is the case*.
 
 ### Why this works in any MCP client, not just Claude
 
@@ -2415,18 +2466,19 @@ This is the same commitment as [§1c](#1c-nothing-here-is-locked-to-one-ai-one-t
 
 ### What it does not do
 
-- **No writing from the app.** The **Agent memory** rail slot *shows* this content — the brief, the current handoff, the journal — but every byte of it is written by an agent over MCP. To change the standing brief by hand, open `state/project.md` in Obsidian.
-- **No rollups**, and no automatic Done/Decided/Blocked summary across scopes or across projects.
+- **No handoff writing from the app.** The **Agent memory** rail slot *shows* the brief, the current handoff and the journal, and it will edit the **brief** — but the handoff and the journal are written by an agent over MCP and by nothing else. That is what keeps a handoff an honest record of what an agent observed, rather than a document two writers take turns on.
+- **No rollups**, and no automatic Done/Decided/Blocked summary across work-streams or across projects.
+- **No migration.** A domain that had memory before v3.48.0 is read exactly where its files are. Moving them under a project folder is something you can do by hand; nothing does it for you, and nothing needs you to.
 - **No automatic capture.** Nothing forces a save at the end of a session; your agent is *guided* to save, not compelled. If a session ends without saving, the next read simply returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Saving overwrites and costs almost nothing, so the habit to build is **save early and save often**, not one big save at the end.
 
 ### One standing brief, many scopes — how the brief and your workstreams relate
 
 This is the thing people get backwards, and getting it backwards costs you something real.
 
-**There is exactly one standing brief per project, and every scope shares it.** `project.md` sits at the top of `state/`, *above* the scope folders — there is no scope segment in its path — and it is returned on **every** read no matter which scope you ask for.
+**There is exactly one standing brief per project, and every scope shares it.** `project.md` sits at the top of the project's folder, *above* the scope folders — there is no scope segment in its path — and it is returned on **every** read no matter which scope you ask for.
 
 ```
-domains/<project>/state/
+domains/<domain>/state/<project>/
   project.md                          ← ONE brief. Every scope gets it.
   <scope>/<machine>/current.md        ← one handoff per workstream, per machine
   <scope>/<machine>/journal.jsonl
@@ -2441,23 +2493,100 @@ So the division of labour is:
 
 **Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`.
 
-**How the brief gets written is different from everything else here.** No MCP tool writes it — `save_working_state` only ever writes a scope's handoff — and the in-app route is read-only. You author it by hand: open `domains/<project>/state/project.md` in Obsidian or any editor, or ask an agent with filesystem access to edit the file directly. There is no in-app editor for it, deliberately: the handoff is the part that costs time to write, and the brief is the part you want to have decided.
+**How the brief gets written is different from everything else here.** `save_working_state` only ever writes a scope's handoff, and nothing writes a brief as a by-product of a session. There are exactly three ways it changes, and all three are deliberate acts:
+
+| Route | What it is |
+|---|---|
+| A text editor | `domains/<domain>/state/<project>/project.md` is plain markdown in your own folder — Obsidian, or anything else |
+| The app | **Domains → Projects → Edit brief** ([§10](#projects-inside-a-domain)), seeded from the [template](project-brief-template.md) when the project is new |
+| An agent, on your explicit instruction | `save_project_brief`, which exists so you can say *"write this project's brief from what we just settled"*. It is not something a session does on its own, it replaces the whole document rather than patching it, and it stamps the file with which agent and model wrote it |
+
+That last route records itself for a reason. An agent reading a brief is told to treat its standing directives as **your** instructions given in advance, and a brief an agent wrote at your request still is that — but the file says so, so nothing has to be assumed about where the words came from. [working-state.md](working-state.md#the-brief-can-be-commissioned-and-it-says-so) has the exact provenance line and what it changes.
 
 > One caution, because the brief is the one file with no machine name in its path: if you hand-edit it on two computers between syncs, one edit can be dropped or spliced silently. See [sync.md](sync.md#working-state-and-why-its-path-has-a-machine-name-in-it). Edit it, then sync.
 
-### One project or several? Domain versus workstream
+### One domain, one project, or one more work-stream?
 
-A **project is a domain**; a **workstream is a scope inside it**. Reach for a second **domain** only when the *knowledge* is genuinely separate — a different product, a different client, a body of reading you would not want mixed into the first one's wiki. That is the same judgement as [§10, Manage your domains](#10-manage-your-domains); working state does not change it, because state lives inside whichever domain you already chose. Three unrelated products are three domains; three features of one product are three scopes in one.
+Three levels, and three different questions. The mistake worth avoiding is reaching for a new
+**domain** when what you wanted was a new **project** — that splits your knowledge in two, and
+neither half can then see the other's wiki.
 
-One hard edge: the project you name must already be a domain. An unknown name is **refused, not created** — a folder with no `CLAUDE.md` is invisible to `listDomains()`, so state saved there would go unseen by the app and every tool, and the store refuses rather than let that happen.
+| Make a new… | When | What it costs |
+|---|---|---|
+| **Domain** | The *knowledge* is genuinely separate — a different product, a different client, a body of reading you would not want mixed into the first one's wiki | A domain has its own wiki, schema and graph. Nothing links across the boundary, and a chat in one cannot see the other. This is the same judgement as [§10](#10-manage-your-domains) |
+| **Project** | The knowledge is shared but the *work* is not — two things you are building against the same reading, each wanting its own standing brief and its own history | Almost nothing. Projects share the domain's wiki and cost one folder under `state/` |
+| **Work-stream** (a scope) | Same project, a separate thread of work — a feature, a migration, a rewrite | Nothing. Work-streams are how one project runs several threads without them overwriting each other's handoff |
+
+Worked through: a consultancy keeps one domain per **client**, because that is where the reading
+and the wiki diverge. Inside the `acme` domain sit two **projects**, `lumina` and `pricing-model`
+— different builds with different standing briefs, both able to cite the same wiki page about
+Acme's market. Inside `lumina` sit three **work-streams**: `main`, `voice-rewrite` and
+`campaign-q4`. And each work-stream holds one handoff per computer you work on.
+
+```mermaid
+flowchart TD
+    D["DOMAIN — acme<br/><i>knowledge: one wiki, one schema</i>"]
+    D --> P1["PROJECT — lumina<br/><i>one standing brief</i>"]
+    D --> P2["PROJECT — pricing-model<br/><i>one standing brief</i>"]
+    P1 --> S1["WORK-STREAM — main"]
+    P1 --> S2["WORK-STREAM — voice-rewrite"]
+    P2 --> S3["WORK-STREAM — main"]
+    S1 --> M1["laptop<br/>handoff + journal"]
+    S1 --> M2["studio<br/>handoff + journal"]
+    S2 --> M3["laptop<br/>handoff + journal"]
+    S3 --> M4["laptop<br/>handoff + journal"]
+```
+
+Read it from the bottom and it is the whole rule: **a handoff belongs to one computer**, a
+work-stream gathers the computers, a project gathers the work-streams and holds the one brief
+they all share, and a domain gathers the projects and holds the knowledge they all read.
+
+**Before v3.48.0 the middle level did not exist**, so a domain *was* a project — which is why you
+may have domains today that were really one body of knowledge with several builds inside it.
+Nothing is moved for you, and nothing needs moving: a domain that had state before the update
+reads as one project named after the domain and keeps working exactly as it did, including on
+your other computers if they have not been updated yet. When you want a second project, add it in
+**Domains → Projects** ([§10](#projects-inside-a-domain)).
+
+**Two hard edges.** The **domain** you name must already exist — an unknown one is refused, not
+created, because a folder with no `CLAUDE.md` is invisible to the app and to every tool, so state
+saved there would go unseen. And an unknown **project** name is refused too, with a list of near
+matches beside it: nothing creates a project as a side effect of saving into it.
+
+### Resuming — the one line to learn
+
+Say the project's name.
+
+> *"Resume Lumina."*
+
+What an agent with the [continuity skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170)
+installed does with that:
+
+1. **You named a project, so that wins.** If you did not name one, it looks for a
+   **`.curator-project`** file in the folder it is working in, or a parent of it — one line,
+   holding `domain/project` or just `project` — and reads that.
+2. **If there is still no name, it lists your projects and asks you.** It does not pick one. An
+   agent that guesses wrong does not merely read the wrong handoff; the save at the end of that
+   session overwrites it.
+3. **Then it reads that project's brief and its `latest` work-stream** — the one most recently
+   written, whose name you therefore never have to remember.
+
+**Copy marker line**, in Domains → Projects, gives you the exact line to paste into a repository's
+`.curator-project` file, which is what turns step 1 into *the agent already knew*.
+
+Two things this deliberately is not. It is **not a command the app parses** — it is a sentence an
+agent understands because the skill told it what to do with a project name, which is also why it
+works the same in Claude Code, Cursor or anything else that can reach the bridge. And *latest* is
+resolved by the store rather than guessed, so *"resume"* lands on the work-stream you were
+actually in.
 
 ### Turning it off
 
-**Nothing is saved unless an agent is asked to save it.** There is no background process, no timer and no hook: `domains/<project>/state/` is created the first time something calls `save_working_state`, and never otherwise. The in-app **Agent memory** view and the routes behind it are read-only, so browsing state cannot create any. If you never ask, a project simply has no state.
+**Nothing is saved unless an agent is asked to save it.** There is no background process, no timer and no hook: `domains/<domain>/state/` is created the first time something calls `save_working_state`, and never otherwise. The in-app **Agent memory** view and the routes behind it are read-only, so browsing state cannot create any. If you never ask, a project simply has no state.
 
 That is also why **there is no on/off setting to find** — none is needed for the common case, and none exists. If you want something firmer than *don't ask*, there are three levers, and they get blunter as you go down.
 
-**1. Just don't ask — per project, no configuration.** Working state is opt-in per project by virtue of being agent-initiated; a project you never mention stays untouched. One wrinkle worth knowing: `project` is an *optional* argument and falls back to your **default domain** ([§16, Settings](#16-settings)). So an agent that saves without naming a project writes there — if you have a default domain set, that is the one to watch.
+**1. Just don't ask — per project, no configuration.** Working state is opt-in per project by virtue of being agent-initiated; a project you never mention stays untouched, and a project that does not exist is never created to receive a save. One wrinkle worth knowing: the project name is an *optional* argument, and a save that names none falls back to your **default domain**'s default project ([§16, Settings](#16-settings)). So an agent saving without naming anything writes there — if you have a default domain set, that is the one to watch.
 
 **2. Remove the `curator-continuity` skill — the practical global off switch.** That skill is what tells an agent to save at all, and when. Without it nothing prompts a save. Three things to know:
 

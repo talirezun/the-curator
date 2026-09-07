@@ -35,7 +35,7 @@ owner — you.
 |---|---|---|
 | **1. Your brain** — a personal wiki per domain | What you have read and understood: entities, concepts, summaries, all cross-linked | Knowledge **accumulates** — every source adds to existing pages instead of duplicating them |
 | **2. Your team's brain** — [Shared Brain](docs/shared-brain-user-guide.md) *(opt-in)* | The same, built collectively by a cohort, team or research group; your other domains never leave your machine | Knowledge **accumulates**, collectively |
-| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands: what is settled, what to do next, what was already tried and ruled out | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back |
+| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands, per **project** — what is settled, what to do next, what was already tried and ruled out. A domain holds as many projects as you build in it | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back |
 
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
 written by your agent at the end of a session and read at the start of the next one, so
@@ -354,10 +354,11 @@ looked at. → [AI Wiki Health Guide](docs/ai-health.md)
 ### Querying it with a frontier model
 
 Building a second brain is rewarding. Querying it with a frontier model is the moment it becomes
-irreplaceable. The **My Curator** MCP bridge exposes **twenty tools** — twelve that read (search,
-nodes, tags, backlinks, multi-hop traversal, cross-domain search, topology overview, the original
-source document behind a summary, and prior working state) and eight health/authoring tools, of
-which five actually change anything on disk. That lets a model ask things a search bar cannot:
+irreplaceable. The **My Curator** MCP bridge exposes **twenty-two tools** — thirteen that read
+(search, nodes, tags, backlinks, multi-hop traversal, cross-domain search, topology overview, the
+original source document behind a summary, your projects, and prior working state) and nine
+health/authoring tools, of which six actually change anything on disk. By capability rather than
+grouping: **sixteen read, six write.** That lets a model ask things a search bar cannot:
 
 > *"What ideas in my AI domain have I never explicitly connected to my business strategy domain?"*
 
@@ -414,7 +415,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
-| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
+| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; projects inside a domain; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |
 | [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup across your own computers (wizard, token permissions, what syncs, troubleshooting) |
