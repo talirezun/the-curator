@@ -202,16 +202,21 @@ for (const name of SKILLS) {
       if (nm) mutators.add(nm[1]);
     }
   }
-  ok(mutators.size === 5,
-    `refuseIfReadonly call sites identify ${mutators.size} mutating tools (expected 5): ${[...mutators].sort().join(', ')}`);
+  // v3.48.0 added `save_project_brief`, the sixth. It is a mutator like any
+  // other here and carries refuseIfReadonly for the same reason: a `shared-*`
+  // mirror is rebuilt from the collective, so a local tier-1 write there is
+  // silently lost.
+  ok(mutators.size === 6,
+    `refuseIfReadonly call sites identify ${mutators.size} mutating tools (expected 6): ${[...mutators].sort().join(', ')}`);
   const undeclared = [...mutators].filter(t => !declaredBySkill['my-curator'].has(t));
   ok(undeclared.length === 0,
     undeclared.length === 0
       ? 'my-curator declares every mutating tool'
       : `my-curator does not declare mutating tool(s): ${undeclared.join(', ')}`);
   // Anti-vacuity: the derivation must be capable of finding a name at all.
-  ok(mutators.has('compile_to_wiki') && mutators.has('save_working_state'),
-    'the mutator derivation really resolved names (compile_to_wiki + save_working_state found)');
+  ok(mutators.has('compile_to_wiki') && mutators.has('save_working_state')
+    && mutators.has('save_project_brief'),
+    'the mutator derivation really resolved names (compile_to_wiki + save_working_state + save_project_brief found)');
 }
 
 // ── 3. Numbers in the prose vs constants in the code ───────────────────────

@@ -86,7 +86,7 @@ function assertStrippedSane(stripped, label, mustContain) {
 const wizCode = assertStrippedSane(stripComments(wiz), 'mcp-wizard.js',
   ["async function getJson(url, init)", "export function openMcpWizard(opts)", "role=\"dialog\""]);
 const settingsCode = assertStrippedSane(stripComments(settings), 'settings.js',
-  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty tools"]);
+  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty-two tools"]);
 // The second canary was `rgba(5,5,10,0.68)` — the scrim darkness, inlined
 // here because `--scrim` was an undefined name baselined at exactly one
 // reference. All five /next overlays now read `--modal-scrim`, a real
@@ -761,8 +761,8 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
     }
   }
 
-  ok(realTotal === 20, `sanity: mcp/tools/index.js registers 20 tools (got ${realTotal})`);
-  ok(realWrite === 5, `sanity: 5 tools call refuseIfReadonly (got ${realWrite})`);
+  ok(realTotal === 22, `sanity: mcp/tools/index.js registers 22 tools (got ${realTotal})`);
+  ok(realWrite === 6, `sanity: 6 tools call refuseIfReadonly (got ${realWrite})`);
 
   ok(TOOL_TOTAL === realTotal, `the wizard's TOOL_TOTAL (${TOOL_TOTAL}) matches the real table (${realTotal})`);
   ok(TOOL_WRITE === realWrite, `the wizard's TOOL_WRITE (${TOOL_WRITE}) matches the real guard count (${realWrite})`);
@@ -773,7 +773,7 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   // earlier edit changed the label to "twenty" while the regex still tested
   // "eighteen", so the assertion reported a number it was not checking — a
   // guard that lies about what it verified is worse than no guard.
-  for (const phrase of ['twenty tools', 'fifteen that read', 'five that write']) {
+  for (const phrase of ['twenty-two tools', 'sixteen that read', 'six that write']) {
     ok(new RegExp(phrase, 'i').test(settingsCode), `settings.js says "${phrase}"`);
   }
   ok(!/seventeen tools/i.test(settingsCode), 'the old, wrong "seventeen tools" claim is gone');

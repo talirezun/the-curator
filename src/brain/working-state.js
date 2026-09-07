@@ -148,7 +148,7 @@
  * cache TTL out of date. Stale state is worse than no state.
  */
 
-import { readdir, stat, mkdir, appendFile, open } from 'fs/promises';
+import { readdir, stat, mkdir, appendFile, open, rename, rm } from 'fs/promises';
 import { readFileSync, writeFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { hostname } from 'os';
@@ -175,6 +175,19 @@ import { scrubPaths } from './ingest-queue.js';
 // (it passes rawPath(domain)). Despite the name the function is
 // root-agnostic: it takes the root as its first argument.
 import { resolveInsideWiki } from './wiki-read.js';
+// The cross-process write lock. Taken ONLY by the project-administration
+// functions (create / rename / delete) and by the tier-1 brief write, and by
+// nothing else in this module — see the CONCURRENCY note on saveWorkingState
+// for why a tier-2 save deliberately does not take it (its target is
+// per-(scope, machine), so the only racers are two savers on one machine for
+// one scope, and current.md is defined as "supersedes").
+//
+// A project-admin call is different in kind: it MOVES or REMOVES a directory
+// that other readers and writers are walking, so "last writer wins" is not a
+// coherent outcome. It is also user-initiated and retryable, which is what
+// makes refusing on a held lock acceptable here and not acceptable for a
+// handoff written by an agent that is about to run out of context.
+import { acquireFileLock } from './write-registry.js';
 
 export const STATE_DIRNAME = 'state';
 export const BRIEF_FILENAME = 'project.md';
@@ -1325,8 +1338,353 @@ export function resolveInsideState(project, relPath) {
   return resolveInsideWiki(stateRoot(project), relPath);
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// PROJECTS INSIDE A DOMAIN (v3.48.0)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE WORD `project` MEANS TWO THINGS IN THIS FILE, AND BOTH ARE KEPT ────
+//
+// Everything above this line calls its first argument `project` and means a
+// CURATOR DOMAIN: `stateRoot(project)` is `domains/<project>/state/`. That
+// naming is on the shipped MCP contract (`get_working_state({project})`
+// takes a domain slug today) and in every suite, so it cannot be renamed
+// without breaking callers this release is not allowed to break.
+//
+// From here down a PROJECT is the new thing: a work-stream container INSIDE a
+// domain. A domain hosts many projects; a project has one standing brief and
+// its own scopes.
+//
+// THE RECONCILIATION IS ONE RULE, and it is what makes every existing caller
+// and every existing on-disk tree keep working unchanged:
+//
+//     THE DEFAULT PROJECT'S SLUG IS THE DOMAIN NAME, AND IT LIVES AT THE
+//     STATE ROOT — exactly where a pre-v3.48.0 tree already puts it.
+//
+// So `project: 'articles'` on a domain called `articles` resolves to the same
+// files it always did, `readWorkingState`'s `project` field keeps returning
+// the same string, and a fresh domain keeps writing the SAME paths an older
+// Curator on another machine knows how to read. A NAMED project — any slug
+// other than the domain's own — lives one level down.
+//
+//   domains/<domain>/state/                          the DEFAULT project
+//     project.md                                     tier 1
+//     <scope>/<machine>/current.md                   tier 2
+//     <scope>/<machine>/journal.jsonl                tier 3
+//   domains/<domain>/state/<project>/                a NAMED project
+//     project.md
+//     <scope>/<machine>/current.md
+//     <scope>/<machine>/journal.jsonl
+//
+// ── WHY THE DEFAULT PROJECT NEVER MOVES INTO state/<domain>/ ──────────────
+// The obvious tidier layout is to give the default project a folder of its
+// own like every other project. It is refused for one measured reason: this
+// folder SYNCS, and a fleet does not upgrade at once. A machine still running
+// v3.47 reads `state/<scope>/<machine>/current.md` and nothing else; the
+// moment this release wrote a fresh domain's default project one level down,
+// that machine would report "no working state saved for this project yet"
+// over a handoff sitting on its own disk — the false-absence class this
+// module exists to refuse, manufactured by a layout change. Keeping the
+// default project where it has always been means a named project is PURELY
+// ADDITIVE: an older Curator ignores the extra directory and keeps reading
+// its own tree correctly.
+//
+// It also removes an entire failure mode by construction. There is no
+// "migrate the legacy default project" step, no window in which one project
+// is split across two layouts, and no I/O needed to decide which layout a
+// path uses — `projectPrefix` is a pure string comparison.
+//
+// The cost, stated rather than implied away: the default project cannot be
+// renamed or deleted through `renameProject`/`deleteProject`, because its
+// directory IS the state root and moving it would take every named project
+// with it. Both refuse it by name and say why.
+
+/** Cap on projects returned for ONE domain. */
+export const MAX_PROJECTS_PER_DOMAIN = 200;
+/** Cap on projects returned across ALL domains. */
+export const MAX_PROJECTS_TOTAL = 200;
+
 /**
- * Validate the project for a WRITE.
+ * The reserved word a caller sends instead of a scope name to mean "whichever
+ * scope this project wrote to most recently".
+ *
+ * A REAL SCOPE OF THIS NAME WINS, and that is not a nicety. `latest` passes
+ * `slugSegment` unchanged, so nothing stops a user (or an older agent) from
+ * having already saved a work-stream called `latest`. Resolving the keyword
+ * over a directory that exists would open a DIFFERENT work-stream than the one
+ * named — the same correctness-bug-wearing-a-helpfulness-costume that
+ * `nearScopeNames` refuses to commit. Exact match first, keyword second.
+ */
+export const LATEST_SCOPE = 'latest';
+
+/**
+ * File and directory names a project may not be called.
+ *
+ * `project.md` / `journal.jsonl` / `current.md` cannot in practice be
+ * directory names in a tree we write, but a hand-made or synced tree is not
+ * ours, and a project resolving onto one of those would build a path whose
+ * last segment collides with a file this module reads.
+ */
+const RESERVED_PROJECT_NAMES = new Set([BRIEF_FILENAME, JOURNAL_FILENAME, CURRENT_FILENAME]);
+
+/**
+ * The path prefix for (domain, project), relative to the domain's state root.
+ *
+ * PURE, and deliberately so — no filesystem probe decides which layout a write
+ * uses. See the block above: the default project's slug is the domain name and
+ * it lives at the root, so the decision is a string comparison that cannot
+ * depend on what happens to be on disk at the moment of the call.
+ *
+ * Returns null when either segment is unusable, so every caller gets a refusal
+ * rather than a path built from something that failed validation.
+ */
+export function projectPrefix(domain, project) {
+  if (!isSafeSegment(domain)) return null;
+  if (project === undefined || project === null || project === '') return '';
+  if (!isSafeSegment(project)) return null;
+  if (RESERVED_PROJECT_NAMES.has(project.toLowerCase())) return null;
+  return project === domain ? '' : `${project}/`;
+}
+
+/** True when (domain, project) names the domain's own root-level project. */
+export function isDefaultProject(domain, project) {
+  return project === undefined || project === null || project === '' || project === domain;
+}
+
+/** Does `abs` name an existing regular file? Never throws. */
+async function isFile(abs) {
+  if (!abs) return false;
+  try { return (await stat(abs)).isFile(); } catch { return false; }
+}
+
+/** Directory names directly under `abs` that this module can address. */
+async function safeDirNames(abs) {
+  if (!abs) return { safe: [], unlisted: 0 };
+  try {
+    const all = (await readdir(abs, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name);
+    return splitAddressable(all);
+  } catch {
+    return { safe: [], unlisted: 0 };
+  }
+}
+
+/**
+ * Read the shape of one domain's `state/` tree and say what each directory
+ * directly under it IS — without moving, renaming or repairing anything.
+ *
+ * ── THE DETECTION RULE, AND WHY IT IS A DEPTH TEST ────────────────────────
+ * The two layouts differ by exactly one level, and the marker file is the
+ * same in both, so the only sound discriminator is HOW DEEP a `current.md`
+ * sits under the directory in question:
+ *
+ *   D/<machine>/current.md            D is a SCOPE of the default project
+ *   D/<scope>/<machine>/current.md    D is a NAMED PROJECT
+ *   D/project.md                      D is a NAMED PROJECT (brief, no saves)
+ *
+ * A directory showing BOTH depths is genuinely ambiguous — it would have to be
+ * a scope whose machine folder happens to contain a scope-shaped folder of its
+ * own, or a project someone hand-built inside a scope. We do not guess: the
+ * name is reported in `ambiguous`, `layoutWarning` names it in words, and it
+ * is listed on BOTH sides so nothing on disk becomes unreadable while the user
+ * decides. Hiding it would be the false-absence failure this module exists to
+ * refuse; picking a side would be a guess that silently changes where the next
+ * save lands.
+ *
+ * A directory showing NEITHER shape (empty, or holding only files) is treated
+ * as a legacy SCOPE, not as a project. That is the conservative direction:
+ * an empty scope directory contributes nothing to any listing, exactly as
+ * before, whereas counting it as a project would invent a project row out of
+ * an empty folder. It is why `createProject` always writes a `project.md` —
+ * a project with no marker and no saves would be invisible to its own store.
+ *
+ * Never throws. A missing or unreadable `state/` yields an empty answer.
+ */
+export async function scanStateLayout(domain) {
+  const empty = {
+    ok: false, domain, defaultHasBrief: false, defaultScopeDirs: [],
+    projects: [], ambiguous: [], unlisted: 0, shadowedDefault: false,
+  };
+  if (!isSafeSegment(domain)) return empty;
+  const root = stateRoot(domain);
+  const { safe, unlisted } = await safeDirNames(root);
+
+  const defaultHasBrief = await isFile(resolveInsideState(domain, BRIEF_FILENAME));
+  const defaultScopeDirs = [];
+  const projects = [];
+  const ambiguous = [];
+  let shadowedDefault = false;
+
+  for (const name of safe) {
+    const dirAbs = resolveInsideState(domain, name);
+    if (!dirAbs) continue;                       // symlink out of state/ — refused
+    const hasBrief = await isFile(path.join(dirAbs, BRIEF_FILENAME));
+    const { safe: children } = await safeDirNames(dirAbs);
+
+    let scopeShape = false;                      // name/<machine>/current.md
+    let projectShape = hasBrief;                 // name/project.md
+    for (const child of children) {
+      const childAbs = resolveInsideState(domain, `${name}/${child}`);
+      if (!childAbs) continue;
+      if (await isFile(path.join(childAbs, CURRENT_FILENAME))) scopeShape = true;
+      if (projectShape) continue;                // already decided; skip the deeper walk
+      const { safe: grandchildren } = await safeDirNames(childAbs);
+      for (const g of grandchildren) {
+        const gAbs = resolveInsideState(domain, `${name}/${child}/${g}`);
+        if (gAbs && await isFile(path.join(gAbs, CURRENT_FILENAME))) { projectShape = true; break; }
+      }
+    }
+
+    if (projectShape && scopeShape) ambiguous.push(name);
+    if (projectShape) {
+      // A directory literally named after the domain would shadow the default
+      // project, whose slug IS the domain name. Reported, never silently
+      // preferred: the default project keeps the name and this row is dropped
+      // from the project list, because two rows with one slug is a listing that
+      // cannot be acted on.
+      if (name === domain) shadowedDefault = true;
+      else projects.push({ project: name, hasBrief });
+    }
+    if (scopeShape || !projectShape) defaultScopeDirs.push(name);
+  }
+
+  return {
+    ok: true, domain, defaultHasBrief, defaultScopeDirs,
+    projects, ambiguous, unlisted, shadowedDefault,
+  };
+}
+
+/**
+ * The one sentence a caller sees when a tree cannot be read unambiguously.
+ * Null when there is nothing to say — a fact and its absence must not collapse
+ * into one value, so this is null rather than an empty string.
+ */
+function layoutWarningFor(layout) {
+  const parts = [];
+  if (layout.ambiguous.length) {
+    parts.push(
+      `${layout.ambiguous.length} director${layout.ambiguous.length === 1 ? 'y' : 'ies'} under state/ `
+      + `(${layout.ambiguous.slice(0, 5).join(', ')}) look like BOTH a work-stream of this domain's own `
+      + 'project AND a separate project. Nothing was moved and nothing is hidden — each is listed on both '
+      + 'sides. Rename one of them to settle it.');
+  }
+  if (layout.shadowedDefault) {
+    parts.push(
+      `A directory named "${layout.domain}" sits under state/, which is the slug this domain's own `
+      + 'project already uses. It is NOT listed as a separate project, because two projects cannot share '
+      + 'one name. Rename it to make it addressable.');
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
+// ── Tier 1 provenance ─────────────────────────────────────────────────────
+//
+// A brief written through a tool has to say so, in the file, because the file
+// is the only thing that travels. `state/project.md` syncs to other machines,
+// is hand-editable in Obsidian, and is read by every agent on every read — and
+// until this release the MCP layer told each of them, in as many words, that
+// "there is deliberately no tool that writes it, so no earlier session and no
+// agent produced this text". The moment `save_project_brief` exists that
+// sentence stops being true for SOME briefs, and a reader has no way to tell
+// which. The comment is what tells it.
+//
+// IT IS A MARKER, NOT AN ATTESTATION. Anyone can type it into the file by
+// hand, and nothing here checks that they did not. What it buys is the honest
+// direction: an agent-written brief is LABELLED as agent-written and gets the
+// weaker `commissioned` authority, while a hand-authored brief carrying no
+// comment keeps `owner`. Forging it can only ever LOWER the authority a brief
+// is granted, which is the safe direction for a forgery to point.
+//
+// FORMAT — one HTML comment on the first line, then a blank line:
+//
+//   <!-- curator-brief: authored_by=human on=2026-09-07T09:00:00.000Z -->
+//   <!-- curator-brief: authored_by=agent harness=claude-code model=opus-5 on=… commissioned=user -->
+//
+// An HTML comment because it is invisible in Obsidian and in every markdown
+// renderer, so it does not become furniture in a document the user edits by
+// hand — and because it survives the read-side sanitiser untouched:
+// PROTOCOL_TAG_RE keys on `<` followed by a named tag and `<!--` is not one,
+// ROLE_MARKER_RE needs a line-initial role word, and there is no URL scheme
+// and no shell pipe in it. That matters more than it looks: a brief whose own
+// bytes changed on read is classified `suspect` and LOSES its owner authority,
+// so a provenance line that the sanitiser touched would downgrade every brief
+// it was written into. Pinned by a round-trip fixed-point assertion.
+const BRIEF_PROVENANCE_RE = /^<!--\s*curator-brief:([^>]*?)-->[ \t]*\r?\n?/;
+/** Values inside the comment are reduced to this before being written. */
+const PROVENANCE_VALUE_RE = /[^A-Za-z0-9._:+-]+/g;
+
+function provenanceValue(v, max = 60) {
+  if (typeof v !== 'string' || !v) return null;
+  const s = v.replace(PROVENANCE_VALUE_RE, '-').replace(/^-+|-+$/g, '').slice(0, max);
+  return s || null;
+}
+
+/**
+ * Parse the provenance comment at the head of a brief.
+ *
+ * Returns `{ kind, harness, model, at, commissionedBy }` or null when there is
+ * no comment. `kind` is `'human' | 'agent' | 'unknown'`; an UNRECOGNISED
+ * `authored_by` value reads as `'unknown'` and every consumer must treat that
+ * like `'agent'`, never like `'human'` — a provenance line we cannot read is
+ * missing evidence, and missing evidence may not buy authority.
+ */
+export function parseBriefProvenance(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const m = BRIEF_PROVENANCE_RE.exec(text);
+  if (!m) return null;
+  const fields = {};
+  for (const pair of m[1].trim().split(/\s+/)) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    fields[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  const raw = String(fields.authored_by || '').toLowerCase();
+  const kind = raw === 'human' ? 'human' : raw === 'agent' ? 'agent' : 'unknown';
+  return {
+    kind,
+    harness: provenanceValue(fields.harness),
+    model: provenanceValue(fields.model),
+    at: isIsoish(fields.on) ? new Date(fields.on).toISOString() : null,
+    commissionedBy: provenanceValue(fields.commissioned, 20),
+  };
+}
+
+/** Strip a leading provenance comment, so a re-save cannot stack them. */
+function stripBriefProvenance(text) {
+  return typeof text === 'string' ? text.replace(BRIEF_PROVENANCE_RE, '') : '';
+}
+
+/**
+ * Render the comment for `authoredBy`, or NULL when there is nothing to
+ * attribute.
+ *
+ * A null is not an oversight: a brief with no comment is exactly what a
+ * hand-authored `project.md` looks like, and that is the reading `owner`
+ * authority is granted on. Stamping `authored_by=human` onto a write whose
+ * caller made no claim would be inventing evidence.
+ */
+function renderBriefProvenance(authoredBy, at) {
+  if (!authoredBy || typeof authoredBy !== 'object') return null;
+  const kind = authoredBy.kind === 'agent' ? 'agent' : 'human';
+  const bits = [`authored_by=${kind}`];
+  if (kind === 'agent') {
+    const h = provenanceValue(authoredBy?.harness);
+    const m = provenanceValue(authoredBy?.model);
+    if (h) bits.push(`harness=${h}`);
+    if (m) bits.push(`model=${m}`);
+  }
+  bits.push(`on=${at}`);
+  // `commissioned=user` is what separates "an agent wrote this because the
+  // user told it to" from "an agent wrote this on its own initiative". The
+  // second is not a thing this store offers — `save_project_brief` is
+  // instruction-only — but the file must SAY which it was, because the file is
+  // what a future reader has.
+  if (kind === 'agent') bits.push(`commissioned=${provenanceValue(authoredBy?.instructedBy) || 'user'}`);
+  return `<!-- curator-brief: ${bits.join(' ')} -->`;
+}
+
+/**
+ * Validate the domain for a WRITE.
  *
  * Refuses a name that is not a real domain — an invented one creates a
  * directory with no CLAUDE.md, which `listDomains()` filters out, so the
@@ -1377,6 +1735,771 @@ async function checkProjectWritable(project) {
     };
   }
   return { ok: true };
+}
+
+/**
+ * Validate (domain, project) for a WRITE that touches a project's own tree.
+ *
+ * The domain check is `checkProjectWritable`'s, unchanged and reused rather
+ * than restated. On top of it: the project name must be addressable, and — for
+ * a NAMED project — its directory must already EXIST unless `allowCreate` is
+ * set. Refusing an unknown project is not tidiness; a typo would otherwise
+ * mint `state/nextsteps/` and put a handoff somewhere no listing shows it,
+ * which is the same invisibility `checkProjectWritable` refuses an invented
+ * DOMAIN for, one level down.
+ */
+async function checkProjectTarget(domain, project, { allowCreate = false } = {}) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const prefix = projectPrefix(domain, project);
+  if (prefix === null) {
+    return {
+      ok: false, reason: 'invalid-state-project',
+      message: `"${project}" is not a usable project name. A project name must start with a letter or `
+        + 'digit, then use only letters, digits, dot, hyphen or underscore, and stay within 64 characters.',
+    };
+  }
+  if (!prefix) return { ok: true, prefix: '', project: domain, isDefault: true };
+  if (!allowCreate) {
+    const dirAbs = resolveInsideState(domain, project);
+    let exists = false;
+    try { exists = !!dirAbs && (await stat(dirAbs)).isDirectory(); } catch { exists = false; }
+    if (!exists) {
+      const known = await listProjects(domain);
+      const names = (known.projects || []).map((p) => p.project);
+      return {
+        ok: false, reason: 'unknown-state-project',
+        message: `"${project}" is not a project in the "${domain}" domain, and nothing is created `
+          + 'implicitly — a mistyped name would put this handoff in a folder no listing shows. '
+          + `Projects in "${domain}": ${names.join(', ') || '(none yet)'}. `
+          + `Use "${domain}" for the domain's own project, or create the named one first.`,
+        candidates: names.slice(0, 10),
+      };
+    }
+  }
+  return { ok: true, prefix, project, isDefault: false };
+}
+
+/**
+ * Everything an index row can say about ONE project, for one stat sweep and at
+ * most ONE journal-tail read.
+ *
+ * `listWorkingScopes` is deliberately NOT reused here even though it computes a
+ * superset: it reads a 16 KB journal tail for EVERY pair it shows, up to 60 per
+ * project, and a Projects list over a domain with twenty projects would spend
+ * twelve hundred tail reads to render twenty headlines. The tail is read for
+ * the newest pair only, because the newest pair is the only one this row names.
+ */
+async function summariseProject(domain, project, now) {
+  const prefix = projectPrefix(domain, project);
+  const row = {
+    domain, project,
+    isDefaultProject: isDefaultProject(domain, project),
+    hasBrief: false, briefBytes: 0, briefUpdatedAt: null, briefAuthoredBy: null,
+    // `scopeCount` is DISTINCT work-streams and `savedCopies` is (scope,
+    // machine) PAIRS. Both are returned because they answer different
+    // questions and this repo has already paid twice for a consumer deriving
+    // one from the other — see the `scopeCount`/`distinctScopeCount` note on
+    // `listWorkingScopes`.
+    scopeCount: 0, savedCopies: 0,
+    lastWriteAt: null, ageSeconds: null,
+    writtenAt: null, writtenAgeSeconds: null,
+    headline: null, newestScope: null, newestMachine: null,
+    harness: null, model: null, lastSaveKind: null,
+  };
+  if (prefix === null) return row;
+
+  const briefAbs = resolveInsideState(domain, `${prefix}${BRIEF_FILENAME}`);
+  // 1 KB, not MAX_BRIEF_BYTES: this row needs the provenance comment on line
+  // one and the file's size and mtime, never the body. A listing must not cost
+  // 32 KB per project to render.
+  const briefHead = briefAbs ? await readCapped(briefAbs, 1024) : null;
+  if (briefHead) {
+    row.hasBrief = true;
+    row.briefBytes = briefHead.bytes;
+    row.briefUpdatedAt = briefHead.mtime;
+    row.briefAuthoredBy = parseBriefProvenance(briefHead.text);
+  }
+
+  // The state root itself when this is the domain's own project; the project
+  // directory otherwise. `resolveInsideState` takes a path RELATIVE to the root,
+  // so there is no relative spelling of the root to hand it.
+  const rootAbs = prefix ? resolveInsideState(domain, project) : stateRoot(domain);
+  const { safe: scopeDirs } = await safeDirNames(rootAbs);
+  const pairs = [];
+  for (const scope of scopeDirs) {
+    const { safe: machines } = await safeDirNames(resolveInsideState(domain, `${prefix}${scope}`));
+    for (const machine of machines) {
+      const curAbs = resolveInsideState(domain, `${prefix}${scope}/${machine}/${CURRENT_FILENAME}`);
+      if (!curAbs) continue;
+      try {
+        const st = await stat(curAbs);
+        if (!st.isFile()) continue;
+        pairs.push({ scope, machine, mtimeMs: st.mtimeMs, lastWriteAt: st.mtime.toISOString() });
+      } catch { /* no current.md under this pair */ }
+    }
+  }
+  if (!pairs.length) return row;
+  pairs.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  row.savedCopies = pairs.length;
+  row.scopeCount = new Set(pairs.map((p) => p.scope)).size;
+  const newest = pairs[0];
+  row.lastWriteAt = newest.lastWriteAt;
+  row.ageSeconds = Math.max(0, Math.round((now - newest.mtimeMs) / 1000));
+  row.newestScope = newest.scope;
+  row.newestMachine = newest.machine;
+  const f = await readPairJournalFacts(domain, prefix, newest.scope, newest.machine, now);
+  row.headline = f.headline;
+  row.writtenAt = f.writtenAt;
+  row.writtenAgeSeconds = f.writtenAgeSeconds;
+  row.harness = f.harness;
+  row.model = f.model;
+  row.lastSaveKind = f.lastSaveKind;
+  return row;
+}
+
+/**
+ * Every project in ONE domain, newest-written first.
+ *
+ * The domain's own project is included whenever it has anything at all — a
+ * brief, or a saved scope — and omitted when it has neither, because a row
+ * describing an empty tree is noise on a screen whose job is "which project".
+ * It is still ADDRESSABLE when omitted: `resolveProject` accepts the domain
+ * name whether or not anything has been written yet, which is what keeps a
+ * first save on a fresh domain working exactly as it did before this release.
+ */
+export async function listProjects(domain, opts = {}) {
+  if (!isSafeSegment(domain)) {
+    return {
+      ok: false, reason: 'invalid-project', domain,
+      message: `"${domain}" is not a valid domain name.`, projects: [], total: 0,
+      truncated: false, layoutWarning: null,
+    };
+  }
+  const layout = await scanStateLayout(domain);
+  const now = Date.now();
+  const rows = [];
+
+  const defaultRow = await summariseProject(domain, domain, now);
+  if (defaultRow.hasBrief || defaultRow.savedCopies > 0) rows.push(defaultRow);
+
+  for (const p of layout.projects) {
+    if (opts.namesOnly === true) {
+      rows.push({ domain, project: p.project, isDefaultProject: false, hasBrief: p.hasBrief });
+      continue;
+    }
+    rows.push(await summariseProject(domain, p.project, now));
+  }
+
+  // Newest WRITE first; a project with no saves sorts by its brief's mtime,
+  // and one with neither sorts last by name. Sorting a never-saved project to
+  // the top by accident would put an empty shell above live work.
+  const key = (r) => (r.lastWriteAt ? Date.parse(r.lastWriteAt) : (r.briefUpdatedAt ? Date.parse(r.briefUpdatedAt) : -1));
+  rows.sort((a, b) => (b.lastWriteAt ? 1 : 0) - (a.lastWriteAt ? 1 : 0)
+    || key(b) - key(a)
+    || String(a.project).localeCompare(String(b.project)));
+
+  const total = rows.length;
+  const shown = rows.slice(0, MAX_PROJECTS_PER_DOMAIN);
+  return {
+    ok: true, domain, projects: shown, total,
+    truncated: total > shown.length,
+    unlistedEntries: layout.unlisted,
+    layoutWarning: layoutWarningFor(layout),
+  };
+}
+
+/**
+ * Every project in EVERY domain, newest-written first.
+ *
+ * This is what makes a bare project name resolvable without the user naming a
+ * domain — the whole point of the `.curator-project` marker and of an agent
+ * being able to say "resume lumina" without knowing where lumina lives.
+ */
+export async function listAllProjects(opts = {}) {
+  let domains = [];
+  try { domains = await listDomains(); } catch { domains = []; }
+  const rows = [];
+  const warnings = [];
+  for (const domain of domains) {
+    const r = await listProjects(domain, opts);
+    if (!r.ok) continue;
+    for (const p of r.projects) rows.push(p);
+    if (r.layoutWarning) warnings.push(`${domain}: ${r.layoutWarning}`);
+  }
+  rows.sort((a, b) => (b.lastWriteAt ? 1 : 0) - (a.lastWriteAt ? 1 : 0)
+    || (b.lastWriteAt ? Date.parse(b.lastWriteAt) : -1) - (a.lastWriteAt ? Date.parse(a.lastWriteAt) : -1)
+    || String(a.domain).localeCompare(String(b.domain))
+    || String(a.project).localeCompare(String(b.project)));
+  const total = rows.length;
+  const shown = rows.slice(0, MAX_PROJECTS_TOTAL);
+  return {
+    ok: true, projects: shown, total, truncated: total > shown.length,
+    domainsScanned: domains.length,
+    layoutWarning: warnings.length ? warnings.join(' ') : null,
+  };
+}
+
+/** Near matches for a project name that was not found. Suggestion only. */
+function nearProjectNames(wanted, rows) {
+  const w = String(wanted || '').toLowerCase();
+  if (!w) return [];
+  const flat = w.replace(/[-_.]/g, '');
+  const scored = [];
+  for (const r of rows) {
+    const c = String(r.project).toLowerCase();
+    if (c === w) continue;
+    const cFlat = c.replace(/[-_.]/g, '');
+    if (c.startsWith(w) || w.startsWith(c)) { scored.push([3, r]); continue; }
+    if (cFlat === flat) { scored.push([2, r]); continue; }
+    if (w.length >= 3 && (c.includes(w) || w.includes(c))) { scored.push([1, r]); continue; }
+  }
+  scored.sort((a, b) => b[0] - a[0] || String(a[1].project).localeCompare(String(b[1].project)));
+  return scored.slice(0, 5).map(([, r]) => ({ domain: r.domain, project: r.project }));
+}
+
+/**
+ * Resolve a project name to exactly one (domain, project), or refuse.
+ *
+ * NEVER GUESSES. Several hits are an ambiguity reported with its candidates;
+ * no hit is a miss reported with near matches. Silently picking one would open
+ * a DIFFERENT project than the one named, and every save after that would land
+ * in the wrong tree — the same reasoning `nearScopeNames` records for scopes,
+ * one level up and considerably more expensive to get wrong.
+ *
+ * A BARE DOMAIN NAME ALWAYS RESOLVES, whether or not anything has been saved
+ * in it. That is what keeps every pre-v3.48.0 caller working: `project` on the
+ * MCP tools has meant a domain slug since v3.17.0, the default project's slug
+ * IS the domain name, and a fresh domain with an empty `state/` must still
+ * accept its first save.
+ *
+ * @returns {Promise<{ok:true, domain, project, isDefaultProject, resolvedBy}
+ *                  | {ok:false, error, message, candidates}>}
+ */
+export async function resolveProject(input = {}) {
+  const rawDomain = input?.domain;
+  const rawProject = input?.project;
+  const wantDomain = rawDomain === undefined || rawDomain === null || rawDomain === ''
+    ? null : slugSegment(String(rawDomain));
+  const wantProject = rawProject === undefined || rawProject === null || rawProject === ''
+    ? null : slugSegment(String(rawProject));
+
+  if (rawDomain && !wantDomain) {
+    return { ok: false, error: 'invalid_domain', message: `"${rawDomain}" is not a usable domain name.`, candidates: [] };
+  }
+  if (rawProject && !wantProject) {
+    return { ok: false, error: 'invalid_project', message: `"${rawProject}" is not a usable project name.`, candidates: [] };
+  }
+
+  let domains = [];
+  try { domains = await listDomains(); } catch { domains = []; }
+
+  // ── Explicit domain ─────────────────────────────────────────────────────
+  if (wantDomain) {
+    if (!domains.includes(wantDomain)) {
+      return {
+        ok: false, error: 'unknown_domain',
+        message: `"${wantDomain}" is not a domain in this Curator. Known domains: ${domains.slice(0, 20).join(', ') || '(none)'}.`,
+        candidates: [],
+      };
+    }
+    if (!wantProject || wantProject === wantDomain) {
+      // `explicit` either way: the DOMAIN was named, so nothing was searched
+      // for and nothing was defaulted from configuration. `default` is
+      // reserved for the case where the caller named neither.
+      return {
+        ok: true, domain: wantDomain, project: wantDomain,
+        isDefaultProject: true, resolvedBy: 'explicit',
+      };
+    }
+    const listed = await listProjects(wantDomain, { namesOnly: true });
+    const hit = (listed.projects || []).find((p) => p.project === wantProject);
+    if (hit) {
+      return { ok: true, domain: wantDomain, project: wantProject, isDefaultProject: false, resolvedBy: 'explicit' };
+    }
+    // The projects that DO exist, named. A refusal with no route back is how a
+    // model ends up guessing again, which is the one thing this resolver is
+    // built not to do — the same courtesy the scope-miss path already owed and
+    // pays (`nearScopeNames` plus the full index).
+    const real = (listed.projects || []).map((p) => p.project);
+    return {
+      ok: false, error: 'project_not_found',
+      message: `No project "${wantProject}" in the "${wantDomain}" domain. `
+        + `Projects there: ${real.slice(0, 20).join(', ') || '(none yet)'}. `
+        + `Use "${wantDomain}" for the domain's own project.`,
+      candidates: nearProjectNames(wantProject, listed.projects || []),
+    };
+  }
+
+  // ── No domain: search every domain ──────────────────────────────────────
+  if (!wantProject) {
+    return { ok: false, error: 'project_required', message: 'Name a project, or a domain.', candidates: [] };
+  }
+  const all = await listAllProjects({ namesOnly: true });
+  const hits = (all.projects || []).filter((p) => p.project === wantProject);
+  // The bare-domain arm. Added to `hits` rather than checked first, so a NAMED
+  // project that happens to share a domain's name is reported as the ambiguity
+  // it is instead of one silently winning.
+  if (domains.includes(wantProject) && !hits.some((h) => h.domain === wantProject && h.project === wantProject)) {
+    hits.push({ domain: wantProject, project: wantProject, isDefaultProject: true });
+  }
+  if (hits.length === 1) {
+    return {
+      ok: true, domain: hits[0].domain, project: hits[0].project,
+      isDefaultProject: hits[0].project === hits[0].domain, resolvedBy: 'search',
+    };
+  }
+  if (hits.length > 1) {
+    return {
+      ok: false, error: 'project_ambiguous',
+      message: `"${wantProject}" names a project in ${hits.length} domains `
+        + `(${hits.map((h) => h.domain).join(', ')}). Name the domain too — nothing was opened for you.`,
+      candidates: hits.map((h) => ({ domain: h.domain, project: h.project })),
+    };
+  }
+  // BOTH facts, because the caller needs both. A name that is neither a
+  // project nor a domain is the case an agent hits when it invents one, and
+  // the reason nothing is created for it is the same reason
+  // `checkProjectWritable` gives for an invented DOMAIN: a folder with no
+  // CLAUDE.md is invisible to listDomains(), so anything written there would
+  // sit on disk unseen by the app, the wiki reader and every tool that lists
+  // domains. Saying only "no such project" would leave a model to conclude
+  // that creating one is the fix.
+  return {
+    ok: false, error: 'project_not_found',
+    message:
+      `No project "${wantProject}" in any domain, and "${wantProject}" is not a domain either — `
+      + 'Unknown domain and unknown project. Working state lives inside a domain '
+      + '(domains/<domain>/state/), and a folder with no CLAUDE.md is invisible to listDomains(), so '
+      + 'nothing is created for a name that is neither. '
+      + `Known domains: ${domains.slice(0, 20).join(', ') || '(none)'}.`,
+    candidates: nearProjectNames(wantProject, all.projects || []),
+  };
+}
+
+/**
+ * Resolve a scope argument, including the `latest` keyword.
+ *
+ * `{ok:true, scope:null}` means "no scope was asked for" — the caller should
+ * do an index read. `latest` over a project with no saves also resolves to
+ * null rather than an error: a cold project answering "there is nothing here
+ * yet, and here is the index" is more useful than a refusal, and it is what
+ * the resume ritual wants on the very first session.
+ */
+export async function resolveScope(domain, project, scope) {
+  if (scope === undefined || scope === null || scope === '') {
+    return { ok: true, scope: null, resolvedBy: 'none' };
+  }
+  const raw = String(scope);
+  if (raw.trim().toLowerCase() === LATEST_SCOPE) {
+    // An ACTUAL scope named `latest` wins over the keyword — see LATEST_SCOPE.
+    const prefix = projectPrefix(domain, project);
+    if (prefix === null) return { ok: false, error: 'invalid-state-project', message: `"${project}" is not a usable project name.` };
+    const exact = await resolveExisting(
+      prefix ? resolveInsideState(domain, project) : stateRoot(domain), LATEST_SCOPE);
+    if (exact) return { ok: true, scope: exact, resolvedBy: 'exact' };
+    const index = await listWorkingScopes(domain, { project });
+    const newest = index.ok && index.scopes.length ? index.scopes[0].scope : null;
+    return { ok: true, scope: newest, resolvedBy: 'latest', latestFound: !!newest };
+  }
+  const s = slugSegment(raw);
+  if (!s) return { ok: false, error: 'invalid-scope', message: `"${scope}" is not a usable scope name.` };
+  return { ok: true, scope: s, resolvedBy: 'exact' };
+}
+
+// ── Tier 1: read and write the standing brief ─────────────────────────────
+
+/**
+ * Read one project's standing brief.
+ *
+ * The same read-side treatment `readWorkingState` gives it — byte-capped,
+ * sanitised, duplicate headings flagged — plus the parsed provenance comment,
+ * so a consumer can say "updated 20 minutes ago by an agent" without parsing
+ * markdown itself.
+ */
+export async function readProjectBrief(domain, project) {
+  const out = {
+    ok: true, domain, project: isDefaultProject(domain, project) ? domain : project,
+    present: false,
+  };
+  const prefix = projectPrefix(domain, project);
+  if (prefix === null) {
+    return { ok: false, reason: 'invalid-state-project', message: `"${project}" is not a usable project name.` };
+  }
+  const abs = resolveInsideState(domain, `${prefix}${BRIEF_FILENAME}`);
+  if (!abs) return out;
+  const r = await readCapped(abs, MAX_BRIEF_BYTES);
+  if (!r) return out;
+  const clean = neutraliseProtocol(r.text);
+  const dups = findDuplicateHeadings(clean, BRIEF_SECTIONS);
+  out.present = true;
+  out.text = clean;
+  out.bytes = r.bytes;
+  out.truncated = r.truncated;
+  out.updatedAt = r.mtime;
+  out.sanitisedOnRead = clean !== r.text;
+  out.sanitisedOnReadNote = clean !== r.text ? READ_SANITISE_NOTE : null;
+  out.duplicateHeadings = dups;
+  out.headingsSuspect = dups.length > 0;
+  out.authoredBy = parseBriefProvenance(clean);
+  return out;
+}
+
+/**
+ * Would writing `incoming` over `prior` destroy a standing brief?
+ *
+ * The SAME two arms and the same two constants `wouldDestroyState` uses, for
+ * the same reason and against a strictly worse loss: `project.md` is one file
+ * per project with no `<machine>` segment, it is the tier a human hand-writes,
+ * and it is overwritten in place with no journal behind it — there is not even
+ * the headline-and-byte-count record tier 2 keeps.
+ *
+ * Bytes rather than sections, because a brief is free-form markdown and has no
+ * fixed section list to count. Arm A is therefore "the incoming text is empty
+ * while something is stored", which is the exact structural analogue of "no
+ * body sections at all".
+ */
+export function wouldShrinkBrief(priorBytes, incomingBytes) {
+  if (!priorBytes) return { destructive: false, why: '' };
+  if (!incomingBytes) {
+    return { destructive: true, why: `The incoming brief is empty while ${priorBytes} bytes are stored.` };
+  }
+  if (priorBytes >= MIN_PROTECTED_BODY_BYTES && incomingBytes < priorBytes * REPLACE_RATIO) {
+    return {
+      destructive: true,
+      why: `The incoming brief carries ${incomingBytes} bytes against the stored ${priorBytes} — `
+        + `under ${Math.round(REPLACE_RATIO * 100)}% of it.`,
+    };
+  }
+  return { destructive: false, why: '' };
+}
+
+/**
+ * THE ONE PLACE `project.md` IS WRITTEN. Both front doors below land here.
+ *
+ * Takes the FINISHED document text; applies the provenance header, the size
+ * cap, the destructive-shrink guard and the lock. Callers own composition.
+ */
+async function writeBriefDoc(domain, project, body, {
+  authoredBy = null, replace = false, allowCreate = false, notes = [], guard = true,
+} = {}) {
+  const target = await checkProjectTarget(domain, project, { allowCreate });
+  if (!target.ok) return target;
+  const prefix = target.prefix;
+  const savedAt = new Date().toISOString();
+
+  const abs = resolveInsideState(domain, `${prefix}${BRIEF_FILENAME}`);
+  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+
+  const provenance = renderBriefProvenance(authoredBy, savedAt);
+  const budget = MAX_BRIEF_BYTES - (provenance ? Buffer.byteLength(provenance, 'utf8') + 2 : 0) - 8;
+  let text = body;
+  if (Buffer.byteLength(text, 'utf8') > budget) {
+    const before = Buffer.byteLength(text, 'utf8');
+    text = sliceToBytes(text, budget - 60) + '\n\n_(truncated at the brief size budget)_\n';
+    notes.push(`brief: truncated to the ${Math.round(MAX_BRIEF_BYTES / 1024)} KB brief size budget (was ${before} bytes)`);
+  }
+  const doc = provenance ? `${provenance}\n\n${text.replace(/\s+$/, '')}\n` : text;
+
+  // ── The destructive-shrink guard, measured against the BODY ─────────────
+  // The provenance line is ours, not the user's, so counting it would let a
+  // one-line brief look substantial and defeat the guard's own arithmetic.
+  const priorRead = await readCapped(abs, MAX_BRIEF_BYTES);
+  const priorBody = priorRead ? stripBriefProvenance(priorRead.text).trim() : '';
+  const verdict = guard === false
+    ? { destructive: false, why: '' }
+    : wouldShrinkBrief(Buffer.byteLength(priorBody, 'utf8'), Buffer.byteLength(text.trim(), 'utf8'));
+  if (verdict.destructive && replace !== true) {
+    return {
+      ok: false, reason: 'would-replace-larger-brief',
+      message:
+        `Refusing to replace the standing brief for "${target.project}" with a much smaller one. `
+        + `${verdict.why} project.md is overwritten in place and there is NO journal behind tier 1, so the `
+        + 'stored text would not be recoverable. A brief write replaces the WHOLE document, so send the '
+        + 'complete brief rather than the part you are changing. If you really do mean to replace it, '
+        + 'repeat the call with replace: true.',
+      existing: { bytes: priorRead ? priorRead.bytes : 0, updatedAt: priorRead ? priorRead.mtime : null },
+      incoming: { bytes: Buffer.byteLength(text.trim(), 'utf8') },
+    };
+  }
+  if (verdict.destructive) {
+    notes.unshift(`replace: deliberately overwrote a larger brief (${Buffer.byteLength(priorBody, 'utf8')} → `
+      + `${Buffer.byteLength(text.trim(), 'utf8')} bytes) because replace: true was set`);
+  }
+
+  const dirAbs = prefix ? resolveInsideState(domain, project) : stateRoot(domain);
+  if (!dirAbs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  try { await mkdir(dirAbs, { recursive: true }); }
+  catch (err) { return { ok: false, reason: 'io', message: `Could not create the state folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+
+  // Tier 1 is the ONE file two writers legitimately share — the app's editor
+  // and an agent acting on the user's instruction — so it takes the lock. It
+  // is user-initiated and retryable either way, which is what makes refusing
+  // acceptable here and unacceptable for a tier-2 handoff.
+  const release = await acquireFileLock(domainPath(domain), { op: 'save-project-brief' });
+  if (!release) {
+    return {
+      ok: false, reason: 'locked',
+      message: `Another write is in progress on "${domain}". Nothing was changed — try again in a moment.`,
+    };
+  }
+  try {
+    await writeFileAtomic(abs, doc, 'utf8');
+  } catch (err) {
+    return { ok: false, reason: 'io', message: `Could not write ${BRIEF_FILENAME}: ${scrubPaths(String(err?.message ?? err))}` };
+  } finally {
+    await release();
+  }
+
+  return {
+    ok: true, domain, project: target.project, savedAt,
+    path: `${STATE_DIRNAME}/${prefix}${BRIEF_FILENAME}`,
+    bytes: Buffer.byteLength(doc, 'utf8'),
+    truncated: notes.some((n) => /^brief: truncated/.test(n)),
+    authoredBy: parseBriefProvenance(doc),
+    notes: finaliseNotes(notes),
+  };
+}
+
+/**
+ * Overwrite a project's standing brief with WHOLE MARKDOWN.
+ *
+ * ── WHY THE WHOLE TEXT, AND NOT SECTIONS ──────────────────────────────────
+ * `saveProjectBrief`'s original structured form composes the document from
+ * four known section keys, so any `## ` heading the owner wrote by hand and
+ * this store does not know about — a "Roadmap", a "How I want you to work" —
+ * is silently DROPPED on the next write. Tier 1 is the human's document; a
+ * writer that can only reproduce the shape we imagined is a writer that
+ * quietly deletes the parts we did not.
+ *
+ * ── AND WHY R3 (HEADING ESCAPING) IS NOT APPLIED HERE ─────────────────────
+ * The write-side sanitiser escapes a line-initial `#` so a FIELD cannot forge
+ * a section heading in a document we are assembling around it. Here the caller
+ * supplies the whole document, headings included, so applying R3 would turn
+ * every `## Firm decisions` the user typed into a literal `\## Firm decisions`
+ * — mangling the file it exists to store. The rules that DO apply are exactly
+ * the ones the READ path applies to this same file (control and invisible
+ * strip, R1 protocol tags, R2 role markers, R4 defanging), which has the
+ * property that matters: our own output is a fixed point of the read
+ * sanitiser, so `sanitisedOnRead` stays false and the brief keeps its
+ * authority instead of being classified `suspect` by its own writer.
+ */
+export async function saveProjectBriefText(domain, project, text, opts = {}) {
+  if (typeof text !== 'string') {
+    return { ok: false, reason: 'empty-brief', message: 'The brief text must be a string. Send the COMPLETE brief — a write replaces the whole document.' };
+  }
+  const notes = [];
+  const stripped = stripBriefProvenance(text.replace(/\r\n?/g, '\n'));
+  if (stripped !== text.replace(/\r\n?/g, '\n')) {
+    // Not a loss — the header is re-rendered below from THIS call's provenance.
+    // Worded without loss vocabulary on purpose; `classifySaveNotes` and every
+    // consumer that buckets notes read those words literally.
+    notes.push('brief: the incoming text carried a Curator provenance comment; the header was re-stamped for this write');
+  }
+  const clean = neutraliseProtocol(stripped).replace(/\n{4,}/g, '\n\n\n').trim();
+  if (clean !== stripped.trim()) {
+    notes.push('brief: escaped protocol-shaped markers and/or defanged a URL scheme or a pipe into a shell — wording is otherwise unchanged, and nothing was checked for safety');
+  }
+  if (!clean) {
+    return {
+      ok: false, reason: 'empty-brief',
+      message: 'The brief would be empty. Send the complete standing brief as markdown — '
+        + 'what this project is, how you want it worked on, and the decisions not to re-litigate.',
+    };
+  }
+  return writeBriefDoc(domain, project, clean, {
+    authoredBy: opts.authoredBy || null,
+    replace: opts.replace === true,
+    allowCreate: opts.allowCreate === true,
+    notes,
+  });
+}
+
+/**
+ * The seed a brand-new project's `project.md` carries when the caller supplied
+ * no text. Headings only, so the file is a prompt to the owner rather than an
+ * invented claim about their project — a template that ASSERTED anything would
+ * be read by every future agent as the owner's own standing instruction.
+ */
+export function briefTemplate(project) {
+  return [
+    `# ${project}`,
+    '',
+    '## Standing brief',
+    '',
+    '_What is this project, and what does "done" look like? Replace this line._',
+    '',
+    '## How I want you to work here',
+    '',
+    '_Method, not permission: delegate, test before pushing, never touch that folder._',
+    '',
+    '## Firm decisions — do not re-litigate',
+    '',
+    '- _Settled question, and the reason it was settled._',
+    '',
+    '## Pointers to depth',
+    '',
+    '- _Files, docs or people worth reading before changing anything._',
+  ].join('\n');
+}
+
+// ── Project administration (app routes; MCP exposes create only) ──────────
+
+/** Refuse a project name that cannot become a directory under state/. */
+async function checkNewProjectName(domain, project, layout) {
+  if (!isSafeSegment(project) || RESERVED_PROJECT_NAMES.has(String(project).toLowerCase())) {
+    return {
+      ok: false, reason: 'invalid-state-project',
+      message: `"${project}" is not a usable project name. It must start with a letter or digit, then use `
+        + 'only letters, digits, dot, hyphen or underscore, and stay within 64 characters.',
+    };
+  }
+  if (project === domain) {
+    return {
+      ok: false, reason: 'reserved-project',
+      message: `"${project}" is the name of the domain itself, which is already the name of this domain's `
+        + 'own project — the one that lives at the root of state/. Choose a different name.',
+    };
+  }
+  if (layout.defaultScopeDirs.includes(project)) {
+    return {
+      ok: false, reason: 'reserved-project',
+      message: `"${project}" is already a work-stream (scope) of this domain's own project, so a project of `
+        + 'that name would sit on top of it. Choose a different name, or rename the work-stream first.',
+    };
+  }
+  if (layout.projects.some((p) => p.project === project)) {
+    return { ok: false, reason: 'project-exists', message: `A project called "${project}" already exists in "${domain}".` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Create a named project.
+ *
+ * ALWAYS writes `project.md`, even when the caller supplied no brief. A
+ * project directory with no marker and no saves matches neither shape
+ * `scanStateLayout` looks for, so it would be invisible to its own store the
+ * moment it was made — created, then immediately unlistable.
+ */
+export async function createProject(domain, project, opts = {}) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const slug = slugSegment(String(project ?? ''));
+  if (!slug) {
+    return { ok: false, reason: 'invalid-state-project', message: `"${project}" is not a usable project name.` };
+  }
+  const layout = await scanStateLayout(domain);
+  const nameCheck = await checkNewProjectName(domain, slug, layout);
+  if (!nameCheck.ok) return nameCheck;
+
+  const brief = typeof opts.brief === 'string' && opts.brief.trim() ? opts.brief : briefTemplate(slug);
+  const written = await saveProjectBriefText(domain, slug, brief, {
+    authoredBy: opts.authoredBy || null,
+    allowCreate: true,
+  });
+  if (!written.ok) return written;
+  return {
+    ok: true, domain, project: slug,
+    path: `${STATE_DIRNAME}/${slug}/`,
+    briefSeeded: !(typeof opts.brief === 'string' && opts.brief.trim()),
+    brief: written,
+    markerLine: `${domain}/${slug}`,
+  };
+}
+
+/** Rename a named project's directory. Refuses the default project by name. */
+export async function renameProject(domain, from, to) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const src = slugSegment(String(from ?? ''));
+  const dst = slugSegment(String(to ?? ''));
+  if (!src || !dst) {
+    return { ok: false, reason: 'invalid-state-project', message: 'Both the current and the new project name must be usable names.' };
+  }
+  if (src === domain) {
+    return {
+      ok: false, reason: 'default-project',
+      message: `"${src}" is this domain's own project and it lives at the root of state/, alongside every `
+        + 'named project. Renaming it would move every other project with it, so it cannot be renamed here.',
+    };
+  }
+  const layout = await scanStateLayout(domain);
+  if (!layout.projects.some((p) => p.project === src)) {
+    return { ok: false, reason: 'unknown-state-project', message: `No project "${src}" in "${domain}".` };
+  }
+  const nameCheck = await checkNewProjectName(domain, dst, layout);
+  if (!nameCheck.ok) return nameCheck;
+
+  const srcAbs = resolveInsideState(domain, src);
+  const dstAbs = resolveInsideState(domain, dst);
+  if (!srcAbs || !dstAbs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to move outside the state folder.' };
+
+  const release = await acquireFileLock(domainPath(domain), { op: 'rename-project' });
+  if (!release) return { ok: false, reason: 'locked', message: `Another write is in progress on "${domain}". Nothing was changed.` };
+  try {
+    await rename(srcAbs, dstAbs);
+  } catch (err) {
+    return { ok: false, reason: 'io', message: `Could not rename the project: ${scrubPaths(String(err?.message ?? err))}` };
+  } finally {
+    await release();
+  }
+  return { ok: true, domain, from: src, project: dst, markerLine: `${domain}/${dst}` };
+}
+
+/**
+ * Delete a named project and everything under it.
+ *
+ * `confirm` must equal the project name. This is the only function in this
+ * module that removes a handoff the store itself wrote, and the journal — the
+ * tier that exists to BE the recovery path — goes with it, so the confirmation
+ * is typed rather than a boolean: a boolean is one stray `true` away from
+ * deleting the wrong project, and a name is not.
+ */
+export async function deleteProject(domain, project, opts = {}) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const slug = slugSegment(String(project ?? ''));
+  if (!slug) return { ok: false, reason: 'invalid-state-project', message: `"${project}" is not a usable project name.` };
+  if (slug === domain) {
+    return {
+      ok: false, reason: 'default-project',
+      message: `"${slug}" is this domain's own project and its folder IS the domain's state root, which `
+        + 'holds every named project too. Deleting it here would take them all. Delete the domain, or the '
+        + 'individual work-streams, instead.',
+    };
+  }
+  const layout = await scanStateLayout(domain);
+  if (!layout.projects.some((p) => p.project === slug)) {
+    return { ok: false, reason: 'unknown-state-project', message: `No project "${slug}" in "${domain}".` };
+  }
+  if (opts.confirm !== slug) {
+    return {
+      ok: false, reason: 'confirm-required',
+      message: `Deleting "${slug}" removes its standing brief, every handoff and every journal under it, `
+        + 'permanently — the journal is the only history there is, and it goes too. Repeat the call with '
+        + `confirm: "${slug}" to proceed.`,
+    };
+  }
+  const summary = await summariseProject(domain, slug, Date.now());
+  const abs = resolveInsideState(domain, slug);
+  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to delete outside the state folder.' };
+
+  const release = await acquireFileLock(domainPath(domain), { op: 'delete-project' });
+  if (!release) return { ok: false, reason: 'locked', message: `Another write is in progress on "${domain}". Nothing was deleted.` };
+  try {
+    await rm(abs, { recursive: true, force: false });
+  } catch (err) {
+    return { ok: false, reason: 'io', message: `Could not delete the project: ${scrubPaths(String(err?.message ?? err))}` };
+  } finally {
+    await release();
+  }
+  return {
+    ok: true, domain, project: slug,
+    removedScopes: summary.scopeCount,
+    removedCopies: summary.savedCopies,
+    hadBrief: summary.hasBrief,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1618,8 +2741,19 @@ export function wouldDestroyState(prior, incoming) {
  * @returns {Promise<{ok:true, ...}|{ok:false, reason, message}>}
  */
 export async function saveWorkingState(project, input = {}) {
-  const check = await checkProjectWritable(project);
+  // v3.48.0 — `project` is the DOMAIN; `input.project` is the project inside
+  // it. Absent, it is the domain's own project, whose prefix is '', so a
+  // pre-v3.48.0 save writes byte-identical paths. A NAMED project must already
+  // exist: nothing is created implicitly, because a typo would otherwise put
+  // this handoff in a folder no listing shows (see checkProjectTarget).
+  // `input` is defaulted for `undefined` only, and §13 of the suite calls this
+  // with a literal null — reading a property off it before the domain check
+  // would throw where every other hostile input returns a refusal.
+  const inputProject = input && typeof input === 'object' ? input.project : undefined;
+  const check = await checkProjectTarget(project, inputProject);
   if (!check.ok) return check;
+  const prefix = check.prefix;
+  const projectSlug = check.project;
 
   const scopeSupplied = !(input.scope === undefined || input.scope === null || input.scope === '');
   const scopeRaw = scopeSupplied ? String(input.scope) : DEFAULT_SCOPE;
@@ -1702,7 +2836,7 @@ export async function saveWorkingState(project, input = {}) {
   );
   for (const [k, n] of Object.entries(omitted)) notes.push(`${k}: ${n} item(s) omitted over the state size budget`);
 
-  const dirRel = `${scope}/${machine}`;
+  const dirRel = `${prefix}${scope}/${machine}`;
   const dirAbs = resolveInsideState(project, dirRel);
   if (!dirAbs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
 
@@ -1808,7 +2942,11 @@ export async function saveWorkingState(project, input = {}) {
   }
 
   return {
-    ok: true, project, scope, machine, savedAt,
+    // `project` is the PROJECT slug — identical to the domain name for the
+    // domain's own project, so the value every existing caller reads is
+    // unchanged — and `domain` is added beside it rather than either being
+    // redefined.
+    ok: true, project: projectSlug, domain: project, scope, machine, savedAt,
     path: `${STATE_DIRNAME}/${dirRel}/${CURRENT_FILENAME}`,
     bytes: Buffer.byteLength(doc, 'utf8'),
     sectionsWritten: STATE_SECTIONS.filter(s => sectionBody(s, data, omitted)).map(s => s.key),
@@ -1825,11 +2963,44 @@ export async function saveWorkingState(project, input = {}) {
 
 /**
  * Overwrite the foundational brief (state/project.md).
- * Separate from saveWorkingState on purpose: this tier is deliberate and
- * rare, and it is returned on EVERY read, so it must not churn with sessions.
+ *
+ * ── TWO FRONT DOORS, ONE WRITER, AND WHY BOTH EXIST ───────────────────────
+ * This function is an ARGUMENT-SHAPE DISPATCHER, and the discriminator is
+ * exact rather than heuristic — a project slug is a string, the legacy input
+ * is an object, and no call can be both:
+ *
+ *   saveProjectBrief(domain, { brief, decisions, workingModel, pointers })
+ *        LEGACY, STRUCTURED. Composes the document from four known section
+ *        keys, so any `## ` heading the owner wrote by hand and this store
+ *        does not know about is DROPPED on the next write. That is why it is
+ *        legacy: do not build on it. It is retained because it is what the
+ *        v3.17.0 suites drive, and deleting a shipped export to change a
+ *        parameter list would red assertions that are still testing real
+ *        behaviour. Nothing in `src/` or `mcp/` calls it.
+ *
+ *   saveProjectBrief(domain, project, text, { authoredBy, replace, create })
+ *        THE CANONICAL FORM. Whole markdown, arbitrary sections preserved.
+ *        Identical to `saveProjectBriefText`, which is the non-overloaded
+ *        name new callers should prefer.
+ *
+ * Both land in `writeBriefDoc`, which is the ONE place `project.md` is
+ * written — the size cap, the destructive-shrink guard, the provenance header
+ * and the lock live there and cannot come to differ between the two doors.
  */
-export async function saveProjectBrief(project, input = {}) {
-  const check = await checkProjectWritable(project);
+export async function saveProjectBrief(project, a, b, c) {
+  if (typeof a === 'string') return saveProjectBriefText(project, a, b, c || {});
+  return saveProjectBriefSections(project, a || {});
+}
+
+/**
+ * LEGACY structured brief writer — see the dispatcher above. Byte-identical to
+ * the v3.17.0 document: no provenance header (its callers make no authorship
+ * claim, and inventing one would be inventing evidence) and no shrink guard
+ * (it is not reachable from any shipping surface, so adding a refusal there
+ * would only change what the suites measure).
+ */
+export async function saveProjectBriefSections(project, input = {}) {
+  const check = await checkProjectTarget(project, input && typeof input === 'object' ? input.project : undefined);
   if (!check.ok) return check;
 
   const savedAt = new Date().toISOString();
@@ -1862,32 +3033,21 @@ export async function saveProjectBrief(project, input = {}) {
   }
 
   const { doc, omitted } = renderWithinBudget(
-    `Project brief — ${project}`, null, `Updated: ${savedAt}`, BRIEF_SECTIONS, data, MAX_BRIEF_BYTES,
+    `Project brief — ${check.project}`, null, `Updated: ${savedAt}`, BRIEF_SECTIONS, data, MAX_BRIEF_BYTES,
   );
   for (const [k, n] of Object.entries(omitted)) notes.push(`${k}: ${n} item(s) omitted over the brief size budget`);
 
-  // Same rule as the state save: cap once, at the end, prioritised and
-  // disclosed. Tier 1 is scarcer here (four sections, not six), but a brief
-  // trimmed at the size budget is exactly the case a caller must be told
-  // about, so it must not be starved by per-item chatter either.
-  const finalNotes = finaliseNotes(notes);
-
-  const rootAbs = stateRoot(project);
-  try { await mkdir(rootAbs, { recursive: true }); }
-  catch (err) { return { ok: false, reason: 'io', message: `Could not create the state folder: ${scrubPaths(String(err?.message ?? err))}` }; }
-
-  const abs = resolveInsideState(project, BRIEF_FILENAME);
-  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
-  try {
-    await writeFileAtomic(abs, doc, 'utf8');
-  } catch (err) {
-    return { ok: false, reason: 'io', message: `Could not write project.md: ${scrubPaths(String(err?.message ?? err))}` };
-  }
+  const written = await writeBriefDoc(project, check.project, doc, {
+    authoredBy: null, guard: false, notes,
+  });
+  if (!written.ok) return written;
   return {
-    ok: true, project, savedAt, path: `${STATE_DIRNAME}/${BRIEF_FILENAME}`,
-    bytes: Buffer.byteLength(doc, 'utf8'),
-    truncated: Object.keys(omitted).length > 0,
-    notes: finalNotes,
+    ...written,
+    // The structured door's own truncation fact. `writeBriefDoc` reports its
+    // OWN byte-budget trim; this one is the section-level omission the
+    // renderer performed before the document ever reached it, and collapsing
+    // the two would report a trim that did not happen or hide one that did.
+    truncated: Object.keys(omitted).length > 0 || written.truncated === true,
   };
 }
 
@@ -2346,7 +3506,7 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
  * which is the honest answer — `writtenAt: null`, `lastSaveKind: null` — and
  * not a fabricated one.
  */
-async function readPairJournalFacts(project, scopeDir, machine, now, opts = {}) {
+async function readPairJournalFacts(domain, prefix, scopeDir, machine, now, opts = {}) {
   const withSaveTimes = !!(opts && opts.withSaveTimes === true);
   // NO JOURNAL AT ALL is not "a journal holding no saves", and collapsing the
   // two here would let the tray draw an empty heartbeat over a store it never
@@ -2366,7 +3526,7 @@ async function readPairJournalFacts(project, scopeDir, machine, now, opts = {}) 
     }
     return f;
   };
-  const jAbs = resolveInsideState(project, `${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
+  const jAbs = resolveInsideState(domain, `${prefix}${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
   if (!jAbs) return absent();
   const tail = await readTail(jAbs, INDEX_JOURNAL_TAIL_BYTES);
   if (!tail) return absent();
@@ -2410,13 +3570,19 @@ async function readPairJournalFacts(project, scopeDir, machine, now, opts = {}) 
  * the Budgets block — but the cap is applied AFTER the newest-first sort, so
  * it can never hide the machine that gets chosen by default.
  */
-export async function listScopeMachines(project, scope) {
+export async function listScopeMachines(project, scope, opts = {}) {
   const empty = { machines: [], total: 0, truncated: false, unlistedMachines: 0, dirName: null };
   if (!isSafeSegment(project) || !isSafeSegment(scope)) return empty;
+  // v3.48.0: `opts.project` names a project INSIDE the domain. Absent (every
+  // pre-v3.48.0 caller) it is the domain's own project, whose prefix is '' —
+  // so every existing call site resolves to exactly the paths it always did.
+  const prefix = projectPrefix(project, opts.project);
+  if (prefix === null) return empty;
+  const projectRootAbs = prefix ? resolveInsideState(project, opts.project) : stateRoot(project);
   // D6: resolve the scope's REAL directory name before building any path.
-  const dirName = await resolveExisting(stateRoot(project), scope);
+  const dirName = await resolveExisting(projectRootAbs, scope);
   if (!dirName) return empty;
-  const scopeDirAbs = resolveInsideState(project, dirName);
+  const scopeDirAbs = resolveInsideState(project, `${prefix}${dirName}`);
   if (!scopeDirAbs) return empty;
 
   let names = [], unlistedMachines = 0;
@@ -2435,7 +3601,7 @@ export async function listScopeMachines(project, scope) {
   for (const machine of names) {
     // Containment re-checked per pair, exactly as the index does — a
     // symlinked machine dir can arrive over sync and readdir lists it happily.
-    const curAbs = resolveInsideState(project, `${dirName}/${machine}/${CURRENT_FILENAME}`);
+    const curAbs = resolveInsideState(project, `${prefix}${dirName}/${machine}/${CURRENT_FILENAME}`);
     if (!curAbs) continue;
     try {
       const st = await stat(curAbs);
@@ -2458,7 +3624,7 @@ export async function listScopeMachines(project, scope) {
     // machine, bounded by MAX_INDEX_ENTRIES and by INDEX_JOURNAL_TAIL_BYTES —
     // the same budget the project index has always spent per pair, and NOT on
     // the polled `GET /api/memory` path, which never calls this function.
-    const f = await readPairJournalFacts(project, dirName, m.machine, now);
+    const f = await readPairJournalFacts(project, prefix, dirName, m.machine, now);
     m.writtenAt = f.writtenAt;
     m.writtenAgeSeconds = f.writtenAgeSeconds;
     m.harness = f.harness;
@@ -2486,7 +3652,24 @@ export async function listWorkingScopes(project, opts = {}) {
   if (!isSafeSegment(project)) {
     return { ok: false, reason: 'invalid-project', message: `"${project}" is not a valid project name.`, scopes: [] };
   }
-  const root = stateRoot(project);
+  // v3.48.0 — see listScopeMachines: absent, `opts.project` is the domain's own
+  // project and the prefix is '', so an existing caller's paths are unchanged.
+  const inner = opts && opts.project !== undefined && opts.project !== null && opts.project !== ''
+    ? String(opts.project) : project;
+  const prefix = projectPrefix(project, inner);
+  if (prefix === null) {
+    return {
+      ok: false, reason: 'invalid-state-project', project, domain: project,
+      message: `"${opts.project}" is not a usable project name.`, scopes: [],
+    };
+  }
+  const root = prefix ? resolveInsideState(project, inner) : stateRoot(project);
+  if (!root) {
+    return {
+      ok: false, reason: 'unsafe-path', project, domain: project,
+      message: 'That project resolves outside the state folder.', scopes: [],
+    };
+  }
   let scopeDirs = [];
   // D7: entries this module cannot address are COUNTED, not silently dropped.
   let unlisted = 0;
@@ -2498,7 +3681,10 @@ export async function listWorkingScopes(project, opts = {}) {
     scopeDirs = split.safe;
     unlisted += split.unlisted;
   } catch {
-    return { ok: true, project, scopes: [], total: 0, distinctScopeCount: 0, truncated: false, unlistedEntries: 0 };
+    return {
+      ok: true, project: inner, domain: project, scopes: [], total: 0,
+      distinctScopeCount: 0, truncated: false, unlistedEntries: 0,
+    };
   }
 
   const pairs = [];
@@ -2515,7 +3701,7 @@ export async function listWorkingScopes(project, opts = {}) {
     for (const machine of machines) {
       // Containment re-checked per pair — a symlinked scope/machine dir can
       // arrive over sync, and readdir happily lists it.
-      const curAbs = resolveInsideState(project, `${scope}/${machine}/${CURRENT_FILENAME}`);
+      const curAbs = resolveInsideState(project, `${prefix}${scope}/${machine}/${CURRENT_FILENAME}`);
       if (!curAbs) continue;
       try {
         const st = await stat(curAbs);
@@ -2557,7 +3743,7 @@ export async function listWorkingScopes(project, opts = {}) {
   for (const p of shown) {
     p.ageSeconds = Math.max(0, Math.round((now - p.mtimeMs) / 1000));
     delete p.mtimeMs;
-    const f = await readPairJournalFacts(project, p.scope, p.machine, now, opts);
+    const f = await readPairJournalFacts(project, prefix, p.scope, p.machine, now, opts);
     p.headline = f.headline;
     p.writtenAt = f.writtenAt;
     p.writtenAgeSeconds = f.writtenAgeSeconds;
@@ -2583,7 +3769,12 @@ export async function listWorkingScopes(project, opts = {}) {
   }
 
   return {
-    ok: true, project, scopes: shown, total, distinctScopeCount, truncated: total > shown.length,
+    // `project` is the PROJECT slug, which for the domain's own project IS the
+    // domain name — so this field's value is unchanged for every pre-v3.48.0
+    // caller, and `domain` is added beside it rather than either being
+    // redefined. Same resolution `scopeCount`/`distinctScopeCount` took.
+    ok: true, project: inner, domain: project, scopes: shown, total, distinctScopeCount,
+    truncated: total > shown.length,
     // D7. A count is enough: it tells the caller that content exists which
     // this module will not address, without inventing a way to address it.
     unlistedEntries: unlisted,
@@ -2629,11 +3820,40 @@ export async function readWorkingState(project, opts = {}) {
   if (!isSafeSegment(project)) {
     return { ok: false, reason: 'invalid-project', message: `"${project}" is not a valid project name.` };
   }
+  // v3.48.0. `project` (the first argument) is the DOMAIN — that name is on
+  // the shipped contract and is not renamed here. `opts.project` is the
+  // project INSIDE it, and when it is absent the domain's own project is read,
+  // whose prefix is '' — so every pre-v3.48.0 call reads exactly the paths it
+  // always did and gets exactly the fields it always got.
+  const optProject = opts && typeof opts === 'object' ? opts.project : undefined;
+  const inner = optProject !== undefined && optProject !== null && optProject !== ''
+    ? String(optProject) : project;
+  const prefix = projectPrefix(project, inner);
+  if (prefix === null) {
+    return { ok: false, reason: 'invalid-state-project', message: `"${optProject}" is not a usable project name.` };
+  }
+  const projectRootAbs = prefix ? resolveInsideState(project, inner) : stateRoot(project);
+  if (!projectRootAbs) {
+    return { ok: false, reason: 'unsafe-path', message: 'That project resolves outside the state folder.' };
+  }
 
-  const out = { ok: true, project, brief: { present: false } };
+  // `project` keeps the value it has always carried for the domain's own
+  // project (the slug IS the domain name); `domain` is ADDED beside it.
+  const out = { ok: true, project: inner, domain: project, brief: { present: false } };
+  // Whether the project's own directory is on disk. A NAMED project that has
+  // never been created reads as "nothing here", and a caller that cannot tell
+  // that from "created but empty" will report the wrong thing to the user —
+  // the fact-and-its-absence collapse this module refuses everywhere else.
+  // The domain's own project is its state root, so its existence IS the
+  // domain's, which `isSafeSegment` plus the domain check upstream already own.
+  out.projectExists = true;
+  if (prefix) {
+    try { out.projectExists = (await stat(projectRootAbs)).isDirectory(); }
+    catch { out.projectExists = false; }
+  }
 
   // Tier 1 — always.
-  const briefAbs = resolveInsideState(project, BRIEF_FILENAME);
+  const briefAbs = resolveInsideState(project, `${prefix}${BRIEF_FILENAME}`);
   if (briefAbs) {
     const r = await readCapped(briefAbs, MAX_BRIEF_BYTES);
     if (r) {
@@ -2645,21 +3865,28 @@ export async function readWorkingState(project, opts = {}) {
         sanitisedOnReadNote: clean !== r.text ? READ_SANITISE_NOTE : null,
         duplicateHeadings: dups,
         headingsSuspect: dups.length > 0,
+        // WHO wrote it, from the file's own provenance comment. Null for a
+        // hand-authored brief (and for every brief written before v3.48.0),
+        // which is exactly the reading `owner` authority is granted on.
+        authoredBy: parseBriefProvenance(clean),
       };
     }
   }
 
-  const wantScope = opts.scope ? slugSegment(opts.scope) : null;
-  if (opts.scope && !wantScope) {
-    return { ok: false, reason: 'invalid-scope', message: `"${opts.scope}" is not a usable scope name.` };
-  }
+  const scopeResolution = await resolveScope(project, inner, opts && typeof opts === 'object' ? opts.scope : undefined);
+  if (!scopeResolution.ok) return { ok: false, reason: scopeResolution.error, message: scopeResolution.message };
+  const wantScope = scopeResolution.scope;
+  // Only meaningful when a scope was ASKED for. `latest` says the store chose
+  // the newest work-stream rather than opening the one the caller named, and a
+  // caller that cannot see that cannot tell the user which one it opened.
+  if (opts && typeof opts === 'object' && opts.scope) out.scopeResolvedBy = scopeResolution.resolvedBy;
 
   if (!wantScope) {
     // The index is built ONLY for the scope-less "what exists?" read. A
     // targeted read must not touch it — see listScopeMachines for why, and
     // note it is also the expensive path (it stats every pair in the project
     // and reads a journal tail for each one).
-    const index = await listWorkingScopes(project);
+    const index = await listWorkingScopes(project, { project: inner });
     out.scope = null;
     out.scopes = index.ok ? index.scopes : [];
     // KEPT AS PAIRS, deliberately. Callers read `scopeCount` and the suites
@@ -2673,9 +3900,12 @@ export async function readWorkingState(project, opts = {}) {
     out.unlistedEntries = index.ok ? (index.unlistedEntries || 0) : 0;
     out.unlistedReason = index.ok ? (index.unlistedReason || null) : null;
     if (!out.scopeCount) {
-      out.message = out.brief.present
-        ? 'No session state saved for this project yet — only the project brief.'
-        : 'No working state saved for this project yet.';
+      out.message = scopeResolution.resolvedBy === 'latest'
+        ? `No work-stream has been saved in "${inner}" yet, so there is no latest one to open.`
+          + (out.brief.present ? ' The standing brief IS present.' : '')
+        : out.brief.present
+          ? 'No session state saved for this project yet — only the project brief.'
+          : 'No working state saved for this project yet.';
     }
     return out;
   }
@@ -2683,7 +3913,7 @@ export async function readWorkingState(project, opts = {}) {
   // Resolved DIRECTLY from this scope's own directory, never by filtering
   // the capped index — that filter made a scope beyond MAX_INDEX_ENTRIES
   // report as "no state saved" while its file sat on disk intact.
-  const inScopeIdx = await listScopeMachines(project, wantScope);
+  const inScopeIdx = await listScopeMachines(project, wantScope, { project: inner });
   const inScope = inScopeIdx.machines;
   out.scope = wantScope;
   // The projection is EXPLICIT, so every field added to a machine row upstream
@@ -2715,7 +3945,7 @@ export async function readWorkingState(project, opts = {}) {
   // D6: every path below is built from the scope's REAL directory name, not
   // from the slugged request — see resolveExisting.
   const scopeDir = inScopeIdx.dirName || wantScope;
-  const scopeDirAbs = resolveInsideState(project, scopeDir);
+  const scopeDirAbs = resolveInsideState(project, `${prefix}${scopeDir}`);
 
   let machine = null;
   if (opts.machine) {
@@ -2762,7 +3992,7 @@ export async function readWorkingState(project, opts = {}) {
   out.machineIsThisHost =
     machine === hostSlug() || new RegExp(`^${hostSlug()}-[0-9a-f]{4,16}$`).test(machine);
 
-  const curAbs = resolveInsideState(project, `${scopeDir}/${machine}/${CURRENT_FILENAME}`);
+  const curAbs = resolveInsideState(project, `${prefix}${scopeDir}/${machine}/${CURRENT_FILENAME}`);
   if (curAbs) {
     const r = await readCapped(curAbs, MAX_STATE_BYTES);
     if (r) {
@@ -2812,7 +4042,7 @@ export async function readWorkingState(project, opts = {}) {
     Number.isFinite(opts.journalLimit) ? Math.floor(opts.journalLimit) : DEFAULT_JOURNAL_ENTRIES,
     MAX_JOURNAL_ENTRIES,
   ));
-  const jAbs = resolveInsideState(project, `${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
+  const jAbs = resolveInsideState(project, `${prefix}${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
   const tail = jAbs ? await readTail(jAbs, MAX_JOURNAL_TAIL_BYTES) : null;
   if (!tail) {
     out.journal = { entries: [], returned: 0, total: 0, totalUnknown: false };

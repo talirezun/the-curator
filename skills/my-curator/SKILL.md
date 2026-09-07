@@ -1,14 +1,14 @@
 ---
 name: my-curator
 description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "what do I know about X", "search my notes", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "remember this", "add this to my second brain", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and treats Shared Brain mirrors as read-only, routing contributions through the user's own opted-in domain. Always calls list_domains and get_index before composing any write.
-allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__get_working_state mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue mcp__my-curator__save_working_state
+allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__get_working_state mcp__my-curator__list_projects mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue mcp__my-curator__save_working_state mcp__my-curator__save_project_brief
 ---
 
 # My Curator — second brain playbook
 
-This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 20 tools — 12 for reading (the wiki graph plus your own prior working state), and 8 in the health/authoring group, of which 5 actually mutate something (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`). This playbook tells you how to use them well, in the order that produces the best results.
+This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 22 tools — 13 for reading (the wiki graph, plus your own prior working state and the projects it belongs to), and 9 in the health/authoring group, of which 6 actually mutate something (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`, `save_project_brief`). This playbook tells you how to use them well, in the order that produces the best results.
 
-**Read the tool list you were actually given, not this paragraph.** Older Curator builds register fewer tools — `get_raw_source` needs v3.5.0+, and the two working-state tools need v3.17.0+, below which the count is 18. A tool that is absent is simply unavailable; everything else here still applies.
+**Read the tool list you were actually given, not this paragraph.** Older Curator builds register fewer tools — `get_raw_source` needs v3.5.0+, the two working-state tools need v3.17.0+ (below which the count is 18), and `list_projects` / `save_project_brief` need v3.48.0+ (below which it is 20, and every project is simply the domain it lives in). A tool that is absent is simply unavailable; everything else here still applies.
 
 **On-demand companions** — do not read them up front; open one when its case arises:
 
@@ -250,6 +250,7 @@ Four rules that hold whatever you are fixing:
 | `get_summary` | Pull a summary page | When user references a specific source |
 | `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 |
 | `get_working_state` | Resume a previous session's handoff (brief, decisions, next steps, journal) | "carry on", "where did we leave off" — call first, before re-reading code |
+| `list_projects` | What is being built, and where — projects with their newest work-stream, age and headline | You do not know which project the user means. **Ask; never guess** |
 | `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 |
 | `scan_wiki_health` | Find structural issues | "Check my wiki" |
 | `fix_wiki_issue` | Apply ONE Health fix | After scan, per issue |
@@ -258,11 +259,14 @@ Four rules that hold whatever you are fixing:
 | `dismiss_wiki_issue` | Permanently skip an issue | When user says "leave alone" |
 | `undismiss_wiki_issue` | Restore a dismissal | When user changes their mind |
 | `save_working_state` | Write this session's handoff for the next session to resume | Save early and often — after a decision settles, a trap is found, or a step completes |
+| `save_project_brief` | Rewrite a project's STANDING BRIEF (tier 1 — the user's own document) | **Only when the user explicitly asks.** Never on your own initiative |
 
-> **The two working-state tools have their own playbook.** This skill covers the WIKI —
+**`save_project_brief` is the one tool here you must not reach for helpfully.** The standing brief is the document every future session is told to follow as the user's own advance instructions, so writing it unasked means editing the instructions you are given. It also replaces the WHOLE file — read the current brief first and send it back with your changes folded in, or the rest is destroyed, and unlike a handoff there is no journal behind tier 1 to recover it from. The file records that an agent wrote it, and later readers are told so.
+
+> **The four working-state tools have their own playbook.** This skill covers the WIKI —
 > what knowledge to write and how to ground it. Carrying build state between sessions is a
-> different discipline (when to save, what a handoff must contain, the writing standard) and
-> lives in the `curator-continuity` skill. Install both if you code with the Curator; this
+> different discipline (which project, when to save, what a handoff must contain, the writing
+> standard) and lives in the `curator-continuity` skill. Install both if you code with the Curator; this
 > skill alone is enough to call the tools, but not to use them well.
 >
 > The boundary that matters: a failure whose value is the PATTERN across incidents is

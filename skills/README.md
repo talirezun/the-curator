@@ -46,7 +46,7 @@ client can call all 20 tools. The skills were not. Three things tied them to one
 
 | | Portable? |
 |---|---|
-| The playbook prose (~37 KB each) | **Yes.** Measured: `mcp__` appears in these files only on the `allowed-tools:` frontmatter line. Every tool reference in all four bodies is already a bare name. |
+| The playbook prose (~30–44 KB each) | **Yes.** Measured: `mcp__` appears in these files only on the `allowed-tools:` frontmatter line. Every tool reference in all four bodies is already a bare name. |
 | `allowed-tools:` in the YAML frontmatter | No — `mcp__my-curator__<tool>` is Claude Code's namespacing. |
 | Auto-activation from the YAML `description` | No — a Claude Code / Claude Desktop mechanism. |
 | The documented install path (`~/.claude/skills/`) | No. |
@@ -219,13 +219,13 @@ every turn of every session, including the ones with nothing to do with the wiki
 
 | Built with | Bytes | Rough tokens (bytes ÷ 4 — an estimate, not a measurement) |
 |---|---|---|
-| `my-curator` | 43.6 KB | ~11,200 |
-| `my-curator --core` | 29.8 KB | ~7,600 |
-| `curator-continuity` | 47.1 KB | ~12,100 |
-| `curator-continuity --core` | 38.5 KB | ~9,900 |
-| both | 90.7 KB | ~23,200 |
-| both, `--core` | 68.3 KB | ~17,500 |
-| either, `--examples` | +19–23 KB | +~5,000–5,900 |
+| `my-curator` | 45.1 KB | ~11,600 |
+| `my-curator --core` | 31.3 KB | ~8,000 |
+| `curator-continuity` | 55.8 KB | ~14,300 |
+| `curator-continuity --core` | 45.7 KB | ~11,700 |
+| both | 100.9 KB | ~25,900 |
+| both, `--core` | 77.0 KB | ~19,700 |
+| either, `--examples` | +20–24 KB | +~5,100–6,100 |
 
 Measured with `wc -c` on the generated files at the time of writing, not estimated — but they
 move whenever a playbook does, so re-measure rather than quoting this table back. The `--core`

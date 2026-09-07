@@ -274,8 +274,8 @@ ok(JSON.stringify(wireNames) === JSON.stringify(srcNames),
   'tools/list NAME SET === the `tools` array in mcp/tools/index.js (catches add/remove/rename; a count would not)');
 // The count is a separate, weaker check kept only because CLAUDE.md and the
 // /next wizard both quote a number at users; if it moves, those must move too.
-ok(srcNames.length === 20,
-  `registry holds 20 tools (got ${srcNames.length}) — if this moves, CLAUDE.md and the /next MCP wizard copy must move with it`);
+ok(srcNames.length === 22,
+  `registry holds 22 tools (got ${srcNames.length}) — if this moves, CLAUDE.md and the /next MCP wizard copy must move with it`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('§3  Every read tool answers over the wire');
