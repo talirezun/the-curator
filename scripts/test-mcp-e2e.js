@@ -30,7 +30,7 @@
  *
  * WHY OFFLINE, NOT LIVE
  * ─────────────────────
- * 19 of the 20 tools make no LLM call, so this needs no credentials. OFFLINE
+ * 21 of the 22 tools make no LLM call, so this needs no credentials. OFFLINE
  * gates every push AND every fork PR; the LIVE job runs only on push-to-main.
  * Gating the MCP contract on the weaker of the two would be a downgrade.
  * Precedent for an OFFLINE suite that spawns a child: test-mcp-setup-contract,

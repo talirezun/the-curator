@@ -165,14 +165,15 @@ export function composeResumePrompt(row, opts = {}) {
  *
  * ── TWO LAYOUTS, AND A READER MAY NOT GUESS BETWEEN THEM ───────────────────
  *
- * v3.48.0 writes `<domain>/state/<project>/<scope>/<machine>/current.md`. A
- * store written before it — or by another Mac in a mixed fleet still on
- * v3.47.0, which Personal Sync carries here unchanged — has no project segment
- * at all: `<domain>/state/<scope>/<machine>/current.md`. Readers never move
- * files, so BOTH shapes are live at once and the difference is one directory
- * level in a path that is pasted into an agent and opened in Finder.
+ * v3.48.0 writes `<domain>/state/<project>/<scope>/<machine>/current.md` for a
+ * NAMED project. The domain's own project has no project segment at all —
+ * `<domain>/state/<scope>/<machine>/current.md` — and that is permanent, not a
+ * migration pending: a tree written before v3.48.0 reads as that project, and
+ * so does one created today. Readers never move files, so BOTH shapes are live
+ * at once and the difference is one directory level in a path that is pasted
+ * into an agent and opened in Finder.
  *
- * `isLegacyDefault` is the producer's answer to which one this row is, carried
+ * `isDefaultProject` is the producer's answer to which one this row is, carried
  * on the row rather than inferred here: inferring it would mean this module
  * deciding a filesystem question it cannot see, and the failure mode is an
  * agent reporting that the state is missing.
@@ -191,11 +192,11 @@ export function stateRelPath(row) {
   const project = text(r.project) || 'the project';
   const scope = text(r.scope) || 'the scope';
   const machine = text(r.machine) || '<machine>';
-  // A row with no domain at all is a pre-v3.48.0 shape, in which the first
-  // segment WAS the domain and there was no project segment. Treated as legacy
-  // for that reason, not as a default.
-  const legacy = r.isLegacyDefault === true || !text(r.domain);
-  return legacy
+  // A row with no domain at all is a pre-v3.48.0 PRODUCER's shape, in which the
+  // first segment WAS the domain and there was no project segment. It takes the
+  // root path for that reason, not because it is a default project.
+  const atRoot = r.isDefaultProject === true || !text(r.domain);
+  return atRoot
     ? `${domain}/state/${scope}/${machine}/current.md`
     : `${domain}/state/${project}/${scope}/${machine}/current.md`;
 }

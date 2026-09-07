@@ -2079,17 +2079,20 @@ export function buildTrayModel(summary, opts = {}) {
       projectLabel,
       projectFull: projectFullName(s),
       route: domain ? domain + '/' + project : project,
-      // The marker COLLAPSES for a legacy default project, where the project
-      // slug IS the domain: a `.curator-project` reading `articles/articles`
-      // is correct and reads like a mistake, and the marker's own grammar
-      // allows the bare project name. `route` deliberately does NOT collapse —
-      // it is compared against the app's own `data-mem-project`, which is a
-      // machine-read attribute rather than something a person types.
-      marker: (!domain || s.isLegacyDefault === true) ? project : domain + '/' + project,
-      // Whether this project's state still lives in the pre-v3.48.0 layout.
-      // It decides the PATH the resume prompt prints and the file `Reveal in
-      // Finder` opens, so it is carried rather than guessed downstream.
-      isLegacyDefault: s.isLegacyDefault === true,
+      // The marker COLLAPSES for a domain's own default project, where the
+      // project slug IS the domain: a `.curator-project` reading
+      // `articles/articles` is correct and reads like a mistake, and the
+      // marker's own grammar allows the bare project name. `route` deliberately
+      // does NOT collapse — it is compared against the app's own
+      // `data-mem-project`, which is a machine-read attribute rather than
+      // something a person types.
+      marker: (!domain || s.isDefaultProject === true) ? project : domain + '/' + project,
+      // Whether this project's state lives at the domain's state ROOT, with no
+      // project segment — which is where the domain's own project lives, both
+      // in a tree written before v3.48.0 and in one created today. It decides
+      // the PATH the resume prompt prints and the file `Reveal in Finder`
+      // opens, so it is carried rather than guessed downstream.
+      isDefaultProject: s.isDefaultProject === true,
       groupIndex,
       groupKey: gKey,
       latest,

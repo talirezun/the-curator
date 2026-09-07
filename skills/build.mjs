@@ -157,7 +157,7 @@ function readMcpToolNames() {
 /**
  * Which skills claim to document the WHOLE MCP surface.
  *
- * my-curator does; curator-continuity deliberately declares a 7-tool subset, so
+ * my-curator does; curator-continuity deliberately declares a 9-tool subset, so
  * "registered but not declared" is expected there and reporting it would train
  * the reader to ignore this check. Declared-but-NOT-registered is a real defect
  * for either skill and is always reported.
@@ -389,7 +389,7 @@ function main(argv) {
   //
   // It used to run only when the targets included my-curator, so building
   // curator-continuity alone verified nothing at all — and that skill's
-  // `allowed-tools` line names seven tools that can rot exactly like any other.
+  // `allowed-tools` line names nine tools that can rot exactly like any other.
   // It also compared COUNTS, which cannot see a rename. Both are fixed here.
   const inv = readMcpToolNames();
   if (!inv.ok) {

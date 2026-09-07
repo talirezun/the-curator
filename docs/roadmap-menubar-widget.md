@@ -35,7 +35,7 @@ against those two scenarios changed six things and left the rest standing.
 | | Changed, and why |
 |---|---|
 | **§1.2a is new** | Two facts about the store were measured this pass and both break a first-pass conclusion. **The state path has no harness segment**, so two harnesses on one machine write the *same* file and silently overwrite each other. And **`ageSeconds` is derived from filesystem mtime**, which git resets on checkout — so on a second machine, every handoff that arrives over sync reads as *"just now"* (MEASURED, §2.9). The first pass's *"Live = an agent is working right now"* glyph would have been wrong on every pull. |
-| **§1.3 replaced** | The use cases are now **ranked** rather than enumerated, and the layout is **flat by recency**, not grouped by project. This reverses the first pass's grouping decision; the reasoning is in §1.3. |
+| **§1.3 replaced** | The use cases are now **ranked** rather than enumerated, and the layout is **flat by recency**, not grouped by project. This reverses the first pass's grouping decision; the reasoning is in §1.3. **Superseded in v3.48.0** — see the note at the head of §1.3. |
 | **§1.5 re-derived** | The budget bar and the recency pips survive. The recency pips now read the **true save time**, not the mtime. Two new refusals are added — a sync *progress* bar, and any encoding that makes save FREQUENCY look like productivity. The event strip is demoted to per-scope and per-source. |
 | **§1.7 reversed, in part** | The first pass refused a reader in the widget. This pass **ships a popup**, because the maintainer asked for one and because there is a version of it that is safe: the widget renders **the journal** (a structured, sanitised, bounded array), and never renders `current.md`. The tier-to-surface mapping is in §1.7. |
 | **§1.10 refined** | The `backgroundMode` field and the `window` default both survive with a stronger argument. What is added is *where the user finds out it exists* — and a note that the **dismissal of that offer** is exactly the consent shape `ui.*` was built for, even though the mode itself is not. |
@@ -96,7 +96,7 @@ the app is read-only over working state by design, and it must stay that way.
 | A **recency mark** per row — `ageBucket()`'s five states drawn as a **draining clock** in teal/amber/grey, `unknown` drawn as nothing | `desktop/lib/menu-dots.js` | **Built.** Not in §1.5's plan in this form; see deviations 9 and 10 |
 | A **per-row submenu** — Open in The Curator · Copy resume prompt · Copy handoff as Markdown · Reveal current.md in Finder | `desktop/lib/tray-menu.js`, `desktop/lib/resume-prompt.js`, `src/brain/tray-summary.js` (`getHandoffMarkdown`) | **Built.** Not in any section below; see deviation 10 |
 | **`previousHarness`** and **`saveHarnesses`** on the index row, and **`harnessChanges`** / **`harnessCount`** on the pulse | `src/brain/working-state.js`, `src/brain/tray-summary.js` | **Built.** Both opt-in behind `withSaveTimes`, so the MCP index payload is unchanged |
-| Two `type: 'header'` section captions — **Save pulse** and **Recent scopes** — replacing the two separators that sat in the same places | `desktop/lib/tray-menu.js` | **Built.** See deviation 9 |
+| Two `type: 'header'` section captions — **Save pulse** and **Recent scopes** — replacing the two separators that sat in the same places | `desktop/lib/tray-menu.js` | **Built.** See deviation 9. In v3.48.0 `Recent scopes` became the EMPTY state's caption only: a store with anything in it draws one header per PROJECT instead, which says strictly more |
 | A hard width budget — `MENU_WIDTH_POINTS` spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** The target is now the **measured 363.5 points** (measured from a 2× capture on 2026-09-02), not the 260 this row named while it was a guess. See deviations 9 and 11 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
 | The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
@@ -661,6 +661,21 @@ absence rule this module already enforces everywhere else.
 > as brand new. Worth fixing on its own merits, independently of this feature.
 
 ### 1.3 The use cases, ranked — and the layout that falls out of them
+
+> **SUPERSEDED IN PART BY v3.48.0 — the layout IS grouped by project now.** The
+> argument below ("flat by recency rather than grouped by project") was correct
+> for the store it was written against, where a domain held exactly one state
+> tree and the "project" token on every row was the DOMAIN name — a token that
+> distinguished nothing on a single-domain store and was dropped for width.
+> v3.48.0 put real projects inside a domain, so the token became the thing the
+> reader is actually looking for, and one busy project monopolising the rows —
+> **accepted rather than mitigated** below — became the common case rather than
+> a corner. The shipped shape is at most **three** project groups, at most
+> **two** rows in a group and **five** rows in total, with a group's unspent
+> rows handed back so a single-project store still fills all five. The
+> ranking of the use cases, the refusals, and everything else in this section
+> stand. Nothing below is edited: the argument is why the first shape was
+> right, and it is the record of what changed the answer.
 
 The first pass enumerated three candidates and decided among them. This pass
 **ranks** them, because the brief is right that a widget showing five things
@@ -2319,7 +2334,9 @@ in prose, with the answer beside them, so nobody re-opens a closed one.
    grouped by project** — reversing the first pass. §1.3 argues it; §3.9 found a
    working implementation of exactly that shape (`prefix(5)` + "Show All (23)"),
    and found that the device-list shape the first pass leaned toward is the one
-   the field mostly abandoned.
+   the field mostly abandoned. **RE-ANSWERED in v3.48.0: grouped**, five rows
+   under at most three project headers — see the note at the head of §1.3 for
+   what changed (a "project" that was really the domain became a real project).
 
 5. **STILL OPEN — what does the glyph carry?** Now with better information.
    *Static* is defensible. *One bit* is the lean, and the choice is between **live**

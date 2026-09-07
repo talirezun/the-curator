@@ -166,6 +166,6 @@ node src/server.js
 # Go to http://localhost:3333 in your browser
 ```
 
-Any one of the three is enough — all three can build your wiki. Get a free Gemini key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey), an Anthropic key at [console.anthropic.com](https://console.anthropic.com), or an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). `.env` is a developer fallback; the ordinary route is to paste the key into Settings once the app is running, which stores it in `.curator-config.json` instead. Saving a key also makes that provider the active one — see [user-guide.md](user-guide.md#api-keys) and [model-lifecycle.md](model-lifecycle.md).
+Any one of the three is enough — all three can build your wiki. Get a free Gemini key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey), an Anthropic key at [console.anthropic.com](https://console.anthropic.com), or an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). `.env` is a developer fallback; the ordinary route is to paste the key into Settings once the app is running, which stores it in `.curator-config.json` instead. Saving a key also makes that provider the active one — see [user-guide.md](user-guide.md#19-api-keys-cost--free-tier) and [model-lifecycle.md](model-lifecycle.md).
 
 To sync across computers, click **Sync** in the app's left rail (bottom) and fill in the Connect card. See [sync.md](sync.md) for details.

@@ -42,7 +42,7 @@ playbooks into a form Codex, opencode, Cursor or Gemini CLI will load.
 ## Why this exists
 
 The MCP server is already harness-neutral: it speaks stdio JSON-RPC, so any local MCP
-client can call all 20 tools. The skills were not. Three things tied them to one vendor:
+client can call all 22 tools. The skills were not. Three things tied them to one vendor:
 
 | | Portable? |
 |---|---|
@@ -119,14 +119,14 @@ mismatch.
 Two things about that check are worth knowing, because both were weaker before:
 
 - **It runs for every target.** It used to run only when the targets included `my-curator`, so
-  building `curator-continuity` on its own verified nothing — and that skill names seven tools
+  building `curator-continuity` on its own verified nothing — and that skill names nine tools
   which rot exactly like any other.
 - **It compares NAMES, not a count.** A count cannot see a rename, which is precisely the
   drift that makes an `allowed-tools` line wrong while the number stays right. The names are
   read by walking the `tools` array, mapping each `xDefinition` identifier back to the module
   it was imported from, and reading that module's `name:` field.
 
-`curator-continuity` declares a deliberate 7-tool subset, so "registered but not declared" is
+`curator-continuity` declares a deliberate 9-tool subset, so "registered but not declared" is
 expected there and is not reported; `my-curator` documents the whole surface, so it is
 reported for that skill. Declared-but-not-registered is a defect for either and is always
 reported.

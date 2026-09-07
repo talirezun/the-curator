@@ -494,7 +494,9 @@ const BRIEF_ONLY_CAVEAT =
  * domain the user happens to name `shared-notes` loses the owner framing; that
  * is the fail-safe direction, and the namespace is documented as reserved.
  *
- * @returns {Promise<'owner'|'mirror'|'suspect'|'unverified'|null>} null when no brief.
+ * @returns {Promise<'owner'|'commissioned'|'mirror'|'suspect'|'unverified'|null>} null when
+ *   no brief. Five values plus null — `commissioned` is the v3.48.0 addition and was missing
+ *   from this line three lines under a comment naming five.
  */
 async function classifyBriefAuthority(domain, brief) {
   if (!brief?.present) return null;

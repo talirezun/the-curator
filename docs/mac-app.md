@@ -133,18 +133,23 @@ is not possible and was never attempted. How to read the strip is in
 [§ The recency dot](user-guide.md#the-recency-dot).
 
 **Rows are grouped under a project header.** Each header reads `domain / project` where the
-domain holds more than one project and just the project's name where it does not, and it carries
-that project's own age and the tool that last wrote to it — so a group says something even before
-you read its rows. At most three groups are drawn, at most two rows in each, newest project and
-newest work-stream first; anything past that is counted on the *More in Agent Memory…* line
-rather than dropped silently.
+domain holds more than one project and just the project's name where it does not — and the domain
+comes back for both headers whenever two of them on screen would otherwise read the same, which is
+what two domains each holding a `main` produces. A header carries that project's own age and the
+tool that last wrote to it, so a group says something even before you read its rows. At most three
+groups are drawn and five rows in total, newest project and newest work-stream first. Two rows per
+group is a floor, not a ceiling: each group gets two before any gets a third, and rows no group
+claimed are handed back out in recency order, so a single project still fills all five. Anything
+past that is counted on the *More in Agent Memory…* line rather than dropped silently.
 
 **Each row has a submenu**, because a menu cannot open a *work-stream* — clicking a row lands on
 the project, and the work-stream picker inside the app has no address the menu can dial. So the
 submenu offers the route the menu does have: **Open in The Curator**, **Copy resume prompt** (an
 instruction you paste into a fresh agent session, whose first line is the short form
 `Resume project "lumina" (domain "acme"), latest scope.` and which asks for
-`scope: "latest"` so a stale work-stream name cannot send it to the wrong place), **Copy handoff
+`scope: "latest"` on a project's newest work-stream, so a stale name cannot send it to the wrong
+place — on any other row it names that row's own work-stream instead, because `latest` there
+would open a different one; the first line and the MCP call always agree), **Copy handoff
 as Markdown** (the standing brief and the handoff themselves, for an assistant that cannot reach
 your files), and **Reveal current.md in Finder**. The handoff is copied through the store's own read, so the markup
 escaping that applies to a file which arrived over sync applies to the clipboard too. See

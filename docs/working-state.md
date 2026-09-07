@@ -83,16 +83,27 @@ domains/<domain>/
     <project>/project.md                       Tier 1 — the standing brief, one per project
     <project>/<scope>/<machine>/current.md     Tier 2 — the handoff (OVERWRITTEN each save)
     <project>/<scope>/<machine>/journal.jsonl  Tier 3 — append-only, one line per save
+
+    project.md                                 …and the DOMAIN'S OWN project, at the root,
+    <scope>/<machine>/current.md               with no project segment at all
+    <scope>/<machine>/journal.jsonl
 ```
 
-**The project level is new in v3.48.0.** Nothing about the three tiers changed and nothing moved
-relative to anything else: the whole tree moved down one level, under a name.
+**The project level is new in v3.48.0, and there are two shapes rather than one.** Nothing about
+the three tiers changed. A **named** project's tree sits one level down, under its name. The
+**domain's own project** — the one whose name IS the domain's — stays exactly where `state/` has
+always put it: at the root, with no project segment. That is permanent, not a step on the way
+somewhere: a tree written before v3.48.0 reads as that project, and a domain's own project
+written for the first time today lands in the same place. Which shape a path takes is a string
+comparison (`project === domain`) and never a question about what is on disk.
 
 A project name obeys the same rule as a scope name, because it is the same kind of thing — one
-path segment, lowercase, `a–z 0–9 . - _`, at most 64 characters, no `..`. `project.md` and
-`journal.jsonl` are reserved, and so is any name that would collide with a legacy scope
-directory sitting at the root of the same `state/` folder (below). A name that would make one
-folder mean two things is refused rather than resolved.
+path segment, lowercase, `a–z 0–9 . - _`, at most 64 characters, no `..`. `project.md`,
+`journal.jsonl` and `current.md` are reserved names. So is **the domain's own name**, because
+that slug already belongs to the domain's own project — you do not create it, it is simply
+there. And so is any name that already exists as a work-stream directory at the root of the same
+`state/` folder (below). A name that would make one folder mean two things is refused rather than
+resolved.
 
 `state/` is a **sibling of `wiki/`**, never a path inside it. It is not written through
 `writePage`: that function redirects every non-canonical path into
@@ -128,26 +139,29 @@ How the two shapes are told apart, mechanically:
 |---|---|
 | It holds `project.md`, **or** any `<scope>/<machine>/current.md` two levels down | A **project** |
 | It holds `<machine>/current.md` one level down | A **legacy scope** of the default project |
-| Both are true of it | Neither. The store reports a `layoutWarning` naming the folder |
+| Both are true of it | **Both.** It is listed as a project AND as a work-stream, and the store reports a `layoutWarning` naming the folder |
+| Neither is true of it — it is empty, or holds only files | A **work-stream** of the domain's own project |
 
-The last row is the one to know about. A folder satisfying both readings is genuinely ambiguous,
-and the store does not pick a winner: it returns the warning and the surfaces above it show it.
-The repair is a rename, and it is yours to make — a project and a scope cannot share a name
-inside one `state/` folder.
+The third row is the one to know about. A folder satisfying both readings is genuinely ambiguous,
+and the store does not pick a winner — but it does not hide it either: it lists the folder on
+BOTH sides, so nothing on disk becomes unreadable while you decide, and returns the warning that
+the surfaces above it show. The repair is a rename, and it is yours to make — a project and a
+work-stream cannot share a name inside one `state/` folder.
 
-**Where a save lands when both shapes exist.** A save into a project that already exists in the
-new layout writes the new layout. A save into the **default project** — the project named after
-its domain, with legacy files present — keeps writing the **legacy** paths until you move them,
-so a fleet in which one machine has updated and another has not never splits one project's
-history across two shapes. Every other project, and the default project of a domain that has no
-legacy state at all, is written in the new layout.
+**Where a save lands.** A save into a **named** project always writes `state/<project>/`. A save
+into the **domain's own project** always writes the state root, with no project segment —
+whether that tree predates v3.48.0 or was created this morning. There is no "until", no
+"while legacy files exist" and no probe of the disk: the decision is the same pure string
+comparison every read uses, which is what makes it impossible for a fleet in which one machine
+has updated and another has not to split one project's history across two shapes.
 
-**Nothing migrates it for you, and no migration ships in v3.48.0.** Compatibility reads are the
-whole of what this release does about the old shape. Moving a legacy tree under a project name
-is a file move you make yourself: sync first, close the app, move `project.md` and the scope
-folders into `state/<name>/`, sync again, and update your other machines before they save. If
-that sounds like something the app should do for you, that is fair — it is recorded as
-[not built](#what-is-not-enforced), not as done.
+**Nothing migrates, because there is nothing to migrate.** The root is where the domain's own
+project lives, permanently — not an old shape awaiting a move. You *may* reorganise if you want
+that work under a name of its own: sync first, close the app, move `project.md` and the
+work-stream folders into `state/<name>/`, sync again, and update your other machines before they
+save. That is an optional reorganisation you perform by hand, and after it those files are an
+ordinary named project. The app does not offer it, and it is recorded as
+[not built](#what-is-not-enforced) rather than as done.
 
 ### The three tiers
 
@@ -445,13 +459,19 @@ outright as `invalid-scope`.
 
 Every tool that takes a project name resolves it the same way, and nothing is ever guessed.
 
-| What the caller supplies | What happens | `resolvedBy` |
+| What the caller supplies | What happens | `resolved_by` |
 |---|---|---|
 | A domain **and** a project | Used as given. A project that does not exist in that domain is refused | `explicit` |
-| A project only | Searched across every domain. **Exactly one** match is used | `search` |
-| A project only, matching nothing | Refused as `project_not_found`, with `candidates` — near matches by prefix and by hyphen-normalised name | — |
-| A project only, matching in **several** domains | Refused as `project_ambiguous`, with the matching `domain`/`project` pairs as `candidates` | — |
-| Neither | The default domain's default project — the pre-v3.48.0 behaviour, unchanged | `default` |
+| A domain only | The domain's own project. The domain was named, so nothing was searched for | `explicit` |
+| A project only | Searched across every domain. **Exactly one** match is used. A bare name that is itself a domain matches that domain's own project through the same arm | `search` |
+| A project only, matching nothing | Refused with `reason: 'project_not_found'` and `candidates` — near matches by prefix and by hyphen-normalised name | — |
+| A project only, matching in **several** domains | Refused with `reason: 'project_ambiguous'` and the matching `domain`/`project` pairs as `candidates` | — |
+| Neither | The default domain's own project — the pre-v3.48.0 behaviour, unchanged | `default` |
+
+Read the middle two rows carefully: **`explicit` means the DOMAIN was named**, whether or not a
+project was, and `default` is reserved for the caller who named neither. On a refusal the machine
+code is on **`reason`** and `error` carries the sentence a person reads — over MCP those are two
+separate fields, and a client branching on the wrong one branches on prose.
 
 An unknown or ambiguous name comes back as **a refusal carrying a list**, never as a best guess.
 The reason is the one running through this whole store: landing in the wrong project is not a
@@ -538,12 +558,22 @@ guessing. An agent dropped into a folder it has never seen cannot resolve *"carr
 brand work"* into a project slug; with the list in front of it, it can ask you a question with
 three names in it instead of picking one of them silently.
 
-**Every read and every save now reports where it landed** — `domain`, `project` and
-`resolvedBy` (`explicit`, `search` or `default`), plus `layoutWarning` when the tree under
-`state/` is ambiguous. That is not decoration. A call that resolved a bare name by searching
-across domains made a choice on your behalf, and a response that does not say so leaves the
-caller unable to tell a confirmed project from an inferred one. An ambiguous name comes back as
-`{ ok: false, error: 'project_ambiguous', candidates }`, and nothing is read or written.
+**Every read and every save now reports where it landed** — both name the `domain` and the
+`project`, and a read adds `resolved_by` (`explicit`, `search` or `default`). That is not
+decoration. A call that resolved a bare name by searching across domains made a choice on your
+behalf, and a response that does not say so leaves the caller unable to tell a confirmed project
+from an inferred one. `layout_warning` — the ambiguous-folder notice from
+[§2](#the-layout-before-v3480-and-how-it-is-read-now) — rides on `list_projects`, which is the
+tool that scans the tree for you.
+
+An ambiguous name comes back as `{ ok: false, error: '<the sentence>', reason:
+'project_ambiguous', candidates: [{domain, project}] }`, and nothing is read or written. **The
+machine-readable code is on `reason`; `error` is the prose.** (Inside the store itself the two
+are the other way round — `error` holds the code and `message` the sentence — which is worth
+knowing only if you are reading `src/brain/working-state.js` rather than calling the tools. The
+store also uses hyphenated codes of its own for the refusals `resolveProject` never sees:
+`unknown-state-project`, `reserved-project`, `project-exists`, `default-project`,
+`would-replace-larger-brief`, `empty-brief`, `confirm-required`, `locked`, `readonly`.)
 
 ### What a read returns
 
@@ -797,11 +827,17 @@ picked one side silently and labelled the owner's side away.
 A brief written through `save_project_brief` carries a provenance comment as its first line:
 
 ```
-<!-- curator-brief: authored_by=agent harness=claude-code model=opus-4 on=2026-09-07 commissioned=user -->
+<!-- curator-brief: authored_by=agent harness=claude-code model=opus-4 on=2026-09-07T09:00:00.000Z commissioned=user -->
 ```
 
+`on` is always a full ISO-8601 timestamp, and `harness`, `model` and `commissioned` appear only
+when an agent wrote it — a hand-stamped human line is just
+`<!-- curator-brief: authored_by=human on=… -->`.
+
 That line is what the authority classifier reads. A brief with no such line, or one recording a
-human author, classifies as `owner`. One recording an **agent** classifies as `commissioned` —
+human author, classifies as `owner`. One recording an **agent** — or an `authored_by` value the
+reader does not recognise, which is deliberately read as the weaker of the two — classifies as
+`commissioned` —
 and that is not a downgrade to untrusted material. Its authority note says what is true of it:
 written by an agent at the owner's request, therefore treated as the owner's, with its **facts**
 re-verified exactly as any other brief's are. A commissioned brief never falls to the untrusted
@@ -810,8 +846,11 @@ framing on account of being commissioned. It can still fall there for the reason
 
 **A brief write replaces the whole document**, like a scope save, so it is idempotent and the
 instruction to an agent is *send the complete brief, not the part that changed*. It carries the
-same destructive-save guard too: an empty brief, or one drastically shorter than what is already
-there, is refused unless the call repeats itself with `replace: true`.
+same destructive-save guard too: a brief drastically shorter than what is already there is
+refused unless the call repeats itself with `replace: true`. An **empty** brief is a separate,
+harder refusal — `empty-brief`, checked before the guard — and `replace: true` does not override
+it. (The guard protects a stored brief of at least 1 KB against an incoming one under 5% of its
+size; below a kilobyte there is not enough at stake to be worth a second round trip.)
 
 **There is no journal for a brief.** Journals are per work-stream and per machine; the project
 level has none, deliberately, because a document that changes a few times a year does not need a
@@ -992,6 +1031,14 @@ domain with its latest work-stream first. The **Domains** view carries the other
 **Projects** section on each domain card, where projects are created, renamed, deleted with a
 typed confirmation, given a standing brief, and where **Copy marker line** hands you the
 `.curator-project` line for a repository.
+
+**One project on that list can be neither renamed nor deleted: the domain's own.** Its folder
+*is* the domain's state root, so renaming it would sweep every other project in the domain into
+the new name and deleting it would take them all with it. Both operations refuse it by name
+(`reason: 'default-project'`), at the store, so no surface can offer it by mistake. If you want
+that work under a name of its own, it is the hand move described in
+[§2](#the-layout-before-v3480-and-how-it-is-read-now) — and after it, what is left at the root
+is a domain's own project with nothing in it.
 
 **The split is one tier deep, and it is deliberate rather than half-finished.**
 

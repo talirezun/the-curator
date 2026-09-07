@@ -609,8 +609,8 @@ flowchart LR
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Working on: lumina · 12 min ago                         │  ⓪ which project
-│  Last save · 12 min ago                                  │  ① the answer, first
+│  Working on: lumina · 12 min ago                         │  ⓪ which project, and
+│                                                          │     how long ago
 │      claude-code · opus-4                                │  ② who wrote it
 │  ── Save pulse ─────────────────────────────────────────  │
 │  ▁▂█▇█▃▆  ┈┈┈───────   5 days known · 79 saves · 2 tools │  ②b the last 7 days
@@ -643,7 +643,9 @@ order. **Save pulse** and each **project header** are real macOS section headers
 the pulse and the row marks are real drawn images, not text — the blocks above are the closest a
 page of text can get. The `▸` on each row is macOS's own submenu arrow. A project header reads
 `domain / project` when that domain holds more than one project, and just the project's name when
-it does not — there is no reason to print `acme / acme` at a person. The rows under a header are
+it does not — there is no reason to print `acme / acme` at a person. The domain comes back for
+both whenever two headers on screen would otherwise read the same, which is what happens when two
+different domains each hold a project called `main`. The rows under a header are
 that project's **work-streams**.*
 
 > **The first line of a row is the work-stream and the time, and nothing else may stand there.**
@@ -656,11 +658,13 @@ that project's **work-streams**.*
 >
 > Everything that used to crowd that line — the tool, the computer, the project, the model — is now
 > on the **second line**, which macOS draws in a smaller face and which therefore has more room.
-> Each of those is still dropped **only while it distinguishes nothing**: the project when one
-> project has state, the tool when every row shows the same tool, the computer when every row came
-> from the same computer, the model when they all used the same one. When even the second line will
-> not hold everything, tokens are dropped **whole, lowest priority first** — model, then project,
-> then computer, then tool — because `son…` is not a shorter `sonnet-4`, it is a different word.
+> Each of those is still dropped **only while it distinguishes nothing**: the tool when every row
+> shows the same tool, the computer when every row came from the same computer, the model when
+> they all used the same one. The project left that line entirely in v3.48.0 — it is the group
+> header above the row now. When even the second line will
+> not hold everything, tokens are dropped **whole, lowest priority first** — model, then computer,
+> then tool — because `son…` is not a shorter `sonnet-4`, it is a different word. The project is
+> not in that ladder at all: it never reaches line two to be dropped from it.
 >
 > **And nothing a cut removed becomes unreachable. Hover the row and you get all of it** — the full
 > `project · work-stream`, the machine folder, the tool, the exact model string and the exact
@@ -673,11 +677,10 @@ that project's **work-streams**.*
 
 | | What it is | Why it is where it is |
 |---|---|---|
-| ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
 | ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
-| ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ①. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ⓪ | **`Working on: <project> · <age>`** — the project that was written to most recently | A person with several projects asks *which one was I in?* before they ask anything else, and until v3.48.0 the menu could not answer it: rows were flat, so the answer had to be inferred from whichever row happened to be at the top |
-| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and at most **two rows** in each, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do) | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
+| ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ⓪. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
+| ⓪ | **`Working on: <project> · <age>`** — the project written to most recently, anywhere across all of them, and how long ago | It is the question you came to ask, so it is answerable without reading past the first line, and clicking it opens Agent memory. It replaced a line reading *"Last save · 12 min ago"*, which said WHEN without saying WHAT: a person with several projects asks *which one was I in?* first, and until v3.48.0 the menu could not answer it, because rows were flat and the answer had to be inferred from whichever one happened to be at the top |
+| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and **five rows** in total, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do). Two rows per group is a floor rather than a ceiling: each group gets two before any group gets a third, and rows nobody claimed are handed back out in recency order — so one project on its own still fills all five, which is what every install had before this release | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
 | ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
 | ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
@@ -696,7 +699,7 @@ main · 4 min ago
 **Line one is `work-stream · when`, and nothing else is ever allowed onto it.** Line two is
 *who wrote it* and then **the agent's own one-line summary of what it did**.
 
-**Line two can carry up to six things, and each appears only when it is telling you something.**
+**Line two can carry up to five things, and each appears only when it is telling you something.**
 
 | On line two | When it appears |
 |---|---|
@@ -704,7 +707,6 @@ main · 4 min ago
 | **`opencode ← claude-code`** | Only when **the last two saves in that work-stream came from different tools** — the baton changed hands. The arrow points from who wrote it to who wrote it before |
 | **the tool** — `claude-code`, `opencode`, `cursor` | Unless every visible row shows the same one |
 | **the computer** — `studio`, `laptop` | Only on a row from **another computer**, and only when the rows disagree about which computer they came from |
-| **the project** | Only when the row's group header does not already say it — normally it does, so this is rare |
 | **the model** — `opus-4`, `gemini-2.5`, `haiku-4` | Unless every visible row used the same one. It is the family and the generation; the exact string is on hover |
 
 > **A row from another computer can now name its tool as well as its machine, and that is a
@@ -803,9 +805,11 @@ say out loud:
 Resume project "lumina" (domain "acme"), latest scope.
 ```
 
-What follows is the same as before: the exact MCP call to make — now with `scope: "latest"`, so
-the agent does not need the work-stream's name to be right — the file path to fall back on if it
-has no bridge, the `.curator-project` marker line for this project, and the instruction to save
+What follows is the same as before: the exact MCP call to make — on a project's **newest**
+work-stream that call asks for `scope: "latest"`, so the agent does not need the name to be
+right; on any other row it names that row's own work-stream, because `latest` there would open a
+different one. The prompt claims `latest` only where it is true, and its first line and its MCP
+call always agree. Then the file path to fall back on if it has no bridge, the `.curator-project` marker line for this project, and the instruction to save
 the **complete** state back when it runs low on context.
 
 *Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
@@ -2025,9 +2029,16 @@ when it was last saved to, and which work-stream that was. Four controls:
 |---|---|
 | **New project** | Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
 | **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
-| **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists |
+| **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
 | **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
 | **Copy marker line** | Puts one line on your clipboard — `domain/project` — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
+
+**One project on that list cannot be renamed or deleted: the domain's own** — the one named after
+the domain itself, which is where a domain's state lived before v3.48.0 and still lives when you
+have not made any other project. Its folder **is** the domain's state root, so renaming it would
+sweep every other project in that domain into the new name, and deleting it would take all of them
+with it. Both controls refuse it rather than warning about it. You can still empty it: delete or
+move the work-streams inside it.
 
 A domain that had agent memory before v3.48.0 shows **one** project, named after the domain
 itself. Nothing was moved to produce that: the old files are read where they lie, and they keep
@@ -2242,7 +2253,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
-- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **20 tools in total: 15 that read and 5 that write.** (Two of those, `get_working_state` and `save_working_state`, are new in v3.17.0 and touch a project’s working state rather than its wiki — see [§13b](#13b-working-state--carrying-context-between-sessions).)
+- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **22 tools in total: 16 that read and 6 that write.** (Four of those — `get_working_state` and `save_working_state` since v3.17.0, `list_projects` and `save_project_brief` since v3.48.0 — touch a project’s working state rather than its wiki; see [§13b](#13b-working-state--carrying-context-between-sessions).)
 - **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
 - **Write to your wiki** (v2.5.2+) — say *"save what we discussed to my second brain"* and Claude calls `compile_to_wiki` to commit the conversation as a summary page plus any new entity/concept pages. Same merge pipeline as the in-app Compile button.
 - **Heal your wiki** (v2.5.2+) — say *"check my wiki for problems"* and Claude scans, auto-fixes the safe ones, asks before destructive merges, and respects your persistent dismissals.

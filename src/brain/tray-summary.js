@@ -93,13 +93,14 @@ import {
  *
  * ── WHY, AND IT IS NOT STYLE ──────────────────────────────────────────────
  *
- * v3.48.0 splits a domain into PROJECTS, and the store grows `listAllProjects`
- * / `listProjects` plus a `project` argument on `listWorkingScopes` and
- * `readWorkingState`. A NAMED import of an export that is not there yet fails
- * at LINK time and takes the whole module with it — and this module is loaded
- * by the menubar shell, where a module that fails to import is a widget that is
+ * v3.48.0 splits a domain into PROJECTS, and the store grew `listAllProjects`
+ * / `listProjects` plus a `project` option on `listWorkingScopes` and
+ * `readWorkingState`. A NAMED import of an export that is not there fails at
+ * LINK time and takes the whole module with it — and this module is loaded by
+ * the menubar shell, where a module that fails to import is a widget that is
  * simply absent, with no error anywhere a user will look. Read off a namespace,
- * a missing function is a `typeof` check and a degraded reading.
+ * the same mistake is a `TypeError` inside one try/catch, which the tray
+ * already renders as a warning row.
  *
  * `readWorkingState` in particular is still the store's own READ path, imported
  * rather than reimplemented — see `getHandoffMarkdown` at the foot of this file
@@ -636,12 +637,12 @@ function installIdOf(machine) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Projects inside a domain — the v3.48.0 shape, and the legacy one
+// Projects inside a domain — and the domain's own project at the state root
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
  * One adapter over the working-state store, so this module speaks ONE shape
- * whether the store below it knows about projects or not.
+ * and speaks it in exactly one place.
  *
  * ╔═══════════════════════════════════════════════════════════════════════════╗
  * ║  A DOMAIN IS WHERE KNOWLEDGE LIVES. A PROJECT IS A THING YOU BUILD.       ║
@@ -652,84 +653,88 @@ function installIdOf(machine) {
  * exactly one of them. `getTraySummary` walked `listDomains()` and named the
  * result `project`. That word was doing two jobs and the widget could not tell
  * them apart, which is precisely what v3.48.0 splits: `state/<project>/<scope>/
- * <machine>/current.md`, with the pre-v3.48.0 tree read as a project whose slug
- * IS the domain name (the "legacy default project").
+ * <machine>/current.md`, with the DOMAIN'S OWN project — the one whose slug is
+ * the domain name — living at the state root, `state/<scope>/<machine>/`, with
+ * no project segment at all.
  *
- * ── THE ADAPTER EXISTS FOR TWO REASONS, AND THE SECOND ONE IS THE HONEST ONE ─
+ * ── THE ROOT LAYOUT IS NOT "LEGACY", AND CALLING IT THAT MISLEADS ─────────
  *
- *  1. A MIXED FLEET IS THE NORMAL STATE. A user's other Mac may still be on
- *     v3.47.0, and Personal Sync carries its legacy tree here. Readers never
- *     move files (that is the contract's rule, not this module's), so the tray
- *     must render both layouts side by side, on one list, without saying which
- *     is which — the layout is the store's business and the user's migration
- *     decision, never a menubar's.
+ * A pre-v3.48.0 tree is read as the domain's own project, and so is a default
+ * project created fresh today: `projectPrefix()` in the store is a pure string
+ * comparison that returns `''` whenever the project slug equals the domain, so
+ * the root layout is where that project lives FOREVER, not a state it is
+ * waiting to be migrated out of. Nothing ever moves. The row therefore carries
+ * `isDefaultProject`, the store's own word, and not a word that would tell a
+ * later reader the file is old when it may have been written this morning.
  *
- *  2. THIS MODULE IS BUILT AGAINST A STORE THAT IS BEING WRITTEN BESIDE IT.
- *     Stated plainly rather than implied: the project-aware store lands on
- *     another branch. Everything here is coded against that API AS SPECIFIED,
- *     and the legacy arm is what runs — and is tested — until it arrives. The
- *     two arms are the same code path from `projectRows()` onward, so the
- *     legacy arm is not a stub that will rot: it is the arm a v3.47.0 tree
- *     takes forever.
+ * ── WHY AN ADAPTER AT ALL, NOW THAT THE STORE HAS LANDED ──────────────────
+ *
+ * Two jobs, both real, neither of them version-skew:
+ *
+ *  1. IT IS THE TEST SEAM. `getTraySummary({store})` and `getHandoffMarkdown`
+ *     take an injected store — the same test-only pattern, and the same
+ *     rationale, as `compile.js`'s `opts.generateText`, which is null in
+ *     production. The adapter is what lets a fake be dumb: a fake supplies
+ *     rows, not a second implementation of the store's ranking.
+ *
+ *  2. IT IS THE ONE PLACE THE TWO ARGUMENT SHAPES MEET. The store takes the
+ *     DOMAIN positionally and the project on its options object
+ *     (`listWorkingScopes(domain, {project, withSaveTimes})`), because every
+ *     pre-v3.48.0 call site had to keep reading exactly the paths it always
+ *     did. This module thinks in (domain, project) PAIRS. Translating in one
+ *     function means no call site downstream can get the two the wrong way
+ *     round — and getting them the wrong way round is silent: a project name
+ *     passed where an options object is expected reads as `{}`, and the store
+ *     answers happily about the DEFAULT project instead.
+ *
+ * There is deliberately NO second arm for a store that does not know about
+ * projects. The store ships in this same checkout — the .app wraps it — so no
+ * install can have one without the other, and an arm nothing can reach is an
+ * arm only a fake ever exercises.
  *
  * @param {object} store  the working-state module, or a fake with the same
- *   shape. INJECTED rather than imported at the call site so the suite can
- *   drive the project-aware arm offline — the same test-only seam, and the same
- *   argument, as `compile.js`'s `opts.generateText`.
+ *   shape.
  */
 export function storeAdapter(store) {
   const s = store && typeof store === 'object' ? store : {};
-  // ONE PREDICATE, ASKED ONCE. `listAllProjects` is the function that only
-  // exists in the project-aware store, so its presence is the layout question
-  // answered — and asking it once means the two arms can never be mixed
-  // half-way through one call.
-  const aware = typeof s.listAllProjects === 'function'
-    && typeof s.listWorkingScopes === 'function';
 
   return {
-    /** Whether the store below knows what a project is. Reported, never
-     *  inferred by a caller from the shape of what comes back. */
-    projectAware: aware,
-
     /**
      * Every (domain, project) that has state, newest first.
      *
-     * The legacy arm answers "every domain is one project named after itself",
-     * which is exactly what the contract says a pre-v3.48.0 tree MEANS. It is
-     * not an approximation of the new answer; it is the new answer for a store
-     * in that shape.
+     * `isDefaultProject` is NORMALISED here and nowhere else: the store sets
+     * it on every row it returns, and the fallback below is for a fake that
+     * supplies rows without it. Downstream reads the field and never re-derives
+     * it, because re-deriving a filesystem fact from a name is how two readers
+     * come to disagree about which path a handoff lives at.
      */
     async listProjects() {
-      if (aware) {
-        const res = await s.listAllProjects();
-        const projects = (res && Array.isArray(res.projects) ? res.projects : [])
-          .filter((p) => p && typeof p.domain === 'string' && typeof p.project === 'string');
-        return {
-          projects,
-          truncated: !!(res && res.truncated === true),
-          // The TRUE total, when the store reports one. `null` is "the store
-          // did not say", which is a different fact from a number and is
-          // rendered as one — see the truncation warning below.
-          total: res && Number.isInteger(res.total) ? res.total : null,
-        };
-      }
-      const domains = await listDomains();
+      const res = await s.listAllProjects();
+      const projects = (res && Array.isArray(res.projects) ? res.projects : [])
+        .filter((p) => p && typeof p.domain === 'string' && typeof p.project === 'string')
+        .map((p) => ({
+          ...p,
+          isDefaultProject: p.isDefaultProject === true || p.project === p.domain,
+        }));
       return {
-        projects: domains.map((d) => ({ domain: d, project: d, isLegacyDefault: true })),
-        truncated: false,
-        total: domains.length,
+        projects,
+        truncated: !!(res && res.truncated === true),
+        // The TRUE total, when the store reports one. `null` is "the store
+        // did not say", which is a different fact from a number and is
+        // rendered as one — see the truncation warning below.
+        total: res && Number.isInteger(res.total) ? res.total : null,
       };
     },
 
     /** The (scope, machine) index for one project. */
     async listScopes(domain, project, opts) {
-      return aware ? s.listWorkingScopes(domain, project, opts) : s.listWorkingScopes(domain, opts);
+      return s.listWorkingScopes(domain, { ...(opts || {}), project });
     },
 
     /** The store's own sanitised read. NEVER a second reader here — see
      *  `getHandoffMarkdown`. */
     async read(domain, project, opts) {
-      return aware ? s.readWorkingState(domain, project, opts) : s.readWorkingState(domain, opts);
+      return s.readWorkingState(domain, { ...(opts || {}), project });
     },
   };
 }
@@ -744,8 +749,8 @@ export function storeAdapter(store) {
  *
  * The same drop-constant rule the rows already live by: a token identical on
  * every row it could appear on distinguishes nothing, so it is pure width. A
- * user whose `articles` domain holds one project called `articles` (the legacy
- * default) would otherwise read `articles / articles` on every header of every
+ * user whose `articles` domain holds one project called `articles` (the
+ * domain's own default project) would otherwise read `articles / articles` on every header of every
  * menu, forever.
  *
  * It comes straight back the moment the domain holds two, because at that point
@@ -897,15 +902,13 @@ export async function getTraySummary(opts = {}) {
   for (const entry of scanned) {
     const domain = entry.domain;
     const project = entry.project;
-    // A LEGACY DEFAULT PROJECT IS NOT A DISPLAY DETAIL. It decides where its
+    // THE DEFAULT PROJECT IS NOT A DISPLAY DETAIL. It decides where its
     // `current.md` actually LIVES (`state/<scope>/…` rather than
     // `state/<project>/<scope>/…`), which is the path the resume prompt prints
     // and the path `Reveal in Finder` opens. Carried on the row rather than
-    // re-derived downstream, because downstream has no way to ask.
-    const isLegacyDefault = entry.isLegacyDefault === true
-      // A store that does not say: the legacy tree is the one whose project
-      // slug IS its domain, which is the contract's own definition.
-      || (entry.isLegacyDefault === undefined && project === domain && !store.projectAware);
+    // re-derived downstream, because downstream has no way to ask — and
+    // normalised once, in `storeAdapter`, so there is one answer per row.
+    const isDefaultProject = entry.isDefaultProject === true;
     const projectsInDomain = perDomain.get(domain) || 1;
     const label = projectLabel(domain, project, projectsInDomain);
     let idx;
@@ -969,7 +972,7 @@ export async function getTraySummary(opts = {}) {
         // about the store rather than about the rows that survived a cap.
         projectLabel: label,
         projectsInDomain,
-        isLegacyDefault,
+        isDefaultProject,
         scope: p.scope,
         machine: p.machine,
         harness: typeof p.harness === 'string' ? p.harness : null,
@@ -1094,7 +1097,7 @@ export async function getTraySummary(opts = {}) {
     domain: shown[0].domain,
     project: shown[0].project,
     projectLabel: shown[0].projectLabel,
-    isLegacyDefault: shown[0].isLegacyDefault,
+    isDefaultProject: shown[0].isDefaultProject,
     scope: shown[0].scope,
     machine: shown[0].machine,
     harness: shown[0].harness,
@@ -1214,19 +1217,19 @@ async function briefFor(row, meta, now) {
     };
   }
 
-  // ── THE LEGACY ARM: ONE `stat`, NEVER A READ ────────────────────────────
+  // ── ONE `stat`, NEVER A READ ────────────────────────────────────────────
   //
   // The brief is TIER C in the widget's ranking: it changes on the order of
   // weeks, it is up to 32 KB of prose, and its whole value is being read IN
   // FULL at the start of a session. A menubar surface gets its age and nothing
-  // else, so this deliberately does not open the file — which is also why the
-  // legacy arm can report no `authoredBy`: the provenance lives INSIDE the
-  // document, and a pre-v3.48.0 document has none to find.
+  // else, so this deliberately does not open the file — which is also why this
+  // path can report no `authoredBy`: the provenance lives INSIDE the document,
+  // and a brief written before v3.48.0 has none to find.
   //
-  // The path is the LEGACY one (`<domain>/state/project.md`) on a legacy
-  // default project and the project's own otherwise, because a reader that
-  // guessed here would report "no brief" for a brief sitting on disk.
-  const rel = row.isLegacyDefault === true ? BRIEF_FILENAME : `${project}/${BRIEF_FILENAME}`;
+  // The path is the state ROOT (`<domain>/state/project.md`) for the domain's
+  // own project and the project's own directory otherwise, because a reader
+  // that guessed here would report "no brief" for a brief sitting on disk.
+  const rel = row.isDefaultProject === true ? BRIEF_FILENAME : `${project}/${BRIEF_FILENAME}`;
   const abs = resolveInsideState(domain, rel);
   if (!abs) return null;
   try {
@@ -1291,10 +1294,10 @@ export function groupKey(row) {
  *
  * Before v3.48.0 the first argument was called `project` and held the DOMAIN,
  * because a domain had one state tree. It now takes both, in that order, and
- * routes through `storeAdapter` — so on a store that does not know about
- * projects the call collapses back to the one-argument form and a legacy tree
- * still copies. The alternative, keeping one argument and guessing which of the
- * two it meant, is how the same word came to name two things in the first place.
+ * routes through `storeAdapter`, which is the one place that knows the store
+ * wants the domain positionally and the project on its options object. The
+ * alternative, keeping one argument and guessing which of the two it meant, is
+ * how the same word came to name two things in the first place.
  *
  * @param {string} domain
  * @param {string} project

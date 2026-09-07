@@ -163,16 +163,16 @@ section('§1 the resume prompt — both arms, and what it never invents');
   // files, so both shapes are live at once.
   const legacy = rp.composeResumePrompt({
     domain: 'articles', project: 'articles', scope: 'main',
-    machine: 'demo-host-a1b2c3', isLegacyDefault: true, latest: true,
+    machine: 'demo-host-a1b2c3', isDefaultProject: true, latest: true,
   }, { domainsDir: '/tmp/fixture-knowledge' });
   ok(legacy.includes('/tmp/fixture-knowledge/articles/state/main/demo-host-a1b2c3/current.md'),
-    'a legacy default project keeps the pre-v3.48.0 path, with NO project segment');
+    'the domain\'s own project lives at the state root, with NO project segment');
   ok(!legacy.includes('articles/state/articles/'),
     '…and does not invent one, which would name a directory that does not exist');
   eq(rp.stateRelPath({ domain: 'd', project: 'p', scope: 's', machine: 'm' }),
     'd/state/p/s/m/current.md', 'stateRelPath: the v3.48.0 layout');
-  eq(rp.stateRelPath({ domain: 'd', project: 'd', scope: 's', machine: 'm', isLegacyDefault: true }),
-    'd/state/s/m/current.md', 'stateRelPath: the legacy layout');
+  eq(rp.stateRelPath({ domain: 'd', project: 'd', scope: 's', machine: 'm', isDefaultProject: true }),
+    'd/state/s/m/current.md', 'stateRelPath: the domain\'s own project, at the state root');
   ok(rp.stateRelPath({ project: 'p', scope: 's', machine: 'm' }).startsWith('p/state/s/'),
     'stateRelPath: a row with no domain at all is the pre-v3.48.0 shape, where the first segment WAS the domain');
 

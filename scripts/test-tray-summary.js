@@ -107,7 +107,7 @@ ok(fpBefore.length > 0, 'real credential files fingerprinted before the run');
 const { getDomainsDir } = await import('../src/brain/config.js');
 const wsMod = await import('../src/brain/working-state.js');
 const {
-  getTraySummary, noteRemoteStatus, __resetRemoteObservation,
+  getTraySummary, getHandoffMarkdown, noteRemoteStatus, __resetRemoteObservation,
   TRAY_DEFAULT_LIMIT, TRAY_MAX_LIMIT, TRAY_MAX_PROJECTS, REMOTE_OBSERVATION_MAX_AGE_MS,
 } = await import('../src/brain/tray-summary.js');
 
@@ -418,12 +418,17 @@ eq(big.lastSave.scope, big.scopes[0].scope,
 eq((await getTraySummary()).scopes.length, TRAY_DEFAULT_LIMIT,
   'the DEFAULT limit is honoured when there is plenty to show — 8, the panel\'s row budget');
 
-// Past TRAY_MAX_PROJECTS. These carry no state, so each costs one failed
-// readdir — enough to prove the cap fires and is reported.
+// Past TRAY_MAX_PROJECTS. Each carries a standing brief and nothing else —
+// the cheapest thing that IS a project. An empty domain is deliberately not
+// one: since v3.48.0 the store omits a domain's own project when it has
+// neither a brief nor a save, because a row describing an empty tree is noise
+// on a screen whose job is "which project". A fixture of empty domains would
+// therefore prove the cap fires by never reaching it.
 for (let i = 0; i < TRAY_MAX_PROJECTS + 5; i++) {
   const n = `p${String(i).padStart(4, '0')}`;
-  fs.mkdirSync(path.join(SCALE, n), { recursive: true });
+  fs.mkdirSync(path.join(SCALE, n, 'state'), { recursive: true });
   fs.writeFileSync(path.join(SCALE, n, 'CLAUDE.md'), '# x\n');
+  fs.writeFileSync(path.join(SCALE, n, 'state', 'project.md'), '# brief\n');
 }
 const many = await getTraySummary();
 const pTrunc = many.warnings.find(w => w.code === 'projects-truncated');
@@ -598,9 +603,9 @@ section('§8b PROJECTS — the legacy tree, read as a project named for its doma
 // v3.48.0 splits DOMAIN from PROJECT. Everything above this line is driven
 // against a REAL ON-DISK store in the pre-v3.48.0 layout, which is what every
 // existing install has and what a Mac still on v3.47.0 keeps syncing here — so
-// this section asserts what the data layer says about THAT tree, on disk, and
-// `scripts/test-tray-projects.js` drives the project-aware arm through an
-// injected fake of the store that has not landed on this branch yet.
+// this section asserts what the data layer says about THAT tree, on disk,
+// through the REAL store, and `scripts/test-tray-projects.js` drives the
+// grouping and the caps through an injected fake.
 setDomains(TMP_DOMAINS);
 {
   const s = await getTraySummary({ limit: 20 });
@@ -608,13 +613,13 @@ setDomains(TMP_DOMAINS);
   ok(row != null, 'CONTROL — the fixture row is present');
   eq(row.domain, 'zulu', 'a legacy tree\'s row names its DOMAIN…');
   eq(row.project, 'zulu', '…and its PROJECT, whose slug IS the domain name — that is what a pre-v3.48.0 tree means');
-  eq(row.isLegacyDefault, true,
-    '…and it is MARKED as legacy, which is what decides its on-disk path downstream rather than a guess made there');
+  eq(row.isDefaultProject, true,
+    '…and it is MARKED as the domain\'s own project, which is what decides its on-disk path downstream rather than a guess made there');
   eq(row.projectLabel, 'zulu',
     'the label does NOT read `zulu / zulu`: the domain holds one project, so the qualifier distinguishes nothing');
   eq(row.projectsInDomain, 1, '…and the count that decided it is carried too, so a consumer can re-derive rather than re-walk');
 
-  // The brief still resolves through the LEGACY path (`<domain>/state/project.md`).
+  // The brief still resolves at the state ROOT (`<domain>/state/project.md`).
   ok(s.brief != null, 'the standing brief is still found in a legacy tree');
   eq(s.brief.domain, 'zulu', '…named by domain…');
   eq(s.brief.project, 'zulu', '…and project');
@@ -632,6 +637,66 @@ setDomains(TMP_DOMAINS);
   ok(c.message.includes('gamma') && c.message.includes('main'),
     '…so the notice and the header name one identity, not two');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8c PROJECTS — a NAMED project, on disk, through the real store');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── WHY THIS SECTION EXISTS, IN ONE SENTENCE ─────────────────────────────
+//
+// The store takes the DOMAIN positionally and the project on its options
+// object; this module thinks in (domain, project) pairs; and getting that wrong
+// DOES NOT THROW. A project name passed where an options object is expected is
+// read as `{}`, `opts.project` comes back undefined, and the store answers —
+// correctly, and about the DEFAULT project. Every named project in the menu
+// would then render the domain's own state under someone else's name, with
+// every existing assertion in this file still green, because every fixture
+// above this line has only default projects.
+//
+// So this is the one place where a NAMED project exists on disk and the real
+// store is asked for it through the real adapter.
+const PROJ = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray-proj-')));
+{
+  fs.mkdirSync(path.join(PROJ, 'workshop'), { recursive: true });
+  fs.writeFileSync(path.join(PROJ, 'workshop', 'CLAUDE.md'), '# workshop\n');
+  // The domain's own project, at the state root.
+  const rootPair = path.join(PROJ, 'workshop', 'state', 'housekeeping', SELF);
+  fs.mkdirSync(rootPair, { recursive: true });
+  fs.writeFileSync(path.join(rootPair, 'current.md'), '# Working state\n\n## Headline\n\nthe default one\n');
+  // …and a NAMED project one level deeper, written LAST so it sorts first.
+  const namedPair = path.join(PROJ, 'workshop', 'state', 'lumina', 'main', SELF);
+  fs.mkdirSync(namedPair, { recursive: true });
+  fs.writeFileSync(path.join(namedPair, 'current.md'), '# Working state\n\n## Headline\n\nthe named one\n');
+  fs.writeFileSync(path.join(PROJ, 'workshop', 'state', 'lumina', 'project.md'), '# lumina\n');
+  setDomains(PROJ);
+
+  const s = await getTraySummary({ limit: 20 });
+  const named = s.scopes.find((r) => r.project === 'lumina');
+  const dflt = s.scopes.find((r) => r.project === 'workshop');
+  ok(named != null, 'the NAMED project\'s pair is listed');
+  ok(dflt != null, 'CONTROL — and the domain\'s own project is listed beside it, so this is two projects and not one read twice');
+  eq(named.scope, 'main', '…with the named project\'s OWN scope');
+  eq(dflt.scope, 'housekeeping',
+    '…and the default project\'s own scope — the two are distinct, which is what a positional/options mix-up would collapse');
+  eq(named.domain, 'workshop', 'the named row carries the domain…');
+  eq(named.isDefaultProject, false, '…and is NOT the domain\'s own project, so its path keeps the project segment');
+  eq(dflt.isDefaultProject, true, '…while the default one is, so its path has none');
+  eq(named.projectLabel, 'workshop / lumina',
+    'the label qualifies with the domain, because this domain now holds two projects');
+  eq(named.projectsInDomain, 2, '…and the count that decided it is carried');
+
+  // The brief belongs to the project of the NEWEST save, and it is the NAMED
+  // project's own file — `state/lumina/project.md`, not `state/project.md`.
+  ok(s.brief != null && s.brief.project === 'lumina',
+    'the standing brief reported is the newest project\'s own');
+
+  // And the handoff read goes to the named project's file, not the default's.
+  const h = await getHandoffMarkdown('workshop', 'lumina', 'main', SELF);
+  ok(h.ok === true, 'the handoff for the named project reads');
+  ok(h.current != null && h.current.includes('the named one'),
+    '…and it is the NAMED project\'s handoff — reading "the default one" here is exactly the silent mix-up this section exists for');
+}
+setDomains(TMP_DOMAINS);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§9  Isolation held');

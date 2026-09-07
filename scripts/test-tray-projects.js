@@ -125,14 +125,16 @@ ok(typeof MENU.buildTrayMenuTemplate === 'function', 'the menu builder is loaded
 ok(typeof RP.composeResumePrompt === 'function', 'the resume-prompt composer is loaded');
 
 /**
- * A project-aware working-state store, implementing the v3.48.0 API.
+ * A working-state store, implementing the v3.48.0 API.
  *
  * ── WHY A FAKE, AND WHAT IT IS ALLOWED TO BE ──────────────────────────────
  *
- * The real project-aware store lands on another branch; this file's subject is
- * everything ABOVE it. So the seam is injected — the same test-only pattern,
- * and the same rationale, as `compile.js`'s `opts.generateText`, which is null
- * in production.
+ * This file's subject is everything ABOVE the store: the grouping, the caps,
+ * the labels and the prompts. So the seam is injected — the same test-only
+ * pattern, and the same rationale, as `compile.js`'s `opts.generateText`, which
+ * is null in production. `scripts/test-tray-summary.js` drives the SAME data
+ * layer against the real store on a real temp tree, so the two together cover
+ * both sides of the adapter.
  *
  * It is deliberately DUMB: it holds the rows it was handed and returns them.
  * A fake that reimplemented the store's ranking would be a second opinion about
@@ -148,7 +150,7 @@ function fakeStore(spec) {
         projects: projects.map((p) => ({
           domain: p.domain,
           project: p.project,
-          isLegacyDefault: p.isLegacyDefault === true,
+          isDefaultProject: p.isDefaultProject === true,
           hasBrief: p.brief !== undefined,
           briefUpdatedAt: p.brief ? p.brief.updatedAt : null,
           briefAuthoredBy: p.brief ? p.brief.authoredBy : null,
@@ -157,7 +159,12 @@ function fakeStore(spec) {
         total: Number.isInteger(spec.total) ? spec.total : projects.length,
       };
     },
-    async listWorkingScopes(domain, project) {
+    // THE STORE'S REAL SIGNATURE: the DOMAIN positionally, the project on the
+    // options object. A fake that took the project positionally would accept a
+    // call the real store silently misreads as "the default project", which is
+    // exactly the defect this shape exists to make impossible.
+    async listWorkingScopes(domain, opts = {}) {
+      const project = opts && opts.project !== undefined ? opts.project : domain;
       const p = projects.find((x) => x.domain === domain && x.project === project);
       if (!p) return { ok: true, project, scopes: [], total: 0, unlistedEntries: 0 };
       // The store's own contract: newest first, and every row carries BOTH
@@ -191,13 +198,13 @@ function fakeStore(spec) {
 
 {
   // CONTROL ON THE SEAM ITSELF. Without this, every §1 assertion could be
-  // passing because the adapter silently fell back to the LEGACY arm and read
-  // the (empty) tempdir — green, and about nothing.
-  const aware = TS.storeAdapter(fakeStore({ projects: [] }));
-  eq(aware.projectAware, true, 'CONTROL — the fake store is recognised as project-aware');
-  const legacy = TS.storeAdapter({ listWorkingScopes() {}, readWorkingState() {} });
-  eq(legacy.projectAware, false,
-    'CONTROL — and a store WITHOUT listAllProjects is not, so the two arms are distinguishable');
+  // passing over a fake nothing ever called.
+  const a = TS.storeAdapter(fakeStore({ projects: [] }));
+  ok(typeof a.listProjects === 'function' && typeof a.listScopes === 'function'
+    && typeof a.read === 'function',
+    'CONTROL — the adapter exposes the three calls the data layer makes');
+  ok(!('projectAware' in a),
+    '…and no layout predicate: there is ONE store, in this same checkout, so an arm for a store without projects would be an arm nothing can reach');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -242,7 +249,7 @@ const ONE_EACH = {
  *  name and whose state still lives in the pre-v3.48.0 layout. */
 const LEGACY_ONLY = {
   projects: [
-    { domain: 'articles', project: 'articles', isLegacyDefault: true,
+    { domain: 'articles', project: 'articles', isDefaultProject: true,
       brief: { updatedAt: ago(20 * 86400), authoredBy: null },
       scopes: [
         { scope: 'session-2026-09-07-a', machine: 'mac-a1b2c3', age: 120, harness: 'claude-code', headline: 'one' },
@@ -295,7 +302,7 @@ eq(twoInOne.summary.scopes.length, 4, 'CONTROL — all four of that fixture\'s p
 // dominant defect class in this whole feature (working-state.js's own docblock
 // names four instances). Both identities are asserted on the producer's OWN
 // output, before anything renders them.
-for (const f of ['domain', 'project', 'projectLabel', 'projectsInDomain', 'isLegacyDefault']) {
+for (const f of ['domain', 'project', 'projectLabel', 'projectsInDomain', 'isDefaultProject']) {
   ok(twoInOne.summary.scopes.every((r) => f in r), `every summary row carries \`${f}\``);
 }
 ok(twoInOne.summary.lastSave && twoInOne.summary.lastSave.domain === 'workshop'
@@ -324,9 +331,9 @@ eq(oneEach.model.rows.map((r) => r.domain), ['workshop', 'articles'],
   '…while the domain is still CARRIED on every row, because the route needs it');
 
 eq(legacyOnly.model.groups.length, 1, 'a legacy-only store draws exactly one group…');
-eq(legacyOnly.model.groups[0].projectLabel, 'articles', '…named for the domain, which IS the legacy default project\'s slug');
-ok(legacyOnly.model.rows.every((r) => r.isLegacyDefault === true),
-  '…and every row is marked as legacy, which is what decides its on-disk path');
+eq(legacyOnly.model.groups[0].projectLabel, 'articles', '…named for the domain, which IS the default project\'s slug');
+ok(legacyOnly.model.rows.every((r) => r.isDefaultProject === true),
+  '…and every row is marked as the domain\'s own project, which is what decides its on-disk path');
 
 // ── THE GROUPS AND THE ROWS ARE THE SAME OBJECTS ────────────────────────
 //
@@ -789,45 +796,66 @@ section('§9 cross-file pins — duplicated on purpose, asserted against the ori
     'a label the producer supplied is used verbatim — the count it depends on is a fact about the STORE, not about the rows that survived a cap');
 }
 
-// ── THE LEGACY ARM STILL WORKS, WHICH IS WHAT SHIPS TODAY ────────────────
+// ── THE ADAPTER SPEAKS THE STORE'S ACTUAL SIGNATURE ──────────────────────
 {
-  // Driven through the adapter against a store with NO listAllProjects — the
-  // shape `src/brain/working-state.js` has on this branch and the shape a
-  // v3.47.0 install has forever.
+  // This module thinks in (domain, project) PAIRS; `src/brain/working-state.js`
+  // takes the DOMAIN positionally and the project on its options object, so
+  // that every pre-v3.48.0 call site kept reading the paths it always did.
+  // `storeAdapter` is the single place those two shapes meet.
   //
   // ── THE FAKE MUST BE ABLE TO SEE THE ARITY, OR THIS PROVES NOTHING ────
   //
-  // FOUND BY MUTATION. The first version of this fake declared
-  // `listWorkingScopes(domain)` and ignored everything after it, so collapsing
-  // the adapter's two arms into the three-argument call ran GREEN: a JavaScript
-  // function cannot tell that it was handed a third argument it never named.
-  // The fixture was the fiction, which is this repo's own recorded shape (see
-  // §2c of test-tray-shell.js). It now RECORDS what it was called with, and the
-  // assertion is about that record.
+  // FOUND BY MUTATION on the branch this replaces. A fake that declared only
+  // the arguments it used ran GREEN against a THREE-argument call: a JavaScript
+  // function cannot tell that it was handed an argument it never named. It now
+  // RECORDS what it was called with, and the assertion is about that record.
+  //
+  // WHY THIS MATTERS MORE THAN ARGUMENT ORDER USUALLY DOES: passing the project
+  // positionally where the store expects options is not a crash. The store
+  // reads `opts.project` off a STRING, gets `undefined`, and answers — happily,
+  // and about the DEFAULT project. Every project in every domain would render
+  // the domain's own state under someone else's name.
   const calls = [];
-  const legacyStore = {
-    async listWorkingScopes(domain, second, third) {
-      calls.push({ argc: arguments.length, domain, second, third });
-      return { ok: true, project: domain, total: 1, unlistedEntries: 0, scopes: [{
-        scope: 'main', machine: 'mac-a1b2c3', lastWriteAt: ago(300), ageSeconds: 300,
-        writtenAt: ago(300), writtenAgeSeconds: 300, harness: 'claude-code',
-        headline: 'from the legacy arm', harnesses: [], saveTimes: [NOW_MS - 300000],
-        saveHarnesses: ['claude-code'], journalTailTruncated: false,
-      }] };
+  const recordingStore = {
+    async listAllProjects() {
+      return { ok: true, projects: [{ domain: 'articles', project: 'lumina', isDefaultProject: false }], total: 1, truncated: false };
     },
-    async readWorkingState() { return { ok: true }; },
+    async listWorkingScopes(domain, opts) {
+      calls.push({ fn: 'listWorkingScopes', argc: arguments.length, domain, opts });
+      return { ok: true, project: (opts && opts.project) || domain, total: 0, unlistedEntries: 0, scopes: [] };
+    },
+    async readWorkingState(domain, opts) {
+      calls.push({ fn: 'readWorkingState', argc: arguments.length, domain, opts });
+      return { ok: true, project: (opts && opts.project) || domain };
+    },
   };
-  const a = TS.storeAdapter(legacyStore);
-  eq(a.projectAware, false, 'CONTROL — a store with no listAllProjects takes the legacy arm');
-  const idx = await a.listScopes('articles', 'articles', { withSaveTimes: true });
-  eq(idx.scopes.length, 1, 'and it answers normally');
-  eq(idx.project, 'articles', '…returning the domain as the project, which is what a legacy tree MEANS');
-  eq(calls.length, 1, 'CONTROL — the legacy store really was called');
-  eq(calls[0].domain, 'articles', 'the adapter passes the DOMAIN first, which is what a v3.47.0 store calls its only argument');
-  eq(calls[0].second, { withSaveTimes: true },
-    '…and the OPTIONS second — not the project, which a legacy store would read as its options object and silently drop every opt-in field');
-  eq(calls[0].argc, 2,
-    '…with exactly two arguments, so the two arms are genuinely different calls rather than one call with a spare');
+  const a = TS.storeAdapter(recordingStore);
+  await a.listScopes('articles', 'lumina', { withSaveTimes: true });
+  await a.read('articles', 'lumina', { scope: 'main', journalLimit: 1 });
+  eq(calls.length, 2, 'CONTROL — the store really was called, twice');
+  for (const c of calls) {
+    eq(c.argc, 2, `${c.fn}: exactly two arguments — the store's own arity`);
+    eq(c.domain, 'articles', `${c.fn}: the DOMAIN first`);
+    eq(c.opts.project, 'lumina',
+      `${c.fn}: and the project on the OPTIONS object, where the store reads it — passed positionally it would be read as {} and answered about the default project`);
+  }
+  eq(calls[0].opts.withSaveTimes, true,
+    'the caller\'s own options survive the merge — dropping withSaveTimes would silently cost the pulse strip its input');
+  eq(calls[1].opts.scope, 'main', '…on the read side too');
+  eq(calls[1].opts.journalLimit, 1, '…including the journal cap the handoff copy depends on');
+
+  // And the row normalisation: a store row that does not say gets the answer
+  // derived once, here, rather than by three downstream readers.
+  const enumerated = await a.listProjects();
+  eq(enumerated.projects[0].isDefaultProject, false,
+    'a named project is not the default one');
+  const bare = TS.storeAdapter({
+    async listAllProjects() { return { projects: [{ domain: 'articles', project: 'articles' }] }; },
+  });
+  eq((await bare.listProjects()).projects[0].isDefaultProject, true,
+    '…and a row that omits the field has it derived from the slug, so downstream always reads a boolean');
+  eq((await bare.listProjects()).total, null,
+    'a store that does not report a total says so with null — "the store did not say" is a different fact from a number');
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} test-tray-projects: ${passed} passed, ${failed} failed`);

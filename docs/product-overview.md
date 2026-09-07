@@ -725,10 +725,12 @@ back by any later agent.
 **A domain is where knowledge lives; a project is a thing you build.** Since v3.48.0 a domain
 holds as many projects as you have builds inside that knowledge, each with its own standing
 brief and its own work-streams, so two projects can share one wiki without sharing one handoff.
-On disk that is `domains/<domain>/state/<project>/`, one level deeper than it was. A domain that
-had memory before the change reads as a single project named after the domain — nothing is
-moved, and an older copy of The Curator on another computer goes on reading and writing the same
-files.
+On disk a **named** project is `domains/<domain>/state/<project>/`, one level deeper than it was.
+The **domain's own** project — the one named after the domain — stays at `domains/<domain>/state/`
+with no project segment, and that is permanent rather than a step on the way somewhere: a domain
+that had memory before the change reads as that project, and so does one you start using today.
+Nothing is moved, and an older copy of The Curator on another computer goes on reading and writing
+the same files.
 
 Three tiers, inside each project:
 
@@ -889,7 +891,7 @@ document is rendered in one place only.
 | ***Save pulse*** | a section header |
 | **2b. The save pulse** | a small drawn timeline of the last seven days, plus a sentence saying what it adds up to |
 | ***`domain / project · age · tool`*** | a section header, one per project group |
-| **3. Rows grouped by project** | at most three groups, at most two rows in each, newest first throughout, each row with a recency mark and a submenu |
+| **3. Rows grouped by project** | at most three groups and five rows in total, newest first throughout, each row with a recency mark and a submenu. Two rows per group is a floor: unclaimed rows are handed back, so one project still fills all five |
 | **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
 | **4. Notices, only when true** | handoffs waiting on GitHub from another computer; **another computer having saved after this one**; two agent tools colliding on one work-stream |
 | **5. Actions** | Open Agent memory · Open The Curator · Settings |
