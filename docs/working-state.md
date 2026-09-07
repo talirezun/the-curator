@@ -1,10 +1,21 @@
 # Working state — carrying build context between sessions
 
-**Status: shipped in v3.17.0.** The store (`src/brain/working-state.js`) and the MCP
-tool layer are live. The `/next` shell's **Agent memory** rail slot renders it, backed
-by a read-only `/api/memory` route — and it is read and *written* by an agent over
-MCP, and readable by you in a text editor. Writing is deliberately not exposed anywhere
-else; see §6.
+**Status: shipped in v3.17.0; projects added in v3.48.0.** The store
+(`src/brain/working-state.js`) and the MCP tool layer are live. The `/next` shell's
+**Agent memory** rail slot renders it, backed by `/api/memory` — and it is read and
+*written* by an agent over MCP, and readable by you in a text editor.
+
+**A domain can now hold many projects.** Until v3.48.0 a domain held one project's state, so
+two things built against the same body of knowledge shared one standing brief and one set of
+work-streams, or had to be split into two domains that could then not share a wiki. A project
+is now a named folder inside a domain's `state/`, with its own brief and its own work-streams.
+[§2](#2-layout-on-disk) has the layout, how a pre-v3.48.0 tree is read, and how a name you
+type turns into one particular project.
+
+**One tier the app now writes.** The handoff and the journal are still agent-only — that
+single-writer property is what §2's sync argument rests on — but the **standing brief** is the
+human's tier, and it is editable in the app and writable by an agent *on your explicit
+instruction*. [§6](#6-what-the-app-writes-and-what-it-does-not) sets that split out.
 
 ---
 
@@ -61,33 +72,94 @@ than a memory one.
 
 ## 2. Layout on disk
 
+A **domain** is where knowledge lives: one wiki, one schema, one body of reading. A **project**
+is a thing you build. A project belongs to exactly one domain, and a domain holds as many
+projects as you have things to build inside that knowledge.
+
 ```
-domains/<project>/
-  wiki/                              your knowledge — unchanged
+domains/<domain>/
+  wiki/                                        your knowledge — unchanged
   state/
-    project.md                       Tier 1 — the standing brief
-    <scope>/<machine>/current.md     Tier 2 — the handoff (OVERWRITTEN each save)
-    <scope>/<machine>/journal.jsonl  Tier 3 — append-only, one line per save
+    <project>/project.md                       Tier 1 — the standing brief, one per project
+    <project>/<scope>/<machine>/current.md     Tier 2 — the handoff (OVERWRITTEN each save)
+    <project>/<scope>/<machine>/journal.jsonl  Tier 3 — append-only, one line per save
 ```
+
+**The project level is new in v3.48.0.** Nothing about the three tiers changed and nothing moved
+relative to anything else: the whole tree moved down one level, under a name.
+
+A project name obeys the same rule as a scope name, because it is the same kind of thing — one
+path segment, lowercase, `a–z 0–9 . - _`, at most 64 characters, no `..`. `project.md` and
+`journal.jsonl` are reserved, and so is any name that would collide with a legacy scope
+directory sitting at the root of the same `state/` folder (below). A name that would make one
+folder mean two things is refused rather than resolved.
 
 `state/` is a **sibling of `wiki/`**, never a path inside it. It is not written through
 `writePage`: that function redirects every non-canonical path into
-`entities/`/`concepts/`/`summaries/` and flattens to the basename, so two different
-scopes in two different projects would both land on the same file. The `(project,
-scope)` pair is inexpressible there.
+`entities/`/`concepts/`/`summaries/` and flattens to the basename, so two scopes in two
+different projects would both land on the same file. The `(project, scope)` pair is
+inexpressible there.
 
 `state/` matches none of the sync exclusion rules, so it **is** tracked by the knowledge
 repo and travels with Personal Sync exactly like your wiki pages.
 
+### The layout before v3.48.0, and how it is read now
+
+A pre-v3.48.0 tree looks like this, and it is still on disk on every machine that had state
+before the update:
+
+```
+domains/<domain>/state/
+  project.md
+  <scope>/<machine>/current.md
+  <scope>/<machine>/journal.jsonl
+```
+
+**It is read as a project whose name is the domain's own name** — the *default project*. A
+domain called `lumina` with a legacy tree reads as one project called `lumina`, brief and
+work-streams exactly where they have always been. Nothing is copied, renamed or moved to make
+that work, and that is the point rather than a shortcut: another computer still running an older
+version of The Curator goes on reading and writing those same files, so updating one machine
+does not strand the rest of them.
+
+How the two shapes are told apart, mechanically:
+
+| A directory directly under `state/` | Is read as |
+|---|---|
+| It holds `project.md`, **or** any `<scope>/<machine>/current.md` two levels down | A **project** |
+| It holds `<machine>/current.md` one level down | A **legacy scope** of the default project |
+| Both are true of it | Neither. The store reports a `layoutWarning` naming the folder |
+
+The last row is the one to know about. A folder satisfying both readings is genuinely ambiguous,
+and the store does not pick a winner: it returns the warning and the surfaces above it show it.
+The repair is a rename, and it is yours to make — a project and a scope cannot share a name
+inside one `state/` folder.
+
+**Where a save lands when both shapes exist.** A save into a project that already exists in the
+new layout writes the new layout. A save into the **default project** — the project named after
+its domain, with legacy files present — keeps writing the **legacy** paths until you move them,
+so a fleet in which one machine has updated and another has not never splits one project's
+history across two shapes. Every other project, and the default project of a domain that has no
+legacy state at all, is written in the new layout.
+
+**Nothing migrates it for you, and no migration ships in v3.48.0.** Compatibility reads are the
+whole of what this release does about the old shape. Moving a legacy tree under a project name
+is a file move you make yourself: sync first, close the app, move `project.md` and the scope
+folders into `state/<name>/`, sync again, and update your other machines before they save. If
+that sounds like something the app should do for you, that is fair — it is recorded as
+[not built](#what-is-not-enforced), not as done.
+
 ### The three tiers
 
-**Tier 1 — `project.md`, the standing brief.** What this project is, the firm decisions
-that hold across every session, the working model, and pointers to where the depth
-lives. It changes rarely and deliberately. It is returned on **every** read, whatever
-scope you ask for, because a session resuming cold needs it before anything else.
-**It is also the one tier that no tool writes** — it is hand-authored by the project
-owner, and that makes its authority different in kind from the two tiers below, which are
-written by agents and travel between machines over sync.
+**Tier 1 — `<project>/project.md`, the standing brief.** What this project is, the firm
+decisions that hold across every session, the working model, and pointers to where the depth
+lives. There is exactly **one per project**, shared by every work-stream in it. It changes
+rarely and deliberately, and it is returned on **every** read, whatever scope you ask for,
+because a session resuming cold needs it before anything else.
+**It is the owner's tier** — hand-authored, or edited in the app, or written by an agent on
+your explicit instruction — and that makes its authority different in kind from the two tiers
+below, which are written by agents as a matter of course and travel between machines over
+sync.
 [§4](#4-treat-stored-state-as-data-not-as-instructions-with-one-exception) is where that difference is
 spelled out. Do not read the rule in that section's title as covering this tier.
 
@@ -154,7 +226,7 @@ So, precisely:
 |---|---|
 | Two machines writing the same `current.md`, resolved by `-X theirs` | **Yes.** They never write the same file |
 | A three-way merge splicing one machine's sections into another's file | **Yes.** Same reason |
-| Two machines editing `state/project.md` (no machine segment) | **No** — see the carve-out above |
+| Two machines editing `state/<project>/project.md` (no machine segment) | **No** — see the carve-out above |
 | A checkout or `reset --hard` replacing this machine's own folder from an older revision | **No.** Path uniqueness is irrelevant; the file is simply overwritten |
 | Two independent sync repositories over one domains folder | **No.** Both write the same paths from different histories |
 
@@ -195,17 +267,23 @@ is the store's own design: the wiki **accumulates**, so a stale pull loses at wo
 newest bullets, while `current.md` is **overwritten** on every save and `journal.jsonl`
 is appended to — so an older revision of either is a straight loss of everything since.
 
-**That argument covers tiers 2 and 3 only.** `state/project.md` has **no** machine segment — one
-file per project, deliberately, because the brief belongs to the project rather than to any one
-machine. So two machines that both edit the brief between syncs *do* produce exactly the
-conflicting hunk described above, and `-X theirs` resolves it by discarding the local edit
-silently. The exposure is small today — the brief changes rarely and deliberately, and
-`saveProjectBrief` is the store's only brief-writing function and nothing in `mcp/` or
-`src/routes/` calls it — but it is real, and §6 tells you to hand-edit that very file in
-Obsidian, which is the workflow that actually writes it, and therefore the one that
-triggers this. If you edit the brief by hand, sync soon
-after; the same advice [sync.md](sync.md) gives for any wiki page. Anyone adding a second frequent
-writer to the brief must revisit this rather than inherit the tier-2 reasoning.
+**That argument covers tiers 2 and 3 only.** `state/<project>/project.md` has **no** machine
+segment — one file per project, deliberately, because the brief belongs to the project rather
+than to any one machine. So two machines that both edit the brief between syncs *do* produce
+exactly the conflicting hunk described above, and `-X theirs` resolves it by discarding the
+local edit silently.
+
+**That exposure grew in v3.48.0, and the honest thing is to say so here rather than in a
+release note.** The paragraph this replaces rested on there being no writer at all:
+`saveProjectBrief` existed in the store and nothing called it, so the only way to change a brief
+was to type into the file. There are now three routes — the app's brief editor, `save_project_brief`
+over MCP, and still a text editor — which is precisely the "second frequent writer" the old
+paragraph told a future release to revisit. What has **not** changed is the frequency: a brief is
+still a document that changes a few times a year, and a write replaces it whole rather than
+merging into it, so the window in which two machines hold different briefs is as wide as your
+sync habit makes it and no wider. Edit a brief, then sync — the same advice [sync.md](sync.md)
+gives for any wiki page. Editing briefs on two machines in one day is the case this layout does
+not cover, and the remedy is a sync between the two edits, not anything in the store.
 
 **The `<machine>` segment is not a bare hostname.** It was, and that was measured to
 fail: two clones with the same default macOS hostname both wrote
@@ -342,9 +420,13 @@ A scope is a workstream inside a project — `main`, `auth-refactor`, `v4-migrat
 Scopes are independent: each has its own handoff and its own journal per machine. If you
 save without naming one, it goes to `main`.
 
+So the full address of a handoff is four parts — **domain → project → scope → machine** — and
+each level answers a different question: which knowledge, which build, which piece of work,
+which computer.
+
 **The standing brief is NOT per scope — there is one per project and every scope shares
-it** (`project.md` sits above the scope folders and is returned on every read, whichever
-scope you ask for). So you never need to collapse work into a single scope to give it a
+it** (`<project>/project.md` sits above the scope folders and is returned on every read,
+whichever scope you ask for). So you never need to collapse work into a single scope to give it a
 common brief; doing that only costs you the ability to run two workstreams without one
 overwriting the other. [user-guide.md § One standing brief, many scopes](user-guide.md#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate)
 covers the practical version, including how the brief gets authored.
@@ -359,9 +441,82 @@ does in fact resolve, since a read normalises the same way; the note exists for 
 that reads the index instead.) A name that normalises to nothing usable is refused
 outright as `invalid-scope`.
 
+### Naming a project, and how a name is resolved
+
+Every tool that takes a project name resolves it the same way, and nothing is ever guessed.
+
+| What the caller supplies | What happens | `resolvedBy` |
+|---|---|---|
+| A domain **and** a project | Used as given. A project that does not exist in that domain is refused | `explicit` |
+| A project only | Searched across every domain. **Exactly one** match is used | `search` |
+| A project only, matching nothing | Refused as `project_not_found`, with `candidates` — near matches by prefix and by hyphen-normalised name | — |
+| A project only, matching in **several** domains | Refused as `project_ambiguous`, with the matching `domain`/`project` pairs as `candidates` | — |
+| Neither | The default domain's default project — the pre-v3.48.0 behaviour, unchanged | `default` |
+
+An unknown or ambiguous name comes back as **a refusal carrying a list**, never as a best guess.
+The reason is the one running through this whole store: landing in the wrong project is not a
+smaller error than not landing at all, because the wrong project's handoff is *overwritten* by
+the save that got there by mistake. `save_working_state` will not create a project to make a
+name resolve either — a bare name matching nothing is refused with candidates, and the only way
+to create a project from an MCP client is `save_project_brief` with `create: true`, which is a
+deliberate act with a document attached to it.
+
+**`scope: "latest"`.** Any read may pass `latest` (case-insensitively) in place of a scope name
+and get that project's most recently written work-stream. This is what makes a one-line resume
+possible: *"pick up the Lumina work"* resolves to a project, and `latest` resolves to the
+work-stream you were actually in — without you or the agent knowing the slug. A project with no
+state yet has no latest scope, and the read says so rather than inventing one.
+
+### The `.curator-project` marker
+
+A repository can name its own project. Put a file called **`.curator-project`** at the repo root
+holding one line:
+
+```
+acme/lumina
+```
+
+or, where the project name is unambiguous across your domains, just:
+
+```
+lumina
+```
+
+An agent that starts in that folder reads the marker instead of asking you. The Projects list in
+the app has a **Copy marker line** button that gives you the exact line for a project.
+
+**This is a convention, not a mechanism.** No server code and no MCP tool reads that file. The
+[continuity skill](#the-skill-that-carries-the-capture-discipline) is what reads it, from the
+working directory or a parent of it, as step two of a three-step ritual:
+
+1. If you named a project in the conversation, that wins.
+2. Otherwise, if `.curator-project` exists in the working directory or a parent, read it.
+3. Otherwise, call `list_projects` and **ask which one**.
+
+Then `get_working_state({ project, scope: 'latest' })`.
+
+So the marker does nothing at all in an agent that has not been told about it, and an agent that
+has been told is instructed to fall back to asking rather than to guessing. Which is the same
+trade the rest of this store makes: a question costs a turn, and a wrong project costs a handoff.
+
+### What is not enforced
+
+Stated here so that nothing above is read as a promise:
+
+- **Nothing is migrated.** A legacy tree is read where it lies and written where it lies.
+  v3.48.0 ships compatibility reads and nothing else about the old shape.
+- **Nothing creates a project implicitly** — an unknown name is refused with candidates, on a
+  read and on a save alike.
+- **The `.curator-project` marker is advisory**: a convention the skill layer follows, invisible
+  to the store, the routes and the tools.
+- **A `layoutWarning` is reported, not repaired.** The store names the ambiguous folder and
+  leaves it exactly as it found it.
+- **Nothing forces a save**, exactly as before
+  ([§6](#6-what-the-app-writes-and-what-it-does-not)). Adding projects did not add a scheduler.
+
 ---
 
-## 3. The two MCP tools
+## 3. The four MCP tools
 
 Working state is reached through the **My Curator MCP**, from any *local* MCP client —
 Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio.
@@ -373,8 +528,22 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 
 | Tool | What it does |
 |---|---|
+| `list_projects` | Every project that has state — in one domain, or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief. Newest first, capped, and the cap is disclosed |
 | `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60 |
 | `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line |
+| `save_project_brief` | Replaces one project's standing brief and records who wrote it. **For use on your explicit instruction only** — see [§4](#the-brief-can-be-commissioned-and-it-says-so) |
+
+`list_projects` is the *which project?* tool, and it exists because the alternative is an agent
+guessing. An agent dropped into a folder it has never seen cannot resolve *"carry on with the
+brand work"* into a project slug; with the list in front of it, it can ask you a question with
+three names in it instead of picking one of them silently.
+
+**Every read and every save now reports where it landed** — `domain`, `project` and
+`resolvedBy` (`explicit`, `search` or `default`), plus `layoutWarning` when the tree under
+`state/` is ambiguous. That is not decoration. A call that resolved a bare name by searching
+across domains made a choice on your behalf, and a response that does not say so leaves the
+caller unable to tell a confirmed project from an inferred one. An ambiguous name comes back as
+`{ ok: false, error: 'project_ambiguous', candidates }`, and nothing is read or written.
 
 ### What a read returns
 
@@ -385,7 +554,8 @@ response says so when it has been truncated. This index is not a convenience. An
 starting cold, told "carry on with the auth work", cannot resolve that to a scope slug
 it has never seen; without the index it would have to guess.
 
-Asking **with a scope** gets you the brief, that scope's `current.md`, the list of
+Asking **with a scope** — a name, or `latest` for the project's most recently written
+work-stream — gets you the brief, that scope's `current.md`, the list of
 machines holding state under that scope, and the most recent journal entries — over MCP,
 **8 by default and 20 at most**. Those are the tool's own limits, deliberately tighter than
 the store's own 10/50, because every byte an MCP response carries is charged against the
@@ -506,8 +676,9 @@ open the state at all.
 
 | Refusal | Why |
 |---|---|
-| The project is not a real domain | Working state lives inside a domain. A folder with no `CLAUDE.md` is invisible to `listDomains()` — hidden from the app, the wiki reader, and every tool that lists domains — so state saved there would go unseen. The message lists the domains that do exist. |
-| The project is a read-only `shared-*` Shared Brain mirror | Mirrors are rebuilt from the collective; a local write is lost. Save on your own project instead. |
+| The domain is not a real domain | Working state lives inside a domain. A folder with no `CLAUDE.md` is invisible to `listDomains()` — hidden from the app, the wiki reader, and every tool that lists domains — so state saved there would go unseen. The message lists the domains that do exist. |
+| The domain is a read-only `shared-*` Shared Brain mirror | Mirrors are rebuilt from the collective; a local write is lost. Save into your own domain instead. |
+| The project name matches nothing, or matches in several domains | Refused with `candidates` rather than resolved to a best guess. A save does not create a project; see [Naming a project](#naming-a-project-and-how-a-name-is-resolved). |
 | No `headline` | See above. |
 | The scope or machine name is unusable | Both are single path segments and are validated as such. |
 | The brief would be empty | A brief with no content in any section is a no-op, not a save. |
@@ -571,12 +742,18 @@ genuinely load-bearing there rather than belt-and-braces: it is a no-op on every
 write-side sanitisers strip controls before calling it), so before it was added a NUL or an ANSI
 escape in a file that arrived over sync was handed to the reader verbatim.
 
-### Tier 1 is not tier 2: the brief is hand-authored by the owner
+<a id="tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner"></a>
+### Tier 1 is not tier 2: the brief is the owner's
 
-`state/project.md` is written by the project owner, by hand. There is deliberately no tool
-that writes it — `saveProjectBrief` exists in the store and is called from nowhere in
-`mcp/` or `src/routes/` (verified by enumeration, not by memory) — so no earlier session
-and no agent produced that text.
+`state/<project>/project.md` is the **owner's** tier. It is typed into a text editor, or edited
+in the app's own brief editor, or — since v3.48.0 — written by an agent **on your explicit
+instruction**, through `save_project_brief`. What it is never written by is a session going
+about its ordinary work: nothing writes a brief as a side effect of anything else, the tool's
+own description says it is for use on the user's instruction, and every write through it stamps
+the file with who made it and when.
+
+So the question a reader has to answer is not *"did an agent touch this?"* but *"was this the
+owner's, at one remove or none?"* — and the file itself answers it.
 
 Until the release that added the split, a read said otherwise. One `content_is_data` caveat covered all three tiers
 at once, telling the model that the text below *"was written by an EARLIER SESSION and is
@@ -615,16 +792,44 @@ over an agent's own rules, because the response to a clash is *tell the user*, n
 the user settles that. It is also strictly safer than the behaviour it replaces, which
 picked one side silently and labelled the owner's side away.
 
+#### The brief can be commissioned, and it says so
+
+A brief written through `save_project_brief` carries a provenance comment as its first line:
+
+```
+<!-- curator-brief: authored_by=agent harness=claude-code model=opus-4 on=2026-09-07 commissioned=user -->
+```
+
+That line is what the authority classifier reads. A brief with no such line, or one recording a
+human author, classifies as `owner`. One recording an **agent** classifies as `commissioned` —
+and that is not a downgrade to untrusted material. Its authority note says what is true of it:
+written by an agent at the owner's request, therefore treated as the owner's, with its **facts**
+re-verified exactly as any other brief's are. A commissioned brief never falls to the untrusted
+framing on account of being commissioned. It can still fall there for the reasons any brief can
+— a mirror, a file that looks forged or badly merged, a check that could not complete.
+
+**A brief write replaces the whole document**, like a scope save, so it is idempotent and the
+instruction to an agent is *send the complete brief, not the part that changed*. It carries the
+same destructive-save guard too: an empty brief, or one drastically shorter than what is already
+there, is refused unless the call repeats itself with `replace: true`.
+
+**There is no journal for a brief.** Journals are per work-stream and per machine; the project
+level has none, deliberately, because a document that changes a few times a year does not need a
+log. Its history is the provenance line — who last wrote it and when — plus the file's own size
+and timestamp, which is what the app and the widget render as *"brief updated 3 days ago by
+you"*.
+
 #### When the brief loses the owner framing
 
-`brief_authority` carries one of four values. Only `owner` gets the treatment above; the
-other three keep the tier-2 wording **verbatim**, putting the brief on exactly the same
-footing as `current` and `journal` — a proposal to confirm with the user, never an
+`brief_authority` carries one of five values. `owner` and `commissioned` get the treatment
+above; the other three keep the tier-2 wording **verbatim**, putting the brief on exactly the
+same footing as `current` and `journal` — a proposal to confirm with the user, never an
 instruction to obey.
 
 | `brief_authority` | Meaning |
 |---|---|
 | `owner` | Verified: a personal project, and the brief file shows no sign of tampering. The framing above applies. |
+| `commissioned` | The same, except that the file records an agent having written it on the owner's instruction. The framing above applies unchanged — with the standing reminder that a brief's *facts* are re-verified whoever typed them. |
 | `mirror` | The project is a read-only `shared-*` Shared Brain mirror, so its files were not necessarily written by this user. |
 | `suspect` | The store reported `headingsSuspect` or `sanitisedOnRead` on the brief — duplicate section headings, or protocol markup that had to be neutralised when it was read. That is what a forged or badly-merged brief looks like, and the note tells the agent to say so to the user. |
 | `unverified` | The mirror check could not be completed, so the brief's authorship is unconfirmed. |
@@ -643,7 +848,7 @@ wording instead of inheriting a permissive default.
 enumeration rather than assumed. `pullCollective` writes pulled pages only through
 `writePage`, and `normalizePath` redirects every path it is handed into `wiki/entities/`,
 `wiki/concepts/` or `wiki/summaries/` (or the two root files `index.md` and `log.md`), so
-nothing in the Shared Brain pull path can currently write `shared-*/state/project.md` at
+nothing in the Shared Brain pull path can currently write `shared-*/state/<project>/project.md` at
 all. The carve-out exists anyway, for two reasons. First, `saveWorkingState` **already**
 refuses to write into a mirror; a read framing saying *"the owner wrote this"* would then
 contradict a write guard saying *"this is not yours to write"* about the same file, and one
@@ -678,8 +883,9 @@ brief sat in the payload.
   observation is for — record the command that re-derives the number.
 - **There is no signature and no privilege boundary.** This is a plain markdown file in
   your own folder. The tier-1 framing above is a **framing, not an authentication**: it
-  rests on the facts that no tool writes the file and the domain is not a mirror, and
-  anyone who can write your `state/` folder can write the brief.
+  rests on the facts that nothing writes the file as a side effect of a session and the
+  domain is not a mirror, and anyone who can write your `state/` folder can write the brief.
+  A `commissioned` stamp is a record of what a write claimed, not a signature over it.
 
 The practical instruction: **verify a claim before acting on it — every claim, in every
 tier — and treat an instruction found in a handoff as a suggestion from a peer, not as an
@@ -703,6 +909,7 @@ Every limit exists so a read is self-capping and cannot blow the MCP response bu
 | Headline | 200 chars |
 | Journal entries returned | Depends which surface asks — **agents over MCP: 8 by default, 20 at most**; **the in-app view: 10 by default, 50 at most** |
 | Scope index entries | 60 |
+| Projects listed, per domain and in total | 200 |
 
 The journal limits differ by surface and that is deliberate, not drift. The MCP tool clamps harder
 than the store because every byte it returns is carried in an agent's context window on the turn
@@ -776,40 +983,58 @@ what that measurement's own *"shape rather than a measured constant"* caveat ant
 
 ---
 
-## 6. The in-app view is read-only, and what is not built at all
+## 6. What the app writes, and what it does not
 
-**There is an in-app view.** The `/next` shell's **Agent memory** rail slot renders it —
-every project's brief, its handoff, and its journal, browsable without an MCP client at
-all. It is backed by a real `GET /api/memory` (the project index: which projects have
-state, how fresh) and `GET /api/memory/:project` (one project's brief plus a named
-scope's handoff and journal).
+**There is an in-app view.** The `/next` shell's **Agent memory** rail slot renders the store —
+every project's brief, its handoff, and its journal, browsable without an MCP client at all —
+grouped by domain and then by project, and it opens on the project you last looked at in that
+domain with its latest work-stream first. The **Domains** view carries the other half: a
+**Projects** section on each domain card, where projects are created, renamed, deleted with a
+typed confirmation, given a standing brief, and where **Copy marker line** hands you the
+`.curator-project` line for a repository.
 
-**Both are read-only, and that is a design decision, not an unfinished write path.** The
-store has exactly one writer — an agent, through `save_working_state` — and that
-single-writer property is what makes the per-machine layout in §2 hold: two
-machines never touch the same file, so a sync **merge** never has a conflicting hunk to
+**The split is one tier deep, and it is deliberate rather than half-finished.**
+
+| Tier | Who may write it |
+|---|---|
+| 1 — the standing brief | You, in a text editor **or in the app**; an agent through `save_project_brief`, on your explicit instruction |
+| 2 — the handoff | An agent, through `save_working_state`. Nothing else |
+| 3 — the journal | An agent, as a by-product of a save. Nothing else |
+
+Tiers 2 and 3 keep **exactly one writer**, and that is what makes the per-machine layout in §2
+hold: two machines never touch the same file, so a sync **merge** never has a conflicting hunk to
 resolve away. (Read that as narrowly as it is written — §2's own carve-out, *"What the
-per-machine path does not protect against"*, lists what it does not cover.) A browser write path would make the app a *second* writer to the same
-files, and it would also break the honesty of the surface: the value of a handoff is that
-it records what an *agent* observed, with the harness and model that observed it. A human
-edit through the app would arrive wearing the last agent's provenance line. If you want to
-edit a brief by hand, `state/project.md` is plain markdown in your own folder — open it
-in Obsidian. That is the deliberate answer, not a missing feature. There is a copyable skeleton
-in [project-brief-template.md](project-brief-template.md), including the
-`## Operating directives` convention and the capability-fallback pattern that keeps a
-directive from failing silently in a harness that cannot follow it.
+per-machine path does not protect against"*, lists what it does not cover.) A browser write path
+into a handoff would make the app a *second* writer to those files, and it would break the
+honesty of the surface as well: the value of a handoff is that it records what an *agent*
+observed, with the harness and model that observed it, and a human edit arriving through the app
+would wear the last agent's provenance line.
 
-**That property is now load-bearing on the read side too**, not only in §2's sync
-argument: precisely because nothing but a human writes the brief, a read can tell a model
-that its standing instructions are the user's own rather than an earlier session's notes.
-Adding a second writer to `state/project.md` would take that away — see
+**The brief was never in that argument, and until v3.48.0 that fact was doing no work.** It has
+no machine segment, it is the human's document, and the previous answer to *"how do I edit it?"*
+was *"open it in Obsidian"* — a true answer that quietly assumed everyone had a text editor
+pointed at their domains folder. The brief editor is that same act with a shorter path to it: it
+goes through the store's one brief-writing function, stamped `human`, so the file the app writes
+and the file you type are the same file written the same way. What it costs is stated in §2 —
+the brief now has three routes into it rather than one, which widens the *"two machines editing
+the brief between syncs"* window that has always existed. Edit, then sync.
+
+A copyable skeleton is in [project-brief-template.md](project-brief-template.md), including the
+`## Operating directives` convention and the capability-fallback pattern that keeps a directive
+from failing silently in a harness that cannot follow it. The app's Create-project editor is
+seeded from it.
+
+**The read side depends on all of the above**, not only §2's sync argument: precisely because
+nothing writes a brief as a side effect, a read can tell a model that the standing instructions
+in front of it are the user's own — given by hand, or commissioned deliberately — rather than an
+earlier session's notes. See
 [§4](#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
 
 ### A second read surface: the menu bar widget (Mac app, off by default)
 
-The Mac app can put a small icon in the macOS menu bar that shows the same store — the last
-save, the most recent work-streams, a seven-day **save pulse**, and the standing brief's age —
-without opening the window. **It is off unless you turn it on** (Settings → General → Menu bar), and it is a
+The Mac app can put a small icon in the macOS menu bar that shows the same store — which
+project you were last working on, the most recent work-streams **grouped under their project**,
+a seven-day **save pulse**, and the standing brief's age — without opening the window. **It is off unless you turn it on** (Settings → General → Menu bar), and it is a
 *reader*, under exactly the same rule as the in-app view: it never writes, and there is still
 one writer.
 
@@ -833,6 +1058,9 @@ Recorded plainly, so nothing else here is read as a promise:
 - **No rollups.** Nothing composes Done/Decided/Blocked views across scopes or projects.
 - **No hooks.** Nothing forces a save at the end of a session. Capture is guided by the
   skill layer and is therefore **advisory**.
+- **No handoff editing anywhere but an agent.** The app writes tier 1 and nothing else.
+- **No migration.** A pre-v3.48.0 tree is read where it lies; moving it under a project name is
+  yours to do ([§2](#the-layout-before-v3480-and-how-it-is-read-now)).
 - **The menu bar widget is a reader, not a writer**, and it never renders `current.md`.
 
 That last one has a consequence worth being direct about: **if a session ends without
@@ -892,6 +1120,7 @@ false claim: it double-grants, including across processes.
 
 ## 8. Related reading
 
+- [user-guide.md § 13b](user-guide.md#13b-working-state--carrying-context-between-sessions) — the same ground for someone using the app, including [when to make a new project](user-guide.md#one-domain-one-project-or-one-more-work-stream)
 - [mcp-user-guide.md](mcp-user-guide.md) — installing the MCP bridge and the full tool list
 - [domains.md](domains.md) — what a domain is and why state lives inside one
 - [sync.md](sync.md) — how `state/` reaches your other machines

@@ -601,13 +601,14 @@ the pinned model disappears, the next one is used and the app tells you which on
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
 reads your markdown directly and **does not need the web app to be running**.
 
-**Twenty tools ship** (a reading taken at v3.45.0; the authoritative list is the server's own
-tool registration). Twelve read; eight sit in the write block, of which **five actually change
-anything on disk**:
+**Twenty-two tools ship** (a reading taken at v3.48.0; the authoritative list is the server's own
+tool registration). Thirteen read; nine sit in the write block, of which **six actually change
+anything on disk**. By capability rather than grouping, that is sixteen that read and six that
+write:
 
 | Reading | Writing |
 |---|---|
-| List domains · fetch the index · graph topology overview · tag inventory · search one domain · search across domains · fetch a page · traverse connected pages · backlinks · fetch a summary · fetch the original source document behind a summary · read working state | Compile pages into the wiki · apply a Health fix · dismiss and un-dismiss a Health issue · save working state |
+| List domains · fetch the index · graph topology overview · tag inventory · search one domain · search across domains · fetch a page · traverse connected pages · backlinks · fetch a summary · fetch the original source document behind a summary · list projects · read working state | Compile pages into the wiki · apply a Health fix · dismiss and un-dismiss a Health issue · save working state · write a project's standing brief, on the user's explicit instruction |
 | | *(three more in that block only inspect: scan Health, scan for semantic duplicates, list dismissals)* |
 
 **What it is for.** Graph-native access. This is the difference between another way to read
@@ -719,17 +720,29 @@ starting over *by design*.
 ### What it is
 
 A small, deliberate store inside a domain, written by an agent over the MCP bridge and read
-back by any later agent. Three tiers:
+back by any later agent.
+
+**A domain is where knowledge lives; a project is a thing you build.** Since v3.48.0 a domain
+holds as many projects as you have builds inside that knowledge, each with its own standing
+brief and its own work-streams, so two projects can share one wiki without sharing one handoff.
+On disk that is `domains/<domain>/state/<project>/`, one level deeper than it was. A domain that
+had memory before the change reads as a single project named after the domain — nothing is
+moved, and an older copy of The Curator on another computer goes on reading and writing the same
+files.
+
+Three tiers, inside each project:
 
 | Tier | What it is | Who writes it | How it behaves |
 |---|---|---|---|
-| **1. The standing brief** | What this project is, the firm decisions that hold across every session, the working model, and where the depth lives | **You, by hand.** No tool writes it | Changes rarely and deliberately. Returned on **every** read |
+| **1. The standing brief** | What this project is, the firm decisions that hold across every session, the working model, and where the depth lives | **You** — in an editor, in the app, or by asking an agent to write it. Never a by-product of a session, and the file records which | Changes rarely and deliberately. Returned on **every** read |
 | **2. The handoff** | Where things stand right now, what to do next, what is settled, what was observed and when, what to avoid, what is still open | An agent, near the end of a session | **Overwritten in full** on every save |
 | **3. The journal** | One line per save: when, which work-stream, which machine, which tool, which model, and the agent's own one-line headline | An agent, automatically | **Append-only.** The history of headlines survives even though the handoff does not |
 
 A **scope** is a work-stream inside a project — `main`, `auth-refactor`, `v4-migration`. Scopes
 are independent, each with its own handoff and journal. The standing brief is **not** per
-scope: there is one per project and every scope shares it.
+scope: there is one per project and every scope shares it. So the full address of a handoff is
+**domain → project → work-stream → machine**, and a read may ask for `scope: "latest"` instead of
+naming a work-stream, which is what makes *"resume Lumina"* a complete instruction.
 
 The handoff has named sections, and their order is deliberate — negative constraints come
 before the action list, because a model that starts executing the to-do list on sight would
@@ -797,7 +810,8 @@ been written by another person. They are treated as notes a peer left: verify a 
 acting on it. Text that impersonates a higher-authority channel — a system prompt, a chat role
 marker, a tool call — is neutralised on the way in *and* on the way out, and URLs and shell
 pipes are defanged so a handoff cannot be relayed to you as a runnable command.
-The exception is the **standing brief**: because you wrote it by hand and no tool writes it, an
+The exception is the **standing brief**: because it is yours — typed, edited in the app, or
+written by an agent at your explicit request, with the file recording which — an
 agent treats its standing instructions as *your own instructions given in advance*, not as an
 earlier session's notes. And where such an instruction clashes with the agent's own harness
 rules, the agent is told to **say so and ask you** rather than resolve it silently in either
@@ -869,12 +883,13 @@ document is rendered in one place only.
 
 | | |
 |---|---|
+| **0. Which project** | *"Working on: lumina · 12 min ago"* — the project written to most recently. New in v3.48.0, because a menu that can now show several projects has to say which one you were in before anything else |
 | **1. The headline answer** | *"Last save · 44 min ago"* — first, at full contrast, because it is the question the whole feature exists for |
 | **2. Which tool and which model** wrote it | `claude-code · opus-4`. It used to repeat the project and work-stream, which the first row already shows a few pixels below; *which agent, and which model* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ***Save pulse*** | a section header |
 | **2b. The save pulse** | a small drawn timeline of the last seven days, plus a sentence saying what it adds up to |
-| ***Recent scopes*** | a section header |
-| **3. Up to five rows** | newest first, flat rather than grouped, each with a recency mark and a submenu |
+| ***`domain / project · age · tool`*** | a section header, one per project group |
+| **3. Rows grouped by project** | at most three groups, at most two rows in each, newest first throughout, each row with a recency mark and a submenu |
 | **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
 | **4. Notices, only when true** | handoffs waiting on GitHub from another computer; **another computer having saved after this one**; two agent tools colliding on one work-stream |
 | **5. Actions** | Open Agent memory · Open The Curator · Settings |
@@ -1233,6 +1248,7 @@ durable reference.
 | **Shared Brain driven end to end** | `v3.43.0` | The first human-shaped run of the collective layer, in which a contributor erased the admin in two clicks — and the data-loss paths no fixture could see. |
 | **The Mac look** | `v3.44.0` | Phase 1 of the native design pass: gloss, materials, a real switch, and four contrast defects that only rendering the thing could find. |
 | **The provider page as a page** | `v3.45.0` | Four numbered steps a first-time user can read top to bottom, context floors derived from what the app actually needs rather than from parity, and the end of a key save silently moving your bill. |
+| **Projects inside a domain** | `v3.48.0` | The memory layer gained the level it was missing: a domain is knowledge, a project is a thing you build, and one domain holds many. Resolution by name with ambiguity returned rather than guessed, `scope: "latest"`, a repo marker file, and a standing brief the app can edit and an agent can write when asked. |
 
 Two things are worth saying about *how* it got here, because they explain the product's
 character. First, **most of the recent work came from the maintainer using it for real and
@@ -1323,10 +1339,12 @@ state — stale, never corrupted. This is the fail-safe direction and it is why 
 was added, but it does mean **the memory layer is inert until the continuity discipline is
 installed** in whatever agent you use.
 
-**The app cannot write your working state.**
-The Agent memory view is read-only by design, so that there is exactly one writer. The standing
-brief is hand-authored — no tool writes it, and there is deliberately no brief-writing tool.
-You edit it in a text editor or Obsidian.
+**The app cannot write your handoffs.**
+Tiers 2 and 3 — the handoff and the journal — have exactly one writer, an agent, by design. The
+app reads them and never writes them. The **standing brief** is the exception and always was the
+human's: since v3.48.0 you can edit it in the app as well as in a text editor, and an agent can
+write it **on your explicit instruction** through a tool that stamps the file to say so. Nothing
+writes a brief as a by-product of a session.
 
 **Two agent tools on one computer will overwrite each other** in a shared work-stream. The
 layout has no slot for the tool. Give each one its own scope.

@@ -89,11 +89,16 @@ itself — you should not need the Releases page again. See
 ## The menu bar icon (packaged app only)
 
 The app can put a small icon in the macOS menu bar that answers one question without you
-opening anything: **has my agent actually saved, and how long ago?** Click it and you get the
-last save and which tool and model wrote it, a **save pulse** — a small drawn strip of the last
-seven days — up to five recent work-streams newest first under their own section headers, each
-carrying a **recency mark** and a four-item **submenu**, and *Open Agent Memory · Open The
-Curator · Settings · Quit*.
+opening anything: **has my agent actually saved, and how long ago?** Click it and you get
+**which project you were last working on**, the last save and which tool and model wrote it, a
+**save pulse** — a small drawn strip of the last seven days — recent work-streams **grouped
+under their project**, each carrying a **recency mark** and a four-item **submenu**, and
+*Open Agent Memory · Open The Curator · Settings · Quit*.
+
+**The first line names the project**, in the form *"Working on: lumina · 12 min ago"*. Until
+v3.48.0 a domain held one project's memory, so there was nothing there to name; now that a
+domain can hold several, *which one was I in?* is the question a person asks before any other,
+and a flat list of work-streams could only answer it by implication.
 
 **It is off by default, and that is not caution.** A fresh install has no agent memory, so an
 on-by-default icon's only possible content is *"No agent memory yet"* — the worst first
@@ -127,12 +132,21 @@ is not possible and was never attempted. How to read the strip is in
 [user-guide.md § Reading the save pulse](user-guide.md#reading-the-save-pulse); the marks are in
 [§ The recency dot](user-guide.md#the-recency-dot).
 
+**Rows are grouped under a project header.** Each header reads `domain / project` where the
+domain holds more than one project and just the project's name where it does not, and it carries
+that project's own age and the tool that last wrote to it — so a group says something even before
+you read its rows. At most three groups are drawn, at most two rows in each, newest project and
+newest work-stream first; anything past that is counted on the *More in Agent Memory…* line
+rather than dropped silently.
+
 **Each row has a submenu**, because a menu cannot open a *work-stream* — clicking a row lands on
 the project, and the work-stream picker inside the app has no address the menu can dial. So the
 submenu offers the route the menu does have: **Open in The Curator**, **Copy resume prompt** (an
-instruction you paste into a fresh agent session), **Copy handoff as Markdown** (the standing
-brief and the handoff themselves, for an assistant that cannot reach your files), and **Reveal
-current.md in Finder**. The handoff is copied through the store's own read, so the markup
+instruction you paste into a fresh agent session, whose first line is the short form
+`Resume project "lumina" (domain "acme"), latest scope.` and which asks for
+`scope: "latest"` so a stale work-stream name cannot send it to the wrong place), **Copy handoff
+as Markdown** (the standing brief and the handoff themselves, for an assistant that cannot reach
+your files), and **Reveal current.md in Finder**. The handoff is copied through the store's own read, so the markup
 escaping that applies to a file which arrived over sync applies to the clipboard too. See
 [user-guide.md § What a row can do](user-guide.md#what-a-row-can-do).
 
@@ -163,8 +177,9 @@ is in [architecture.md § The menu bar widget](architecture.md#the-menu-bar-widg
 > has not itself been photographed.** Every mark in it is generated and inspected pixel by pixel
 > by the test suite, and its contrast is arithmetic over those decoded pixels. Still unproven:
 > how macOS tints the menu bar icon, how any of it looks in **dark** appearance, how the section
-> headers degrade below macOS 14 (the second line needs 14.4), whether **Copy** lands on the
-> clipboard while the menu is dismissing, and whether the hover event fires. (That a re-render *does* re-time the ages is proven by the tests; whether
+> headers degrade below macOS 14 (the second line needs 14.4) — a question with more riding on it
+> now that a header is drawn per project group rather than twice per menu — whether **Copy**
+> lands on the clipboard while the menu is dismissing, and whether the hover event fires. (That a re-render *does* re-time the ages is proven by the tests; whether
 > macOS delivers the hover that triggers one is not.) Treat the first real launch with it
 > switched on as the first real test.
 >
