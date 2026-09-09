@@ -167,6 +167,15 @@ function buildSidebarSandbox() {
     extractFunction(chatView, 'isSameLocalDay') + '\n' +
     'function icon(n, s) { return "<svg data-icon=\\"" + n + "\\"></svg>"; }\n' +
     extractConst(chatView, 'MESSAGES_PER_TURN') + '\n' +
+    // v3.49.0: conversationListHtml's empty state now ends with
+    // filterAskRowHtml(), so these three are BINDINGS this sandbox has to
+    // resolve, not opt-ins. Their own behaviour is asserted in
+    // scripts/test-next-chat-filter.js; here they exist so the pre-existing
+    // empty-state assertions below still execute the real function.
+    extractConst(chatView, 'FILTER_ASK_MIN_WORDS') + '\n' +
+    extractFunction(chatView, 'looksLikeAnAsk') + '\n' +
+    extractFunction(chatView, 'filterAskOffered') + '\n' +
+    extractFunction(chatView, 'filterAskRowHtml') + '\n' +
     extractFunction(chatView, 'matchHint') + '\n' +
     extractFunction(chatView, 'conversationRowHtml') + '\n' +
     extractFunction(chatView, 'conversationListHtml') + '\n' +
@@ -177,7 +186,8 @@ function buildSidebarSandbox() {
     extractFunction(chatView, 'bumpMessageCountForTurn') + '\n' +
     'return { matchHint, conversationRowHtml, conversationListHtml, bulkBarHtml, ' +
     'bulkNoticeHtml, conversationPaneHtml, pruneSelection, bumpMessageCountForTurn, ' +
-    'MESSAGES_PER_TURN };';
+    'looksLikeAnAsk, filterAskOffered, filterAskRowHtml, ' +
+    'MESSAGES_PER_TURN, FILTER_ASK_MIN_WORDS };';
   return new Function('__state', src);
 }
 const makeSidebar = buildSidebarSandbox();
