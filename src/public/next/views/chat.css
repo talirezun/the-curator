@@ -22,18 +22,76 @@
   color: var(--text-3);
   display: flex;
 }
+/* ── A FILTER, NOT A COMPOSER ─────────────────────────────────────────────
+   This field was mistaken for the message composer by a power user three
+   times, once in a live demo (see views/chat.js's own note at the markup).
+   The field is unchanged in what it DOES; what changed is that it now reads
+   as the kit's FIELD rather than as a place to write:
+
+   · SUNKEN, on the kit's own recipe — --control-edge at rest, --surface-inset,
+     --gloss-well — which is exactly what views/settings.css's
+     .provider-replace-input takes and what tokens/material.css states the
+     inversion is FOR ("a field is the inversion — a sunken well — and that
+     inversion is most of what tells a user which control they can type in").
+     It was a flat --border box, and --border measures 1.2:1: on the sidebar
+     material the box barely existed, so the placeholder was doing all the
+     work of saying what this is.
+   · 30 -> 28px, the compact step this kit has. --hit-min IS 28 (macOS's
+     default control target), and going below it to buy two more pixels would
+     put a real click target under the floor sections 10 and 11 of
+     scripts/test-next-views-kit.js exist to hold. Written as the token, so it
+     tracks the floor rather than sitting a literal pixel away from it.
+   · Focus moves the BORDER as well as adding the ring, the same two-part
+     signal the settings field uses — a ring alone on a 1.2:1 resting border
+     was the only thing distinguishing focused from present. */
 .chat-search-input {
   width: 100%;
-  height: 30px;
+  height: var(--hit-min);
   padding: 0 10px 0 30px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-edge);
   background: var(--surface-inset);
+  box-shadow: var(--gloss-well);
   color: var(--text);
   font: var(--type-body-sm);
+  transition: border-color var(--t-state), box-shadow var(--t-state), background var(--t-state);
 }
 .chat-search-input::placeholder { color: var(--text-3); }
-.chat-search-input:focus-visible { box-shadow: var(--ring-focus); }
+.chat-search-input:hover { border-color: var(--text-faint); }
+.chat-search-input:focus {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--gloss-well-quiet), var(--ring-focus);
+}
+
+/* The offer made when the filter matched nothing and the typed text reads
+   like a question. A LINK-WEIGHT control, not a button: it is a suggestion
+   inside an empty state, and giving it a filled or bordered box would make
+   the sidebar's most prominent control the one that appears only when
+   something has gone wrong. `min-height` rather than `height` so the target
+   is --hit-min while the label stays on one line at any text scale. */
+.chat-filter-ask {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: var(--hit-min);
+  margin-top: 2px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--accent-text);
+  font: var(--type-body-sm);
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), transform var(--t-press);
+}
+.chat-filter-ask:hover { background: var(--mat-row-hover); }
+.chat-filter-ask:active { background: var(--mat-row-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 
 .chat-conv-pane { display: flex; flex-direction: column; }
 .chat-conv-list { display: flex; flex-direction: column; gap: 1px; }
@@ -402,6 +460,39 @@
   letter-spacing: var(--track-eyebrow);
   color: var(--text-3);
   flex: none;
+}
+/* ── THE TWO GROUPS THE SCOPE BAR IS MADE OF ──────────────────────────────
+   The bar used to be five loose flex children, and the page-count readout was
+   the LAST of them — immediately after the Compile button, which is how
+   `[Compile to Wiki] 1,406 pages in scope` came to read as one phrase and
+   stopped a user pressing the button (views/chat.js's markup carries the full
+   report). Grouping is the fix: the readout belongs to the pills it describes,
+   the caption belongs to the button it describes, and .chat-scope-spacer holds
+   the two apart. Both groups are `flex: none` because the bar itself scrolls
+   horizontally — a shrinkable group would compress its own label instead. */
+.chat-scope-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.chat-compile-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+/* The caption is SECONDARY TEXT — --text-3 at --text-xs, the same rung the
+   scope readout takes — because it explains a control rather than competing
+   with it. Tabular figures for the same reason section 6 of
+   scripts/test-next-views-kit.js gives: the message count ticks with every
+   turn, and a proportional `1` next to a `4` reflows the words after it. */
+.chat-compile-caption {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
 }
 .chat-scope-pills { display: flex; gap: 6px; flex: none; }
 /* ── 26 -> --hit-min (28px) ───────────────────────────────────────────────
@@ -1547,15 +1638,28 @@
 }
 .chat-compile-btn:hover { background: var(--accent-tint-strong); }
 /* Compile to Wiki. THE ONE CONTROL IN THIS PASS WHERE THE PRESS IS NOT
-   COSMETIC: it spends real money with no estimate and no confirm (still open
-   in CLAUDE.md's audit queue), so "did my click register" is a question the
-   user actually has here, and the answer being nothing at all is the worst
-   version of it. The border tightening to full `--accent` on top of the fill
-   step is the extra half-signal a spend control earns.
+   COSMETIC: it is the only control on this view that spends money, so "did my
+   click register" is a question the user actually has here, and the answer
+   being nothing at all is the worst version of it. The border tightening to
+   full `--accent` on top of the fill step is the extra half-signal a spend
+   control earns.
 
-   This is a CSS-only acknowledgement and it is NOT a substitute for the
-   missing cost estimate — it says the click landed, not what it will cost.
-   `:not([disabled])` keeps it silent while a compile is already in flight. */
+   CORRECTED (v3.49.0): this note used to say the button "spends real money
+   with no estimate and no confirm (still open in CLAUDE.md's audit queue)"
+   and called the press "NOT a substitute for the missing cost estimate". That
+   has been false since v3.27.0 — "Compile stops spending silently". The click
+   handler calls `startCompile`, which fetches `/api/compile/estimate` and puts
+   the answer through `confirmThen` before `runCompile` is reachable at all;
+   `runCompile` is wired to no click handler anywhere, and
+   scripts/test-next-compile-estimate.js pins both halves. A stale comment
+   describing a missing safety gate is worse than no comment: it invites the
+   next reader to "add" a confirm that is already there, or to trust that this
+   button is unguarded when it is not.
+
+   The press remains what it always was — an acknowledgement that the click
+   landed. `:not([disabled])` keeps it silent while a compile is already in
+   flight. What the compile will COST is the dialog's sentence, and what it
+   DOES is now `.chat-compile-caption`'s. */
 .chat-compile-btn:active:not([disabled]) { background: var(--accent-tint-strong); border-color: var(--accent); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .chat-compile-btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
@@ -2040,6 +2144,7 @@
   .chat-browse-clear:active,
   .chat-browse-close:active,
   .chat-bulk-delete:active,
+  .chat-filter-ask:active,
   .chat-cite-chip:active { transform: none; }
   .chat-conv-row::before { transition: none; }
 }

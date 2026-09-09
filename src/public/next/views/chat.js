@@ -931,6 +931,15 @@ function pruneSelection() {
 // the query is expensive.
 const SEARCH_DEBOUNCE_MS = 220;
 
+// How many words make a filter string read as a sentence rather than a needle.
+// See looksLikeAnAsk() for why this is a word count and not a question-word
+// list, and why 4 rather than 3: "large PDF ingest" is an entirely plausible
+// three-word needle, so 3 would put the offer under ordinary filtering. Four
+// is where a typed string stops looking like something you would scan a list
+// for. A miss here costs nothing — the filter still works exactly as before,
+// and the offer is simply not made.
+const FILTER_ASK_MIN_WORDS = 4;
+
 function cancelSearchTimer() {
   if (state.searchTimer) { clearTimeout(state.searchTimer); state.searchTimer = null; }
 }
@@ -2269,6 +2278,147 @@ function conversationRowHtml(c) {
   );
 }
 
+// ── "Ask this in a new chat" ─────────────────────────────────────────────
+//
+// The second half of the mistaken-composer fix. Relabelling the field stops
+// the NEXT person typing a question into it; it does nothing for the person
+// who already has. That reader is looking at "No conversations match “how do
+// we stage the rollout”." — an answer that is technically correct and
+// completely useless, because their question is right there, typed, and the
+// app is pretending not to have seen it.
+//
+// So when the filter has matched nothing AND the text reads like something
+// asked rather than something looked up, the empty state offers to move it
+// where it belongs. It is an OFFER, never an automatic redirect: a filter that
+// silently turned into a chat turn would spend money on a keystroke.
+
+/**
+ * PURE. Does this text read like a question or a sentence rather than a needle?
+ *
+ * Two signals, deliberately crude, because the cost of each error is not
+ * symmetric: a false positive shows one extra button that nobody has to press,
+ * a false negative leaves a typed question stranded. A trailing "?" is
+ * unambiguous. Four or more words is the length at which a filter string stops
+ * being plausible — real filter needles are one or two words ("graphql",
+ * "ingest pipeline"); nobody filters a list by an eight-word phrase.
+ *
+ * NOT a question-word list ("how", "what", "why"): "the rollout plan we agreed
+ * on Tuesday" is a sentence with no question word, and a word list would also
+ * have to be maintained per language.
+ */
+function looksLikeAnAsk(text) {
+  const t = String(text == null ? '' : text).trim();
+  if (t === '') return false;
+  if (t.endsWith('?')) return true;
+  return t.split(/\s+/).filter(Boolean).length >= FILTER_ASK_MIN_WORDS;
+}
+
+/**
+ * Is the offer live RIGHT NOW? The single source of that decision, read by the
+ * renderer AND by the field's Enter handler, so the key and the button can
+ * never disagree about whether there is anything to trigger.
+ *
+ * `state.conversations` is the server's answer for the last COMPLETED filter,
+ * so "matched nothing" is a fact rather than a guess. A load error is not a
+ * miss — the filter may well have matched and we simply could not fetch it —
+ * so the offer stays down.
+ */
+function filterAskOffered() {
+  if (state.domains.length === 0) return false;
+  if (state.loadError) return false;
+  if (state.conversations.length > 0) return false;
+  return looksLikeAnAsk(state.searchQuery);
+}
+
+/**
+ * The row itself. The label does NOT echo the typed text — partly because the
+ * hint directly above it already quotes the query back, and partly because an
+ * echo is one more place a hostile title-shaped string would have to be
+ * escaped for no gain.
+ */
+function filterAskRowHtml() {
+  if (!filterAskOffered()) return '';
+  return (
+    '<button type="button" class="chat-filter-ask" id="chat-filter-ask">' +
+      icon('plus', 12) + ' Ask this in a new chat' +
+    '</button>'
+  );
+}
+
+/**
+ * Clear the filter and show the domain's real list again. Also the Escape
+ * handler's whole body — Escape on a filter means "undo the filtering", which
+ * is a repaint, not a navigation: the open conversation stays open.
+ */
+function clearConversationFilter() {
+  if (state.searchQuery === '') return;
+  state.searchQuery = '';
+  cancelSearchTimer();
+  const input = document.getElementById('chat-search-input');
+  if (input) input.value = '';
+  loadDomainConversations(state.activeDomain, myMountToken, {
+    // Cleared one statement above, so this is a blank — passed explicitly all
+    // the same, because scripts/test-next-chat-sidebar.js §9 requires every
+    // list REFRESH to carry the active query and exempts exactly two call
+    // sites by name. Being a third exemption is worse than passing '': the
+    // rule it enforces (a refresh must never silently drop the user's filter)
+    // is one this function must obey the moment it stops clearing first.
+    q: state.searchQuery,
+    sidebarOnly: true,
+  }).catch(reportAsyncActionFailure);
+}
+
+/**
+ * MOVE the typed text out of the filter and into the composer, in a new chat.
+ *
+ * MOVE, not copy: leaving it in the filter would leave the sidebar insisting
+ * this domain has no conversations, one click after the user asked to go
+ * somewhere else — and the reason (a filter they can no longer see the point
+ * of) would be off in a field they have stopped looking at.
+ *
+ * It does NOT send. The text lands in the composer, focused, caret at the end,
+ * exactly as if it had been typed there — which is the state the user believed
+ * they were in. Sending on their behalf would spend money on a keystroke that
+ * was, by construction, aimed at the wrong control.
+ *
+ * The new-chat reset is startNewChat's, called rather than reproduced: it is
+ * the one place that knows what "a new chat" clears (activeConversationId,
+ * thread, cancelNotice) and it already repaints and focuses the composer.
+ */
+function askFilterTextInNewChat() {
+  const text = state.searchQuery.trim();
+  if (text === '') return;
+  state.searchQuery = '';
+  cancelSearchTimer();
+  startNewChat();
+  const ta = document.getElementById('chat-input');
+  if (ta) {
+    ta.value = text;
+    autosize(ta);
+    // NO `ta.focus()` HERE, and its absence is a finding rather than an
+    // omission. A first draft called it, and the mutation that deleted the
+    // call left scripts/test-next-chat-filter.js §3 GREEN — because
+    // startNewChat() above already ends in focusComposer(), which focuses this
+    // very element. Two calls, one of which can never be the reason the
+    // property holds. The redundancy is removed rather than kept and
+    // annotated, and the property is now carried by the ONE call that has a
+    // failing direction (deleting focusComposer's call from startNewChat reds
+    // §3, which is how it is proven).
+    //
+    // The caret is NOT redundant: focusing a textarea that already has a value
+    // does not reliably put the caret at the end, and position 0 in text the
+    // user is about to continue typing is its own small defect.
+    try { ta.selectionStart = ta.selectionEnd = text.length; } catch { /* not a real textarea */ }
+  }
+  // The list on screen is the FILTERED (empty) answer; the filter is now gone,
+  // so refetch or the sidebar keeps claiming the domain is empty. Same `q`
+  // reasoning as clearConversationFilter above.
+  loadDomainConversations(state.activeDomain, myMountToken, {
+    q: state.searchQuery,
+    sidebarOnly: true,
+  }).catch(reportAsyncActionFailure);
+}
+
 function conversationListHtml() {
   if (state.domains.length === 0) return '';
   if (state.loadError) return '<div class="chat-sidebar-error">' + escapeHtml(state.loadError) + '</div>';
@@ -2283,7 +2433,7 @@ function conversationListHtml() {
   if (list.length === 0) {
     return '<div class="sidebar-hint">' +
       (query ? 'No conversations match “' + escapeHtml(state.searchQuery) + '”.' : 'No conversations yet in this domain.') +
-      '</div>';
+      '</div>' + filterAskRowHtml();
   }
 
   const today = [];
@@ -2379,6 +2529,17 @@ function wireConversationPane(root) {
   if (deleteBtn) deleteBtn.addEventListener('click', () => {
     deleteSelectedConversations(myMountToken).catch(reportAsyncActionFailure);
   });
+
+  // Wired HERE, in the ONE shared wiring function, and not in renderSidebar.
+  // The row lives inside the pane, and the pane is what the light re-render
+  // replaces — which is the path the row normally arrives on, since it appears
+  // as the result of a debounced filter refetch (renderSidebarConversationsOnly
+  // patches `.chat-conv-pane` in place and never re-runs renderSidebar's own
+  // body). Wiring it in renderSidebar would therefore leave the row dead in the
+  // case it is actually reached in, while looking correct in the full render.
+  // Same reasoning, and the same function, as the per-row delete above.
+  const askBtn = root.querySelector('#chat-filter-ask');
+  if (askBtn) askBtn.addEventListener('click', askFilterTextInNewChat);
 }
 
 // ── Sidebar render entry points ──────────────────────────────────────────
@@ -2418,9 +2579,35 @@ function renderSidebar(token) {
     renderViewHeader({ variant: 'sidebar', title: 'Chat' }) +
     '<button class="btn btn-primary chat-new-btn" id="chat-new-btn">' + icon('plus', 14) + ' New chat</button>' +
     (state.domains.length > 0
+      // ── THIS FIELD IS A FILTER, AND IT HAD TO STOP LOOKING LIKE A COMPOSER ─
+      // REPORTED: a power user typed a question into this box three times —
+      // once in a live demo — and waited for an answer. `startNewChat` already
+      // calls `focusComposer()`, so the caret was never in here by accident;
+      // the cause is that a full-bleed text field sitting directly under the
+      // sidebar's primary button, with a placeholder ending in an ellipsis
+      // ("Search conversations…") that reads like the composer's own
+      // ("Ask Articles…"), IS the most typeable-looking thing on the screen.
+      //
+      // Three changes, none of which touch what the field DOES: the verb
+      // becomes "Filter" (what it does to a list, not what you do to a
+      // corpus), the ellipsis goes (an ellipsis promises the sentence
+      // continues elsewhere — a filter's does not), and the box takes the
+      // kit's sunken-field treatment at --hit-min instead of a taller flat
+      // one, so it reads as a well in the sidebar rather than as a raised
+      // place to write.
+      //
+      // NOT SHRUNK BELOW --hit-min, which the brief's "compact height" would
+      // have allowed: 30 -> 28 is the compact step this kit HAS (macOS's
+      // default control target, and the floor sections 10 and 11 of
+      // scripts/test-next-views-kit.js exist to hold). A 26px field would put
+      // a real click target under that floor to buy two pixels, and two pixels
+      // is not what was confusing anyone — the label and the treatment are.
+      //
+      // `aria-label` is not decoration here: the visible label for this field
+      // is the placeholder, which assistive tech is entitled to ignore.
       ? '<div class="chat-search-wrap">' +
           '<span class="chat-search-icon">' + icon('search', 13) + '</span>' +
-          '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Search conversations…" value="' + escapeHtml(state.searchQuery) + '">' +
+          '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Filter conversations" aria-label="Filter conversations" value="' + escapeHtml(state.searchQuery) + '">' +
         '</div>' +
         '<div class="chat-conv-pane">' + conversationPaneHtml() + '</div>'
       // ── CUT: "No domains exist yet — nothing to chat with." ──────────────
@@ -2461,6 +2648,25 @@ function renderSidebar(token) {
       // keystroke, so the caret and the value the user is typing are
       // untouched until the answer arrives.
       scheduleConversationSearch(myMountToken);
+    });
+    // Enter and Escape, wired on the field itself so the keyboard reaches both
+    // affordances the mouse has. Enter is deliberately gated on
+    // filterAskOffered() — the SAME predicate that decides whether the action
+    // row is on screen — rather than on the raw text: the row's condition
+    // includes "no conversation matched", which is only known once the
+    // debounced refetch has answered, so an Enter typed inside the 220 ms
+    // window must fall through and do nothing rather than open a new chat on a
+    // filter that was about to match something.
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && filterAskOffered()) {
+        e.preventDefault();
+        askFilterTextInNewChat();
+        return;
+      }
+      if (e.key === 'Escape' && state.searchQuery !== '') {
+        e.preventDefault();
+        clearConversationFilter();
+      }
     });
   }
 
@@ -2570,12 +2776,32 @@ function renderMain(token) {
 
   setMain(
     '<div class="chat-view">' +
+      // ── THE READOUT BELONGS TO THE SCOPE CHIP, NOT TO THE BUTTON ─────────
+      // REPORTED by a power user, and reproduced from the shipped markup: the
+      // page count was rendered as the LAST child of this bar, immediately
+      // after the Compile button, so on a mature domain the right-hand end of
+      // the toolbar read `[Compile to Wiki] 1,406 pages in scope` as one
+      // phrase. He read it as the button's own caption — "compiling will touch
+      // 1,406 pages" — and did not press it. The number was always the SCOPE's
+      // (how much wiki this conversation can see), never the compile's
+      // (compile writes a handful of pages from ONE conversation), so the two
+      // facts were adjacent and one was silently annotating the other.
+      //
+      // The fix is structural rather than a wording change: the readout moves
+      // INSIDE `.chat-scope-group` with the eyebrow and the pills it describes,
+      // and the compile control gets its own caption in `.chat-compile-group`.
+      // Those two groups are separated by the flex spacer, so no future edit
+      // can make the count the button's neighbour again without deleting a
+      // container — which is what scripts/test-next-chat-scopebar.js asserts on
+      // (the DOM path of each, not the words).
       '<div class="chat-scopebar">' +
-        '<span class="chat-scope-eyebrow mono">SCOPE</span>' +
-        '<div class="chat-scope-pills">' + scopePills + '</div>' +
+        '<div class="chat-scope-group">' +
+          '<span class="chat-scope-eyebrow mono">SCOPE</span>' +
+          '<div class="chat-scope-pills">' + scopePills + '</div>' +
+          '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
+        '</div>' +
         '<div class="chat-scope-spacer"></div>' +
-        renderCompileButtonHtml() +
-        '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
+        compileControlHtml() +
       '</div>' +
       '<div class="chat-thread" id="chat-thread"></div>' +
       renderComposerHtml(active) +
@@ -2614,6 +2840,77 @@ function renderCompileButtonHtml() {
       ' title="Save this conversation as wiki pages">' +
       icon('sparkles', 13) + ' <span id="chat-compile-btn-label">' + escapeHtml(label) + '</span>' +
     '</button>'
+  );
+}
+
+/**
+ * How many messages this compile would take as its INPUT.
+ *
+ * Counted off `state.thread`, which is what is on screen, so the number in the
+ * caption is one the reader can verify by counting bubbles. `role: 'compile'`
+ * entries are synthetic outcome cards pushed by runCompile (see
+ * renderThreadOnly's own branch for them) and are not messages — including them
+ * would make a second compile of the same thread claim one more message than
+ * the first, with nothing said in between.
+ *
+ * NOT the sidebar row's server-supplied `messageCount`: that is the same
+ * quantity, but it is patched locally by bumpMessageCountForTurn and is
+ * therefore a second, drifting copy of a number the thread already holds
+ * exactly.
+ */
+function compileMessageCount() {
+  return state.thread.filter((m) => m && (m.role === 'user' || m.role === 'assistant')).length;
+}
+
+/**
+ * The Compile control's own caption — the sentence that has to be true whether
+ * or not the reader has understood anything else on this bar.
+ *
+ * IT NAMES THE INPUT, NOT THE OUTPUT, and that is the whole point of it. The
+ * defect it fixes was a page count being read as "how many pages this button
+ * will touch"; replacing it with a different output number would repeat the
+ * mistake in a more confident voice, because how many wiki pages a compile
+ * writes is genuinely unknown before the call (buildCompileConfirmCopy says so
+ * in as many words: "how many wiki pages the AI decides to write cannot be
+ * known before the call"). The messages going IN are countable, and they are on
+ * screen.
+ *
+ * NO COST, DELIBERATELY. The confirm dialog is the cost gate (v3.27.0 —
+ * "Compile stops spending silently"): it estimates, states a real price, a free
+ * model, an unpriced model or no provider as four different sentences, and only
+ * then spends. A price on the toolbar would be a second, un-estimated copy of
+ * that fact — stale by construction, since it would have to be rendered before
+ * `/api/compile/estimate` has been called. The caption's job is to say what the
+ * button DOES; the dialog's job is to say what it costs.
+ *
+ * The wording tracks the dialog's on purpose — the dialog opens with "Compile
+ * this conversation to your wiki?" and ends with "Pages are written into the
+ * "<domain>" wiki" — so the caption reads as the short form of the sentence the
+ * user is about to be shown, not as a second, competing description.
+ */
+function compileCaptionText() {
+  const n = compileMessageCount();
+  return 'Saves this conversation (' + n + ' message' + (n === 1 ? '' : 's') + ') as wiki pages';
+}
+
+/**
+ * The Compile button PLUS its caption, as one group.
+ *
+ * One builder rather than two call-site siblings, because the caption must
+ * appear and disappear with the button and never on its own: a caption for a
+ * control that is not there describes nothing. It delegates the whole
+ * visibility decision to renderCompileButtonHtml — an empty string from that
+ * function is the single gate — so COMPILE_MIN_USER_MESSAGES stays stated in
+ * exactly one place.
+ */
+function compileControlHtml() {
+  const btn = renderCompileButtonHtml();
+  if (!btn) return '';
+  return (
+    '<div class="chat-compile-group">' +
+      btn +
+      '<span class="chat-compile-caption">' + escapeHtml(compileCaptionText()) + '</span>' +
+    '</div>'
   );
 }
 
