@@ -40,7 +40,7 @@ undocumented or the mirror is stale.
 | Token file | Differs? | Why |
 |---|---|---|
 | `color.css` | **Yes** | The text ramp — below |
-| `typography.css` | **Yes** | `--font-scale` — below |
+| `typography.css` | **Yes** | `--font-scale`, and the added `--type-caption` rung — both below |
 | `motion.css` | **Yes** | The press vocabulary — below |
 | `fonts-local.css` | App-side only | No bundle counterpart |
 | `material.css` | App-side only | The material vocabulary — below |
@@ -69,6 +69,89 @@ The app adds a user-facing font-size setting the bundle does not model. It is
 **not** a single new token: all thirteen size declarations are rewritten to
 `calc(<bundle value> * var(--font-scale))`, so a byte-diff against the bundle
 looks far larger than "one token added". That whole diff is this one feature.
+
+### `typography.css` — the caption rung (v3.49.0)
+
+One **added** token, `--type-caption`; nothing existing moved. The bundle's
+smallest labelled rung is `--type-eyebrow`, and it is **mono** by design —
+`typography.css`'s own header reserves the mono face for "everything the machine
+owns: paths, slugs, wiki-links, counts, versions, timestamps, eyebrow labels".
+
+The rail's section names are none of those. They are prose a human reads, at a
+size the bundle had no sans rung for, so the app adds one:
+
+```
+--type-caption: var(--weight-medium) var(--text-xs)/var(--leading-tight) var(--font-sans);
+```
+
+**11px, not 12px, and the difference is the width of the whole app's left
+column.** Measured in a real browser at `deviceScaleFactor: 2` against the app's
+own Largest text setting (`--font-scale: 1.18`, so the rung resolves to
+12.98px), the seven captions render:
+
+| Caption | Width |
+|---|---|
+| Domains | 53.27px |
+| Settings | 50.84px |
+| Memory | 50.02px |
+| Shared | 43.36px |
+| Ingest | 38.02px |
+| Sync | 30.27px |
+| Chat | 28.88px |
+
+At the 12px rung "Domains" is ~58px and the rail column would have had to grow
+past 72px to hold it. Note which caption is widest: **"Settings" is the longest
+by character count and "Domains" is the widest by pixels.** The first draft of
+this work sized the column against "Settings" and was 2.43px short. Measure; do
+not count letters.
+
+`--app-rail-w` (in `shell.css`, not a bundle token) is the column that
+measurement sized: **60px → 72px in v3.49.0**, giving the caption a 60px content
+box and 6.73px of slack on the widest caption at the largest text size.
+
+### The reduced mark (v3.49.0)
+
+`src/public/next/assets/mark-mini-on-{dark,light}.svg` is a **second, smaller-
+size variant of the product mark**, used by the rail and the favicon only. The
+full mark — `images/mark-on-*.svg`, and its thicker-stroked twin
+`src/public/next/assets/mark-small-on-*.svg` — is unchanged, still shipped, and
+is still the one for the README, the about screen and the DMG.
+
+**Why a variant exists.** The full mark is a 40-node, 100-edge network. The rail
+draws it at 28px and the favicon at 16px, where its 1.9-unit strokes land under
+one device pixel. Rendered at 32px and box-averaged back to the device grid
+(4× supersample, decoded from real PNG output):
+
+| | ink coverage | of that, **solid** | of that, **mid-tone mush** | enclosed gaps |
+|---|---|---|---|---|
+| full mark @32px | 43.3% | 28.2% | **71.8%** | 42 |
+| mini mark @32px | 25.7% | 58.6% | **41.4%** | 3 |
+| full mark @64px | 36.5% | 57.6% | 42.4% | 58 |
+| mini mark @64px | 22.4% | 76.6% | 23.4% | 6 |
+
+Two readings, and they say the same thing. Nearly **three quarters** of the full
+mark's ink at 32px is neither background nor line but antialiased grey — the
+definition of texture rather than drawing. And its 42 enclosed gaps average
+around one square pixel each, so the *network* — the thing the mark depicts —
+is not resolvable; the mini mark's 3 gaps are.
+
+**How the variant is constrained**, so a redraw cannot quietly undo this:
+
+- **≤ 10 nodes, ≤ 14 edges.** Shipped at exactly 10 and 14.
+- **Stroke ≥ 1.5 device px at a 32px render.** Shipped at 5.5 user units on a
+  110-unit viewBox = **1.60px**.
+- **Same silhouette.** All ten node coordinates are copied *verbatim* out of the
+  full mark — seven from its convex hull plus its three accent nodes — so the
+  outline is a literal subset of the original's, not a redrawing of it.
+- **Same colours**, byte-identical per theme: ink `#EDEDF4` / `#14141F`, accents
+  `#3FBFD8` `#79C752` `#E0A33A` on dark and `#2596AE` `#5AA038` `#B57C21` on
+  light.
+- The viewBox is inset (`-5 -5 110 110`) so the heavier stroke and the larger
+  node discs have room **without any coordinate moving**.
+
+`scripts/test-next-shell-rail.js` §7 reads the node count, the edge count and
+the stroke width off the SVG itself and asserts all three, with the full mark as
+a paired control — so the budgets cannot pass by both files being the same file.
 
 ### `motion.css` — the press vocabulary (v3.27.0)
 

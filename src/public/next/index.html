@@ -17,8 +17,17 @@
      reload rather than a live OS theme change) and could not be verified
      end-to-end from this environment — so a single asset that is provably
      correct in the common case, and still readable in the other, was
-     chosen over a fork that might silently regress to the invisible one. -->
-<link rel="icon" href="/next/assets/mark-small-on-light.svg">
+     chosen over a fork that might silently regress to the invisible one.
+
+     v3.49.0: the same reasoning, now on the REDUCED mark
+     (mark-mini-on-light.svg). A favicon is drawn at 16-32 CSS px, which is
+     the size the full 40-node / 100-edge mark stops being a network and
+     becomes texture — the identical defect a power user reported about the
+     28px rail mark, on a smaller box. The mini mark's silhouette and
+     colours are the full mark's (its ten node coordinates are copied
+     verbatim from it), so the tab icon is the same shape, legibly drawn.
+     The light-ink choice above is unchanged and unaffected. -->
+<link rel="icon" href="/next/assets/mark-mini-on-light.svg">
 
 <!-- Design tokens — copied byte-identical from the design system bundle.
      Order matters: typography.css defines --font-sans/--font-mono at :root,

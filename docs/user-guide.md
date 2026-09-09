@@ -1136,25 +1136,71 @@ http://localhost:3333
 
 There are no tabs across the top. Everything is reached from a narrow **icon rail down the left edge**, and the screen is three columns: the rail, a **contextual panel** beside it that changes with the view, and the **main column**.
 
-The rail, top to bottom:
+At the very top of the rail is **the mark — and it is a button.** Click it to
+go **Home**, which is the **Domains** overview: every domain you have, its page
+and conversation counts, and its projects. Wherever you are in the app, the
+logo takes you back to the thing the app is about.
 
-| Rail item | What it's for |
-|---|---|
-| **Chat** | Ask questions of one domain's wiki. This is where the app opens. |
-| **Domains** | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. |
-| **Shared Brain** | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Agent memory** | Working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
-| **Ingest** | Drop in PDFs, Markdown or text files. |
+The rail, top to bottom. **Every icon carries its name underneath it** — you do
+not have to hover and wait to find out what something is:
+
+| Rail item | Caption | What it's for |
+|---|---|---|
+| **Chat** | Chat | Ask questions of one domain's wiki. |
+| **Ingest** | Ingest | Drop in PDFs, Markdown or text files. |
+| **Domains** | Domains | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. This is **Home**, and where a first launch opens. |
+| — a thin dividing line — | | Everything below it is the advanced half. |
+| **Shared Brain** | Shared | Collective wikis you contribute to with a cohort or team. Off by default. |
+| **Agent memory** | Memory | Working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
 
 Then, at the **bottom of the rail**, separated by a gap:
 
-| Rail footer | What it's for |
-|---|---|
-| **☀/☾ theme toggle** | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type, button and text-box labels included; control heights and icons deliberately stay put, so buttons don't grow into each other. |
-| **Sync** | Back your wiki up to a private GitHub repository. |
-| **Settings** | Keys, MCP bridge, scan limits, knowledge base folder, version. |
+| Rail footer | Caption | What it's for |
+|---|---|---|
+| **☀/☾ theme toggle** | — | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type, button and text-box labels included; control heights and icons deliberately stay put, so buttons don't grow into each other. |
+| **Sync** | Sync | Back your wiki up to a private GitHub repository. |
+| **Settings** | Settings | Keys, MCP bridge, scan limits, knowledge base folder, version. |
 
-Hover any rail icon to see its name.
+Two captions are shortened to fit the column — **Shared Brain** reads *Shared*
+and **Agent memory** reads *Memory*. Hovering any rail icon still shows its
+full name, and that is also the name a screen reader announces.
+
+### Which screen you land on
+
+**The first time you open The Curator, it opens on Domains** — the overview, so
+the first thing you see is what you have (or, on a fresh install, the button
+that creates your first domain). Chat used to be the opening screen, which
+meant a brand-new install greeted you with a composer that could not answer
+anything yet.
+
+**After that, it opens wherever you left off.** The Curator remembers the last
+screen you were on, per browser, and returns you to it — so if you spend your
+week in Chat, you open in Chat. Two deliberate exceptions:
+
+- If a screen **failed to load** last time, that one is not restored. You get
+  Domains instead, rather than the same error every launch.
+- If an update **removes or renames** a screen, a stored name that no longer
+  exists is ignored and you get Domains.
+
+Nothing is remembered across machines; this is a per-browser preference, not
+part of your wiki.
+
+### What changed in v3.49.0, and why
+
+All three came from one long-time user's report, and each is worth stating
+because you may have built habits around the old behaviour:
+
+- **The icons now have names.** He could not tell the Shared Brain icon from
+  the Agent memory icon, and the upload arrow did not read as *Ingest*; he was
+  hovering and waiting for tooltips. A tooltip costs a hover every time and
+  does not exist at all for keyboard navigation, so the names are on screen.
+- **Ingest moved from fifth to second.** It was behind Shared Brain and Agent
+  memory — two screens a new user has neither joined nor filled — even though
+  adding material is the second thing anyone does.
+- **The logo does something.** It was decoration that swallowed your click.
+
+The rail is slightly wider than before to hold the captions at every text size,
+including the largest.
 
 ### Two things are not rail destinations
 
@@ -1168,9 +1214,9 @@ If you used The Curator before this release, this is the whole map:
 
 | The old tab | Where it is now |
 |---|---|
-| **Chat** | **Chat** in the rail. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. |
-| **Ingest** | **Ingest** in the rail. Unchanged otherwise. |
-| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list on any domain's page in **Domains**, or by clicking a citation in chat. |
+| **Chat** | **Chat** in the rail, first. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
+| **Ingest** | **Ingest** in the rail, second since v3.49.0. Unchanged otherwise. |
+| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list, now the first group on any domain's page in **Domains**, or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
 | **Domains** | **Domains** in the rail. Now the hub: stats, health, page list, and the create/rename/delete controls. |
 | **Sync** | **Sync**, in the rail *footer*. |
