@@ -631,15 +631,15 @@ textarea {
    vocabulary as .rail-btn so a pointer landing on it gets an answer, and it
    is a real focusable control so the keyboard gets one too.
 
-   `padding` rather than a fixed box: it makes the hit target 42x42 around a
-   28px mark — measured — comfortably over the 28px macOS floor, without the
+   `padding` rather than a fixed box: it makes the hit target 40x40 around a
+   26px mark — measured — comfortably over the 28px macOS floor, without the
    mark itself having to grow, and it keeps the hover overlay a square that
    matches the nav buttons below it rather than hugging the artwork. */
 .rail-home {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-3);            /* 6px — a 28px mark in a 42px target */
+  padding: var(--space-3);            /* 6px — a 26px mark in a 40px target */
   margin-bottom: var(--space-2);
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
@@ -652,16 +652,8 @@ textarea {
 .rail-home:active { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
 
 .rail-mark {
-  /* 26px -> 28px (v3.49.0). The mark is the REDUCED one now
-     (assets/mark-mini-on-*.svg): same silhouette, same three accent dots,
-     10 nodes instead of 40 and 14 edges instead of 100, drawn on a
-     -5 -5 110 110 viewBox so its heavier 5.5-unit stroke and larger nodes
-     have somewhere to sit. The extra 2px restores the artwork to the same
-     optical height as the old 26px mark on its tighter 0 0 100 100 box
-     (80.16 drawn units of 110 at 28px = 20.4px, against 80.16 of 100 at
-     26px = 20.8px), so nothing on the rail moved. */
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: block;
   flex: none;
 }

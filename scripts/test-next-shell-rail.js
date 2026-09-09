@@ -42,9 +42,10 @@
  *   §6  pickStartView: a fresh launch opens HOME_VIEW; a stored view is
  *       restored; a stored view this build no longer has is ignored;
  *       null/''/junk fall to HOME_VIEW.
- *   §7  The mark the rail draws is the REDUCED one, and it really is
- *       reduced — node and edge counts read off the SVG, not asserted from
- *       a filename.
+ *   §7  The mark ref the rail draws is root-absolute and resolves to a
+ *       real file on disk, in both themes — the full mark, same as
+ *       README/about/the DMG (a simplified rail-only variant was tried
+ *       briefly in v3.49.0 and withdrawn at the maintainer's request).
  *   §8  SOURCE GUARD (the one place a source read is the right tool): the
  *       caption's font comes from a token whose family is --font-sans.
  *       A rendered-font check needs a browser; the token indirection does
@@ -425,8 +426,14 @@ ok(ALL_VIEWS.includes('settings') && ALL_VIEWS.includes('sync'),
 }
 
 // ════════════════════════════════════════════════════════════════════════
-section('§7  The rail draws the REDUCED mark, and it really is reduced');
+section('§7  The rail mark ref is root-absolute and resolves to a real file');
 // ════════════════════════════════════════════════════════════════════════
+// A simplified rail-only mark was tried and withdrawn at the maintainer's
+// request — the rail draws the same full mark (assets/mark-small-on-*.svg)
+// as README/about/the DMG again. What stays load-bearing is the
+// root-absolute property itself: see the comment on the markSrc line in
+// renderRail() for why a bare-relative ref silently 200s as HTML instead
+// of 404ing.
 
 const srcOf = (theme) => {
   const r = render({ theme });
@@ -441,32 +448,8 @@ for (const [theme, src] of [['dark', darkSrc], ['light', lightSrc]]) {
     `the ${theme} mark ref is root-absolute — a bare-relative one resolves against the CURRENT path and silently 200s as HTML`);
   const disk = path.join(ROOT, 'src/public', (src || '').replace(/^\//, ''));
   ok(existsSync(disk), `the ${theme} mark exists on disk (${src})`);
-  if (!existsSync(disk)) continue;
-  const svg = readFileSync(disk, 'utf8');
-  const nodes = (svg.match(/<circle\b/g) || []).length;
-  const edges = (svg.match(/<line\b/g) || []).length;
-  const stroke = parseFloat((/stroke-width="([\d.]+)"/.exec(svg) || [])[1] || '0');
-  const vb = (/viewBox="([^"]+)"/.exec(svg) || [])[1] || '';
-  const vbW = parseFloat(vb.split(/\s+/)[2] || '0');
-  ok(nodes <= 10, `${theme} mark has ${nodes} nodes (budget: 10)`);
-  ok(edges <= 14, `${theme} mark has ${edges} edges (budget: 14)`);
-  // The brief's floor is 1.5 device px of stroke at a 32px render, and the
-  // stroke is in USER UNITS, so it has to be converted through the viewBox.
-  const strokeAt32 = stroke * 32 / vbW;
-  ok(strokeAt32 >= 1.5,
-    `${theme} mark's stroke is ${strokeAt32.toFixed(2)}px at a 32px render (floor: 1.5) — ${stroke} units on a ${vbW}-unit viewBox`);
 }
-// The FULL mark is untouched and still shipped, and it is the one that is
-// too intricate here — so prove the rail is not drawing it.
-{
-  const full = path.join(ROOT, 'src/public/next/assets/mark-small-on-dark.svg');
-  ok(existsSync(full), 'the full mark is still on disk — it is the one for README, about and the DMG');
-  const fullSvg = readFileSync(full, 'utf8');
-  const fullNodes = (fullSvg.match(/<circle\b/g) || []).length;
-  ok(fullNodes > 20,
-    `CONTROL: the full mark really is intricate (${fullNodes} nodes) — without this, the budgets above could be passing on two identical files`);
-  ok(darkSrc !== '/next/assets/mark-small-on-dark.svg', 'the rail does NOT draw the full mark');
-}
+ok(darkSrc === '/next/assets/mark-small-on-dark.svg', 'the rail draws the full mark, not a reduced one');
 
 // ════════════════════════════════════════════════════════════════════════
 section('§8  The caption takes the TEXT face, not the machine face');

@@ -1326,15 +1326,7 @@ function renderRail() {
   // v3.49.0, by rendering the rail and requiring the src it produced to be
   // root-absolute AND to exist on disk.
   //
-  // v3.49.0: this points at mark-MINI-on-*.svg, not mark-small-on-*.svg.
-  // The "small" pair was the full 40-node / 100-edge mark with a thicker
-  // stroke; at the 28px the rail draws it, a power user's report was that
-  // it is noise. The mini pair keeps the same silhouette (its ten node
-  // coordinates are copied verbatim out of the full mark) and the same
-  // colours, on 10 nodes and 14 edges. mark-small-on-*.svg is untouched and
-  // still shipped — see assets/mark-mini-on-dark.svg's own comment for
-  // where each belongs.
-  const markSrc = state.theme === 'light' ? '/next/assets/mark-mini-on-light.svg' : '/next/assets/mark-mini-on-dark.svg';
+  const markSrc = state.theme === 'light' ? '/next/assets/mark-small-on-light.svg' : '/next/assets/mark-small-on-dark.svg';
 
   // ── THE CAPTION UNDER EVERY ICON (v3.49.0) ───────────────────────────
   // Reported by a power user on v3.48.1, in his own words: he could not
@@ -1399,7 +1391,7 @@ function renderRail() {
   rail.innerHTML =
     '<button class="rail-home" id="rail-home" data-view="' + HOME_VIEW + '" ' +
       'title="Home — your domains overview" aria-label="Home">' +
-      '<img class="rail-mark" src="' + markSrc + '" alt="" aria-hidden="true" width="28" height="28">' +
+      '<img class="rail-mark" src="' + markSrc + '" alt="" aria-hidden="true" width="26" height="26">' +
     '</button>' +
     navBtns +
     '<div class="rail-spacer"></div>' +

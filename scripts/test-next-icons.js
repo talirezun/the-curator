@@ -253,20 +253,8 @@ const faviconMatch = /<link rel="icon" href="([^"]+)">/.exec(nextHtml);
 ok(!!faviconMatch, 'next/index.html has exactly one <link rel="icon"> (this suite assumes a single-asset fix — see its header comment)');
 
 const faviconHref = faviconMatch ? faviconMatch[1] : '';
-// v3.49.0 CHANGED THIS ASSERTION DELIBERATELY, and the reason matters more
-// than the edit. It read `faviconHref === '/next/assets/mark-small-on-light
-// .svg'` — an exact FILENAME, which is not the property Defect 2 was about.
-// Defect 2 was "the tab icon is invisible on a light tab", and the fix was
-// "use the DARK-INK variant". v3.49.0 introduced a reduced mark for small
-// sizes (mark-mini-on-*.svg — a favicon is drawn at 16-32px, the exact size
-// at which the full 40-node mark stops resolving) and pointed the favicon
-// at its on-light half, which satisfies Defect 2 completely while failing a
-// filename comparison. Pinning the name would have made this suite an
-// obstacle to a fix in its own subject area, so it now pins the PROPERTY:
-// an on-light-named asset, dark ink, no on-dark ink. The name variant is
-// free to move; the ink is not.
-ok(/^\/next\/assets\/mark-[a-z]+-on-light\.svg$/.test(faviconHref),
-   `favicon points at an on-LIGHT (dark-ink) mark asset (got "${faviconHref}")`);
+ok(faviconHref === '/next/assets/mark-small-on-light.svg',
+   `favicon points at the on-light asset (got "${faviconHref}")`);
 ok(faviconHref.startsWith('/next/'), 'favicon reference is root-absolute and /next/-prefixed (matches test-next-asset-paths.js\'s convention)');
 
 const faviconDiskPath = path.join(ROOT, 'src/public', faviconHref.replace(/^\//, ''));
