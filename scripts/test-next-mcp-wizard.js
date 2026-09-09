@@ -906,8 +906,21 @@ section('9. Source guards — the shapes the pure tests cannot reach');
 section('10. Seams — settings.js, index.html, CSS');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  ok(/import \{ openMcpWizard, closeMcpWizardIfOpen \} from '\.\/mcp-wizard\.js';/.test(settingsCode),
-    'settings.js imports both wizard entry points');
+  // WHY THIS IS NOT A LITERAL MATCH ON THE WHOLE IMPORT LIST any more.
+  // It was `import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';`
+  // pinned character for character, so v3.49.0 adding a THIRD name to that
+  // list (MCP_GUIDE_URL — the one URL both the wizard's first panel and
+  // Settings' MCP section link to, declared in the wizard because settings.js
+  // already imports it and the reverse would be a cycle) reported the two
+  // entry points missing when both were sitting right there. The PROPERTY
+  // is that both entry points come from that module; the exact membership of
+  // the list is not the property, and pinning it made a correct edit red.
+  const mcpImport = /import\s*\{([^}]*)\}\s*from\s*'\.\/mcp-wizard\.js';/.exec(settingsCode);
+  const imported = mcpImport ? mcpImport[1].split(',').map((n) => n.trim()).filter(Boolean) : [];
+  ok(imported.includes('openMcpWizard') && imported.includes('closeMcpWizardIfOpen'),
+    'settings.js imports both wizard entry points from ./mcp-wizard.js');
+  ok(imported.length > 0 && !imported.includes('nope-not-a-real-export'),
+    'control: the import list was really parsed (' + imported.length + ' names), so the assertion above can fail');
   ok(/id="btn-mcp-wizard"/.test(settingsCode), 'renderMcp() emits the CTA button');
   ok(/getElementById\('btn-mcp-wizard'\)[\s\S]{0,400}openMcpWizard\(/.test(settingsCode),
     'wireMcpListeners() binds it');
@@ -1010,6 +1023,100 @@ section('10. Seams — settings.js, index.html, CSS');
 
   // No inline style="" with a var() — test-css-tokens.js §8 walks these.
   ok(!/style="[^"]*var\(/.test(wizCode), 'no built HTML string carries a var() inside an inline style attribute');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.49.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE REPORT ───────────────────────────────────────────────────────────
+// Every heading and instruction on the MCP surfaces says "Claude Desktop" —
+// legitimately, because that is the config file the wizard writes — so a
+// newcomer could not tell whether the bridge is a Claude integration or a
+// standard he can point anything at. It is the latter: a stdio JSON-RPC
+// server, spawned as a local process, and the limit is the TRANSPORT rather
+// than the vendor.
+//
+// ── THE RULE THIS SECTION ENFORCES ───────────────────────────────────────
+// Do not name a client the DOCS cannot name. A settings screen guessing at
+// another company's roadmap is how a false claim ships, so the three named
+// clients are checked against docs/mcp-user-guide.md itself rather than
+// against a list retyped here. The ChatGPT sentence states the MECHANISM
+// (a page in a browser cannot spawn a program on this Mac), not a verdict on
+// the product, so it stays true whichever way that product moves.
+{
+  const guide = readFileSync(path.join(ROOT, 'docs/mcp-user-guide.md'), 'utf8');
+  const CLIENTS = ['Claude Desktop', 'Claude Code', 'Cursor'];
+
+  // (a) THE WIZARD'S FIRST PANEL — EXECUTED. panelStep1 is pure markup with
+  // exactly one free identifier, so running it proves what the user is shown
+  // rather than that a string exists somewhere in the file.
+  const step1Src = /function panelStep1\(\)\s*\{[\s\S]*?\n\}/.exec(wizCode);
+  ok(!!step1Src, 'panelStep1() is found in mcp-wizard.js');
+  const urlSrc = /export const MCP_GUIDE_URL = '([^']+)';/.exec(wizCode);
+  ok(!!urlSrc, 'MCP_GUIDE_URL is exported from mcp-wizard.js — one constant, two readers');
+  let step1 = null;
+  if (step1Src && urlSrc) {
+    step1 = new Function('MCP_GUIDE_URL', step1Src[0] + '\nreturn panelStep1;')(urlSrc[1])();
+  }
+  ok(!!step1 && step1.length > 200, 'CONTROL: panelStep1() really rendered (' + (step1 ? step1.length : 0) + ' chars)');
+  if (step1) {
+    ok(/works with any MCP client/i.test(step1),
+      'the wizard says the bridge works with ANY MCP client that runs local servers');
+    for (const c of CLIENTS) {
+      ok(step1.includes(c), `…and names ${c}`);
+      ok(guide.includes(c), `CONTROL: ${c} is a client docs/mcp-user-guide.md itself names — nothing is claimed that the docs cannot back`);
+    }
+    ok(/ChatGPT[^.]*cannot run a local server/.test(step1),
+      'the one honest exclusion states the MECHANISM — a web app cannot run a local server');
+    ok(step1.includes('href="' + urlSrc[1] + '"') && /Read the MCP guide/.test(step1),
+      'and it links to the MCP guide');
+    ok(/rel="noopener noreferrer"/.test(step1.slice(step1.indexOf(urlSrc[1]) - 200)),
+      'the outbound link carries rel="noopener noreferrer"');
+  }
+
+  // (b) SETTINGS' MCP SECTION — EXECUTED too, against the real renderMcp.
+  const mcpSrc = /function renderMcp\(\)\s*\{[\s\S]*?\n\}/.exec(settingsCode);
+  ok(!!mcpSrc, 'renderMcp() is found in settings.js');
+  let mcpHtml = null;
+  if (mcpSrc && urlSrc) {
+    const deps = {
+      state: { mcpError: null, mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d' },
+               selfTest: null, configSnippetOpen: false, configSnippet: null,
+               defaultDomainInfo: { domains: ['alpha'], defaultDomain: 'alpha' },
+               defaultDomainSaving: false, selfTestLoading: false, copyFeedback: null },
+      deriveMcpStatus: () => ({ pillClass: 'status-pill', pillLabel: 'Connected', wizardLabel: 'Reconnect' }),
+      renderSelfTestResult: () => '', shouldShowMcpStaleNote: () => false,
+      escapeHtml: (x) => String(x), icon: () => '',
+      renderListboxHtml: () => '<LISTBOX/>', pendingListboxes: [],
+      MCP_GUIDE_URL: urlSrc[1], myMountToken: 1, onSaveDefaultDomain: () => {},
+    };
+    const names = Object.keys(deps);
+    mcpHtml = new Function(...names, mcpSrc[0] + '\nreturn renderMcp;')(...names.map((n) => deps[n]))();
+  }
+  ok(!!mcpHtml && mcpHtml.includes('status-pill'), 'CONTROL: renderMcp() really rendered its status card');
+  if (mcpHtml) {
+    ok(/Works with any MCP client/.test(mcpHtml),
+      'the MCP section carries the same claim — a user who never opens the wizard still reads it');
+    for (const c of CLIENTS) ok(mcpHtml.includes(c), `…and names ${c} there too`);
+    ok(/ChatGPT[^.]*cannot run a local server/.test(mcpHtml), '…and the same honest exclusion');
+    ok(mcpHtml.includes('href="' + urlSrc[1] + '"'), '…linking to the same guide as the wizard');
+    ok(/class="settings-hint-text"/.test(mcpHtml.slice(mcpHtml.indexOf('Works with any MCP client') - 200)),
+      'it renders in the kit\'s SECONDARY text face, not as a status or a warning — it is orientation, not an alert');
+  }
+
+  // (c) ONE URL, TWO SURFACES. Two hand-typed links is how one of them rots.
+  ok(!/const MCP_GUIDE_URL =/.test(settingsCode),
+    'settings.js does not declare its own copy of the guide URL — it imports the wizard\'s');
+  const hardcodedGuideLinks = (settingsCode.match(/mcp-user-guide\.md/g) || []).length;
+  ok(hardcodedGuideLinks === 0,
+    `settings.js contains no hand-typed guide URL (found ${hardcodedGuideLinks}) — the constant is the only path to it`);
+
+  // (d) THE DOCS CARRY THE SAME PARAGRAPH, including the reason.
+  ok(/stdio/i.test(guide), 'docs/mcp-user-guide.md names the stdio transport — the honest reason for the one exclusion');
+  ok(/ChatGPT/.test(guide), '…and states the ChatGPT case explicitly, so the app and the docs agree');
+  ok(!/\bGemini app\b|\bCopilot\b/.test(mcpHtml || ''),
+    'CONTROL: no client is named in the app that the docs do not name');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

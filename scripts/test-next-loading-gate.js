@@ -635,6 +635,12 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   const fn = new Function(
     'state', ...names,
     extractFunction(domainsSrc, 'shouldKeepHealthOnReload', 'domains.js') + '\n' +
+    // v3.49.0: the header's action LABEL is derived from whether a scan
+    // result exists ("Scan wiki health" / "Rescan"). LIFTED rather than
+    // stubbed — this suite renders the real panel, and a stub would let the
+    // label say anything. Its own coverage is in
+    // scripts/test-next-domain-card-order.js.
+    extractFunction(domainsSrc, 'healthScanLabel', 'domains.js') + '\n' +
     extractFunction(domainsSrc, 'renderHealthPanel', 'domains.js') + '\nreturn renderHealthPanel;'
   );
   const render = (state) => fn(state, ...names.map(n => deps[n]))({ slug: 'articles' }, false);

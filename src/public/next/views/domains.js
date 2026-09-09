@@ -680,6 +680,12 @@ async function loadDomainsList(token) {
     // it renders itself when it lands, and making the health scan wait on it
     // would delay the panel above it for no reason.
     loadProjects(state.activeSlug, token).catch(reportAsyncActionFailure);
+    // Same again for the page list on a re-entry. Unlike the semantic scan
+    // there is nothing paid to preserve, and unlike the health report there
+    // is no stale-while-revalidate to arrange: loadBrowse re-stamps its own
+    // state with the slug it was called for and activeBrowse() refuses any
+    // other, so re-asking is both cheap and the safe direction.
+    loadBrowse(state.activeSlug, token).catch(reportAsyncActionFailure);
   } else render(token);
 }
 
@@ -1921,6 +1927,12 @@ function selectDomain(slug) {
   render(myMountToken);
   loadHealth(slug, myMountToken).catch(reportAsyncActionFailure);
   loadProjects(slug, myMountToken).catch(reportAsyncActionFailure);
+  // The page list loads WITH the domain (v3.49.0), for the same reason the
+  // project list does and on the same terms: it is a readdir, it costs
+  // nothing, and it is the one thing on this screen the user actually came
+  // to see. Not awaited and not ordered against the two above — each paints
+  // itself when it lands.
+  loadBrowse(slug, myMountToken).catch(reportAsyncActionFailure);
 }
 
 // ── Projects inside a domain (v3.48.0) ─────────────────────────────────────
@@ -2148,14 +2160,31 @@ function renderMain(token) {
     (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
     renderStatCards(counts, pages) +
-    // ABOVE Health and Browse. A project is a thing about the domain itself —
-    // the same kind of fact as its page counts — while Health and the page
-    // browser are about the wiki's contents. It also puts the Projects
-    // section where a user looking for "where does my agent memory live"
-    // will see it without scrolling past a health report.
+    // ── THE WIKI COMES FIRST (v3.49.0) ───────────────────────────────────
+    // Reported by a power user who could not find "the wiki" at all: the
+    // page browser was the LAST thing on this card, behind a "Browse pages"
+    // button, under a maintenance report. So the index of his own knowledge
+    // — the thing this whole application exists to build — sat below a list
+    // of broken links, and the four stat cards above it counted pages he had
+    // no way to see.
+    //
+    // The order is now: what the domain HOLDS (stat cards, then the pages
+    // themselves), then what is ABOUT the domain (its projects), then the
+    // maintenance report on it. That reads outward from the content, which is
+    // what the user came for, to the housekeeping, which is what they came
+    // for on the days something is wrong.
+    //
+    // THIS SUPERSEDES the v3.48.0 placement note, which argued Projects
+    // belonged above Health and Browse because "a project is a thing about
+    // the domain itself — the same kind of fact as its page counts". That
+    // argument is kept and still holds AGAINST HEALTH: Projects is still
+    // above the health report, and someone looking for "where does my agent
+    // memory live" still finds it without scrolling past one. What the
+    // argument got wrong was ranking a fact about the domain above the
+    // domain's own contents.
+    renderBrowsePanel() +
     renderProjectsPanel(readonly) +
-    renderHealthPanel(domain, readonly) +
-    renderBrowsePanel();
+    renderHealthPanel(domain, readonly);
 
   setMain(html, token);
   document.getElementById('dm-ask-btn')?.addEventListener('click', () => goToChatScoped(domain.slug));
@@ -2572,26 +2601,37 @@ async function loadBrowse(slug, token) {
   }
 }
 
+// The eyebrow every branch of this panel renders.
+//
+// IT NAMES THE THING TWICE ON PURPOSE. The stat cards directly above carry
+// their own `PAGES` eyebrow over a COUNT, so a bare `PAGES` here read as a
+// second heading for the same number rather than as the list itself — and
+// the word the reporting user was looking for, and could not find anywhere
+// on this screen, was "wiki". Naming both is what makes the count and the
+// index distinguishable at a glance.
+const BROWSE_EYEBROW = '<div class="cur-eyebrow dm-recent-eyebrow">PAGES · THE WIKI</div>';
+
 function renderBrowsePanel() {
   const b = activeBrowse();
-  if (!b) {
-    return (
-      '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
-      '<div class="dm-browse-card">' +
-        '<div class="dm-browse-lead">' +
-          renderDescription('Browse every page in this domain — entities, concepts and summaries.') +
-        '</div>' +
-        '<button class="btn btn-secondary" id="dm-browse-load-btn">' + icon('book', 13) + ' Browse pages</button>' +
-      '</div>'
-    );
-  }
-  if (b.loading) {
-    return '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div><div class="dm-browse-card">' +
+  // NO GATE. Until v3.49.0 this branch rendered a "Browse pages" button and
+  // the list existed only after someone pressed it — which is how a user
+  // ended up unable to find his own wiki (see renderMain). The list is now
+  // loaded with the domain, alongside the project list and the health scan,
+  // so this branch is only ever the instant between the first paint and
+  // loadBrowse's own first render. It is the SAME placeholder the loading
+  // branch below shows, deliberately: a control here would flash a gate the
+  // user is not being asked to pass.
+  //
+  // The read is cheap by construction — GET /api/wiki/:domain/list is a
+  // readdir with no file bodies (see the section header) — and the render
+  // cap below is what keeps a 3,300-page domain from painting 3,300 rows.
+  if (!b || b.loading) {
+    return BROWSE_EYEBROW + '<div class="dm-browse-card">' +
       gatedLoader(loadGate, 'Loading pages…', 'dm-browse-empty') + '</div>';
   }
   if (b.error) {
     return (
-      '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
+      BROWSE_EYEBROW +
       '<div class="dm-browse-card">' +
         // The THIRD runtime error in this view that rendered through a class
         // meaning something else — `.dm-browse-empty` also says "No pages
@@ -2632,7 +2672,7 @@ function renderBrowsePanel() {
     : '';
 
   return (
-    '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
+    BROWSE_EYEBROW +
     '<div class="dm-browse-card">' +
       '<div class="dm-browse-controls">' +
         '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
@@ -3100,6 +3140,39 @@ function bindBrowseListeners() {
 
 // ── Health panel ───────────────────────────────────────────────────────────
 
+/**
+ * The health header's action, labelled by whether there is a scan to RE-do.
+ *
+ * ── THE DEFECT, reported by a power user ─────────────────────────────────
+ * The button said "Rescan" in every state, including the one where nothing
+ * had ever been scanned — a word that asks the reader to remember a scan
+ * that never happened, on the screen where they are trying to work out what
+ * this panel even is.
+ *
+ * ── WHERE IT IS ACTUALLY REACHABLE, stated so this is not read as wider
+ * than it is ─────────────────────────────────────────────────────────────
+ * Entering the view and switching domains both run a scan on their own
+ * (loadDomainsList -> loadHealth, and selectDomain -> loadHealth), and
+ * GET /api/health/:domain really scans rather than returning a cached
+ * report — so by the time the READOUT branch paints, a scan for this domain
+ * genuinely has completed and "Rescan" was already the true word there. The
+ * branch that was lying is the FAILURE one: a first scan that errors leaves
+ * no result at all, and the button under the error offered to redo it.
+ *
+ * So the label is derived from the one fact that separates the two, in one
+ * place, for both branches — rather than being right in one of them by
+ * accident. A failure that follows a SUCCESSFUL scan of the same domain
+ * still reads "Rescan", because in that case a result does exist; the panel
+ * is simply showing the error instead of it.
+ *
+ * Pure, and lifted by the suite.
+ */
+function healthScanLabel(hasResult) {
+  return hasResult
+    ? icon('refresh', 13) + ' Rescan'
+    : icon('activity', 13) + ' Scan wiki health';
+}
+
 function renderHealthPanel(domain, readonly) {
   // Stale-while-revalidate — LAYER 2, independent of LAYER 1 in
   // shouldKeepHealthOnReload. A report is usable here ONLY if it was
@@ -3125,7 +3198,11 @@ function renderHealthPanel(domain, readonly) {
       '<div class="dm-health-card">' +
         '<div class="dm-health-top">' +
           '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
-          '<button class="btn btn-secondary" id="dm-rescan-btn">' + icon('refresh', 13) + ' Rescan</button>' +
+          // `usable` is the same predicate the readout branch uses: it is
+          // true only when a report for THIS domain is in hand. A first
+          // scan that failed leaves none, and this is the branch where the
+          // old always-"Rescan" label was actually wrong.
+          '<button class="btn btn-secondary" id="dm-rescan-btn">' + healthScanLabel(usable) + '</button>' +
         '</div>' +
         // Third meaning of `.dm-health-body`, after the loading placeholder
         // above and the readout below: a runtime error. It is a STATE, so it
@@ -3184,7 +3261,7 @@ function renderHealthPanel(domain, readonly) {
       '<div class="dm-health-top">' +
         '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
         '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
-          ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : icon('refresh', 13) + ' Rescan') +
+          ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : healthScanLabel(!!report)) +
         '</button>' +
       '</div>' +
       // Honesty: while revalidating, these counts are the PREVIOUS scan's.

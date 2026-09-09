@@ -1170,7 +1170,7 @@ If you used The Curator before this release, this is the whole map:
 |---|---|
 | **Chat** | **Chat** in the rail. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. |
 | **Ingest** | **Ingest** in the rail. Unchanged otherwise. |
-| **Wiki** | Gone as a destination. Open pages from **Domains → Browse pages**, or by clicking a citation in chat. |
+| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list on any domain's page in **Domains**, or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
 | **Domains** | **Domains** in the rail. Now the hub: stats, health, page list, and the create/rename/delete controls. |
 | **Sync** | **Sync**, in the rail *footer*. |
@@ -1495,12 +1495,12 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"The AI invented N extra summary page(s) (...) — merged into the canonical summary '...' instead of creating duplicates"* | ℹ Info | The AI wrote its content for a second, differently-named summary page instead of the one the file name always produces for this source. | Merged the extra summary's content into the canonical one and never wrote the duplicate to disk. | Nothing. Re-ingesting this same source will keep updating the one canonical summary, as intended. |
 | *"Page path '...' was missing the .md extension — wrote it as '...'"* | ℹ Info | The AI returned a page path with no file extension (e.g. `concepts/some-idea` instead of `concepts/some-idea.md`). | Added the extension and wrote the page normally — previously this page would have been silently dropped. | Nothing. |
 | *"N page paths came back from the AI without the '.md' extension and were written correctly (a, b, c, …and N more)"* (v3.0.17, the grouped form — appears once 3 or more pages hit this in one ingest, see "When one line represents many pages" above) | ℹ Info | Same issue as the row above, happening on 3 or more pages in this ingest. | Same fix, applied to every affected page — grouped into one line instead of listing it N times. | Nothing. Every affected page is still listed individually, with its full path, in the change list above the warnings. |
-| *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → Browse pages**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
+| *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → PAGES · THE WIKI**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
 | *"N pages had to be rewritten more briefly: the AI's first attempt at each came back unusable... (examples). These are real content, but they are briefer than the rest..."* (v3.0.17, grouped form) | ⚠ For review | Same as the row above, happening on 3 or more pages in this ingest. | Same brevity retry, applied to each page, grouped into one line. | Same as above — check the pages named as examples, or anything in the change list that reads unusually thin. |
 | *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **✨ Find duplicate pages** under QUICK MAINTENANCE. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
 | *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open **Domains → the domain → Wiki health** → expand Broken links → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
 | *"Stub page created: `<path>` — AI failed to write content for this page"* | ⚠ For review | The LLM failed to generate content for a planned page even after the page-by-page fallback and the v3.0.17 brevity retry above. | Wrote a clearly-marked stub with the LLM's planned summary preserved. | Re-ingest the source. The stub page has a `stub` tag so you can find it. |
-| *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → Browse pages**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
+| *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES · THE WIKI**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
 | *"Refused an unsafe/malformed page path '...' — nothing was written"* | ⚠ Attention | The AI returned a page path that can never be a valid wiki page (e.g. empty, a folder with no filename, or containing characters that aren't allowed). This is rare and is a hard safety refusal, not an auto-correction. | Refused to write that one page — every other page from the same ingest still wrote normally. | That one page's content was lost. Re-ingest the source; if it recurs on the same source, open an issue — this shouldn't normally happen. |
@@ -1995,7 +1995,7 @@ If you hit step 3, the fix is to compile a shorter thread (or break a sprawling 
 **Tips**
 
 - Give the conversation a focused topic before compiling. A wide-ranging chat compiles into a noisy summary.
-- Re-read the summary page after compile (**Domains → Browse pages**) — you can edit it directly in any text editor or in Obsidian if you want to refine it.
+- Re-read the summary page after compile (**Domains → PAGES · THE WIKI**) — you can edit it directly in any text editor or in Obsidian if you want to refine it.
 - The conversation itself stays in the Chat sidebar after compile — compile doesn't delete it.
 
 ---
@@ -2022,9 +2022,21 @@ Above the list is **New domain**. Click any row to open that domain in the main 
 - A one-line scope sentence: *"A compounding wiki of 3,336 pages — 600 entities, 2,651 concepts, 83 summaries."* (a fourth "other pages" count is added only if any page sits outside those three folders)
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 - **Stat cards**: PAGES · ENTITIES · CONCEPTS · SUMMARIES (plus OTHER when non-zero)
-- The **Wiki health** panel — see [§17](#17-wiki-health)
+- **PAGES · THE WIKI** — the page list itself, **open**, with its filter box and its
+  All / Entities / Concepts / Summaries tabs. See [§11](#11-read-a-wiki-page)
 - The **Projects** section — see just below
-- **PAGES** — a **Browse pages** button that opens the full page list, see [§11](#11-read-a-wiki-page)
+- The **Wiki health** panel — see [§17](#17-wiki-health)
+
+*Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
+**Browse pages** button, underneath the health report — so the index of your own knowledge sat
+below a maintenance report and a user could genuinely fail to find it. It is now the second thing
+you see, open, right under the counts it is the contents of; the order reads outward from what the
+domain **holds** to what is **about** it to the housekeeping **on** it. Nothing else moved:
+Projects is still above Wiki health, exactly as in v3.48.0.
+
+The list loads with the domain, so there is nothing to press. On a very large domain the first 150
+matching rows are painted and a note tells you to narrow the filter — the same cap as before, and
+the reason it is still there.
 
 ### Projects inside a domain
 
@@ -2064,6 +2076,8 @@ old files keep working on any other computer of yours that has not been updated 
 
 *A domain's page, with the **Wiki health** panel expanded — see [§17](#17-wiki-health). Every AI action in that panel names its price before it runs.*
 
+> **This screenshot predates v3.49.0** and still shows the old arrangement: Wiki health above, and a **PAGES** section at the bottom offering a **Browse pages** button. In the app today the page list is open, directly under the stat cards, and the health panel is last. The panel's own contents are unchanged.
+
 ### Creating, renaming, deleting
 
 - **New domain** — give it a **Name**, an optional **Description**, and pick a **Template**: **Generic** (a balanced starting schema, the good default) · **Tech** · **Business** · **Personal**. The template writes the domain's starting schema, which tells the AI how to categorise what you ingest — you can edit it later. Nothing is written until you click **Create domain**.
@@ -2084,7 +2098,9 @@ Reading a page is not a place you navigate to — it's an **overlay** that opens
 
 **From a chat answer.** Click any `[source: …]` citation. The page the answer drew from opens immediately, so you can check the claim without losing the conversation underneath.
 
-**From a domain's page list.** Open **Domains**, pick a domain, scroll to **PAGES**, click **Browse pages**. You get:
+**From a domain's page list.** Open **Domains** and pick a domain. The list is under
+**PAGES · THE WIKI**, directly beneath the stat cards, and it is already open — before v3.49.0 it
+sat at the bottom of the page behind a **Browse pages** button. You get:
 
 - a **Filter by name…** box that narrows the list as you type
 - tabs — **All · Entities · Concepts · Summaries** — each with its own count
@@ -2266,6 +2282,8 @@ Use **Obsidian** when you want to:
 ### Option C — My Curator MCP (frontier-model research, plus writes from v2.5.2+)
 
 Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or any MCP-compatible AI client — to **research** your wiki AND, since v2.5.2, **save findings back into it** without leaving the conversation.
+
+> **Which AIs can use it.** The bridge is a **stdio JSON-RPC server** — an ordinary local program — so it works with **any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor, and others.** It is not an integration with one assistant. The one real limit is the transport rather than the vendor: **ChatGPT's web app cannot run a local server, so it cannot connect.** The setup steps below and in the wizard are written for Claude Desktop because that is the most common case — only the file you paste the entry into changes. Full detail in [docs/mcp-user-guide.md](mcp-user-guide.md).
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
@@ -2872,13 +2890,23 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 
 | Section | What's in it |
 |---|---|
-| **General** | Appearance (theme), System check, Show setup guide |
+| **General** | **Software update** (first), Appearance / Text size / Menu bar, System check, Show setup guide |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read what chat starts on, browse the whole catalogue ([§16b](#16b-choosing-your-ai-model)) |
+| **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
-| **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
 
-At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` — next to an **Updates** button.
+*Reordered in v3.49.0.* The list used to run General → Providers → MCP bridge → Health → Knowledge
+base, which was the order the sections were built in rather than the order anyone reads them. It is
+now ordered by how often you come back to a section: the app itself, then the AI and the bill, then
+where your wiki lives, then a bridge you set up once per client, then cost ceilings you touch only
+when a scan refuses to run. **Software update** moved with it — it was the third of four blocks
+inside **General** and is now the first thing that section shows, because it is what most people
+open Settings for. Nothing inside any section changed.
+
+At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` — next to an
+**Updates** button, which switches to **General** and runs the check. That landing is now at the
+**top** of the section it lands on.
 
 ### The page is four numbered steps
 
@@ -3029,7 +3057,7 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 ### Version and updates
 
-The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** takes you to the update controls.
+The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** takes you to the update controls: it switches to **General**, where **Software update** is the first block on the page (*it was the third until v3.49.0*), and runs the check.
 
 **How you update depends on which install you have**, and it is the second of the four
 real differences between them. If you are not sure which you are running,
@@ -3757,9 +3785,11 @@ These are measurements, not endorsements. Your documents are not the documents t
 
 ## 17. Wiki Health
 
-**Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page, between the stat cards and the page list. That's where it belongs: a health problem is always a problem with one specific wiki.
+**Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page — the **last** section, below the page list and the Projects group (it sat above them until v3.49.0). That's where it belongs: a health problem is always a problem with one specific wiki, and it is the section you go looking for on the days something is wrong rather than the one you read first.
 
-**It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. **Rescan** re-runs it after you've made changes. The panel opens with a plain sentence: *"Found 14 issues, last scanned 2 min ago."* Under it is a line of what was scanned, then a row of chips — one per issue type, with its count. Zero counts stay grey.
+**It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. The panel then shows the open-issue total with **scanned N ago** beside it, the entity / concept / summary / dismissed counts, and a row of chips — one per issue type, with its count. Zero counts stay grey.
+
+**The button says what it will do.** Once a scan has produced a result for that domain the action reads **Rescan**, and re-runs it after you have made changes. If a scan **fails** and there is no result at all — a folder that has gone away, a disk that stopped answering — the same button reads **Scan wiki health** instead, because there is nothing to *re*-do (*new in v3.49.0*; it used to say "Rescan" under an error, asking you to remember a scan that never happened). A failure that follows a successful scan still says **Rescan**, because in that case a result does exist — the panel is just showing you the error instead of it.
 
 Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
 
@@ -4114,7 +4144,7 @@ The cost figures throughout this section are for **Gemini and Claude**, the two 
 
 | ✅ Uses tokens (paid) | ❌ Free / local-only |
 |---|---|
-| **Ingest** — by far the biggest consumer | **Reading wiki pages** (the reader overlay, Browse pages) |
+| **Ingest** — by far the biggest consumer | **Reading wiki pages** (the reader overlay, the PAGES · THE WIKI list) |
 | **Chat** — every message + reply | **Domain management** (create / rename / delete) |
 | **Wiki health — ✨ Ask AI on broken links** (Phase 1) | **GitHub Sync** (Sync now / Push only / Pull only) |
 | **Wiki health — ✨ Ask AI on orphan pages** (Phase 2) | **Wiki health structural scan** + deterministic fixes (folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) |

@@ -158,6 +158,20 @@ function extractFunction(source, name) {
   return extracted;
 }
 
+// A single-line `const NAME = '…';` declaration, lifted verbatim.
+//
+// SINGLE-LINE ONLY, and it says so by throwing: a multi-line initialiser
+// would need brace/quote matching, and a regex that silently stopped at the
+// first `;` inside a string would hand the sandbox a truncated declaration
+// that fails much later as a SyntaxError. The extractors in this file are
+// loud on desync by design.
+function extractConstText(source, name) {
+  const re = new RegExp(`(?:^|\\n)const ${name} = [^\\n]*;`);
+  const m = re.exec(source);
+  if (!m) throw new Error(`extractConstText: "${name}" not found as a single-line const in domains.js`);
+  return m[0].trim();
+}
+
 /**
  * Build a callable from lifted source, with every free identifier supplied
  * by name.
@@ -321,6 +335,10 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
   const build = () => makeCallable(
     ['state', ...names],
     extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
+    // v3.49.0: the header's action LABEL is derived, not hardcoded — see
+    // §3b. It is LIFTED rather than stubbed, so what these renders show is
+    // the shipped word and not this file's idea of it.
+    extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
     extractFunction(domainsSrc, 'renderHealthPanel'),
     'renderHealthPanel'
   );
@@ -424,6 +442,7 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
       ['state', ...names],
       extractFunction(domainsSrc, 'relTime') + '\n' +
       extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
+      extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
       extractFunction(domainsSrc, 'renderHealthPanel'),
       'renderHealthPanel'
     )({ healthLoading: false, health: report, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() },
@@ -603,7 +622,12 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
     };
     const names = Object.keys(deps);
     const html = callOrFail('browse panel with a listing error', () => makeCallable(
-      ['state', ...names], extractFunction(domainsSrc, 'renderBrowsePanel'), 'renderBrowsePanel'
+      // v3.49.0: the eyebrow is one shared const across the panel's branches
+      // (the stat cards above carry their own PAGES eyebrow over a COUNT, so
+      // the list says "PAGES · THE WIKI"). Lifted, not retyped.
+      ['state', ...names],
+      extractConstText(domainsSrc, 'BROWSE_EYEBROW') + '\n' +
+      extractFunction(domainsSrc, 'renderBrowsePanel'), 'renderBrowsePanel'
     )({}, ...names.map((n) => deps[n]))());
     if (html) {
       ok(html.includes('tx-status-danger'),

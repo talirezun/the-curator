@@ -134,6 +134,13 @@ function loadHealth(slug, token, opts) { calls.loadHealth.push({ slug, token, op
 // is kept per project inside a domain). Stubbed and RECORDED rather than
 // silently swallowed, so a change that stopped re-asking is visible here.
 function loadProjects(slug, token) { (calls.loadProjects = calls.loadProjects || []).push({ slug, token }); return Promise.resolve(); }
+// v3.49.0: selectDomain also re-asks for the domain's PAGE LIST. The browser
+// used to sit behind a "Browse pages" button and load only on demand, which
+// is how a power user ended up unable to find his own wiki; it is now loaded
+// with the domain, like the projects above. Stubbed and RECORDED for the same
+// reason: a change that stopped re-asking must be visible here rather than
+// silently swallowed.
+function loadBrowse(slug, token) { (calls.loadBrowse = calls.loadBrowse || []).push({ slug, token }); return Promise.resolve(); }
 function navigate(name) { calls.navigate.push(name); calls.order.push('nav'); }
 function reportAsyncActionFailure(err) { calls.asyncFailures = (calls.asyncFailures || 0) + 1; void err; }
 const shell = { requestChatScope: (s) => { calls.chatScope.push(s); calls.order.push('scope'); } };
