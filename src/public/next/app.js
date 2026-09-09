@@ -249,22 +249,67 @@ const THEME_KEY = 'curator-next-theme';
 const VIEW_KEY = 'curator-next-view';
 const FONT_SCALE_KEY = 'curator-next-font-scale';
 
-// Rail order matches ARCHITECTURE.md's rail table exactly: your brain
-// (Domains) -> your team's brain (Shared Brain) -> your agents' brain
-// (Agent memory) -> the way material gets in (Ingest), with Chat as the
-// way in to all three ahead of them, then the footer pair.
-const NAV_VIEWS = ['chat', 'domains', 'shared', 'memory', 'ingest'];
+// ── RAIL ORDER (v3.49.0) ────────────────────────────────────────────────
+// This used to read: "Rail order matches ARCHITECTURE.md's rail table
+// exactly: your brain (Domains) -> your team's brain (Shared Brain) -> your
+// agents' brain (Agent memory) -> the way material gets in (Ingest), with
+// Chat as the way in to all three ahead of them, then the footer pair."
+//
+// That ordering is an ONTOLOGY (whose brain is this?) and it put Ingest —
+// the way anything gets INTO the app at all — last, behind two surfaces a
+// new user has neither joined nor populated. A power user's report on
+// v3.48.1 was blunt about the consequence: the upload arrow was not
+// obviously Ingest, and it was the fifth thing in a column he read top
+// down. The order below is a FREQUENCY order for the three everyday
+// surfaces, then an advanced group:
+//
+//   chat -> ingest -> domains   | the everyday loop: ask, add, browse
+//   ─────────────────────────── | RAIL_DIVIDER_AFTER draws the line here
+//   shared -> memory            | advanced: a cohort you joined, agents
+//
+// The divider is DATA, not a hardcoded index in renderRail(): reordering
+// NAV_VIEWS moves the line with the item it follows, and a divider naming a
+// view that is not in NAV_VIEWS simply never renders (renderRail() asks
+// per item, so there is no index to fall out of range).
+const NAV_VIEWS = ['chat', 'ingest', 'domains', 'shared', 'memory'];
 const FOOTER_VIEWS = ['sync', 'settings'];
 const ALL_VIEWS = [...NAV_VIEWS, ...FOOTER_VIEWS];
 
+// The thin rule separating the everyday group from the advanced group is
+// drawn AFTER this view. Null / an unknown name = no divider.
+const RAIL_DIVIDER_AFTER = 'domains';
+
+// The view the rail's own logo button goes to, and the view a FIRST launch
+// lands on (see boot()). Domains is the overview — every domain, its page
+// and conversation counts, and the project list — which is what "home"
+// means in an app whose whole subject is a knowledge base. It is also
+// answerable with no API key and no cohort, unlike Chat, which was the old
+// default and greets a fresh install with a composer it cannot yet use.
+const HOME_VIEW = 'domains';
+
+// `caption` is the rail's own label, rendered UNDER the icon (v3.49.0).
+// It is deliberately not `label` and not `title`:
+//   title   — the tooltip and the aria-label. The FULL name, because a
+//             screen reader and a hover both have room for it, and
+//             "Shared" alone does not say what is shared.
+//   label   — the long form used by other surfaces (view headers).
+//   caption — ONE WORD, because it sits under a 19px icon in a 72px column
+//             (--app-rail-w) and a two-word caption either wraps or gets
+//             clipped at the app's Largest text size, where the widest
+//             one-word caption already measures 53.27px of a 60px content
+//             box. "Shared Brain" -> "Shared",
+//             "Agent memory" -> "Memory"; every other view's name is
+//             already one word.
+// Keeping all three means widening the rail is a layout decision, never a
+// truncation decision — nothing loses its real name to fit.
 const VIEW_META = {
-  chat:     { label: 'Chat',          icon: 'messageSquare', title: 'Chat' },
-  domains:  { label: 'Domains',       icon: 'grid',          title: 'Domains' },
-  shared:   { label: 'Shared Brain',  icon: 'users',         title: 'Shared Brain' },
-  memory:   { label: 'Agent memory',  icon: 'cpu',           title: 'Agent memory' },
-  ingest:   { label: 'Ingest',        icon: 'upload',        title: 'Ingest' },
-  sync:     { label: 'Sync',          icon: 'refresh',       title: 'Sync' },
-  settings: { label: 'Settings',      icon: 'settings',      title: 'Settings' },
+  chat:     { label: 'Chat',          caption: 'Chat',     icon: 'messageSquare', title: 'Chat' },
+  domains:  { label: 'Domains',       caption: 'Domains',  icon: 'grid',          title: 'Domains' },
+  shared:   { label: 'Shared Brain',  caption: 'Shared',   icon: 'users',         title: 'Shared Brain' },
+  memory:   { label: 'Agent memory',  caption: 'Memory',   icon: 'cpu',           title: 'Agent memory' },
+  ingest:   { label: 'Ingest',        caption: 'Ingest',   icon: 'upload',        title: 'Ingest' },
+  sync:     { label: 'Sync',          caption: 'Sync',     icon: 'refresh',       title: 'Sync' },
+  settings: { label: 'Settings',      caption: 'Settings', icon: 'settings',      title: 'Settings' },
 };
 
 // ── Icons ──────────────────────────────────────────────────────────────
@@ -592,9 +637,10 @@ export function navigate(name) {
 // already been persisted as VIEW_KEY on some earlier, still-good launch, and
 // nothing here ever un-persisted it — so every subsequent reload landed
 // straight back on the error card with no recovery path but manually
-// clearing localStorage. Removing the key (rather than writing 'chat'
-// directly) reuses boot()'s own existing fallback-to-chat default, so there
-// is exactly one place that decides what "no saved view" means.
+// clearing localStorage. Removing the key (rather than writing a view name
+// directly) reuses boot()'s own existing default — HOME_VIEW since v3.49.0,
+// 'chat' before it — so there is exactly one place that decides what "no
+// saved view" means, and moving that default moves this recovery with it.
 function handleMountFailure(name, err) {
   console.error('[next] onEnter failed for view "' + name + '"', err);
   renderMountErrorCard(name, err);
@@ -1274,36 +1320,106 @@ function renderRail() {
   // v3.6.1 root-absolutised all 18 references in next/index.html for exactly
   // this reason and pinned them with scripts/test-next-asset-paths.js — but
   // that suite scans index.html, so a ref built in JS was outside its reach.
-  // scripts/test-cutover.js now pins this one too.
-  const markSrc = state.theme === 'light' ? '/next/assets/mark-small-on-light.svg' : '/next/assets/mark-small-on-dark.svg';
+  // scripts/test-cutover.js used to pin this one; v3.41.0 DELETED that file
+  // along with the cutover notice it existed to test, and the assertion went
+  // with it. scripts/test-next-shell-rail.js §7 picked it back up in
+  // v3.49.0, by rendering the rail and requiring the src it produced to be
+  // root-absolute AND to exist on disk.
+  //
+  // v3.49.0: this points at mark-MINI-on-*.svg, not mark-small-on-*.svg.
+  // The "small" pair was the full 40-node / 100-edge mark with a thicker
+  // stroke; at the 28px the rail draws it, a power user's report was that
+  // it is noise. The mini pair keeps the same silhouette (its ten node
+  // coordinates are copied verbatim out of the full mark) and the same
+  // colours, on 10 nodes and 14 edges. mark-small-on-*.svg is untouched and
+  // still shipped — see assets/mark-mini-on-dark.svg's own comment for
+  // where each belongs.
+  const markSrc = state.theme === 'light' ? '/next/assets/mark-mini-on-light.svg' : '/next/assets/mark-mini-on-dark.svg';
 
+  // ── THE CAPTION UNDER EVERY ICON (v3.49.0) ───────────────────────────
+  // Reported by a power user on v3.48.1, in his own words: he could not
+  // tell the people icon (Shared Brain) from the memory icon and waited for
+  // the tooltip to arrive, and the upload arrow did not read as "Ingest".
+  // A tooltip is not a label — it costs a hover and half a second EVERY
+  // time, it is invisible to anyone navigating by keyboard, and it is
+  // absent entirely on touch. `title` stays (it carries the FULL name, and
+  // the caption is a one-word abbreviation for two of the seven), but the
+  // name is now on screen.
+  //
+  // The caption is INSIDE the button, not a sibling under it. Three
+  // consequences, all wanted: the hit target is one box covering icon AND
+  // text rather than a 40px icon with an unclickable word beneath it; the
+  // `.active` accent tint and border wrap both, so "which section am I in"
+  // is one shape rather than two; and the focus ring — which this shell
+  // draws on the button — surrounds the whole label.
+  //
+  // TEXT FACE, NOT MONO, and that is the v3.44.0 queued item this closes.
+  // typography.css's own rule: mono is "everything the machine owns —
+  // paths, slugs, wiki-links, counts, versions, eyebrow labels". A section
+  // name is prose a human reads, so it takes --font-sans through the
+  // --type-caption rung (added in tokens/typography.css for this).
+  // scripts/test-next-shell-rail.js §8 resolves .rail-cap's font token one
+  // level and asserts the FAMILY it lands on, with --type-eyebrow as a
+  // paired control proving the resolver can tell the two faces apart — the
+  // failure being guarded is a one-word token swap, not a missing line.
   const navBtns = NAV_VIEWS.map((id) => {
     const meta = VIEW_META[id];
-    const badge = id === 'sync' ? '' : ''; // sync badge is in the footer button below
+    const divider = id === RAIL_DIVIDER_AFTER
+      // aria-hidden + role=presentation: this is a grouping HINT, not a
+      // landmark. A separator announced to a screen reader between two
+      // buttons that already announce their own names is noise.
+      ? '<div class="rail-divider" role="presentation" aria-hidden="true"></div>'
+      : '';
     return (
       '<button class="rail-btn" data-view="' + id + '" title="' + meta.title + '" aria-label="' + meta.title + '">' +
-        icon(meta.icon, 19) + badge +
-      '</button>'
+        icon(meta.icon, 19) +
+        // aria-hidden on the caption: the button already carries the FULL
+        // name in aria-label, and an unhidden caption would make a screen
+        // reader read "Shared Brain, Shared".
+        '<span class="rail-cap" aria-hidden="true">' + escapeHtml(meta.caption) + '</span>' +
+      '</button>' + divider
     );
   }).join('');
 
   const syncMeta = VIEW_META.sync;
   const settingsMeta = VIEW_META.settings;
 
+  // ── THE LOGO IS A BUTTON (v3.49.0) ───────────────────────────────────
+  // Same report: "the logo is not clickable and there is no home". Every
+  // app whose chrome carries a mark in the top-left has trained the
+  // expectation that clicking it goes somewhere; this one absorbed the
+  // click and did nothing, which reads as a dead app rather than as a
+  // decorative image.
+  //
+  // It goes to HOME_VIEW (Domains), which is also where a FIRST launch now
+  // lands — one destination, named once, so the two can never disagree.
+  // The <img> keeps `alt=""` and aria-hidden because the BUTTON now owns
+  // the accessible name ("Home"); an alt of "The Curator" inside a button
+  // labelled "Home" would be announced as both.
   rail.innerHTML =
-    '<img class="rail-mark" src="' + markSrc + '" alt="The Curator" width="26" height="26">' +
+    '<button class="rail-home" id="rail-home" data-view="' + HOME_VIEW + '" ' +
+      'title="Home — your domains overview" aria-label="Home">' +
+      '<img class="rail-mark" src="' + markSrc + '" alt="" aria-hidden="true" width="28" height="28">' +
+    '</button>' +
     navBtns +
     '<div class="rail-spacer"></div>' +
     '<button class="rail-theme-toggle" id="rail-theme-toggle" title="Toggle theme"></button>' +
     '<button class="rail-btn rail-btn-sm" data-view="sync" title="' + syncBadgeTitle(_syncPendingCount) + '" aria-label="' + syncMeta.title + '">' +
       icon(syncMeta.icon, 18) +
+      '<span class="rail-cap" aria-hidden="true">' + escapeHtml(syncMeta.caption) + '</span>' +
       syncBadgeMarkup(_syncPendingCount) +
     '</button>' +
     '<button class="rail-btn rail-btn-sm" data-view="settings" title="' + settingsMeta.title + '" aria-label="' + settingsMeta.title + '">' +
       icon(settingsMeta.icon, 18) +
+      '<span class="rail-cap" aria-hidden="true">' + escapeHtml(settingsMeta.caption) + '</span>' +
     '</button>' +
     '<div class="rail-avatar" aria-hidden="true"></div>';
 
+  // ONE delegation point for every [data-view] in the rail — the seven nav
+  // buttons AND the home button, which carries data-view="domains" for
+  // exactly this reason rather than getting its own listener. It follows
+  // that clicking the logo highlights Domains in the rail, which is
+  // correct: it IS Domains, not a separate place.
   rail.querySelectorAll('[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => navigate(btn.dataset.view));
   });
@@ -2449,15 +2565,56 @@ export async function checkOtherInstances() {
 
 // ── Boot ───────────────────────────────────────────────────────────────
 
+// Which view a launch opens, decided from the raw stored value and nothing
+// else. Pulled out of boot() in v3.49.0 so the rule is testable by RUNNING
+// it rather than by reading boot()'s source: boot() also touches theme,
+// font scale, four timers, three fetches and the onboarding panel, none of
+// which an offline suite can stand up, and a source regex asserting the
+// presence of a line proves nothing about what that line does (this repo's
+// own recorded lesson, v3.0.17).
+//
+// TWO rules, and the ORDER of them is the whole behaviour:
+//   1. A stored view is restored — that is the feature, and it predates
+//      this release.
+//   2. It is restored ONLY if this build still has it. `stored` comes from
+//      localStorage, which outlives the build that wrote it: a view renamed
+//      or removed by an update would otherwise be handed to navigate(),
+//      which would fail to find it in the registry. ALL_VIEWS, not
+//      NAV_VIEWS — 'sync' and 'settings' are footer views and are perfectly
+//      legitimate things to have been on when you quit.
+// Anything else — never set, storage disabled, hand-edited junk, a name
+// from an older build — falls to HOME_VIEW.
+function pickStartView(stored) {
+  return (stored && ALL_VIEWS.includes(stored)) ? stored : HOME_VIEW;
+}
+
 function boot() {
   let savedTheme = 'dark';
-  let savedView = 'chat';
+  // ── FIRST LAUNCH LANDS ON DOMAINS, NOT CHAT (v3.49.0) ────────────────
+  // This was 'chat'. A first launch therefore opened a composer against a
+  // knowledge base the user has not created yet, with no API key saved —
+  // the one screen in the app that cannot answer anything until two other
+  // screens have been visited. HOME_VIEW (Domains) is the overview: the
+  // domains that exist, their page and conversation counts, their
+  // projects, and the buttons that create the first one. It is also where
+  // the rail's logo button goes, so "home" is one place, named once.
+  //
+  // This is the DEFAULT ONLY. Restoring the view the user left is
+  // unchanged and still wins — the line below overwrites this the moment
+  // VIEW_KEY holds a view that still exists. So a returning user notices
+  // nothing; only a fresh install, a cleared storage, or a stored value
+  // naming a view this build no longer has (validated against ALL_VIEWS,
+  // which is the whole point of that check) lands here.
+  let savedView = HOME_VIEW;
   let savedFontScale = FONT_SCALE_DEFAULT;
   try {
     const t = localStorage.getItem(THEME_KEY);
     if (t === 'light' || t === 'dark') savedTheme = t;
-    const v = localStorage.getItem(VIEW_KEY);
-    if (v && ALL_VIEWS.includes(v)) savedView = v;
+    // ONE try/catch for all three reads, unchanged: if localStorage itself
+    // throws, every one of them falls to its default together, which is
+    // why pickStartView takes the already-read value rather than doing its
+    // own read.
+    savedView = pickStartView(localStorage.getItem(VIEW_KEY));
     // normalizeFontScale absorbs null (never set), a value from an older
     // build, and anything hand-edited into storage — all three land on the
     // default rather than writing junk into a CSS custom property.

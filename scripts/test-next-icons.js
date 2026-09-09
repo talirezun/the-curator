@@ -68,7 +68,7 @@
  *     for why).
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -253,24 +253,49 @@ const faviconMatch = /<link rel="icon" href="([^"]+)">/.exec(nextHtml);
 ok(!!faviconMatch, 'next/index.html has exactly one <link rel="icon"> (this suite assumes a single-asset fix — see its header comment)');
 
 const faviconHref = faviconMatch ? faviconMatch[1] : '';
-ok(faviconHref === '/next/assets/mark-small-on-light.svg',
-   `favicon points at the on-light asset (got "${faviconHref}")`);
+// v3.49.0 CHANGED THIS ASSERTION DELIBERATELY, and the reason matters more
+// than the edit. It read `faviconHref === '/next/assets/mark-small-on-light
+// .svg'` — an exact FILENAME, which is not the property Defect 2 was about.
+// Defect 2 was "the tab icon is invisible on a light tab", and the fix was
+// "use the DARK-INK variant". v3.49.0 introduced a reduced mark for small
+// sizes (mark-mini-on-*.svg — a favicon is drawn at 16-32px, the exact size
+// at which the full 40-node mark stops resolving) and pointed the favicon
+// at its on-light half, which satisfies Defect 2 completely while failing a
+// filename comparison. Pinning the name would have made this suite an
+// obstacle to a fix in its own subject area, so it now pins the PROPERTY:
+// an on-light-named asset, dark ink, no on-dark ink. The name variant is
+// free to move; the ink is not.
+ok(/^\/next\/assets\/mark-[a-z]+-on-light\.svg$/.test(faviconHref),
+   `favicon points at an on-LIGHT (dark-ink) mark asset (got "${faviconHref}")`);
 ok(faviconHref.startsWith('/next/'), 'favicon reference is root-absolute and /next/-prefixed (matches test-next-asset-paths.js\'s convention)');
 
 const faviconDiskPath = path.join(ROOT, 'src/public', faviconHref.replace(/^\//, ''));
 ok(existsSync(faviconDiskPath), `the referenced favicon file exists on disk (${faviconDiskPath})`);
 
-// Sanity: the two mark assets are actually what their names claim — dark
-// ink on the "on-light" file, light ink on the "on-dark" file — so a
-// future swap back to the wrong one is at least structurally implausible.
+// Sanity: the mark assets are actually what their names claim — dark ink on
+// every "on-light" file, light ink on every "on-dark" file — so a future
+// swap back to the wrong one is at least structurally implausible. Checked
+// over EVERY pair in assets/, not just the one index.html happens to point
+// at today: v3.49.0 added a second pair, and a suite that only inspects the
+// linked file would have let a mislabelled sibling sit there until the day
+// somebody linked it.
 const onLightSvg = existsSync(faviconDiskPath) ? readFileSync(faviconDiskPath, 'utf8') : '';
-ok(onLightSvg.includes('#14141F'), 'mark-small-on-light.svg uses dark ink (#14141F)');
-ok(!onLightSvg.includes('#EDEDF4'), 'mark-small-on-light.svg does not use the on-dark light ink (#EDEDF4)');
+ok(onLightSvg.includes('#14141F'), `${path.basename(faviconHref)} uses dark ink (#14141F)`);
+ok(!onLightSvg.includes('#EDEDF4'), `${path.basename(faviconHref)} does not use the on-dark light ink (#EDEDF4)`);
 
-const onDarkPath = path.join(ROOT, 'src/public/next/assets/mark-small-on-dark.svg');
-if (existsSync(onDarkPath)) {
-  const onDarkSvg = readFileSync(onDarkPath, 'utf8');
-  ok(onDarkSvg.includes('#EDEDF4'), 'mark-small-on-dark.svg (still on disk, unused by index.html now) uses light ink (#EDEDF4), confirming it really is the dark-background variant');
+const ASSET_DIR = path.join(ROOT, 'src/public/next/assets');
+const markFiles = existsSync(ASSET_DIR)
+  ? readdirSync(ASSET_DIR).filter((f) => /^mark-[a-z]+-on-(dark|light)\.svg$/.test(f)).sort()
+  : [];
+ok(markFiles.length >= 2,
+   `assets/ holds at least one on-dark/on-light mark pair (found ${markFiles.length}: ${markFiles.join(', ')})`);
+for (const f of markFiles) {
+  const svg = readFileSync(path.join(ASSET_DIR, f), 'utf8');
+  const wantsLightInk = /-on-dark\.svg$/.test(f);   // dark BACKGROUND ⇒ light ink
+  ok(svg.includes(wantsLightInk ? '#EDEDF4' : '#14141F'),
+     `${f} uses ${wantsLightInk ? 'light ink (#EDEDF4)' : 'dark ink (#14141F)'}, matching the background its name claims`);
+  ok(!svg.includes(wantsLightInk ? '#14141F' : '#EDEDF4'),
+     `${f} does not also carry the OTHER theme's ink`);
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

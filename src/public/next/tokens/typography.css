@@ -75,4 +75,28 @@
   --type-label:    var(--weight-medium) var(--text-md)/var(--leading-snug) var(--font-sans);
   --type-mono:     var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-mono);
   --type-eyebrow:  var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+
+  /* ── Caption rung (ADDED v3.49.0) ──────────────────────────────────────
+     The smallest rung that is still PROSE. It exists for the rail's
+     section names, which sit under a 19px icon in a narrow column and must
+     read as words a human wrote — so --font-sans, not --font-mono, unlike
+     --type-eyebrow directly above it, which is the machine's voice (paths,
+     counts, versions) and the face the rail's captions must NOT take.
+
+     11px (--text-xs) rather than 12px (--text-sm), and the difference is
+     the width of the whole rail. Measured in a real browser at
+     deviceScaleFactor 2, against the app's own Largest text setting
+     (--font-scale 1.18, so 11px resolves to 12.98px), the widest caption
+     is "Domains" at 53.27px. At the 12px rung the same string is ~58px, and
+     the rail column (--app-rail-w in shell.css) would have had to grow past
+     72px to hold it — 72 is already 12px more than the rail was before
+     captions existed, and every pixel of it comes out of the sidebar and
+     main columns. The 11px rung is the largest one that fits every caption
+     at every one of the four text sizes Settings offers.
+
+     --leading-tight, not a raw 1: a descender ('g' in "Settings") needs the
+     0.1 of extra box, and the caption is a single line by construction (the
+     rail sets white-space: nowrap), so a leading over 1 costs nothing in
+     wrapping. It is an ADDITION — no existing token's value moved. */
+  --type-caption:  var(--weight-medium) var(--text-xs)/var(--leading-tight) var(--font-sans);
 }

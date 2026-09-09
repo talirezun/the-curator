@@ -16,6 +16,36 @@
    and keep the token file untouched, per the "ship tokens as-is" rule. */
 :root {
   --app-sidebar-w: 272px;
+
+  /* ── THE RAIL COLUMN (named AND widened, v3.49.0) ─────────────────────
+     This width was a bare `60px` literal in FOUR places — #app-shell's grid
+     template, .reader-scrim's left offset, --guide-dock-w's calc, and a
+     comment describing the first. Naming it was a prerequisite for
+     v3.49.0's captions: the rail had to be measured against its widest
+     caption, and a width you can only change in four places at once is a
+     width nobody changes.
+
+     60px -> 72px, AND THE 12px IS A MEASUREMENT, NOT A MARGIN OF TASTE.
+     Rendered in a real browser at deviceScaleFactor 2 with the app's own
+     Largest text setting (--font-scale 1.18, the largest of the four sizes
+     Settings offers), the captions measure:
+
+       Domains 53.27   Settings 50.84   Memory 50.02   Shared 43.36
+       Ingest  38.02   Sync     30.27   Chat   28.88
+
+     A 60px rail leaves the caption a 48px content box (60 - 8 of column
+     breathing room - 2 of button border - 2 of button padding), so the top
+     THREE overflowed — clipped against `white-space: nowrap`, silently, at
+     the one text size the users who most need a caption are most likely to
+     be using. 72px gives a 60px content box: 6.73px of slack on the widest
+     caption at the largest scale, 13.97px at the default scale. Every other
+     caption has more.
+
+     The first draft of this was 68px, chosen against "Settings" — which is
+     the longest caption by CHARACTER COUNT and not the widest by PIXELS.
+     "Domains" beats it by 2.43px in this face. Re-measure, do not count
+     letters, before shortening this. */
+  --app-rail-w: 72px;
 }
 
 /* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
@@ -499,7 +529,7 @@ textarea {
 
 #app-shell {
   display: grid;
-  grid-template-columns: 60px var(--app-sidebar-w) 1fr;
+  grid-template-columns: var(--app-rail-w) var(--app-sidebar-w) 1fr;
   height: 100vh;
   overflow: hidden;
 }
@@ -568,8 +598,8 @@ textarea {
    because §9 as written could only see that both lines were DECLARED, which
    is what let this ship.
 
-   Geometry is untouched either way: #app-shell's 60px / --app-sidebar-w
-   columns and .reader-scrim's `left: calc(60px + var(--app-sidebar-w))` do
+   Geometry is untouched either way: #app-shell's --app-rail-w /
+   --app-sidebar-w columns and .reader-scrim's own left offset do
    not move, since a shadow — inset or not — takes part in no layout.
 
    ── THE BLUR IS DECLARED AND DOES NOTHING HERE, STATED RATHER THAN HIDDEN
@@ -593,21 +623,96 @@ textarea {
   gap: var(--space-2);
 }
 
+/* ── THE LOGO, WHICH IS NOW A BUTTON (v3.49.0) ─────────────────────────
+   It was a bare <img> that absorbed clicks and did nothing; it is a real
+   <button> going to the Domains overview. The button carries no visible
+   chrome at rest — the mark IS the affordance, as it is in every app whose
+   top-left mark navigates home — but it takes the same hover/press overlay
+   vocabulary as .rail-btn so a pointer landing on it gets an answer, and it
+   is a real focusable control so the keyboard gets one too.
+
+   `padding` rather than a fixed box: it makes the hit target 42x42 around a
+   28px mark — measured — comfortably over the 28px macOS floor, without the
+   mark itself having to grow, and it keeps the hover overlay a square that
+   matches the nav buttons below it rather than hugging the artwork. */
+.rail-home {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);            /* 6px — a 28px mark in a 42px target */
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: default;
+  flex: none;
+  transition: background var(--t-state), border-color var(--t-state), transform var(--t-press);
+}
+.rail-home:hover { background: var(--mat-row-hover); }
+.rail-home:active { background: var(--mat-row-active); transform: scale(var(--press-scale-icon)); }
+
 .rail-mark {
-  width: 26px;
-  height: 26px;
-  margin-bottom: 12px;
+  /* 26px -> 28px (v3.49.0). The mark is the REDUCED one now
+     (assets/mark-mini-on-*.svg): same silhouette, same three accent dots,
+     10 nodes instead of 40 and 14 edges instead of 100, drawn on a
+     -5 -5 110 110 viewBox so its heavier 5.5-unit stroke and larger nodes
+     have somewhere to sit. The extra 2px restores the artwork to the same
+     optical height as the old 26px mark on its tighter 0 0 100 100 box
+     (80.16 drawn units of 110 at 28px = 20.4px, against 80.16 of 100 at
+     26px = 20.8px), so nothing on the rail moved. */
+  width: 28px;
+  height: 28px;
   display: block;
   flex: none;
 }
 
+/* ── THE GROUP DIVIDER (v3.49.0) ───────────────────────────────────────
+   One thin rule between the everyday group (Chat, Ingest, Domains) and the
+   advanced group (Shared Brain, Agent memory). Purely visual grouping —
+   app.js renders it aria-hidden with role="presentation", so it adds
+   nothing to the accessibility tree.
+
+   --hairline, not --border: this sits ON the rail's material plane, and
+   --hairline is the token color.css designates for a decorative line
+   inside a surface, at 0.06 white / 0.07 ink. --border is a box boundary
+   and reads as a second edge beside the rail's own two-line material edge.
+   Height is --hairline-w — 1px at 1x, and 0.5px at >=2dppx, which is what
+   AppKit itself draws (see the token's own note in material.css); measured
+   0.5px in the 2x render. */
+.rail-divider {
+  width: var(--space-12);             /* 24px — a third of the rail column */
+  height: var(--hairline-w);
+  background: var(--hairline);
+  margin: var(--space-1) 0;
+  flex: none;
+}
+
+/* ── THE NAV BUTTON, NOW A TWO-ROW STACK (v3.49.0) ─────────────────────
+   Was a fixed 40x40 icon box. It is now icon-over-caption, laid out in a
+   column, and its HEIGHT IS NO LONGER FIXED — padding plus content, so the
+   box grows with the app's own text-size setting instead of clipping the
+   caption at Largest. `min-height` keeps the hit target honest if a future
+   caption is ever empty.
+
+   WIDTH is the whole rail column less 8px of breathing room (64px inside
+   the 72px rail), which is what makes the caption fit: 64px of button, less
+   2px of border and 2px of padding, is a 60px content box against a widest
+   measured caption of 53.27px ("Domains") at the app's Largest text size.
+   The full table, and why the rail moved from 60px to 72px to get there, is
+   on --app-rail-w above; why the rung is 11px rather than 12px is on
+   --type-caption in tokens/typography.css. */
 .rail-btn {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: calc(var(--app-rail-w) - var(--space-4));
+  /* Never below the 28px macOS control target, even if a caption were ever
+     empty. In practice the box measures 47px (49px at Largest text). */
+  min-height: var(--space-20);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-px) var(--space-2);
   border-radius: var(--radius-lg);   /* was a raw 9px */
   border: 1px solid transparent;
   background: transparent;
@@ -618,6 +723,33 @@ textarea {
      variants below; the amplitude and the reduced-motion decision live there
      so the whole press vocabulary reads in one place. */
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
+}
+
+/* ── THE CAPTION ───────────────────────────────────────────────────────
+   `font: var(--type-caption)` — the SANS rung. This is the v3.44.0 queued
+   "sidebar captions off monospace" item: a section name is prose, and
+   typography.css reserves mono for what the machine owns.
+
+   It inherits `color` from the button, so the caption and the icon are
+   always the same colour in every state — including `.active`, where the
+   accent applies to both without a second rule. That is deliberate: two
+   rules would be two places for the active state to half-apply.
+
+   `nowrap` is load-bearing, and it is a DELIBERATE choice of failure mode.
+   Wrapping is the silent one: "Domains" would quietly become two lines at
+   Largest text if the column were ever narrowed, every button below it
+   would shift, and nothing would report anything. `nowrap` turns that same
+   mistake into visible overflow, which somebody notices. Measured in a
+   real browser at 2x, both themes, at the default AND the Largest text
+   size: every caption renders on ONE line with no overflow, the tightest
+   being "Domains" with 6.73px to spare. */
+.rail-cap {
+  font: var(--type-caption);
+  letter-spacing: var(--track-body);
+  white-space: nowrap;
+  /* The caption is a label on chrome, not content. Same reason .rail sets
+     it — a double-click in the rail must not select the word. */
+  pointer-events: none;
 }
 /* ── ROW STATES ON A MATERIAL PLANE ARE RELATIVE OVERLAYS ────────────────
    This was `var(--surface-hover)` (#15151F). The rail's plane is now
@@ -692,8 +824,27 @@ textarea {
    was. */
 .rail-badge {
   position: absolute;
-  top: 4px;
-  right: 3px;
+  /* ── ANCHORED TO THE ICON, NOT TO THE BUTTON'S RIGHT EDGE (v3.49.0) ──
+     These were `top: 4px; right: 3px` against a 40x40 button whose 18px
+     icon nearly filled it, which put the badge over the glyph's upper-right
+     corner. The captioned button is 64x46 and the icon no longer fills it,
+     so the same two literals would have left the badge floating in the
+     button's top-right corner with clear air between it and the glyph it
+     counts.
+
+     The badge belongs to the ICON, which is horizontally centred, so it is
+     positioned from the CENTRE rather than from an edge: half the badge
+     (7.5px) plus the 9.5px the old 40px geometry put between the icon's
+     centre and the badge's centre, giving `right: calc(50% - 17px)`. That
+     reproduces the previous overlap at ANY button width, so it cannot drift
+     again the next time the rail is re-measured.
+
+     MEASURED after the change, in a real browser at 2x, both themes: the
+     badge's right edge sits 8px past the icon's right edge and its top 5px
+     above the icon's top — the same relationship the 40px button produced —
+     and the pill stays inside the button's own box. */
+  top: 1px;
+  right: calc(50% - 17px);
   min-width: 15px;
   height: 15px;
   padding: 0 3px;
@@ -991,7 +1142,7 @@ textarea {
    .obp-panel's width resolves against .obp-root's narrower content box, so
    the two would silently mean different lengths. */
 :root {
-  --guide-dock-w: min(368px, calc((100vw - 60px - var(--app-sidebar-w)) * 0.42));
+  --guide-dock-w: min(368px, calc((100vw - var(--app-rail-w) - var(--app-sidebar-w)) * 0.42));
 }
 body.guide-docked .main {
   padding-right: var(--guide-dock-w);
@@ -1809,7 +1960,7 @@ body.guide-docked .main {
    targets at this size; see tokens/motion.css for why one factor could not
    serve both.
 
-   NO translate. A rail button sits in a fixed 60px column with 4px gaps; a
+   NO translate. A rail button sits in the fixed --app-rail-w column; a
    1px nudge inside a bordered rail reads as the whole column shifting. The
    scale contracts toward the icon's own centre, which is the honest gesture
    for a square target and matches what a platform icon press does.
@@ -1880,7 +2031,7 @@ body.guide-docked .main {
 
    Fix: position the scrim relative to the VIEWPORT instead (`position:
    fixed`), clipped to exactly the main column's screen region via the
-   same grid geometry #app-shell already uses (`60px` rail + the sidebar
+   same grid geometry #app-shell already uses (--app-rail-w rail + the sidebar
    width token) rather than a JS-measured rect — this is pure CSS, doesn't
    care what #main's scrollTop is, and doesn't require moving which
    element chat.js (or any other view) scrolls. `.main` has no transform/
@@ -1892,7 +2043,7 @@ body.guide-docked .main {
   position: fixed;
   top: 0;
   bottom: 0;
-  left: calc(60px + var(--app-sidebar-w));
+  left: calc(var(--app-rail-w) + var(--app-sidebar-w));
   right: 0;
   z-index: 40;
   background: var(--modal-scrim);
@@ -2129,6 +2280,9 @@ body.guide-docked .main {
 @media (prefers-reduced-motion: reduce) {
   .btn:active,
   .rail-btn:active,
+  /* v3.49.0: the rail's logo is a real button now, and it takes the same
+     press scale as its neighbours — so it takes the same opt-out. */
+  .rail-home:active,
   .rail-theme-toggle:active,
   .reader-close:active,
   .reader-backlink-row:active { transform: none; }

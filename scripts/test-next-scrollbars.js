@@ -201,9 +201,26 @@ ok(anyScrollbarDecl,
     'CONTROL: stripComments removes a declaration planted inside a comment');
   ok(cleaned.includes('a{'),
     'CONTROL: stripComments preserves real declarations outside comments');
-  // and prove it on the real file: the prose word "divider" only ever
-  // appears inside the comment, so it must be gone after stripping.
-  ok(shellRaw.includes('divider') && !shell.includes('divider'),
+  // And prove it on the REAL file, which is the half a synthetic decoy
+  // cannot cover: some prose that exists only inside shell.css's comments
+  // must survive the raw read and vanish from the stripped one.
+  //
+  // v3.49.0 CHANGED THE PROBE STRING, and the reason is the lesson. It was
+  // the single word "divider", chosen because it appeared only in the
+  // scrollbar comment's prose. v3.49.0 added a real `.rail-divider` rule to
+  // shell.css (the line between the rail's everyday and advanced groups),
+  // so the word became a genuine selector, `!shell.includes('divider')`
+  // went false, and this control failed on a change that had nothing to do
+  // with comment stripping or scrollbars. A single lowercase word is
+  // always one feature away from becoming an identifier.
+  //
+  // The probe is now a PHRASE CONTAINING SPACES taken from the scrollbar
+  // comment itself. CSS has no construct in which "you can hold with the
+  // mouse" is valid outside a comment, so this cannot be made true by any
+  // future rule — the property being tested (comments are stripped) is
+  // what it measures, and nothing else can satisfy it.
+  const COMMENT_ONLY_PROSE = 'you can hold with the mouse';
+  ok(shellRaw.includes(COMMENT_ONLY_PROSE) && !shell.includes(COMMENT_ONLY_PROSE),
     'CONTROL: shell.css comment prose is present raw and absent after stripping');
 }
 
