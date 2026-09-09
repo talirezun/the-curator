@@ -154,5 +154,99 @@ const agreeingCheck = checkAgreement(fabricatedSections, 'zzz-mutated-first', 'z
 ok(agreeingCheck.defaultMatches && agreeingCheck.prefetchMatches,
   'CONTROL: …and reports a MATCH when the values genuinely agree with a different (fabricated) first entry — the comparator is not simply always-false');
 
+// ── §4  THE ORDER OF THE ROWS (v3.49.0) ──────────────────────────────────
+console.log('\n§4  THE SIDEBAR ORDER — deliberately pinned, and here is why');
+// ─────────────────────────────────────────────────────────────────────────
+// UNTIL v3.49.0 NOTHING PINNED THE ORDER, only that General was first. The
+// rail ran General -> Providers -> MCP -> Health -> Knowledge base, which was
+// the order the sections happened to be BUILT in, and a power user's report
+// was that the thing he came back for most — Software update — was at the
+// bottom of the screen.
+//
+// The order is now by how often a person returns to a section, and this
+// section EXISTS TO STOP A REVERT: re-sorting this array back into build
+// order is not a tidy-up, it is the defect. If a future release genuinely
+// re-decides the order, this block is the place to record that decision —
+// change it deliberately, with the reason, rather than deleting it to go
+// green.
+//
+// THE ONE THING THAT IS NOT HERE: a "Software update" row. It is a BLOCK
+// inside General (the first one — see renderGeneral), not a section, because
+// it is a multi-state panel that shares state.version and the install-mode
+// capability with the rest of General, and the sidebar footer's "Updates"
+// button already lands on it. §5 pins that it is General's first block, so
+// the two halves of this decision cannot drift apart.
+const EXPECTED_ORDER = ['general', 'providers', 'storage', 'mcp', 'health'];
+const actualOrder = SETTINGS_SECTIONS.map(([id]) => id);
+ok(JSON.stringify(actualOrder) === JSON.stringify(EXPECTED_ORDER),
+  `the rail is ordered by how often a section is returned to: ${EXPECTED_ORDER.join(' -> ')} (got ${actualOrder.join(' -> ')})`);
+ok(actualOrder.indexOf('storage') < actualOrder.indexOf('mcp'),
+  'Knowledge base is ABOVE the MCP bridge — "where does my wiki live" is asked far more often than a bridge that is set up once per client');
+ok(actualOrder.indexOf('health') === actualOrder.length - 1,
+  'Health & scan limits is last — cost ceilings are touched only when a scan refuses to run');
+
+// EXECUTED, not scanned: the real renderSidebar, run against the real array,
+// must emit the rows in that order. renderSidebar is what a user sees; the
+// array is only its input, and a renderer that sorted or reversed it would
+// leave every assertion above green.
+const renderSidebarSrc = functionSource(settingsCode, 'renderSidebar');
+ok(renderSidebarSrc !== null, 'renderSidebar() is found in views/settings.js');
+let renderedIds = null;
+if (renderSidebarSrc) {
+  let captured = '';
+  const fn = new Function(
+    'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar',
+    renderSidebarSrc + '\nreturn renderSidebar;'
+  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; });
+  fn(1);
+  renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
+}
+ok(renderedIds !== null && renderedIds.length === SETTINGS_SECTIONS.length,
+  `CONTROL: the rendered rail really was parsed — ${renderedIds ? renderedIds.length : 0} rows found, ${SETTINGS_SECTIONS.length} expected (an empty parse would pass the order check below by accident)`);
+ok(renderedIds !== null && JSON.stringify(renderedIds) === JSON.stringify(EXPECTED_ORDER),
+  `EXECUTED: renderSidebar paints the rows in that order (got ${renderedIds ? renderedIds.join(' -> ') : 'nothing'})`);
+
+// A REORDER MUST NOT ORPHAN A SECTION. renderMain dispatches by id with a
+// final `else`, so order cannot break it — but a row whose id no arm names
+// and which is not the fallback would render the fallback's body under
+// someone else's title, silently.
+const renderMainSrc = functionSource(settingsCode, 'renderMain');
+ok(renderMainSrc !== null, 'renderMain() is found');
+if (renderMainSrc) {
+  const named = new Set([...renderMainSrc.matchAll(/state\.section === '([a-z]+)'/g)].map((m) => m[1]));
+  const unnamed = actualOrder.filter((id) => !named.has(id));
+  ok(unnamed.length === 1,
+    `exactly one section id is unnamed in renderMain and therefore takes the final else (found: ${unnamed.join(', ') || 'none'}) — two would mean one section renders another's body`);
+  ok(named.size + 1 === SETTINGS_SECTIONS.length,
+    `CONTROL: every row has a body — ${named.size} explicit arms + 1 fallback for ${SETTINGS_SECTIONS.length} rows`);
+}
+
+// ── §5  SOFTWARE UPDATE IS GENERAL'S FIRST BLOCK (v3.49.0) ────────────────
+console.log('\n§5  Software update opens the General section');
+// ─────────────────────────────────────────────────────────────────────────
+// The other half of §4's decision, and the half the report was actually
+// about. Asserted by POSITION inside renderGeneral's own body — a substring
+// check would have been green throughout the defect, because the block was
+// always present, just third.
+//
+// The block's CONTENTS are not asserted here: its copy, its buttons and its
+// phase ring are pinned by scripts/test-update-in-app.js and
+// scripts/test-update-installer.js, and nothing about them changed.
+const renderGeneralSrc = functionSource(settingsCode, 'renderGeneral');
+ok(renderGeneralSrc !== null, 'renderGeneral() is found');
+if (renderGeneralSrc) {
+  const iUpdates = renderGeneralSrc.indexOf('id="block-updates"');
+  const iGroup = renderGeneralSrc.indexOf('cur-group cur-group-fields');
+  const iCheck = renderGeneralSrc.indexOf('btn-run-quick-check');
+  const iGuide = renderGeneralSrc.indexOf('btn-show-setup-guide');
+  ok(iUpdates >= 0 && iGroup >= 0 && iCheck >= 0 && iGuide >= 0,
+    `CONTROL: all four of General's blocks were located (${iUpdates}/${iGroup}/${iCheck}/${iGuide}) — a missing one would make the comparisons below vacuous`);
+  ok(iUpdates < iGroup, 'Software update comes BEFORE the appearance group — the reported defect');
+  ok(iUpdates < iCheck, '…and before System check');
+  ok(iUpdates < iGuide, '…and before the Setup guide, so it is the first thing the section shows');
+  ok(renderGeneralSrc.indexOf('id="block-updates"', iUpdates + 1) === -1,
+    'there is exactly one update block — it was MOVED, not copied');
+}
+
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

@@ -168,6 +168,11 @@ function reportAsyncActionFailure() {}
 // about the semantic-merge gate; the projects load has its own coverage in
 // scripts/test-next-domain-projects.js.
 function loadProjects() { return Promise.resolve(); }
+// v3.49.0: and the domain's PAGE LIST — the wiki browser used to sit behind
+// a "Browse pages" button and is now loaded with the domain. Stubbed for the
+// same reason as loadProjects above; its own coverage is in
+// scripts/test-next-domain-card-order.js.
+function loadBrowse() { return Promise.resolve(); }
 function beginDomainWrite(domain, label) { gates.opened.push({ domain, label }); return () => { gates.released++; }; }
 function loadEstimates() { return Promise.resolve(); }
 function escapeHtml(s) { return String(s == null ? '' : s); }

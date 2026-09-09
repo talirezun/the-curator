@@ -110,6 +110,15 @@
 import { icon } from '../app.js';
 import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
 
+
+// ── ONE URL FOR THE VENDOR-NEUTRALITY CLAIM ──────────────────────────────
+// The MCP bridge's own user guide. TWO surfaces make the "works with any MCP
+// client" claim — this wizard's first panel and Settings' MCP section — and
+// they must not be able to point at different pages, so the constant lives
+// here (settings.js already imports this module; the reverse would be a
+// cycle) and is imported there.
+export const MCP_GUIDE_URL = 'https://github.com/talirezun/the-curator/blob/main/docs/mcp-user-guide.md';
+
 // ── Facts about the bridge, pinned against mcp/tools/index.js ────────────
 // Hardcoded here because the wizard must state them BEFORE any connection
 // exists (there is no live tool list to read yet). The drift risk that
@@ -997,6 +1006,22 @@ function panelStep1() {
       '<p class="mcpw-hint">Claude Desktop keeps its list of MCP servers in one JSON file. You need to get ' +
       'one entry into it, called <code>my-curator</code>. Pick which version to put on your clipboard — the ' +
       'next step gives you the matching instructions.</p>' +
+      // ── THE WIZARD IS NAMED FOR ONE CLIENT; THE BRIDGE IS NOT (v3.49.0) ─
+      // Every heading and instruction in this wizard says "Claude Desktop",
+      // because that is the config file it writes and the steps really are
+      // specific to it. A newcomer reading it concluded the bridge only
+      // works with Claude. It is a stdio JSON-RPC server — any client that
+      // can spawn a local process drives it — and the limit is the
+      // TRANSPORT, not the vendor.
+      //
+      // The three clients named are the three docs/mcp-user-guide.md names,
+      // and no others. The ChatGPT sentence states the mechanism rather than
+      // a verdict, so it stays true whichever way that product moves.
+      '<p class="mcpw-hint" id="mcpw-clients-note">This bridge works with any MCP client ' +
+      'that runs local servers — Claude Desktop, Claude Code, Cursor, and others; the steps below are ' +
+      'written for Claude Desktop because only the file you paste into changes. ChatGPT’s web app cannot ' +
+      'run a local server, so it cannot connect. ' +
+      '<a href="' + MCP_GUIDE_URL + '" target="_blank" rel="noopener noreferrer">Read the MCP guide</a>.</p>' +
 
       '<fieldset class="mcpw-choices">' +
         '<legend class="mcpw-label">What to copy</legend>' +

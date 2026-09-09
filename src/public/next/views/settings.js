@@ -145,7 +145,11 @@ import {
 // closed unconditionally by this view's teardown, so navigating away can
 // never leave it mounted behind the next view.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
+// MCP_GUIDE_URL is DECLARED THERE, not here: this view and the wizard both
+// make the "works with any MCP client" claim, and two copies of the link
+// would rot apart. settings.js already imports that module, so the constant
+// travels this way round; the reverse would be a cycle.
+import { openMcpWizard, closeMcpWizardIfOpen, MCP_GUIDE_URL } from './mcp-wizard.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
@@ -187,12 +191,43 @@ import {
   updateRingPosition, updateProgressSublabel,
 } from '../shared/update-phases.js';
 
+/**
+ * The sidebar's rows, IN ORDER — and the order is the whole content of this
+ * array, so it is worth saying what it is ordered BY.
+ *
+ * ── REORDERED v3.49.0, on a power user's report ──────────────────────────
+ * It ran General → Providers → MCP → Health → Knowledge base, which was the
+ * order the sections happened to be built in. The complaint was that
+ * Software update — the one thing a user comes back to Settings for again
+ * and again — sat at the bottom of the screen. The rule now is HOW OFTEN a
+ * person returns to it, with the two that are "set once and forget" last:
+ *
+ *   General          — the app itself, and Software update is its FIRST
+ *                      block (see renderGeneral, which says why).
+ *   Providers & keys — the AI, and the bill. Changed whenever a key or a
+ *                      model changes.
+ *   Knowledge base   — where the wiki lives. Read often when something looks
+ *                      missing; moved UP from last for that reason.
+ *   MCP bridge       — set up once per client, then left alone.
+ *   Health & scan limits — cost ceilings, touched only when a scan refuses.
+ *
+ * THERE IS NO "Software update" ROW, and that is deliberate rather than an
+ * omission: it is a multi-state panel with progress, errors, a restart and
+ * its own recovery disclosure, it shares `state.version` and the install-mode
+ * capability with the rest of General, and the sidebar footer's "Updates"
+ * button already lands on it. Giving it a row would split General for a
+ * panel that is already the first thing General shows.
+ *
+ * `freshState()` and onEnter's prefetch both read `SETTINGS_SECTIONS[0][0]`,
+ * so the landing section follows this array and cannot drift from it —
+ * pinned by scripts/test-next-settings-default-section.js.
+ */
 const SETTINGS_SECTIONS = [
-  ['general',   'General',              'Appearance, updates'],
+  ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter, local'],
+  ['storage',   'Knowledge base',       'Vault folder, Obsidian'],
   ['mcp',       'MCP bridge',           'My Curator, default write domain'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
-  ['storage',   'Knowledge base',       'Vault folder, Obsidian'],
 ];
 
 const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) => [id, label]));
@@ -1560,6 +1595,52 @@ function renderGeneral() {
 
   return (
     '<div class="settings-section" id="section-general">' +
+      // ── SOFTWARE UPDATE COMES FIRST (v3.49.0) ────────────────────────
+      // Reported by a power user: the update panel "sits last". It was the
+      // third of four blocks here, under an appearance group and a system
+      // check, in a section that was itself read top-to-bottom only by
+      // people who had already found it. It is the block a user returns to
+      // most — Appearance, Text size and Menu bar are set once and never
+      // touched again — so it opens the section.
+      //
+      // NOTHING INSIDE IT CHANGED: same id, same copy, same buttons, same
+      // listeners in wireGeneralListeners. Only its position in this
+      // concatenation moved, which is why no update assertion anywhere in
+      // scripts/ had to be relaxed to make room for it.
+      //
+      // The sidebar footer's "Updates" button still lands here (it switches
+      // to this section and runs the check) — a 272px footer has no room for
+      // a version comparison, a partial-install warning and a restart
+      // progress line, and the flow needs a surface that stays put while the
+      // server is restarting under it. That landing is now at the TOP of the
+      // section it lands on, which is what it always implied.
+      '<div class="settings-field-block" id="block-updates">' +
+        '<span class="settings-field-label settings-label-row">Software update' + recovery.btn + '</span>' +
+        // The hint has to be right BEFORE the button is clicked, so it reads
+        // the install's own capability rather than a check result that does
+        // not exist yet. The git sentence ("installing replaces The Curator's
+        // own program files and restarts it") is not merely irrelevant to a
+        // packaged install — it describes something that build refuses to do.
+        (installerMode
+          ? (updaterAttached === true
+            ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build, and installs it here — ' +
+              'it downloads, checks the file, then restarts into the new version. Your knowledge base, API keys and ' +
+              'sync settings are never touched.</p>'
+            : '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
+              'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
+              'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
+              'are never touched.</p>')
+          : '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
+            'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>') +
+        recovery.panel +
+        '<div class="settings-btn-row">' +
+          '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
+            (state.updateChecking ? 'Checking…' : 'Check for updates') +
+          '</button>' +
+        '</div>' +
+        renderUpdateStatus() +
+      '</div>' +
+
       // ── THE INSET GROUPED LIST, AND WHY THESE THREE ARE ONE GROUP ────────
       // A stack of label+control pairs with a gap between them is a FORM; a
       // rounded card whose rows are separated by a hairline inset to the
@@ -1570,9 +1651,12 @@ function renderGeneral() {
       // These three and no others. Appearance, Text size and Menu bar are all
       // "how the app presents itself on this machine", they are all instant
       // and reversible, and none of them spends money or writes to disk.
-      // System check and Software update are BELOW the group on purpose —
-      // each is a multi-state panel with progress, errors and its own result
-      // surface, and a row in a grouped list cannot hold one honestly.
+      // Software update sits ABOVE the group and System check below it, and
+      // neither is IN it for the same reason — each is a multi-state panel
+      // with progress, errors and its own result surface, and a row in a
+      // grouped list cannot hold one honestly. (Software update moved above
+      // in v3.49.0; see its own block for why. The argument for keeping it
+      // out of the group is unchanged by that move.)
       //
       // The rows keep .settings-field-block wholesale, so every id, every
       // data-* hook and every test selector is byte-identical; the group only
@@ -1626,38 +1710,6 @@ function renderGeneral() {
 
         (summary ? renderQuickSummary(quick) : '') +
         (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
-      '</div>' +
-
-      // Software update. The sidebar footer's "Updates" button lands here
-      // (it switches to this section and runs the check) — a 272px footer
-      // has no room for a version comparison, a partial-install warning
-      // and a restart progress line, and the flow needs a surface that
-      // stays put while the server is restarting under it.
-      '<div class="settings-field-block" id="block-updates">' +
-        '<span class="settings-field-label settings-label-row">Software update' + recovery.btn + '</span>' +
-        // The hint has to be right BEFORE the button is clicked, so it reads
-        // the install's own capability rather than a check result that does
-        // not exist yet. The git sentence ("installing replaces The Curator's
-        // own program files and restarts it") is not merely irrelevant to a
-        // packaged install — it describes something that build refuses to do.
-        (installerMode
-          ? (updaterAttached === true
-            ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build, and installs it here — ' +
-              'it downloads, checks the file, then restarts into the new version. Your knowledge base, API keys and ' +
-              'sync settings are never touched.</p>'
-            : '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
-              'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
-              'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
-              'are never touched.</p>')
-          : '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
-            'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>') +
-        recovery.panel +
-        '<div class="settings-btn-row">' +
-          '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
-            (state.updateChecking ? 'Checking…' : 'Check for updates') +
-          '</button>' +
-        '</div>' +
-        renderUpdateStatus() +
       '</div>' +
 
       // Setup guide (D-C). The first-run panel is dismissible, so it needs
@@ -6679,6 +6731,22 @@ function renderMcp() {
       '<span class="' + pillClass + '"><span class="status-pill-dot"></span>' + pillLabel + '</span>' +
       '<code class="mono mcp-path-line">Claude Desktop → ' + escapeHtml(m.mcp_server_name) + ' → ' + escapeHtml(m.domains_dir) + '</code>' +
     '</div>' +
+    // ── WHICH CLIENTS THIS ACTUALLY WORKS WITH (v3.49.0) ────────────────
+    // Reported by a power user: every string on this screen and in the
+    // wizard says "Claude Desktop", so a newcomer cannot tell whether the
+    // bridge is a Claude integration or a standard they can point anything
+    // at. It is the latter — a stdio JSON-RPC server, spawned as a local
+    // process — and the honest limit is the TRANSPORT, not the vendor.
+    //
+    // THE THREE CLIENTS NAMED HERE ARE THE THREE docs/mcp-user-guide.md
+    // NAMES, and no others: a settings screen is not the place to guess at
+    // another company's roadmap. The ChatGPT sentence states the mechanism
+    // rather than a verdict, so it stays true whichever way that product
+    // moves — a page in a browser cannot spawn a program on this Mac.
+    '<p class="settings-hint-text" id="mcp-client-note">Works with any MCP client that runs local ' +
+    'servers — Claude Desktop, Claude Code, Cursor, and others. ChatGPT’s web app cannot run a ' +
+    'local server, so it cannot connect. ' +
+    '<a href="' + MCP_GUIDE_URL + '" target="_blank" rel="noopener noreferrer">Read the MCP guide</a>.</p>' +
     // Counted from mcp/tools/index.js, not from memory: 18 registered
     // tools, of which 4 mutate the wiki (the four guarded by
     // refuseIfReadonly — compile_to_wiki, fix_wiki_issue,
