@@ -54,6 +54,15 @@ const upload = multer({
     // does NOT inherit it" — this route is that second instance, and this
     // line is what closes it here too.
     fieldNestingDepth: 1,
+    // And the same again for GHSA-535w-7cp7-47q4, the oversized-array-index
+    // DoS that multer 2.3.0 patched: also gated behind hasOwnProperty, also
+    // defaulted to Infinity, also useless until it is set on EVERY multer
+    // instance. See the long comment in routes/ingest.js for the mechanism
+    // and for why 0 is the derived value. This route's submitter is
+    // views/ingest.js's batch form, which appends `domain`, `overwrite`,
+    // `budgetUsd` and a repeated `files` — all flat, no brackets — so the
+    // largest array index it requires is none.
+    fieldArrayIndexLimit: 0,
   },
   fileFilter(req, file, cb) {
     const allowed = ['.txt', '.md', '.pdf'];

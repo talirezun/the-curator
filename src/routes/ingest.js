@@ -44,9 +44,37 @@ const upload = multer({
   // field needs nesting, add it FLAT rather than raising this; raising it is
   // what reopens the hole. Exceeding it raises a MulterError with code
   // LIMIT_FIELD_NESTING, which the error middleware below returns as a 400.
+  //
+  // fieldArrayIndexLimit is the SAME TRAP, one advisory later — do not delete
+  // it either. multer 2.3.0 patched GHSA-535w-7cp7-47q4 (DoS via an oversized
+  // array index in a field name: `items[4294967294]` makes append-field build
+  // a maximum-length sparse array, and the process pays for it synchronously
+  // the moment anything iterates or serialises req.body). The check is
+  // `exceedsArrayIndexLimit` in multer/lib/make-middleware.js, gated behind
+  // `hasOwnProperty(limits, 'fieldArrayIndexLimit')` with a documented default
+  // of Infinity. The advisory's own remediation is "upgrade to 2.3.0 AND
+  // configure limits.fieldArrayIndexLimit to the minimum array index your
+  // application requires" — so the 2.2.0 -> 2.3.0 bump alone turns npm audit
+  // green over an attack surface that has not moved. The other two HIGH
+  // advisories in that bump (GHSA-wc9g-mqfw-jrwm, GHSA-qfvm-cv95-jqjf) ARE
+  // closed by the version alone; this one is not.
+  //
+  // Value: 0, derived the same way as the depth above. Every submitter of this
+  // route sends flat field names with no brackets at all — views/ingest.js
+  // appends `domain`, `file` and `overwrite`, and docs/api-reference.md
+  // documents `domain` + `file` — so the largest array index this route
+  // requires is none, and 0 admits exactly `a[0]`, the single index that fits
+  // inside the one level of nesting depth already allowed. Raising it is what
+  // reopens the hole. Note 0 is FALSY and still works: the gate is
+  // hasOwnProperty, not truthiness — a `limits.fieldArrayIndexLimit ||`
+  // style check upstream would silently disarm this, so it is worth
+  // re-reading that gate before bumping multer again. Exceeding it raises a
+  // MulterError with code LIMIT_FIELD_ARRAY_INDEX, which the error middleware
+  // below returns as a 400 like every other multer rejection.
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB
     fieldNestingDepth: 1,
+    fieldArrayIndexLimit: 0,
   },
   fileFilter(req, file, cb) {
     const allowed = ['.txt', '.md', '.pdf'];
