@@ -44,6 +44,14 @@ import {
 // module is evaluated once regardless of how many times it is imported.
 import * as shell from '../app.js';
 
+// The paste-into-your-entry-file block, and the banner that confirms it was
+// copied. ONE text, shared with the Agent-memory view, the docs suite and any
+// future CLI — see that module's header for why it is frozen and what was
+// measured. The view's job here is the button and the clipboard, nothing else:
+// composing the words in two places is how two model-read instruction sets
+// start disagreeing.
+import { composeAgentInstructions, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+
 // The ONE /next Markdown renderer (next/shared/markdown.js). This view and
 // views/chat.js are both callers of the same copy — see that module's header
 // for the escape-first cardinal rule and for why a wiki page body, which
@@ -331,11 +339,19 @@ const state = {
   //     brief, confirmText, busy, error, refusal }
   projectLc: null,
 
-  // The last "Copy marker line" outcome, or null: { project, ok }.
+  // The last copy outcome from a project row, or null:
+  //   { kind: 'marker'|'agent', project, ok, text }
   // Cleared on the next render that changes anything else, because a copy
   // confirmation that outlives the click reads as a state rather than as an
   // acknowledgement.
-  markerCopied: null,
+  //
+  // ONE SLOT FOR BOTH ACTIONS, not two. They are mutually exclusive by
+  // construction — a click replaces whatever the last one left — so a second
+  // field could only ever hold a stale confirmation for the button you did
+  // NOT just press, sitting under the one you did. `kind` says which, and
+  // `text` is what actually reached the clipboard, which is what the refusal
+  // path has to show.
+  copied: null,
 };
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
@@ -1923,7 +1939,7 @@ function selectDomain(slug) {
   // remembered.
   state.projectLc = null;
   state.projects = null;
-  state.markerCopied = null;
+  state.copied = null;
   render(myMountToken);
   loadHealth(slug, myMountToken).catch(reportAsyncActionFailure);
   loadProjects(slug, myMountToken).catch(reportAsyncActionFailure);
@@ -2293,6 +2309,20 @@ function renderProjectRow(row, canWrite) {
       '<div class="cur-group-control">' +
         '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
           'Copy marker line</button>' +
+        // THE SECOND HALF OF THE SAME JOB, and the reason it is a second
+        // button rather than more words on the first. The marker line says
+        // WHICH project a repository is; this says WHAT AN AGENT SHOULD DO
+        // ABOUT IT — read at the start, save early, save complete — and it
+        // goes in a different file, for a different reader.
+        //
+        // It is here on every row, the domain's own project included, for the
+        // same reason the marker is: both are things you paste into a
+        // repository, and the domain's own project is a perfectly ordinary
+        // project to be building in. Neither is a write, so neither is gated
+        // on `canWrite` — a read-only Shared Brain mirror can still be
+        // resumed, it just cannot be renamed.
+        '<button class="btn btn-ghost dm-proj-btn" data-proj-agent="' + escapeHtml(name) + '">' +
+          'Copy agent instructions</button>' +
         // THE DOMAIN'S OWN PROJECT GETS NEITHER CONTROL. Its directory IS the
         // domain's state root, which holds every named project too, so the
         // store refuses both by name (`reason: 'default-project'`) — renaming
@@ -2324,6 +2354,49 @@ function renderProjectRow(row, canWrite) {
  * say what they are, because a section that vanishes when it has nothing to
  * show is indistinguishable from a section that failed.
  */
+/**
+ * The confirmation (or the refusal) for whichever of the two copy buttons was
+ * pressed last. Pure apart from reading `state`, and lifted out of this
+ * file by the suite, which drives it rather than scanning it.
+ *
+ * THE REFUSAL PATH PRINTS WHAT DID NOT REACH THE CLIPBOARD, in both cases.
+ * `navigator.clipboard` is unavailable on a non-secure origin and can be
+ * refused outright, and a button that silently did nothing is the worst
+ * possible outcome for a user who is about to go and paste. The marker is one
+ * line, so it fits in the status text; the agent block is a paragraph, so it
+ * gets a selectable mono block underneath instead of being crammed into a
+ * sentence.
+ */
+function renderCopyOutcome() {
+  const c = state.copied;
+  if (!c) return '';
+  const agent = c.kind === 'agent';
+  if (c.ok) {
+    return renderStatus({
+      state: 'success',
+      title: agent ? 'Agent instructions copied' : 'Marker line copied',
+      // The success wording for the agent block is COPY_SUCCESS_BANNER's own
+      // second half: the banner names the four files because the whole point
+      // of the block is that it is harness-neutral, and a confirmation that
+      // said only "copied" would leave the user looking for somewhere to put
+      // it.
+      detail: agent
+        ? COPY_SUCCESS_BANNER
+        : 'Paste it into a file called .curator-project at the root of that project\u2019s repository. '
+          + 'An agent that finds it knows which project to resume without being told.',
+    });
+  }
+  return renderStatus({
+    state: 'attention',
+    title: 'Could not copy',
+    detail: agent
+      ? 'Your browser refused clipboard access. Select the block below and copy it by hand.'
+      : 'Your browser refused clipboard access. The line is ' + c.text + '.',
+  }) + (agent
+    ? '<pre class="dm-proj-copy-fallback">' + escapeHtml(c.text) + '</pre>'
+    : '');
+}
+
 function renderProjectsPanel(readonly) {
   // NO `domain` PARAMETER, deliberately, unlike renderHealthPanel beside it.
   // The only correct source of "which domain's projects" is activeProjects(),
@@ -2361,16 +2434,7 @@ function renderProjectsPanel(readonly) {
       p.rows.length + '. Older projects are on disk and still readable by your agents.</span></div></div>'
     : '';
 
-  const copied = state.markerCopied
-    ? renderStatus({
-        state: state.markerCopied.ok ? 'success' : 'attention',
-        title: state.markerCopied.ok ? 'Marker line copied' : 'Could not copy',
-        detail: state.markerCopied.ok
-          ? 'Paste it into a file called .curator-project at the root of that project’s repository. '
-            + 'An agent that finds it knows which project to resume without being told.'
-          : 'Your browser refused clipboard access. The line is ' + state.markerCopied.line + '.',
-      })
-    : '';
+  const copied = renderCopyOutcome();
 
   // ── THE CREATE CONTROL IS THE GROUP'S FOOTER ROW ────────────────────────
   // It shipped in v3.48.0 as a `.btn` in a `<div>` BELOW the card, and the
@@ -3232,7 +3296,7 @@ function renderLifecycleCard() {
 // somehow survived a domain switch still could not act on the wrong domain.
 
 function openProjectLifecycle(mode, project) {
-  state.markerCopied = null;
+  state.copied = null;
   state.projectLc = {
     mode,
     slug: state.activeSlug,
@@ -3366,15 +3430,49 @@ async function runProjectAction() {
  * the user with a button that silently did nothing.
  */
 async function copyProjectMarker(project) {
-  const line = state.activeSlug + '/' + project;
+  return copyForProject(project, 'marker');
+}
+
+/**
+ * Copy the harness-neutral working-state block for `project`.
+ *
+ * WHAT IT IS FOR, and why it is not the marker: measured on 2026-09-10, an
+ * agent on Claude Code with the `curator-continuity` skill installed and
+ * listed activated it in 0 of 4 headless runs and therefore never read state
+ * and never saved; with this block in the file that harness loads every
+ * session, 3 of 4 runs read at start and saved before stopping. On opencode,
+ * which activates the skill natively, the block changed nothing (4/4 either
+ * way). So this button exists for the harnesses that do not self-activate —
+ * and the block, unlike a skill, is just text in a file every one of them
+ * already reads. N=4, one task, one model: a shape, not a rate.
+ *
+ * The TEXT is not composed here — see shared/agent-instructions.js.
+ */
+async function copyProjectAgentInstructions(project) {
+  return copyForProject(project, 'agent');
+}
+
+/**
+ * The shared body of both copy actions.
+ *
+ * `state.activeSlug` is read ONCE, before the await, and the composed text is
+ * captured with it: everything after the await re-checks the mount, so a
+ * domain switch mid-copy cannot label another domain's confirmation with this
+ * project's name.
+ */
+async function copyForProject(project, kind) {
+  const domain = state.activeSlug;
+  const text = kind === 'agent'
+    ? composeAgentInstructions({ domain, project })
+    : domain + '/' + project;
   const token = myMountToken;
   let ok = false;
   try {
-    await navigator.clipboard.writeText(line);
+    await navigator.clipboard.writeText(text);
     ok = true;
   } catch { ok = false; }
   if (!isCurrentMount(token)) return;
-  state.markerCopied = { project, ok, line };
+  state.copied = { kind, project, ok, text };
   render(token);
 }
 
@@ -3391,6 +3489,11 @@ function bindProjectListeners() {
   document.querySelectorAll('[data-proj-marker]').forEach((btn) => {
     btn.addEventListener('click', () => {
       copyProjectMarker(btn.dataset.projMarker).catch(reportAsyncActionFailure);
+    });
+  });
+  document.querySelectorAll('[data-proj-agent]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      copyProjectAgentInstructions(btn.dataset.projAgent).catch(reportAsyncActionFailure);
     });
   });
 

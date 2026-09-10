@@ -75,6 +75,8 @@ list_projects({ domain: "work" })    just one domain's
 
 **Never guess a project.** Opening the wrong one resumes the wrong work with confident-sounding context, and the save that follows overwrites the right project's handoff. Asking costs one turn; guessing costs a handoff. Never invent a name either — see §9 for why nothing is created for one.
 
+**If you are reading this from an entry file rather than as an activated skill, that is by design.** This playbook only helps on the turns where it is actually in context, and a harness may never activate it: measured across 16 headless runs on 2026-09-10, an agent on Claude Code activated this skill in **0 of 4** runs — installed, listed, on a prompt opening with "Continue" — and therefore never read state and never saved one; opencode activated it first in 4 of 4. The harness-neutral fix is a short block in the file the host auto-loads every session (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules`), naming the project and the two calls. It took Claude Code from 0/4 to 3/4. The Curator generates it with the names filled in — **Domains → Projects → Copy agent instructions**, and the same button on the Agent memory screen — and if the user's project has no such block yet, offering to add one is a reasonable thing to suggest once, at the end of a session, rather than a step in this ritual.
+
 If the user says nothing and there is no marker, omitting `project` falls back to the configured default domain's own project, which is the right answer on a single-project machine and the wrong one everywhere else. Prefer `list_projects` when you have any doubt.
 
 **Step 2 — read with no scope.**
@@ -339,6 +341,8 @@ The reverse also holds. Do not put durable patterns only in `now_state`, where t
 ```
 Session opening on a tracked project, or the user says "continue" / "resume":
   → WHICH PROJECT?  the user named it
+                    → else a "## Working state" block in CLAUDE.md / AGENTS.md /
+                      GEMINI.md / .cursor/rules (Copy agent instructions writes it)
                     → else a `.curator-project` marker in cwd or a parent
                     → else list_projects() and ASK. Never guess.
   → get_working_state({project})           read the brief + the scope INDEX

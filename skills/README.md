@@ -48,7 +48,7 @@ client can call all 22 tools. The skills were not. Three things tied them to one
 |---|---|
 | The playbook prose (~30–44 KB each) | **Yes.** Measured: `mcp__` appears in these files only on the `allowed-tools:` frontmatter line. Every tool reference in all four bodies is already a bare name. |
 | `allowed-tools:` in the YAML frontmatter | No — `mcp__my-curator__<tool>` is Claude Code's namespacing. |
-| Auto-activation from the YAML `description` | No — a Claude Code / Claude Desktop mechanism. |
+| Auto-activation from the YAML `description` | **Partly, and not the way this row used to claim.** It was written as a Claude-only mechanism; measured, opencode reads `skills: { paths }` and activated `curator-continuity` first in 4 of 4 runs, while Claude Code headless activated it in **0 of 4** with the identical skill installed. Portability is not the question — *whether a given host's model reaches for it* is, and that is answered per host, below. |
 | The documented install path (`~/.claude/skills/`) | No. |
 
 **Why that mattered more than it looks.** An agent in another harness can already *read*
@@ -208,9 +208,26 @@ failing.
 
 ## What you lose without auto-activation, and what it costs
 
-In Claude, a skill is *dormant* until the conversation matches its description, and then
-its full body is loaded. Everywhere else you are choosing between two imperfect options,
-and both have a real cost. Be deliberate about which.
+The intended behaviour is that a skill lies *dormant* until the conversation matches its
+description, and its full body then loads. **Do not assume any host does that, including
+Claude's own.** Measured 2026-09-10 — 16 headless runs, one task, Haiku 4.5, N=4 per arm
+([the table and its limits](../docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)):
+
+| Host | Activated `curator-continuity`? | Runs that saved state |
+|---|---|---|
+| **opencode** | Yes — first action, 4/4. It loads skills natively via `skills: { paths }`. | **4/4** |
+| **Claude Code** (headless) | **No — 0 of 4**, with the skill installed and listed, on a prompt opening with *"Continue"*, one of its own triggers. | **0/4** |
+
+So the portable mechanism is not the skill file. **It is a few lines of prose in the entry
+file the host already loads every session** — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+`.cursor/rules` — telling the agent to read state at the start and save as it goes. Adding
+that block took Claude Code headless from 0/4 to **3/4**; on opencode it changed nothing.
+The Curator generates it for you with the project's names filled in: **Domains → Projects →
+Copy agent instructions**. It is 6 lines, it is the same text everywhere, and it sits
+*beside* whichever install option you pick below rather than replacing it.
+
+With that settled, the choice below is about where the ~30–44 KB of PLAYBOOK lives, not
+about whether the agent knows to save. Both options have a real cost; be deliberate.
 
 **Always-on** (paste it into the file your host loads every session). The agent always
 knows the discipline, including on the turn where it should be saving state — which is the
@@ -249,9 +266,11 @@ line in your always-on file pointing at the playbook — something like *"Before
 session or when context runs low, read `.agents/curator-continuity.md` and follow it."*
 One line of always-on context restores most of the trigger behaviour for ~20 tokens.
 
-Neither option reproduces Claude's behaviour exactly. Claude decides activation from the
-description with the body out of context; elsewhere either the body is always in context,
-or a human decides. That difference is stated here rather than papered over.
+Neither option reproduces the *intended* behaviour exactly: dormant until matched, then
+loaded whole. Elsewhere either the body is always in context, or a human decides. And as
+the table above shows, the intended behaviour is not guaranteed on the host it was designed
+for either — which is why the entry-file block is recommended alongside both options rather
+than as a third alternative to them.
 
 ## Version compatibility
 

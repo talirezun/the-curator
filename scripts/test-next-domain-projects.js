@@ -135,6 +135,12 @@ const FNS = [
   'classifyProjectError',
   'runProjectAction',
   'copyProjectMarker',
+  // v3.52.0. Both copy buttons share one body, so the marker path now runs
+  // through it too; lifted, never stubbed, or S13 would be asserting a copy of
+  // the code rather than the code.
+  'copyProjectAgentInstructions',
+  'copyForProject',
+  'renderCopyOutcome',
   'bindProjectListeners',
 ];
 
@@ -181,9 +187,16 @@ const navigator = { clipboard: { writeText: async (t) => {
 } } };
 `;
 
+// The REAL shared helper, injected rather than stubbed: this suite's marker
+// assertions must keep passing against the same function the browser runs, and
+// a stub here would let a broken import in the view pass unnoticed.
+const { composeAgentInstructions, COPY_SUCCESS_BANNER } =
+  await import('../src/public/next/shared/agent-instructions.js');
+
 let sandbox;
 try {
   sandbox = new Function(
+    'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -198,7 +211,7 @@ try {
        __setRenderImpl: (fn) => { renderImpl = fn; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )();
+  )(composeAgentInstructions, COPY_SUCCESS_BANNER);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -208,6 +221,7 @@ const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
   renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
+  copyProjectAgentInstructions, renderCopyOutcome,
   PROJECT_BRIEF_TEMPLATE,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
   __setDocument, __setRenderImpl,
@@ -224,7 +238,7 @@ function freshState(over) {
     activeSlug: 'alpha',
     projects: { slug: 'alpha', loading: false, error: null, rows: [ROW()], truncated: false, canWrite: true, readonly: false },
     projectLc: null,
-    markerCopied: null,
+    copied: null,
     banner: null,
     ...over,
   };
@@ -694,7 +708,7 @@ section('S7 -- The .curator-project marker line');
   __setClipboard(true);
   await copyProjectMarker('lumina');
   eq('the copied line is exactly domain/project', __calls().clipboard[0], 'alpha/lumina');
-  eq('...and the outcome is recorded', __state().markerCopied.ok, true);
+  eq('...and the outcome is recorded', __state().copied.ok, true);
   const panel = renderProjectsPanel(false);
   ok('the confirmation names the file it goes in', panel.includes('.curator-project'));
 }
@@ -706,8 +720,8 @@ section('S7 -- The .curator-project marker line');
   __reset();
   __setClipboard(false);
   await copyProjectMarker('lumina');
-  eq('a refusal is recorded as a failure', __state().markerCopied.ok, false);
-  eq('...and keeps the line', __state().markerCopied.line, 'alpha/lumina');
+  eq('a refusal is recorded as a failure', __state().copied.ok, false);
+  eq('...and keeps the line', __state().copied.text, 'alpha/lumina');
   const panel = renderProjectsPanel(false);
   ok('...which is shown, so the user can type it', panel.includes('alpha/lumina'));
   __setClipboard(true);

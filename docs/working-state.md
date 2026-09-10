@@ -1178,6 +1178,92 @@ be rebuilt for every harness; a skill works in every MCP host as it is. The cost
 what that buys: capture stays advisory, and a missed save yields the *previous* state, never a
 corrupted one. That is the fail-safe direction, which is why no enforcement was added.
 
+### Activation: put the discipline where the harness cannot skip it
+
+Installing the skill is not the same as the skill *running*. In Claude Code a skill is dormant
+until the model decides its description matches the conversation, and **that decision can simply
+not happen** — which turns the whole write half of this feature off, silently, on a machine where
+everything looks correctly installed.
+
+Measured on **2026-09-10**: 16 headless runs, one task, Haiku 4.5, an isolated store, **N=4 per
+arm**. Arm A is the skill alone; arm B is the skill plus the block below in the file the harness
+auto-loads every session. Both arms had the same skills and the same MCP; the block is the only
+difference.
+
+| Harness | Arm | Runs that saved ≥1 | Read state at start | Saved before stopping | Skill activated |
+|---|---|---|---|---|---|
+| Claude Code | A — skill only | **0/4** | 0/4 | 0/4 | never |
+| Claude Code | B — skill + block | **3/4** | 3/4 | 3/4 | never |
+| opencode | A — skill only | **4/4** | 4/4 | 3/4 | 4/4, as its first action |
+| opencode | B — skill + block | **4/4** | 4/4 | 3/4 | 4/4, as its first action |
+
+All 16 runs made the task's `npm test` pass, so nothing here traded correctness for discipline.
+The cost on Claude Code was about **+0.2 min and +$0.02 per run**.
+
+Read the two harnesses separately, because they are answering different questions.
+
+- **Claude Code never activated the skill at all** — in either arm — even though it was installed,
+  listed, and the prompt opened with the word *"Continue"*, one of the skill's own trigger phrases.
+  Arm A therefore never read state and never saved: **the feature was inert on a correct install.**
+  With the block, the agent read at the start and saved as its last action in 3 of 4 runs. The one
+  miss is worth knowing about: the transcript says *"I'll start by reading the working state"* and
+  later *"let me save the working state"*, and both times the run failed to actually issue the MCP
+  call and tried a shell workaround. **The block changed what the agent wanted to do; something
+  else stopped it.**
+- **opencode activated the skill natively, first, every time**, read state and saved. Adding the
+  block changed nothing measurable. **On opencode you do not need it.**
+
+So this is a difference in *kind* on the harness that does not self-activate, and *zero* on the
+harness that does.
+
+#### The block
+
+Paste it into your harness's entry file, with your own domain and project substituted. **Domains →
+Projects → Copy agent instructions** (and the same button on the Agent memory screen) puts exactly
+this on your clipboard with the names already filled in, which is the intended way to get it —
+the text is frozen because it is the thing that was measured.
+
+```markdown
+## Working state
+
+This repository's working state lives in The Curator (project `exp/widget`, see
+`.curator-project`). At the START of every session call the my-curator MCP tool
+`get_working_state` with project "widget" and scope "latest" and read the standing
+brief before acting. SAVE with `save_working_state` under project "widget", scope
+"main", after every material decision and at least every ten tool calls, and ALWAYS
+before you stop; a save overwrites, so send the complete state each time.
+```
+
+#### Where it goes
+
+The block is plain prose in a file each of these already reads on its own. Nothing needs to be
+installed, and it is the same text everywhere.
+
+| Harness | File it auto-loads |
+|---|---|
+| Claude Code | `CLAUDE.md` |
+| Codex | `AGENTS.md` |
+| opencode | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Cursor | `.cursor/rules` |
+
+It sits *beside* the skill rather than replacing it. The skill carries the writing standard, the
+refusal handling and the treat-state-as-data rule — 55 KB of playbook this paragraph cannot; the
+block's job is only to make sure the agent reaches for any of it.
+
+#### What this does not show
+
+- **N=4 is a shape, not a rate.** 0/4 against 3/4 is a large and consistent gap, but four runs
+  cannot put an interval on *how often*. Nothing here licenses a number like "75%".
+- **Headless only.** Claude Code's *interactive* mode was not measured, and it differs in ways that
+  could matter (a persistent session, a visible skill list, a human who can say "save state").
+- **One task, one model (Haiku 4.5), one prompt.** Saves were counted as *saves that reached the
+  store*; save **quality** was not judged.
+- **The most likely confounder is skill competition.** The Claude Code build under test injected 19
+  of its own skills beside the two installed, so `curator-continuity` was one description among 21.
+  A stock install with only these two may behave like opencode. That was not measured.
+- **opencode needs no block**, and the table says so rather than recommending it everywhere.
+
 ---
 
 ## 7. Concurrency

@@ -2140,7 +2140,7 @@ in [§13b](#one-domain-one-project-or-one-more-work-stream).
 The **Projects** section on a domain's page lists each project with its standing brief's status,
 when it was last saved to, and which work-stream that was. A domain where nothing has been saved
 and no brief written yet lists **nothing** — there is no project to describe until one of those
-exists, and creating one is a click away. Five controls:
+exists, and creating one is a click away. Six controls:
 
 | Control | What it does |
 |---|---|
@@ -2149,6 +2149,7 @@ exists, and creating one is a click away. Five controls:
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
 | **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
 | **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
+| **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
 
 **One project on that list cannot be renamed or deleted: the domain's own** — the one named after
 the domain itself, which is where a domain's state lives when you have not made any other project,
@@ -2156,8 +2157,8 @@ and where it lived before v3.48.0. Its folder **is** the domain's state root, so
 sweep every other project in that domain into the new name, and deleting it would take all of them
 with it. Its row therefore **does not offer those two buttons at all**, and says why — *"the
 domain's own project — it cannot be renamed or deleted"* — rather than offering a control whose
-only possible outcome is a refusal. **Copy marker line** and **Edit brief** work on it as on any
-other. You can still empty it: delete or move the work-streams inside it.
+only possible outcome is a refusal. **Copy marker line**, **Copy agent instructions** and **Edit brief** work on it
+as on any other. You can still empty it: delete or move the work-streams inside it.
 
 A domain that had agent memory before v3.48.0 shows **one** project, named after the domain
 itself. Nothing was moved to produce that, and nothing ever will be: that is where a domain's own
@@ -2712,6 +2713,32 @@ installed does with that:
 
 **Copy marker line**, in Domains → Projects, gives you the exact line to paste into a repository's
 `.curator-project` file, which is what turns step 1 into *the agent already knew*.
+
+### Making sure your agent actually does it
+
+Everything above assumes the agent *reaches for* the continuity skill. On some harnesses it does
+not — and when it does not, nothing is read, nothing is saved, and there is no error to see.
+Measured on 2026-09-10 across 16 headless runs (one task, N=4 per arm): with the skill alone, an
+agent on **Claude Code** saved in **0 of 4** runs; with a short block pasted into the file that
+harness loads every session, **3 of 4**. On **opencode**, which loads the skill itself, it was
+**4 of 4** either way — there the block buys nothing.
+
+**Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Agent
+memory screen), puts that block on your clipboard with this project's names already in it. Paste it
+into whichever of these your tool reads:
+
+| Your tool | Paste it into |
+|---|---|
+| Claude Code | `CLAUDE.md` |
+| Codex | `AGENTS.md` |
+| opencode | `AGENTS.md` |
+| Gemini CLI | `GEMINI.md` |
+| Cursor | `.cursor/rules` |
+
+It does not replace the skill — the skill is what carries *how* to write a good handoff. The block
+only makes sure the agent goes and looks. The full measurement, including what it does not show
+(N=4 is a shape, not a rate; headless only; one model), is in
+[working-state.md § Activation](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it).
 
 Two things this deliberately is not. It is **not a command the app parses** — it is a sentence an
 agent understands because the skill told it what to do with a project name, which is also why it
