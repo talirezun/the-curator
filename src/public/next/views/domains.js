@@ -2159,7 +2159,7 @@ function renderMain(token) {
     // the domain on screen, so it renders in the body and not behind the mark.
     (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
-    renderStatCards(counts, pages) +
+    renderStatCards(counts, pages, projectCount()) +
     // ── THE WIKI COMES FIRST (v3.49.0) ───────────────────────────────────
     // Reported by a power user who could not find "the wiki" at all: the
     // page browser was the LAST thing on this card, behind a "Browse pages"
@@ -2197,6 +2197,49 @@ function renderMain(token) {
   bindBrowseListeners();
 }
 
+
+// ── An ⓘ mark and its fold, for a section that is not a view header ───────
+//
+// The domain header already has one (renderViewHeader's `info`), and the
+// maintainer's report of the Projects section was precisely that its
+// explanation should be "under an ⓘ info icon like the domain header's". This
+// is that mark, and it is the SHARED COMPONENT'S CONTRACT rather than a second
+// pattern: shared/text.js installs ONE delegated document listener at module
+// scope keyed on `[data-tx-info]` + getElementById, with no coupling to
+// renderViewHeader at all. Emitting the same two elements inherits, for free
+// and with nothing to bind per render: toggle on click, Escape closes AND
+// returns focus to the button, outside-click dismisses, click-inside does not,
+// one panel open at a time. `.tx-vh-info` and `.tx-vh-panel` are likewise
+// unscoped in text.css, so this view's stylesheet gains no rule for them.
+// views/settings.js reached the same conclusion and carries the same helper;
+// the glyph here is pinned byte-identical to text.js's INFO_GLYPH by this
+// view's suite, so the copies cannot drift while they are apart.
+//
+// WHAT MUST NEVER GO IN `info`: warnings, costs, spend figures,
+// irreversibility. v3.16.1's rule — a warning behind a click is not a warning.
+// What goes here is neutral explanation of a visible label, which is exactly
+// what the Projects paragraph is.
+function infoMark(id, label, info) {
+  const glyph =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+  const text = typeof info === 'string' ? info.trim() : '';
+  if (!id || !text) return { btn: '', panel: '' };
+  const name = label || 'More information';
+  return {
+    btn:
+      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
+        ' data-tx-info="' + escapeHtml(id) + '"' +
+        ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
+        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
+        glyph +
+      '</button>',
+    panel:
+      '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
+        ' aria-label="' + escapeHtml(name) + '" hidden>' + escapeHtml(text) + '</div>',
+  };
+}
 
 // ── The Projects sub-section ───────────────────────────────────────────────
 
@@ -2361,8 +2404,25 @@ function renderProjectsPanel(readonly) {
         '</button>'
       : '');
 
+  // Inline rather than a module const, deliberately: it is used once, and a
+  // const would have to be lifted separately by every suite that executes this
+  // function — a second thing to remember for no reader's benefit.
+  const info = infoMark('dm-proj-info', 'About projects',
+    'A domain is one compounding wiki: everything ingested into it links into one graph. ' +
+    'A project is a thing you build inside that domain — and it is what your agents keep their ' +
+    'working notes against, so a new session can pick up where the last one stopped. ' +
+    'Each project has its own standing brief, which you write, and its own work-streams, which ' +
+    'agents save handoffs into. Both are plain markdown under this domain’s state folder, and ' +
+    'both travel with Personal Sync, so the same project resumes on another machine.');
+
   return (
-    '<div class="dm-projects">' +
+    // A SECTION, and a `.dm-section`, like the three around it. The reported
+    // defect was that Projects "sits glued to Wiki health with no spacing":
+    // it carried `margin-top: 22px` of its own and the health card carried no
+    // margin at all, so the gap above it and the gap below it were 22px and
+    // 0px. Every gap on this card is now ONE rule (`.dm-section +
+    // .dm-section`), which is why they cannot disagree again.
+    '<section class="dm-section dm-projects">' +
       // ── THE EYEBROW AND ITS CAPTION ARE ONE HEADER ──────────────────────
       // The sentence used to render at x=0, hard against the top of the
       // card, while the eyebrow above it sat indented to the row padding —
@@ -2377,11 +2437,20 @@ function renderProjectsPanel(readonly) {
       // the same pair). This view places it; shared/text.css dresses it, and
       // domains.css may not name a tx- class to do otherwise.
       '<div class="dm-proj-head">' +
-        '<div class="cur-group-title">PROJECTS IN THIS DOMAIN</div>' +
+        '<div class="dm-section-head-row">' +
+          '<div class="cur-group-title dm-section-eyebrow">PROJECTS IN THIS DOMAIN</div>' +
+          info.btn +
+        '</div>' +
+        info.panel +
+        // ── ONE LINE, AND THE REST BEHIND THE MARK ───────────────────────
+        // The paragraph that used to live here was four lines of standing
+        // explanation on a screen a person visits to DO something, and the
+        // maintainer asked for it under the ⓘ. What stays visible is the one
+        // sentence that says what a project IS — which is the only part a
+        // reader who already knows needs to skip, and the only part a reader
+        // who does not needs before deciding to open the fold.
         '<div class="dm-proj-caption">' +
-          renderDescription('A domain is one compounding wiki. A project is a thing you build inside it — ' +
-            'and it is what your agents keep their working notes against, so a new session can pick up where ' +
-            'the last one stopped.') +
+          renderDescription('A domain is one compounding wiki; a project is a thing you build inside it.') +
         '</div>' +
       '</div>' +
       copied +
@@ -2398,7 +2467,7 @@ function renderProjectsPanel(readonly) {
       // (`#dm-proj-name`, `#dm-proj-submit`) would exist twice and
       // getElementById would wire the listeners to whichever came first.
       (createOpen ? '' : lifecycle) +
-    '</div>'
+    '</section>'
   );
 }
 
@@ -2495,23 +2564,77 @@ function renderProjectLifecycleCard() {
   );
 }
 
-function renderStatCards(counts, pages) {
+/**
+ * How many projects this domain holds — the fifth overview figure.
+ *
+ * TAKEN FROM THE LIST THAT IS ALREADY ON SCREEN, never from a second fetch.
+ * The Projects section below renders `activeProjects()`, so deriving the count
+ * from anything else would put two answers to one question on one card, free
+ * to disagree — which is the shape this view has already paid for twice
+ * (`activeBrowse`/`activeProjects` both exist precisely to stop a list
+ * rendering under the wrong domain).
+ *
+ * `total` IS THE STORE'S COUNT, taken before its own cap, and `rows.length`
+ * would report a CAP as a measurement on a domain with more than
+ * MAX_PROJECTS_PER_DOMAIN projects — the same mistake `distinctScopeCount`
+ * exists to stop one layer down.
+ *
+ * A FACT AND ITS ABSENCE STAY APART. While the list is loading, or if it
+ * failed, this returns `null` and the card renders an em dash — never `0`,
+ * which is a real and different answer ("this domain has no projects").
+ */
+function projectCount() {
+  const p = activeProjects();
+  if (!p || p.loading || p.error) return null;
+  if (typeof p.total === 'number' && Number.isFinite(p.total)) return p.total;
+  return Array.isArray(p.rows) ? p.rows.length : null;
+}
+
+/**
+ * The OVERVIEW section: the domain's figures, in ONE card.
+ *
+ * ── THE REPORTED DEFECT ──────────────────────────────────────
+ * "The top number cards float without a card." They did: four bordered tiles
+ * sat directly on the view background with no group around them and no
+ * eyebrow naming what they were, so the first thing on the domain card was
+ * an unlabelled row of numbers. Every OTHER section on this screen is a
+ * captioned group; this one was the exception, which is what made it read as
+ * loose furniture rather than as the domain's summary.
+ *
+ * Now it is the kit's inset grouped list (`.cur-group`, the same chrome
+ * Projects and — since this release — Pages and Wiki health carry), under
+ * its own eyebrow, and the tiles inside it lose their individual borders and
+ * shadows: a card inside a card is two objects where the design has one.
+ *
+ * THE FIFTH FIGURE IS PROJECTS, and it was missing. A project is one of the
+ * two things a domain HOLDS — pages and projects — and the section for it
+ * was on the card while the count for it was nowhere.
+ */
+function renderStatCards(counts, pages, projects) {
   const otherCount = counts.other || 0;
+  const card = (label, value, cls) =>
+    '<div class="dm-stat-card"><div class="cur-eyebrow">' + label + '</div>' +
+    '<div class="dm-stat-value' + (cls ? ' ' + cls : '') + '">' + value + '</div></div>';
   return (
-    '<div class="dm-stats-grid">' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">PAGES</div><div class="dm-stat-value">' + pages.toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">ENTITIES</div><div class="dm-stat-value dm-stat-entity">' + (counts.entities || 0).toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">CONCEPTS</div><div class="dm-stat-value dm-stat-concept">' + (counts.concepts || 0).toLocaleString() + '</div></div>' +
-      '<div class="dm-stat-card"><div class="cur-eyebrow">SUMMARIES</div><div class="dm-stat-value dm-stat-summary">' + (counts.summaries || 0).toLocaleString() + '</div></div>' +
-      // MEDIUM-2 fix: shown only when non-zero, so the common case (every
-      // page fits entities/concepts/summaries) renders identically to
-      // before — but when `other` IS non-zero it is never just dropped
-      // (see the caller's comment): a fifth stat card, same shape as the
-      // other three, not a footnote.
-      (otherCount > 0
-        ? '<div class="dm-stat-card"><div class="cur-eyebrow">OTHER</div><div class="dm-stat-value dm-stat-other">' + otherCount.toLocaleString() + '</div></div>'
-        : '') +
-    '</div>'
+    '<section class="dm-section dm-overview">' +
+      '<div class="cur-group-title dm-section-eyebrow">OVERVIEW</div>' +
+      '<div class="cur-group dm-stats-group">' +
+        '<div class="dm-stats-grid">' +
+          card('PAGES', pages.toLocaleString(), '') +
+          card('ENTITIES', (counts.entities || 0).toLocaleString(), 'dm-stat-entity') +
+          card('CONCEPTS', (counts.concepts || 0).toLocaleString(), 'dm-stat-concept') +
+          card('SUMMARIES', (counts.summaries || 0).toLocaleString(), 'dm-stat-summary') +
+          // An em dash, not a zero. See projectCount().
+          card('PROJECTS', projects === null || projects === undefined ? '—' : projects.toLocaleString(), 'dm-stat-project') +
+          // MEDIUM-2 fix: shown only when non-zero, so the common case (every
+          // page fits entities/concepts/summaries) renders identically to
+          // before — but when `other` IS non-zero it is never just dropped
+          // (see the caller's comment): a sixth stat card, same shape as the
+          // other five, not a footnote.
+          (otherCount > 0 ? card('OTHER', otherCount.toLocaleString(), 'dm-stat-other') : '') +
+        '</div>' +
+      '</div>' +
+    '</section>'
   );
 }
 
@@ -2538,9 +2661,28 @@ const BROWSE_FOLDERS = [
   { key: 'entities', label: 'Entities' },
   { key: 'concepts', label: 'Concepts' },
   { key: 'summaries', label: 'Summaries' },
+  // ── THE FOURTH KIND OF MARKDOWN IN A DOMAIN (v3.50.0) ──────────────────
+  // A domain's `state/` tree is markdown too — each project's standing brief
+  // and each work-stream's handoff — and until now the only route to any of
+  // it was the Agent memory screen, which is organised around RESUMING work
+  // rather than around reading. This is the browse route to the same files.
+  //
+  // ITS COUNT IS ITS OWN, and `all` deliberately does NOT include it: the
+  // stat card above says PAGES and means wiki pages, and a facet labelled
+  // "All" that disagreed with the number directly above it would be the
+  // self-contradicting-figures defect this card has already been fixed for
+  // once (MEDIUM-2, the `other` count).
+  { key: 'memory', label: 'Memory' },
 ];
-// How many rows are painted at once. The filter box is the way to reach
-// past it; painting 3,300 rows costs more than it tells anyone.
+// How many rows are painted at ONE TIME, and the size of each further step.
+//
+// ── THE DEAD END THIS REPLACES ─────────────────────────────────────────
+// The note under the list used to read "Showing the first 150 of 3,421
+// matches — narrow the filter to see the rest", and there was no other way
+// to see the rest: a user who did not know what to type could not reach page
+// 151 of his own wiki at all. The cap is still here, because painting 3,300
+// rows costs more than it tells anyone — but it is now a WINDOW that a
+// footer row extends, not a wall.
 const BROWSE_RENDER_CAP = 150;
 
 // LAYER 2 for the browse list, same shape as activeSemanticScan(): a list
@@ -2567,6 +2709,46 @@ function filterBrowseEntries(entries, filter, folder) {
   return out;
 }
 
+/**
+ * The same text filter, over MEMORY rows.
+ *
+ * A SECOND FUNCTION, not a `kind` parameter on the one above: the two lists
+ * have different shapes (a wiki entry has `slug` and `folder`; a memory entry
+ * has `project`, `scope` and `machine`) and the haystacks are therefore
+ * different. Folding them together would mean a folder check that is dead for
+ * one caller and a field list that is dead for the other.
+ *
+ * The haystack is everything the row DISPLAYS — its title and its path — so a
+ * user who types a machine name, a scope name or a project name finds the row
+ * they can see, which is the only rule a filter box can be judged against.
+ */
+function filterMemoryEntries(entries, filter) {
+  const q = (filter || '').trim().toLowerCase();
+  if (!q) return entries.slice();
+  return entries.filter((e) => ((e.title || '') + ' ' + (e.path || '')).toLowerCase().includes(q));
+}
+
+/**
+ * WHICH LIST THE FACETS ARE SHOWING, and how much of it.
+ *
+ * One place answers it, so the row painter, the "Showing N of M" note and the
+ * "Show 150 more" footer cannot disagree about the same three numbers — which
+ * they would, being three separate expressions over the same state, the moment
+ * one of them was edited.
+ */
+function browseMatches(b) {
+  if (b.folder === 'memory') {
+    return { kind: 'memory', items: filterMemoryEntries(b.memory || [], b.filter) };
+  }
+  return { kind: 'wiki', items: filterBrowseEntries(b.entries, b.filter, b.folder) };
+}
+
+/** How many rows are painted right now. Never below one step, never a NaN. */
+function browseWindow(b) {
+  const w = Number(b && b.window);
+  return Number.isFinite(w) && w >= BROWSE_RENDER_CAP ? w : BROWSE_RENDER_CAP;
+}
+
 async function loadBrowse(slug, token) {
   // Capture the gate for THIS call. `loadGate` is module-scoped and the
   // next mount replaces it, so settling the module variable from a stale
@@ -2574,15 +2756,28 @@ async function loadBrowse(slug, token) {
   // loader that is legitimately up. A cancelled gate ignores settle(), so
   // the stale path becomes a no-op instead.
   const gate = loadGate;
-  state.browse = { slug, loading: true, error: null, entries: [], truncated: false, total: 0, filter: '', folder: 'all' };
+  state.browse = {
+    slug, loading: true, error: null, entries: [], memory: [], memoryTruncated: false,
+    truncated: false, total: 0, filter: '', folder: 'all', window: BROWSE_RENDER_CAP,
+  };
   if (gate) gate.begin();
   render(token);
   try {
-    const data = await fetchJSON('/api/wiki/' + encodeURIComponent(slug) + '/list');
+    // `include=memory` is opt-in ON THE SERVER (see src/routes/wiki.js) and
+    // this is the caller that wants it: the memory facet needs the list, and
+    // its COUNT has to be right on the very first paint or the facet would
+    // read "Memory 0" until something else happened to refresh it.
+    const data = await fetchJSON('/api/wiki/' + encodeURIComponent(slug) + '/list?include=memory');
     if (!isCurrentMount(token)) return;
     const b = state.browse;
     if (!b || b.slug !== slug) return; // domain switched mid-fetch
     b.entries = Array.isArray(data.entries) ? data.entries : [];
+    // AN OLDER SERVER ANSWERS WITHOUT IT. A browser tab can be running this
+    // shell against a server that predates the flag (the same case the
+    // deprecated memory alias exists for), and the honest degradation is an
+    // empty facet, never a thrown render.
+    b.memory = Array.isArray(data.memory) ? data.memory : [];
+    b.memoryTruncated = !!data.memoryTruncated;
     b.truncated = !!data.truncated;
     b.total = b.entries.length;
     b.loading = false;
@@ -2609,7 +2804,7 @@ async function loadBrowse(slug, token) {
 // the word the reporting user was looking for, and could not find anywhere
 // on this screen, was "wiki". Naming both is what makes the count and the
 // index distinguishable at a glance.
-const BROWSE_EYEBROW = '<div class="cur-eyebrow dm-recent-eyebrow">PAGES · THE WIKI</div>';
+const BROWSE_EYEBROW = '<div class="cur-eyebrow dm-recent-eyebrow dm-section-eyebrow">PAGES · THE WIKI</div>';
 
 function renderBrowsePanel() {
   const b = activeBrowse();
@@ -2648,41 +2843,142 @@ function renderBrowsePanel() {
     );
   }
 
-  const matches = filterBrowseEntries(b.entries, b.filter, b.folder);
-  const shown = matches.slice(0, BROWSE_RENDER_CAP);
+  const { kind, items } = browseMatches(b);
+  const win = browseWindow(b);
+  const shown = items.slice(0, win);
   const tabs = BROWSE_FOLDERS.map((f) => {
-    const n = f.key === 'all' ? b.entries.length : b.entries.filter((e) => e.folder === f.key).length;
+    const n = f.key === 'memory'
+      ? (b.memory || []).length
+      : (f.key === 'all' ? b.entries.length : b.entries.filter((e) => e.folder === f.key).length);
     return '<button class="dm-browse-tab' + (b.folder === f.key ? ' active' : '') + '" data-browse-folder="' + f.key + '">' +
       escapeHtml(f.label) + ' <span class="dm-browse-tab-count">' + n + '</span></button>';
   }).join('');
 
-  const rows = shown.map((e) => (
-    '<button class="dm-browse-row" data-browse-path="' + escapeHtml(e.path) + '" data-browse-title="' + escapeHtml(e.title || e.slug) + '">' +
-      '<span class="dm-browse-dot dm-browse-dot-' + escapeHtml(e.folder) + '"></span>' +
-      '<span class="dm-browse-title">' + escapeHtml(e.title || e.slug) + '</span>' +
-      '<span class="mono dm-browse-path">' + escapeHtml(e.path) + '</span>' +
-    '</button>'
-  )).join('') || renderDescription('No pages match that filter.');
+  const rows = shown.map((e) => (kind === 'memory' ? memoryRowHtml(e) : browseRowHtml(e))).join('') ||
+    renderDescription(kind === 'memory'
+      ? 'No memory pages match that filter.'
+      : 'No pages match that filter.');
 
-  const capNote = matches.length > shown.length
-    ? '<div class="dm-browse-note">Showing the first ' + shown.length + ' of ' + matches.length.toLocaleString() + ' matches — narrow the filter to see the rest.</div>'
-    : '';
   const truncNote = b.truncated
     ? '<div class="dm-browse-note dm-quick-note-busy">' + icon('alertTriangle', 12) + ' This domain has more pages than the listing endpoint returns — the list below is incomplete.</div>'
     : '';
 
   return (
-    BROWSE_EYEBROW +
-    '<div class="dm-browse-card">' +
-      '<div class="dm-browse-controls">' +
-        '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
-        '<div class="dm-browse-tabs">' + tabs + '</div>' +
+    // A `.dm-section`, so its gap to Projects below is the SAME rule as every
+    // other gap on this card. See renderProjectsPanel for the reported defect.
+    '<section class="dm-section dm-pages">' +
+      BROWSE_EYEBROW +
+      '<div class="dm-browse-card">' +
+        '<div class="dm-browse-controls">' +
+          '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
+          '<div class="dm-browse-tabs">' + tabs + '</div>' +
+        '</div>' +
+        truncNote +
+        // ── THE FOOTER SITS BELOW THE LIST, NOT INSIDE IT ─────────────────
+        // v3.48.1 put "+ New project" INSIDE its group as the last row, and
+        // the first draft of this copied that. Rendering it showed why the two
+        // cases are not the same: the projects group is not a scroll
+        // container, so its last row is at the end of what you can see, while
+        // `.dm-browse-list` is capped at 420px with `overflow-y: auto` — so an
+        // in-list footer sits roughly 130 rows below the fold, under a note
+        // reading "Showing 150 of 400" that offers no visible way past it.
+        // Which is the reported defect wearing a control.
+        //
+        // The row SHAPE is kept (a `.cur-group-row` button, the whole band a
+        // target, a hairline above it at the kit's inset) because that is the
+        // right shape for a list's own action; only the placement differs, and
+        // it differs for a measured reason rather than by drift.
+        '<div class="dm-browse-list" id="dm-browse-list">' + rows + '</div>' +
+        browseNoteHtml(shown.length, items.length) +
+        browseMoreHtml(shown.length, items.length) +
       '</div>' +
-      truncNote +
-      '<div class="dm-browse-list">' + rows + '</div>' +
-      capNote +
-    '</div>'
+    '</section>'
   );
+}
+
+/**
+ * One wiki page's row. Extracted from renderBrowsePanel because the
+ * "Show 150 more" path APPENDS rows into the live list rather than
+ * re-rendering the panel, so two places emit this markup — and two copies of
+ * it is how the appended rows would quietly stop matching the painted ones.
+ */
+function browseRowHtml(e) {
+  return (
+    '<button class="dm-browse-row" data-browse-path="' + escapeHtml(e.path) + '" data-browse-title="' + escapeHtml(e.title || e.slug) + '">' +
+      '<span class="dm-browse-dot dm-browse-dot-' + escapeHtml(e.folder) + '"></span>' +
+      '<span class="dm-browse-title">' + escapeHtml(e.title || e.slug) + '</span>' +
+      '<span class="mono dm-browse-path">' + escapeHtml(e.path) + '</span>' +
+    '</button>'
+  );
+}
+
+/**
+ * One memory page's row — a project's standing brief, or one work-stream's
+ * handoff on one machine.
+ *
+ * IT CARRIES THE THREE FACTS THE CLICK NEEDS, not the path: the path is
+ * DISPLAYED (it is what tells a person where the file is on disk and in their
+ * synced repository), but `openMemoryPageFromBrowse` opens the file through
+ * GET /api/memory/:domain/:project, which addresses it by project, scope and
+ * machine. Sending a path to a route that takes names would mean parsing the
+ * path back apart on the way in, which is a second, weaker copy of the
+ * store's own addressing.
+ */
+function memoryRowHtml(e) {
+  const title = e.title || e.path;
+  return (
+    '<button class="dm-browse-row dm-browse-row-memory"' +
+      ' data-mem-kind="' + escapeHtml(e.kind || '') + '"' +
+      ' data-mem-project="' + escapeHtml(e.project || '') + '"' +
+      ' data-mem-scope="' + escapeHtml(e.scope || '') + '"' +
+      ' data-mem-machine="' + escapeHtml(e.machine || '') + '"' +
+      ' data-mem-title="' + escapeHtml(title) + '"' +
+      ' data-mem-path="' + escapeHtml(e.path || '') + '">' +
+      '<span class="dm-browse-dot dm-browse-dot-memory"></span>' +
+      '<span class="dm-browse-title">' + escapeHtml(title) + '</span>' +
+      '<span class="mono dm-browse-path">' + escapeHtml(e.path || '') + '</span>' +
+    '</button>'
+  );
+}
+
+/**
+ * The count line, and the way past it.
+ *
+ * ── "Showing N of M", AND A ROW THAT CHANGES N ──────────────────────────
+ * The old note said "Showing the first 150 of 3,421 matches — narrow the
+ * filter to see the rest" and meant it literally: narrowing the filter was
+ * the ONLY way. This says the same two numbers and puts a control under them.
+ *
+ * THE CONTROL IS THE LIST'S FOOTER ROW, the shape v3.48.1 settled for "+ New
+ * project": a `<button>` that IS a row, so the whole band is the target and
+ * the kit's own separator draws above it with no special case. It is the same
+ * answer to the same question — where does a list's own action live — so it is
+ * the same shape, not a second one.
+ *
+ * Returns '' when everything matching is already on screen, which is the
+ * common case on a small domain: a control that can only say "there is
+ * nothing more" is worse than no control.
+ */
+function browseMoreHtml(shownCount, totalCount) {
+  if (totalCount <= shownCount) return '';
+  const step = Math.min(BROWSE_RENDER_CAP, totalCount - shownCount);
+  return (
+    '<button type="button" class="cur-group-row dm-browse-more" id="dm-browse-more">' +
+      '<span class="dm-browse-more-label">Show ' + step.toLocaleString() + ' more</span>' +
+    '</button>'
+  );
+}
+
+/**
+ * "Showing N of M" — and NOTHING when N is M.
+ *
+ * A list that fits says nothing about its own length, which is what every
+ * small domain sees and is the state this note must not clutter.
+ */
+function browseNoteHtml(shownCount, totalCount) {
+  if (totalCount <= shownCount) return '';
+  return '<div class="dm-browse-note" id="dm-browse-note">Showing ' +
+    shownCount.toLocaleString() + ' of ' + totalCount.toLocaleString() + '</div>';
 }
 
 // Opens a page in the shell reader.
@@ -2736,6 +3032,86 @@ async function openWikiPageFromBrowse(path, titleHint) {
     if (!isCurrentMount(mount)) return;
     if (!isCurrentReader(epoch)) return;
     openReader({ slug: path, title: titleHint || path, error: err.message }, mount);
+  }
+}
+
+/**
+ * Opens a MEMORY page in the shell reader.
+ *
+ * ── WHY NOT GET /api/wiki/:domain/page, WHICH THE ROW ABOVE USES ─────────
+ * MEASURED, not assumed — scripts/test-wiki-list-memory.js §6 drives the real
+ * route against three real `state/` paths. It answers **400**, with the words
+ * `"state/project.md" must be inside entities/, concepts/, or summaries/`:
+ * `getWikiPage` gates on a FOLDER ALLOW-LIST before it even reaches
+ * `resolveInsideWiki`, and `state/` is `wiki/`'s SIBLING, not its child. Both
+ * refusals are deliberate and load-bearing (the containment half is the v3.2.0
+ * CRITICAL's fix), so the answer is to use the route that owns memory rather
+ * than to widen the one that owns the wiki.
+ *
+ * GET /api/memory/:domain/:project is that route. It already reads, byte-caps
+ * and SANITISES both tiers — `neutraliseProtocol` on read, the duplicate-
+ * heading check, the read-sanitisation note — and it addresses a handoff by
+ * (project, scope, machine), which is exactly the three facts the row carries.
+ *
+ * ── NO `domain` ON THE READER PAYLOAD, DELIBERATELY ──────────────────────
+ * `content.domain` is the one fact that switches on the reader's RAW-source
+ * bar (app.js), which asks GET /api/wiki/:domain/source about a wiki page. A
+ * memory page has no ingested source document and is not a wiki page at all,
+ * so supplying it would buy a request that can only ever answer "no". Omitted
+ * is the documented degradation: no bar, no request.
+ *
+ * The body is UNTRUSTED — agent-written, hand-editable, and arriving over
+ * Personal Sync from other machines — so it goes through renderMarkdown(),
+ * which escapes the whole string before inserting any tag. Same renderer, same
+ * rule, as the wiki row beside it.
+ */
+async function openMemoryPageFromBrowse(row) {
+  const mount = myMountToken;
+  const slug = state.activeSlug;
+  const title = row.title || row.path;
+  const epoch = openReader({ slug: row.path, title, loading: true }, mount);
+  try {
+    let url = '/api/memory/' + encodeURIComponent(slug) + '/' + encodeURIComponent(row.project);
+    if (row.kind === 'handoff') {
+      url += '?scope=' + encodeURIComponent(row.scope) + '&machine=' + encodeURIComponent(row.machine);
+    }
+    const data = await fetchJSON(url);
+    if (!isCurrentMount(mount)) return;
+    if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we fetched
+
+    const part = row.kind === 'handoff' ? (data && data.current) : (data && data.brief);
+    const present = !!(part && part.present);
+    const body = present && typeof part.text === 'string' ? part.text : '';
+
+    openReader({
+      slug: row.path,
+      title,
+      type: 'memory',
+      typeLabel: row.kind === 'handoff' ? 'handoff' : 'standing brief',
+      // The store's own honesty fields, forwarded rather than dropped — this
+      // module's recorded dominant defect class is a consumer silently losing
+      // a field the store computed. Each renders as a tag chip.
+      tags: [
+        row.kind === 'handoff' && row.scope ? 'scope: ' + row.scope : null,
+        row.kind === 'handoff' && row.machine ? 'machine: ' + row.machine : null,
+        part && part.truncated ? 'truncated at the read cap' : null,
+        part && part.sanitisedOnRead ? 'sanitised on read' : null,
+        part && part.headingsSuspect ? 'repeated headings' : null,
+      ].filter(Boolean),
+      readonly: !!(data && data.readonly),
+      // AN ABSENT FILE IS SAID, NOT RENDERED AS AN EMPTY PAGE. The listing is
+      // a snapshot; an agent can move or replace a file between the list and
+      // the click, and a blank reader would read as "this handoff is empty".
+      bodyHtml: present
+        ? renderMarkdown(body)
+        : renderDescription('This file is not there any more. The list was read when this domain '
+          + 'was opened; an agent may have saved over it or a sync may have moved it since.'),
+      backlinks: [],
+    }, mount);
+  } catch (err) {
+    if (!isCurrentMount(mount)) return;
+    if (!isCurrentReader(epoch)) return;
+    openReader({ slug: row.path, title, error: err.message }, mount);
   }
 }
 
@@ -3110,6 +3486,11 @@ function bindBrowseListeners() {
       const b = activeBrowse();
       if (!b) return;
       b.filter = filterEl.value;
+      // THE WINDOW RESETS WITH THE QUERY. It counts rows of a SPECIFIC match
+      // set; carrying 600 across to a new query would paint 600 rows of a
+      // list the user has just narrowed to 12, and would make "Showing 600 of
+      // 12" expressible.
+      b.window = BROWSE_RENDER_CAP;
       // Re-render repaints the input, so restore focus + caret. Keeping the
       // list in sync with the box on every keystroke is the whole point of
       // holding all entries in memory.
@@ -3125,17 +3506,107 @@ function bindBrowseListeners() {
       const b = activeBrowse();
       if (!b) return;
       b.folder = btn.dataset.browseFolder;
+      // Same reason as the filter above, and the same line: a facet change is
+      // a different match set.
+      b.window = BROWSE_RENDER_CAP;
       render(myMountToken);
     });
   });
 
-  document.querySelectorAll('.dm-browse-row[data-browse-path]').forEach((btn) => {
+  bindBrowseRowClicks(document);
+
+  document.getElementById('dm-browse-more')?.addEventListener('click', showMoreBrowseRows);
+}
+
+/**
+ * Wires the click handlers for the rows inside `root`.
+ *
+ * `root` is the DOCUMENT on a full paint and the newly-appended FRAGMENT on a
+ * "Show 150 more" — which is the whole reason it is a parameter. Re-scanning
+ * the document after an append would re-bind every row already on screen, and
+ * a second listener on a row opens the reader twice.
+ */
+function bindBrowseRowClicks(root) {
+  root.querySelectorAll('.dm-browse-row[data-browse-path]').forEach((btn) => {
     btn.addEventListener('click', () => {
       Promise.resolve()
         .then(() => openWikiPageFromBrowse(btn.dataset.browsePath, btn.dataset.browseTitle))
         .catch(reportAsyncActionFailure);
     });
   });
+  root.querySelectorAll('.dm-browse-row[data-mem-path]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      Promise.resolve()
+        .then(() => openMemoryPageFromBrowse({
+          kind: btn.dataset.memKind,
+          project: btn.dataset.memProject,
+          scope: btn.dataset.memScope,
+          machine: btn.dataset.memMachine,
+          title: btn.dataset.memTitle,
+          path: btn.dataset.memPath,
+        }))
+        .catch(reportAsyncActionFailure);
+    });
+  });
+}
+
+/**
+ * Paints the NEXT window of rows — by APPENDING them, not by re-rendering.
+ *
+ * ── WHY APPEND ──────────────────────────────────────────────────────────
+ * A full render() replaces `#view-root`'s innerHTML. On this list that costs
+ * three things a person notices: the scroll position of `.dm-browse-list`
+ * jumps back to the top (so pressing "Show more" would throw away the place
+ * you were reading), the filter input is destroyed and re-created, and every
+ * row already on screen is re-parsed. Appending keeps the scroll position by
+ * construction — the rows above the button do not move — and touches only the
+ * nodes that are new.
+ *
+ * The button is REPLACED rather than left and hidden, because it is the list's
+ * last row and a hidden row still occupies the separator above it. When
+ * nothing is left it goes, and the note goes with it.
+ *
+ * `state.browse.window` is still the single source of truth: a later full
+ * render (a domain reload, a facet change) paints exactly what is on screen
+ * now, so the two paths cannot disagree about how much is shown.
+ */
+function showMoreBrowseRows() {
+  const b = activeBrowse();
+  if (!b) return;
+  const list = document.getElementById('dm-browse-list');
+  const moreBtn = document.getElementById('dm-browse-more');
+  if (!list || !moreBtn) return;
+
+  const { kind, items } = browseMatches(b);
+  const from = browseWindow(b);
+  const to = Math.min(items.length, from + BROWSE_RENDER_CAP);
+  if (to <= from) { moreBtn.remove(); return; }
+
+  const html = items.slice(from, to)
+    .map((e) => (kind === 'memory' ? memoryRowHtml(e) : browseRowHtml(e))).join('');
+  const before = list.children.length;
+  list.insertAdjacentHTML('beforeend', html);
+  b.window = to;
+
+  // Bind ONLY what was just inserted — see bindBrowseRowClicks. Taken as the
+  // tail of the list by INDEX rather than by counting backwards from a
+  // sibling, so a row the painter ever renders as two elements cannot make
+  // this bind the wrong set.
+  const added = Array.prototype.slice.call(list.children, before);
+  bindBrowseRowClicks({
+    querySelectorAll: (sel) => added.filter((el) => el.matches && el.matches(sel)),
+  });
+
+  const note = document.getElementById('dm-browse-note');
+  if (to >= items.length) {
+    moreBtn.remove();
+    if (note) note.remove();
+  } else {
+    const label = moreBtn.querySelector('.dm-browse-more-label');
+    const step = Math.min(BROWSE_RENDER_CAP, items.length - to);
+    if (label) label.textContent = 'Show ' + step.toLocaleString() + ' more';
+    if (note) note.textContent = 'Showing ' + to.toLocaleString() + ' of ' + items.length.toLocaleString();
+  }
 }
 
 // ── Health panel ───────────────────────────────────────────────────────────
@@ -3173,6 +3644,33 @@ function healthScanLabel(hasResult) {
     : icon('activity', 13) + ' Scan wiki health';
 }
 
+/**
+ * The Wiki health section's wrapper — a `.dm-section` with its own eyebrow,
+ * like the three above it.
+ *
+ * ── WHY THE WORD APPEARS TWICE, and why that is the right call ──────────
+ * The card keeps its own head (`Wiki health` beside the activity icon and the
+ * Rescan button) because that head is the card's TITLE BAR: it carries the
+ * action, and the two belong to each other. The eyebrow above it names the
+ * SECTION, which is what makes the four sections on this card scannable as
+ * four. That is the same decision v3.49.0 recorded for the stat cards' `PAGES`
+ * eyebrow sitting above the list's `PAGES · THE WIKI` — naming both is what
+ * makes the summary and the thing itself distinguishable at a glance.
+ *
+ * An EMPTY body renders nothing at all, eyebrow included: renderHealthPanel
+ * returns '' when there is no report, and a section heading over nothing is a
+ * gap that looks like a failure.
+ */
+function healthSection(inner) {
+  if (!inner) return '';
+  return (
+    '<section class="dm-section dm-health">' +
+      '<div class="cur-group-title dm-section-eyebrow">WIKI HEALTH</div>' +
+      inner +
+    '</section>'
+  );
+}
+
 function renderHealthPanel(domain, readonly) {
   // Stale-while-revalidate — LAYER 2, independent of LAYER 1 in
   // shouldKeepHealthOnReload. A report is usable here ONLY if it was
@@ -3186,7 +3684,7 @@ function renderHealthPanel(domain, readonly) {
   // Only collapse to "Scanning…" when there is genuinely nothing to show.
   // A rescan behind a report we already have keeps that report on screen.
   if (state.healthLoading && !usable) {
-    return (
+    return healthSection(
       '<div class="dm-health-card">' +
         '<div class="dm-health-top"><div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div></div>' +
         '<div class="dm-health-body">Scanning…</div>' +
@@ -3194,7 +3692,7 @@ function renderHealthPanel(domain, readonly) {
     );
   }
   if (state.healthError) {
-    return (
+    return healthSection(
       '<div class="dm-health-card">' +
         '<div class="dm-health-top">' +
           '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
@@ -3256,7 +3754,7 @@ function renderHealthPanel(domain, readonly) {
     { label: 'Dismissed', value: report.counts.dismissed },
   ]);
 
-  return (
+  return healthSection(
     '<div class="dm-health-card">' +
       '<div class="dm-health-top">' +
         '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +

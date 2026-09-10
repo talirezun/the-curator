@@ -449,8 +449,14 @@ ok(filterBrowseEntries(entries, 'zzz', 'all').length === 0, 'a filter matching n
 ok(filterBrowseEntries(entries, 'A Report', 'all').length === 1, 'the title is searched as well as the slug');
 ok(typeof BROWSE_RENDER_CAP === 'number' && BROWSE_RENDER_CAP > 0, 'the render cap is a real number — ~3,300 rows are not painted at once');
 const listSrc = extractFunction(src, 'loadBrowse');
-ok(/'\/api\/wiki\/' \+ encodeURIComponent\(slug\) \+ '\/list'/.test(listSrc),
+// v3.50.0 appended `?include=memory` — the memory facet's count has to be
+// right on the first paint. The ROUTE is what this pins, so the pattern stops
+// at the path and the query is asserted separately below rather than being
+// baked into one brittle literal.
+ok(/'\/api\/wiki\/' \+ encodeURIComponent\(slug\) \+ '\/list/.test(listSrc),
    'the page list comes from GET /api/wiki/:domain/list (Agent D’s readdir-only endpoint), not the 14 MB whole-domain route');
+ok(/\/list\?include=memory/.test(listSrc),
+   '…and asks that endpoint for the domain’s MEMORY pages too, in the same round trip');
 ok(/b\.truncated = !!data\.truncated/.test(listSrc), 'the endpoint’s truncated flag is read, not ignored');
 ok(/renderBrowsePanel/.test(src) && /dm-browse-note dm-quick-note-busy/.test(src),
    'a truncated listing is SHOWN as incomplete rather than silently presented as the whole domain');

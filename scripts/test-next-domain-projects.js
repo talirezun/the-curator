@@ -120,6 +120,12 @@ function extractConst(source, name) {
 
 const FNS = [
   'activeProjects',
+  // v3.50.0. The section's explanatory paragraph moved behind an ⓘ mark (the
+  // maintainer asked for it "like the domain header's"), and renderProjectsPanel
+  // builds that mark through this helper. LIFTED, never stubbed — S12b asserts
+  // the fold really CARRIES the paragraph, and a stub would let an empty panel
+  // pass that assertion.
+  'infoMark',
   'loadProjects',
   'renderProjectRow',
   'renderProjectsPanel',

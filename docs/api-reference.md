@@ -1165,6 +1165,12 @@ Reads are allowed on read-only Shared Brain mirror domains, matching `/page` —
 |-----------|-------------|
 | `domain` | Domain slug |
 
+**Query parameter**
+
+| Parameter | Description |
+|-----------|-------------|
+| `include` | Comma-separated. The only recognised value is `memory` (v3.50.0). Anything else is ignored. |
+
 **Success response** `200 OK`
 
 ```json
@@ -1186,6 +1192,40 @@ Entries are sorted by `path` and drawn only from the three canonical folders (`e
 **`title` is derived from the slug alone (`tali-rezun` → `Tali Rezun`), never from frontmatter or file content.** This is a deliberate trade-off, not an oversight: reading each file for its real title (an explicit `title:` in frontmatter, or the first `# Heading`) would mean opening every page body — reinstating the exact 14 MB read this endpoint exists to avoid. A page whose real title differs from its slug (e.g. an acronym, or a title that doesn't match its filename) shows the slug-derived label here; its real title is correct the instant it's opened via `GET /:domain/page`, which does read the file.
 
 Capped at 20,000 entries (`truncated: true` beyond that; `count` is the number actually returned). `total` always reports the real, uncapped count — it costs nothing extra, since every filename is enumerated before the cap is applied.
+
+### `?include=memory` — the domain's memory pages (v3.50.0)
+
+A domain's `state/` tree is markdown too: each project's **standing brief** and each work-stream's **handoff** (`current.md`). With `?include=memory` the response gains four additive fields:
+
+```json
+{
+  "domain": "ai-tech",
+  "entries": [ … ],
+  "count": 3, "total": 3, "truncated": false,
+
+  "memory": [
+    { "kind": "brief",   "project": "ai-tech", "isDefaultProject": true,  "scope": null,
+      "machine": null,   "path": "state/project.md",
+      "title": "ai-tech · Standing brief", "savedAt": "2026-09-08T11:02:00.000Z", "bytes": 4180 },
+    { "kind": "handoff", "project": "lumina", "isDefaultProject": false, "scope": "design",
+      "machine": "studio-9f2a1c",           "path": "state/lumina/design/studio-9f2a1c/current.md",
+      "title": "lumina · design · studio-9f2a1c", "savedAt": "2026-09-09T18:41:00.000Z", "bytes": 9022 }
+  ],
+  "memoryCount": 2,
+  "memoryTotal": 2,
+  "memoryTruncated": false
+}
+```
+
+**It is a separate array, never folded into `entries`, and `count`/`total` keep meaning wiki pages.** The Domains view renders a fifth **Memory** facet from it beside Entities / Concepts / Summaries, and the "All" facet keeps counting wiki pages only — a facet that disagreed with the PAGES figure directly above it would be a self-contradicting readout.
+
+**One row per `(scope, machine)` pair.** The `<machine>` segment is load-bearing in the working-state store (two machines saving under one work-stream are two files, and Personal Sync keeps them apart precisely so no hunk ever conflicts), so collapsing them would hide a file that is on disk.
+
+**The domain's own project lives at the state root**, so its brief is `state/project.md` and its handoffs are `state/<scope>/<machine>/current.md` — never `state/<domain>/…`. Named projects sit one level deeper.
+
+**No file bodies, ever**, and the wire shape is an allow-list of exactly the nine fields above. The store's rows also carry journal-derived facts — the headline an agent wrote, the harness and model that wrote it — and none of them reach this listing. To read a memory page's content, use `GET /api/memory/:domain/:project` (add `?scope=&machine=` for a handoff); `GET /api/wiki/:domain/page` **cannot** open one and answers `400` — it gates on the three canonical wiki folders, and `state/` is `wiki/`'s sibling.
+
+**Why it is opt-in.** The wiki half is one `readdir` per canonical folder. The memory half walks the project list and reads one journal tail per `(scope, machine)` pair — bounded, but not free. Without the flag the response is byte-for-byte what it always was, so nothing that does not want memory pages pays for them. `memory` is capped at 2,000 entries with `memoryTruncated` saying so; a domain with no `state/` folder gets `"memory": []` and `memoryCount: 0`, which is an answer rather than an error.
 
 **Error responses**
 

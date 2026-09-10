@@ -339,6 +339,11 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // §3b. It is LIFTED rather than stubbed, so what these renders show is
     // the shipped word and not this file's idea of it.
     extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+    // v3.50.0: the panel is now wrapped in its own `.dm-section` with a
+    // section eyebrow, by a helper. LIFTED, not stubbed, for the same reason
+    // healthScanLabel is: what these renders show has to be the shipped
+    // markup, and a stub would hide the wrapper the section-rhythm work added.
+    extractFunction(domainsSrc, 'healthSection') + '\n' +
     extractFunction(domainsSrc, 'renderHealthPanel'),
     'renderHealthPanel'
   );
@@ -443,6 +448,8 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
       extractFunction(domainsSrc, 'relTime') + '\n' +
       extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
       extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+      // v3.50.0 — see the §3 harness above.
+      extractFunction(domainsSrc, 'healthSection') + '\n' +
       extractFunction(domainsSrc, 'renderHealthPanel'),
       'renderHealthPanel'
     )({ healthLoading: false, health: report, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() },

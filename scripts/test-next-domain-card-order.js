@@ -200,11 +200,21 @@ try {
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
     extractFunction(SRC, 'activeBrowse') + '\n' +
+    extractFunction(SRC, 'activeProjects') + '\n' +
+    extractFunction(SRC, 'projectCount') + '\n' +
     extractFunction(SRC, 'filterBrowseEntries') + '\n' +
+    extractFunction(SRC, 'filterMemoryEntries') + '\n' +
+    extractFunction(SRC, 'browseMatches') + '\n' +
+    extractFunction(SRC, 'browseWindow') + '\n' +
+    extractFunction(SRC, 'browseRowHtml') + '\n' +
+    extractFunction(SRC, 'memoryRowHtml') + '\n' +
+    extractFunction(SRC, 'browseMoreHtml') + '\n' +
+    extractFunction(SRC, 'browseNoteHtml') + '\n' +
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
-    `return { renderMain, renderBrowsePanel, BROWSE_EYEBROW,
+    `return { renderMain, renderBrowsePanel, BROWSE_EYEBROW, browseMatches, browseWindow,
+       memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
   )();
@@ -290,7 +300,10 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
     html.includes('id="dm-browse-filter"'));
   const root = parseHtmlToChildren(html);
   const tabs = flatten(root).filter((n) => hasClass(n, 'dm-browse-tab'));
-  eq('all four folder facets render (All / Entities / Concepts / Summaries)', tabs.length, 4);
+  // FIVE since v3.50.0: Memory joined them — the domain's standing briefs and
+  // work-stream handoffs are markdown too, and this list is where a person
+  // looks for "what documents are in this domain".
+  eq('all five folder facets render (All / Entities / Concepts / Summaries / Memory)', tabs.length, 5);
   const rows = flatten(root).filter((n) => hasClass(n, 'dm-browse-row'));
   eq('and the pages themselves are listed', rows.length, 2);
 }
@@ -312,7 +325,15 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
   const html = renderCard({ browse: { slug: 'alpha', loading: false, error: null, filter: '', folder: 'all', truncated: false, entries: many } });
   const rows = flatten(parseHtmlToChildren(html)).filter((n) => hasClass(n, 'dm-browse-row'));
   eq('a 400-page domain paints the capped number of rows, not 400', rows.length, 150);
-  ok('...and says so, with the real total', html.includes('Showing the first 150 of 400 matches'));
+  // THE WORDING CHANGED WITH THE DEAD END IT DESCRIBED (v3.50.0). It used to
+  // read "Showing the first 150 of 400 matches — narrow the filter to see the
+  // rest", and narrowing the filter really was the only route past it. The
+  // note now states the two numbers and a footer row extends the window; the
+  // pagination itself is driven in scripts/test-next-domain-pages.js.
+  ok('...and says so, with the real total', html.includes('Showing 150 of 400'));
+  ok('...and offers the way past it, rather than telling the reader to type',
+    html.includes('id="dm-browse-more"') && html.includes('Show 150 more'));
+  ok('...with no trace of the old dead end', !html.includes('narrow the filter'));
 }
 {
   // THE FILTER STILL FILTERS, through the real filterBrowseEntries.
@@ -355,6 +376,7 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
     'state', ...names,
     extractFunction(SRC, 'shouldKeepHealthOnReload') + '\n' +
     extractFunction(SRC, 'healthScanLabel') + '\n' +
+    extractFunction(SRC, 'healthSection') + '\n' +
     extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
   );
   const render = (st) => build()(st, ...names.map((n) => deps[n]))({ slug: 'articles' }, false);
