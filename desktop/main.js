@@ -898,7 +898,7 @@ async function runMenuInstall(action) {
 // desktop/README.md carries the same statement.
 
 /**
- * The row limit asked of the data layer.
+ * The row limit asked of the data layer. THE FETCH, AND ONLY THE FETCH.
  *
  * It WAS `MAX_ROWS` — exactly what the menu displays — and grouping by project
  * (v3.48.0) makes that wrong: the summary's slice is newest-first across ALL
@@ -907,6 +907,14 @@ async function runMenuInstall(action) {
  * cannot group what it was never given. `TRAY_FETCH_ROWS` is the data layer's
  * own ceiling; the cost is an array rather than I/O, because the same journals
  * are read for the same pairs whatever the limit is. See its docblock.
+ *
+ * ── AND IT MUST NEVER BE HANDED TO `buildTrayModel` ────────────────────────
+ *
+ * v3.50.0 passed this same 40 as the model's `maxRows`, which is the DISPLAY
+ * cap, and the tray rendered 23 rows across three groups on the maintainer's
+ * own machine. The model owns that number (`MAX_ROWS` = 5, with the group
+ * arithmetic beside it) and now clamps to it whatever it is handed, so this
+ * constant is passed to `getTraySummary` and nowhere else.
  */
 const TRAY_ROW_LIMIT = TRAY_FETCH_ROWS;
 
@@ -1112,8 +1120,9 @@ function renderTrayFromSnapshot() {
   // The subscription below is `AppleInterfaceThemeChangedNotification` rather
   // than `nativeTheme.on('updated')` for the same reason: with themeSource
   // pinned, `updated` does not fire for a system appearance change.
+  // NO `maxRows`: the display cap is the model's own `MAX_ROWS`, and handing
+  // this call the FETCH limit is what put 23 rows on the menu in v3.50.0.
   const model = buildTrayModel(traySnapshot, {
-    maxRows: TRAY_ROW_LIMIT,
     dark: menuAppearanceIsDark(),
   });
 

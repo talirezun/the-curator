@@ -938,11 +938,27 @@ section('§8 width compaction — three levers, each conditional and each revers
   // escalated at all, plus the control that makes it non-vacuous.
   eq(realRows.filter((r) => r.agePrecision !== null).length, 0,
     'and NO row was escalated: every pair whose line one matches is separated on line two already');
-  ok(realRows.filter((r) => r.scope.includes('design-conformance')).length === 2,
-    'CONTROL — the two same-scope rows really are both shown, so the assertion above is not vacuous');
-  const dcSubs = realRows.filter((r) => r.scope.includes('design-conformance')).map((r) => r.sublabel);
-  ok(dcSubs[0] !== dcSubs[1],
-    'CONTROL — and their line TWO differs, which is the reason line one was never in trouble');
+
+  // ── REVERSED IN v3.51.0, AND THIS STORE IS WHY THE RULE EXISTS ─────────
+  //
+  // Two of this store's eight pairs are ONE work-stream saved from two machine
+  // FOLDERS that share the install id `9f3c1a` — one laptop, two folders. Under
+  // the five-row cap that spent two of five rows on `design-conformance` twice,
+  // which is what the maintainer photographed. A group's slots now go to
+  // DISTINCT SCOPES, newest copy first, so each work-stream appears once and
+  // the row it freed goes to the next work-stream down.
+  eq(realRows.filter((r) => r.scope.includes('design-conformance')).length, 1,
+    'the work-stream saved from two machine folders is ONE row, not two');
+  eq(realRows.filter((r) => r.scope.includes('chat-streaming')).length, 1,
+    '…and so is the other duplicated one — two pairs on this store, both collapsed');
+  eq(realRows.find((r) => r.scope.includes('design-conformance')).machine, 'alices-macbook-pro-9f3c1a',
+    'and the copy kept is the NEWEST, which is the one a reader would resume from');
+  eq(new Set(realRows.map((r) => r.scope)).size, realRows.length,
+    'so every row on the menu is a different work-stream');
+  // CONTROL — the collapse really did buy a row rather than shorten the list.
+  eq(realRows.length, 5, 'the freed slot went to the next work-stream down, not to a blank line');
+  ok(realRows.some((r) => r.scope.includes('chat-streaming')),
+    'CONTROL — and that next work-stream is one the duplicate had been keeping off the menu');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -981,7 +997,11 @@ section('§9 nothing dropped from a label becomes unreachable');
     .map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join(' ')).join(' ');
   ok(!/install-id|machineMatch/.test(surfaced),
     'the diagnostic machineMatch field reaches no label, sublabel or tooltip');
-  ok(/mac-9f3c1a/.test(surfaced),
+  // The machine folder asserted here is the one whose rows SURVIVE the
+  // distinct-scope rule (v3.51.0): `mac-9f3c1a` holds only older copies of
+  // work-streams `alices-macbook-pro-9f3c1a` also saved, so it no longer
+  // reaches a surface and asserting it would test the cut rather than the scan.
+  ok(/alices-macbook-pro-9f3c1a/.test(surfaced),
     'CONTROL: other per-row fields DO reach a surface, so the scan above is looking at real rendered text');
 
   // A control: the tooltip is NOT simply the label repeated, and it really is
@@ -1005,11 +1025,32 @@ section('§10 the collision guard: compaction may never make two rows read alike
 // two lines still over the width target. The order asserted below is the fixed
 // one: same computer -> finer age; different computers -> the machine stays;
 // same computer inside one minute -> the folder name, as a last resort.
+//
+// ── WHY EVERY PAIR BELOW SITS IN TWO PROJECTS, FROM v3.51.0 ────────────────
+//
+// These fixtures were written as ONE project, ONE scope, TWO machine folders,
+// because that is the shape the maintainer's store had. v3.51.0 makes a group's
+// slots go to DISTINCT SCOPES — a second machine copy of a work-stream already
+// on screen is the same work-stream twice, which is what his Tray showed — so
+// that shape now renders ONE row and a pair can no longer be built from it.
+//
+// The collision machinery is NOT dead, and this is not a fixture bent to keep a
+// suite green: the resolver's own docblock records the photographed case as
+// "one scope topic saved in two different PROJECTS", and v3.48.0's fixtures are
+// full of projects that all name a scope `main`. Two groups is where a
+// collision is now reachable, so that is where these are driven. Everything
+// each case was written to prove — which discriminator is chosen, in which
+// order, and what is handed back — is unchanged, because the resolver compares
+// the RENDERED PAIR and the project token is on the header, not on either line.
 {
   const row = (over) => ({
     project: 'projects', scope: 'session-alpha', harness: 'claude-code',
     ageSource: 'agent', headline: 'h', ...over,
   });
+  // The second member of a colliding pair. Same scope NAME, different project:
+  // two groups, so both rows survive the distinct-scope rule and still render
+  // an identical pair of lines.
+  const row2 = (over) => row({ project: 'posts', ...over });
   const build = (scopes) => model.buildTrayModel({ ok: true, scopes }, { now: NOW });
 
   // ── A. THE MAINTAINER'S REAL CASE ──────────────────────────────────────
@@ -1024,7 +1065,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   const REAL_SCOPE = 'session-2026-08-30-design-conformance-pre-native';
   const real = build([
     row({ scope: REAL_SCOPE, machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 124066 }),
-    row({ scope: REAL_SCOPE, machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
+    row2({ scope: REAL_SCOPE, machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
   ]);
   eq(model.ageText(124066, 'agent'), model.ageText(132529, 'agent'),
     'the two ages really do render identically on the ordinary ladder — the collision is real, not manufactured');
@@ -1048,15 +1089,15 @@ section('§10 the collision guard: compaction may never make two rows read alike
   ok(real.rows.some((r) => r.toolTip.includes('alices-macbook-pro-9f3c1a')),
     'the full machine folder name survives in the tooltip — the only place it now appears');
   ok(real.rows.some((r) => r.toolTip.includes('mac-9f3c1a')), 'and so does the other one');
-  ok(real.rows.every((r) => r.toolTip.includes(REAL_SCOPE) && r.toolTip.includes('projects')),
-    'along with everything else the compaction dropped');
+  ok(real.rows.every((r) => r.toolTip.includes(REAL_SCOPE) && r.toolTip.includes(r.project)),
+    'along with everything else the compaction dropped — including each row\'s own project, which is on the header and on no line of the row');
 
   // CONTROL: with the ages already apart, nothing is escalated at all. Without
   // this, the assertions above would pass on an implementation that always
   // escalates — which would be a second, quieter defect.
   const apart = build([
     row({ machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 300 }),
-    row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
+    row2({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 132529 }),
   ]);
   eq(apart.rows.map((r) => r.agePrecision), [null, null],
     'CONTROL: rows that do not collide stay on the ordinary ladder, the one the app\'s memory view renders');
@@ -1080,7 +1121,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // them, and the assertion that it does not is a real one.
   const twoMachines = build([
     row({ machine: 'laptop-abcd1111', isThisMachine: false, writtenAgeSeconds: 124066 }),
-    row({ machine: 'laptop-abcd2222', isThisMachine: false, writtenAgeSeconds: 132529 }),
+    row2({ machine: 'laptop-abcd2222', isThisMachine: false, writtenAgeSeconds: 132529 }),
   ]);
   for (const r of twoMachines.rows) {
     ok(/laptop/.test(r.label), 'a row from another machine keeps its machine label through a collision');
@@ -1100,7 +1141,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // machine label is never dropped. The ordinary shape of "two machines".
   const mixed = build([
     row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 90000 }),
-    row({ machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 90000 }),
+    row2({ machine: 'studio-9f8e7d', isThisMachine: false, writtenAgeSeconds: 90000 }),
   ]);
   // REVERSED IN v3.43.0 — IN WHICH LINE IT READS, NOT IN WHAT IT SAYS. Both
   // assertions were written when a collision was decided over LINE ONE alone,
@@ -1122,7 +1163,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // ── C. THE UNRESOLVABLE CASE — same computer, inside one minute ────────
   const sameMinute = build([
     row({ machine: 'alices-macbook-pro-9f3c1a', isThisMachine: true, writtenAgeSeconds: 3600 }),
-    row({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 3600 }),
+    row2({ machine: 'mac-9f3c1a', isThisMachine: true, writtenAgeSeconds: 3600 }),
   ]);
   ok(sameMinute.rows[0].label !== sameMinute.rows[1].label,
     'two saves from one computer inside one minute are still told apart');
@@ -1146,7 +1187,7 @@ section('§10 the collision guard: compaction may never make two rows read alike
   // HERE.
   const anonymous = build([
     row({ isThisMachine: false, writtenAgeSeconds: 90000 }),
-    row({ isThisMachine: false, writtenAgeSeconds: 90000 }),
+    row2({ isThisMachine: false, writtenAgeSeconds: 90000 }),
   ]);
   eq(anonymous.rows[0].label, anonymous.rows[1].label,
     'two rows with no machine and nothing else to tell them apart really do collide — the fixture is the shape being guarded');

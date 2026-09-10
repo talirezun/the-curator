@@ -1447,11 +1447,20 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
         scope: 'session-2026-08-30-design-conformance-pre-native' }),
       // THE DHCP PAIR: same scope, same coarse age, a DIFFERENT folder, one
       // installation. Naming the machine here is the fix that is wrong about
-      // the hardware; the age is escalated instead.
+      // the hardware. Since v3.51.0 it does not reach a label at all — a
+      // group's slots go to DISTINCT SCOPES and the newest copy wins — so what
+      // this pair proves now is the COLLAPSE; the escalation is driven below
+      // on the shape where a collision is still reachable.
       readerRow({ writtenAt: atAge(129600), writtenAgeSeconds: 129600,
         scope: 'session-2026-08-30-design-conformance-pre-native', machine: 'notebook-a1b2c3' }),
       readerRow({ writtenAt: atAge(140400), writtenAgeSeconds: 140400,
         scope: 'session-2026-08-30-ingest-continuity-tables' }),
+      // A sixth work-stream, added in v3.51.0 so the store still fills all five
+      // rows once the pair above collapses to one. Without it every assertion
+      // below would be running on a four-row menu and the row-cap controls
+      // would be measuring the fixture rather than the cap.
+      readerRow({ writtenAt: atAge(151200), writtenAgeSeconds: 151200,
+        scope: 'session-2026-08-28-chat-streaming' }),
       ...extra,
     ],
   });
@@ -1486,11 +1495,39 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
   ok(reader.rows.every((r) => !/^projects/.test(r.label)),
     'nor the project token, which one project makes constant');
 
-  // THE DHCP PAIR IS SEPARATED BY A FINER AGE, NEVER BY A FOLDER NAME.
+  // ── THE DHCP PAIR IS ONE ROW NOW (v3.51.0) ─────────────────────────────
+  //
+  // Two folders, one laptop, one work-stream: the second copy said nothing the
+  // first did not, and on a five-row menu it cost a whole slot. The newest copy
+  // is kept and the older one is reachable through the overflow item.
   const pair = reader.rows.filter((r) => r.scope.includes('design-conformance'));
-  eq(pair.length, 2, 'CONTROL — the colliding pair is present');
-  ok(pair[0].label !== pair[1].label, 'the two rows read differently');
-  ok(pair.every((r) => r.agePrecision === 'hour'),
+  eq(pair.length, 1, 'the DHCP pair is ONE row — a second machine copy of a shown work-stream is the same work-stream twice');
+  eq(pair[0].machine, 'laptop-a1b2c3', '…and it is the NEWER copy that survived');
+  eq(new Set(reader.rows.map((r) => r.scope)).size, reader.rows.length,
+    'so every row on this menu is a different work-stream');
+  ok(reader.rows.some((r) => r.scope.includes('chat-streaming')),
+    'CONTROL — and the freed slot went to the next work-stream down rather than shortening the menu');
+
+  // ── AND WHERE A COLLISION IS STILL REACHABLE, IT IS STILL THE AGE ───────
+  //
+  // One scope NAME in two PROJECTS, saved from two folders of one laptop, at
+  // two ages that round to the same words. That is the shape the resolver's own
+  // docblock records from the photograph, and it survives the distinct-scope
+  // rule because the two rows are two work-streams in two groups.
+  const collide = model.buildTrayModel({
+    ok: true, total: 2,
+    scopes: [
+      readerRow({ writtenAt: atAge(122400), writtenAgeSeconds: 122400,
+        scope: 'session-2026-08-30-design-conformance-pre-native' }),
+      readerRow({ writtenAt: atAge(129600), writtenAgeSeconds: 129600, project: 'posts',
+        scope: 'session-2026-08-30-design-conformance-pre-native', machine: 'notebook-a1b2c3' }),
+    ],
+  }, { now: NOW });
+  eq(collide.rows.length, 2, 'CONTROL — the colliding pair is present');
+  ok(collide.rows.every((r) => !/laptop|notebook|a1b2c3/.test(r.label)),
+    'neither row names a machine folder');
+  ok(collide.rows[0].label !== collide.rows[1].label, 'the two rows read differently');
+  ok(collide.rows.every((r) => r.agePrecision === 'hour'),
     '…and they were separated by escalating the AGE, which costs no width and makes no claim about hardware');
 
   // AND THE MOMENT A SECOND COMPUTER APPEARS, THE NAME COMES BACK.
@@ -2139,10 +2176,16 @@ section('§20 the topic-first budget, over three fixtures including the READER\'
   // FINER AGE; if it thinks they are two, it puts machine names back on line
   // one — reasserting a computer that does not exist, on the two widest lines
   // in the menu. That is the v3.37.0 defect, and this is the fixture for it.
+  //
+  // THE TWO ROWS SIT IN TWO PROJECTS (v3.51.0). A group's slots go to distinct
+  // scopes now, so one scope name in one project would render ONE row and this
+  // fixture would have nothing to resolve. The two-installation question it
+  // exists to ask is untouched by that: `machineIdentityKey` is a fact about
+  // the FOLDER, and the resolver still compares the rendered pair.
   const twoInstalls = build([
     R({ scope: 'session-2026-08-30-shared', writtenAt: at(122400),
       machine: 'alpha-macbook-pro-acb035', isThisMachine: false, isThisHost: true, headline: 'h' }),
-    R({ scope: 'session-2026-08-30-shared', writtenAt: at(129600),
+    R({ scope: 'session-2026-08-30-shared', writtenAt: at(129600), project: 'posts',
       machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: true, isThisHost: true, headline: 'h' }),
   ]);
   eq(new Set(twoInstalls.rows.map((r) => model.installIdPart(r.machine))).size, 2,
@@ -2719,18 +2762,23 @@ section('§24 the collision is decided over the WHOLE ROW, and no age reads in t
 
   // ── AND WHEN EVERY RUNG BUYS NOTHING, THE WHOLE ESCALATION IS HANDED BACK ──
   //
-  // The same two saves, this time in ONE project with ONE headline: now the
-  // rows really are indistinguishable, so the resolver has a genuine problem.
-  // It walks the ladder, finds that neither `hour` nor `minute` tells them
-  // apart — twenty-one hours old and thirty seconds apart — and puts the
-  // precision back exactly where it found it before falling through. A row
-  // reading `1271 min ago` beside four rows reading in hours would be width
-  // spent on a distinction that FAILED.
+  // The same two saves, this time with ONE headline on both: now the rows
+  // really are indistinguishable, so the resolver has a genuine problem. It
+  // walks the ladder, finds that neither `hour` nor `minute` tells them apart —
+  // twenty-one hours old and thirty seconds apart — and puts the precision back
+  // exactly where it found it before falling through. A row reading `1271 min
+  // ago` beside four rows reading in hours would be width spent on a
+  // distinction that FAILED.
+  //
+  // THE PAIR SITS IN TWO PROJECTS (v3.51.0), because a group's slots go to
+  // distinct scopes and one project would render ONE row. The fixture's own
+  // subject is unchanged: it is the identical HEADLINE that makes line two
+  // useless here, not the project — the project is on the header either way.
   const twinsOneProject = model.buildTrayModel({
     ok: true, total: 2, scopes: [
       P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
         writtenAt: ago(TWIN_A), writtenAgeSeconds: TWIN_A, headline: 'same sentence on both rows' }),
-      P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
+      P({ project: 'projects', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
         writtenAt: ago(TWIN_B), writtenAgeSeconds: TWIN_B, headline: 'same sentence on both rows' }),
     ], brief: null, remote: null, warnings: [], pulse: null,
   }, { now: PHOTO_NOW });

@@ -1430,12 +1430,30 @@ function dedupeAgainstSuppliedWarnings(supplied, derived, hasTruncatedNote) {
  * @param {object} [opts]
  * @param {Date}   [opts.now]      the render clock, injected so the suite can
  *                                 assert the absolute stamp deterministically.
- * @param {number} [opts.maxRows]
+ * @param {number} [opts.maxRows]  a SHRINK-ONLY seam: clamped to `MAX_ROWS`,
+ *                                  never able to raise the display cap.
  * @returns {object} the model consumed by tray-menu.js.
  */
 export function buildTrayModel(summary, opts = {}) {
   const now = opts.now instanceof Date ? opts.now : new Date();
-  const maxRows = Number.isInteger(opts.maxRows) && opts.maxRows > 0 ? opts.maxRows : MAX_ROWS;
+  // ── `maxRows` CAN LOWER THE CAP AND NEVER RAISE IT ──────────────────────
+  //
+  // v3.50.0 shipped this option as an override in BOTH directions, and the
+  // shell handed it `TRAY_FETCH_ROWS` — 40 — because one constant was being
+  // asked to do two jobs. The FETCH limit and the DISPLAY cap are different
+  // numbers for a stated reason (see TRAY_FETCH_ROWS: the model cannot group
+  // what it was never given), and the menu on the maintainer's own Tray then
+  // rendered 23 rows across three groups: the flat list this file's whole
+  // caps section exists to prevent, and the "quarter of a screen" v3.37.0
+  // measured and removed.
+  //
+  // `MAX_ROWS` is the ceiling now, in code rather than in the caller's
+  // discipline. The option survives because it is used, and only ever
+  // DOWNWARD: two suites drive a 2-row budget to prove the group quota binds
+  // before the row cap. Ignoring it outright would delete a seam that has
+  // callers; clamping it removes the only direction that can hurt.
+  const maxRows = Number.isInteger(opts.maxRows) && opts.maxRows > 0
+    ? Math.min(opts.maxRows, MAX_ROWS) : MAX_ROWS;
 
   // ── THE THEME IS PASSED IN, NEVER READ HERE ────────────────────────────
   //
@@ -1517,11 +1535,40 @@ export function buildTrayModel(summary, opts = {}) {
   const rowsPerGroup = Number.isInteger(opts.maxRowsPerGroup) && opts.maxRowsPerGroup > 0
     ? opts.maxRowsPerGroup : MAX_ROWS_PER_GROUP;
 
+  //
+  // ── ONE ROW PER WORK-STREAM: THE NEWEST COPY OF A SCOPE WINS ───────────
+  //
+  // The data layer's row is one per (SCOPE, MACHINE) pair — that is
+  // `listWorkingScopes`' own unit, and it is right for the store, because the
+  // two copies are two files. It is wrong for a two-row group: the maintainer's
+  // Tray showed one work-stream twice, `handoff trimmed · claude-code` above
+  // `handoff trimmed · claude-code`, both slots of a group spent restating one
+  // thing.
+  //
+  // The quota therefore counts SCOPES, not pairs, and the copy kept is the
+  // newest — `withAge` is already sorted newest-first, so the first occurrence
+  // IS that copy, and no second opinion about recency is formed here. The
+  // dropped copies are not lost: they are counted in `hiddenRows` against the
+  // store's true total, so the overflow item still routes to them.
+  //
+  // KNOWN CONSEQUENCE, recorded rather than discovered later: the
+  // `newerElsewhere` notice is derived from the SHOWN rows, so a scope whose
+  // two copies are one local and one foreign now contributes only its newest
+  // to that comparison. Nothing about grouping, allocation or ordering changes.
   const groupOrder = [];
   const groupBuckets = new Map();
+  const scopesTaken = new Map();
   for (const x of withAge) {
     const k = rowGroupKey(x.s);
-    if (!groupBuckets.has(k)) { groupBuckets.set(k, []); groupOrder.push(k); }
+    if (!groupBuckets.has(k)) { groupBuckets.set(k, []); groupOrder.push(k); scopesTaken.set(k, new Set()); }
+    // A row with no usable scope name is never collapsed into another: an
+    // absent name is not evidence of sameness, and two unnamed rows are two
+    // work-streams until something says otherwise.
+    const scopeName = str(x.s.scope);
+    if (scopeName !== null) {
+      if (scopesTaken.get(k).has(scopeName)) continue;
+      scopesTaken.get(k).add(scopeName);
+    }
     groupBuckets.get(k).push(x);
   }
   // ── THE QUOTA IS A FLOOR FOR THE OTHERS, NOT A CEILING ON THE FIRST ─────
