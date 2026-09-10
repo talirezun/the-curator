@@ -948,6 +948,27 @@
    escape. */
 .dm-proj-skeleton-name { display: block; width: 42%; height: 13px; }
 
+/* The clipboard-refusal fallback for "Copy agent instructions". The marker
+   line fits in a sentence; the agent block is a paragraph, so a refusal shows
+   it here for the user to select by hand rather than dropping it. Same
+   declarations as .dm-sem-preview-body below — a sunken mono block that wraps
+   rather than scrolls sideways — capped so a refusal never pushes the rows it
+   belongs to off screen. */
+.dm-proj-copy-fallback {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ── THE FOOTER ROW: "NEW PROJECT" ───────────────────────────────────────
    A <button> that IS a `.cur-group-row`, so the kit owns the band: the 40px
    minimum height (comfortably past --hit-min's 28), the --space-3/--space-6

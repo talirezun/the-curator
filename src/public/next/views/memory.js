@@ -102,6 +102,13 @@ import {
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
+// The paste-into-your-entry-file block. ONE text, shared with the Domains
+// view — see that module's header for what was measured and why the wording
+// is frozen. This screen offers it because this screen is where someone ends
+// up when they are wondering why a project has no state: the answer is often
+// that the agent's harness never activated the skill, and this is the fix.
+import { composeAgentInstructions, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+
 // ── The render -> wire handoff for the two pickers ───────────────────────
 // renderScopeControls builds each control's cfg while it has the data in
 // hand; wireScopeControls hydrates from the SAME objects after the paint.
@@ -175,6 +182,13 @@ function freshState() {
     // guards), and it is derived, never stored.
     activeDomain: null,
     activeProject: null,
+    // The last "Copy agent instructions" outcome, or null:
+    //   { domain, project, ok, text }
+    // STAMPED with its pair for the same reason briefEdit is: this view
+    // switches project without unmounting, and an unstamped confirmation
+    // would sit under the next project's header claiming its block had been
+    // copied. Cleared whenever the selection changes.
+    copied: null,
     // The standing-brief editor, or null when nothing is being edited.
     //   { domain, project, text, busy, error, savedAt }
     // Stamped with its own (domain, project) so a reply that lands after the
@@ -933,6 +947,11 @@ async function selectProject(domain, project, token, opts = {}) {
   // draft was never sent, and carrying it onto another project's brief is
   // the one outcome that could destroy something.
   state.briefEdit = null;
+  // Same rule, same reason: a copy confirmation is about the project it was
+  // pressed on. The stamp on `state.copied` would already stop it rendering
+  // here, but leaving it set would make it reappear the moment the user came
+  // back — an acknowledgement that outlives the click.
+  state.copied = null;
   rememberProject(domain, project);
   state.projectRead = null;
   state.detail = null;
@@ -1442,6 +1461,59 @@ function renderNoProjects() {
   );
 }
 
+/**
+ * The confirmation, or the refusal, for "Copy agent instructions".
+ *
+ * STAMPED, and the stamp is checked here rather than only cleared on switch:
+ * `state.copied` is written after an await, and this view changes project
+ * without unmounting, so the only safe question to ask at paint time is
+ * "was this copy about the project I am painting?".
+ *
+ * A refusal PRINTS THE BLOCK. `navigator.clipboard` is unavailable on a
+ * non-secure origin and can be refused outright; the whole value of the button
+ * is the text, so a refusal hands it over to be selected by hand instead of
+ * leaving a button that silently did nothing.
+ */
+function renderCopyOutcome() {
+  const c = state.copied;
+  if (!c) return '';
+  if (c.domain !== state.activeDomain || c.project !== state.activeProject) return '';
+  if (c.ok) {
+    return renderStatus({
+      state: 'success',
+      title: 'Agent instructions copied',
+      detail: COPY_SUCCESS_BANNER,
+    });
+  }
+  return renderStatus({
+    state: 'attention',
+    title: 'Could not copy',
+    detail: 'Your browser refused clipboard access. Select the block below and copy it by hand.',
+  }) + '<pre class="mem-copy-fallback">' + escapeHtml(c.text) + '</pre>';
+}
+
+/**
+ * Compose the block for the project on screen and put it on the clipboard.
+ *
+ * The pair is captured BEFORE the await and the outcome is stamped with it,
+ * so a project switch during the copy leaves the confirmation belonging to the
+ * project it was pressed on — where renderCopyOutcome will decline to paint
+ * it — rather than re-labelling it as the new one's.
+ */
+async function copyAgentInstructions(token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const text = composeAgentInstructions({ domain, project });
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch { ok = false; }
+  if (!isCurrentMount(token)) return;
+  state.copied = { domain, project, ok, text };
+  render(token);
+}
+
 function renderProject() {
   const read = state.projectRead;
   const d = state.detail;
@@ -1461,6 +1533,23 @@ function renderProject() {
       (d && d.readonly
         ? '<span class="mem-badge mem-badge-quiet">shared mirror</span>'
         : '') +
+      // ── THE ENTRY-FILE BLOCK, ON THE SCREEN THAT ANSWERS "WHY IS THIS
+      // EMPTY?" ────────────────────────────────────────────────────────────
+      // Measured 2026-09-10: an agent on Claude Code with the continuity
+      // skill installed and listed activated it in 0 of 4 headless runs, so
+      // it never read state and never saved one; with this block in the file
+      // that harness loads every session, 3 of 4 read at the start and saved
+      // before stopping. opencode activates the skill natively and was 4/4
+      // either way. So the commonest cause of a project with nothing under it
+      // is not that the user forgot to ask — it is that the harness never
+      // told the agent to — and this button is the fix, one paste away, on
+      // the screen where the emptiness is visible.
+      //
+      // NOT gated on the readonly arm. Nothing here writes: it composes text
+      // from two names already on screen and puts it on the clipboard. A
+      // shared-mirror project is still a project someone can resume.
+      '<button type="button" class="btn btn-secondary mem-copy-agent" id="mem-copy-agent">' +
+        'Copy agent instructions</button>' +
     '</div>' +
     // PROMOTED OUT OF A TOOLTIP, not folded behind a mark. This qualifies who
     // WROTE what you are about to read — it can be someone else on your cohort
@@ -1471,7 +1560,8 @@ function renderProject() {
       ? '<div class="mem-note">' + icon('lockAlt', 13) +
         '<span>A read-only Shared Brain mirror — this state can have been written by ' +
         'someone else on your cohort.</span></div>'
-      : '');
+      : '') +
+    renderCopyOutcome();
 
   if (state.detailError) {
     return header + renderStatus({
@@ -2517,6 +2607,10 @@ function wire(token) {
       selectProject(domain, project, token, { revalidateIndex: true })
         .catch((err) => reportAsyncMountFailure(token, err));
     });
+  });
+
+  document.getElementById('mem-copy-agent')?.addEventListener('click', () => {
+    copyAgentInstructions(token).catch((err) => reportAsyncMountFailure(token, err));
   });
 
   // ── The standing-brief editor ─────────────────────────────────────────

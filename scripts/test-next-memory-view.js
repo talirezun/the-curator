@@ -712,6 +712,7 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'unlistedCount', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderUnlistedNote', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderBriefOnlyNotice', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderCopyOutcome', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderProject', 'memory.js') + '\n' +
     // The REAL component render path, with its own helpers, so the escaping
     // assertions below cover it too.
@@ -2716,7 +2717,7 @@ const EXECUTED = new Set([
   'firstNote', 'saveLine',
   'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'renderAbout',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
-  'unlistedCount', 'renderProject',
+  'unlistedCount', 'renderCopyOutcome', 'renderProject',
   'render', 'captureFocus', 'restoreFocus',
   'screenSignature', 'nextPollDelay', 'stopPoll', 'schedulePoll',
   'fetchIndex', 'fetchState', 'refreshIndex', 'refreshScopeList', 'reloadActive', 'loadScope',
@@ -2735,6 +2736,7 @@ const NOT_EXECUTED = {
   loadIndex: 'orchestration over fetchIndex + selectProject, both executed; its own logic is one sort, covered by §2',
   selectProject: 'orchestration over fetchState + loadScope, both executed; reloadActive (§15) covers the same shape',
   wire: 'addEventListener over a real DOM; its call targets are executed and its call sites are counted',
+  copyAgentInstructions: 'needs navigator.clipboard; EXECUTED for real (both the granted and the refused arm, plus the switch-mid-copy stamp) in test-agent-instructions.js, which lifts it from this same file',
 };
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',

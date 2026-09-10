@@ -273,11 +273,16 @@ const document = { get getElementById() { return documentImpl.getElementById; },
                    get querySelectorAll() { return documentImpl.querySelectorAll; } };
 `;
 
+// The REAL banner text, injected rather than stubbed -- renderCopyOutcome is
+// lifted here so the projects panel it feeds can be rendered at all.
+const { COPY_SUCCESS_BANNER } =
+  await import('../src/public/next/shared/agent-instructions.js');
+
 const FNS = [
   'activeBrowse', 'activeProjects', 'projectCount', 'infoMark',
   'filterBrowseEntries', 'filterMemoryEntries', 'browseMatches', 'browseWindow',
   'browseRowHtml', 'memoryRowHtml', 'browseMoreHtml', 'browseNoteHtml',
-  'renderBrowsePanel', 'renderStatCards', 'renderProjectRow', 'renderProjectsPanel',
+  'renderBrowsePanel', 'renderStatCards', 'renderProjectRow', 'renderCopyOutcome', 'renderProjectsPanel',
   'showMoreBrowseRows', 'bindBrowseRowClicks', 'bindBrowseListeners', 'openMemoryPageFromBrowse',
   'healthSection', 'renderMain',
 ];
@@ -285,6 +290,7 @@ const FNS = [
 let box;
 try {
   box = new Function(
+    'COPY_SUCCESS_BANNER',
     PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -296,7 +302,7 @@ try {
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )();
+  )(COPY_SUCCESS_BANNER);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);

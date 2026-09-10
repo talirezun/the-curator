@@ -157,7 +157,9 @@ flowchart TD
   source at build time rather than hand-copied — per-harness detail in
   [`skills/README.md`](skills/README.md). The consequence is worth naming: an agent in another
   harness can *read* working state over MCP fine — that half is pure protocol — but nothing tells
-  it to **save**. The store is portable; the discipline that fills it is not yet.
+  it to **save** — and measured, a harness may not activate the skill even where it is designed to
+(Claude Code headless: 0 of 4 runs). The portable fix is prose, not a file format: paste the block
+**Copy agent instructions** gives you into whatever file your harness already loads.
 - **Local models are not available.** The OpenRouter adapter speaks an OpenAI-*compatible*
   protocol — the name of a wire format, **not** OpenAI support — which is groundwork for local
   runtimes later, not a capability today.
@@ -374,6 +376,11 @@ carries the writing discipline — ground every wikilink, refuse speculative lin
 respect domain siloing. [`skills/curator-continuity`](skills/curator-continuity/SKILL.md) carries
 the session-handoff discipline; **install that one if you want working state at all**, because
 nothing forces an agent to save, and an agent that has not been told the discipline never writes.
+And because a harness can decline to activate the skill at all — measured, an agent on Claude Code
+saved in **0 of 4** headless runs with the skill alone and **3 of 4** with a six-line block pasted
+into `CLAUDE.md` — **Domains → Projects → Copy agent instructions** hands you that block, filled in
+for your project, to paste into `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
+([the measurement and its limits](docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 
 ### Shared Brain — collective wikis (opt-in)
 

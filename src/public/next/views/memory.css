@@ -204,6 +204,40 @@
 }
 .mem-project-name { font: var(--type-h3); color: var(--text); }
 
+/* ── "Copy agent instructions" ─────────────────────────────────────────────
+   PUSHED TO THE FAR END of the header rather than sitting next to the name.
+   The three spans before it are one phrase — domain / project — and a control
+   inside that phrase reads as part of the title. `margin-left: auto` is the
+   whole trick; the kit owns everything else about a .btn, and the height is
+   the same compact step the Domains project rows use for the same reason:
+   this is a list-level utility, not a call to action.                       */
+.mem-copy-agent {
+  margin-left: auto;
+  flex: none;
+  height: var(--control-sm);
+  padding: 0 10px;
+  font-size: var(--text-xs);
+}
+
+/* The clipboard-refusal fallback. The block is a paragraph, so it cannot go
+   in a status sentence; a sunken mono block that wraps rather than scrolls
+   sideways hands it over to be selected by hand, capped so a refusal never
+   pushes the handoff below it off screen. */
+.mem-copy-fallback {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 12px;
+  padding: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ── THE SAVE-KIND PILL ───────────────────────────────────────────────────
    v3.39.0's verdicts, and NOTHING about which verdict gets which pill moves
    here: `incomplete` stays the attention-red one because it means content was
