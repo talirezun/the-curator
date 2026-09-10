@@ -15,6 +15,16 @@ The Curator is a local Node.js web application that ingests text sources (PDF, M
 
 **Philosophy:** Compiled knowledge (persistent wiki), not retrieval (RAG). The wiki compounds with every ingest.
 
+## Working state
+
+This repository's working state lives in The Curator (project `projects/curator`, see
+`.curator-project`). At the START of every session call the my-curator MCP tool
+`get_working_state` with project "curator" and scope "latest" and read the standing
+brief before acting. SAVE with `save_working_state` under project "curator", in ONE scope per
+session named `session-YYYY-MM-DD-topic` (the standing brief's rule; `scope: "latest"` opens the
+newest), after every material decision and at least every ten tool calls, and ALWAYS
+before you stop; a save overwrites, so send the complete state each time.
+
 ---
 
 ## Directory Structure
