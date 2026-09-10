@@ -434,6 +434,150 @@ eq(legacyOnly.model.hiddenRows, 1, '…with the sixth disclosed rather than drop
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§3b the display cap binds — v3.51.0, and this is the shape he saw');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT ────────────────────────────────────────────────────────────
+//
+// v3.50.0's menu listed EVERY work-stream — 23 rows under three project
+// headers on the maintainer's own Tray. `main.js` holds ONE constant for two
+// different numbers: `TRAY_FETCH_ROWS` (40) is what the DATA layer is asked
+// for, because the model cannot group what it was never given, and it was also
+// being passed to `buildTrayModel` as `maxRows`, which is the DISPLAY cap. The
+// model obeyed. Five rows, and the "quarter of a screen" v3.37.0 measured and
+// removed, both went out through one argument.
+//
+// The fix is in the MODEL, not in the caller's discipline: `maxRows` is a
+// shrink-only seam now. A test that only checked main.js's argument list would
+// pass the day someone passes 40 from somewhere else.
+{
+  // THE MAINTAINER'S SHAPE: three projects with 13, 7 and 3 work-streams.
+  const BIG = {
+    projects: [
+      { domain: 'workshop', project: 'curator',
+        scopes: Array.from({ length: 13 }, (_, i) => ({
+          scope: 'session-2026-09-0' + (i % 10) + '-curator-' + i, machine: 'mac-a1b2c3',
+          age: 600 + i * 900, harness: 'claude-code', model: 'opus-4-6', headline: 'c' + i,
+        })) },
+      { domain: 'workshop', project: 'lumina',
+        scopes: Array.from({ length: 7 }, (_, i) => ({
+          scope: 'session-2026-08-2' + (i % 10) + '-lumina-' + i, machine: 'mac-a1b2c3',
+          age: 40000 + i * 900, harness: 'claude-code', model: 'opus-4-6', headline: 'l' + i,
+        })) },
+      { domain: 'articles', project: 'field-notes',
+        scopes: Array.from({ length: 3 }, (_, i) => ({
+          scope: 'session-2026-08-1' + (i % 10) + '-notes-' + i, machine: 'mac-a1b2c3',
+          age: 90000 + i * 900, harness: 'opencode', headline: 'n' + i,
+        })) },
+    ],
+  };
+  const big = await drive(BIG);
+  eq(big.summary.scopes.length, 23,
+    'CONTROL — the data layer really did hand over all 23 rows, which is what grouping needs and what the menu must not print');
+
+  // THE FIX, ASSERTED WHERE IT LIVES: the shell's fetch limit passed as the
+  // display cap changes nothing. This is the v3.50.0 call, verbatim.
+  const asShipped = M.buildTrayModel(big.summary, { now: NOW, maxRows: M.TRAY_FETCH_ROWS });
+  eq(asShipped.rows.length, M.MAX_ROWS,
+    'the FETCH limit handed to the model as `maxRows` cannot raise the display cap — this is the v3.50.0 call and it now renders five');
+  eq(asShipped.groups.length, M.MAX_GROUPS, '…under at most three headers');
+  eq(asShipped.groups.map((g) => g.rows.length), [2, 2, 1],
+    '…in the documented 2 + 2 + 1 shape');
+  eq(asShipped.truncatedNote, 'More in Agent Memory… (18)',
+    'and the 18 rows the cap hid are COUNTED, not dropped: the overflow is the only route to them');
+  eq(asShipped.hiddenRows, 18, '…which is 23 minus the five on screen');
+
+  // AND WITHOUT THE OPTION AT ALL — the call main.js makes from v3.51.0.
+  const bare = M.buildTrayModel(big.summary, { now: NOW });
+  eq(bare.rows.map((r) => r.scope), asShipped.rows.map((r) => r.scope),
+    'passing nothing and passing 40 now produce the IDENTICAL five rows, so the caller cannot move this number in either direction');
+  // CONTROL — the clamp is a MINIMUM, not an "ignore the option": a caller
+  // asking for FEWER rows is still obeyed, and two suites depend on it.
+  eq(M.buildTrayModel(big.summary, { now: NOW, maxRows: 2 }).rows.length, 2,
+    'CONTROL — a budget BELOW the cap is still honoured, so the clamp is min(opt, MAX_ROWS) rather than a deleted seam');
+  eq(M.buildTrayModel(big.summary, { now: NOW, maxRows: 0 }).rows.length, M.MAX_ROWS,
+    '…while a nonsense budget falls back to the cap rather than emptying the menu');
+
+  // ── SCAN ONLY, and it says so: main.js cannot be imported (no Electron) ──
+  const mainSrc = readFileSync(path.join(DESKTOP, 'main.js'), 'utf8');
+  const call = mainSrc.slice(mainSrc.indexOf('buildTrayModel(traySnapshot'));
+  ok(!/maxRows/.test(call.slice(0, 200)),
+    'SCAN ONLY: the shell no longer hands the model a row budget at all');
+  ok(/getTraySummary\(\{\s*limit:\s*TRAY_ROW_LIMIT\s*\}\)/.test(mainSrc),
+    'SCAN ONLY: while the FETCH still asks for all 40, which is what grouping needs');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§3c one row per work-stream — the newest machine copy wins');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The data layer's unit is the (SCOPE, MACHINE) pair, which is right for the
+// store: two copies are two files. It is wrong for a two-row group. The
+// maintainer's menu showed one work-stream twice — the same topic, the same
+// `handoff trimmed · claude-code` on both lines two — spending both slots of a
+// group to say one thing. v3.48.1 records the condition that produces it: his
+// installed app and his repo checkout stamp the same Mac with two install ids.
+{
+  const twoCopies = await drive({
+    projects: [
+      { domain: 'workshop', project: 'curator',
+        scopes: [
+          { scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3', age: 720,
+            harness: 'claude-code', model: 'opus-4-6', headline: 'the newest copy' },
+          { scope: 'session-2026-09-07-widget', machine: 'mac-9f3c1a', age: 5400,
+            harness: 'claude-code', model: 'opus-4-6', headline: 'the older copy' },
+        ] },
+    ],
+  });
+  eq(twoCopies.summary.scopes.length, 2,
+    'CONTROL — the store really does hold TWO pairs for this one work-stream, which is the shape being collapsed');
+  eq(twoCopies.model.rows.length, 1,
+    'a group with two machine copies of ONE scope shows ONE row');
+  eq(twoCopies.model.rows[0].machine, 'mac-a1b2c3',
+    '…and it is the NEWEST copy, which is the one a reader would resume from');
+  eq(twoCopies.model.hiddenRows, 1,
+    '…with the older copy counted against the store\'s true total rather than silently dropped');
+  ok(twoCopies.model.truncatedNote && /\(1\)/.test(twoCopies.model.truncatedNote),
+    `…and reachable through the overflow — ${twoCopies.model.truncatedNote}`);
+
+  // AND THE SLOT IT FREES GOES TO A REAL WORK-STREAM, which is the whole
+  // point: the quota counts SCOPES now, so a duplicate cannot crowd one out.
+  const crowded = await drive({
+    projects: [
+      { domain: 'workshop', project: 'curator',
+        scopes: [
+          { scope: 'session-a', machine: 'mac-a1b2c3', age: 600, harness: 'claude-code', headline: 'a' },
+          { scope: 'session-a', machine: 'mac-9f3c1a', age: 900, harness: 'claude-code', headline: 'a-older' },
+          { scope: 'session-b', machine: 'mac-a1b2c3', age: 1200, harness: 'claude-code', headline: 'b' },
+        ] },
+      { domain: 'workshop', project: 'lumina',
+        scopes: Array.from({ length: 4 }, (_, i) => ({
+          scope: 'lum-' + i, machine: 'mac-a1b2c3', age: 40000 + i * 60, harness: 'claude-code', headline: 'l' + i,
+        })) },
+    ],
+  });
+  eq(crowded.model.groups[0].rows.map((r) => r.scope), ['session-a', 'session-b'],
+    'the busy group\'s two slots go to two DIFFERENT work-streams, never to two copies of one');
+  eq(new Set(crowded.model.rows.map((r) => r.scope)).size, crowded.model.rows.length,
+    'and no scope appears twice anywhere on the menu');
+
+  // A row with NO scope name is never folded into another: an absent name is
+  // not evidence of sameness. Driven at the model, because the data layer
+  // refuses a row whose scope is not a string.
+  const nameless = M.buildTrayModel({
+    ok: true, total: 2,
+    scopes: [
+      { project: 'p', domain: 'd', machine: 'mac-a1b2c3', harness: 'h', ageSource: 'agent',
+        writtenAgeSeconds: 600, headline: 'one' },
+      { project: 'p', domain: 'd', machine: 'mac-9f3c1a', harness: 'h', ageSource: 'agent',
+        writtenAgeSeconds: 900, headline: 'two' },
+    ],
+  }, { now: NOW });
+  eq(nameless.rows.length, 2,
+    'two rows with no scope name at all stay two rows — an absent name is not a match');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§4 what a header says, and what its tooltip keeps');
 // ═══════════════════════════════════════════════════════════════════════════
 
