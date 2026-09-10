@@ -1216,7 +1216,7 @@ If you used The Curator before this release, this is the whole map:
 |---|---|
 | **Chat** | **Chat** in the rail, first. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
 | **Ingest** | **Ingest** in the rail, second since v3.49.0. Unchanged otherwise. |
-| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list, now the first group on any domain's page in **Domains**, or by clicking a citation in chat. |
+| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list, the second group on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
 | **Domains** | **Domains** in the rail. Now the hub: stats, health, page list, and the create/rename/delete controls. |
 | **Sync** | **Sync**, in the rail *footer*. |
@@ -2067,11 +2067,15 @@ Above the list is **New domain**. Click any row to open that domain in the main 
 - Its display name, and — if it's a mirror — a **read-only mirror** pill
 - A one-line scope sentence: *"A compounding wiki of 3,336 pages — 600 entities, 2,651 concepts, 83 summaries."* (a fourth "other pages" count is added only if any page sits outside those three folders)
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
-- **Stat cards**: PAGES · ENTITIES · CONCEPTS · SUMMARIES (plus OTHER when non-zero)
-- **PAGES · THE WIKI** — the page list itself, **open**, with its filter box and its
-  All / Entities / Concepts / Summaries tabs. See [§11](#11-read-a-wiki-page)
-- The **Projects** section — see just below
-- The **Wiki health** panel — see [§17](#17-wiki-health)
+
+Then **four sections**, each in its own card under its own heading, in this order:
+
+| Section | What it is |
+|---|---|
+| **OVERVIEW** | Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders) |
+| **PAGES · THE WIKI** | The page list itself, **open**, with its filter box and its All / Entities / Concepts / Summaries / **Memory** tabs. See [§11](#11-read-a-wiki-page) |
+| **PROJECTS IN THIS DOMAIN** | See just below |
+| **WIKI HEALTH** | See [§17](#17-wiki-health) |
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -2080,9 +2084,51 @@ you see, open, right under the counts it is the contents of; the order reads out
 domain **holds** to what is **about** it to the housekeeping **on** it. Nothing else moved:
 Projects is still above Wiki health, exactly as in v3.48.0.
 
-The list loads with the domain, so there is nothing to press. On a very large domain the first 150
-matching rows are painted and a note tells you to narrow the filter — the same cap as before, and
-the reason it is still there.
+*Changed in v3.50.0*, from a maintainer's review of his own install:
+
+- **The figures are one card now, with a heading.** They used to be four tiles floating on the
+  page background with nothing naming them. **PROJECTS** joined them — a project is one of the two
+  things a domain holds, and until now it had a whole section on this page and no figure anywhere.
+  It counts exactly what the Projects section below lists, and reads **—** rather than **0** while
+  that list is still loading, because "not known yet" and "none" are different answers.
+- **The four sections are spaced and captioned alike.** Projects and Wiki health used to sit flush
+  against each other with no gap at all while the sections above them had two different gaps, and
+  the three cards were painted three slightly different ways. One gap, one card.
+- **The Projects explanation moved behind an ⓘ**, next to its heading, the same mark the domain
+  title carries. One short line stays visible; click the mark for the rest, **Esc** to close it.
+- **The page list no longer dead-ends.** See below.
+
+### Seeing every page, not just the first 150
+
+The list loads with the domain, so there is nothing to press. On a large domain the first **150**
+matching rows are painted — painting 3,400 rows costs more than it tells anyone — and under the
+list you get **"Showing 150 of 3,410"** and a **Show 150 more** row. Press it and the next 150
+are added to what is already there; press again for the next. The count keeps up, the last press
+offers only the remainder (*Show 60 more*), and when everything matching is on screen the row and
+the count both go away.
+
+*Before v3.50.0* that note read *"…narrow the filter to see the rest"*, and narrowing the filter
+really was the only way — if you did not know what to type, page 151 of your own wiki was
+unreachable. Typing in the filter box, or switching folder tab, starts the window fresh at 150,
+because it is 150 rows *of what currently matches*.
+
+### Memory pages in the list
+
+*New in v3.50.0.* Your agents' working notes are markdown too, and they live in this domain
+alongside its wiki. The **Memory** tab beside Summaries lists them:
+
+- **`<project> · Standing brief`** — the project's standing brief, the document you write
+- **`<project> · <work-stream> · <machine>`** — one work-stream's latest handoff, on one machine
+
+Each row shows the file's path under `state/`, exactly where it is on disk and in your synced
+folder. Click one and it opens in the same reader a wiki page does.
+
+The **Memory** tab carries its own count and the **All** tab does **not** include them — "All"
+means wiki pages, the same number the PAGES figure above reports, so the two can never disagree.
+Memory pages are never mixed into Entities, Concepts or Summaries either. For the full working-state
+screen — journals, machines, editing a brief — use **Agent memory** in the rail
+([§13b](#one-domain-one-project-or-one-more-work-stream)); this list is for **reading** them where
+the rest of the domain's documents are.
 
 ### Projects inside a domain
 
@@ -2122,7 +2168,7 @@ old files keep working on any other computer of yours that has not been updated 
 
 *A domain's page, with the **Wiki health** panel expanded — see [§17](#17-wiki-health). Every AI action in that panel names its price before it runs.*
 
-> **This screenshot predates v3.49.0** and still shows the old arrangement: Wiki health above, and a **PAGES** section at the bottom offering a **Browse pages** button. In the app today the page list is open, directly under the stat cards, and the health panel is last. The panel's own contents are unchanged.
+> **This screenshot predates v3.49.0 and v3.50.0** and still shows the old arrangement: four stat cards floating with no heading, Wiki health above, and a **PAGES** section at the bottom offering a **Browse pages** button. In the app today the figures are one **OVERVIEW** card of five (PROJECTS included), the page list is open directly under it with a **Memory** tab and a **Show 150 more** row, Projects has its own card and an ⓘ, and the health panel is last. The panel's own contents are unchanged.
 
 ### Creating, renaming, deleting
 

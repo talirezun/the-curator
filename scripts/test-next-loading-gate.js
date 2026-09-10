@@ -641,6 +641,11 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     // label say anything. Its own coverage is in
     // scripts/test-next-domain-card-order.js.
     extractFunction(domainsSrc, 'healthScanLabel', 'domains.js') + '\n' +
+    // v3.50.0: the panel is wrapped in its own `.dm-section` with a section
+    // eyebrow. Lifted for the same reason healthScanLabel is — this suite
+    // renders the REAL panel, and the collapsed/settled patterns it matches
+    // have to be found in the shipped markup, wrapper and all.
+    extractFunction(domainsSrc, 'healthSection', 'domains.js') + '\n' +
     extractFunction(domainsSrc, 'renderHealthPanel', 'domains.js') + '\nreturn renderHealthPanel;'
   );
   const render = (state) => fn(state, ...names.map(n => deps[n]))({ slug: 'articles' }, false);

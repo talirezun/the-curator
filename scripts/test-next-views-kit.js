@@ -315,8 +315,22 @@ section('3. The domain stat counts clear AA in the light theme');
 // ═════════════════════════════════════════════════════════════════════════
 {
   const dom = read('views/domains.css');
-  const cardBg = declFor(dom, '.dm-stat-card', 'background');
-  ok(cardBg === 'var(--surface)', `.dm-stat-card is on --surface (got ${cardBg})`);
+  // ── WHAT THE DIGITS SIT ON, AFTER v3.50.0 ───────────────────────────────
+  // The tile used to paint `--surface` itself. The five figures are now inside
+  // ONE inset group (the reported "the top number cards float without a card")
+  // and the tile is transparent, so the plane behind the digits is the GROUP's
+  // — which is the kit's `.cur-group`, in shell.css. The backdrop the contrast
+  // arithmetic below uses is therefore RE-DERIVED rather than assumed: if the
+  // group ever moves off `--surface`, this goes red instead of the numbers
+  // quietly being computed against a plane that is no longer there.
+  const groupBg = declFor(read('shell.css'), '.cur-group', 'background');
+  ok(groupBg === 'var(--surface)', `the OVERVIEW group is on --surface (got ${groupBg})`);
+  const tileBg = declFor(dom, '.dm-stats-group .dm-stat-card', 'background');
+  ok(tileBg === 'none',
+     `.dm-stat-card is transparent inside the group, so the group's plane is the backdrop (got ${tileBg})`);
+  ok(/class="cur-group dm-stats-group"/.test(read('views/domains.js')),
+     '…and the group the view renders really is the kit\'s `.cur-group` — otherwise the two reads above ' +
+     'describe a plane nothing paints');
   for (const [ty, tok] of [['entity', '--dm-ink-entity'], ['concept', '--dm-ink-concept'], ['summary', '--dm-ink-summary']]) {
     const decl = declFor(dom, `.dm-stat-${ty}`, 'color');
     ok(decl === `var(${tok})`, `.dm-stat-${ty} takes ${tok} (got ${decl})`);
@@ -544,8 +558,13 @@ section('7. The monospace face is spent on LITERALS, not on facts');
          · 3 inline spans — the project name the user must RETYPE to confirm a
            delete, the filename `.curator-project`, and the path
            `<domain>/state/`. A thing you retype, a filename and a path are the
-           three cases this budget exists for. */
-    'views/domains.js': 24,
+           three cases this budget exists for.
+       v3.50.0 RAISED IT FROM 24 TO 25, for one span and the same rule:
+         · 1 `mono dm-browse-path` on a MEMORY row — the path of a standing
+           brief or a work-stream handoff under `state/`, which is the same
+           case as the wiki row's path directly beside it, and it is the fact
+           that tells a reader where the file sits in their synced folder. */
+    'views/domains.js': 25,
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string

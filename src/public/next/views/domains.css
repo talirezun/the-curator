@@ -316,6 +316,53 @@
    default class shared/loading-gate.js paints its placeholder with. What is
    retired is THIS VIEW'S four uses of it, role by role, not the class. */
 
+/* ── THE FOUR SECTIONS OF A DOMAIN CARD ───────────────────────────────────
+   OVERVIEW -> PAGES · THE WIKI -> PROJECTS -> WIKI HEALTH.
+
+   ── THE REPORTED DEFECT, and the shape of the fix ─────────────────────────
+   "The sections are not visually distinguished from each other" and Projects
+   "sits glued to Wiki health with no spacing". Measured on v3.49.1, the four
+   gaps came from four unrelated declarations:
+
+       stat cards -> Pages     24px  (.dm-stats-grid margin-bottom)
+                                + 4px (.dm-recent-eyebrow margin-top)
+       Pages -> Projects       22px  (.dm-projects margin-top)
+       Projects -> Health       0px  (.dm-health-card has no margin)
+
+   Four numbers maintained in four places, one of them zero. They are now ONE
+   rule over adjacent siblings, so the gaps cannot disagree again — there is
+   only one of them. This is the same move v3.48.1 made for the create control
+   (put the thing where the structure already puts it, rather than remembering
+   to give it a margin), and it is why the per-section margins above and below
+   are now explicitly zeroed rather than left to cancel out by luck.
+
+   24px, the kit's --space-12: one step above the 16px `.cur-group + .cur-group`
+   uses for two groups INSIDE one section, so a section break reads as larger
+   than a group break rather than the same size. */
+.dm-section + .dm-section { margin-top: var(--space-12); }
+
+/* Every section's eyebrow, on one x-axis — the same left offset
+   `.cur-group-title` uses for a grouped list's caption, and the same offset
+   the row labels inside each card carry, so the four headings and the content
+   under them line up down the whole card. Wins over `.cur-group-title` by
+   source order: shell.css is loaded before this file. */
+.dm-section-eyebrow { margin: 0 0 var(--space-4) var(--space-6); }
+
+/* An eyebrow with an ⓘ mark beside it. The mark's own class belongs to
+   shared/text.css and this file may not name it — that prefix is owned
+   outright, and this view's suite fails on any appearance of it in this
+   stylesheet — so the alignment lives on the wrapper instead. --space-2 is the
+   same gap renderViewHeader's own row uses between a title and its mark. */
+.dm-section-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The eyebrow's bottom margin belongs to the HEADER when it is in one — the
+   ⓘ panel and the caption come next, and a gap here would open between the
+   eyebrow and its own fold. */
+.dm-section-head-row .dm-section-eyebrow { margin-bottom: 0; }
+
 /* ── Stat cards ───────────────────────────────────────────────────────── */
 
 .dm-stats-grid {
@@ -329,7 +376,6 @@
      and simply adds a 5th column when OTHER is present. */
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
-  margin-bottom: 24px;
 }
 /* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
    ONE thing: `.dm-path-eyebrow`, and it keeps it because an EYEBROW is a
@@ -359,12 +405,29 @@
   /* 14 -> --space-8 (16px), on the 4pt grid. */
   padding: var(--space-8);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  /* A card is CONTENT, not chrome, so it takes elevation and a hairline and
-     never the two-line material edge — the same pair `.cur-group` uses. */
-  box-shadow: var(--elev-1);
 }
+/* ── THE FIGURES ARE ONE CARD, NOT FIVE (v3.50.0) ──────────────────────────
+   Reported: "the top number cards float without a card". They did — five
+   bordered tiles on the view background, with no group around them and no
+   eyebrow saying what they were, so the first thing on the domain card was an
+   unlabelled row of numbers while every other section was a captioned group.
+
+   The group is now the kit's own `.cur-group` (see `.dm-stats-group`), and the
+   tiles inside it drop their individual border, surface and elevation: a card
+   inside a card is two objects where the design has one, and a border repeated
+   five times inside a bordered container is the "gap between bordered cards is
+   a web form" shape shell.css records against. The tile keeps its PADDING and
+   its radius, so the grid geometry and the hover targets are unchanged. */
+.dm-stats-group { padding: var(--space-2); }
+.dm-stats-group .dm-stat-card {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+/* PAGES carries no ink class and takes --text; so does PROJECTS, because both
+   are totals rather than one of the three wiki types. Named rather than left
+   classless so the suite can address it. */
+.dm-stat-project { color: var(--text); }
 .dm-stat-value {
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
@@ -396,8 +459,10 @@
 .dm-health-card {
   padding: 16px;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  /* See the ONE CARD CHROME block by `.dm-browse-card`. */
+  border: 1px solid var(--hairline);
   background: var(--surface);
+  box-shadow: var(--elev-1);
   margin-bottom: 24px;
 }
 
@@ -759,7 +824,9 @@
 
 /* ── Recently written ─────────────────────────────────────────────────── */
 
-.dm-recent-eyebrow { margin-top: 4px; margin-bottom: 8px; }
+/* Only the BOTTOM gap is this eyebrow's; the top one belongs to
+   `.dm-section + .dm-section`, and the left indent to `.dm-section-eyebrow`. */
+.dm-recent-eyebrow { margin-top: 0; }
 .dm-recent-note {
   font-size: var(--text-sm);
   color: var(--text-2);
@@ -844,7 +911,11 @@
    side, and a squeezed Delete button beside a truncated project name is the
    worst possible version of this row.                                      */
 
-.dm-projects { margin-top: 22px; }
+/* ZERO. Every gap between sections on this card is now ONE rule
+   (`.dm-section + .dm-section`), which is what stops the gap above Projects
+   and the gap below it disagreeing — they were 22px and 0px, which is the
+   "glued to Wiki health" the maintainer reported. */
+.dm-projects { margin-top: 0; }
 
 /* ── THE HEADER: EYEBROW + CAPTION, ON ONE X-AXIS ─────────────────────────
    The kit gives `.cur-group-title` a left margin of --space-6 so the eyebrow
@@ -1193,11 +1264,27 @@
 
 /* ── Wiki browse panel ────────────────────────────────────────────────── */
 
+/* ── ONE CARD CHROME FOR ALL FOUR SECTIONS (v3.50.0) ───────────────────────
+   Reported: the sections "are not visually distinguished from each other" and
+   Projects "has no card of its own". Measured, the second half was not quite
+   the defect — Projects has had a `.cur-group` card since v3.48.0 — but the
+   first half was, and worse than reported: the three cards on this screen were
+   painted in THREE different chromes.
+
+       .cur-group    (Projects)  --surface        + --hairline + --elev-1
+       .dm-browse-card (Pages)   --surface-raised + --border   + no shadow
+       .dm-health-card (Health)  --surface        + --border   + no shadow
+
+   Three answers to one question, so no two sections looked like siblings. They
+   are now the kit's group chrome, which is the one with a rule behind it
+   (shell.css: a card is CONTENT, so it takes elevation and a hairline and
+   never the two-line material edge). */
 .dm-browse-card {
   padding: 12px 14px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  background: var(--surface-raised);
+  background: var(--surface);
+  box-shadow: var(--elev-1);
 }
 .dm-browse-empty {
   font-size: var(--text-sm);
@@ -1288,6 +1375,11 @@
 .dm-browse-dot-entities { background: var(--type-entity); }
 .dm-browse-dot-concepts { background: var(--type-concept); }
 .dm-browse-dot-summaries { background: var(--type-summary); }
+/* MEMORY IS NOT A WIKI TYPE, so it does not take a --type-* rung. It takes the
+   app's own accent, which is what the memory layer wears everywhere else, and
+   it is an existing token — this file's colour-LITERAL baseline is a number
+   its suite allows only to shrink, and a fourth hex here would grow it. */
+.dm-browse-dot-memory { background: var(--accent); }
 .dm-browse-title {
   flex: 1;
   min-width: 0;
@@ -1305,11 +1397,57 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The count sits between the list and its action, so it reads as the
+   sentence the button answers. No top margin: the list's own bottom edge and
+   the button's hairline are the boundaries. */
 .dm-browse-note {
   margin-top: 8px;
   font-size: var(--text-2xs);
   color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
 }
+
+/* ── "Show 150 more" — THE LIST'S FOOTER ROW ───────────────────────────────
+   The same shape v3.48.1 settled for "+ New project", and for the same reason:
+   a list's own action is the LAST ROW OF THE LIST, so the whole band is the
+   target and the section reads as one object rather than a card with a button
+   near it. It reuses `.cur-group-row` for its geometry (40px min-height, the
+   kit's padding) and turns off the <button> chrome here rather than fighting
+   it — the same three declarations `.dm-proj-footer` carries.
+
+   The separator is drawn EXPLICITLY. The kit's own
+   `.cur-group-row + .cur-group-row::before` needs the row above it to also be
+   a `.cur-group-row`, and the row above this one is a `.dm-browse-row`; so the
+   line is stated here, at the same inset and off the same token, instead of
+   being inherited from a rule whose precondition does not hold. */
+.dm-browse-more {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  transition: background var(--t-state), transform var(--t-press);
+}
+.dm-browse-more::before {
+  content: "";
+  position: absolute;
+  left: var(--space-6);
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
+.dm-browse-more:hover { background: var(--surface-hover); }
+.dm-browse-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.dm-browse-more-label { font-weight: var(--weight-medium); }
 
 /* The reader body for a page opened from the browse list carries NO rule
    here. It used to: `.dm-page-source` styled a <pre> of escaped Markdown
@@ -1468,5 +1606,6 @@
   .dm-row:active,
   .dm-quick-btn:active:not(:disabled),
   .dm-browse-row:active,
+  .dm-browse-more:active,
   .reader-source-reveal:active:not(:disabled) { transform: none; }
 }
