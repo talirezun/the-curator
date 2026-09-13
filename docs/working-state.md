@@ -1,8 +1,8 @@
 # Working state — carrying build context between sessions
 
 **Status: shipped in v3.17.0; projects added in v3.48.0.** The store
-(`src/brain/working-state.js`) and the MCP tool layer are live. The `/next` shell's
-**Agent memory** rail slot renders it, backed by `/api/memory` — and it is read and
+(`src/brain/working-state.js`) and the MCP tool layer are live. The app's **Memory** rail item
+opens **Agent memory**, which renders the store, backed by `/api/memory` — and it is read and
 *written* by an agent over MCP, and readable by you in a text editor.
 
 **A domain can now hold many projects.** Until v3.48.0 a domain held one project's state, so
@@ -1033,13 +1033,15 @@ what that measurement's own *"shape rather than a measured constant"* caveat ant
 
 ## 6. What the app writes, and what it does not
 
-**There is an in-app view.** The `/next` shell's **Agent memory** rail slot renders the store —
+**There is an in-app view.** The **Memory** rail item opens **Agent memory**, which renders the store —
 every project's brief, its handoff, and its journal, browsable without an MCP client at all —
 grouped by domain and then by project, and it opens on the project you last looked at in that
 domain with its latest work-stream first. The **Domains** view carries the other half: a
 **Projects** section on each domain card, where projects are created, renamed, deleted with a
 typed confirmation, given a standing brief, and where **Copy marker line** hands you the
-`.curator-project` line for a repository.
+`.curator-project` line for a repository, with **Copy agent instructions** beside it.
+
+![The Curator's Agent memory screen. The sidebar lists projects grouped by domain — under PROJECTS: "projects, 3 scopes", "lumina, 7 scopes" and "curator, 10 scopes"; under POSTS: "posts, 1 scope" — above a note reading "Agents write the handoffs here through MCP. You write the standing brief." The main pane is headed YOUR AGENTS' BRAIN / Agent memory, with a "projects / lumina" breadcrumb and a "Copy agent instructions" button. A card reads "Last saved 3 days ago" over the work-stream name and the harness that wrote it, "Claude Code (desktop app)"; a "summary shortened" chip explains that the handoff itself was written in full and only its one-line label was truncated; below that, "This file arrived on this computer 3 days ago — the reading above is the agent's own clock, not the file's", and "Standing brief — 3 days ago". Underneath sit a Work-stream dropdown, a Machine name with a matching "from that machine" chip, and the caption "synced here — local paths and processes may differ".](images/curator-agent-memory.png)
 
 **One project on that list can be neither renamed nor deleted: the domain's own.** Its folder
 *is* the domain's state root, so renaming it would sweep every other project in the domain into

@@ -233,7 +233,9 @@ point is the compounding graph it produces.
 **The counter-intuitive cost driver:** what an ingest costs depends mostly on **how big your
 wiki already is**, not on the document — because the prompt carries the existing page names so
 the model can link into them. The same short note measured tens of times more expensive against
-a mature wiki than an empty one.
+a mature wiki than an empty one. That is what the estimate explains rather than hides:
+
+![The Curator's Ingest view with a four-file batch queued. A drop zone reads "Drop more files here — or browse your files", "Accepts .txt · .md · .pdf", "Dropping more files adds them to the batch you already started". Below it, "Batch ingest — 4 files, 303.0 KB total · gemini · gemini-2.5-flash-lite", then WILL BE INGESTED (LARGEST FIRST) listing four markdown files with their sizes and a remove button each. An "Estimated cost" panel reads "$0.15 — $0.29" over a long explanation: the estimate is computed for these specific files against this domain's real current page inventory and index, the existing content works out to about 2.4x the input tokens the same files would cost against an empty domain, it is size-based rather than a real text extraction, and both ends are estimates rather than limits. Under it, "Estimated tokens 2,562,101 in / 86,684 out", an optional "Budget cap" field showing "No cap", an unchecked "Overwrite existing pages for files already ingested" box, and the buttons Start batch, Add more files and Clear all.](images/curator-ingest.png)
 
 ### 4.2 The wiki and its graph
 
@@ -252,6 +254,12 @@ each of those entity pages links back to the summary.
 **What it is for.** Two things a chat answer cannot give you: *the shape of what you know*, and
 *a page you can read and edit yourself*. Point Obsidian at the folder and the graph view shows
 clusters, hubs and — usefully — the gaps between them.
+
+**You do not need Obsidian to read the list.** Opening a domain shows **Pages · the wiki** — every
+page with its file path, a name filter, and facets for Entities, Concepts, Summaries and **Memory**
+(the standing briefs and newest handoffs from layer 3, which are markdown in the same folder but
+are not wiki pages). Long lists render 150 rows at a time behind a **Show 150 more** row, so a
+three-thousand-page domain is reachable by scrolling rather than only by filtering.
 
 **Reach for it when** you are looking for the themes you keep circling, the entity that
 everything connects to, or the two concepts that have never been joined.
@@ -285,6 +293,8 @@ thinking animation it cannot substantiate.
 
 **Reach for it when** the answer needs several sources at once: *"how does X relate to Y?"*,
 *"what do I already know about Z?"*, *"which of these sources disagree?"*
+
+![The Curator's Chat view. A scope bar across the top carries one pill per domain — Articles (selected), Business, Lectures, Posts, Projects, Research — with the readout "3,421 pages in scope" and a "Compile to Wiki" button beside it. The sidebar has New chat, a "Filter conversations" box and a list of saved threads with their message counts. In the thread, a question asks for a table of the last ten articles with a shared-similarities row; the answer below is labelled "THE CURATOR · MiniMax M3 (free) · free" and renders as a Markdown table with columns for number, article and its source page, date, summary and domain interest. The composer at the bottom reads "Ask Articles…" and carries a model dropdown set to "MiniMax M3 (free)", a length dropdown set to "Balanced", and the note "cost varies with response length".](images/curator-chat.png)
 
 ### 4.4 Compiling a conversation into the wiki
 
@@ -370,9 +380,18 @@ Intentional cross-domain linking is **not supported**.
 **Marking a domain read-only** is a one-line change to its schema file, and it blocks ingest,
 compile, every mutating Health action and every MCP write tool while leaving reads working.
 
+**A domain holds many projects (`v3.48.0`).** A *project* is a thing you build inside the
+domain's one compounding wiki; each carries its own standing brief and its own work-streams
+(*scopes*) in layer 3. The domain's own project stays at the root of `state/` and can be neither
+renamed nor deleted, because its folder *is* that root. The Projects section on a domain creates,
+renames and deletes the rest, edits a brief, and hands you two things to paste into a repository:
+the **`.curator-project` marker line** that tells an agent which project it is in, and the
+**agent instructions** block that tells it to save at all.
+
 **Reach for a new domain when** the subject would not sensibly share a page with what you
-already have. A project is a domain; a work-stream within it is a *scope* — three unrelated
-products are three domains, three features of one product are three scopes in one.
+already have — three unrelated products are three domains. Three features of one product are one
+domain: a project inside it if they are separate builds, scopes inside one project if they are
+strands of the same build.
 
 ### 4.7 Personal Sync
 
@@ -486,6 +505,8 @@ price bands, search, and a *worth testing for this job* shortlist that is a filt
 sentence attached and never a ranking). With no key connected, blocks 2, 3 and 4 say what they
 are waiting for rather than disappearing — a numbered flow that silently loses steps stops
 reading as a sequence.
+
+![The Curator's Settings screen, Providers & keys section. Step 1, "Connect a provider", explains "One key per provider — connect as many as you like. The Curator calls the provider directly with your key; nothing goes through us." Three rows follow: Gemini (Google) with a masked key and a green Connected pill beside Disconnect and Replace key; Anthropic reading "No key" with a "Not connected" pill and an Add key button; and OpenRouter ("One key onto many vendors") Connected, with Test this key alongside. Beneath them: "A local model — Ollama, LM Studio, llama.cpp — will connect here once there is a base-URL setting to point it at. It is not missing from your install; it does not exist yet", and a lock line reading "Keys live in .curator-config.json at 0600 on this machine. Never committed, never sent anywhere except the provider you call." Step 2, "What builds your wiki", states that Ingest, Health scans and Compile all run on this one model, and shows a picker set to "Flash Lite 2.5" with "Gemini gemini-2.5-flash-lite" and three chips — "$0.10 in · $0.40 out per 1M tokens", "plans 18–20 pages per source", "measured by The Curator" — over the note that nobody has chosen one so this follows the app default. A CHEAPEST MEASURED block offers "MiniMax M3 (free) — free, against the $0.10 in · $0.40 out you are paying now" with a "Use it" button, above a "Change… every model that can build your wiki" row and the count "11 measured for this job".](images/curator-providers-keys.png)
 
 **Two jobs, not one setting.** This is the organising idea.
 
@@ -621,7 +642,7 @@ box cannot:
 > *"Compile everything we just figured out and save it as a research summary in my business
 > domain."*
 
-**Fifteen of the twenty never change anything on disk.**
+**Sixteen of the twenty-two never change anything on disk.**
 
 **Guarantees around it.** Every response is size-capped (a few hundred kilobytes, roughly a
 hundred thousand tokens) so one tool call cannot saturate a model's context window — the
@@ -648,7 +669,11 @@ is reported as text and never fetched.
 (ground every link in a page that exists, refuse speculative links on a fresh domain, respect
 domain siloing), the other carries the *session-handoff* discipline. Install the second one if
 you want working state at all — nothing forces an agent to save, and an agent that has never
-been told the discipline never writes.
+been told the discipline never writes. A harness can also decline to activate a skill it was
+given: measured at `v3.52.0`, an agent on Claude Code headless saved in **0 of 4** runs with the
+skill alone and **3 of 4** with a short block pasted into `CLAUDE.md`, which is why **Copy agent
+instructions** exists on every Projects row. The limits of that measurement are stated where it
+is recorded.
 
 ### 4.11 The desktop application (Mac)
 

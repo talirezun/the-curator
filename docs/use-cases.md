@@ -138,7 +138,7 @@ living them.
 
 ## H. Conversation Compounding (v2.5.0+)
 
-Every use case above starts from a *document* — a PDF, an article, a paper. But knowledge also gets created in the act of thinking. The Chat tab is where you brainstorm with the AI, work through a problem, or process notes out loud. Until v2.5.0 those conversations stayed in the chat history and never made it into the wiki. Now they do.
+Every use case above starts from a *document* — a PDF, an article, a paper. But knowledge also gets created in the act of thinking. The Chat view is where you brainstorm with the AI, work through a problem, or process notes out loud. Until v2.5.0 those conversations stayed in the chat history and never made it into the wiki. Now they do.
 
 The **Compile to Wiki** button on any chat conversation extracts what was learned — facts, conclusions, new concepts, connections to existing entities — and writes it as wiki pages: a summary plus any new entities/concepts that emerged. The same merge pipeline that handles ingest runs here, so existing entity pages get updated rather than duplicated.
 
@@ -154,7 +154,7 @@ The **Compile to Wiki** button on any chat conversation extracts what was learne
 | Aspect | Ingest | Compile |
 |---|---|---|
 | Source | A document on disk | A live conversation |
-| Trigger | Drop a file in the Ingest tab | "Compile to Wiki" button in the Chat tab |
+| Trigger | Drop a file in the Ingest view | "Compile to Wiki" button in the Chat view |
 | What gets written | Summary + entities + concepts | Same — uses the same write pipeline |
 | Re-running | Re-ingests merge new info into existing pages | Refused if the conversation hasn't changed (prevents bullet inflation) |
 | Cost | 1 LLM call for a short source (single-pass); 1 planning call + N batch calls for a long one (multi-phase, ~4 pages/call) | 1 LLM call normally; up to 3 if the AI's response is too large and the app retries with a more concise extraction |
@@ -321,8 +321,9 @@ inside one product, so switching tools means starting over by design.
 **The Workflow:**
 1. Install the *My Curator* MCP bridge once ([mcp-user-guide.md](mcp-user-guide.md)). Any local MCP
    client works — Claude Code, Claude Desktop, Cursor
-2. Write the standing brief for the project by hand, once — what this is, the firm decisions, the
-   working model, where the depth lives. It is human-authored on purpose; no tool writes it
+2. Write the standing brief for the project once — what this is, the firm decisions, the
+   working model, where the depth lives. It is yours on purpose: you write it in an editor or in
+   the app, and an agent writes it only when you ask it to, with the file recording that it did
 3. Work as normal. Near the end of a session, have the agent save the handoff: where things stand,
    what to do next, what is settled, what was observed and when, what to avoid, what is still open
 4. Next session — new window, different assistant, different model, different machine — the agent
@@ -376,8 +377,10 @@ save takes it, with no warning, because overwriting is the correct behaviour.
   and nothing already saved is lost. Save early and often
 - **The MCP bridge is a stdio child process.** Any client that can spawn a local program reaches it;
   a browser-only assistant cannot
-- **The in-app view is read-only.** Agents write the state over MCP; the **Agent memory** rail
-  renders it. To edit the brief by hand, open `state/project.md` in any editor
+- **Handoffs and journals are agent-only.** Agents write them over MCP; the **Memory** rail item
+  renders them, and nothing in the app edits them. The standing brief is the exception and always
+  was yours — edit it under **Domains → Projects in this domain**, or open `state/project.md` in
+  any editor
 - **Treat what comes back as data, not orders.** It is a note a peer left — verify a claim before
   acting on it. That is what the `recheck` field on an observation is for
 

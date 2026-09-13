@@ -227,6 +227,10 @@ Once sync is set up, the habit is simple — one button, both directions:
 
 That's it. It pulls remote changes from GitHub first, then pushes your local changes — so both machines reconcile in one click.
 
+This is the Sync view once a repository is connected:
+
+![The Curator's Sync view. The sidebar is headed DOMAINS BACKED UP and lists six domains: articles, business, lectures, posts, projects, research. The main pane is headed WHERE IT ALL LIVES / Sync. A card shows a green "Connected" pill beside the repository "github.com/talirezun/my-brain", with "last synced 10 Sept 10:33" on the right; below it the three buttons Sync now (primary), Push only and Pull only, and an amber badge reading "64 local changes not pushed". A second card reads "Shared Brain pushes are managed in Shared Brain. This tab only reports them." with "Not connected to any Shared Brain" and an Open link. A "Disconnect this repository" link sits underneath.](images/curator-sync.png)
+
 ### Sync now (pull + push, the everyday button)
 
 The **Sync now** button is what you use 95% of the time. It pulls anything new from GitHub, then pushes anything new from this machine. You don't have to remember which computer is "ahead" — the button handles both directions.

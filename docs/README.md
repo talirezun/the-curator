@@ -30,20 +30,26 @@ accumulates; state supersedes. Durable material put into state is overwritten by
 and nothing warns you — from the store's point of view, overwriting is correct. The decision
 table lives in [working-state.md](working-state.md#1-the-problem-it-solves).
 
-### Two honest boundaries
+### Three honest boundaries
 
 - **The MCP bridge is a stdio child process.** It works with any MCP client that can spawn a
   local program — Claude Code, Claude Desktop, Cursor, and other MCP-capable agents — and it does
   not need the web app running. A browser-only assistant cannot reach it. The limit is the
   transport, not the vendor.
-- **The skills are portable in content, Claude-shaped in activation.** Their text is ordinary prose
-  and works anywhere you can paste it; what is Claude-specific is how they *switch on* (the
-  tool-permission header, auto-triggering from a description, and the install path). So an agent in
-  another harness can **read** working state through MCP fine, but nothing tells it to **save**.
-  The store is portable; the discipline that fills it is not yet.
-- **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer prompts
-  for one. A missed save means the next read returns the **previous** state — stale, never
-  corrupted. The standing project brief is human-authored; no tool writes it.
+- **The skills are portable in content; activation is per harness.** Their text is ordinary prose
+  and works anywhere you can paste it; what differs is how they *switch on* (the tool-permission
+  header, auto-triggering from a description, and the install path). Reading working state over
+  MCP is pure protocol and works anywhere — but nothing tells an agent to **save**, and a harness
+  may not activate the skill even where it is designed to (measured: Claude Code headless saved in
+  **0 of 4** runs on the skill alone). The portable fix is prose, not a file format: **Domains →
+  Projects → Copy agent instructions** hands you the block to paste into whatever file your harness
+  already loads — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
+  ([the measurement and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
+- **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer and that
+  block prompt for one. A missed save means the next read returns the **previous** state — stale,
+  never corrupted. The standing project brief is yours: you write it, in a text editor or in the
+  app, and an agent writes it only when you tell it to — and it is stamped as agent-authored when
+  it does.
 
 ### The insight behind layer 1
 
@@ -127,7 +133,7 @@ first group applies to all three.
 | Document | What's inside |
 |----------|---------------|
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
-| [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) | **This project's memory.** Every release row older than the newest five, moved out of `CLAUDE.md` **byte-for-byte** — the measurements, traps and "KNOWN AND UNFIXED" items that explain why the code is shaped the way it is. `CLAUDE.md` keeps the newest five in full plus a one-line index of every entry here. Read the full row before changing anything with a history. It lives at the repo **root**, not in `docs/`, and that is load-bearing — the preserved rows carry root-relative links; see the note at the top of the file |
+| [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) | **This project's memory.** Every release row older than the newest six, moved out of `CLAUDE.md` **byte-for-byte** — the measurements, traps and "KNOWN AND UNFIXED" items that explain why the code is shaped the way it is. `CLAUDE.md` keeps the newest six in full plus a one-line index of every entry here. Read the full row before changing anything with a history. It lives at the repo **root**, not in `docs/`, and that is load-bearing — the preserved rows carry root-relative links; see the note at the top of the file |
 | [roadmap-chat-modes.md](roadmap-chat-modes.md) | Design context for Chat Modes 3 (**Dictate**) and 4 (**Curate**) — **designed but never built**. Nothing in it describes shipped behaviour; read it before implementing either mode |
 | [roadmap-menubar-widget.md](roadmap-menubar-widget.md) | The design pass behind the Mac menu bar icon. **Phase 1 shipped; Phases 2–3 did not.** §0a is the exact boundary — what is built, the five places the build deviated from the plan and why, and what has never been rendered. The rest is the reasoning, deliberately left as written |
 | [roadmap-automatic-sync.md](roadmap-automatic-sync.md) | Whether Personal Sync should run by itself. **Researched, not built** — automatic push is structurally incapable of destroying a local file, automatic pull is not, so the recommendation is opt-in push with pull left as a decision. Read it before proposing any background sync |

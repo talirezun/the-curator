@@ -30,7 +30,7 @@ Three built-in domains ship with the app — **AI / Tech**, **Business / Finance
 
 ### `state/` — working state, not wiki content
 
-Since v3.17.0 a domain may also carry a `state/` folder. It's a genuine **sibling** of `wiki/`, not a path inside it — a standing project brief plus per-machine session handoffs that an agent reads and writes over MCP (`get_working_state`, `save_working_state`), so a build session on one machine can hand its context to the next session on any machine, harness, or model. You can read it in the app: the **Agent memory** rail view shows the standing brief, the current handoff for a chosen scope and machine, and the journal tail. That view is **read-only, deliberately** — agents are the only writer, which is what keeps two machines from ever writing the same file, and a browser writer would also stamp your edit with the last agent's provenance. To change the standing brief by hand, open `state/project.md` in Obsidian; it is plain markdown in your own folder.
+Since v3.17.0 a domain may also carry a `state/` folder. It's a genuine **sibling** of `wiki/`, not a path inside it — a standing project brief plus per-machine session handoffs that an agent reads and writes over MCP (`get_working_state`, `save_working_state`), so a build session on one machine can hand its context to the next session on any machine, harness, or model. Since v3.48.0 a single domain can hold **many projects**, each with its own brief and its own work-streams under `state/<project>/…`; the domain's own project stays at the state root and can be neither renamed nor deleted. You can read it in the app: the **Memory** rail item opens **Agent memory**, which shows the standing brief, the current handoff for a chosen work-stream and machine, and the journal tail. **The handoffs and the journal are agent-only, deliberately** — agents are the single writer, which is what keeps two machines from ever writing the same file, and a browser writer would also stamp your edit with the last agent's provenance. **The standing brief is yours**: edit it in the app under **Domains → Projects in this domain**, or open `state/project.md` in Obsidian; it is plain markdown in your own folder either way.
 
 It deliberately sits **outside the wiki graph**: nothing in `state/` goes through `writePage`, so none of it carries frontmatter or `[[wikilinks]]`, none of it is scanned by Wiki Health, none of it is folded into `index.md`, and none of it counts toward a domain's page counts (those are all computed by walking `wiki/` only). Where the wiki's merge model *accumulates* — every ingest adds to a page's bullets and nothing is dropped — working state *supersedes*: each save overwrites the previous handoff, because yesterday's resolved blocker should not be resurrected by today's read.
 
@@ -42,35 +42,39 @@ Nothing needs to create the folder by hand — the first save makes `state/` and
 
 The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator (a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window on a port it picks fresh each launch) and go to **Domains**.
 
+Opening a domain shows four sections — its numbers, its pages, its projects, and its wiki health:
+
+![The Curator's Domains view with the "projects" domain open. The sidebar has New domain and Use existing folder above a KNOWLEDGE list of six domains with page counts. The main pane is headed DOMAINS/PROJECTS/ and "Projects", with Rename, Delete and "Ask this domain" beside the title. An OVERVIEW group holds five tiles: Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 3. Below it, PAGES · THE WIKI holds a "Filter by name…" box and the facets All 767, Entities 161, Concepts 553, Summaries 53, Memory 26, over an alphabetical list of page titles with their file paths on the right; a footer reads "Showing 150 of 767" above a "Show 150 more" link. Underneath, PROJECTS IN THIS DOMAIN explains "A domain is one compounding wiki; a project is a thing you build inside it." and lists a project row carrying a "Standing brief" pill, its last save and newest work-stream, and the actions Copy marker line and Copy agent instructions.](images/curator-domains.png)
+
 > **Already have a knowledge folder?** Don't create a domain — **point the app at the folder you already have.** The Domains sidebar carries **Use existing folder** in every state of the view, and the empty-state card carries it too. **Pick the folder that CONTAINS your domains, not one of the domains** — the difference, and why an empty list cannot tell you which mistake you made, is in [user-guide.md § Knowledge base folder](user-guide.md#pick-the-folder-that-contains-your-domains).
 
 ### Creating a new domain
 
-1. Click **+ New Domain**.
-2. Enter a display name (e.g. `Health & Fitness`). The folder slug is generated automatically and shown as a live preview (e.g. `domains/health-and-fitness/`).
-3. Optionally describe the scope in 1–2 sentences.
-4. Pick a **template** that matches your topic:
+1. Click **New domain** in the Domains sidebar.
+2. Enter a **Name** (e.g. `Health & Fitness`). The folder slug is generated automatically and shown as a live preview (e.g. `domains/health-and-fitness/`).
+3. Optionally add a **Description** in 1–2 sentences.
+4. Pick a **Template** that matches your topic. It picks the starting schema that tells the AI how to categorise what you ingest, and you can edit it later:
 
    | Template | Best for | Entity types | Concept style |
    |----------|----------|-------------|---------------|
-   | ⚙️ Tech / AI | Software, AI research, developer tools | person, tool, company, dataset | How It Works / Applications |
-   | 📈 Business / Finance | Startups, investing, strategy | person, company, fund, institution | Why It Matters / Examples |
-   | 🌱 Personal Growth | Books, habits, mental models | person, book, framework | Why It Matters / How to Apply It |
-   | 📁 Generic | Any other topic | person, item, organization | Overview / Examples |
+   | Generic | Any other topic | person, item, organization | Overview / Examples |
+   | Tech | Software, AI research, developer tools | person, tool, company, dataset | How It Works / Applications |
+   | Business | Startups, investing, strategy | person, company, fund, institution | Why It Matters / Examples |
+   | Personal | Books, habits, mental models | person, book, framework | Why It Matters / How to Apply It |
 
-5. Click **Create Domain**.
+5. Click **Create domain**.
 
-The domain appears immediately in every dropdown (Ingest, Chat, Wiki) and in Obsidian's file explorer. No restart needed.
+The domain appears immediately in the Domains list, in Ingest's destination list and in Chat's scope pills — and in Obsidian's file explorer. No restart needed.
 
 ### Renaming a domain
 
-Click the **pencil icon** on a domain card, type the new display name, and click **Rename**. All wiki pages, conversations, and chat history are preserved. Obsidian reflects the change instantly.
+Open the domain, click **Rename** next to its title, type the new display name, and click **Rename** again in the card that opens. All wiki pages, conversations, and chat history are preserved. Obsidian reflects the change instantly.
 
 > **If sync is configured:** renaming appears to GitHub as a delete + add. Click **Sync now** soon after renaming so your other computers stay consistent.
 
 ### Deleting a domain
 
-Click the **trash icon** on a domain card. The confirmation panel shows exactly how many wiki pages and conversations will be removed. Click **Yes, delete permanently** to commit.
+Open the domain and click **Delete** next to its title. The confirmation names the folder and how many wiki pages go with it, and says its raw sources and saved conversations go too. Click **Delete permanently** to commit.
 
 > ⚠️ **Deletion is permanent — there is no undo.** If sync is configured, the domain is removed from GitHub on the next **Sync now**.
 
