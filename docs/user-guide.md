@@ -1236,6 +1236,10 @@ The **Agent memory** rail item opens a browser for the working state your agents
 each other. Almost all of it is **read-only** — agents write this over MCP and the app shows it —
 with exactly one exception, the **standing brief**, which is your document and has an Edit button.
 
+![The top of the Agent memory view. Down the left, the icon rail with Memory highlighted. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS eyebrow with a Refresh link, and projects grouped under their domain: under PROJECTS, three rows — "projects · 3 scopes · 3 days ago", "lumina · 7 scopes · 3 days ago" (selected), "curator · 10 scopes · 3 days ago" — and under POSTS, one row, "posts · 1 scope · 1 week ago". At the foot of the panel, beside a padlock, the note "Agents write the handoffs here through MCP. You write the standing brief." The main column opens with the eyebrow "YOUR AGENTS' BRAIN" over the title "Agent memory", a breadcrumb reading "projects / lumina", and a "Copy agent instructions" button on the right. Below it the save-status card: "Last saved" over "3 days ago" in large monospace, then "session-2026-09-10-lumina-d366-alert-history · Claude Code (desktop app)". A "summary shortened" chip sits underneath with its explanation — that the handoff itself was written in full, that what got shortened is a label attached to the save, most often its one-line summary, that the label matters because it is the only thing a future session sees before deciding whether to open this state, and "headline: truncated to 200 chars (was 210)". Then the line "This file arrived on this computer 3 days ago — the reading above is the agent's own clock, not the file's.", and at the foot of the card "Standing brief — 3 days ago". Under the card sit a "Work-stream" dropdown set to session-2026-09-10-lumina-d366-alert-history, "Machine talis-macbook-pro-acb035", an amber chip reading "from talis-macbook-pro-acb035", and beneath them "synced here — local paths and processes may differ".](images/curator-agent-memory.png)
+
+*One project's state, open. The card across the middle is the [save-status strip](#the-save-status-strip) described below — this one is showing two of its qualifying lines at once.*
+
 - **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
   nested under their domain, each project with its work-stream count and how long ago it was last
   written to (*"2 scopes · 5 hr ago"*). A project that has a standing brief but has never been
@@ -1290,9 +1294,11 @@ each has something to say**, up to five qualifying lines:
 > **It says "Last saved", never "you are saved".** It knows when the last save happened; it cannot
 > know whether anything has changed since. That inference is left where it belongs — with you.
 
-> ⚠️ **This strip has never been rendered in a browser.** Its logic is covered by the automated
-> tests, but nobody has yet looked at it on a screen. If a line reads wrongly, that is worth
-> [reporting](https://github.com/talirezun/the-curator/issues).
+> ⚠️ **Most of this strip has still never been looked at on a screen.** Two of its lines have —
+> the **`summary shortened`** badge and *"This file arrived on this computer N ago"*, both visible
+> in the screenshot above, which is the first time any of it has been photographed rendering. The
+> rest is covered by the automated tests and by nothing else. If a line reads wrongly, that is
+> worth [reporting](https://github.com/talirezun/the-curator/issues).
 
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
@@ -1368,7 +1374,9 @@ flowchart TD
 
 ### How to ingest
 
-![The Ingest view. Down the left, an icon rail with Ingest highlighted. Beside it a panel headed "Ingest" with a "+ Choose files" button and a DESTINATION list of six domains — Articles, Business, Lectures, Posts, Projects, Research — each showing a page count and a last-write date, with Articles ticked as the current destination. The main column is headed "Ingest" over the eyebrow "THE WAY MATERIAL GETS IN", and holds a Domain dropdown set to Articles and a dashed drop zone reading "Drop a source here or browse your files", "Accepts .txt .md .pdf", "2 or more files at once starts a batch", above an Ingest button.](images/curator-ingest.png)
+![The Ingest view, caught with a batch half-assembled. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a "+ Choose files" button, and a DESTINATION list of six domains — Articles, Business, Lectures, Posts, Projects, Research — each showing a page count and a last-write date, e.g. "3421 pages · last write 2026-09-03", with Articles ticked as the current destination. The main column holds a domain dropdown set to Articles above a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started". Under it, a heading "Batch ingest — 4 files" over "303.0 KB total · gemini · gemini-2.5-flash-lite", then "WILL BE INGESTED (LARGEST FIRST)" listing four Markdown files with their sizes — 26.9 KB, 14.1 KB, 184.3 KB and 77.6 KB — each with an × to remove it. Below that a boxed estimate: "Estimated cost $0.15 — $0.29", followed by a long monospaced explanation saying the figure is computed for the "articles" domain at its current 611 entities, 2720 concepts and 132 KB index, that this existing content works out to about 2.4x the input tokens the same files would cost against an empty domain, that the estimate is size-based rather than a real text extraction, and that usdLow assumes prompt caching applies while usdHigh assumes it does not. Then "Estimated tokens 2,562,101 in / 86,684 out", a "Budget cap (optional)" field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and three controls: Start batch, Add more files, Clear all.](images/curator-ingest.png)
+
+*The Ingest view with four files queued. The top half — destination list, domain picker, drop zone — is the single-file flow described below; everything from "Batch ingest — 4 files" down is the confirm screen covered in [Batch ingest](#batch-ingest--queue-many-files-at-once). Note the drop zone's wording: it reads "Drop a source here" with "2 or more files at once starts a batch" underneath when nothing is queued yet, and changes to the wording above once a batch is being built.*
 
 1. Click **Ingest** in the rail
 2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
@@ -1752,17 +1760,19 @@ The chat adapts its answer shape to your question: a **decision** question ("whi
 
 ### The chat interface
 
-Chat is the app's default view — it's what you land on. It has three parts:
+Chat is the first item in the rail. (It is no longer the screen a fresh install opens on — that is **Domains**; after your first visit the app returns you to whichever view you left. See [Which screen you land on](#which-screen-you-land-on).) It has three parts:
 
-- **The panel beside the rail** — a **New chat** button, a **Filter conversations** box that reads the *contents* of your conversations rather than only their titles, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
-- **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,336 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation (4 messages) as wiki pages"*.
+- **The panel beside the rail** — a **New chat** button, a **Filter conversations** box that reads the *contents* of your conversations rather than only their titles, a **Select all** tick, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
+- **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation (4 messages) as wiki pages"*.
 - **The thread and the composer** below it.
 
 An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation chip (named for the page, since v3.46.0) to open it.
 
-![The Chat view. A left panel headed "Chat" holds a "New chat" button, a conversation search box and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by a "Compile to Wiki" button and the readout "3,416 pages in scope". Below it a user question sits in a bubble on the right; the answer beneath it is labelled "THE CURATOR · GLM 5.3 Flash · $0.0037" and renders as a Markdown table comparing five articles against their connections, with wiki concept links highlighted inline and page citations such as "summaries/…md" shown in small monospaced text. At the bottom the composer reads "Ask Articles…" with a model dropdown, a length dropdown reading "Detailed", the note "cost varies with response length", and a send button.](images/curator-chat.png)
+![The Chat view. A left panel headed "Chat" holds a "New chat" button, a "Filter conversations" box with a magnifier inside it, a "Select all" checkbox, and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by the readout "3,421 pages in scope" and then a "Compile to Wiki" button. Below it a user question sits in a bubble on the right, asking for a table of the last ten articles with a row describing their similarities. The answer beneath it is labelled "THE CURATOR · MiniMax M3 (free) · free" and opens "Here's a synthesis of your recent work based on what's loaded in your wiki." It then renders a Markdown table headed "Your Last 10 Articles (synthesized)" with columns #, Article, Date, Summary and Domain Interest; each Article cell names a title and its source page in monospace, such as "summaries/from-writing-code-to-directing-intelligence.md". At the bottom the composer reads "Ask Articles…" with a model dropdown showing "MiniMax M3 (free)", a length dropdown reading "Balanced", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 
-> **The screenshot above predates v3.49.0** and shows the older arrangement, with the page count sitting immediately after the **Compile to Wiki** button. That is exactly the layout this release changed: read together, *"Compile to Wiki · 3,416 pages in scope"* looks like a warning that compiling will touch 3,416 pages, which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose message count the caption states, as wiki pages. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
+*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the SCOPE pills, and **Compile to Wiki** stands apart from it.*
+
+> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose message count the caption states, as wiki pages. (In the shot above the window edge clips that caption.) What it will **cost** is still the confirmation dialog's job, not the toolbar's.
 
 > Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
@@ -2059,13 +2069,12 @@ Click **Domains** in the rail. The panel beside the rail lists every domain unde
 - **RO** — this is a read-only Shared Brain mirror
 - a small dot on the right — this domain has open health issues
 
-Above the list is **New domain**. Click any row to open that domain in the main column.
+Above the list are **New domain** and **Use existing folder** — the second points the app at a `domains/` folder you already have rather than creating an empty one ([§16](#pick-the-folder-that-contains-your-domains)). Click any row to open that domain in the main column.
 
 ### What a domain's page shows you
 
 - Its folder path, in monospace: `domains/articles/`
-- Its display name, and — if it's a mirror — a **read-only mirror** pill
-- A one-line scope sentence: *"A compounding wiki of 3,336 pages — 600 entities, 2,651 concepts, 83 summaries."* (a fourth "other pages" count is added only if any page sits outside those three folders)
+- Its display name, with an **ⓘ** mark beside it — click that for the one-line explanation of what a domain *is*; **Esc** closes it. (This used to be a generated sentence printed under the title — *"A compounding wiki of 3,336 pages — 600 entities…"* — and it was removed in v3.50.0 because every figure in it is one of the OVERVIEW figures below, said twice. What was left was an explanation, and explanations go behind the mark.) If the domain is a mirror, a **read-only mirror** pill sits here too — that one stays in the open, because it is a data-loss notice rather than an explanation.
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 
 Then **four sections**, each in its own card under its own heading, in this order:
@@ -2076,6 +2085,10 @@ Then **four sections**, each in its own card under its own heading, in this orde
 | **PAGES · THE WIKI** | The page list itself, **open**, with its filter box and its All / Entities / Concepts / Summaries / **Memory** tabs. See [§11](#11-read-a-wiki-page) |
 | **PROJECTS IN THIS DOMAIN** | See just below |
 | **WIKI HEALTH** | See [§17](#17-wiki-health) |
+
+![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of six domains, each with a coloured identity dot, its name and its page count — Articles 3,421 pages (with a small orange dot on the right marking open health issues), Business 50, Lectures 379, Posts 668, Projects 767 and selected, Research 64. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 3. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 26; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ, the line "A domain is one compounding wiki; a project is a thing you build inside it.", then a project row: "projects" with a "Standing brief" pill, "last save 3 days ago · newest work-stream session-2026-09-09-lumina-d363-d364-excel-setup-guide · the domain's own project — it cannot be renamed or deleted", and the buttons "Copy marker line" and "Copy agent instructions".](images/curator-domains.png)
+
+*The four sections in order, on a real domain: the counts, then the wiki itself, then the projects built with it. **Wiki health** is the fourth and sits below the fold here — see [§17](#17-wiki-health).*
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -2164,12 +2177,6 @@ A domain that had agent memory before v3.48.0 shows **one** project, named after
 itself. Nothing was moved to produce that, and nothing ever will be: that is where a domain's own
 project lives permanently, for a tree written today as much as for one written last year, so the
 old files keep working on any other computer of yours that has not been updated yet.
-
-![The Domains view. A left panel headed "Domains" with a "New domain" button and a KNOWLEDGE list of six domains, each with a coloured identity dot and a page count; Articles is selected and carries a small dot on the right marking open health issues. The main column is headed "Articles" under the path eyebrow "DOMAINS/ARTICLES/", with Rename and Delete buttons and an "Ask this domain" button. Four stat cards read PAGES 3,410 · ENTITIES 609 · CONCEPTS 2,713 · SUMMARIES 88. Below them a "Wiki health" panel shows "Open issues 20, scanned just now" beside Entities, Concepts, Summaries and Dismissed counts, then a row of category chips — Broken links 17, Orphan pages 3, Cross-folder duplicates 0, Hyphen variants 0, Folder-prefix links 0, Missing backlinks 0. A QUICK MAINTENANCE box offers "Fix 17 broken links $0.0030", "Rescue 3 orphans $0.0027" and "Find duplicate pages", above the sentence "Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet." Collapsed rows for Broken links, Orphan pages and Dismissed sit underneath, and a PAGES section at the bottom offers "Browse pages".](images/curator-domains.png)
-
-*A domain's page, with the **Wiki health** panel expanded — see [§17](#17-wiki-health). Every AI action in that panel names its price before it runs.*
-
-> **This screenshot predates v3.49.0 and v3.50.0** and still shows the old arrangement: four stat cards floating with no heading, Wiki health above, and a **PAGES** section at the bottom offering a **Browse pages** button. In the app today the figures are one **OVERVIEW** card of five (PROJECTS included), the page list is open directly under it with a **Memory** tab and a **Show 150 more** row, Projects has its own card and an ⓘ, and the health panel is last. The panel's own contents are unchanged.
 
 ### Creating, renaming, deleting
 
@@ -2377,6 +2384,10 @@ Use **Obsidian** when you want to:
 Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or any MCP-compatible AI client — to **research** your wiki AND, since v2.5.2, **save findings back into it** without leaving the conversation.
 
 > **Which AIs can use it.** The bridge is a **stdio JSON-RPC server** — an ordinary local program — so it works with **any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor, and others.** It is not an integration with one assistant. The one real limit is the transport rather than the vendor: **ChatGPT's web app cannot run a local server, so it cannot connect.** The setup steps below and in the wizard are written for Claude Desktop because that is the most common case — only the file you paste the entry into changes. Full detail in [docs/mcp-user-guide.md](mcp-user-guide.md).
+
+![Settings → MCP bridge, connected. The Settings panel beside the rail lists five sections with their subtitles — General (Software update, appearance), Providers & keys (Gemini, Anthropic, OpenRouter, local), Knowledge base (Vault folder, Obsidian), MCP bridge (My Curator, default write domain) and Health & scan limits (Cost ceilings, candidate pairs) — with MCP bridge selected, and at the foot "The Curator v3.52.0" beside an Updates button. The main column reads "CONFIGURATION" over the title "MCP bridge" with an ⓘ mark. A status card shows a green "Connected" pill and the chain "Claude Desktop → my-curator → " followed by the knowledge-folder path, which is blurred out in this image. Below it: "Works with any MCP client that runs local servers — Claude Desktop, Claude Code, Cursor, and others. ChatGPT's web app cannot run a local server, so it cannot connect.", then a "Read the MCP guide." link and four controls — Re-run setup, Run self-test, View config, Copy snippet. Under them a ticked result line reads "Bridge responds" beside the monospace summary "22 tools (list_domains, get_index, get_graph_overview, get_tags, search_wiki, search_cross_domain, …) · 6 domain(s) visible". Last, a "Default domain for MCP writes" block explaining that when a client calls a write tool and the user says "my wiki" without naming a domain, this one is used, and that leaving it unset forces the model to always name a domain; its dropdown is set to "projects".](images/curator-mcp-bridge.png)
+
+*A connected bridge, reporting itself. **Run self-test** is what produced the "Bridge responds" line — it spawns the server exactly the way your pasted config does and counts what answered. The **Default domain for MCP writes** block at the bottom is covered in [§16](#default-domain-for-mcp-writes-v252).*
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
@@ -2884,6 +2895,10 @@ GitHub
 Computer B (about to start here)
 ```
 
+![The Sync view. Down the left, the icon rail; its Sync icon, in the footer, carries a small amber badge reading 64 and is highlighted. Beside it a panel headed "Sync" with an ⓘ mark and a "DOMAINS BACKED UP" eyebrow over six domain names — articles, business, lectures, posts, projects, research — each with a small dot. The main column reads "WHERE IT ALL LIVES" over the title "Sync" with an ⓘ mark. A status card shows a green "Connected" pill beside the repository "github.com/talirezun/my-brain", with "last synced 10 Sept 10:33" on the right; underneath sit three buttons — a primary "Sync now" with a refresh glyph, then "Push only" and "Pull only" — and, on the right, an amber chip reading "64 local changes not pushed". Below the card a row with a people glyph reads "Shared Brain pushes are managed in Shared Brain. This tab only reports them.", with "Not connected to any Shared Brain" and an "Open" button at its right end. At the foot, an underlined link: "Disconnect this repository".](images/curator-sync.png)
+
+*Everything in the Sync view at once. The panel lists what the backup covers — domain names only, because there is no endpoint that can count per-domain changes without performing a real sync. The **64** on the chip and the **64** on the rail badge are the same number.*
+
 **The primary button:**
 
 | Button | What happens |
@@ -2931,7 +2946,7 @@ If you want to remove the sync connection from one computer (without affecting G
 
 Your GitHub repository is not changed. You can reconnect at any time.
 
-> The Sync view also has a **History** area which currently says commit history and revert are coming soon. Every sync already *is* a real git commit, so nothing is missing from your data — there just isn't a screen for browsing or reverting individual commits yet. A git client pointed at your knowledge base folder can do it today.
+> **There is no commit-history or revert screen, and no card promising one.** The view used to carry a **History** area saying both were coming soon; v3.24.0 removed it, because a roadmap note on an operational panel only raises a question it cannot answer. The fact worth keeping moved behind the **ⓘ** beside the Sync title: every sync already *is* a real git commit, so nothing is missing from your data — a git client pointed at your knowledge base folder can browse and revert today. The exact commands are in [docs/sync.md](sync.md).
 
 ---
 
@@ -2973,7 +2988,7 @@ Two completely different concepts that beginners often confuse. Get this right a
 
 ### Getting started
 
-Shared Brain has its own place in the rail. Click **Shared Brain** (the people icon, third from the top). On a fresh install it says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
+Shared Brain has its own place in the rail. Click **Shared** (the people icon — fourth from the top, the first item *below* the dividing line, since everything under that line is the advanced half). On a fresh install it says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
 
 Turning it on connects you to nothing. It only unlocks the view; nothing leaves your machine until you configure a brain and push a domain to it. Once enabled you choose your path:
 
@@ -2981,6 +2996,10 @@ Turning it on connects you to nothing. It only unlocks the view; nothing leaves 
 |---|---|
 | **I have an invite token → Join** | You received an invite token (`sbi_...`) from your cohort admin |
 | **I'm starting a new Shared Brain → Set up** | You're starting one for your cohort, team, or research group |
+
+![The Shared Brain view, enabled but with nothing connected. Down the left, the icon rail with Shared highlighted, fourth from the top. Beside it a panel headed "Shared Brain" with a small "beta" pill, holding a single note: "No Shared Brains connected yet." The main column reads "YOUR TEAM'S BRAIN" over the title "Shared Brain" with an ⓘ mark, and offers two cards, each with a glyph, a heading, a line of explanation and one button. The first: "I have an invite token — From my cohort, team, or research group." with a primary "Join →" button. The second: "I'm starting a new Shared Brain — Set one up for my cohort or team." with a "Set up →" button. Nothing else is on the screen.](images/curator-shared-brain.png)
+
+*The choice, and nothing else. This is what the view looks like once Shared Brain is enabled and before you have joined or created anything — enabling it connects you to nothing, and the screen shows that by having nothing on it.*
 
 > **v3.6.1 — invite tokens are GitHub-only, and a non-GitHub one is now refused at step 1.** Joining a Shared Brain works by accepting an invitation to a GitHub repository and creating a Personal Access Token, so only a GitHub-backed brain can issue an invite. A token describing any other storage backend is rejected on paste, with an explanation — previously it was accepted and you were walked all the way to the final step, **creating a real PAT on github.com along the way**, before saving failed with an internal message that read like the app was broken. (The non-GitHub backends still exist for cohort simulation; they are configured directly, not via an invite.)
 
@@ -3023,7 +3042,7 @@ when a scan refuses to run. **Software update** moved with it — it was the thi
 inside **General** and is now the first thing that section shows, because it is what most people
 open Settings for. Nothing inside any section changed.
 
-At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` — next to an
+At the bottom of that list you'll see the version — e.g. `The Curator v3.52.0` — next to an
 **Updates** button, which switches to **General** and runs the check. That landing is now at the
 **top** of the section it lands on.
 
@@ -3040,6 +3059,10 @@ At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` 
 
 **No block is ever hidden.** Before you have connected anything, blocks 2, 3 and 4 each say what they are waiting for rather than disappearing — otherwise the numbered flow would silently lose steps and stop reading as a sequence.
 
+![Settings → Providers & keys, showing steps 1 and 2. The Settings panel beside the rail lists General, Providers & keys (selected), Knowledge base, MCP bridge and Health & scan limits, with "The Curator v3.52.0" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "Providers & keys" with an ⓘ mark. Step ① "Connect a provider" opens with "One key per provider — connect as many as you like. The Curator calls the provider directly with your key; nothing goes through us." Three rows follow, each with a coloured dot, a name and vendor, a key field and a status: Gemini / Google, a masked key ending "zpAY", a green "Connected" pill, then Disconnect and Replace key; Anthropic / Anthropic, the field reading "No key", a "Not connected" pill, and a primary "Add key" button; OpenRouter / "One key onto many vendors", a masked key ending "b7cf", a green "Connected" pill, then Test this key, Disconnect and Replace key. Beneath the rows, a sentence: "A local model — Ollama, LM Studio, llama.cpp — will connect here once there is a base-URL setting to point it at. It is not missing from your install; it does not exist yet." Then a padlocked line: "Keys live in .curator-config.json at 0600 on this machine. Never committed, never sent anywhere except the provider you call." Step ② "What builds your wiki" states in bold that "Ingest, Health scans and Compile all run on this one model", and explains that they always share one, that one model keeps the ingest prompt cache warm and keeps one bill to read, and that choosing a model from another provider makes that provider the active one so the bill moves with it. Inside an accented card sits a picker reading "Flash Lite 2.5", with "Gemini gemini-2.5-flash-lite" and an ⓘ underneath, then three chips — "$0.10 in · $0.40 out per 1M tokens", "plans 18–20 pages per source" and "measured by The Curator" — and the line "Nobody has chosen one, so this follows the app default and can change when The Curator updates." Under a "CHEAPEST MEASURED" eyebrow: "For the keys you have connected, that is MiniMax M3 (free) — free, against the $0.10 in · $0.40 out you are paying now." with a "Use it" button. At the foot, "Change… every model that can build your wiki" on the left and "11 measured for this job" on the right.](images/curator-providers-keys.png)
+
+*Steps 1 and 2, on an install with two providers connected. Note what step 2 is saying about itself: the build model here was never chosen by anyone — it is the app default — and the **CHEAPEST MEASURED** line names a free model and offers a one-click switch to it.*
+
 ### 1 · Connect a provider
 
 Each provider gets one row: a coloured dot, its name and vendor, the key (masked), and a status in plain words — **Connected** or **Not connected**.
@@ -3052,7 +3075,16 @@ To add or change a key:
 
 Saving a key **connects** that provider. It becomes the one that builds your wiki only if nothing else already does — i.e. on your first key. After that the key is saved and the build lane stays where it is; change it under *What builds your wiki*. (If a provider has no model able to build a wiki at all, it cannot take the lane in any case, and the reason is shown.)
 
-Once a row has a key it also offers **Disconnect** (which removes that key entirely — use it to drop a provider, not to pause one), and OpenRouter additionally offers **Test this key**, which asks OpenRouter about the credential and spends nothing. That test confirms the *key*, not any particular model: The Curator asks for an exact model and never lets OpenRouter substitute one, so an individual model can still be unavailable on a key that passes.
+Which buttons a row carries depends on what it has:
+
+| Button | On which row | What it does |
+|---|---|---|
+| **Add key** | A provider with no key | Opens the field to paste one in |
+| **Replace key** | A provider that already has one | Same field, over the existing key |
+| **Disconnect** | A provider that already has one | Removes that key **entirely**. Use it to drop a provider, not to pause one |
+| **Test this key** | **OpenRouter only** | Asks OpenRouter about the credential. Spends nothing |
+
+**What `Test this key` does and does not prove.** It confirms the *key*, not any particular model: The Curator asks for an exact model and never lets OpenRouter substitute one, so an individual model can still be unavailable on a key that passes.
 
 > **The row no longer says `active`.** It used to show one of three words — `active`, `configured` or `not set` — and only one of them was about your key at all. *Active* meant "this provider's model builds your wiki", which is now block 2's whole subject, stated there once with the price and the provenance beside it. A credential row answers one question, so it now gives one answer.
 
@@ -3176,7 +3208,7 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 ### Version and updates
 
-The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** takes you to the update controls: it switches to **General**, where **Software update** is the first block on the page (*it was the third until v3.49.0*), and runs the check.
+The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.52.0`. Next to it, **Updates** takes you to the update controls: it switches to **General**, where **Software update** is the first block on the page (*it was the third until v3.49.0*), and runs the check.
 
 **How you update depends on which install you have**, and it is the second of the four
 real differences between them. If you are not sure which you are running,
