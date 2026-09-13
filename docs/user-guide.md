@@ -116,9 +116,9 @@ flowchart TD
         N5[YOUR MODELS<br/>Gemini · Anthropic · OpenRouter<br/>change provider whenever you like]
     end
 
-    subgraph S["⚠️ CLAUDE-SHAPED TODAY"]
+    subgraph S["⚠️ HARNESS-DEPENDENT — activation belongs to the harness"]
         direction TB
-        S1[THE TWO SKILLS<br/>the writing ports anywhere;<br/>how they SWITCH ON is<br/>a Claude-harness mechanism]
+        S1[THE TWO SKILLS<br/>the writing ports anywhere;<br/>whether a harness SWITCHES ONE ON<br/>is that harness behaviour<br/>— opencode did 4 of 4,<br/>Claude Code headless 0 of 4;<br/>the entry-file block is the neutral fix]
     end
 
     subgraph F["🔒 NOT AVAILABLE YET"]
@@ -139,12 +139,13 @@ flowchart TD
 
 **And what is *not* yet neutral — said plainly, because an overclaim would be worse than the gap:**
 
-- **The two Claude skills are portable in content but Claude-shaped in activation.** Their text is ordinary prose with no vendor-specific logic, so it works anywhere you can paste it. What is Claude-specific is how they *switch on*: the tool-permission header uses Claude's tool-naming convention, automatic triggering from a description is a Claude Code / Claude Desktop mechanism, and the documented install location is Claude's skills folder. Elsewhere, you paste the body into whatever your harness loads at the start of a session.
-- **The practical consequence.** An agent in another harness can **read** working state through MCP without any trouble — that half is pure protocol. What it is missing is anything telling it to **save**. The store is portable; the discipline that fills it is not yet.
-- **The neutral form is generated, never hand-copied.** A second, hand-maintained copy of a long playbook would be the worst possible place for two documents to drift apart, because these files are read by *models* — two copies would not merely disagree, they would instruct two agents to behave differently. So the neutral version is **derived** from the same single source: the same prose, with the Claude-specific activation header stripped and the tool names de-prefixed.
+- **The two agent skills are portable prose. Whether a harness *activates* one is a property of the harness, not of the skill and not of Claude.** Their text has no vendor-specific logic, so it works anywhere you can paste it. Two things in the packaging are Claude Code's conventions rather than anything universal — the `allowed-tools:` header uses its tool-naming scheme, and the documented install location is its skills folder — and the build script strips both when it renders the neutral form. Activation is the part nobody can promise for you: measured, **opencode** loaded `curator-continuity` natively and ran it as its **first action in 4 of 4 runs**, while **Claude Code headless never activated it at all** with the same skill installed and listed.
+- **The practical consequence, and the mechanism that fixes it.** Reading working state over MCP is pure protocol and works in any MCP client. Saving is a discipline someone has to give the agent, and an installed skill only gives it if the harness reaches for the skill — which is why an agent on Claude Code saved in **0 of 4** headless runs with the skill alone. The harness-neutral mechanism is prose, not a file format: paste the block **Copy agent instructions** hands you into the file your harness already loads every session, which took Claude Code headless to **3 of 4** and changed nothing on opencode, where the skill already fired. → [§ 13b, Making sure your agent actually does it](#making-sure-your-agent-actually-does-it).
+- **What the measurement does not show.** Four runs per arm is a shape, not a rate; it was headless sessions only, one task, one model, two harnesses. Interactive Claude Code was not measured, and save *quality* was not judged. → [the full table and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it).
+- **The neutral form is generated, never hand-copied.** A second, hand-maintained copy of a long playbook would be the worst possible place for two documents to drift apart, because these files are read by *models* — two copies would not merely disagree, they would instruct two agents to behave differently. So the neutral version is **derived** from the same single source: the same prose, with the Claude Code-specific frontmatter stripped and the tool names de-prefixed.
 - **Local models are not available today.** The provider row is visible in Settings and marked unavailable. The OpenRouter connection speaks an OpenAI-*compatible* protocol — that is the name of a wire format, **not** OpenAI support — which is the groundwork that makes local runtimes a natural later addition rather than a rewrite. When it ships, this guide will say so.
 
-> A note on skill portability: an open format existing is not the same as other tools implementing it. Treat loading these skills elsewhere as something you may need to do by hand.
+> A note on skill portability: an open format existing is not the same as every tool implementing it the same way. Installing a skill elsewhere may be a manual step, and a host that loads it may still not reach for it on its own — which is what the entry-file block is for.
 
 ---
 
@@ -680,7 +681,7 @@ that project's **work-streams**.*
 | ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ⓪. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
 | ⓪ | **`Working on: <project> · <age>`** — the project written to most recently, anywhere across all of them, and how long ago | It is the question you came to ask, so it is answerable without reading past the first line, and clicking it opens Agent memory. It replaced a line reading *"Last save · 12 min ago"*, which said WHEN without saying WHAT: a person with several projects asks *which one was I in?* first, and until v3.48.0 the menu could not answer it, because rows were flat and the answer had to be inferred from whichever one happened to be at the top |
-| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and **five rows** in total, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do). Two rows per group is a floor rather than a ceiling: each group gets two before any group gets a third, and rows nobody claimed are handed back out in recency order — so one project on its own still fills all five, which is what every install had before this release | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
+| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and **five rows** in total, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do). Two rows per group is a floor rather than a ceiling: each group gets two before any group gets a third, and rows nobody claimed are handed back out in recency order — so one project on its own still fills all five, which is what every install had before this release. **A work-stream saved from two of your computers takes one row, not two** — the newer save — and the older copy is counted in ④ rather than shown | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
 | ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
 | ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
@@ -1102,7 +1103,7 @@ Stated plainly rather than left for you to discover.
 
 | | |
 |---|---|
-| **The menu has been photographed exactly once, in light appearance.** | A throwaway probe put the real menu in a real menu bar on 2026-09-02 and captured it. That settled a great deal — the section headers draw, the second line under each row draws, the submenu arrow draws, the colour images are drawn as authored, and the menu is **363.5 points wide**. What it did **not** settle: the **dark** palette, the empty-store menu, the truncation states, whether the tooltip appears on hover, and how the menu bar icon itself is tinted in a light bar. Treat your first launch with it on as a real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
+| **The menu has been photographed twice, both times in light appearance.** | A throwaway probe put the real menu in a real menu bar on 2026-09-02 and captured it. That settled a great deal — the section headers draw, the second line under each row draws, the submenu arrow draws, the colour images are drawn as authored, and the menu is **363.5 points wide**. What it did **not** settle: the **dark** palette, the empty-store menu, the truncation states, whether the tooltip appears on hover, and how the menu bar icon itself is tinted in a light bar. Treat your first launch with it on as a real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
 | **The save pulse and the row dots have been drawn by macOS once, and the picture changed both** | The one capture showed the pulse reading cut short and the quarter mark reading as a sliver; both are fixed here, and the marks now sit inside a faint clock face. Both images are still generated and inspected pixel by pixel by the tests, and their contrast is arithmetic over decoded pixels. What has not been seen is either of them **after** those two fixes, or either of them in **dark** appearance. If a strip or a dot looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
 | **The section headers draw on macOS 14; below it, nobody knows.** | **Save pulse** and each project header use a macOS 14+ menu affordance, and the 2026-09-02 capture shows a header of that kind drawing correctly. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but **that fallback has never been observed**. Either way they can never become a clickable item that does nothing. There are now more of them, one per project group, so a machine where the fallback is ugly is uglier than it was |
 | **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn. The two are genuinely different questions and are allowed to disagree. What is unproven is that macOS delivers the appearance-changed notification the rebuild listens for |
@@ -1112,7 +1113,7 @@ Stated plainly rather than left for you to discover.
 | **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put five of them legibly |
 | **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At twelve hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
 | **A row click opens the project, not the work-stream.** | You land on Agent memory at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
-| **The current arrangement has not been photographed — the one before it was.** | The 2026-09-02 capture is what produced the three fixes in this release: a cut pulse reading, a quarter mark too thin to read, and a width model that was wrong by 78 points. Every mark is still generated and inspected pixel by pixel by the automated tests, and its contrast is arithmetic over those decoded pixels — but nobody has yet seen the corrected menu on a real menu bar, and nobody has seen any of it in **dark** appearance. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
+| **The current arrangement has not been photographed — the two before it were.** | The second photograph, of the grouped menu as it shipped in v3.50.0, is what produced this release's row-cap fix: grouping and the `Working on:` headline drew exactly as designed, and the menu was **23 rows long**, because the five-row cap had stopped binding. The corrected five-row menu is **derived** from the real store and the real menu builder over that photograph's shape, not photographed. The earlier 2026-09-02 capture is what produced the three fixes before them: a cut pulse reading, a quarter mark too thin to read, and a width model that was wrong by 78 points. Every mark is still generated and inspected pixel by pixel by the automated tests, and its contrast is arithmetic over those decoded pixels — but nobody has yet seen the corrected menu on a real menu bar, and nobody has seen any of it in **dark** appearance. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
 | **The row submenus have never been opened.** | That macOS draws a submenu on a menu bar item at all, that the four items appear where you expect, and that **Copy** actually lands on the clipboard while the menu is dismissing, are all unproven here — Electron is not something the tests can run. The composing is executed and checked; the copying is not |
 | **macOS 14 or later is assumed for two things.** | The two section headers and the small second line under each row are macOS 14 affordances (the second line needs 14.4). On an older macOS the headers should degrade to dimmed caption lines and the second line may simply not draw — in which case the work-stream and the age, which are on the *first* line, are still there. Neither degradation has been observed |
 
@@ -1251,6 +1252,11 @@ with exactly one exception, the **standing brief**, which is your document and h
   project was written to most recently, which is nearly always the one you just came from, and it
   remembers the last project you looked at in each domain; the lists themselves do not reorder
   between visits.
+- **The header carries `Copy agent instructions`**, beside the breadcrumb naming the domain and
+  project you are looking at. It is the same block as the button of that name in
+  [§10 → Projects](#projects-inside-a-domain), already filled in for this project — the thing to
+  paste into the file your coding tool loads every session, so the agent knows to read this screen's
+  state when it starts and to save it as it goes ([§13b](#making-sure-your-agent-actually-does-it)).
 - **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
   was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
   the model and [§10](#projects-inside-a-domain) for how to add a second project.
@@ -1312,11 +1318,17 @@ brief in Obsidian instead still works; it is the same file, `state/<project>/pro
 saved here is stamped as written by a **human**, which is what tells a later agent that the
 directives in it are yours rather than an earlier session's notes.
 
-> 💡 **The write half needs a skill.** Nothing forces an agent to save, so an agent that has never
-> been told the discipline simply never writes and this screen stays empty. The
+> 💡 **The write half has to be asked for, and installing the skill is not always enough.** Nothing
+> forces an agent to save, so an agent that has never been told the discipline simply never writes
+> and this screen stays empty. The
 > **[Curator Continuity skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170)**
 > is what teaches it: resume from state at the start of a session, save early and often, and what
-> belongs in a handoff. Install it alongside the My Curator skill.
+> belongs in a handoff. Install it alongside the My Curator skill — **and paste the block from Copy
+> agent instructions into the file your tool loads every session**, because a harness can hold an
+> installed skill and never reach for it. Measured, an agent on Claude Code saved in **0 of 4**
+> headless runs with the skill alone and **3 of 4** with the block, while opencode — which loads
+> skills itself — was **4 of 4 either way**
+> ([§13b](#making-sure-your-agent-actually-does-it)).
 
 > 💡 **On a Mac you can watch this without opening the app.** The optional
 > **[menu bar icon](#6b-the-menu-bar-icon-mac-app)** shows the same store — the last save, recent
@@ -2157,7 +2169,7 @@ exists, and creating one is a click away. Six controls:
 
 | Control | What it does |
 |---|---|
-| **New project** | Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
+| **New project** | The **last row of the Projects group**, reading `+ New project` — press it and the create form opens **in place of that row, inside the group**, so you never lose sight of the projects you already have. Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
 | **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
 | **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
@@ -2768,6 +2780,7 @@ That is also why **there is no on/off setting to find** — none is needed for t
 **2. Remove the `curator-continuity` skill — the practical global off switch.** That skill is what tells an agent to save at all, and when. Without it nothing prompts a save. Three things to know:
 
 - It lives in **your harness**, not in The Curator — `~/.claude/skills/curator-continuity/`, or uploaded into a Claude Desktop project — so you remove it there.
+- **If you pasted the entry-file block, delete that too.** The `## Working state` block from **Copy agent instructions** ([§13b](#making-sure-your-agent-actually-does-it)) is a standing instruction in `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / your Cursor rules, and it asks for saves whether or not the skill is installed. Removing the skill alone does not remove it.
 - The tools stay registered, so a direct *"save our progress"* still works. This removes the habit, not the capability.
 - If you also run the `my-curator` skill, its tool table still lists `save_working_state` with a *save early and often* hint. Delete `mcp__my-curator__save_working_state` from that skill's `allowed-tools:` line if you want the nudge gone entirely.
 

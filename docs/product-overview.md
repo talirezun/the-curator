@@ -105,14 +105,18 @@ than as a slogan.
 **And what is not yet neutral, stated plainly, because an overclaim here would be worse than
 the gap:**
 
-- **The two agent skills are portable in content but Claude-shaped in activation.** Their text
-  is ordinary prose that works anywhere you can paste it; what is Claude-specific is how they
-  *switch on* — the tool-permission header, automatic triggering from a description, and the
-  documented install path. A harness-neutral form is **generated** from the same single source
-  rather than hand-copied, so there is no second copy to drift.
-  The practical consequence: an agent in another harness can **read** working state over MCP
-  perfectly well, but nothing tells it to **save**. The store is portable; the discipline that
-  fills it is not yet.
+- **The two agent skills are portable prose; whether a harness *activates* one is the harness's
+  behaviour, not the skill's and not Claude's.** Their text works anywhere you can paste it, and a
+  harness-neutral form is **generated** from the same single source rather than hand-copied, so
+  there is no second copy to drift. Activation is the part that cannot be promised: measured,
+  **opencode** loaded the continuity skill natively and ran it first in **4 of 4** runs, while an
+  agent on **Claude Code headless** never reached for it and saved in **0 of 4**. The practical
+  consequence: reading working state over MCP is pure protocol and works anywhere, but saving is a
+  discipline the agent has to be given, and an installed skill only gives it if the harness picks
+  the skill up. The harness-neutral mechanism is the entry-file block from **Copy agent
+  instructions** — prose in the file the tool already loads every session — which took Claude Code
+  headless to **3 of 4**. Four runs per arm, headless only, one task and one model: a shape, not a
+  rate ([the measurement and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 - **Local models are not available.** The provider row exists in Settings and is marked
   unavailable. The OpenRouter connection speaks an OpenAI-*compatible* protocol — the name of a
   wire format, not OpenAI support — which is groundwork for local runtimes later, not a

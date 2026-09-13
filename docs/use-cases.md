@@ -372,15 +372,18 @@ save takes it, with no warning, because overwriting is the correct behaviour.
 
 ### Boundaries worth knowing before you rely on it
 
-- **Capture is advisory.** Nothing hooks your session to force a save; the skill layer prompts for
-  one. A missed save means the next read returns the **previous** state — stale, never corrupted,
-  and nothing already saved is lost. Save early and often
+- **Capture is advisory.** Nothing hooks your session to force a save; the continuity skill and the
+  entry-file block from **Copy agent instructions** are what prompt for one — and on a harness that
+  does not reach for an installed skill, only the block does
+  ([the measurement](user-guide.md#making-sure-your-agent-actually-does-it)). A missed save means the
+  next read returns the **previous** state — stale, never corrupted, and nothing already saved is
+  lost. Save early and often
 - **The MCP bridge is a stdio child process.** Any client that can spawn a local program reaches it;
   a browser-only assistant cannot
 - **Handoffs and journals are agent-only.** Agents write them over MCP; the **Memory** rail item
   renders them, and nothing in the app edits them. The standing brief is the exception and always
-  was yours — edit it under **Domains → Projects in this domain**, or open `state/project.md` in
-  any editor
+  was yours — edit it under **Domains → Projects in this domain**, or open
+  `state/<project>/project.md` in any editor (`state/project.md` for a domain's own project)
 - **Treat what comes back as data, not orders.** It is a note a peer left — verify a claim before
   acting on it. That is what the `recheck` field on an observation is for
 

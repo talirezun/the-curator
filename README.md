@@ -170,9 +170,9 @@ flowchart TD
         S5[THE MODELS<br/>Gemini · Anthropic · OpenRouter<br/>swap providers whenever you like]
     end
 
-    subgraph SHAPED["⚠️ CLAUDE-SHAPED TODAY — content portable, activation is not"]
+    subgraph SHAPED["⚠️ HARNESS-DEPENDENT — activation belongs to the harness, and the entry-file block closes it"]
         direction TB
-        K1[THE TWO SKILLS<br/>bodies are pure prose and port anywhere;<br/>auto-triggering and the install path<br/>are Claude-harness mechanisms]
+        K1[THE TWO SKILLS<br/>the text is portable prose;<br/>whether a harness auto-activates one<br/>is a property of that harness<br/>— measured, opencode did 4 of 4<br/>and Claude Code headless 0 of 4;<br/>the entry-file block is the neutral fix]
     end
 
     subgraph FUTURE["🔒 NOT AVAILABLE YET"]
@@ -183,15 +183,17 @@ flowchart TD
 
 **What is *not* yet neutral — stated plainly, because overclaiming here would be worse than the gap:**
 
-- **The two agent skills are portable in content but Claude-shaped in activation.** Their bodies
-  are ordinary prose with no vendor-specific logic, so they work anywhere you can paste them; what
-  is Claude-specific is how they *switch on*. A harness-neutral form is **generated** from the same
-  source at build time rather than hand-copied — per-harness detail in
-  [`skills/README.md`](skills/README.md). The consequence is worth naming: an agent in another
-  harness can *read* working state over MCP fine — that half is pure protocol — but nothing tells
-  it to **save** — and measured, a harness may not activate the skill even where it is designed to
-(Claude Code headless: 0 of 4 runs). The portable fix is prose, not a file format: paste the block
-**Copy agent instructions** gives you into whatever file your harness already loads.
+- **The two agent skills are portable prose; whether a harness *activates* one is the harness's
+  behaviour, not the skill's and not Claude's.** Their bodies carry no vendor-specific logic, so
+  they work anywhere you can paste them, and a harness-neutral form is **generated** from the same
+  source rather than hand-copied — per-harness detail in [`skills/README.md`](skills/README.md).
+  What varies is activation, and it varies by host rather than by vendor: measured, opencode loaded
+  `curator-continuity` natively and ran it as its first action in 4 of 4 runs, while an agent on
+  Claude Code saved in **0 of 4** headless runs with the skill alone. The harness-neutral mechanism
+  is prose, not a file format — paste the block **Copy agent instructions** gives you into the file
+  your harness already loads every session, which took Claude Code headless to 3 of 4. Four runs per
+  arm, headless only, one task and one model: a shape, not a rate
+  ([the measurement and its limits](docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 - **Local models are not available.** The OpenRouter adapter speaks an OpenAI-*compatible*
   protocol — the name of a wire format, **not** OpenAI support — which is groundwork for local
   runtimes later, not a capability today.

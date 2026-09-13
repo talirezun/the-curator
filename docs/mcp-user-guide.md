@@ -153,11 +153,14 @@ The **My Curator skill** packages that playbook into a single markdown file you 
 - **Maintenance** — three-tier model: auto-fix safe types, confirm review-only types, always-preview destructive (`semanticDupe`) merges. Persists `dismiss_wiki_issue` decisions across machines.
 - **Quality rules** — no invented slugs, no duplicate pages, no folder prefixes in entity/concept wikilinks, no cross-domain links, no idempotency-violating re-compiles.
 
-> **Using a host that isn't Claude?** The playbook itself is ordinary prose and works anywhere —
-> what is Claude-specific is only how it *switches on*. A harness-neutral form is **generated** from
-> this same file (never hand-copied, so the two can't drift and instruct two agents differently):
-> see [`skills/README.md`](../skills/README.md). In a host without a skills mechanism, you paste
-> the body into whatever it loads at the start of a session.
+> **Using a host that isn't Claude?** The playbook itself is ordinary prose and works anywhere. A
+> harness-neutral form is **generated** from this same file (never hand-copied, so the two can't
+> drift and instruct two agents differently): see [`skills/README.md`](../skills/README.md), which
+> lists where each host loads it from. In a host without a skills mechanism, you paste the body into
+> whatever it loads at the start of a session. **Whether a host that *does* have one actually
+> reaches for the skill is that host's behaviour, not Claude's** — measured, opencode loaded
+> `curator-continuity` natively and ran it first in 4 of 4 runs, while Claude Code headless did not
+> activate it at all.
 
 > **Note on paths:** this directory was called `claude-skills/` until recently and is now
 > **`skills/`** — the old name asserted a Claude-only framework in the filesystem, which is not what

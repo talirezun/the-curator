@@ -37,13 +37,14 @@ table lives in [working-state.md](working-state.md#1-the-problem-it-solves).
   not need the web app running. A browser-only assistant cannot reach it. The limit is the
   transport, not the vendor.
 - **The skills are portable in content; activation is per harness.** Their text is ordinary prose
-  and works anywhere you can paste it; what differs is how they *switch on* (the tool-permission
-  header, auto-triggering from a description, and the install path). Reading working state over
-  MCP is pure protocol and works anywhere — but nothing tells an agent to **save**, and a harness
-  may not activate the skill even where it is designed to (measured: Claude Code headless saved in
-  **0 of 4** runs on the skill alone). The portable fix is prose, not a file format: **Domains →
-  Projects → Copy agent instructions** hands you the block to paste into whatever file your harness
-  already loads — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
+  and works anywhere you can paste it; what differs is how they *switch on*, and that difference
+  belongs to the host rather than to a vendor — measured, opencode loaded `curator-continuity`
+  natively and ran it first in **4 of 4** runs, while Claude Code headless saved in **0 of 4** runs
+  on the skill alone, never activating it. Reading working state over MCP is pure protocol and
+  works anywhere; saving is a discipline the agent has to be given, and an installed skill only
+  gives it if the harness reaches for the skill. The portable fix is prose, not a file format:
+  **Domains → Projects → Copy agent instructions** hands you the block to paste into whatever file
+  your harness already loads — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
   ([the measurement and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 - **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer and that
   block prompt for one. A missed save means the next read returns the **previous** state — stale,

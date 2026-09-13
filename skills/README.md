@@ -51,11 +51,12 @@ client can call all 22 tools. The skills were not. Three things tied them to one
 | Auto-activation from the YAML `description` | **Partly, and not the way this row used to claim.** It was written as a Claude-only mechanism; measured, opencode reads `skills: { paths }` and activated `curator-continuity` first in 4 of 4 runs, while Claude Code headless activated it in **0 of 4** with the identical skill installed. Portability is not the question — *whether a given host's model reaches for it* is, and that is answered per host, below. |
 | The documented install path (`~/.claude/skills/`) | No. |
 
-**Why that mattered more than it looks.** An agent in another harness can already *read*
-working state through MCP perfectly well. Nothing was telling it to *save*. Capture is
-advisory by design — nothing in the product forces a save — so a harness whose agent never
-learns the discipline leaves the store empty and the whole memory layer silently does
-nothing. The store was portable; the discipline that fills it was not.
+**Why that mattered more than it looks.** Any MCP client can already *read* working state
+perfectly well — that half is pure protocol. Nothing in the protocol tells an agent to
+*save*. Capture is advisory by design — nothing in the product forces a save — so an agent
+that never learns the discipline leaves the store empty and the whole memory layer silently
+does nothing. The store was portable; the discipline that fills it was reaching only the
+agents whose host happened to load the skill, which, measured, was **not** Claude Code headless.
 
 ## One source, no copies
 
