@@ -19,11 +19,30 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
+## What it is, in plain words
+
+You drop in the things you read — PDFs, articles, notes — and The Curator turns them into a
+connected personal wiki: a page for every person, tool and idea worth one, all linked to each
+other. Every new source **updates the pages that already exist** instead of adding another copy,
+so the wiki gets better the more you feed it, and you can ask it questions in ordinary language
+and get answers that point at the pages they came from. All of it lives on your own computer as
+plain text files you can open, edit and back up yourself — no account, no database, nothing of
+yours on anyone else's server. And if you work with AI coding assistants, it can also hold
+**where a piece of work stands**, so the next session picks up where the last one stopped.
+
+**On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
+couple of minutes.** On Windows and Linux it runs as a local server you open in your browser —
+same code, same release, same features.
+
+---
+
 ## Your brain → your team's brain → your agents' brain
 
 The Curator is where your **context** lives — both the knowledge you have accumulated and the
 state of the work you are doing — as plain markdown files on your own machine. Any editor opens
-them. Your own private GitHub repo syncs them. Any local MCP client reads and writes them.
+them. Your own private GitHub repo syncs them. Any local MCP client — an AI assistant allowed
+to launch a small helper program on your machine, like Claude Desktop, Claude Code or Cursor —
+reads and writes them.
 
 **That last part is the whole argument.** Claude Projects, ChatGPT Projects and Cursor rules each
 hold your accumulated context inside one vendor's product, and you leave it behind on the day you
@@ -39,7 +58,8 @@ owner — you.
 
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
 written by your agent at the end of a session and read at the start of the next one, so
-the work survives a change of session, agent, model, harness *or* machine.
+the work survives a change of session, agent, model, harness *(the app you run the agent in)*
+*or* machine.
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
 > The Curator's job is everything else — summarizing, cross-referencing, filing, and bookkeeping.
@@ -55,8 +75,9 @@ architecture the team had ruled out in **4 of 4**. With the handoff present: **0
 Read that as the shape of the effect at N=4 per condition, not a constant —
 [method and caveats](docs/use-cases.md#r-anyone-who-codes-with-agents-across-sessions-tools-and-machines).
 
-> **Two honest boundaries.** The MCP bridge is a **stdio child process**, so a client has to be
-> able to spawn a local program to reach it — a browser-only assistant is out of scope by
+> **Two honest boundaries.** The MCP bridge is a **stdio child process** — a small program your
+> assistant starts on your own computer and talks to directly — so a client has to be
+> able to spawn a local program to reach it; a browser-only assistant is out of scope by
 > construction, not by choice. And capture is **advisory**: nothing forces an agent to save, and a
 > missed save returns the *previous* state — stale, never corrupted.
 
@@ -65,8 +86,10 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 ## Demo
 
 <p align="center">
-  <img src="images/the-curator-product-video-v2.gif" alt="The Curator product demo" width="800" /><br>
-  <em>Drop in a PDF, watch it atomize into an interlinked wiki, explore the graph, chat with your knowledge.</em>
+  <img src="images/the-curator-demo-2026.gif" alt="The Curator product demo" width="800" /><br>
+  <em>The whole arc in 100 seconds: a PDF becoming interlinked pages · cited, streamed chat · the
+  Obsidian graph · sync to your own private GitHub repo · a Shared Brain · one agent saving where
+  the work stands and another reading it back · the Mac menu bar widget.</em>
 </p>
 
 ---
@@ -76,7 +99,7 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 ```
 1. Drop in a PDF, article, or note
          ↓
-2. The Curator reads it and writes 5–15 interlinked wiki pages
+2. The Curator reads it and writes ~18–20 interlinked wiki pages
    (one summary + entity pages + concept pages, with YAML frontmatter)
          ↓
 3. Chat with your knowledge — multi-turn, cited answers, streamed as they
@@ -98,6 +121,15 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 
 Everything is a plain markdown file on your computer. No subscriptions, no database, no cloud
 account — only an API key from Google Gemini, Anthropic or OpenRouter.
+
+**That page count is the model's, not a constant.** The pinned default is measured at 18–20
+outline pages per source and the catalogue spans 5 to 27 on the same document; Settings →
+Providers & keys prints the figure for whichever model you pick, beside its price.
+
+<p align="center">
+  <img src="docs/images/curator-domains.png" alt="The Curator's Domains view for the &quot;projects&quot; domain: an overview strip reading Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 3; below it a PAGES · THE WIKI list filtered by All / Entities / Concepts / Summaries / Memory with a Show 150 more row; below that PROJECTS IN THIS DOMAIN with Copy marker line and Copy agent instructions actions" width="800"><br>
+  <em>One domain is one compounding wiki. Every page is a file on disk you can open in any editor.</em>
+</p>
 
 → The technical deep dive on step 2 — every safeguard, every failure mode, the quality contract —
 is [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md).
@@ -172,9 +204,9 @@ flowchart TD
 ## Quick start
 
 On a **Mac** you can download the app. On **Windows and Linux** — and on a Mac too, if you
-prefer it — The Curator runs as a **local server you open in your browser**. Same codebase,
-same release, same features, same files: one shell around `src/`, not a fork. The browser
-install is **not** a legacy path and is fully supported everywhere.
+prefer it — The Curator runs as a **local server you open in your browser**: one shell around
+`src/`, not a fork, so the browser install is **not** a legacy path and is fully supported
+everywhere.
 
 ### Option A — Download the Mac app (`.dmg`)
 
@@ -192,6 +224,11 @@ its own runtime.
 
 Then open the `.dmg` and **drag The Curator onto the Applications folder** in the window that
 appears. Eject the disk image afterwards.
+
+**Nothing below is hard — it is three clicks, once.** macOS asks you to confirm the very first
+launch of any app it cannot yet identify, and The Curator is in that position until Apple
+Developer enrolment completes. After that first confirmation you never see it again, not even
+when the app updates itself. The honest detail:
 
 > **⚠️ First launch — you have to allow it explicitly.**
 >
@@ -229,9 +266,6 @@ appears. Eject the disk image afterwards.
 >
 > then open it normally. (Don't disable Gatekeeper system-wide to get around this.)
 
-**What this Mac release is, plainly.** It is not signed with an Apple identity and not
-notarised, so the **one-time** Open Anyway step above applies to this first manual install.
-
 **One optional extra the browser install has no equivalent for:** a **menu bar icon** showing
 what your coding agents have just saved, so you can check your state is written without leaving
 what you are doing — the last save and where it was, a **save pulse** drawing the last seven
@@ -242,11 +276,10 @@ See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
 
 **After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)
 downloads the new version, verifies it against the sha256 GitHub publishes on the asset, and
-swaps it in, showing progress as it goes. You do not come back to this page for updates — the Releases
-page is for a first install. And an update installed this way carries **no Gatekeeper prompt at
-all**: macOS flags a file your *browser* downloads, but not one the app fetched itself, so the
-Open Anyway step never recurs. That difference is measured, with the browser download kept as
-the control.
+swaps it in, showing progress as it goes. You do not come back to this page for updates — the
+Releases page is for a first install. An update installed this way carries **no Gatekeeper prompt
+at all**, because macOS flags a file your *browser* downloads but not one the app fetched itself
+— measured, with the browser download kept as the control.
 
 **One limit, stated rather than glossed:** no automated run has ever replaced a real installed
 application. The swap is proven against a real signed bundle in a test folder, and the design
@@ -323,13 +356,19 @@ structural Health scans and the MCP bridge itself cost nothing at all.
 | Provider | Free tier? | Paid price | Real-world |
 |---|---|---|---|
 | **Gemini 2.5 Flash Lite** *(default)* | Yes, but [rate-limited](https://ai.google.dev/gemini-api/docs/rate-limits) — enough to try, not to work | $0.10/M in · $0.40/M out | **~€5/month** at heavy solo use |
-| **Anthropic Claude Haiku 4.5** | No | $1/M in · $5/M out | ~10× the Gemini bill for the same workload |
+| **Anthropic Claude Haiku 4.5** | No | $1/M in · $5/M out | 10× the Gemini bill on input, 12.5× on output |
 
 Those are the *defaults*, not the only options. A hand-measured catalogue spans Gemini, Anthropic
-and OpenRouter — one route is free, and OpenRouter's pinned default is the cheapest way to build a
-wiki. Across the measured Gemini and Anthropic models the span is roughly **50× on input and 62× on
-output**, so changing model rescales the rows above. An admin running cohort-scale Shared Brain
-synthesis weekly is more like €10–20/month.
+and OpenRouter — one route is **free**, and on a connected install the app names the cheapest
+measured model for you on the same screen. OpenRouter's pinned default is about a **third** of the
+Gemini default per token. Across the measured Gemini and Anthropic models the span is roughly
+**50× on input and 62× on output**, so changing model rescales the rows above. An admin running
+cohort-scale Shared Brain synthesis weekly is more like €10–20/month.
+
+<p align="center">
+  <img src="docs/images/curator-providers-keys.png" alt="The Curator's Providers &amp; keys settings: step 1 Connect a provider lists Gemini connected, Anthropic with no key, and OpenRouter connected, with a note that local models do not exist yet; step 2 What builds your wiki shows Flash Lite 2.5 selected with chips reading &quot;$0.10 in · $0.40 out per 1M tokens&quot;, &quot;plans 18-20 pages per source&quot; and &quot;measured by The Curator&quot;, and a CHEAPEST MEASURED line offering MiniMax M3 (free)" width="800"><br>
+  <em>Price and pages-per-source are shown as measured facts, next to the cheapest model your own keys can reach.</em>
+</p>
 
 → Full breakdown, the per-feature token table and the pricing math:
 [User Guide § 19](docs/user-guide.md#19-api-keys-cost--free-tier) ·
@@ -347,6 +386,11 @@ model-by-model measurements: [§ 16b](docs/user-guide.md#16b-choosing-your-ai-mo
 
 They don't compete and they need no sync or export between them — all three read the same markdown.
 → [User Guide § 13](docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
+
+<p align="center">
+  <img src="docs/images/curator-chat.png" alt="The Curator's Chat view: a row of scope pills for the Articles, Business, Lectures, Posts, Projects and Research domains with &quot;3,421 pages in scope&quot; and a Compile to Wiki button; a typed question asking for a table of the last 10 articles; and the streamed answer, labelled THE CURATOR · MiniMax M3 (free) · free, rendering a Markdown table of articles with dates, one-sentence summaries and the source page each came from" width="800"><br>
+  <em>Answers cite the wiki pages they were built from. The model and answer length are per-chat choices.</em>
+</p>
 
 Keeping that graph honest is **Wiki Health**: one scan for broken links, orphans, duplicate
 entities and missing backlinks — deterministic repairs are free and applied in place, AI-assisted
@@ -382,6 +426,11 @@ into `CLAUDE.md` — **Domains → Projects → Copy agent instructions** hands 
 for your project, to paste into `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
 ([the measurement and its limits](docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 
+<p align="center">
+  <img src="docs/images/curator-agent-memory.png" alt="The Curator's Agent memory view: a Projects list showing projects with 3 scopes, lumina with 7 scopes and curator with 10 scopes, each last saved 3 days ago, beside a note that agents write the handoffs through MCP while you write the standing brief; on the right a card headed Last saved 3 days ago, naming the work-stream and the agent that wrote it, carrying a &quot;summary shortened&quot; badge explaining that only the one-line label was trimmed and not the handoff, plus a Work-stream dropdown and the machine the save came from" width="800"><br>
+  <em>Layer 3, on disk: which project, which work-stream, which machine, and how long ago an agent last wrote it down.</em>
+</p>
+
 ### Shared Brain — collective wikis (opt-in)
 
 A cohort, team or research group builds one wiki together without merging personal data. Each
@@ -392,11 +441,8 @@ Personal Access Token = per-contributor identity), GDPR Article 17 erasure built
 modes for cohorts vs. enterprises. It can also be **sold** — experts, educators and consultancies
 can charge for access today, with no code changes.
 
-→ [User Guide](docs/shared-brain-user-guide.md) ·
-[Architecture & roadmap](docs/shared-brain.md) ·
-[Admin operations](docs/shared-brain-admin.md) ·
-[Compliance](docs/shared-brain-compliance.md) ·
-[Monetization](docs/shared-brain-monetization.md)
+→ Start with the [Shared Brain User Guide](docs/shared-brain-user-guide.md); architecture, admin
+operations, compliance and monetization each have their own doc in the tables below.
 
 ---
 
@@ -423,6 +469,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
 | [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; projects inside a domain; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
+| [Standing brief template](docs/project-brief-template.md) | A copyable `state/project.md` — the brief you write by hand so every agent on a project starts from the same instructions |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |
 | [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup across your own computers (wizard, token permissions, what syncs, troubleshooting) |
@@ -503,8 +550,9 @@ wording is what should change.
   network**, and a cross-origin guard rejects state-changing requests from other web origins
   (CSRF / DNS-rebinding defence). It still has no per-request authentication — it is a single-user
   local app and should not be reverse-proxied onto a public network.
-- Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json` and
-  `.env`) are gitignored, never committed, and written with `0600` owner-only permissions.
+- Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`,
+  `.env`, and the `.knowledge-git/config` that holds your sync token) are gitignored, never
+  committed, and written with `0600` owner-only permissions.
 
 ---
 
