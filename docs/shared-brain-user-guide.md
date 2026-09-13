@@ -44,8 +44,10 @@ Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New in
 
 Once enabled, the Shared Brain view shows two cards:
 
-- **📨 I have an invite token** — *From my cohort, team, or research group.* — `[Join →]` button
-- **⚙ I'm starting a new Shared Brain** — *Set one up for my cohort or team.* — `[Set up →]` button
+- **I have an invite token** — *From my cohort, team, or research group.* — `[Join →]` button
+- **I'm starting a new Shared Brain** — *Set one up for my cohort or team.* — `[Set up →]` button
+
+![The Curator's Shared Brain view before anything is connected. The sidebar reads "Shared Brain" with a "beta" pill and, below it, "No Shared Brains connected yet." The main pane is headed YOUR TEAM'S BRAIN / Shared Brain and offers two cards: "I have an invite token — From my cohort, team, or research group." with a Join button, and "I'm starting a new Shared Brain — Set one up for my cohort or team." with a Set up button.](images/curator-shared-brain.png)
 
 You only do this once per computer. The setting is remembered in `.curator-config.json`.
 
@@ -67,7 +69,7 @@ You CANNOT proceed without accepting the GitHub collaborator invitation. The Cur
 
 ### Step-by-step wizard
 
-In the **Shared Brain** rail view, on the **📨 I have an invite token** card, click **Join →**. A
+In the **Shared Brain** rail view, on the **I have an invite token** card, click **Join →**. A
 wizard sheet comes down from the top of the window with a 5-step progress bar
 (Token → Access → Your token → Domains → Save) and a **Step N of 5** counter under the title.
 
@@ -220,7 +222,7 @@ You can do this before OR after running the admin wizard. Order doesn't matter �
 
 ### Step C — Run the admin wizard
 
-In the Curator → **Shared Brain** rail view → on the **⚙ I'm starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → Your token → Domains → Save**.
+In the Curator → **Shared Brain** rail view → on the **I’m starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → Your token → Domains → Save**.
 
 #### Step 1 — Setup
 
@@ -303,7 +305,7 @@ Detailed admin operations (synthesis cadence, contributor management, admin-toke
 Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curator alongside your personal domains. You can:
 
 - **Read** it from **Domains** — pick the `shared-<slug>` domain and open a page (the reader opens as an overlay; Esc closes it)
-- **Chat** with it in the Chat tab (it's a domain like any other)
+- **Chat** with it in the Chat view (it's a domain like any other)
 - **Explore** it in Obsidian (open `domains/shared-<slug>/wiki/` as a vault folder)
 - **Search** it from Claude Desktop via the My Curator MCP
 
@@ -373,7 +375,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - That's by design — the mirror is read-only. Direct writes wouldn't propagate. Use the MCP write tools on your personal opted-in domain instead, then Push.
 
 **Wiki Health "Fix" refuses to run on the `shared-<slug>` domain**
-- Same reason — fixes to the mirror would be overwritten. Scanning a mirror is allowed (useful for spotting conflict markers), but every fix action returns a clear refusal (v3.0.2+). To fix a Health issue in the collective wiki, fix it upstream in your personal contributing domain, then Push. The mirror also no longer appears in the Ingest tab's domain dropdown.
+- Same reason — fixes to the mirror would be overwritten. Scanning a mirror is allowed (useful for spotting conflict markers), but every fix action returns a clear refusal (v3.0.2+). To fix a Health issue in the collective wiki, fix it upstream in your personal contributing domain, then Push. The mirror also no longer appears in the Ingest view's destination list.
 
 **Status shows "GitHub rate limit is running low"**
 - GitHub fine-grained PATs get 5000 REST requests/hour. Heavy synthesis on a large brain can approach this. Since v3.0.4 the warning appears directly in the operation's progress stream (previously it only went to the server log). Wait an hour and retry; for cohort-scale brains this is rare.
@@ -402,8 +404,8 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | Action | Where in the Curator app |
 |---|---|
 | Enable Shared Brain (beta) | **Shared Brain** rail view → Enable button |
-| Join a cohort (contributor) | **Shared Brain** → **📨 I have an invite token** → Join → paste invite token |
-| Start a new cohort (admin) | **Shared Brain** → **⚙ I'm starting a new Shared Brain** → Set up |
+| Join a cohort (contributor) | **Shared Brain** → **I have an invite token** → Join → paste invite token |
+| Start a new cohort (admin) | **Shared Brain** → **I’m starting a new Shared Brain** → Set up |
 | Push your contributions | **Shared Brain** → connection card → "Push contributions" |
 | Pull collective updates | **Shared Brain** → connection card → "Pull updates" |
 | Run synthesis (admin) | **Shared Brain** → connection card → "Run synthesis (admin)" (main action row, beside Push and Pull) |
