@@ -14,10 +14,13 @@
   <a href="#option-c--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
+  <a href="https://mycurator.xyz"><img src="https://img.shields.io/badge/Website-mycurator.xyz-7C5AF5" alt="Website: mycurator.xyz"></a>
   <a href="https://github.com/talirezun/the-curator/blob/main/package.json"><img src="https://img.shields.io/github/package-json/v/talirezun/the-curator?label=Version&color=blue" alt="Current Version"></a>
   <a href="https://github.com/talirezun/the-curator/actions/workflows/test.yml"><img src="https://github.com/talirezun/the-curator/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
+
+<p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
 
 ## What it is, in plain words
 
@@ -466,6 +469,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 
 | | |
 |-|-|
+| [Official website](https://mycurator.xyz) | mycurator.xyz — the one-page overview, downloads, and an AI assistant that answers questions from these docs |
 | [Product Overview](docs/product-overview.md) | **Start here for the whole picture.** Every capability and what it is for, the memory layer, the menu bar icon, worked scenarios, where the project stands, and an explicit "what this is not". Capability-level rather than technical — also the file to hand an AI agent that needs to understand The Curator |
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |

@@ -207,4 +207,4 @@ Version **3.52.0**, as of 13 September 2026. The project is open source, active,
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 
-Downloads and release notes: https://github.com/talirezun/the-curator/releases
+Downloads and release notes: https://github.com/talirezun/the-curator/releases — the official website, with a one-page overview and this assistant, is https://mycurator.xyz

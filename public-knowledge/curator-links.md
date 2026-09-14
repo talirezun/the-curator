@@ -2,6 +2,10 @@
 
 This file is navigation only. It says which page in the GitHub repository answers a question, and gives the link. The repository is https://github.com/talirezun/the-curator.
 
+## Where is the official website?
+
+The official website is https://mycurator.xyz — a one-page overview with downloads and this assistant.
+
 ## Where do I download the Mac app?
 
 Go here for the .dmg installer (Apple Silicon and Intel builds are published side by side): https://github.com/talirezun/the-curator/releases
