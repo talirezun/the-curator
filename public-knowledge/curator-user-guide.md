@@ -37,7 +37,7 @@ The app is ad-hoc signed: its contents are sealed, so macOS can tell it has not 
 
 Do not leave a long gap between steps 1 and 2 — the **Open Anyway** button only appears for a while after a blocked launch. On macOS Ventura and Sonoma, 13 and 14, right-click → **Open** → **Open** still works; on Sequoia, 15, and later it does not.
 
-[CHECK: the app's signature state has been verified with Apple's `syspolicy_check`, which reports notarization as the only remaining problem, but nobody has launched a quarantined copy of a current build to watch which dialog macOS actually puts up. The three steps are inferred from the signature state rather than observed.]
+These steps are what the app's signature state should produce (Apple's own `syspolicy_check` reports notarization as the only remaining problem), but nobody has yet launched a quarantined copy of a current build to watch which dialog macOS actually shows. If you see something different, report it on GitHub.
 
 If macOS instead says the app **"is damaged and can't be opened"** and offers no **Open Anyway** at all, you have a build from v3.30.0 or earlier. Those shipped with a broken signature, which is a different and worse Gatekeeper class. Download v3.31.0 or later.
 

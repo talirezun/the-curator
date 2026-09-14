@@ -547,7 +547,8 @@ wording is what should change.
 ## Security
 
 - The app runs entirely on your local machine. The only outbound calls are to the AI provider you
-  configured (Gemini, Claude or OpenRouter) and, when syncing, to your own private GitHub repo.
+  configured (Gemini, Claude or OpenRouter) and to GitHub — your own private repo when you sync,
+  and the project's Releases when you check for updates.
 - The server binds to `127.0.0.1` (loopback) only, so it is **not reachable from your local
   network**, and a cross-origin guard rejects state-changing requests from other web origins
   (CSRF / DNS-rebinding defence). It still has no per-request authentication — it is a single-user

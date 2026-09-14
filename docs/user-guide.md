@@ -2215,10 +2215,10 @@ Reading a page is not a place you navigate to — it's an **overlay** that opens
 sat at the bottom of the page behind a **Browse pages** button. You get:
 
 - a **Filter by name…** box that narrows the list as you type
-- tabs — **All · Entities · Concepts · Summaries** — each with its own count
+- tabs — **All · Entities · Concepts · Summaries · Memory** — each with its own count (**Memory** lists standing briefs and handoffs and is not included in **All**, see [§10](#memory-pages-in-the-list))
 - one row per page, colour-dotted by type, with its full path in monospace
 
-Click a row to open it. Very large lists render the first 150 matches with a note telling you to narrow the filter to see the rest.
+Click a row to open it. Very large lists render 150 rows at a time with a **Show 150 more** row at the bottom that appends the next 150 until every match is shown; *Showing N of M* tracks it.
 
 ### Inside the reader
 

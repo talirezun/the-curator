@@ -171,7 +171,7 @@ Accurate references need no permission at all: "based on The Curator", "compatib
 
 ## Is it secure, and where does my data go?
 
-The app runs entirely on your local machine. The only outbound calls are to the AI provider you configured — Gemini, Anthropic or OpenRouter — and to GitHub, when you sync to your own private repository or when the app checks for updates. `[CHECK: two values]` — one page lists only the provider and your own repo, another also lists update checks.
+The app runs entirely on your local machine. The only outbound calls are to the AI provider you configured — Gemini, Anthropic or OpenRouter — and to GitHub, when you sync to your own private repository or when the app checks for updates.
 
 The server binds to `127.0.0.1`, the loopback address, only. It is therefore not reachable from your local network, and a cross-origin guard rejects state-changing requests from other web origins, which defends against CSRF and DNS rebinding. It still has **no per-request authentication**: it is a single-user local app and should not be reverse-proxied onto a public network.
 
@@ -184,7 +184,7 @@ One thing "local" does **not** mean: it is not private from your AI provider. Wh
 This list is deliberate. Every item is a limit, a refusal or a known gap the project states rather than hides.
 
 - **It is not a hosted service.** No account with the project, no server of the project's, no cloud backup you did not set up yourself, no web-accessible version of your wiki and no support tier.
-- **It does not read everything you point at it.** Three file types only — PDF, Markdown and plain text. No OCR, so a scanned or image-only PDF is refused. No web fetching: a source recorded as a URL is stored as text and never retrieved. There is a per-source input cap of 80,000 characters, so a very long document is truncated with a visible warning rather than silently half-read. The app also keeps no list of files you previously ingested.
+- **It does not read everything you point at it.** Three file types only — PDF, Markdown and plain text. No OCR, so a scanned or image-only PDF is refused. No web fetching: a source recorded as a URL is stored as text and never retrieved. There is a per-source input cap of 80,000 characters, so a very long document is truncated with a visible warning rather than silently half-read. There is no screen in the app listing the files you have already ingested.
 - **It has no undo.** Not for a Wiki Health merge, not for deleting a domain, not for anything else. The recovery route is git, through Personal Sync, and only if you set that up. Browsing or reverting history from inside the app is not built.
 - **It does not sync by itself.** No timer, no background push, no background pull. Every sync is a click. Automatic sync was researched and deliberately not built.
 - **It is not multi-user and it is not a server.** Shared Brain is not real-time collaboration: it is push, administrator-run synthesis, and pull.
@@ -203,7 +203,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 
 ## What version is it, and is the project active?
 
-Version **3.52.0**, as of 13 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It has roughly 84 stars. `[CHECK: the repository shows a live stars badge rather than a fixed number, so the count moves]`
+Version **3.52.0**, as of 13 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 
