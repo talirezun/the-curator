@@ -24,14 +24,15 @@
 
 ## What it is, in plain words
 
-You drop in the things you read — PDFs, articles, notes — and The Curator turns them into a
-connected personal wiki: a page for every person, tool and idea worth one, all linked to each
-other. Every new source **updates the pages that already exist** instead of adding another copy,
-so the wiki gets better the more you feed it, and you can ask it questions in ordinary language
-and get answers that point at the pages they came from. All of it lives on your own computer as
-plain text files you can open, edit and back up yourself — no account, no database, nothing of
-yours on anyone else's server. And if you work with AI coding assistants, it can also hold
-**where a piece of work stands**, so the next session picks up where the last one stopped.
+You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts —
+and The Curator turns them into a connected personal wiki: a page for every person, tool and idea
+worth one, all linked to each other. Every new source **updates the pages that already exist**
+instead of adding another copy, so the wiki gets better the more you feed it, and you can ask it
+questions in ordinary language and get answers that point at the pages they came from. All of it
+lives on your own computer as plain text files you can open, edit and back up yourself — no
+account, no database, nothing of yours on anyone else's server. And if you work with AI coding
+assistants, it can also hold **where a piece of work stands**, so the next session picks up where
+the last one stopped.
 
 **On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
 couple of minutes.** On Windows and Linux it runs as a local server you open in your browser —
@@ -100,9 +101,9 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 ## How it works
 
 ```
-1. Drop in a PDF, article, or note
+1. Drop in a PDF, a Markdown file or a text file
          ↓
-2. The Curator reads it and writes ~18–20 interlinked wiki pages
+2. The Curator reads it and writes an interlinked set of wiki pages
    (one summary + entity pages + concept pages, with YAML frontmatter)
          ↓
 3. Chat with your knowledge — multi-turn, cited answers, streamed as they
@@ -125,9 +126,9 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 Everything is a plain markdown file on your computer. No subscriptions, no database, no cloud
 account — only an API key from Google Gemini, Anthropic or OpenRouter.
 
-**That page count is the model's, not a constant.** The pinned default is measured at 18–20
-outline pages per source and the catalogue spans 5 to 27 on the same document; Settings →
-Providers & keys prints the figure for whichever model you pick, beside its price.
+**How many pages you get is the model's call, not a constant.** The pinned default is measured
+at 18–20 outline pages per source and the catalogue spans 5 to 27 on the same document; Settings
+→ Providers & keys prints the figure for whichever model you pick, beside its price.
 
 <p align="center">
   <img src="docs/images/curator-domains.png" alt="The Curator's Domains view for the &quot;projects&quot; domain: an overview strip reading Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 3; below it a PAGES · THE WIKI list filtered by All / Entities / Concepts / Summaries / Memory with a Show 150 more row; below that PROJECTS IN THIS DOMAIN with Copy marker line and Copy agent instructions actions" width="800"><br>

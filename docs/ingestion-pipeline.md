@@ -31,7 +31,7 @@ flowchart TD
     F -- No --> G[Truncate + warn user]
     F -- Yes --> H[Extract author hints<br/>byline + YAML]
     G --> H
-    H --> H2[Prompt assembly:<br/>index.md unchanged, still embedded<br/>full entity/concept filename lists sent<br/>&lpar;safety-valve cap only on pathological wikis&rpar;<br/>v3.0.16]
+    H --> H2["Prompt assembly:<br/>index.md unchanged, still embedded<br/>full entity/concept filename lists sent<br/>(safety-valve cap only on pathological wikis)<br/>v3.0.16"]
     H2 --> I{Text > 15k chars?}
     I -- No --> J[SINGLE-PASS<br/>one LLM call, no cache breakpoint]
     I -- Yes --> K[MULTI-PHASE<br/>Phase 1 outline → Phase 2 batches<br/>cache-ordered prefix, batch page list last]
@@ -41,7 +41,7 @@ flowchart TD
     L2 --> M[For each page:<br/>writePage with 3-pass dedup +<br/>frontmatter inject + link normalization]
     M --> N[syncSummaryEntities:<br/>reconcile Entities Mentioned<br/>+ inject bidirectional backlinks]
     N --> O[mergeIntoIndex:<br/>programmatic, no LLM call]
-    O --> P1[linkifyHubPages:<br/>wrap plain-text mentions in &lpar;&lpar;wikilinks&rpar;&rpar;<br/>v3.0.1-beta.11+]
+    O --> P1["linkifyHubPages:<br/>wrap plain-text mentions in ((wikilinks))<br/>v3.0.1-beta.11+"]
     P1 --> P[auditBrokenWikilinks:<br/>count + sample]
     P --> P2[aggregateWarnings:<br/>collapse same-class runs<br/>v3.0.17]
     P2 --> Q[appendLog with warnings]
@@ -405,22 +405,22 @@ Same-directory tempfile naming is critical: POSIX `rename(2)` is only atomic wit
 
 ```mermaid
 flowchart LR
-    A[POST /api/ingest] --> A1[registerWrite&lpar;domain, 'ingest'&rpar;]
-    A1 --> A2[acquireFileLock&lpar;domain&rpar;]
-    A2 --> A3[ingestFile&lpar;...&rpar;]
+    A[POST /api/ingest] --> A1["registerWrite(domain, 'ingest')"]
+    A1 --> A2["acquireFileLock(domain)"]
+    A2 --> A3["ingestFile(...)"]
     A3 --> A4[release in finally]
 
-    B[POST /api/update] --> B1{hasActiveWrites&lpar;&rpar;?}
+    B[POST /api/update] --> B1{"hasActiveWrites()?"}
     B1 -- Yes --> B2[409 Conflict]
-    B1 -- No --> B3[beginUpdate&lpar;&rpar;]
+    B1 -- No --> B3["beginUpdate()"]
     B3 --> B4[repo: git reset + npm install<br/>app: download + verify + swap]
     B4 --> B5[endUpdate in finally]
 
-    C[POST /api/sync/*] --> C1{hasActiveWrites&lpar;&rpar;?}
+    C[POST /api/sync/*] --> C1{"hasActiveWrites()?"}
     C1 -- Yes --> C2[409 Conflict]
     C1 -- No --> C3[Proceed with git sync]
 
-    D[MCP compile_to_wiki] --> D1{isFileLocked&lpar;domain&rpar;?}
+    D[MCP compile_to_wiki] --> D1{"isFileLocked(domain)?"}
     D1 -- Yes --> D2[Refuse with file_lock]
     D1 -- No --> D3[acquireFileLock]
 ```
@@ -676,7 +676,7 @@ The output-token-limit guard lives in `callProvider` in [`src/brain/llm.js`](../
 flowchart TD
     MSG[User message<br/>possibly long / pasted] --> ASK[extractAsk:<br/>abbreviation-protect Dr./e.g.,<br/>split into sentences,<br/>take the LAST qualifying clause<br/>question OR command-opener]
     ASK --> AN{analytical?<br/>disagree/conflict/contradict<br/>+ whole-word 'differ'}
-    ASK --> T1{strong enumerate anchor?<br/>list / how many / count /<br/>what&#124;which &lt;plural-noun&gt; /<br/>all&#124;every &lt;noun&gt;<br/>at a clause boundary}
+    ASK --> T1{"strong enumerate anchor?<br/>list / how many / count /<br/>what|which &lt;plural-noun&gt; /<br/>all|every &lt;noun&gt;<br/>at a clause boundary"}
     T1 -- yes --> AN
     T1 -- no --> T3{decision cue?<br/>recommend / should I /<br/>which of these / evaluate /<br/>which…best}
     T3 -- yes --> DEC[decision]

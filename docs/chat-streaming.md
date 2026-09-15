@@ -321,7 +321,7 @@ flowchart TD
     B -- No --> D{streamCommit.emitted?<br/>i.e. are bytes already on screen?}
 
     D -- Yes --> E[Rethrow RAW.<br/>No retry. No chain walk.<br/>No friendly re-message.]
-    D -- No --> F{Deterministic provider error?<br/>&lpar;routing constraint, data policy&rpar;}
+    D -- No --> F{"Deterministic provider error?<br/>(routing constraint, data policy)"}
 
     F -- Yes --> G[Throw unchanged.<br/>Not a retirement — do not walk the chain.]
     F -- No --> H{Model not found?}
