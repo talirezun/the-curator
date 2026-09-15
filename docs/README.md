@@ -58,7 +58,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 
 ### What you can do with it
 
-- **Ingest** any PDF, article, or note — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
+- **Ingest** any PDF, Markdown or text file — an article, a note, a transcript — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
 - **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Answers stream in as the model writes them rather than landing all at once, and on OpenRouter you can watch a reasoning model think first. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
 - **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines. On a Mac you can also put an optional **menu bar icon** there (off by default) that answers *"is my state actually saved, and how long ago?"* without opening the app

@@ -2,7 +2,7 @@
 
 ## What is The Curator?
 
-The Curator is a program you run on your own computer. You drop in the things you read — PDFs, articles, notes — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
+The Curator is a program you run on your own computer. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
 
 Every new source updates the pages that already exist instead of adding another copy, so the wiki gets better the more you feed it. You can ask it questions in ordinary language and get answers that point at the pages they came from.
 

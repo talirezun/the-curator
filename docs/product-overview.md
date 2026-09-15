@@ -15,7 +15,7 @@ catalogues, tool counts — it is marked as a reading taken at a moment rather t
 ## If you read only one section
 
 The Curator is a **local application you run yourself**. It turns sources you feed it —
-PDFs, articles, notes — into an interlinked wiki of **plain markdown files in a folder you
+PDFs, Markdown and text files: articles, notes, transcripts — into an interlinked wiki of **plain markdown files in a folder you
 chose**, readable in Obsidian or any text editor. Nothing is hosted by anyone else; you bring
 your own model API key.
 
