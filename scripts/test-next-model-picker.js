@@ -447,6 +447,14 @@ const stubState = {
   // and defending against it in renderModelOption would only hide a genuinely
   // missing initialiser.
   modelRowOpen: {},
+  // Block 4's shortlist fold, and the three fields the Model lists group's
+  // "Check model availability" control reads. Mirrored here for the same reason
+  // modelRowOpen is: the renderers DEREFERENCE them, so a fixture missing one
+  // crashes this suite rather than failing it, and defending against the
+  // absence in the product would only hide a missing initialiser.
+  worthTestingOpen: false,
+  modelCheckBusy: null, modelCheck: {}, modelCheckError: {},
+  browseRowOpen: {},
   // The picker's own two fields. Same live-object rule: onPickModel (executed
   // in the SECOND sandbox below) mutates these, and renderModelPicker in the
   // FIRST sandbox reads them off the same identity — so §17-§21 can drive the
@@ -530,7 +538,12 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_RE
   // that set them, and a local copy would keep this suite green after the
   // module renamed a facet and every button started resolving to the default.
   'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS',
-  'BUILD_WORKING_SET_TOKENS'];
+  'BUILD_WORKING_SET_TOKENS',
+  // Which providers publish a refetchable catalogue. It decides whether a Model
+  // lists row carries Refresh or Check, and §0c found its absence the way that
+  // guard is meant to — a bare identifier READ is invisible to §0's call
+  // scanner, so only the smoke CALL surfaced it.
+  'CATALOGUE_SYNC_PROVIDERS'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -629,8 +642,26 @@ const RENDER_FN_NAMES = [
   // real page vacuous — the rule §16 already states for renderProviderRow.
   'settingsBlock', 'renderConnectBlock', 'renderAllModelsBlock',
   // Block 4's table, its facet predicates and the "worth testing" shelf.
-  'renderModelBrowse', 'refreshCatalogueButton', 'browseFilter',
-  'browseLanePass', 'browseBandPass', 'worthTestingRows',
+  // `refreshCatalogueButton` IS GONE. It rendered block 4's footer copy of the
+  // refresh control — the SAME `data-sync-catalogue` hook and the SAME route as
+  // the per-provider one, under a second name (`Refresh catalogue` against
+  // `Refresh model list`). One action under two names is worse than two
+  // actions, because the second name implies a second thing to learn. The one
+  // surviving control lives in the Model lists group and names its provider.
+  'renderModelBrowse', 'browseFilter',
+  'browseLanePass', 'browseBandPass', 'worthTestingRows', 'renderWorthTesting',
+  // The Model lists group, which replaced the per-provider catalogue cards.
+  // Those were a SECOND copy of this table with a second search and a second
+  // sort, and rows whose only control was a sentence saying the control was
+  // elsewhere. EXTRACTED, never stubbed: renderAllModelsBlock delegates to the
+  // group, so a stub would make every block-4 assertion below describe the stub.
+  'renderModelListsGroup', 'renderModelListRow', 'renderModelCheckResult',
+  'renderCatalogueSyncDetail',
+  // The retired-build-model banner and its pure verdict. renderBuildBlock
+  // delegates to the banner, so omitting it is a ReferenceError at call time
+  // rather than a failing assertion — which is exactly what §0c exists to turn
+  // into a named failure.
+  'modelGoneFacts', 'renderModelGoneBanner',
 ];
 
 /**
@@ -2343,9 +2374,25 @@ section('§12  The list is attached to its own provider row');
   stubState.modelPickerOpen = {};
   const section = renderProviders();
   const rowAt = section.indexOf('class="provider-row"');
-  const pickAt = section.indexOf('data-model-picker="gemini"');
-  ok(rowAt !== -1 && pickAt !== -1 && pickAt > rowAt,
-    'the Gemini model section is rendered AFTER its own provider row, in the same list');
+  // -- UPDATED DELIBERATELY: THERE IS NO PER-PROVIDER MODEL SECTION --------
+  // This asserted `data-model-picker="gemini"` -- one collapsed catalogue per
+  // provider, under that provider's connection row. Those sections were a
+  // SECOND copy of block 4's table: the same rows, a second search box, a
+  // second sort, and a "control" that was the sentence `can build -- choose
+  // above`. The table survives because it is the one that can be used --
+  // cross-provider, with the working pick control, price bands and context --
+  // and docs/user-guide.md has stated the principle ("one list, not one list
+  // per provider") since v3.45.0 while the screen did the opposite.
+  //
+  // What the per-provider cards genuinely owned was the REFRESH, and that is
+  // what this now pins: one Model lists row per connected provider, still after
+  // the connection rows, still in reading order. The OLD shape is asserted
+  // ABSENT as well, so nobody "fixes" a future red by restoring the duplicate.
+  const listAt = section.indexOf('data-model-list="gemini"');
+  ok(rowAt !== -1 && listAt !== -1 && listAt > rowAt,
+    'the Gemini model-list row is rendered AFTER its own provider row, in reading order');
+  ok(!section.includes('data-model-picker='),
+    'and there is NO per-provider catalogue section \u2014 it was a second copy of block 4\u2019s table');
   // ── THE MONEY FORMATTER — behaviour first, then the two source scans ────
   // WHAT WAS WRONG HERE. These were the ONLY two guards on the one rule
   // `shared/format-usd.js` exists to enforce ("a non-zero cost never renders
@@ -2772,44 +2819,38 @@ section('§16  The SECTION WRAPPER decides openness — executed, not grepped (M
   stubState.keys = allKeys;
   stubState.modelPickerOpen = {};
   const fresh = renderProviders();
-  const openCount = (h) => (h.match(/<details class="model-picker"[^>]*\sopen/g) || []).length;
-  // Populated AND empty sections both count: a keyed provider must produce
-  // exactly one of the two shapes (§1b). The empty one is a <div>, never a
-  // <details>, so it can never be open — which is why openCount is unchanged.
-  const sectionCount = (h) => (h.match(/data-model-picker(?:-empty)?="/g) || []).length;
-  ok(sectionCount(fresh) === PROVIDERS.length,
-    `a fresh mount renders one section per keyed provider (${sectionCount(fresh)} for ${PROVIDERS.length})`);
-  ok(openCount(fresh) === 0,
-    'a fresh mount renders EVERY section collapsed — nothing is expanded for the user');
+  // -- UPDATED DELIBERATELY, SAME REASON AS §12 ABOVE -----------------------
+  // The per-provider collapsed catalogues are gone; what is per-provider now is
+  // one Model lists ROW. The property worth keeping from this section is the
+  // one it was written for: a provider reaches this surface ONLY through the
+  // saved-key gate (v3.0.13's rule), and the WRAPPER -- not the renderer -- is
+  // what applies it. That is still driven through the real renderProviders,
+  // which is the whole reason this section exists rather than a source grep.
+  //
+  // The fold assertions moved WITH the fold: the only collapsed things in
+  // block 4 now are the shelf and the shortlist, both covered where they live.
+  const listCount = (h) => (h.match(/data-model-list="/g) || []).length;
+  ok(listCount(fresh) === PROVIDERS.length,
+    `a fresh mount renders one Model lists row per keyed provider (${listCount(fresh)} for ${PROVIDERS.length})`);
+  ok(!fresh.includes('data-model-picker='),
+    'and NO per-provider catalogue section of either shape — the duplicate list is gone');
+  void B;
 
-  stubState.modelPickerOpen = { [A]: true };
-  const oneOpen = renderProviders();
-  ok(openCount(oneOpen) === 1, 'recording ONE section as open expands exactly one');
-  ok(new RegExp('<details class="model-picker" open data-model-picker="' + A + '"').test(oneOpen),
-    `and it is the one the user actually opened ("${A}"), not an arbitrary section`);
-  ok(!new RegExp('<details class="model-picker" open data-model-picker="' + B + '"').test(oneOpen),
-    `the OTHER provider ("${B}") stays collapsed — openness is per-section, not global`);
-
-  stubState.modelPickerOpen = {};
-  const reclosed = renderProviders();
-  ok(openCount(reclosed) === 0, 'clearing the record collapses them again on the next repaint');
-
-  // The key gate, through the real wrapper this time.
+  // The key gate, through the real wrapper.
   stubState.keys = keysFor(A);  // every OTHER provider has no saved key
   const oneKey = renderProviders();
-  ok(sectionCount(oneKey) === 1, 'only the provider with a saved key gets a section');
-  ok(oneKey.includes('data-model-picker="' + A + '"'),
-    `and it is the keyed one ("${A}") — a Disconnected provider is not pickable anywhere`);
+  ok(listCount(oneKey) === 1, 'only the provider with a saved key gets a row');
+  ok(oneKey.includes('data-model-list="' + A + '"'),
+    `and it is the keyed one ("${A}") — a Disconnected provider is not reachable here either`);
   for (const prov of PROVIDERS) {
     if (prov === A) continue;
-    ok(!oneKey.includes('data-model-picker="' + prov + '"')
-       && !oneKey.includes('data-model-picker-empty="' + prov + '"'),
-      `"${prov}" (Disconnected) gets no section of EITHER shape — not even the empty disclosure`);
+    ok(!oneKey.includes('data-model-list="' + prov + '"'),
+      `"${prov}" (Disconnected) gets no Model lists row`);
   }
 
   stubState.keys = null;  // still loading
-  ok(!renderProviders().includes('data-model-picker'),
-    'before the key payload arrives, no section is rendered at all');
+  ok(!renderProviders().includes('data-model-list'),
+    'before the key payload arrives, no row is rendered at all');
   stubState.keys = allKeys;
   stubState.modelPickerOpen = {};
 }
@@ -4044,14 +4085,26 @@ section('§35  The refresh control: who gets it, when it is offered, what it cla
       stubState.keys = keysFor('openrouter');
       return renderProviders();
     })();
+    // -- UPDATED DELIBERATELY: THE SYNC PANEL IS NOW A ROW, NOT A CARD ----
+    // This asserted `row -> sync panel -> per-provider model list`, an ordering
+    // that only had a subject while the per-provider list existed. It does not:
+    // the refresh lives on one Model lists row per provider, in the kit's own
+    // group. The property this section exists for -- no interactive control
+    // inside any <summary>, so the beta.18 self-toggling hazard is closed BY
+    // CONSTRUCTION rather than by remembering preventDefault -- is asserted
+    // above against the real rendered panel and is unchanged.
     const iRow = all.indexOf('data-replace="openrouter"');
-    const iSync = all.indexOf('data-catalogue-sync="openrouter"');
-    const iPicker = all.indexOf('data-model-picker="openrouter"');
-    const iEmpty = all.indexOf('data-model-picker-empty="openrouter"');
-    const iList = iPicker === -1 ? iEmpty : iPicker;
-    ok(iRow !== -1 && iSync !== -1 && iList !== -1, 'renderProviders emits row, sync panel and model list for OpenRouter');
-    ok(iRow < iSync && iSync < iList,
-      'the sync panel sits BETWEEN the provider row and the model list — a sibling of both');
+    const iSync = all.indexOf('data-sync-catalogue="openrouter"');
+    const iList = all.indexOf('data-model-list="openrouter"');
+    ok(iRow !== -1 && iSync !== -1 && iList !== -1,
+      'renderProviders emits the connection row, the Model lists row and its refresh control');
+    // The refresh control is now INSIDE its Model lists row rather than
+    // between two sections, which is the containment the maintainer asked for:
+    // "refresh must be obvious per provider". Asserted as ORDER — row, then the
+    // list row, then the control within it — so a control that floated back out
+    // of the group (the v3.48.1 shape, one screen over) reds this.
+    ok(iRow < iList && iList < iSync,
+      'the refresh control sits INSIDE its own provider’s Model lists row, after the connection row');
   }
 
   // ── DISABLED STATES: two layers, and neither is the guarantee ──────────

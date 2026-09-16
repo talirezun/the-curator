@@ -99,7 +99,12 @@ const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLL
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
-  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS'];
+  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS',
+  // Which providers publish a refetchable catalogue. Extracted rather than
+  // re-declared here: it is the table that decides whether a Model lists row
+  // gets Refresh or Check, and a local copy would keep this suite green after
+  // a second provider joined it.
+  'CATALOGUE_SYNC_PROVIDERS'];
 
 const FNS = [
   'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
@@ -115,7 +120,24 @@ const FNS = [
   'renderModelOption', 'renderEmptyModelPicker', 'renderQualification', 'renderQualifyPanel',
   'renderModelPickerScope', 'renderModelPicker', 'renderCatalogueSync', 'filterModels',
   'browseLanePass', 'browseBandPass', 'browseFilter', 'worthTestingRows',
-  'renderModelBrowse', 'refreshCatalogueButton',
+  // `refreshCatalogueButton` IS GONE, and its removal is the point. It rendered
+  // block 4's footer copy of the refresh control — the SAME `data-sync-catalogue`
+  // hook and the SAME route as the per-provider one, under a second name
+  // (`Refresh catalogue` vs `Refresh model list`). One action under two names is
+  // worse than two actions: the second name implies a second thing to learn, and
+  // the maintainer could not tell them apart. There is now one control per
+  // provider, in the Model lists group, named after the provider it refreshes.
+  'renderModelBrowse', 'renderWorthTesting',
+  // The Model lists group, which replaced the per-provider catalogue cards
+  // (`renderCatalogueSync` + `renderModelPicker` per provider). Those were a
+  // SECOND copy of block 4's table with a second search and a second sort, and
+  // rows whose only control was a sentence saying the control was elsewhere.
+  'renderModelListsGroup', 'renderModelListRow', 'renderModelCheckResult',
+  'renderCatalogueSyncDetail',
+  // The retired-build-model banner and its pure verdict. Extracted, never
+  // re-implemented here: `liveMissing` is three-valued and the whole assertion
+  // is about which of the three renders nothing.
+  'modelGoneFacts', 'renderModelGoneBanner',
   'settingsBlock', 'renderConnectBlock', 'renderAllModelsBlock',
   'renderBuildBlock', 'renderBuildCurrent', 'renderBuildList', 'renderChatBlock',
   'renderProviderRow', 'renderActivationNotice', 'renderProviders',
@@ -128,6 +150,8 @@ const stubState = {
   modelPickerOpen: {}, modelRowOpen: {}, modelLaneOpen: {}, modelShelfOpen: false,
   buildListOpen: false, modelPickBusy: '', modelPickError: {}, modelPickErrorAt: '',
   catalogueSyncBusy: null, catalogueSync: {}, qualify: null, modelFilter: {},
+  modelCheckBusy: null, modelCheck: {}, modelCheckError: {}, worthTestingOpen: false,
+  browseRowOpen: {},
 };
 
 const INJECTED = {
@@ -494,7 +518,11 @@ section('\u00a75  BLOCK 4 — facet counts, the hidden ids, and the honest shelf
 
   ok(/<details class="settings-shelf" data-model-shelf/.test(block),
     'the catalogue ships COLLAPSED');
-  okContains(block, '211 in total', 'the summary states the true total');
+  // "Browse every model" became "Every model, all providers" and the count
+  // dropped "in total": the shelf summary is a NAME plus a NUMBER, and "in
+  // total" was a word doing no work beside a figure that is self-evidently one.
+  okContains(block, 'Every model, all providers', 'the shelf names what it holds');
+  okContains(block, '\u00b7 211', 'the summary states the true total');
 
   // ── THE COUNT THE CLIENT CANNOT RECOMPUTE ────────────────────────────
   // `batchHidden` names ids the eligibility filter REMOVED, so nothing in the
@@ -585,9 +613,20 @@ section('\u00a75  BLOCK 4 — facet counts, the hidden ids, and the honest shelf
   okContains(bare, 'Every model stays reachable in the list above',
     '\u2026and says nothing has been hidden');
 
-  // The two catalogue actions.
-  ok(/data-open-model-lab="1"/.test(block), 'Open Model Lab is offered');
-  ok(/data-sync-catalogue="openrouter"/.test(block), 'Refresh catalogue is offered');
+  // ── THE TWO CATALOGUE ACTIONS ARE NOW ONE, AND IT NAMES ITS PROVIDER ──
+  // `Open Model Lab` navigated NOWHERE — it opened every provider's <details>
+  // and scrolled, and the thing it scrolled to has been removed. `Refresh
+  // catalogue` was the SAME action as the per-provider control under a second
+  // name, through the same hook and the same route. Asserting their ABSENCE is
+  // what stops a later edit restoring the pair that the maintainer could not
+  // tell apart.
+  ok(!/data-open-model-lab/.test(block),
+    'Open Model Lab is GONE — a scroll dressed as a destination, to a section that no longer exists');
+  ok(!/>Refresh catalogue</.test(block),
+    'and so is the unqualified "Refresh catalogue" — one action under two names');
+  ok(/data-sync-catalogue="openrouter"/.test(block), 'ONE refresh control survives');
+  ok(/Refresh OpenRouter model list/.test(block),
+    '\u2026and it NAMES the provider, so "which list does this refresh?" is answered by the button');
   const noOr = renderWith(stateB());
   ok(!/data-sync-catalogue=/.test(noOr),
     'and Refresh is absent for a provider with no fetchable catalogue \u2014 derived, never hardcoded');
@@ -614,7 +653,7 @@ section('\u00a76  THE DEGRADED PAYLOAD — an older backend still renders a page
   // plus five OpenRouter), which is the only honest number available without
   // the server's own count — and it is visibly smaller than the true catalogue,
   // which is exactly why `catalogueCounts` exists.
-  okContains(html, '7 in total',
+  okContains(html, '\u00b7 7',
     'no `catalogueCounts`: the total is counted from the catalogue the client holds');
   okContains(html, '7 models available', 'no `chat`: the count falls back the same way');
   okContains(html, 'Solar Pro 4', '\u2026and chat\u2019s starting model is resolved from activeProvider');

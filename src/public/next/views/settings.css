@@ -655,6 +655,44 @@
   margin-bottom: 12px;
 }
 .provider-fallback-banner svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+
+/* ── THE BUILD MODEL IS GONE ───────────────────────────────────────────────
+   The same treatment as the fallback banner, because it is the same CLASS of
+   event: something outside the user's control has changed what their money
+   buys, and the app is the only thing that can tell them. It is not a
+   <details>, it carries no fold, and it sits above block 2's heading rather
+   than between two blocks — a banner between two blocks belongs to neither, and
+   this one is about block 2's subject specifically.
+
+   Rendered ONLY on `liveMissing === true`. An unknown renders nothing: see
+   modelGoneFacts for why the third value is the one that matters. */
+.provider-gone-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: 12px var(--space-8);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  /* Border + tint + icon carry the amber; the sentence is --text. As BODY TEXT
+     on its own tint --attention-text measured 3.21 light. */
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.provider-gone-banner svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+.provider-gone-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.provider-gone-headline { overflow-wrap: anywhere; }
+.provider-gone-sub { color: var(--text-2); overflow-wrap: anywhere; }
+.provider-gone-sub code,
+.provider-gone-headline code {
+  padding: 1px var(--space-2);
+  border-radius: 5px;
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-xs);
+}
+.provider-gone-action { margin-top: var(--space-2); }
 .provider-fallback-body {
   display: flex;
   flex-direction: column;
@@ -1520,7 +1558,12 @@
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   background: var(--surface-sunken);
-  margin-top: -4px;
+  /* The `margin-top: -4px` that used to be here is GONE. It pulled this card
+     up against the provider row above it, and with the per-provider cards
+     removed it was the last declaration on this page still adjusting spacing by
+     hand — exactly the four-unrelated-declarations shape v3.50.0 removed from
+     Domains. Block-to-block rhythm is now one rule
+     (`.settings-job-block + .settings-job-block`) and nothing else. */
 }
 .catalogue-sync-head {
   display: flex;
@@ -1749,13 +1792,43 @@
    inside carry another, so a third would make the build list read as nested
    twice. What separates the blocks is a rule and a heading, which is what the
    reader is actually using to navigate. */
+/* ── ONE RULE FOR BLOCK-TO-BLOCK SPACING (Providers & keys) ────────────────
+   MEASURED on the shipped page, and it was the Domains defect one screen over
+   (v3.50.0): the gap BETWEEN two blocks was 16px of padding plus a 1px rule =
+   17px, against 14px of gap INSIDE a block — so a block break read as very
+   slightly larger than a paragraph break, and the maintainer's verdict was that
+   the four blocks were "a sea of information" with nothing separating them.
+
+   Now the same two-sided rhythm `.dm-section + .dm-section` gives Domains, and
+   for the same reason: 24 | hairline | 24 = --space-12 on each side of the
+   rule, one step above the 16px `.cur-group + .cur-group` uses for two groups
+   INSIDE one block, so a block break reads as larger than a group break rather
+   than the same size. The margin is on the ADJACENT sibling only, so the first
+   block keeps its own top padding and the page does not open with a gap. */
 .settings-job-block {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding-top: var(--space-8);
+  padding-top: var(--space-12);
   border-top: 1px solid var(--border);
 }
+.settings-job-block + .settings-job-block { margin-top: var(--space-12); }
+
+/* The lede's fold panel is a SIBLING of the lede, not a child — shared/text.js
+   addresses it by id and toggles `hidden`, and a panel nested inside the <p>
+   would be invalid markup around a <div>. It takes the lede's own 32px indent
+   so the fold opens under the prose column rather than under the numeral.
+
+   The indent is on a WRAPPER rather than on the panel itself: shared/text.css
+   owns the whole `tx-` prefix and scripts/test-next-text-system.js fails on a
+   `tx-` selector appearing in any other /next stylesheet — comments included.
+   A first draft of this rule was `.settings-block > .tx-vh-panel` and that
+   guard caught it, which is the guard doing exactly its job. */
+.settings-block-info { margin-left: 32px; }
+/* `display: contents` so the wrapper adds no box of its own when the panel
+   inside it is `hidden` — otherwise the block's flex `gap` would reserve a row
+   for an empty div above every closed fold. */
+.settings-block-info:not(:has(> :not([hidden]))) { display: contents; }
 .settings-job-title {
   margin: 0;
   font-size: var(--text-lg);
@@ -1793,15 +1866,27 @@
    CONTRAST IS MEASURED, NOT ASSUMED. --text-2 on --surface-raised is the pair
    used throughout this file for body copy and clears AA; the model id sits at
    full --text because it is the answer, not the explanation. */
+/* ── ONE CHROME ACROSS THE WHOLE PAGE ──────────────────────────────────────
+   This card was --surface-raised + --border + no shadow while the provider list
+   beside it was the kit group's --surface + --hairline + --elev-1, so the two
+   things a user compares on this screen were painted as different kinds of
+   object. Same finding, same fix as Domains (v3.50.0): the kit's chrome is the
+   one with a rule behind it — a card is CONTENT, so it takes elevation and a
+   hairline and never the two-line material edge.
+
+   The 3px lane rule on the left STAYS. It is not chrome, it is the one piece of
+   state on the card: green while the pinned model is the one running, amber
+   when the engine refused it, neutral when nothing builds the wiki yet. */
 .build-current {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: var(--space-6) var(--space-8);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
   border-left: 3px solid var(--success-text);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
 }
 /* A pin the engine refused. Amber, because this IS a finding about something
    that went wrong — unlike the neutral "no pin" state beside it, which is the
@@ -2314,26 +2399,139 @@
 .browse-unmeasured { font-size: var(--text-sm); color: var(--text-3); white-space: nowrap; }
 
 /* "Worth testing for this job" — a filter with a sentence attached, never a
-   ranking. Sunken rather than raised: it is derived from the table above it,
-   not a separate claim standing on its own. */
+   ranking. A CLOSED <details> now: it was five list items of 33 words, 29 of
+   them identical, which is the wall the maintainer was looking at. The count in
+   the summary is what survives the fold, because the fold must not hide the
+   fact that there is something here.
+
+   ONE CHROME, the kit group's (--surface + --hairline + --elev-1), the same
+   move v3.50.0 made for the Domains cards. It was --surface-sunken, which made
+   it the only element in block 4 painted in a third register. */
 .browse-worth {
   margin-top: var(--space-6);
-  padding: var(--space-5) var(--space-7);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   border: 1px solid var(--hairline);
+  box-shadow: var(--elev-1);
 }
+.browse-worth-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-5) var(--space-7);
+}
+.browse-worth-summary::-webkit-details-marker { display: none; }
+.browse-worth-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+  border-radius: var(--radius-sm, 5px);
+}
+/* Chevron — graphic, so --text-3 is correct here. */
+.browse-worth-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-fast, 0.12s) var(--ease-out, ease);
+}
+.browse-worth[open] > .browse-worth-summary svg { transform: rotate(90deg); }
 .browse-worth b {
-  display: block;
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
   color: var(--text);
-  margin-bottom: var(--space-3);
 }
-.browse-worth ul { margin: 0; padding-left: 18px; }
-.browse-worth li { font: var(--type-body-sm); color: var(--text-2); line-height: 1.6; }
-.browse-worth li strong { color: var(--text); font-weight: var(--weight-medium); }
+.browse-worth-count {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--text-2);          /* 8.09 measured; --text-3 is 4.38 */
+  font-variant-numeric: var(--numeric-tabular);
+}
+.browse-worth-body {
+  padding: 0 var(--space-7) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+/* The one rule line that replaced the clause repeated on all five rows. */
+.browse-worth-rule {
+  margin: 0;
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  line-height: 1.6;
+  max-width: 78ch;
+}
 .browse-worth p { margin: 0; font: var(--type-body-sm); color: var(--text-3); line-height: 1.6; }
+.browse-worth-why { font: var(--type-body-sm); color: var(--text-2); line-height: 1.5; }
+
+/* The live probe panel's host — the ONE case the row cannot cover: a model
+   being measured that the current filter has removed from the table. */
+.browse-qualify-host { margin-top: var(--space-6); }
+.browse-qualify-orphan {
+  margin: 0 0 var(--space-4);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* ── THE ROW'S EVIDENCE ────────────────────────────────────────────────────
+   A <details> cannot span two table rows, so the disclosure is this button plus
+   a second <tr>. It carries an EXPLICIT transparent border rather than none:
+   scripts/test-next-button-chrome.js's class invariant is that every <button>
+   in the tree declares one, because a bare button falls through to Chromium's
+   2px outset UA bevel — and it found this one on its first run. */
+.browse-detail-btn {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: var(--space-2);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 5px);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  vertical-align: -3px;
+  transition: transform var(--dur-fast, 0.12s) var(--ease-out, ease),
+              background var(--t-state), color var(--t-state);
+}
+/* The GLYPH is 18px and the TARGET is --hit-min. A transparent ::before is the
+   sanctioned way to grow one without growing the other, and
+   scripts/test-next-design-kit.js found this control under the floor on its
+   first run — the guard doing its job on a brand-new control. The inset is
+   DERIVED from the token and the rendered size, never a hand-picked number:
+   a glyph-size change then moves the target with it. */
+.browse-detail-btn::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-min) - 18px) / -2);
+}
+.browse-detail-btn:hover { background: var(--surface-hover); color: var(--text-2); }
+.browse-detail-btn:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.browse-detail-btn[aria-expanded="true"] { transform: rotate(90deg); color: var(--text-2); }
+/* The expanded row. Sunken, so the evidence reads as belonging to the row above
+   rather than as another entry in the table. */
+.browse-detail > td {
+  background: var(--surface-sunken);
+  padding: var(--space-5) var(--space-7);
+}
+.browse-detail .model-note { margin: 0 0 var(--space-4); }
+.browse-detail .model-qual { margin: 0; }
+
+/* A run that failed, with what the provider said. --text + medium rather than
+   amber: weight is the channel that survives both themes. */
+.model-qual-fail {
+  margin: var(--space-3) 0 0;
+  font: var(--type-body-sm);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.model-qual-fail-act { margin: var(--space-3) 0 0; }
 
 .browse-foot {
   display: flex;
@@ -2347,17 +2545,59 @@
 .browse-foot-t { font: var(--type-body-sm); color: var(--text-3); line-height: 1.5; max-width: 62ch; }
 .browse-foot-sp { flex: 1; }
 
-/* The per-provider catalogues, which host the nine-run Model Lab flow. Given a
-   top rule so "Open Model Lab" lands on something visibly separate from the
-   table it scrolled away from. */
-.settings-model-lab {
-  margin-top: var(--space-8);
-  padding-top: var(--space-6);
-  border-top: var(--hairline-w) solid var(--hairline);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+/* ── THE MODEL LISTS GROUP ─────────────────────────────────────────────────
+   This replaces `.settings-model-lab` — the per-provider catalogue cards, which
+   were a SECOND copy of the table above them with a second search box and rows
+   whose only control was a sentence saying the control was elsewhere. What
+   stays is the one thing those cards genuinely owned: the refresh, one row per
+   connected provider, in the kit's own group so its spacing and separators are
+   the same ones every other list on this screen uses.
+
+   `.cur-group` supplies the chrome and `.cur-group-row` the 40px band and the
+   hairline between rows, so there is nothing to declare here except the two
+   things the kit has no opinion about: the lane pill and the verdict line. */
+.settings-model-lists { margin-top: var(--space-8); }
+.mlist-lane {
+  margin-left: var(--space-4);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-full);
+  padding: 1px var(--space-3);
+  vertical-align: 1px;
 }
+.mlist-lane-live {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-border);
+}
+.mlist-lane-idle {
+  color: var(--text-2);
+  background: var(--surface-sunken);
+  border: 1px solid var(--hairline);
+}
+/* The button and the answer it produced, in one column, right-aligned with the
+   rest of the group's controls. The verdict is BESIDE the control that asked
+   for it — v3.6.0's rule, and the reason the check does not write its answer
+   into a panel somewhere else on the page. */
+.mlist-act {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: 22rem;
+}
+.mlist-verdict {
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  text-align: right;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* --text + semibold rather than amber: weight is the channel that survives
+   both themes, and --attention-text measured 3.58 in light. */
+.mlist-verdict-warn { color: var(--text); font-weight: var(--weight-medium); }
+/* The refresh's own report — counts, the funnel, the session-only warning and
+   any refusal — stacked under the row that produced it. */
+.mlist-detail { gap: var(--space-4); }
 .settings-shelf-title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--text); }
 
 /* ── THE TWO "WAITING" BLOCKS LOOK THE SAME, BECAUSE THEY ARE THE SAME ───

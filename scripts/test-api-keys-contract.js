@@ -197,7 +197,10 @@ const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLL
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
-  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS'];
+  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS',
+  // Which providers publish a refetchable catalogue -- the table that decides
+  // whether a Model lists row carries Refresh or Check.
+  'CATALOGUE_SYNC_PROVIDERS'];
 
 const FNS = [
   'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
@@ -213,7 +216,18 @@ const FNS = [
   'renderModelOption', 'renderEmptyModelPicker', 'renderQualification', 'renderQualifyPanel',
   'renderModelPickerScope', 'renderModelPicker', 'renderCatalogueSync', 'filterModels',
   'browseLanePass', 'browseBandPass', 'browseFilter', 'worthTestingRows',
-  'renderModelBrowse', 'refreshCatalogueButton',
+  // `refreshCatalogueButton` is GONE: it was block 4's footer copy of the
+  // refresh control, through the SAME hook and the SAME route as the
+  // per-provider one, under a second name. One action under two names is worse
+  // than two actions. The survivor names its provider and lives in the Model
+  // lists group, which is what replaced the per-provider catalogue cards.
+  'renderModelBrowse', 'renderWorthTesting',
+  'renderModelListsGroup', 'renderModelListRow', 'renderModelCheckResult',
+  'renderCatalogueSyncDetail',
+  // The retired-build-model banner and its pure verdict, both reached from
+  // renderBuildBlock -- so omitting them is a ReferenceError at CALL time, not
+  // a failing assertion.
+  'modelGoneFacts', 'renderModelGoneBanner',
   'settingsBlock', 'renderConnectBlock', 'renderAllModelsBlock',
   'renderBuildBlock', 'renderBuildCurrent', 'renderBuildList', 'renderChatBlock',
   'renderProviderRow', 'renderActivationNotice', 'renderProviders',
@@ -226,6 +240,12 @@ const stubState = {
   modelPickerOpen: {}, modelRowOpen: {}, modelLaneOpen: {}, modelShelfOpen: false,
   buildListOpen: false, modelPickBusy: '', modelPickError: {}, modelPickErrorAt: '',
   catalogueSyncBusy: null, catalogueSync: {}, qualify: null, modelFilter: {},
+  // The Model lists group's check control and block 4's shortlist fold. The
+  // renderers DEREFERENCE these, so a fixture missing one crashes this suite
+  // rather than failing it -- and defending against the absence in the product
+  // would only hide a missing initialiser in freshState().
+  modelCheckBusy: null, modelCheck: {}, modelCheckError: {}, worthTestingOpen: false,
+  browseRowOpen: {},
 };
 
 const INJECTED = {
