@@ -117,6 +117,18 @@ const FNS = [
   'liveHighConfidencePairs',
   'markSemanticPairStatus',
   'setSemanticPairMessage',
+  // v3.53.0 — the chained-merge cascade. A semantic scan pairs EVERY
+  // candidate, so a version family is a clique: merging one pair deletes a
+  // page several sibling pairs still name. These three are what stops those
+  // siblings sitting on screen as cards that can be neither previewed nor
+  // merged. §10-§12 drive them.
+  'resolvePairsTouching',
+  'markSemanticPairResolved',
+  'semanticStaleFromError',
+  'semanticHandledLabel',
+  'renderSemanticScanResult',
+  'renderSemanticPairCard',
+  'renderSemanticPreview',
   // A real dependency of runSemanticScan and runMergeSemanticDuplicates,
   // not a convenience: both feed the Health progress ring from the SSE
   // frames they already read. Omitting it made the merge stream throw a
@@ -149,7 +161,7 @@ const FNS = [
   // stub in PREAMBLE below, which is what the real streamSSE now calls.
   'streamSSE',
 ];
-const CONSTS = ['HEALTH_CATEGORIES'];
+const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN'];
 
 // Stubs for everything the extracted functions reach outside themselves.
 // `net` records every request so the shapes can be asserted; `net.fail`
@@ -261,6 +273,8 @@ const {
   markSemanticPairStatus, toWirePair, loadHealth, selectDomain, runSemanticScan,
   previewSemanticPair, mergeOneSemanticPair, skipSemanticPair, runMergeSemanticDuplicates,
   mergeSemanticDuplicates,
+  resolvePairsTouching, markSemanticPairResolved, semanticStaleFromError,
+  semanticHandledLabel, renderSemanticScanResult,
   __state, __setState, __net, __gates, __setMount,
 } = sandbox;
 
@@ -611,6 +625,166 @@ for (const fn of ['runCreateDomain', 'runRenameDomain', 'runDeleteDomain']) {
   ok(/revealMessage\('\.dm-lc-refusal, \.dm-lc-error'\)/.test(extractFunction(src, fn)),
      fn + ' reveals its refusal/error too');
 }
+
+console.log('\n=== 10. CHAINED MERGES: one merge resolves the pairs that share its page ===');
+// THE REPORTED DEFECT. findSemanticCandidatePairs emits EVERY pair above
+// threshold, so a family of near-identical pages is a dense CLIQUE — 8
+// versions produce 28 pairs and every page is in 7 of them. Merging one pair
+// DELETES a page that several sibling pairs still name, and those stayed on
+// screen as ordinary action cards: Preview failed ("Both pages must exist"),
+// Merge stayed gated behind "Preview required before Merge", and the only way
+// out was to re-run a PAID scan.
+function family() {
+  return [
+    pair({ keepFolder: 'entities', keepSlug: 'a3', removeFolder: 'entities', removeSlug: 'a2' }),   // merged first
+    pair({ keepFolder: 'entities', keepSlug: 'a',  removeFolder: 'entities', removeSlug: 'a2' }),   // names a2 on REMOVE
+    pair({ keepFolder: 'entities', keepSlug: 'a2', removeFolder: 'entities', removeSlug: 'a4' }),   // names a2 on KEEP
+    pair({ keepFolder: 'entities', keepSlug: 'z',  removeFolder: 'entities', removeSlug: 'z2' }),   // unrelated control
+  ];
+}
+const KEY_1 = 'entities/a3||entities/a2';
+
+// 10a. the single-pair path
+__setState(stateWithScan('alpha', family(), [KEY_1]));
+__net().nextResult = { ok: true, fixed: 1 };
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+let ps = __state().semanticScan.pairs;
+ok(ps[0].status === 'merged', '10a: the merged pair is recorded as merged');
+ok(ps[1].status === 'resolved',
+   '10a: THE FIX — a sibling naming the deleted page on its REMOVE side is RESOLVED, not left as an unmergeable card');
+ok(ps[2].status === 'resolved', '10a: …and so is the sibling naming it on its KEEP side');
+ok(ps[3].status === 'open', '10a: NEGATIVE CONTROL — an unrelated pair is untouched and still actionable');
+ok(/a2 was merged into a3/.test(ps[1].resolvedBy || ''),
+   '10a: the resolved pair carries the sentence that explains it');
+ok(ps[1].resolvedMissing === 'entities/a2', '10a: …and the page that went');
+ok(__state().semanticScan !== null, '10a: the paid pair list is NOT dropped to achieve this');
+
+// 10b. the gate speaks for a resolved pair
+let gr = canMergeSemanticPair(__state().semanticScan.pairs[1]);
+ok(gr.allowed === false, '10b: a resolved pair cannot be merged');
+ok(/Already resolved by an earlier merge/.test(gr.reason) && /a2/.test(gr.reason),
+   '10b: …and the refusal names the page, instead of the generic "already been handled"');
+ok(canMergeSemanticPair(__state().semanticScan.pairs[3]).allowed === false &&
+   /preview/i.test(canMergeSemanticPair(__state().semanticScan.pairs[3]).reason),
+   '10b: NEGATIVE CONTROL — the untouched pair still gets the ordinary preview refusal, not the resolved one');
+
+// 10c. DEFENCE IN DEPTH — a page deleted OUTSIDE this session (Obsidian, the
+// MCP, another Health fix) is first noticed by a failing preview.
+__setState(stateWithScan('alpha', family()));
+__net().nextReject = new Error('entities/a2 no longer exists — it was probably merged into another page earlier in this session, so this pair is already resolved.');
+await previewSemanticPair('alpha', __state().semanticScan.pairs[1]);
+ps = __state().semanticScan.pairs;
+ok(ps[1].status === 'resolved',
+   '10c: a preview refused with the `no longer exists` marker RESOLVES the pair instead of leaving a red card with a gated Merge button');
+ok(ps[1].resolvedMissing === 'entities/a2', '10c: …and takes the page name from the server’s own message');
+ok(ps[0].status === 'resolved' && ps[2].status === 'resolved',
+   '10c: …and cascades to every other pair naming that page');
+ok(ps[3].status === 'open', '10c: NEGATIVE CONTROL — the unrelated pair is still open');
+ok(!(__state().semanticScan.preview && __state().semanticScan.preview.error),
+   '10c: no "Could not build a preview" error is rendered for a pair that is simply already done');
+
+__setState(stateWithScan('alpha', family()));
+__net().nextReject = new Error('preview blew up');
+await previewSemanticPair('alpha', __state().semanticScan.pairs[1]);
+ok(__state().semanticScan.pairs[1].status === 'open',
+   '10c: NEGATIVE CONTROL — an ORDINARY preview failure does NOT resolve anything');
+ok(!!(__state().semanticScan.preview && __state().semanticScan.preview.error === 'preview blew up'),
+   '10c: …it still renders as the pair’s own error, exactly as before');
+
+// 10d. the detector itself
+ok(semanticStaleFromError(new Error('entities/a2 no longer exists — …')).missing === 'entities/a2',
+   '10d: semanticStaleFromError extracts the folder/slug');
+ok(semanticStaleFromError(new Error('something else went wrong')) === null,
+   '10d: NEGATIVE CONTROL — it does not fire on an unrelated message');
+
+// 10e. a merge the SERVER refuses because a page is gone is not an error
+__setState(stateWithScan('alpha', family(), [KEY_1]));
+__net().nextResult = { ok: true, fixed: 0, reason: 'keep-page-missing', missing: 'entities/a2' };
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+ps = __state().semanticScan.pairs;
+ok(ps[0].status === 'resolved' && !ps[0].error,
+   '10e: fixed:0 with a staleness reason is ALREADY RESOLVED, never "the pair failed validation on disk"');
+__setState(stateWithScan('alpha', family(), [KEY_1]));
+__net().nextResult = { ok: true, fixed: 0, reason: 'semantic-pair-invalid' };
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+ok(/failed validation/.test(__state().semanticScan.pairs[0].error || ''),
+   '10e: NEGATIVE CONTROL — a real validation refusal still reports as an error on the card');
+
+console.log('\n=== 11. The BATCH path cascades too — and it reaches this first ===');
+// v3.0.17's lesson: fix the path that runs FIRST. The batch deletes many
+// pages in one pass, so within a family most of its own later pairs go stale
+// mid-run.
+__setState(stateWithScan('alpha', family()));
+__net().sseFrames = [
+  { type: 'progress', done: 1, total: 2, pair: { keepFolder: 'entities', keepSlug: 'a3', removeFolder: 'entities', removeSlug: 'a2' }, status: 'merged' },
+  { type: 'done', merged: 1, stale: 1, skipped: 0, errors: 0, total: 2 },
+];
+await runMergeSemanticDuplicates('alpha');
+ps = __state().semanticScan.pairs;
+ok(ps[0].status === 'merged', '11a: the merged frame is recorded');
+ok(ps[1].status === 'resolved' && ps[2].status === 'resolved',
+   '11a: THE FIX — a `merged` batch frame resolves every sibling naming the deleted page');
+ok(ps[3].status === 'open', '11a: NEGATIVE CONTROL — the unrelated pair survives the batch, still actionable');
+
+// 11b. a `stale` frame — the server telling us THIS pair was already gone.
+__setState(stateWithScan('alpha', family()));
+__net().sseFrames = [
+  { type: 'progress', done: 1, total: 2, pair: { keepFolder: 'entities', keepSlug: 'a', removeFolder: 'entities', removeSlug: 'a2' }, status: 'stale', missing: 'entities/a2' },
+  { type: 'done', merged: 0, stale: 1, skipped: 0, errors: 0, total: 1 },
+];
+await runMergeSemanticDuplicates('alpha');
+ps = __state().semanticScan.pairs;
+ok(ps[1].status === 'resolved',
+   '11b: a `stale` frame maps to RESOLVED — not to `skipped`, which is the word the UI uses for the user’s own Skip');
+ok(ps[0].status === 'resolved' && ps[2].status === 'resolved',
+   '11b: …and the named missing page cascades to the rest of the family');
+__setState(stateWithScan('alpha', family()));
+__net().sseFrames = [
+  { type: 'progress', done: 1, total: 1, pair: { keepFolder: 'entities', keepSlug: 'a', removeFolder: 'entities', removeSlug: 'a2' }, status: 'skipped' },
+  { type: 'done', merged: 0, stale: 0, skipped: 1, errors: 0, total: 1 },
+];
+await runMergeSemanticDuplicates('alpha');
+ok(__state().semanticScan.pairs[1].status === 'skipped',
+   '11b: NEGATIVE CONTROL — a genuine `skipped` frame is still recorded as skipped, so the split means something');
+ok(__state().semanticScan.pairs[0].status === 'open',
+   '11b: …and a skipped pair cascades to nothing, because nothing was deleted');
+
+// 11c. the helper on its own, with no scan and with a junk page
+__setState(stateWithScan('alpha', family()));
+ok(resolvePairsTouching(null, { folder: 'entities', slug: 'a2' }, null) === 0, '11c: no scan → nothing resolved, no throw');
+ok(resolvePairsTouching(__state().semanticScan, { folder: 'entities', slug: 'nobody' }, null) === 0,
+   '11c: NEGATIVE CONTROL — a page no pair names resolves nothing');
+ok(resolvePairsTouching(__state().semanticScan, { folder: 'entities', slug: 'a2' }, null) === 3,
+   '11c: …while a2 resolves exactly the three pairs that name it');
+ok(resolvePairsTouching(__state().semanticScan, { folder: 'entities', slug: 'a2' }, null) === 0,
+   '11c: …and running it again resolves nothing more (it only ever touches OPEN pairs)');
+
+console.log('\n=== 12. A resolved pair is NEVER rendered as an action card ===');
+__setState(stateWithScan('alpha', family(), [KEY_1]));
+__net().nextResult = { ok: true, fixed: 1 };
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+const html = renderSemanticScanResult(false, false);
+const resolvedKeys = __state().semanticScan.pairs.filter((p) => p.status === 'resolved').map(semanticPairKey);
+ok(resolvedKeys.length === 2, '12: precondition — two pairs are resolved');
+for (const k of resolvedKeys) {
+  ok(html.indexOf('data-sem-action="merge" data-sem-key="' + k + '"') === -1,
+     '12: no Merge action is rendered for resolved pair ' + k);
+  ok(html.indexOf('data-sem-action="preview" data-sem-key="' + k + '"') === -1,
+     '12: …and no Preview action either — the whole card is gone, not just its button');
+}
+const openKey = semanticPairKey(__state().semanticScan.pairs[3]);
+ok(html.indexOf('data-sem-action="merge" data-sem-key="' + openKey + '"') !== -1,
+   '12: NEGATIVE CONTROL — the still-open pair DOES render a Merge action, so the absence above means something');
+ok(/Already handled in this scan/.test(html), '12: the resolved pairs land in the "Already handled" block');
+ok(/resolved by an earlier merge/.test(html),
+   '12: …worded "resolved by an earlier merge", distinct from merged and from skipped');
+ok(/entities\/a2 is gone/.test(html), '12: …and naming the page that went');
+ok(/dm-sem-handled-resolved/.test(html), '12: …on a row the stylesheet can tell apart');
+ok(semanticHandledLabel({ status: 'merged' }) === 'merged' &&
+   semanticHandledLabel({ status: 'skipped' }) === 'skipped',
+   '12: NEGATIVE CONTROL — merged and skipped keep their own one-word labels');
+ok(/merging one of them can resolve the others/.test(html),
+   '12: the panel explains that the scan pairs every candidate, so one merge can resolve several pairs');
 
 console.log('\n' + '='.repeat(60));
 console.log(`Passed: ${passed}   Failed: ${failed}`);

@@ -1032,9 +1032,15 @@ async function onUndoKnowledgeFolder(targetPath, token) {
 // while the scan that produced the pair list is still meaningful. Without
 // it, merging pair 1 of 8 would wipe the whole list and the user would
 // have to RE-RUN a paid LLM scan to reach pair 2 — the fine-grained path
-// would cost money per pair. It is deliberately NOT set for the batch
-// merge, a domain switch, a plain rescan, or any other fix, all of which
-// invalidate the scan for real.
+// would cost money per pair. THE BATCH MERGE SETS IT TOO (it has since the
+// v3.7.0 paid-scan-survival fix, which stopped the batch destroying the
+// medium/low-confidence pairs it never touched); this comment claimed the
+// opposite for three releases. A domain switch, a plain rescan and every
+// other fix do NOT set it — those invalidate the scan for real.
+//
+// Keeping the scan is a cost decision, never a claim that every surviving
+// pair is still mergeable: a merge deletes a page that sibling pairs may
+// name, and those are marked `resolved` by resolvePairsTouching.
 function resetDomainScopedHealthState(opts) {
   state.estimates = {};
   state.pendingPlan = null;
@@ -1624,6 +1630,95 @@ function isSemanticPreviewed(pair) {
   return s.previewed.has(semanticPairKey(pair));
 }
 
+// ── CHAINED MERGES: one merge can resolve several pairs ───────────────────
+//
+// `findSemanticCandidatePairs` emits EVERY pair above threshold, so a family
+// of near-identical pages is a dense CLIQUE — 8 versions of one page produce
+// 28 pairs, and every page appears in 7 of them. Merging one pair deletes a
+// page that up to N-2 other pairs still name, and before this those siblings
+// stayed on screen as ordinary action cards: Preview failed ("Both pages must
+// exist"), Merge stayed gated behind "Preview required before Merge", and the
+// only way out was to re-run a PAID scan.
+//
+// So when a page goes, every OPEN pair that names it — on either side — is
+// marked `resolved`, with the sentence that explains it. Local, deterministic
+// and free: the pair list the user paid an LLM for is preserved (this is NOT
+// a reason to drop the scan), and nothing is sent anywhere.
+//
+// Called from BOTH paths, and the batch is the one that matters most: it
+// deletes many pages in a single pass, so most of a clique's later pairs go
+// stale mid-run. Fixing only the single-pair path would have left the path
+// that runs FIRST, and runs over the most pages, still broken — v3.0.17's
+// recorded lesson, where a response-shape fix landed on the fallback while
+// the batch path that runs for every ingest kept the original bug.
+//
+// `byPair` supplies the sentence, so the user reads WHY the card changed
+// rather than finding a row that silently rewrote itself. Returns the number
+// of pairs it resolved, which is what makes it assertable on its own.
+function resolvePairsTouching(scan, gone, byPair) {
+  if (!scan || !Array.isArray(scan.pairs) || !gone || !gone.slug || !gone.folder) return 0;
+  const goneKey = gone.folder + '/' + gone.slug;
+  const by = byPair && byPair.removeSlug && byPair.keepSlug
+    ? byPair.removeSlug + ' was merged into ' + byPair.keepSlug
+    : 'an earlier merge';
+  let resolved = 0;
+  for (let i = 0; i < scan.pairs.length; i++) {
+    const p = scan.pairs[i];
+    if (!p || p.status !== 'open') continue;
+    const names = (p.keepFolder + '/' + p.keepSlug) === goneKey ||
+                  (p.removeFolder + '/' + p.removeSlug) === goneKey;
+    if (!names) continue;
+    scan.pairs[i] = Object.assign({}, p, {
+      status: 'resolved',
+      resolvedBy: by,
+      resolvedMissing: goneKey,
+      refusal: null,
+      error: null,
+    });
+    // Same defense-in-depth as markSemanticPairStatus: a resolved pair is
+    // already refused by the status check, but leaving a previewed key for a
+    // page that no longer exists is a stale authorisation, and this costs a
+    // delete.
+    if (scan.previewed) scan.previewed.delete(semanticPairKey(p));
+    if (scan.preview && scan.preview.key === semanticPairKey(p)) scan.preview = null;
+    resolved++;
+  }
+  return resolved;
+}
+
+// Marks ONE pair resolved — the pair the server itself just told us is stale
+// (a `stale` batch frame, a stale preview, or a merge refused because a page
+// is gone). Its siblings are handled by resolvePairsTouching above.
+function markSemanticPairResolved(pair, opts) {
+  const s = activeSemanticScan();
+  if (!s) return false;
+  const key = semanticPairKey(pair);
+  const idx = s.pairs.findIndex((p) => semanticPairKey(p) === key);
+  if (idx === -1) return false;
+  s.pairs[idx] = Object.assign({}, s.pairs[idx], {
+    status: 'resolved',
+    resolvedBy: (opts && opts.by) || 'the page is gone',
+    resolvedMissing: (opts && opts.missing) || null,
+    refusal: null,
+    error: null,
+  });
+  s.previewed.delete(key);
+  if (s.preview && s.preview.key === key) s.preview = null;
+  return true;
+}
+
+// DEFENCE IN DEPTH for a page deleted OUTSIDE this session — in Obsidian, by
+// the MCP, by another Health fix on another tab. The server's refusal keeps a
+// stable `no longer exists` substring (staleSemanticPairError in
+// src/brain/health.js) precisely so this can recognise it without the client
+// re-deriving what "gone" means. Returns { missing } or null.
+function semanticStaleFromError(err) {
+  const msg = err && err.message ? String(err.message) : '';
+  if (!/ no longer exists/.test(msg)) return null;
+  const m = /^\s*((?:entities|concepts)\/[^\s]+) no longer exists/.exec(msg);
+  return { missing: m ? m[1] : null };
+}
+
 // The gate itself. Returns { allowed, reason } so a refusal always has
 // something to SAY — a silently-disabled button is how a user concludes
 // their click did not register.
@@ -1633,6 +1728,17 @@ function canMergeSemanticPair(pair) {
   const idx = s.pairs.indexOf(pair);
   const known = idx !== -1 ? s.pairs[idx] : s.pairs.find((p) => semanticPairKey(p) === semanticPairKey(pair));
   if (!known) return { allowed: false, reason: 'That pair is no longer part of the current scan.' };
+  // `resolved` is its own answer, ahead of the generic "already been handled".
+  // The user did not handle this pair — a merge they made elsewhere in the
+  // same scan did, and the refusal has to say which page went or it reads as
+  // the app losing track.
+  if (known.status === 'resolved') {
+    return {
+      allowed: false,
+      reason: 'Already resolved by an earlier merge — ' +
+        (known.resolvedMissing ? known.resolvedMissing + ' no longer exists.' : 'one of its pages no longer exists.'),
+    };
+  }
   if (known.status !== 'open') return { allowed: false, reason: 'That pair has already been handled.' };
   if (!s.previewed.has(semanticPairKey(known))) return { allowed: false, reason: 'Open the preview diff for this pair before merging it.' };
   return { allowed: true, reason: null };
@@ -4157,6 +4263,20 @@ function renderPendingPlan(crossMountBusy) {
   );
 }
 
+// THREE outcomes on a handled pair, not two. `merged` and `skipped` are the
+// user's own actions; `resolved` is neither — an earlier merge in this same
+// scan deleted a page this pair named, so it needs nothing from anyone. It
+// was previously indistinguishable from `skipped`, which is the word the UI
+// uses for the user's own Skip (dismiss), so a merge that never ran was
+// presented back as a decision they had made.
+function semanticHandledLabel(p) {
+  if (p.status === 'merged') return 'merged';
+  if (p.status === 'resolved') {
+    return 'resolved by an earlier merge' + (p.resolvedMissing ? ' — ' + p.resolvedMissing + ' is gone' : '');
+  }
+  return 'skipped';
+}
+
 function renderSemanticScanResult(readonly, crossMountBusy) {
   const s = activeSemanticScan();
   if (!s) return '';
@@ -4181,9 +4301,9 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
 
   const cards = open.map((p) => renderSemanticPairCard(p, readonly, busy)).join('');
   const handledRows = handled.map((p) => (
-    '<div class="dm-issue-row dm-sem-handled">' +
+    '<div class="dm-issue-row dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : '') + '">' +
       '<span class="mono dm-issue-main">' + escapeHtml(p.removeFolder + '/' + p.removeSlug) + ' → ' + escapeHtml(p.keepFolder + '/' + p.keepSlug) + '</span>' +
-      '<span class="dm-issue-meta">' + (p.status === 'merged' ? 'merged' : 'skipped') + '</span>' +
+      '<span class="dm-issue-meta">' + escapeHtml(semanticHandledLabel(p)) + '</span>' +
     '</div>'
   )).join('');
 
@@ -4192,7 +4312,9 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'candidate pair') + ' found</div>' +
       '<div class="dm-plan-summary">Each merge deletes one page and repoints every [[wikilink]] to it across the domain. ' +
       'Preview a pair to enable its Merge button; Flip swaps which side survives; Skip dismisses the pair so it stops ' +
-      'coming back on future scans. ' + GIT_UNDO_WARN + '</div>' +
+      'coming back on future scans. The scan pairs every candidate, so several versions of one page produce several ' +
+      'overlapping pairs — merging one of them can resolve the others, and those move to "Already handled" on their own. ' +
+      GIT_UNDO_WARN + '</div>' +
       batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
       (handledRows ? ('<div class="dm-plan-detail">Already handled in this scan:</div>' + handledRows) : '') +
@@ -5248,7 +5370,22 @@ async function previewSemanticPair(slug, pair) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     const scan = activeSemanticScan();
-    if (scan) scan.preview = { key, error: err.message };
+    // DEFENCE IN DEPTH. The cascade above covers merges made in THIS session;
+    // a page can also go in Obsidian, over the MCP, or in another Health fix
+    // on another tab, and then the first thing that notices is this preview.
+    // Leaving it as a red "Could not build a preview" under a Merge button
+    // gated by "Preview required before Merge" is the dead end this release
+    // is about — so the pair is marked resolved instead.
+    const stale = semanticStaleFromError(err);
+    if (stale) {
+      markSemanticPairResolved(pair, { missing: stale.missing, by: 'the page is gone' });
+      if (stale.missing) {
+        const parts = String(stale.missing).split('/');
+        resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
+      }
+    } else if (scan) {
+      scan.preview = { key, error: err.message };
+    }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -5284,10 +5421,36 @@ async function mergeOneSemanticPair(slug, pair) {
     });
     if (isCurrentMount(token)) {
       if (!result || !result.fixed) {
-        setSemanticPairMessage(key, { error: 'The server refused this merge (the pair failed validation on disk).' });
+        // Two different "fixed: 0"s. A page of the pair being GONE is the
+        // pair already being resolved (fixIssue names it in `missing`), and
+        // reporting that as "failed validation on disk" is what made the
+        // reported dead end look like a bug in the user's own wiki.
+        const gone = result && (result.reason === 'remove-page-missing' || result.reason === 'keep-page-missing');
+        if (gone) {
+          markSemanticPairResolved(pair, {
+            missing: result.missing || null,
+            by: 'the page is gone',
+          });
+          if (result.missing) {
+            const parts = String(result.missing).split('/');
+            resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
+          }
+        } else {
+          setSemanticPairMessage(key, { error: 'The server refused this merge (the pair failed validation on disk).' });
+        }
       } else {
         markSemanticPairStatus(pair, 'merged');
-        state.banner = { tone: 'success', text: 'Merged ' + pair.removeSlug + ' → ' + pair.keepSlug + '.' };
+        // THE CASCADE. `pair.removeSlug` no longer exists on disk, so every
+        // other OPEN pair in this scan that names it is resolved too — see
+        // resolvePairsTouching. Without this, a version family left N-2
+        // cards whose Preview failed and whose Merge stayed gated.
+        const alsoResolved = resolvePairsTouching(
+          activeSemanticScan(), { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
+        state.banner = {
+          tone: 'success',
+          text: 'Merged ' + pair.removeSlug + ' → ' + pair.keepSlug + '.' +
+            (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' resolved with it.' : ''),
+        };
       }
     }
   } catch (err) {
@@ -5304,8 +5467,13 @@ async function mergeOneSemanticPair(slug, pair) {
     state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
-  // keepSemanticScan: the remaining pairs in this scan are still valid and
-  // re-earning them costs a paid LLM pass. See resetDomainScopedHealthState.
+  // keepSemanticScan: re-earning this pair list costs a paid LLM pass, so the
+  // scan is kept. NOT because "the remaining pairs are still valid" — that is
+  // what this comment used to claim and it was false: the scan pairs every
+  // candidate, so a version family is a clique and this merge just deleted a
+  // page that several sibling pairs still name. Those are marked `resolved`
+  // above (resolvePairsTouching) rather than left as cards that cannot be
+  // previewed or merged. See resetDomainScopedHealthState.
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
   revealSemanticMessage(key);
 }
@@ -5395,6 +5563,25 @@ async function runMergeSemanticDuplicates(slug) {
       // see the `finally` below for why wiping was the wrong default.
       if (type === 'progress' && ev.pair && (ev.status === 'merged' || ev.status === 'skipped')) {
         markSemanticPairStatus(ev.pair, ev.status);
+        // THE CASCADE, on the path that reaches it FIRST and hardest: the
+        // batch deletes many pages in one pass, so within a version family
+        // most of its own later pairs go stale mid-run. See
+        // resolvePairsTouching.
+        if (ev.status === 'merged') {
+          resolvePairsTouching(
+            activeSemanticScan(), { folder: ev.pair.removeFolder, slug: ev.pair.removeSlug }, ev.pair);
+        }
+      }
+      // `stale` is the server saying a page of THIS pair was already gone
+      // when it got there — the pair is resolved, not skipped. `skipped` is
+      // the word the UI uses for the user's own Skip, and reporting a merge
+      // that never ran as the user's decision is the defect this splits.
+      if (type === 'progress' && ev.pair && ev.status === 'stale') {
+        markSemanticPairResolved(ev.pair, { missing: ev.missing || null, by: 'an earlier merge' });
+        if (ev.missing) {
+          const parts = String(ev.missing).split('/');
+          resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
+        }
       }
       // Same frames also carry {done, total}. Feeding the ring here is
       // additive — it does not touch the pair-status recording above, which

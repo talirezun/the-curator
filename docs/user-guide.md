@@ -4073,6 +4073,14 @@ Each candidate comes back as its own card showing `remove-slug → keep-slug`, a
 
 The preview gate is per pair, and it resets whenever you re-scan, switch domains, or flip a pair — a preview you looked at for one arrangement never authorises a different one. If a merge is refused (because something else is writing to that domain), the refusal appears **inside the card you are looking at**, not somewhere you'd have to scroll to find it.
 
+**One merge can resolve several pairs (v3.53.0).** The scan pairs up every candidate rather than grouping a family of pages into one cluster, so several versions of the same page produce several overlapping pairs — eight versions produce twenty-eight pairs, and each page appears in seven of them. When you merge one of those pairs, the page it deletes is a page other pairs still name, and those pairs are then **already resolved**: there is nothing left to decide and nothing left to merge.
+
+So they move, on their own, to the **Already handled in this scan** list at the bottom, labelled *"resolved by an earlier merge — entities/claude-opus-5 is gone"*. That wording is deliberately different from **merged** (you merged it) and from **skipped** (you skipped it, or the pair failed validation) — nobody decided this one, an earlier merge simply settled it. It is a free, local change to the list you already paid for: the scan is not re-run, and the pairs you have not reached — including every medium- and low-confidence pair — are left exactly as they were.
+
+The same thing happens when you use the batch **Merge all N high-confidence** button, which is where you will see it most, and when a page disappears from outside the app (you delete it in Obsidian, or an agent merges it through the MCP bridge) while a scan is open on screen.
+
+*Before v3.53.0 this was not reported at all: those pairs stayed on screen as ordinary cards, **Preview diff** failed with "Both pages must exist to preview a merge", and **Merge** stayed greyed out behind "Preview required before Merge" — with no way forward except paying for another scan.*
+
 **There is also a batch option** for high-confidence pairs, which names the count and what will happen before it runs: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Medium- and low-confidence pairs are deliberately one at a time — they're the ones most likely to be genuinely distinct.
 
 You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. Defaults (50,000 tokens, 500 pairs) suit domains up to ~5k pages; raise them for larger wikis. A scan refuses to start when its estimate exceeds the ceiling.

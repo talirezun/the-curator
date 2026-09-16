@@ -1010,8 +1010,11 @@ async function fixMissingBacklink(wikiDir, issue) {
  * @param {boolean|{ok: boolean, reason: string|null}} r
  */
 function normaliseFixOutcome(r) {
-  if (typeof r === 'boolean') return { ok: r, reason: null };
-  return { ok: !!r?.ok, reason: r?.reason ?? null };
+  if (typeof r === 'boolean') return { ok: r, reason: null, missing: null };
+  // `missing` rides the same channel as `reason` and for the same purpose: a
+  // refusal a caller can act on. It names the `folder/slug` that is gone on
+  // the two semanticDupe staleness reasons, and is null everywhere else.
+  return { ok: !!r?.ok, reason: r?.reason ?? null, missing: r?.missing ?? null };
 }
 
 /**
@@ -1021,8 +1024,10 @@ function normaliseFixOutcome(r) {
  * @param {string} domain
  * @param {string} type       — one of AUTO_FIXABLE
  * @param {object|null} issue — if null, fix all issues of this type
- * @returns {{ fixed: number, total: number, reason?: string }} `reason` is
- *   present only on the single-issue branch and only when nothing was written.
+ * @returns {{ fixed: number, total: number, reason?: string, missing?: string }}
+ *   `reason` (and, on the two semanticDupe staleness reasons, `missing` —
+ *   the `folder/slug` that is gone) is present only on the single-issue
+ *   branch and only when nothing was written.
  *   It is ADDITIVE: every existing caller reads `fixed`/`total` and is
  *   unaffected (src/routes/health.js spreads the object into its JSON body,
  *   mcp/tools/health.js reads `fixed`, and the suites assert on `fixed`).
@@ -1043,8 +1048,13 @@ export async function fixIssue(domain, type, issue = null) {
     if (type === 'missingBacklinks')  raw = await fixMissingBacklink(wikiDir, issue);
     if (type === 'orphanLink')        raw = await fixOrphanLink(wikiDir, issue);
     if (type === 'semanticDupe')      raw = await fixSemanticDuplicate(wikiDir, issue);
-    const { ok, reason } = normaliseFixOutcome(raw);
-    return { fixed: ok ? 1 : 0, total: 1, ...(ok || !reason ? {} : { reason }) };
+    const { ok, reason, missing } = normaliseFixOutcome(raw);
+    return {
+      fixed: ok ? 1 : 0,
+      total: 1,
+      ...(ok || !reason ? {} : { reason }),
+      ...(ok || !missing ? {} : { missing }),
+    };
   }
 
   // Fix all of type: re-scan and apply each. For brokenLinks, only issues
@@ -1424,8 +1434,70 @@ function resolveSemanticDupePair(wikiDir, issue) {
   const removePath = wikiFile(wikiDir, removeFolder, removeSlug + '.md');
   if (!keepPath || !removePath) return null;
 
-  return { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath };
+  // THE TWO EXISTENCE CHECKS ARE TWO DIFFERENT FACTS, and collapsing them
+  // into one boolean is the defect this release repairs.
+  //
+  // `findSemanticCandidatePairs` emits EVERY pair above threshold, so a
+  // version family is a dense clique — 8 near-identical pages produce 28
+  // pairs and every page appears in 7 of them. Merging one pair therefore
+  // DELETES a page that up to N-2 other pairs still name, and every one of
+  // those siblings is now unmergeable for a reason the user cannot act on.
+  // Before this, both callers asked `existsSync(keep) && existsSync(remove)`
+  // and reported "invalid pair" / "both pages must exist" — which reads as
+  // "you did something wrong" for what is actually "this is already done".
+  //
+  // The REMOVE side is named first when both are gone: it is the side a
+  // merge deletes, so it is the likelier casualty, and naming one page is
+  // more useful than naming two. `wiki-missing` is kept SEPARATE from the
+  // two page cases on purpose — a domain with no wiki folder at all is not
+  // "already resolved", and the batch must keep reporting it as `skipped`.
+  const removeMissing = !existsSync(removePath);
+  const keepMissing = !existsSync(keepPath);
+  let missingReason = null;
+  let missingPage = null;
+  if (removeMissing || keepMissing) {
+    if (!existsSync(wikiDir)) {
+      missingReason = 'wiki-missing';
+    } else if (removeMissing) {
+      missingReason = 'remove-page-missing';
+      missingPage = removeFolder + '/' + removeSlug;
+    } else {
+      missingReason = 'keep-page-missing';
+      missingPage = keepFolder + '/' + keepSlug;
+    }
+  }
+
+  return { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath, missingReason, missingPage };
 }
+
+/**
+ * The refusal a stale semantic-duplicate pair produces, in one place.
+ *
+ * `no longer exists` is a STABLE SUBSTRING and a contract: /next's
+ * `semanticStaleFromError` keys on it to mark a pair resolved when the page
+ * was deleted outside this session (Obsidian, the MCP, another Health fix),
+ * and scripts/test-semantic-chained-merges.js pins both halves. The page is
+ * NAMED because the whole point is that the user can see which one went and
+ * why this pair needs nothing from them.
+ */
+function staleSemanticPairError(missingPage) {
+  const err = new Error(
+    `${missingPage} no longer exists — it was probably merged into another page earlier in ` +
+    `this session, so this pair is already resolved.`
+  );
+  err.code = 'SEMANTIC_PAIR_STALE';
+  err.status = 409;          // a refusal, not a failure — see src/routes/health.js
+  err.missing = missingPage;
+  return err;
+}
+
+// The reasons that mean "a page of this pair is gone", as opposed to "this
+// pair never made sense". One definition rather than two copies of the same
+// string list. Deliberately NOT exported: health.js's export surface is
+// enumerated and pinned by test-wiki-page.js §8b/§8c, and neither this nor
+// staleSemanticPairError above has a caller outside this module — the route
+// branches on `err.code`, and the client on the error's stable substring.
+const SEMANTIC_STALE_REASONS = new Set(['remove-page-missing', 'keep-page-missing']);
 
 export async function countLinksToSlug(domain, slug) {
   const wikiDir = wikiPath(domain);
@@ -1468,10 +1540,15 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   // ReferenceError on every VALID pair, while all five tests passed invalid
   // input and asserted a throw — which a ReferenceError satisfies. The
   // positive-path assertions in test-wiki-page.js §8d exist because of that.
-  const { keepPath, removePath, removeSlug } = resolved;
-  if (!existsSync(keepPath) || !existsSync(removePath)) {
-    throw new Error('Both pages must exist to preview a merge');
+  const { keepPath, removePath, removeSlug, missingReason, missingPage } = resolved;
+  if (missingReason === 'wiki-missing') {
+    throw new Error(`No wiki found for domain: ${domain}`);
   }
+  // NAMES THE PAGE. This used to be the generic 'Both pages must exist to
+  // preview a merge', rendered by /next as "Could not build a preview — …"
+  // with Merge still gated behind "Preview required before Merge": a dead
+  // end the user could only escape by re-running a PAID scan.
+  if (missingReason) throw staleSemanticPairError(missingPage);
 
   const keepContent = await readFile(keepPath, 'utf8');
   const removeContent = await readFile(removePath, 'utf8');
@@ -1519,14 +1596,24 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
  *      old slug must point to the new canonical).
  *   5. Delete the removed file.
  *
- * Returns true on success, false on any validation failure (silent no-op —
- * matches the pattern used by fixOrphanLink).
+ * Returns true on success, or `{ok: false, reason, missing}` on a refusal —
+ * the `{ok, reason}` channel `normaliseFixOutcome` already understands, so
+ * every existing caller (which reads `fixed`/`total`) is unaffected.
+ *
+ * `reason` matters here because "nothing was written" has three causes that
+ * ask for three different things from the user: the pair never made sense
+ * (`semantic-pair-invalid`), the domain has no wiki (`wiki-missing`), or a
+ * page of the pair is GONE because an earlier merge in this same scan
+ * deleted it (`remove-page-missing` / `keep-page-missing`, with `missing`
+ * naming it). The last case is not a failure at all — it is the pair being
+ * already resolved, and reporting it as a validation failure is what left
+ * the reporter of this bug with a card they could neither preview nor merge.
  */
 async function fixSemanticDuplicate(wikiDir, issue) {
   const resolved = resolveSemanticDupePair(wikiDir, issue);
-  if (!resolved) return false;
-  const { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath } = resolved;
-  if (!existsSync(keepPath) || !existsSync(removePath)) return false;
+  if (!resolved) return { ok: false, reason: 'semantic-pair-invalid' };
+  const { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath, missingReason, missingPage } = resolved;
+  if (missingReason) return { ok: false, reason: missingReason, ...(missingPage ? { missing: missingPage } : {}) };
 
   // Step 2: merge bodies
   const keepContent = await readFile(keepPath, 'utf8');
@@ -1568,46 +1655,76 @@ async function fixSemanticDuplicate(wikiDir, issue) {
  *
  * Runs `fixSemanticDuplicate` sequentially for each pair. Sequential — NOT
  * parallel — because each merge rewrites `[[links]]` and deletes a file across
- * the entire domain; concurrent merges would race on shared files. A pair
- * whose keep/remove file was already consumed by an earlier merge in the same
- * batch is reported as `skipped` (its file no longer exists) rather than an
- * error, so chained duplicates degrade gracefully.
+ * the entire domain; concurrent merges would race on shared files.
+ *
+ * A pair whose keep/remove file was already consumed by an earlier merge in
+ * the same batch is reported as **`stale`**, NOT as `skipped`. Those are two
+ * different events and this docblock used to call them one: `skipped` is the
+ * word the UI uses for the user's own Skip (dismiss this pair), so a merge
+ * that never ran was being presented back to the user as a decision they
+ * made. The batch is also the path that reaches this FIRST — it deletes many
+ * pages in one pass, so within a version-family clique most of its own later
+ * pairs go stale mid-run.
  *
  * Callers (the "Merge all high-confidence" button) pass an explicit, already-
  * filtered list of pairs. Each pair is still independently validated inside
  * `fixSemanticDuplicate` (slug regex, folder allowlist, existence) so a crafted
  * request cannot escape the wiki folder.
  *
+ * NOTE for anyone summing the counts: `merged + stale + skipped + errors ===
+ * total`. `stale` was carved OUT of `skipped` in this release, so a caller
+ * asserting the old three-term sum will be short by the stale count.
+ *
  * @param {string}   domain
  * @param {object[]} pairs       [{keepSlug, keepFolder, removeSlug, removeFolder}]
- * @param {function} onProgress  ({done, total, pair, status}) => void
- * @returns {Promise<{merged:number, skipped:number, errors:number, total:number, results:object[]}>}
+ * @param {function} onProgress  ({done, total, pair, status, missing?}) => void
+ * @returns {Promise<{merged:number, stale:number, skipped:number, errors:number, total:number, results:object[]}>}
  */
 export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () => {}) {
   const wikiDir = wikiPath(domain);
   const list = Array.isArray(pairs) ? pairs : [];
   const total = list.length;
   const results = [];
-  let merged = 0, skipped = 0, errors = 0;
+  let merged = 0, stale = 0, skipped = 0, errors = 0;
 
   for (let i = 0; i < total; i++) {
     const pair = list[i] || {};
     let status = 'skipped';
+    let reason = null;
+    let missing = null;
     try {
-      const ok = await fixSemanticDuplicate(wikiDir, pair);
-      status = ok ? 'merged' : 'skipped';
+      // MUST go through normaliseFixOutcome. fixSemanticDuplicate returns an
+      // OBJECT on a refusal now, and `{ok: false}` is TRUTHY — a bare
+      // `const ok = await …` here would report every refused pair as merged.
+      // That is v3.0.17's recorded lesson (`{"pages": []}` is truthy) and the
+      // same shape fixIssue's own loop carries a comment about.
+      const outcome = normaliseFixOutcome(await fixSemanticDuplicate(wikiDir, pair));
+      reason = outcome.reason;
+      missing = outcome.missing;
+      status = outcome.ok
+        ? 'merged'
+        : (SEMANTIC_STALE_REASONS.has(outcome.reason) ? 'stale' : 'skipped');
     } catch (err) {
       status = 'error';
       console.error(`[health] Batch merge failed for "${pair.removeSlug}" → "${pair.keepSlug}": ${err.message}`);
     }
     if (status === 'merged') merged++;
     else if (status === 'error') errors++;
+    else if (status === 'stale') stale++;
     else skipped++;
-    results.push({ keepSlug: pair.keepSlug, removeSlug: pair.removeSlug, status });
-    try { onProgress({ done: i + 1, total, pair, status }); } catch { /* progress is best-effort */ }
+    results.push({
+      keepSlug: pair.keepSlug,
+      removeSlug: pair.removeSlug,
+      status,
+      ...(status === 'merged' || !reason ? {} : { reason }),
+      ...(missing ? { missing } : {}),
+    });
+    try {
+      onProgress({ done: i + 1, total, pair, status, ...(missing ? { missing } : {}) });
+    } catch { /* progress is best-effort */ }
   }
 
-  return { merged, skipped, errors, total, results };
+  return { merged, stale, skipped, errors, total, results };
 }
 
 /**
