@@ -454,6 +454,7 @@ const stubState = {
   // absence in the product would only hide a missing initialiser.
   worthTestingOpen: false,
   modelCheckBusy: null, modelCheck: {}, modelCheckError: {},
+  browseRowOpen: {},
   // The picker's own two fields. Same live-object rule: onPickModel (executed
   // in the SECOND sandbox below) mutates these, and renderModelPicker in the
   // FIRST sandbox reads them off the same identity — so §17-§21 can drive the

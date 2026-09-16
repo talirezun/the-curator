@@ -2463,10 +2463,75 @@
 .browse-worth p { margin: 0; font: var(--type-body-sm); color: var(--text-3); line-height: 1.6; }
 .browse-worth-why { font: var(--type-body-sm); color: var(--text-2); line-height: 1.5; }
 
-/* The live probe panel's host. It sits under the shortlist because that is
-   where the control that starts it lives; `state.qualify` is a single object,
-   so there is at most one of these on the page. */
+/* The live probe panel's host — the ONE case the row cannot cover: a model
+   being measured that the current filter has removed from the table. */
 .browse-qualify-host { margin-top: var(--space-6); }
+.browse-qualify-orphan {
+  margin: 0 0 var(--space-4);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* ── THE ROW'S EVIDENCE ────────────────────────────────────────────────────
+   A <details> cannot span two table rows, so the disclosure is this button plus
+   a second <tr>. It carries an EXPLICIT transparent border rather than none:
+   scripts/test-next-button-chrome.js's class invariant is that every <button>
+   in the tree declares one, because a bare button falls through to Chromium's
+   2px outset UA bevel — and it found this one on its first run. */
+.browse-detail-btn {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: var(--space-2);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 5px);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  vertical-align: -3px;
+  transition: transform var(--dur-fast, 0.12s) var(--ease-out, ease),
+              background var(--t-state), color var(--t-state);
+}
+/* The GLYPH is 18px and the TARGET is --hit-min. A transparent ::before is the
+   sanctioned way to grow one without growing the other, and
+   scripts/test-next-design-kit.js found this control under the floor on its
+   first run — the guard doing its job on a brand-new control. The inset is
+   DERIVED from the token and the rendered size, never a hand-picked number:
+   a glyph-size change then moves the target with it. */
+.browse-detail-btn::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-min) - 18px) / -2);
+}
+.browse-detail-btn:hover { background: var(--surface-hover); color: var(--text-2); }
+.browse-detail-btn:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.browse-detail-btn[aria-expanded="true"] { transform: rotate(90deg); color: var(--text-2); }
+/* The expanded row. Sunken, so the evidence reads as belonging to the row above
+   rather than as another entry in the table. */
+.browse-detail > td {
+  background: var(--surface-sunken);
+  padding: var(--space-5) var(--space-7);
+}
+.browse-detail .model-note { margin: 0 0 var(--space-4); }
+.browse-detail .model-qual { margin: 0; }
+
+/* A run that failed, with what the provider said. --text + medium rather than
+   amber: weight is the channel that survives both themes. */
+.model-qual-fail {
+  margin: var(--space-3) 0 0;
+  font: var(--type-body-sm);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.model-qual-fail-act { margin: var(--space-3) 0 0; }
 
 .browse-foot {
   display: flex;

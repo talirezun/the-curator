@@ -144,6 +144,7 @@ const setState = {
   buildListOpen: false, modelPickBusy: '', modelPickError: {}, modelPickErrorAt: '',
   catalogueSyncBusy: null, catalogueSync: {}, catalogueSyncError: {},
   modelCheckBusy: null, modelCheck: {}, modelCheckError: {}, worthTestingOpen: false,
+  browseRowOpen: {},
   qualify: null, modelFilter: {},
 };
 
@@ -221,6 +222,18 @@ const OR = [
     standardInput: null, standardOutput: null, suitability: 'chat-only', jsonRaw: null,
     maxOutput: 32768, contextLength: 262144, note: '', measuredBy: null,
     free: true, thinks: false },
+  // MEASURED BY US AND FOUND UNFIT, on a provider that CAN self-test. Added
+  // after a mutation dropping the lane half of the Test control's gate came
+  // back GREEN: the only measured-and-unfit row in the corpus was a GEMINI one,
+  // and Gemini cannot self-test at all, so the provider half alone was enough
+  // to satisfy every assertion. A fixture that cannot reach a branch is a
+  // fixture that certifies it silently -- the v3.15.0 shape this suite's
+  // siblings record.
+  { id: 'vendor/measured-unfit', label: 'Measured Unfit', input: 0.05, output: 0.20,
+    standardInput: 0.05, standardOutput: 0.20, suitability: 'chat-only', jsonRaw: false,
+    maxOutput: 32768, contextLength: 262144, note: 'unrepairable JSON in 3 of 9 ingest runs',
+    cautionReason: 'unrepairable JSON in 3 of 9 ingest runs',
+    measuredBy: 'curator', free: false, thinks: false },
   { id: 'dear/expensive-15', label: 'Dear Fifteen', input: 15.00, output: 75.00,
     standardInput: 15.00, standardOutput: 75.00, suitability: 'chat-only', jsonRaw: null,
     maxOutput: 32768, contextLength: 400000, note: '', measuredBy: null,
@@ -779,6 +792,212 @@ section('\u00a710  MODEL_GONE IN INGEST — headed and actionable, not the red w
   ok(/item\.errorCode === 'MODEL_GONE'/.test(ingestSrc),
     'SOURCE GUARD: the batch row dispatches on the same code, never on the message text');
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§11  THE PROBE PANEL — "Run 0 of 9" was the screenshot');
+// ══════════════════════════════════════════════════════════════════════════
+// The maintainer pressed Test on my wiki and watched a panel reading **Run 0 of
+// 9** for minutes. The `start` frame has carried `{modelId, domain, runs,
+// promptChars}` since the feature shipped and the client discarded it, so the
+// headline counted runs that had FINISHED — which is zero until the first one
+// settles, and the slowest measured call is 382 s.
+{
+  const panel = (q) => S.renderQualifyPanel(q, 9);
+
+  // THE DECISIVE ONE: a `start` frame alone, ZERO `run` frames.
+  const waiting = panel({
+    modelId: 'vendor/unmeasured-big', phase: 'running', runs: [],
+    total: 9, startedAt: Date.now() - 42000,
+    estimate: { runs: 9, domain: 'articles' },
+  });
+  ok(/Run 1 of 9/.test(waiting),
+    'a start frame alone says "Run 1 of 9" — the run IN FLIGHT, not the runs completed');
+  ok(!/Run 0 of 9/.test(waiting),
+    '…and never "Run 0 of 9", which is what the screenshot showed');
+  ok(/waiting for the model/.test(waiting),
+    '…and says what it is waiting for, because there is no ETA to project from yet');
+  ok(/so far/.test(waiting),
+    '…with an elapsed clock, the same answer v3.16.1 gave to the identical complaint in chat');
+
+  // The count comes from the START frame, not from the estimate, when they
+  // disagree: what is running is the truth.
+  const disagree = panel({
+    modelId: 'a/b', phase: 'running', runs: [], total: 5, startedAt: Date.now(),
+    estimate: { runs: 9, domain: 'articles' },
+  });
+  ok(/Run 1 of 5/.test(disagree),
+    'the start frame’s own run count wins over the estimate the user was quoted');
+
+  // The clamp: on the last frame `done === total`, and "Run 3 of 2" would be a
+  // new wrong number in place of the old one.
+  const last = panel({
+    modelId: 'a/b', phase: 'running', total: 2, startedAt: Date.now(),
+    runs: [{ run: 1, of: 2, outcome: 'COMPLETED', usable: true, parseClass: 'raw', pageCount: 20 },
+      { run: 2, of: 2, outcome: 'COMPLETED', usable: true, parseClass: 'raw', pageCount: 21 }],
+    estimate: { runs: 2 },
+  });
+  ok(/Run 2 of 2/.test(last) && !/Run 3 of 2/.test(last),
+    'the run in flight is clamped to the total — never "Run 3 of 2"');
+
+  // -- THE OFF-BY-ONE THE CLAMP TEST COULD NOT SEE -----------------------
+  // FOUND BY A MUTATION THAT CAME BACK GREEN. Replacing `done + 1` with `done`
+  // left every assertion above passing: the zero-run arm hardcodes "Run 1 of
+  // N", and the clamp fixture has done === total, where the two expressions
+  // agree by construction. So the ONE shape that separates them -- one run
+  // settled, eight still to come -- was never rendered. It is the screenshot's
+  // own bug one step in: a panel saying "Run 1 of 9" while run 2 is in flight.
+  const midway = panel({
+    modelId: 'a/b', phase: 'running', total: 9, startedAt: Date.now(),
+    runs: [{ run: 1, of: 9, outcome: 'COMPLETED', usable: true, parseClass: 'raw',
+      pageCount: 22, etaMs: 320000 }],
+    estimate: { runs: 9 },
+  });
+  ok(/Run 2 of 9/.test(midway),
+    'with ONE run settled the panel names run 2 — the one in flight, not the one that finished');
+  ok(!/Run 1 of 9/.test(midway),
+    '…and does not still say "Run 1 of 9", which is the screenshot’s bug one step in');
+  ok(/about 5 min left/.test(midway),
+    '…and the projection replaces the clock the moment there is evidence to project from');
+
+  // The per-call ceiling, when the server sends it.
+  const ceiling = panel({
+    modelId: 'a/b', phase: 'running', runs: [], total: 9,
+    startedAt: Date.now(), callTimeoutMs: 600000, estimate: { runs: 9 },
+  });
+  ok(/gives up after 10 min/.test(ceiling),
+    'the per-call ceiling bounds the wait, which a projection cannot do before run 1');
+  ok(!/gives up after/.test(waiting),
+    '…and is omitted entirely when the server did not send one — never guessed');
+
+  // ── A RUN THAT FAILED NAMES WHAT THE PROVIDER SAID ─────────────────────
+  const failed = panel({
+    modelId: 'a/b', phase: 'running', total: 9, startedAt: Date.now(),
+    runs: [{ run: 1, of: 9, outcome: 'FAILED', errorClass: 'RATE_LIMITED',
+      errorMessage: 'Provider returned 429: rate limit exceeded' }],
+    estimate: { runs: 9 },
+  });
+  ok(/Run 1 of 9 failed: Provider returned 429: rate limit exceeded/.test(failed),
+    'a run frame carrying errorMessage renders the message — not just "FAILED"');
+  ok(/data-qualify-pick-another/.test(failed),
+    '…with the route to a model that is already measured');
+  const noMsg = panel({
+    modelId: 'a/b', phase: 'running', total: 9, startedAt: Date.now(),
+    runs: [{ run: 1, of: 9, outcome: 'FAILED', errorClass: 'RATE_LIMITED' }],
+    estimate: { runs: 9 },
+  });
+  ok(!/failed:/.test(noMsg),
+    'CONTROL: a frame with NO errorMessage invents none');
+  ok(/FAILED/.test(noMsg), '…and the outcome code IS rendered, so the check above is not vacuous');
+
+  // ── A `done` FRAME WITH AN ABORT CLASS ─────────────────────────────────
+  const stoppedBurn = panel({
+    modelId: 'a/b', phase: 'stopped', aborted: 'ABORTED_REASONING_BURN', stoppedAfter: 3,
+    runs: [1, 2, 3], total: 9,
+  });
+  ok(/Stopped after run 3/.test(stoppedBurn), 'an aborted run says WHERE it stopped');
+  ok(/hidden reasoning/.test(stoppedBurn), '…and WHY, in plain words');
+  ok(!/Run \d+ of 9…/.test(stoppedBurn),
+    '…and the running state is cleared — the panel does not sit on "Run N of 9" for ever');
+
+  const stoppedRate = panel({
+    modelId: 'a/b', phase: 'stopped', aborted: 'NOT_MEASURED_RATE_LIMITED', stoppedAfter: 2,
+    runs: [1, 2], total: 9,
+  });
+  ok(/Nothing was recorded against the model/.test(stoppedRate),
+    'a RATE LIMIT is a fact about the queue, so nothing is recorded against the model');
+  ok(!/Nothing was recorded against the model/.test(stoppedBurn),
+    '…and a reasoning burn does NOT borrow that sentence: it IS an observation about the model ' +
+    'and it IS stored — the brief said otherwise for all three classes, and the record contradicts it');
+  const stoppedUnknown = panel({
+    modelId: 'a/b', phase: 'stopped', aborted: 'SOMETHING_NEW', stoppedAfter: 4, runs: [], total: 9,
+  });
+  ok(/Stopped after run 4/.test(stoppedUnknown) && !/because/.test(stoppedUnknown),
+    'an UNRECOGNISED abort class states the fact and invents no reason for it');
+
+  ok(panel({ phase: 'running', runs: [], total: 9, startedAt: Date.now() }).includes('qualify-stop'),
+    'Stop is unchanged and still on the running panel');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§12  THE PROBE LIVES IN THE TABLE NOW');
+// ══════════════════════════════════════════════════════════════════════════
+{
+  const k = keysFor(['openrouter', 'gemini']);
+  const all = sliceBlocks(renderWith(k)).all;
+
+  // The Test control is on the row that states the refusal, because that is the
+  // row that has to offer the way past it.
+  const i = all.indexOf('data-model-id="vendor/unmeasured-big"');
+  const row = all.slice(i, all.indexOf('</tr>', i) + 5);
+  ok(/not measured yet/.test(row), 'an unmeasured row still states the refusal');
+  ok(/data-qualify-model="vendor\/unmeasured-big"/.test(row),
+    '…and carries the Test control in the same Build-lane cell');
+
+  // NOT offered where the server would refuse it: a model WE measured and found
+  // unfit is a dead end by design, and a control whose only outcome is a
+  // refusal is worse than no control.
+  const j = all.indexOf('data-model-id="gemini-3.5-flash-lite"');
+  const measuredChatOnly = all.slice(j, all.indexOf('</tr>', j) + 5);
+  ok(/chat only — measured/.test(measuredChatOnly),
+    'CONTROL: a measured chat-only row is present and says so');
+  ok(!/data-qualify-model/.test(measuredChatOnly),
+    '…and is NOT offered a self-test, because the server would refuse it');
+
+  // -- AND THE SAME, ON A PROVIDER THAT *CAN* SELF-TEST -------------------
+  // The row above proves the PROVIDER half of the gate (Gemini cannot
+  // self-test at all). This one proves the LANE half, which nothing reached
+  // until a mutation dropping it came back green: an OpenRouter model WE
+  // measured and found unfit is a dead end BY DESIGN -- `POST
+  // /api-keys/model` refuses a chat-only id -- so offering it a Test button
+  // would be offering a control whose only outcome is a refusal.
+  const u = all.indexOf('data-model-id="vendor/measured-unfit"');
+  ok(u !== -1, 'CONTROL: a measured-and-unfit OpenRouter row is in the table');
+  const unfitRow = all.slice(u, all.indexOf('</tr>', u) + 5);
+  ok(/chat only — measured/.test(unfitRow), '…and says we measured it');
+  ok(!/data-qualify-model/.test(unfitRow),
+    '…and gets NO Test control, although its provider can self-test — the LANE half of the gate');
+
+  // The evidence expands UNDER the row rather than replacing the page.
+  ok(/data-browse-detail="upstage\/solar-pro4"/.test(all),
+    'a row with measured evidence carries an expander');
+  const opened = sliceBlocks(renderWith(k, (st) => {
+    st.browseRowOpen = { 'upstage/solar-pro4': true };
+  })).all;
+  ok(/<tr class="browse-detail" data-browse-detail-row="upstage\/solar-pro4">/.test(opened),
+    '…and opening it emits a detail ROW, not a panel somewhere else');
+  ok(/plans about 23 pages per source/.test(opened),
+    '…carrying the measured note that used to live on the per-provider list');
+  ok(!/plans about 23 pages per source/.test(all),
+    'CONTROL: the note is genuinely folded when the row is closed');
+
+  // The live panel renders inside the row being measured, and the row is FORCED
+  // open — a press re-renders, and a confirm inside a collapsed row is the
+  // v3.8.0 shape where a click appears to do nothing.
+  const probing = sliceBlocks(renderWith(k, (st) => {
+    st.qualify = { modelId: 'vendor/unmeasured-big', phase: 'running', runs: [], total: 9,
+      startedAt: Date.now(), estimate: { runs: 9 } };
+  })).all;
+  ok(/<tr class="browse-detail" data-browse-detail-row="vendor\/unmeasured-big">/.test(probing),
+    'the row being measured is FORCED open, without the user having expanded it');
+  ok(/Run 1 of 9/.test(probing), '…and the live panel is inside it');
+  ok(!/browse-qualify-host/.test(probing),
+    '…and the block-level host does NOT also render — two panels would be two #qualify-confirm ids');
+
+  // The one gap the row cannot cover: the model being measured has been
+  // filtered out of the table.
+  const filtered = sliceBlocks(renderWith(k, (st) => {
+    st.qualify = { modelId: 'vendor/unmeasured-big', phase: 'running', runs: [], total: 9,
+      startedAt: Date.now(), estimate: { runs: 9 } };
+    st.modelFilter = { [S.ALL_MODELS_SCOPE]: { q: 'solar' } };
+  })).all;
+  ok(!/data-model-id="vendor\/unmeasured-big"/.test(filtered),
+    'CONTROL: the filter really did remove the row being measured');
+  ok(/browse-qualify-host/.test(filtered),
+    '…so the block-level host renders instead — a live stream never loses its panel');
+  ok(/filters above have removed/.test(filtered),
+    '…and says why it is there rather than in the table');
+}
+
 
 // ══════════════════════════════════════════════════════════════════════════
 console.log(`\n${'\u2500'.repeat(60)}`);

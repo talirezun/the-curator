@@ -245,6 +245,7 @@ const stubState = {
   // rather than failing it -- and defending against the absence in the product
   // would only hide a missing initialiser in freshState().
   modelCheckBusy: null, modelCheck: {}, modelCheckError: {}, worthTestingOpen: false,
+  browseRowOpen: {},
 };
 
 const INJECTED = {

@@ -979,6 +979,18 @@ function freshState() {
     // connection, which is what the server reads as the cancel — there is no
     // separate cancel endpoint and therefore no run id to get wrong.
     qualifyAbort: null,
+    // The elapsed clock's interval id, or null. It exists because the FIRST run
+    // has no ETA to project from — `etaMs` is computed from runs that have
+    // happened — and the slowest measured call is 382 s, so without it the
+    // panel carries no number at all for up to six minutes. Cleared through
+    // `stopQualifyClock` at every exit AND by the tick itself when the mount
+    // has moved on.
+    qualifyTickId: null,
+    // Which browse-table rows have their evidence open, by model id. Recorded
+    // rather than re-derived: render() replaces the section wholesale, so a
+    // native `<details open>` is discarded on every repaint — and this table
+    // repaints on a keystroke in the search box.
+    browseRowOpen: {},
 
     // MCP bridge
     mcp: null,              // GET /api/mcp/config
@@ -3197,6 +3209,10 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
   const defaultId = (b && typeof b.model === 'string') ? b.model : '';
   const busyId = typeof state.modelPickBusy === 'string' ? state.modelPickBusy : '';
   const pickDisabled = !!crossBusy || busyId !== '';
+  // Read off the wire, with the same floor renderModelPicker used. It is the
+  // number the panel PRINTS ("only 3 of the 9 runs needed"), so a local default
+  // that drifted from the server's would be a false claim about a bar.
+  const minRuns = Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9;
 
   const body = orderedRows.map(({ p, m, lane, qual }) => {
     const inUse = p.id === activeProvider && m.id === defaultId;
@@ -3213,11 +3229,72 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
       // records in as many words that unmeasured must never become a rejection
       // signal. The two absences are drawn apart here for the same reason
       // `measurementChip` refuses to collapse them.
-      laneCell = (isCuratorMeasured(m) || qual)
+      //
+      // —— AND "NOT MEASURED YET" IS NOW A DOOR, NOT A DEAD END ——————————
+      // The nine-run probe lived on the per-provider list, i.e. on the copy of
+      // this table that has been removed — so the ONE path from "nobody has
+      // measured this" into the build lane had no home. It belongs here: this
+      // is the row that states the refusal, so it is the row that must offer
+      // the way past it.
+      //
+      // Offered ONLY on the exact shape the server's own gate accepts —
+      // CHAT_UNMEASURED on a provider whose `canQualify` is true — because a
+      // model WE measured and found unfit (gemini-3.5-flash-lite, `jsonRaw:
+      // false`) would get a refusal and nothing else, and a control whose only
+      // outcome is a refusal is worse than no control. A TABLE LOOKUP, never
+      // `p.id === 'openrouter'`: a fourth provider with a fetchable, unmeasured
+      // catalogue would otherwise be silently stuck at "chat only" with nothing
+      // on screen saying why.
+      const provRow = PROVIDER_ROWS.find((r) => r.id === p.id);
+      const canMeasure = !!(provRow && provRow.canQualify === true)
+        && lane === MODEL_LANES.CHAT_UNMEASURED;
+      const measuring = !!(state.qualify && state.qualify.modelId === m.id);
+      const measureBtn = canMeasure
+        ? '<button type="button" class="btn btn-secondary btn-xs model-qualify-btn"' +
+            ' data-qualify-model="' + escapeHtml(String(m.id)) + '"' +
+            (measuring || pickDisabled ? ' disabled' : '') + '>' +
+            escapeHtml(qual ? 'Test again on my wiki' : 'Test on my wiki') + '</button>'
+        : '';
+      laneCell = ((isCuratorMeasured(m) || qual)
         ? '<span class="browse-chatonly">chat only — measured</span>'
-        : '<span class="browse-unmeasured">not measured yet</span>';
+        : '<span class="browse-unmeasured">not measured yet</span>') + measureBtn;
     }
     const ctx = formatTokenCount(m.contextLength);
+
+    // —— THE EVIDENCE, IN AN EXPANDABLE ROW UNDER THE ROW IT BELONGS TO —————
+    // A <details> cannot span table rows, so the disclosure is a BUTTON in the
+    // name cell plus a second <tr> the renderer emits when it is open. The
+    // state is recorded rather than left to the DOM for the reason every other
+    // fold on this page records it: render() replaces the section wholesale and
+    // this table repaints on a keystroke in the search box.
+    //
+    // FORCED OPEN WHILE THIS ROW IS BEING MEASURED, and that arm is not
+    // optional: pressing Test re-renders, so without it the confirm panel the
+    // press exists to produce would render inside a collapsed row and the press
+    // would appear to do nothing — the v3.8.0 shape this repo has shipped once.
+    const noteText = lane === MODEL_LANES.BUILD_LOCAL
+      ? withoutLaneClaim(m.note)
+      : (typeof m.note === 'string' ? m.note : '');
+    const qualHtml = renderQualification(qual, minRuns, k && k.models ? k.models[p.id] : '') +
+      ((state.qualify && state.qualify.modelId === m.id)
+        ? renderQualifyPanel(state.qualify, minRuns) : '');
+    const hasDetail = !!(noteText.trim() || qualHtml);
+    const detailOpen = hasDetail &&
+      (state.browseRowOpen[m.id] === true || !!(state.qualify && state.qualify.modelId === m.id));
+    const expander = hasDetail
+      ? '<button type="button" class="browse-detail-btn" data-browse-detail="' +
+          escapeHtml(String(m.id)) + '" aria-expanded="' + (detailOpen ? 'true' : 'false') + '"' +
+          ' aria-label="' + escapeHtml((detailOpen ? 'Hide' : 'Show') + ' what was measured about ' +
+            (m.label || m.id)) + '">' + icon('chevronRight', 11) + '</button>'
+      : '';
+    const detailRow = detailOpen
+      ? '<tr class="browse-detail" data-browse-detail-row="' + escapeHtml(String(m.id)) + '">' +
+          '<td colspan="5">' +
+            (noteText.trim() ? '<p class="model-note">' + escapeHtml(noteText) + '</p>' : '') +
+            qualHtml +
+          '</td>' +
+        '</tr>'
+      : '';
     // ── THE ROW IS ADDRESSABLE BY MODEL ID ─────────────────────────────
     // The same attribute `renderModelOption`'s `<li>` carries, so "is this
     // model on the page at all?" is one question with one answer across both
@@ -3225,13 +3302,13 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     // per-provider lists gone, no id may appear twice INSIDE this block, and an
     // attribute that exists on only one of the two renderings could not say so.
     return '<tr data-model-id="' + escapeHtml(String(m.id == null ? '' : m.id)) + '">' +
-      '<td class="browse-name"><b>' + escapeHtml(m.label || m.id) + '</b>' +
+      '<td class="browse-name">' + expander + '<b>' + escapeHtml(m.label || m.id) + '</b>' +
         '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
       '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
       '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.output) || '—') + '</td>' +
       '<td class="browse-num mono">' + escapeHtml(ctx || '—') + '</td>' +
       '<td>' + laneCell + '</td>' +
-    '</tr>';
+    '</tr>' + detailRow;
   }).join('');
 
   // ── THE COUNT LINE, INCLUDING WHAT IS NOT ON IT ────────────────────────
@@ -3248,17 +3325,24 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     ? String(rowsAll.length) + ' models'
     : 'Showing ' + String(orderedRows.length) + ' of ' + String(rowsAll.length)) + hidden;
 
+  // ── THE LIVE PROBE PANEL LIVES IN ITS ROW — AND THIS IS THE ONE GAP ─────
+  // Every row that can be measured renders the panel inside its own expandable
+  // detail row, which is where the press happened. The one case that leaves is
+  // a model being measured that the CURRENT FILTER has removed from the table:
+  // press Test, narrow the search, and the panel would vanish mid-run with a
+  // live stream still attached to it. So the block-level host stays, and it
+  // renders ONLY when the qualifying model is not among the drawn rows — never
+  // as a second copy, which would put two `id="qualify-confirm"` on one page and
+  // make revealInMain scroll to whichever came first.
+  const qualifyingId = state.qualify ? state.qualify.modelId : null;
+  const qualifyingDrawn = !!qualifyingId && orderedRows.some(({ m }) => m && m.id === qualifyingId);
   const worthHtml = renderWorthTesting(rowsAll, b, pickDisabled) +
-    // ── THE LIVE PROBE PANEL, ONE PER PAGE ──────────────────────────────
-    // `state.qualify` is a SINGLE object, not a per-model map, so there is at
-    // most one panel and it belongs beside the control that starts it. The
-    // press re-renders, so without a rendered home the confirm would have
-    // nowhere to land and the click would appear to do nothing — the v3.8.0
-    // shape this repo has already shipped once.
-    (state.qualify
+    ((state.qualify && !qualifyingDrawn)
       ? '<div class="browse-qualify-host" id="browse-qualify-host">' +
-          renderQualifyPanel(state.qualify,
-            Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9) +
+          '<p class="browse-qualify-orphan">A measurement is running on <code class="mono">' +
+          escapeHtml(String(qualifyingId)) + '</code>, which the filters above have removed from ' +
+          'the table.</p>' +
+          renderQualifyPanel(state.qualify, minRuns) +
         '</div>'
       : '');
 
@@ -3591,7 +3675,16 @@ function renderModelListRow(p, k, crossBusy) {
     else if (when) facts.push('Last refreshed ' + when + (isStale ? ' — more than a day ago' : ''));
     else if (last) facts.push('refreshed, but no usable time came with it');
     else facts.push('not refreshed yet');
-    if (loadedCount !== null) facts.push(formatTokenCount(loadedCount) + ' loaded');
+    // ── "0 loaded" IS NOT A MEASUREMENT, IT IS THE ABSENCE OF ONE ────────
+    // FOUND BY RENDERING IT. On a fresh install the row read "no list fetched
+    // yet · 0 loaded" — two clauses for one fact, the second of them asserting
+    // a count of a list that was never fetched. `loaded` is suppressed on the
+    // not-loaded branch and on a zero for the same reason `batchHidden`
+    // suppresses a null: a zero states that we looked and found none, which is
+    // exactly what did not happen here.
+    if (!notLoaded && loadedCount !== null && loadedCount > 0) {
+      facts.push(formatTokenCount(loadedCount) + ' loaded');
+    }
 
     const busy = state.catalogueSyncBusy === p.id;
     const disabled = busy || !!crossBusy || state.catalogueSyncBusy !== null;
@@ -3618,6 +3711,16 @@ function renderModelListRow(p, k, crossBusy) {
     extra = renderCatalogueSyncDetail(p, k, last);
   } else {
     facts.push('the list The Curator has measured');
+    // ── "NOT CHECKED YET" IS A DIFFERENT FACT FROM "WE CANNOT TELL" ──────
+    // The route does not PERSIST a Gemini/Anthropic verdict, so after every
+    // restart this row genuinely has no answer — and the difference between
+    // "nobody has asked" and "we asked and could not find out" is exactly the
+    // distinction `liveMissing`'s third value exists for. Said here, once, so
+    // the blank beside the button does not read as a permanent unknown.
+    if (!(state.modelCheck && state.modelCheck[p.id])
+      && !(state.modelCheckError && state.modelCheckError[p.id])) {
+      facts.push('not checked since this app started');
+    }
     const busy = state.modelCheckBusy === p.id;
     // NOT gated on crossBusy, and for the same reason `Test this key` is not:
     // this request WRITES NOTHING. It asks the provider what it currently
@@ -3660,8 +3763,19 @@ function renderModelCheckResult(p) {
   const err = (state.modelCheckError && typeof state.modelCheckError[p.id] === 'string')
     ? state.modelCheckError[p.id] : '';
   if (err) {
+    // ── THE ROUTE'S OWN SENTENCE, RENDERED WHERE THE CLICK HAPPENED ──────
+    // `POST /api/config/models/check` answers 400 with a written sentence for
+    // the one refusal a user can act on — "No gemini key is saved in Settings
+    // — connect one before checking its model list." It is rendered HERE,
+    // beside the button, and never as a page-level error: v3.6.0's finding is
+    // that a refusal painted where the user is not looking reads as "my click
+    // didn't register", and the observed next action is a retry. The prefix is
+    // dropped when the server already wrote a whole sentence, because
+    // "Could not check — No gemini key is saved…" is two openings for one
+    // message.
+    const whole = /^[A-Z]/.test(err) && /[.!?]$/.test(err.trim());
     return '<span class="mlist-verdict mlist-verdict-warn" role="status">' +
-      escapeHtml('Could not check — ' + err) + '</span>';
+      escapeHtml(whole ? err : 'Could not check — ' + err) + '</span>';
   }
   const r = (state.modelCheck && typeof state.modelCheck[p.id] === 'object' && state.modelCheck[p.id])
     ? state.modelCheck[p.id] : null;
@@ -6640,19 +6754,78 @@ function renderQualifyPanel(q, minRuns) {
     );
   }
   if (q.phase === 'running') {
-    const done = (q.runs || []).length;
-    const total = (q.estimate && q.estimate.runs) || minRuns;
-    const last = done ? q.runs[done - 1] : null;
+    // ── THE RUN IN FLIGHT, NOT THE RUNS COMPLETED ───────────────────────
+    // THE MAINTAINER'S SCREENSHOT. This read `Run ${done} of ${total}` where
+    // `done` is `q.runs.length` — the number of run frames that have ARRIVED.
+    // Before the first one settles that is ZERO, so a probe whose slowest
+    // measured call is 382 s displayed **"Run 0 of 9"** for up to six minutes,
+    // on the one panel whose entire job is saying that something is happening.
+    // The `start` frame has carried `{modelId, domain, runs, promptChars}`
+    // since the feature shipped and the client discarded it.
+    //
+    // The run in flight is `done + 1`, clamped: on the last frame before the
+    // stream closes `done` equals `total`, and "Run 10 of 9" would be a new
+    // wrong number in place of the old one.
+    const runs = q.runs || [];
+    const done = runs.length;
+    // The START frame's own count first: it is the number the SERVER is
+    // actually running, and the estimate is what the user was quoted. They
+    // agree today; if they ever disagree, the truth is what is running.
+    const total = (Number.isFinite(q.total) && q.total > 0) ? q.total
+      : ((q.estimate && q.estimate.runs) || minRuns);
+    const inFlight = Math.min(done + 1, total);
+    const last = done ? runs[done - 1] : null;
     const eta = last && Number.isFinite(last.etaMs) ? formatDuration(last.etaMs) : null;
+
+    // ── AN ELAPSED CLOCK, BECAUSE THE FIRST RUN HAS NO ETA ──────────────
+    // `etaMs` is a projection from runs that have happened, so before run 1
+    // there is nothing to project from and the panel would otherwise carry no
+    // number at all. v3.16.1 recorded the identical complaint about chat —
+    // "we had measured its speed and never told him" — and the answer there
+    // was the same: show the clock, and claim nothing about how long it will
+    // take. No animation.
+    const elapsed = Number.isFinite(q.startedAt)
+      ? formatDuration(Date.now() - q.startedAt) : null;
+
+    // The adapter's per-call ceiling, on the ONE line where it answers a
+    // question the user is actually asking. It bounds the wait, which a
+    // projection cannot do before the first run has landed. Rendered only when
+    // the server sent it — an absent ceiling prints no clause rather than a
+    // guessed one.
+    const ceiling = Number.isFinite(q.callTimeoutMs) ? formatDuration(q.callTimeoutMs) : null;
+    const head = done === 0
+      ? 'Run 1 of ' + total + ' — waiting for the model…' +
+        (elapsed ? ' ' + elapsed + ' so far' : '') +
+        (ceiling ? ' (it gives up after ' + ceiling + ')' : '')
+      : 'Run ' + inFlight + ' of ' + total + '…' +
+        (eta ? ' about ' + eta + ' left' : (elapsed ? ' ' + elapsed + ' so far' : ''));
+
+    // ── A FAILED RUN NAMES WHAT THE PROVIDER SAID ───────────────────────
+    // `errorMessage` is on the run record and was not on the frame, so the
+    // panel could say a run had FAILED and never what it failed with — a
+    // wrong key, a 402, a model the router has withdrawn all read identically.
+    // Rendered for the most recent failure only: a rate limit produces a run
+    // of them and nine copies of one sentence is the wall this release is
+    // removing elsewhere.
+    const failed = runs.filter((r) => r && typeof r.errorMessage === 'string' && r.errorMessage);
+    const lastFail = failed.length ? failed[failed.length - 1] : null;
+    const failHtml = lastFail
+      ? '<p class="model-qual-fail">Run ' + escapeHtml(String(lastFail.run)) + ' of ' +
+          escapeHtml(String(lastFail.of || total)) + ' failed: ' +
+          escapeHtml(lastFail.errorMessage) +
+          (failed.length > 1 ? ' (' + escapeHtml(String(failed.length)) + ' runs have failed)' : '') +
+        '</p>' +
+        '<p class="model-qual-fail-act">' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-qualify-pick-another="1">' +
+          'Pick a different model</button></p>'
+      : '';
+
     return (
       '<div class="model-qual model-qual-running">' +
-        '<p class="model-qual-head">Run ' + escapeHtml(String(done)) + ' of ' +
-          escapeHtml(String(total)) + '…' +
-          // A projection from the runs that have ACTUALLY happened, which
-          // replaces the pre-run range as soon as there is any evidence.
-          (eta ? ' about ' + escapeHtml(eta) + ' left' : '') + '</p>' +
+        '<p class="model-qual-head">' + escapeHtml(head) + '</p>' +
+        failHtml +
         '<p class="mono model-qual-facts">' +
-          escapeHtml((q.runs || []).map(r =>
+          escapeHtml(runs.map(r =>
             r.outcome === 'COMPLETED'
               ? (r.usable ? r.parseClass + '/' + r.pageCount + 'p' : (r.parseClass || '?') + '/UNUSABLE')
               : r.outcome).join('  ')) +
@@ -6663,6 +6836,49 @@ function renderQualifyPanel(q, minRuns) {
           // watching it. See the ids on the confirm panel's buttons above.
           '<button type="button" class="btn btn-secondary btn-xs" id="qualify-stop" data-qualify-stop="1">Stop</button>' +
         '</div>' +
+      '</div>'
+    );
+  }
+  // ── STOPPED BY THE SERVER'S OWN CIRCUIT BREAKER ───────────────────────────
+  // The `done` frame can carry an `aborted` class — the probe gave up after a
+  // run of reasoning burn, of exhausted budgets, or of rate limits. Without
+  // this arm the panel stayed on "Run N of 9…" until the `stored` frame
+  // cleared it, which on the rate-limit class is a wait with no end in sight.
+  //
+  // WHAT IS CLAIMED IS EXACTLY WHAT THE CLASS SUPPORTS, and the three are NOT
+  // the same claim. A rate limit is a fact about the QUEUE — free ids draw on a
+  // shared upstream pool — and llm.js records in as many words that it is
+  // neither a defect nor a pass, so that arm says the run was not recorded
+  // against the model. The two burn classes ARE observations about the model
+  // and ARE stored, so that arm does not pretend otherwise. The brief for this
+  // change said "not recorded against the model" for all three; it is true of
+  // one, and saying it of the other two would be a reassurance the record
+  // contradicts.
+  if (q.phase === 'stopped') {
+    // FUNCTION-LOCAL and null-prototype, exactly like renderCatalogueSync's
+    // SYNC_BY_PROVIDER and renderProviderRow's KEY_TEST_BY_PROVIDER, and for
+    // the same three reasons: an unrecognised class fails safe (the fact with
+    // no explanation), an inherited name like `constructor` cannot resolve
+    // truthy, and NO NEW MODULE-LEVEL IDENTIFIER enters the sandboxes that
+    // three suites build by extraction — where a missing binding is a CRASH
+    // rather than a failing assertion (the v3.11.0 FN_NAMES shape).
+    const QUALIFY_ABORT_REASONS = Object.assign(Object.create(null), {
+      ABORTED_REASONING_BURN: 'the model spent its whole output budget on hidden reasoning, ' +
+        'several runs in a row',
+      ABORTED_BUDGET_EXHAUSTION: 'the model ran out of output budget several runs in a row',
+      NOT_MEASURED_RATE_LIMITED: 'the provider rate-limited the run',
+    });
+    const why = QUALIFY_ABORT_REASONS[q.aborted] || null;
+    const recorded = q.aborted === 'NOT_MEASURED_RATE_LIMITED'
+      ? 'Nothing was recorded against the model — a rate limit is a fact about the queue, not about ' +
+        'the model.'
+      : 'What ran was recorded, and it is a finding about this model on your wiki.';
+    return (
+      '<div class="model-qual model-qual-short">' +
+        '<p class="model-qual-head">' + escapeHtml('Stopped after run ' +
+          String(Number.isFinite(q.stoppedAfter) ? q.stoppedAfter : (q.runs || []).length) +
+          (why ? ': ' + why : '.')) + '</p>' +
+        '<p class="model-qual-caveat">' + escapeHtml(recorded) + '</p>' +
       '</div>'
     );
   }
@@ -7078,17 +7294,37 @@ function renderModelOption(m, index, defaultId, ctx) {
         'message in the composer.') +
       '">chat only</span>' + measureBtn;
   } else if (c.readOnlyList === true) {
-    // ── REFERENCE, NOT A CONTROL SURFACE ──────────────────────────────────
-    // A build-lane row on the shelf. It CAN build the wiki, so the chat-only
-    // refusal above would be a false statement — but the choice is made once,
-    // in the build block, through the atomic route that names provider and
-    // model together. Offering a second button here that writes the same
-    // setting through the OLDER endpoint would reinstate exactly the inert-pin
-    // state renderBuildCurrent has to report: that route pins per provider
-    // without activating it, so a click here could look like it worked and
-    // govern nothing.
+    // ── UNREACHABLE FROM THE SHIPPING PAGE, AND THE REASON MATTERS ────────
     //
-    // So the row states where the control is instead of carrying a duplicate.
+    // READ THIS BEFORE "FIXING" ANYTHING HERE. The comment that used to sit in
+    // this branch argued that a build-lane row on the per-provider shelf must
+    // NOT carry a pick button, because the only one available to it wrote
+    // through `POST /api-keys/model` — the OLDER, per-provider route, which
+    // pins a model without activating its provider and so can leave a click
+    // looking like it worked while governing nothing. That argument was about
+    // a ROUTE, not about a control, and it was correct: with only that endpoint
+    // in hand, a sentence pointing elsewhere really was better than a button.
+    //
+    // It is no longer the situation. `POST /api-keys/build-model` names
+    // provider and model TOGETHER and applies both, and block 4's table already
+    // carries it on every build-lane row (`data-build-model` +
+    // `data-build-provider`). So the row the maintainer complained about —
+    // "rows that can build must be choosable there" — is choosable, through a
+    // route that cannot strand a pin.
+    //
+    // What is left is this branch, and it is now UNREACHABLE from the page:
+    // `renderModelPicker` is the only caller that sets `readOnlyList`, and
+    // `renderAllModelsBlock` no longer calls it. The correct next step is to
+    // delete both, and that is NOT done here — see the release notes: doing so
+    // reds ~126 assertion sites in scripts/test-next-model-picker.js, many of
+    // which reach `renderModelOption`'s price, escaping and badge behaviour
+    // THROUGH the picker, and deleting them carelessly would delete real
+    // coverage of a renderer that still ships.
+    //
+    // THE ONE THING THIS COMMENT EXISTS TO PREVENT: do not read
+    // `can build — choose above` as evidence that the per-provider list should
+    // come back. It is the sentence that replaced a control, on a surface that
+    // no longer exists, under a route that no longer has to be avoided.
     control = '<span class="model-pick-state model-pick-state-elsewhere"' +
       ' title="' + escapeHtml('This model can build your wiki. The choice is made once, at the top of ' +
         'this screen, so that it always applies — a per-provider pin can end up governing nothing.') +
@@ -7634,6 +7870,30 @@ function wireProviderListeners() {
       render(myMountToken);
     });
   });
+  // -- THE ROW'S EVIDENCE ------------------------------------------------
+  // A <details> cannot span two table rows, so this is a button plus a second
+  // <tr> the renderer emits -- which means it DOES re-render, unlike every
+  // native disclosure on this page. Recorded first, so the repaint draws the
+  // state the user just asked for.
+  document.querySelectorAll('[data-browse-detail]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.browseDetail;
+      if (state.browseRowOpen[id] === true) delete state.browseRowOpen[id];
+      else state.browseRowOpen[id] = true;
+      render(myMountToken);
+    });
+  });
+  // The way out of a model that keeps failing its probe: open the list of the
+  // models that are already measured. Same destination as the retired-model
+  // banner's button, because it is the same question -- which model should
+  // build the wiki -- and this page answers it in exactly one place.
+  document.querySelectorAll('[data-qualify-pick-another]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.buildListOpen = true;
+      render(myMountToken);
+      revealInMain('settings-build-list');
+    });
+  });
   // ── THE MODEL LISTS GROUP ──────────────────────────────────────────────
   // `Open Model Lab` is gone with the per-provider cards it scrolled to. What
   // replaces it is not a second scroll: the shortlist that used to send people
@@ -7659,16 +7919,35 @@ function wireProviderListeners() {
       const provider = btn.dataset.modelGonePick || '';
       state.buildListOpen = true;
       render(myMountToken);
-      const cands = buildCandidates(state.keys);
-      const first = cands.find(({ p }) => p && p.id === provider) || cands[0] || null;
-      const target = first
-        ? document.getElementById(buildPickButtonId(first.p.id, first.m.id))
-        : document.getElementById('settings-build-list');
-      if (target) {
-        if (typeof target.scrollIntoView === 'function') {
-          try { target.scrollIntoView({ block: 'center' }); } catch { /* jsdom / older engines */ }
+      // ── THE LIST FIRST, THE ROW SECOND ─────────────────────────────────
+      // FOUND BY CLICKING IT. The first draft resolved a candidate, asked for
+      // its pick button BY ID, and did nothing at all when that returned null —
+      // which is the COMMON case, not an edge one: the first candidate of the
+      // provider being complained about is usually the model already in force,
+      // and that row deliberately carries a `<span>Building your wiki</span>`
+      // rather than a button. So the list opened 1,242px below the fold and the
+      // press looked like it had done nothing. That is the v3.8.0 shape the
+      // qualify panel already has a comment about, reached through a new door.
+      //
+      // Now the LIST is revealed unconditionally — that alone makes the press
+      // legible — and focus is a bonus taken only when a real, focusable
+      // alternative exists. Candidates already in force are skipped, because
+      // "pick another" that lands on the one you have is not another.
+      revealInMain('settings-build-list');
+      const inForce = (state.keys && state.keys.build && typeof state.keys.build.model === 'string')
+        ? state.keys.build.model : '';
+      const cands = buildCandidates(state.keys)
+        .filter(({ p, m }) => p && m && m.id !== inForce);
+      const ranked = cands.filter(({ p }) => p.id === provider).concat(
+        cands.filter(({ p }) => p.id !== provider));
+      for (const { p, m } of ranked) {
+        const el = document.getElementById(buildPickButtonId(p.id, m.id));
+        if (!el) continue;
+        if (typeof el.scrollIntoView === 'function') {
+          try { el.scrollIntoView({ block: 'center' }); } catch { /* jsdom / older engines */ }
         }
-        if (typeof target.focus === 'function') target.focus();
+        if (typeof el.focus === 'function') el.focus();
+        break;
       }
     });
   });
@@ -8638,6 +8917,7 @@ async function onQualifyEstimate(modelId, token) {
 
 /** Close the panel without spending anything. */
 function onQualifyDismiss(token) {
+  stopQualifyClock();
   state.qualify = null;
   render(token);
 }
@@ -8656,6 +8936,7 @@ function onQualifyStop(token) {
     try { state.qualifyAbort.abort(); } catch { /* already settled */ }
   }
   state.qualifyAbort = null;
+  stopQualifyClock();
   state.qualify = null;
   render(token);
 }
@@ -8668,10 +8949,43 @@ function onQualifyStop(token) {
  * indistinguishable from a hang — the report this app has already had about
  * Phase 1 of ingest.
  */
+/**
+ * Stop the elapsed clock.
+ *
+ * ONE PLACE, called from every exit — settled, stopped, errored, abandoned —
+ * because an interval whose clear is written at each call site is an interval
+ * that survives the call site somebody forgets. It is also cleared by the tick
+ * ITSELF when the mount has moved on, so a user who navigates away mid-probe
+ * cannot leave a timer re-rendering a section that is gone.
+ */
+function stopQualifyClock() {
+  if (state.qualifyTickId != null) {
+    try { clearInterval(state.qualifyTickId); } catch { /* already gone */ }
+    state.qualifyTickId = null;
+  }
+}
+
 async function onQualifyGo(modelId, token) {
   const controller = new AbortController();
   state.qualifyAbort = controller;
-  state.qualify = Object.assign({}, state.qualify, { modelId, phase: 'running', runs: [], error: null });
+  // `startedAt` is stamped HERE — before the request, not on the first frame —
+  // because the wait this clock exists to explain BEGINS here: the slowest
+  // measured call is 382 s, and every second of it was previously spent with
+  // the panel reading "Run 0 of 9". See renderQualifyPanel's running arm.
+  state.qualify = Object.assign({}, state.qualify, {
+    modelId, phase: 'running', runs: [], error: null,
+    startedAt: Date.now(), total: null, aborted: null, stoppedAfter: null,
+  });
+  stopQualifyClock();
+  state.qualifyTickId = setInterval(() => {
+    // The mount check lives INSIDE the tick, so the timer stops itself rather
+    // than relying on a teardown that this view does not have.
+    if (!isCurrentMount(token) || !state.qualify || state.qualify.phase !== 'running') {
+      stopQualifyClock();
+      return;
+    }
+    render(token);
+  }, 1000);
   render(token);
 
   try {
@@ -8712,13 +9026,59 @@ async function onQualifyGo(modelId, token) {
           let ev = null;
           try { ev = JSON.parse(data); } catch { continue; }
           if (!isCurrentMount(token)) return;
-          if (type === 'run') {
+          if (type === 'start') {
+            // ── THE FRAME THE CLIENT USED TO THROW AWAY ────────────────
+            // It has always carried `{modelId, domain, runs, promptChars,
+            // sourceName, minRunsToQualify}` and nothing read it, so the panel
+            // could not name the run in flight until the FIRST one settled —
+            // up to 382 s of "Run 0 of 9". Only `runs` is stored, because only
+            // `runs` says something the confirm did not already say, and
+            // storing a field nothing renders is the dead-data shape this repo
+            // keeps re-finding.
+            state.qualify = Object.assign({}, state.qualify, {
+              total: Number.isFinite(ev.runs) && ev.runs > 0 ? ev.runs : null,
+              // The adapter's per-call ceiling. Worth one clause on the waiting
+              // line and nothing more: it bounds how long "waiting for the
+              // model" can possibly last, which is the one thing a user staring
+              // at an unmoving panel actually wants to know. Stored only
+              // because it is RENDERED — `deadlineMs`, `promptChars` and
+              // `sourceName` are on the same frame and are not, because the
+              // confirm panel already said them.
+              callTimeoutMs: Number.isFinite(ev.callTimeoutMs) && ev.callTimeoutMs > 0
+                ? ev.callTimeoutMs : null,
+            });
+            render(token);
+          } else if (type === 'run') {
             state.qualify = Object.assign({}, state.qualify, {
               runs: (state.qualify && state.qualify.runs ? state.qualify.runs : []).concat([ev]),
             });
             render(token);
+          } else if (type === 'done') {
+            // ── THE SERVER GAVE UP, AND SAYS WHY ───────────────────────
+            // `aborted` names the circuit breaker that fired. Read off the
+            // frame FIRST and off the record second: the contract puts it on
+            // the frame, and `record.aborted` has carried the same value since
+            // the probe shipped — so reading both means this works against the
+            // build that sends it and the build that does not, and cannot
+            // disagree with itself when both are present.
+            const aborted = (typeof ev.aborted === 'string' && ev.aborted)
+              ? ev.aborted
+              : ((ev.record && typeof ev.record.aborted === 'string') ? ev.record.aborted : null);
+            if (aborted) {
+              stopQualifyClock();
+              state.qualify = Object.assign({}, state.qualify, {
+                phase: 'stopped',
+                aborted,
+                stoppedAfter: (state.qualify && state.qualify.runs) ? state.qualify.runs.length : 0,
+              });
+              render(token);
+            }
+            // A `done` with no abort is the ordinary end of a run and the
+            // `stored` frame is one line behind it; rendering anything here
+            // would be a state the user sees for a few milliseconds.
           } else if (type === 'stored') {
             state.qualifyAbort = null;
+            stopQualifyClock();
             state.qualify = null;
             // Refetch rather than trusting the stream's echo: `loadKeys` picks
             // up `qualifications` AND `models[provider]`, i.e. what llm.js will
@@ -8728,6 +9088,7 @@ async function onQualifyGo(modelId, token) {
             return;
           } else if (type === 'error') {
             state.qualifyAbort = null;
+            stopQualifyClock();
             state.qualify = { modelId, phase: 'error', runs: [], error: ev.error || 'The test failed.' };
             render(token);
             return;
@@ -8740,6 +9101,11 @@ async function onQualifyGo(modelId, token) {
     // The stream ended without a `stored` frame — the server hung up mid-run.
     if (!isCurrentMount(token)) return;
     state.qualifyAbort = null;
+    stopQualifyClock();
+    // Guarded on `running` SPECIFICALLY, and that now matters: a `done` frame
+    // carrying an abort has already moved the panel to `stopped` and said WHY,
+    // so replacing it here with the generic "stopped before it finished" would
+    // overwrite the real reason with a vaguer one.
     if (state.qualify && state.qualify.phase === 'running') {
       state.qualify = { modelId, phase: 'error', runs: [], error: 'The test stopped before it finished. Nothing was recorded.' };
       render(token);
@@ -8747,6 +9113,7 @@ async function onQualifyGo(modelId, token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.qualifyAbort = null;
+    stopQualifyClock();
     // An abort is the USER stopping the run, not a failure — onQualifyStop has
     // already cleared the panel, so saying anything here would be reporting an
     // error for something that worked.

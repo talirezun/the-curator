@@ -151,6 +151,7 @@ const stubState = {
   buildListOpen: false, modelPickBusy: '', modelPickError: {}, modelPickErrorAt: '',
   catalogueSyncBusy: null, catalogueSync: {}, qualify: null, modelFilter: {},
   modelCheckBusy: null, modelCheck: {}, modelCheckError: {}, worthTestingOpen: false,
+  browseRowOpen: {},
 };
 
 const INJECTED = {
