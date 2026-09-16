@@ -677,6 +677,503 @@ section('\u00a76  THE DEGRADED PAYLOAD — an older backend still renders a page
     '\u2026and never telling a working install that nothing builds its wiki');
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§9  THE BUILD LANE IS VISIBLE ON THE ROW, not only in the last cell');
+// ══════════════════════════════════════════════════════════════════════════
+// THE REPORT: in block 4's 200-row table and block 2's list, the rows that can
+// build the wiki looked exactly like the rows that cannot, and the only tell
+// was whether the LAST of five columns held a button — a column that scrolls
+// out of view inside `.browse-table-wrap`.
+//
+// ── THE SECOND MEASUREMENT IS DELIBERATELY DUMB ─────────────────────────────
+// The expected set is derived from the FIXTURE's own `suitability` field, not
+// from `modelLaneOf` — the function under test's own predicate. Comparing the
+// renderer against the rule it uses would agree with itself whatever the rule
+// became; comparing it against the raw data is the independent cross-check this
+// repo's v3.1.0 lesson asks for. `qualifications` is empty in every fixture
+// here, so `suitability !== 'chat-only'` IS the lane, with no second opinion.
+function rowAttrs(html, tag) {
+  // Deliberately a scan for OPEN TAGS carrying data-model-id, not a parse: the
+  // attributes are what is asserted, so reading them out of the literal source
+  // is the closest thing to reading the rendered attribute list.
+  const out = new Map();
+  const re = new RegExp('<' + tag + '\\s([^>]*?)data-model-id="([^"]*)"([^>]*)>', 'g');
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    out.set(m[2], (m[1] || '') + (m[3] || ''));
+  }
+  return out;
+}
+function laneMarked(attrMap) {
+  const s = new Set();
+  for (const [id, attrs] of attrMap) if (/data-lane="build"/.test(attrs)) s.add(id);
+  return s;
+}
+function sorted(set) { return Array.from(set).sort().join(','); }
+
+{
+  const keys = stateC();
+  const html = renderWith(keys);
+
+  // Block 4's table. Every catalogue row is drawn, from both connected
+  // providers, so the mixed case is the one under test.
+  const tableRows = rowAttrs(html, 'tr');
+  const expectBuild = new Set();
+  const expectChat = new Set();
+  for (const p of ['gemini', 'openrouter']) {
+    for (const m of keys.offerable[p]) {
+      (m.suitability === 'chat-only' ? expectChat : expectBuild).add(m.id);
+    }
+  }
+  ok(expectBuild.size >= 2 && expectChat.size >= 2,
+    `the fixture is genuinely mixed (${expectBuild.size} build, ${expectChat.size} chat-only) ` +
+    '— without both kinds every assertion below is vacuous');
+  ok(tableRows.size === expectBuild.size + expectChat.size,
+    `block 4 draws every catalogue row (got ${tableRows.size})`);
+
+  const marked = laneMarked(tableRows);
+  ok(sorted(marked) === sorted(expectBuild),
+    'block 4: EXACTLY the build-lane rows carry data-lane="build" ' +
+    `(got ${sorted(marked) || 'none'})`);
+  let chatMarked = 0;
+  for (const id of expectChat) if (marked.has(id)) chatMarked++;
+  ok(chatMarked === 0, `block 4: no chat-only row carries the marker (got ${chatMarked})`);
+
+  // The row IN FORCE gets the stronger variant, and there is exactly one of it
+  // on the whole page — the same "in use must mean one model" rule
+  // renderModelOption states for its badge.
+  const current = [];
+  for (const [id, attrs] of tableRows) if (/data-build-current="1"/.test(attrs)) current.push(id);
+  ok(current.length === 1 && current[0] === 'upstage/solar-pro4',
+    `block 4: exactly one row is marked as building now (got ${current.join(',') || 'none'})`);
+  for (const [id, attrs] of tableRows) {
+    if (!marked.has(id)) continue;
+    ok(/browse-row-builds/.test(attrs), `block 4: ${id} carries the paint class too`);
+  }
+  ok(/browse-row-inuse/.test(tableRows.get('upstage/solar-pro4') || ''),
+    'block 4: the row in force carries the stronger paint class');
+
+  // The chip, in the FIRST cell — the one that never scrolls out of view.
+  const builds = (html.match(/model-badge-lane">builds</g) || []).length;
+  const now = (html.match(/model-badge-lane-now">building now</g) || []).length;
+  ok(now === 1, `block 4: one "building now" chip (got ${now})`);
+  ok(builds === expectBuild.size - 1,
+    `block 4: a "builds" chip on every other build row (got ${builds}, expected ${expectBuild.size - 1})`);
+
+  // Block 2's list. EVERY row there is a build candidate, so the assertion is
+  // set equality against the whole list — and there is no `builds` chip,
+  // deliberately: a flag on 100% of a list carries no information (v3.16.1).
+  const liRows = rowAttrs(html, 'li');
+  ok(liRows.size >= 2, `block 2 draws its candidates (got ${liRows.size})`);
+  const liMarked = laneMarked(liRows);
+  ok(liMarked.size === liRows.size,
+    `block 2: every candidate row carries the marker (${liMarked.size} of ${liRows.size})`);
+  const liCurrent = [];
+  for (const [id, attrs] of liRows) if (/data-build-current="1"/.test(attrs)) liCurrent.push(id);
+  ok(liCurrent.length === 1 && liCurrent[0] === 'upstage/solar-pro4',
+    `block 2: exactly one row is marked as building now (got ${liCurrent.join(',') || 'none'})`);
+  for (const [, attrs] of liRows) {
+    ok(/model-option-builds/.test(attrs), 'block 2: …and the paint class with it');
+    break;
+  }
+}
+
+{
+  // THE NEGATIVE STATE. With nothing connected there is no catalogue, so there
+  // must be no marker anywhere — a marker that survived an empty page would
+  // mean it is being emitted unconditionally, which is the mutation this
+  // section exists to catch.
+  const html = renderWith(stateA());
+  ok(!/data-lane="build"/.test(html),
+    'state A: nothing connected, so nothing is marked as building');
+  ok(!/model-badge-lane/.test(html), 'state A: …and no lane chip is emitted');
+}
+
+{
+  // PRICE NEVER TOUCHES THE COLOUR (v3.16.0: price is a fact, never a gate).
+  // Driven, not asserted from the stylesheet: the free row and the dearest row
+  // in this fixture are BOTH chat-only, and the build rows span $0.03 to $0.25
+  // output — so if price leaked into the marker the sets would differ.
+  const keys = stateC();
+  const html = renderWith(keys);
+  const marked = laneMarked(rowAttrs(html, 'tr'));
+  ok(!marked.has('minimax/minimax-m3:free'),
+    'the free model is not marked — being free is not a lane');
+  ok(!marked.has('qwen/qwen3-max'),
+    'the dearest model is not marked either — price is not a lane');
+  const prices = Array.from(marked).map((id) => {
+    for (const p of ['gemini', 'openrouter']) {
+      for (const m of keys.offerable[p]) if (m.id === id) return m.output;
+    }
+    return null;
+  });
+  ok(new Set(prices).size > 1,
+    `the marked rows do NOT share one price (got ${prices.join(', ')}) — so the marker ` +
+    'cannot be a price band wearing a lane’s name');
+}
+
+{
+  // THE STYLESHEET ACTUALLY PAINTS THEM. A marker class nothing styles is a
+  // marker nobody can see, which is the whole report.
+  const css = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.css'), 'utf8');
+  for (const sel of ['.browse-row-builds > td:first-child', '.browse-row-inuse > td:first-child',
+    '.model-option-builds', '.model-badge-lane']) {
+    ok(css.indexOf(sel) !== -1, `settings.css styles ${sel}`);
+  }
+  const ruleBlock = (sel) => {
+    const i = css.indexOf(sel);
+    if (i === -1) return '';
+    const open = css.indexOf('{', i);
+    return css.slice(open, css.indexOf('}', open));
+  };
+  ok(/var\(--accent\)/.test(ruleBlock('.browse-row-builds > td:first-child')),
+    'the rule down a build row is painted in --accent (4.30:1 dark / 6.57:1 light, measured)');
+  ok(/var\(--text\)/.test(ruleBlock('.model-badge-lane')),
+    'the chip LABEL is --text, not the accent — the measured treatment the other ' +
+    'model badges use (14.75:1 dark / 16.16:1 light on the chip’s own tint)');
+  ok(/padding-left/.test(ruleBlock('.browse-table th:first-child')),
+    'every first cell reserves the rule’s space, header included, so a marked row’s ' +
+    'name does not sit two pixels right of an unmarked one’s');
+  // CONTROL: the extractor really does read a block, so the scans above are not
+  // three vacuous truths about an empty string.
+  ok(ruleBlock('.browse-row-inuse > td:first-child').length > 5,
+    'CONTROL: the rule-block reader returns real declarations');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§10  THE RUN ENDS AND THE PANEL SAYS SO');
+// ══════════════════════════════════════════════════════════════════════════
+// THE REPORT: nine runs finished and nothing said they had. `state.qualify` was
+// set to null on the `stored` frame, so the panel simply vanished and the only
+// evidence was a lane cell changing somewhere in a 200-row table.
+{
+  const rec = (over) => Object.assign({
+    modelId: 'ibm-granite/granite-4.0-h-micro', provider: 'openrouter', domain: 'probe',
+    runsCompleted: 9, minRunsToQualify: 9, outcome: 'NO_DEFECT_FOUND', aborted: null,
+    counts: { raw: 9, repaired: 0, unrepairable: 0, unusable: 0, notMeasured: 0, failed: 0 },
+  }, over || {});
+
+  const clean = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: true, record: rec(),
+  }, 9, 'upstage/solar-pro4');
+  okContains(clean, 'Done — no defect found in 9 runs. This model can now build your wiki.',
+    'a clean run says so, in the panel the user has been watching');
+  okContains(clean, 'data-build-model="ibm-granite/granite-4.0-h-micro"',
+    '…and carries the lane control right there');
+  okContains(clean, 'data-build-provider="openrouter"',
+    '…naming the provider too, because the route applies both together');
+  okContains(clean, 'data-qualify-cancel="1"',
+    '…and a way to dismiss it, through the one handler that clears state.qualify');
+
+  // THE PROVIDER IS READ, NEVER GUESSED. A record without one withholds the
+  // button rather than pinning a model under a key the user is not using.
+  const noProv = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: true, record: rec({ provider: null }),
+  }, 9, '');
+  okContains(noProv, 'This model can now build your wiki.',
+    'a record with no provider still reports the outcome');
+  ok(!/data-build-model=/.test(noProv),
+    '…and withholds the control rather than guessing which key would be billed');
+
+  // ALREADY THE BUILD MODEL: report, never offer a write that rewrites the
+  // value it has — this file’s named invitation-to-a-no-op.
+  const already = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: true, record: rec(),
+  }, 9, 'ibm-granite/granite-4.0-h-micro');
+  ok(!/data-build-model=/.test(already),
+    'the model already building the wiki is not offered the button again');
+  okContains(already, 'Building your wiki', '…it reports that state instead');
+
+  // THE FAILING ARM, with the reason.
+  const bad = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: false,
+    record: rec({ outcome: 'DEFECT_OBSERVED',
+      counts: { raw: 2, repaired: 0, unrepairable: 7, unusable: 0, notMeasured: 0, failed: 0 } }),
+  }, 9, '');
+  okContains(bad, 'Done — 7 of 9 runs failed; it stays chat-only.',
+    'a failing run names how many failed and what it means');
+  okContains(bad, '7 returned JSON that could not be repaired.',
+    '…with the reason, not just the count');
+  ok(!/data-build-model=/.test(bad),
+    '…and never offers a control the pin route would refuse');
+
+  // A RATE LIMIT IS NOT A DEFECT. llm.js records this in as many words: it is a
+  // fact about a shared upstream queue, not about the model.
+  const rl = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: false,
+    record: rec({ outcome: 'NOT_MEASURED', runsCompleted: 0,
+      counts: { raw: 0, repaired: 0, unrepairable: 0, unusable: 0, notMeasured: 9, failed: 0 } }),
+  }, 9, '');
+  okContains(rl, 'Done — nothing was measured; it stays chat-only.',
+    'a rate-limited run is reported as not measured');
+  okContains(rl, 'says nothing about the model',
+    '…and is explicitly NOT counted against it');
+  ok(!/runs failed/.test(rl),
+    '…so it never says a run "failed", which would be a finding it does not have');
+
+  // CLEAN BUT SHORT OF THE BAR — say WHICH, rather than letting a clean
+  // result read as a refusal for an unstated reason.
+  const short = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: false,
+    record: rec({ runsCompleted: 3,
+      counts: { raw: 3, repaired: 0, unrepairable: 0, unusable: 0, notMeasured: 0, failed: 0 } }),
+  }, 9, '');
+  okContains(short, 'Done — no defect found, but it stays chat-only.',
+    'clean-but-short says both halves');
+  okContains(short, 'Only 3 of the 9 runs needed', '…and names the bar it fell short of');
+
+  // A BACKEND THAT SENDS NO `counts` MUST STILL PRODUCE A NUMBER, from the run
+  // frames the client already holds — never a silent zero.
+  const framesOnly = R.renderQualifyPanel({
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', total: 9, qualifies: false,
+    runs: [
+      { run: 1, outcome: 'COMPLETED', usable: true },
+      { run: 2, outcome: 'COMPLETED', usable: false },
+      { run: 3, outcome: 'FAILED' },
+    ],
+    record: { modelId: 'ibm-granite/granite-4.0-h-micro', provider: 'openrouter',
+      outcome: 'DEFECT_OBSERVED', runsCompleted: 3 },
+  }, 9, '');
+  okContains(framesOnly, 'Done — 2 of 9 runs failed',
+    'no `counts` on the record: the count comes from the frames, not from nowhere');
+
+  // The phases that existed before this one are untouched.
+  const running = R.renderQualifyPanel({
+    modelId: 'a/b', phase: 'running', runs: [], total: 9, startedAt: Date.now(),
+  }, 9, '');
+  okContains(running, 'Run 1 of 9', 'the running arm is unchanged');
+  ok(!/Done —/.test(running), '…and never claims to be done');
+  ok(R.renderQualifyPanel(null, 9, '') === '', 'no panel with no qualification in flight');
+}
+
+{
+  // THE COMPLETION NOTICE EXISTS ONCE ON THE PAGE. A model that PASSES moves
+  // into the build lane, so the instant `loadKeys` lands it is ALSO a block 2
+  // row — and block 2 renders the same panel for the row being measured.
+  // Without the phase guard in renderModelOption the notice, and the button
+  // with it, would render twice in two different blocks.
+  const keys = stateC();
+  stubState.qualify = {
+    modelId: 'ibm-granite/granite-4.0-h-micro', phase: 'done', runs: [], total: 9,
+    qualifies: true,
+    record: { modelId: 'ibm-granite/granite-4.0-h-micro', provider: 'openrouter',
+      domain: 'probe', runsCompleted: 9, outcome: 'NO_DEFECT_FOUND',
+      counts: { raw: 9, repaired: 0, unrepairable: 0, unusable: 0 } },
+  };
+  // The model is chat-only in the fixture, so give it the qualification the
+  // run just produced — which is exactly what promotes it into block 2.
+  keys.qualifications = [{ modelId: 'ibm-granite/granite-4.0-h-micro', provider: 'openrouter',
+    qualifies: true, outcome: 'NO_DEFECT_FOUND', runsCompleted: 9, domain: 'probe',
+    counts: { raw: 9, repaired: 0, unrepairable: 0, unusable: 0 } }];
+  INJECTED.pendingListboxes.length = 0;
+  Object.assign(stubState, { keys, keysError: null, keysActionError: null,
+    keysActivationNotice: null, modelPickerOpen: {}, modelShelfOpen: false,
+    buildListOpen: false, modelPickBusy: '', modelPickError: {}, modelPickErrorAt: '',
+    modelFilter: {} });
+  const html = R.renderProviders();
+  const marked = laneMarked(rowAttrs(html, 'li'));
+  ok(marked.has('ibm-granite/granite-4.0-h-micro'),
+    'CONTROL: the freshly-qualified model really is a block 2 row now — without ' +
+    'that, the duplicate this guard prevents is unreachable and the assertion is vacuous');
+  const notices = (html.match(/id="qualify-done"/g) || []).length;
+  ok(notices === 1, `the completion notice renders exactly once on the page (got ${notices})`);
+  stubState.qualify = null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§11  render() KEEPS OPEN WHAT THE USER OPENED');
+// ══════════════════════════════════════════════════════════════════════════
+// THE REPORT: an ⓘ fold and the model `<details>` rows closed by themselves
+// while a "Test on my wiki" run streamed. Two causes, measured in the browser:
+// the folds live ONLY in the DOM (shared/text.js flips `hidden` and
+// `aria-expanded` and records nothing), and the `<details>` are state-backed but
+// lose a race, because the spec QUEUES the `toggle` event so a render landing
+// between the click and that task rebuilds from state that is one task stale.
+//
+// Both are closed by capturing off the LIVE DOM before the swap, so this drives
+// the REAL render() against a fake document — the same way
+// test-next-settings-scroll-and-scale.js drives it with spies.
+{
+  function el(tag, attrs, extra) {
+    const a = Object.assign({}, attrs || {});
+    const node = Object.assign({
+      tagName: tag.toUpperCase(),
+      open: false,
+      hidden: false,
+      get attributes() {
+        return Object.keys(a).map((name) => ({ name, value: a[name] }));
+      },
+      getAttribute(n) { return Object.hasOwn(a, n) ? a[n] : null; },
+      setAttribute(n, v) { a[n] = String(v); },
+    }, extra || {});
+    return node;
+  }
+  function makeRoot(nodes) {
+    return {
+      querySelectorAll(sel) {
+        // Deliberately literal. An unrecognised selector THROWS rather than
+        // returning nothing: a fake that silently answers "no matches" turns a
+        // renamed selector into a green test, which is this repo's named
+        // worse-than-no-test shape.
+        if (sel === 'details[open]') return nodes.filter((n) => n.tagName === 'DETAILS' && n.open);
+        if (sel === 'details') return nodes.filter((n) => n.tagName === 'DETAILS');
+        if (sel === '[data-tx-info][aria-expanded="true"]') {
+          return nodes.filter((n) => n.getAttribute('data-tx-info') !== null &&
+            n.getAttribute('aria-expanded') === 'true');
+        }
+        if (sel === '[data-tx-info]') {
+          return nodes.filter((n) => n.getAttribute('data-tx-info') !== null);
+        }
+        throw new Error('fake DOM: unhandled selector ' + sel);
+      },
+    };
+  }
+
+  // BEFORE the render: what the user has open.
+  const shelfBefore = el('details', { 'data-model-shelf': '1' }); shelfBefore.open = true;
+  const rowBefore = el('details', { 'data-model-row': 'z-ai/glm-5.3-flash' });
+  const barefoot = el('details', {}); barefoot.open = true;   // no data- hook at all
+  const infoOnBefore = el('button', { 'data-tx-info': 'p1', 'aria-expanded': 'true' });
+  const infoOffBefore = el('button', { 'data-tx-info': 'p2', 'aria-expanded': 'false' });
+  const rootBefore = makeRoot([shelfBefore, rowBefore, barefoot, infoOnBefore, infoOffBefore]);
+
+  // AFTER the render: exactly what a template string emits — everything
+  // closed, every panel hidden, every button "false".
+  const shelfAfter = el('details', { 'data-model-shelf': '1' });
+  const rowAfter = el('details', { 'data-model-row': 'z-ai/glm-5.3-flash' });
+  const barefootAfter = el('details', {});
+  const infoOnAfter = el('button', { 'data-tx-info': 'p1', 'aria-expanded': 'false' });
+  const infoOffAfter = el('button', { 'data-tx-info': 'p2', 'aria-expanded': 'false' });
+  const p1 = el('div', {}); p1.hidden = true;
+  const p2 = el('div', {}); p2.hidden = true;
+  const rootAfter = makeRoot([shelfAfter, rowAfter, barefootAfter, infoOnAfter, infoOffAfter]);
+
+  let current = rootBefore;
+  const doc = {
+    getElementById(id) {
+      if (id === 'view-root') return current;
+      if (id === 'p1') return p1;
+      if (id === 'p2') return p2;
+      return null;
+    },
+  };
+  const seen = [];
+  const renderFn = new Function('document', 'preserveMainScroll', 'renderSidebar',
+    'renderMain', 'wireGlobalListeners',
+    extractFunction(settingsSrc, 'render') + '\nreturn render;')(
+    doc,
+    (f) => f(),
+    () => seen.push('sidebar'),
+    () => {
+      // The swap. The replacement is CLOSED, which is what makes the assertions
+      // below able to fail: only the restore can reopen anything.
+      current = rootAfter;
+      seen.push({ step: 'main', shelfOpenAtSwap: shelfAfter.open, p1HiddenAtSwap: p1.hidden });
+    },
+    () => seen.push({ step: 'wire', shelfOpenAtWire: shelfAfter.open, p1HiddenAtWire: p1.hidden }),
+  );
+
+  renderFn('tok');
+
+  const mainStep = seen.find((s) => s && s.step === 'main');
+  const wireStep = seen.find((s) => s && s.step === 'wire');
+  ok(mainStep && mainStep.shelfOpenAtSwap === false && mainStep.p1HiddenAtSwap === true,
+    'CONTROL: the freshly-rendered subtree really is closed and hidden at the swap — ' +
+    'so anything open afterwards came from the restore and nowhere else');
+
+  ok(shelfAfter.open === true,
+    'the shelf the user had open is open again after the re-render');
+  ok(rowAfter.open === false,
+    'a row that was CLOSED is left closed — the restore only opens, never guesses');
+  ok(infoOnAfter.getAttribute('aria-expanded') === 'true' && p1.hidden === false,
+    'the ⓘ fold that was open is open again, BOTH halves — panel shown and button ' +
+    'expanded, because shared/text.js reads aria-expanded to decide the next click');
+  ok(infoOffAfter.getAttribute('aria-expanded') === 'false' && p2.hidden === true,
+    'a fold that was closed stays closed');
+
+  ok(wireStep && wireStep.shelfOpenAtWire === true && wireStep.p1HiddenAtWire === false,
+    'the restore runs BEFORE wireGlobalListeners, so the listeners bind to the ' +
+    'subtree the user will actually see');
+
+  ok(barefootAfter.open === false,
+    'a <details> with no data- hook cannot be keyed and is skipped — the stated ' +
+    'limit of the scheme, pinned so it is a decision and not a surprise');
+}
+
+{
+  // THE KEY IS THE COMPOSED data- HOOKS, so two disclosures that differ only in
+  // their hook value do not restore each other. Without this, opening one model
+  // row would reopen every model row on the next repaint.
+  function el2(attrs, open) {
+    const a = Object.assign({}, attrs);
+    return {
+      tagName: 'DETAILS', open: !!open, hidden: false,
+      get attributes() { return Object.keys(a).map((name) => ({ name, value: a[name] })); },
+      getAttribute(n) { return Object.hasOwn(a, n) ? a[n] : null; },
+      setAttribute(n, v) { a[n] = String(v); },
+    };
+  }
+  const mk = (nodes) => ({
+    querySelectorAll(sel) {
+      if (sel === 'details[open]') return nodes.filter((n) => n.open);
+      if (sel === 'details') return nodes;
+      if (sel === '[data-tx-info][aria-expanded="true"]') return [];
+      if (sel === '[data-tx-info]') return [];
+      throw new Error('fake DOM: unhandled selector ' + sel);
+    },
+  });
+  const aBefore = el2({ 'data-model-row': 'a/one' }, true);
+  const bBefore = el2({ 'data-model-row': 'b/two' }, false);
+  const aAfter = el2({ 'data-model-row': 'a/one' }, false);
+  const bAfter = el2({ 'data-model-row': 'b/two' }, false);
+  let cur = mk([aBefore, bBefore]);
+  const doc = { getElementById: (id) => (id === 'view-root' ? cur : null) };
+  const renderFn = new Function('document', 'preserveMainScroll', 'renderSidebar',
+    'renderMain', 'wireGlobalListeners',
+    extractFunction(settingsSrc, 'render') + '\nreturn render;')(
+    doc, (f) => f(), () => {}, () => { cur = mk([aAfter, bAfter]); }, () => {});
+  renderFn('tok');
+  ok(aAfter.open === true, 'the row that was open is restored');
+  ok(bAfter.open === false,
+    '…and its sibling is NOT — the key carries the hook’s VALUE, so one open ' +
+    'row cannot open every row');
+}
+
+{
+  // EVERY <details> THE PAGE EMITS CARRIES A data- HOOK, and this is the guard
+  // that keeps that true: an unhooked one is silently unpreservable, which is
+  // exactly the defect being fixed, reintroduced quietly.
+  //
+  // SCANNED OVER EMITTED STRING LITERALS, never over the file. A bare
+  // `<details>` scan matched this file's own PROSE — settings.js discusses
+  // disclosures in a dozen comments — and reported nine failures that were
+  // sentences. The opening quote is what makes it markup being BUILT; the
+  // window after it is the rest of that tag, which is where the hook has to be
+  // (the shelf splits its tag across three concatenated fragments, so a
+  // per-literal check would be wrong for the opposite reason).
+  const emitted = [];
+  const reDet = /'<details\b/g;
+  let hit;
+  while ((hit = reDet.exec(settingsSrc)) !== null) {
+    const win = settingsSrc.slice(hit.index, hit.index + 400);
+    const close = win.indexOf('>');
+    emitted.push(close === -1 ? win : win.slice(0, close + 1));
+  }
+  const unhooked = emitted.filter((h) => !/data-[a-z-]+="/.test(h));
+  ok(emitted.length >= 5,
+    `CONTROL: the scan finds the page’s EMITTED disclosures (got ${emitted.length})`);
+  ok(unhooked.length === 0,
+    'every <details> settings.js emits carries a data- hook, so render() can key it ' +
+    `(unhooked: ${unhooked.length})`);
+}
+
 console.log(`\n  ${'\u2500'.repeat(46)}`);
 console.log(`  Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {

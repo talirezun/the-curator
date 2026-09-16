@@ -3711,6 +3711,8 @@ The labelling was overhauled to stop a long list reading as a wall of warnings. 
 | Marker | Meaning |
 |---|---|
 | **provider chip** | Which provider the row belongs to — needed now that the build list is one cross-provider list. |
+| **builds** | This model **can** build your wiki. In the *All models* table it is a chip under the name and a coloured rule down the left edge of the row, so you can see the lane without reading across to the last column — which, in a narrow window, scrolls out of view. It says nothing about price: a free model and a $25 one in the same lane look identical. |
+| **building now** | The one model that **is** building your wiki. Same colour, stronger: a thicker rule, a tinted row, and the word changes. There is exactly one of these. |
 | **in use** | This is what is actually running right now. |
 | **your choice** | You picked this one, so an update won't move you off it. |
 | **cheapest** | The least expensive model available. A reference point for the rows near it. |
@@ -3750,6 +3752,8 @@ The measurement is nine runs, and on the slowest models a single run has taken o
 - **A run that fails says what the provider said.** A wrong key, a rate limit, a model the router has withdrawn — these used to be one word, *FAILED*. The panel now carries the provider's own message, and a button to pick a model that has already been measured, because a model failing its probe is usually the moment to stop.
 - **A run the server gives up on says so, and says what was recorded.** The probe stops itself when a model burns its whole output budget on hidden reasoning several times over, or when the provider rate-limits it. Those are different findings and they are not described the same way: a rate limit is a fact about the queue and **nothing is recorded against the model**, while a budget burn is an observation about the model on your wiki and is kept.
 - **Stop still stops it**, unchanged. A cancelled run is never stored — it measured nothing, and writing a stub over a real earlier result would lose evidence you paid for.
+- **It says when it has finished.** The panel used to simply vanish when the ninth run landed: nothing announced the end, and the only evidence was a lane cell changing somewhere in a two-hundred-row table. It now ends on a plain sentence — *"Done — no defect found in 9 runs. This model can now build your wiki."*, with the **Use for building** button right there, or *"Done — N of 9 runs failed; it stays chat-only."* with the reason under it — and stays on screen until you close it. The measured detail (counts, planned pages, speed, cost) is unchanged and sits directly above it. A rate-limited run says *"Done — nothing was measured"*, because that is a fact about the queue and not about the model.
+- **Nothing you have open closes itself while it runs.** Each progress update repaints the screen, which used to shut every ⓘ explanation and every expanded row you had opened. Whatever you open stays open.
 
 ### Why some models are flagged
 

@@ -859,6 +859,25 @@ section('§8c  ONE MODEL, ONE STORY — the picker and the table stop contradict
   ok(trRow(nb.all, GONE_ID).includes('>Use for building<'),
     'CONTROL: the null-verdict row still offers it — so the withholding above is not vacuous');
 
+  // ── TWO FACTS, AND NEITHER ERASES THE OTHER ────────────────────────────
+  // "This is a model that can build a wiki" and "the provider has withdrawn it"
+  // are separate claims, and the lane marker added for the build-row colouring
+  // must not silently become an availability signal: a withdrawn row keeps the
+  // lane (it IS a build-lane model — that is why its disappearance matters)
+  // and carries the warning chip beside the lane chip. Collapsing them would
+  // make the page say a withdrawn model was never a build model, which is the
+  // opposite of what happened.
+  ok(/data-lane="build"/.test(goneTr),
+    '★★ a WITHDRAWN build-lane row keeps its lane marker [mutation: gating ' +
+    'data-lane on the live verdict reds this]');
+  ok(/model-badge-lane/.test(goneTr) && goneTr.includes('model-badge-gone'),
+    '★ …and wears BOTH chips — the lane it is in and the warning about it');
+  const chatTr = trRow(gb.all, 'vendor/unmeasured-big');
+  ok(chatTr, 'CONTROL: the chat-only comparison row is drawn in the same table');
+  ok(!/data-lane="build"/.test(chatTr),
+    'CONTROL: a chat-only row in the SAME render carries no lane marker — so the ' +
+    'assertion above is about the lane and not about every row on the page');
+
   // ── THE ROW THAT IS ACTUALLY RUNNING ───────────────────────────────────
   // The lane cell states WHAT IS IN FORCE. On a withdrawn id it must state both
   // halves: still pinned (nothing is re-pinned for you) AND gone.

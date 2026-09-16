@@ -1547,10 +1547,121 @@ function requestTheme(target) {
 // nothing behind for the wiring pass to mount.
 const pendingListboxes = [];
 
+/**
+ * ── WHAT IS OPEN RIGHT NOW, READ OFF THE DOM ───────────────────────────────
+ *
+ * MEASURED IN THE REAL APP, not inferred from the report. The maintainer saw
+ * three things close by themselves while a "Test on my wiki" run streamed, and
+ * they have TWO different causes — one deterministic, one a race — which is why
+ * this is a capture/restore pair rather than another `state.somethingOpen`.
+ *
+ *   1. THE ⓘ FOLDS LOSE EVERY TIME, DETERMINISTICALLY. Their open state lives
+ *      ONLY in the DOM: shared/text.js's one delegated listener flips
+ *      `panel.hidden` and the button's `aria-expanded`, and writes nothing
+ *      anywhere else. renderMain() re-emits every panel with `hidden` and every
+ *      button with `aria-expanded="false"`, so a render CANNOT preserve them.
+ *      Measured in the browser at 1280x900: fold open -> press "Test on my
+ *      wiki" (one render) -> `aria-expanded` "true" -> "false", `hidden` false
+ *      -> true. One render is enough; a run emits one per SSE frame plus one a
+ *      second from the elapsed clock.
+ *
+ *   2. THE `<details>` ARE STATE-BACKED AND STILL LOSE A RACE. `open` is
+ *      recorded by a `toggle` listener, and the HTML spec QUEUES that event
+ *      rather than firing it synchronously. So a render landing in the gap
+ *      between the click and the toggle task rebuilds the element from state
+ *      that has not been written yet, and the disclosure snaps shut. Measured:
+ *      click a `[data-model-row]` summary, force a render in the SAME task ->
+ *      `open` false. It comes back on the NEXT render (the queued toggle does
+ *      run, on the detached node), which is why this reads as flicker rather
+ *      than as loss — and why it is only visible while something is
+ *      re-rendering once a second.
+ *
+ * THE DOM IS THE MORE RECENT TRUTH, and that is the whole idea. The browser
+ * applied the user's click synchronously; `state` is one queued task behind.
+ * Capturing from the live DOM immediately before the swap therefore beats
+ * reading the same state the renderer just read, and closes (2) as well as (1).
+ *
+ * RESTORE ONLY OPENS, NEVER CLOSES. Several renderers FORCE a disclosure open —
+ * the build list while a refusal or a write belongs to a row inside it, a model
+ * row while it is the one being measured — and a restore that also closed
+ * things would fight them, re-creating the v3.9.x "confirm rendered inside a
+ * collapsed disclosure" shape. A stray open disclosure is visible and one click
+ * from being closed; a disclosure that snapped shut is the defect being fixed.
+ *
+ * KEYED ON THE `data-*` HOOKS THE ELEMENTS ALREADY CARRY, composed and sorted,
+ * rather than on a hand-maintained list of attribute names. A list is a second
+ * description of the page that is free to fall behind it: a `<details>` added
+ * later and forgotten would silently go back to snapping shut, with nothing
+ * failing. A `<details>` with no `data-` hook at all cannot be keyed and is
+ * skipped — which is why `.catalogue-funnel` was given one.
+ */
 function render(token) {
   preserveMainScroll(() => {
+    // ── EVERYTHING THIS NEEDS IS INLINE, AND THAT IS A CONSTRAINT ─────────
+    // `render` is EXECUTED, not scanned, by scripts/test-next-settings-scroll-
+    // and-scale.js: it is lifted out of this file with `extractFunction` and
+    // called with four spies for `preserveMainScroll`, `renderSidebar`,
+    // `renderMain` and `wireGlobalListeners`. In that sandbox any other free
+    // identifier is a ReferenceError — a CRASH rather than a failing assertion,
+    // the v3.11.0 FN_NAMES shape this file names twice elsewhere. So the
+    // capture/restore lives here rather than in two module-level helpers, and
+    // the `typeof document` guards are what let the same code run under Node
+    // with no DOM at all. In a browser both are always taken.
+    const doc = (typeof document === 'undefined') ? null : document;
+    const foldKey = (el) => {
+      const parts = [];
+      for (const a of el.attributes) {
+        if (a.name.indexOf('data-') === 0) parts.push(a.name + '=' + a.value);
+      }
+      if (!parts.length) return '';
+      parts.sort();
+      return parts.join('&');
+    };
+
+    // Taken BEFORE the swap, off the LIVE DOM. Setting `open` back on below
+    // queues a `toggle`, and wireGlobalListeners runs in this same task, so the
+    // listener is attached long before that task fires and DOES write `true`
+    // into state. That is the repair, not a side effect: in race (2) above, the
+    // state is the thing that was stale. An element the renderer already
+    // emitted open is untouched — no attribute change, no event.
+    const before = doc ? doc.getElementById('view-root') : null;
+    const openFolds = new Set();
+    const openInfos = new Set();
+    if (before) {
+      before.querySelectorAll('details[open]').forEach((el) => {
+        const key = foldKey(el);
+        if (key) openFolds.add(key);
+      });
+      before.querySelectorAll('[data-tx-info][aria-expanded="true"]').forEach((btn) => {
+        const id = btn.getAttribute('data-tx-info');
+        if (id) openInfos.add(id);
+      });
+    }
+
     renderSidebar(token);
     renderMain(token);
+
+    const after = doc ? doc.getElementById('view-root') : null;
+    if (after && openFolds.size) {
+      after.querySelectorAll('details').forEach((el) => {
+        const key = foldKey(el);
+        if (key && openFolds.has(key)) el.open = true;
+      });
+    }
+    if (after && openInfos.size) {
+      after.querySelectorAll('[data-tx-info]').forEach((btn) => {
+        const id = btn.getAttribute('data-tx-info');
+        if (!id || !openInfos.has(id)) return;
+        const panel = doc.getElementById(id);
+        // Both halves or neither: shared/text.js's delegated listener reads
+        // `aria-expanded` to decide what the NEXT click does, so a panel shown
+        // with its button still saying "false" would take two clicks to close.
+        if (!panel) return;
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+      });
+    }
+
     wireGlobalListeners();
   });
 }
@@ -2730,6 +2841,7 @@ function renderGoneChip(providerName) {
     'no longer offered by ' + escapeHtml(who) + '</span>';
 }
 
+
 /**
  * ── THE BUILD LANE, AS ONE RECORD ──────────────────────────────────────────
  *
@@ -3280,6 +3392,35 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
   // that drifted from the server's would be a false claim about a bar.
   const minRuns = Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9;
 
+  // ── THE BUILD-LANE CHIP ─────────────────────────────────────────────────
+  //
+  // FUNCTION-LOCAL, and that is deliberate — the same rule `renderQualifyPanel`
+  // states for its own `QUALIFY_ABORT_REASONS`: NO NEW MODULE-LEVEL IDENTIFIER
+  // enters the sandboxes that several suites build by extraction, because a
+  // missing binding there is a CRASH rather than a failing assertion (the
+  // v3.11.0 FN_NAMES shape). This function is the only surface that renders the
+  // chip — block 2's list deliberately does not (see renderModelOption) — so
+  // there is no second caller a shared builder would serve.
+  //
+  // TWO STRENGTHS, ONE VOCABULARY. `builds` means this model MAY build the
+  // wiki; `building now` means it IS the one doing it. They are facts about
+  // different numbers of rows — many, and exactly one — and one marker for both
+  // would lose the thing a reader scanning this table is looking for.
+  //
+  // NOT A RECOMMENDATION AND NOT A RANKING: it states the eligibility the
+  // server decides (`isBuildLaneModel`, mirrored by `laneBuildsWiki`). Price
+  // plays no part — v3.16.0, price is a fact and never a gate — so a free model
+  // and a dear one in the same lane wear the identical chip.
+  //
+  // IT IS NOT REDUNDANT WITH THE LANE CELL, because of `.browse-table-wrap
+  // { overflow-x: auto }`: the lane cell is the LAST of five columns and
+  // scrolls out of view in a narrow main column, which is the case the wrap
+  // exists for. The name cell is the first and is always on screen. The chip is
+  // where the fact survives; the cell is where the control is.
+  const laneChip = (isNow) => (isNow === true
+    ? '<span class="model-badge model-badge-lane model-badge-lane-now">building now</span>'
+    : '<span class="model-badge model-badge-lane">builds</span>');
+
   const body = orderedRows.map(({ p, m, lane, qual }) => {
     const inUse = p.id === activeProvider && m.id === defaultId;
     const canBuild = laneBuildsWiki(lane);
@@ -3362,7 +3503,9 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
       : (typeof m.note === 'string' ? m.note : '');
     const qualHtml = renderQualification(qual, minRuns, k && k.models ? k.models[p.id] : '') +
       ((state.qualify && state.qualify.modelId === m.id)
-        ? renderQualifyPanel(state.qualify, minRuns) : '');
+        // `defaultId` is what is building the wiki right now, so the done
+        // panel can report that state instead of offering to set it again.
+        ? renderQualifyPanel(state.qualify, minRuns, defaultId) : '');
     const hasDetail = !!(noteText.trim() || qualHtml);
     const detailOpen = hasDetail &&
       (state.browseRowOpen[m.id] === true || !!(state.qualify && state.qualify.modelId === m.id));
@@ -3386,11 +3529,35 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     // surfaces. It is also what makes the duplicate check possible: with the
     // per-provider lists gone, no id may appear twice INSIDE this block, and an
     // attribute that exists on only one of the two renderings could not say so.
-    return '<tr data-model-id="' + escapeHtml(String(m.id == null ? '' : m.id)) + '">' +
+    // ── THE LANE, ON THE ROW ITSELF ────────────────────────────────────
+    // THE MAINTAINER'S THIRD REPORT: in a 200-row table the rows that can
+    // build the wiki looked exactly like the rows that cannot, and the only
+    // tell was whether the last cell held a button — i.e. you had to read
+    // across the whole row to learn the one thing the table is sorted and
+    // filtered by. A coloured left rule and one chip carry it at a glance.
+    //
+    // DERIVED FROM `lane`, THE SAME PREDICATE THE CONTROL IS. `canBuild` is
+    // `laneBuildsWiki(lane)`, which mirrors the server's own `isBuildLaneModel`
+    // — so the marker and the button cannot come to disagree about a row, which
+    // is exactly the drift this file records for the badge, the note and the
+    // control before `lane` was resolved once.
+    //
+    // PRICE NEVER TOUCHES THIS. v3.16.0's rule: price is a fact, never a gate.
+    // The rule and the chip say what a model may be used FOR, and a free model
+    // and a dear one in the same lane are drawn identically.
+    //
+    // `data-lane` IS THE MARKER; the classes are the paint. A test asserting
+    // "every build row and no chat row" needs one attribute, not a reading of
+    // the class list.
+    const inUseAttr = inUse ? ' data-build-current="1"' : '';
+    return '<tr data-model-id="' + escapeHtml(String(m.id == null ? '' : m.id)) + '"' +
+      (canBuild ? ' data-lane="build" class="browse-row-builds' + (inUse ? ' browse-row-inuse' : '') + '"'
+                : '') + inUseAttr + '>' +
       '<td class="browse-name">' + expander + '<b>' + escapeHtml(m.label || m.id) + '</b>' +
         // ONE builder, shared with the block-2 picker row, so the two surfaces
         // cannot word one fact differently — the drift this file already
         // records for `dominated` / "out-performed".
+        (canBuild ? laneChip(inUse) : '') +
         (gone ? renderGoneChip(p.name) : '') +
         '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
       '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
@@ -3431,7 +3598,7 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
           '<p class="browse-qualify-orphan">A measurement is running on <code class="mono">' +
           escapeHtml(String(qualifyingId)) + '</code>, which the filters above have removed from ' +
           'the table.</p>' +
-          renderQualifyPanel(state.qualify, minRuns) +
+          renderQualifyPanel(state.qualify, minRuns, defaultId) +
         '</div>'
       : '');
 
@@ -3947,7 +4114,11 @@ function renderCatalogueSyncDetail(p, k, last) {
       '</li>';
   }).join('');
   const funnelHtml = funnelRows
-    ? '<details class="catalogue-funnel">' +
+    // The `data-` hook is what makes this fold survive a re-render: render()'s
+    // capture/restore pair keys on the composed data-attributes an element
+    // already carries, and a <details> with none of them cannot be keyed. This
+    // was the one live disclosure on the page with no hook at all.
+    ? '<details class="catalogue-funnel" data-catalogue-funnel="' + escapeHtml(String(p && p.id ? p.id : '')) + '">' +
         '<summary class="catalogue-funnel-summary">Why models were left out</summary>' +
         '<ul class="catalogue-funnel-list">' + funnelRows + '</ul>' +
       '</details>'
@@ -5606,7 +5777,11 @@ function renderCatalogueSync(p, k, crossBusy) {
       '</li>';
   }).join('');
   const funnelHtml = funnelRows
-    ? '<details class="catalogue-funnel">' +
+    // The `data-` hook is what makes this fold survive a re-render: render()'s
+    // capture/restore pair keys on the composed data-attributes an element
+    // already carries, and a <details> with none of them cannot be keyed. This
+    // was the one live disclosure on the page with no hook at all.
+    ? '<details class="catalogue-funnel" data-catalogue-funnel="' + escapeHtml(String(p && p.id ? p.id : '')) + '">' +
         '<summary class="catalogue-funnel-summary">Why models were left out</summary>' +
         '<ul class="catalogue-funnel-list">' + funnelRows + '</ul>' +
       '</details>'
@@ -6811,7 +6986,7 @@ function renderQualification(qual, minRuns, baselineModelId) {
  * it, which is the whole point — and the moment run 1 lands the panel switches
  * to a projection derived from that actual measurement.
  */
-function renderQualifyPanel(q, minRuns) {
+function renderQualifyPanel(q, minRuns, buildNow) {
   if (!q) return '';
   if (q.error) {
     return '<div class="model-qual model-qual-defect"><p class="model-qual-head">' +
@@ -6978,6 +7153,119 @@ function renderQualifyPanel(q, minRuns) {
       '</div>'
     );
   }
+  // ── THE RUN FINISHED, AND THE PANEL SAYS SO ───────────────────────────────
+  // THE MAINTAINER'S SECOND REPORT. Nine runs ended and nothing said they had:
+  // `state.qualify` was set to null on the `stored` frame, the panel vanished,
+  // and the only evidence was a lane cell changing to "Use for building"
+  // somewhere in a 200-row table. The screen now states the outcome where the
+  // user has been watching, and — when the model passed — carries the lane
+  // control itself, so the next act is one click away instead of a search.
+  //
+  // THE EXISTING SUMMARY IS NOT REPLACED. `renderQualification` renders the
+  // stored record's counts, pages, latency and cost immediately above this
+  // panel (the `stored` frame is followed by a `loadKeys`, which brings the
+  // record back in `qualifications`). This adds the VERDICT and the action; it
+  // does not restate the evidence.
+  if (q.phase === 'done') {
+    // ── WHAT THE FINISHED RUN MEANS, AS FACTS ───────────────────────────
+    // FUNCTION-LOCAL for the reason `QUALIFY_ABORT_REASONS` below is: no new
+    // module-level identifier enters the sandboxes several suites build by
+    // extraction, where a missing binding is a CRASH rather than a failing
+    // assertion (the v3.11.0 FN_NAMES shape). It is fully drivable through this
+    // renderer, which every one of those manifests already lists.
+    //
+    // `qualifies` COMES FROM THE SERVER AND IS NEVER RE-DERIVED. The route
+    // recomputes it through `isLocallyQualified` — the same gate
+    // `POST /api-keys/build-model` applies — so a second client-side rule would
+    // be free to offer a button the pin route then refuses. The counts decide
+    // only how a FAILURE is worded, never whether it is one.
+    const d = (() => {
+      const num = (v) => (Number.isFinite(v) ? v : 0);
+      const rec = (q.record && typeof q.record === 'object') ? q.record : {};
+      const counts = (rec.counts && typeof rec.counts === 'object') ? rec.counts : {};
+      const frames = Array.isArray(q.runs) ? q.runs : [];
+      const floor = Number.isFinite(minRuns) ? minRuns : 9;
+
+      const completed = Number.isFinite(rec.runsCompleted) ? rec.runsCompleted : frames.length;
+      const total = (Number.isFinite(q.total) && q.total > 0)
+        ? q.total
+        : (Number.isFinite(rec.minRunsToQualify) ? rec.minRunsToQualify : floor);
+
+      // A clean run is one of the two PARSE classes that produced a usable
+      // plan. Anything else — unrepairable, parsed-but-unusable, a call that
+      // never returned — is a run that did not do the job, which is what the
+      // headline counts. Derived from the RECORD where it has counts, and from
+      // the frames only when it does not: an older backend that sends a record
+      // without `counts` must still produce a number, not a silent zero.
+      const clean = num(counts.raw) + num(counts.repaired);
+      const failed = Object.keys(counts).length
+        ? Math.max(0, completed - clean)
+        : frames.filter((r) => !(r && r.outcome === 'COMPLETED' && r.usable === true)).length;
+
+      const qualifies = q.qualifies === true;
+      // `provider` IS READ OFF THE RECORD, AND ITS ABSENCE WITHHOLDS THE
+      // BUTTON. `POST /api-keys/build-model` names provider AND model together;
+      // a guessed provider would pin a model under a key the user is not using.
+      // Under-offering costs one click in block 2; a wrong pin moves the bill.
+      const provider = (typeof rec.provider === 'string' && rec.provider) ? rec.provider : '';
+      const modelId = (typeof q.modelId === 'string') ? q.modelId : '';
+
+      let headline;
+      let reason = '';
+      if (qualifies) {
+        headline = 'Done — no defect found in ' + completed +
+          ' runs. This model can now build your wiki.';
+      } else if (rec.outcome === 'NOT_MEASURED') {
+        // NOT a failure of the model, and it must not be counted as one: a rate
+        // limit is a fact about a shared upstream queue. The same distinction
+        // llm.js and renderQualification both make in as many words.
+        headline = 'Done — nothing was measured; it stays chat-only.';
+        reason = 'The provider rate-limited the run, which says nothing about the model. ' +
+          'Try again later.';
+      } else if (failed > 0) {
+        headline = 'Done — ' + failed + ' of ' + total + ' runs failed; it stays chat-only.';
+        reason = num(counts.unrepairable)
+          ? num(counts.unrepairable) + ' returned JSON that could not be repaired.'
+          : num(counts.unusable)
+            ? num(counts.unusable) + ' returned JSON with no usable page list.'
+            : 'Those runs did not return a plan this app could use.';
+      } else {
+        // Clean, and still short of the bar — say WHICH, rather than letting a
+        // clean result read as a refusal for an unstated reason.
+        headline = 'Done — no defect found, but it stays chat-only.';
+        reason = 'Only ' + completed + ' of the ' + total +
+          ' runs needed before a model can build your wiki were completed.';
+      }
+      return { qualifies, completed, total, failed, headline, reason, provider, modelId };
+    })();
+    // The same control block 4's table renders, byte for byte in its two data
+    // attributes — one route, `POST /api-keys/build-model`, which names
+    // provider and model together and so cannot strand a pin under a provider
+    // that is not active. Withheld when the record carried no provider (see
+    // qualifyDoneFacts) and when this model is ALREADY what builds the wiki,
+    // because a control whose only outcome is rewriting the value it has is
+    // this file's named invitation-to-a-no-op.
+    const alreadyBuilding = typeof buildNow === 'string' && buildNow !== '' && buildNow === d.modelId;
+    const act = (d.qualifies && d.provider && d.modelId && !alreadyBuilding)
+      ? '<button type="button" class="btn btn-primary btn-xs"' +
+          ' data-build-model="' + escapeHtml(d.modelId) + '"' +
+          ' data-build-provider="' + escapeHtml(d.provider) + '">Use for building</button>'
+      : (alreadyBuilding ? '<span class="model-pick-state">Building your wiki</span>' : '');
+    return (
+      '<div class="model-qual ' + (d.qualifies ? 'model-qual-clean' : 'model-qual-short') +
+        '" id="qualify-done" role="status">' +
+        '<p class="model-qual-head">' + escapeHtml(d.headline) + '</p>' +
+        (d.reason ? '<p class="model-qual-caveat">' + escapeHtml(d.reason) + '</p>' : '') +
+        '<div class="model-qual-actions">' + act +
+          // Dismiss goes through the SAME handler Cancel on the confirm panel
+          // uses — one way to clear `state.qualify`, so a second path cannot
+          // leave the clock or the abort controller behind.
+          '<button type="button" class="btn btn-secondary btn-xs" data-qualify-cancel="1">Close</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
   // ── STOPPED BY THE SERVER'S OWN CIRCUIT BREAKER ───────────────────────────
   // The `done` frame can carry an `aborted` class — the probe gave up after a
   // run of reasoning burn, of exhausted budgets, or of rate limits. Without
@@ -7255,8 +7543,17 @@ function renderModelOption(m, index, defaultId, ctx) {
   // The user's own measurement, and the live panel if this is the row being
   // measured right now. Both live in the row BODY (behind the expand) except
   // while a probe is running, which renderModelOption's caller forces open.
+  // ── THE DONE PANEL IS NOT RENDERED HERE, AND THAT IS NOT AN OVERSIGHT ────
+  // A model that PASSES its probe moves into the build lane, so the instant
+  // `loadKeys` lands it appears in block 2's list as well — and this renderer
+  // is block 2's row. Without the phase guard the completion notice, and the
+  // "Use for building" button with it, would render TWICE on one page, in two
+  // different blocks. It belongs to block 4's table, which is where the press
+  // happened and where the user has been watching; that row is forced open
+  // while `state.qualify` names its model, so it is on screen.
   const qualHtml = renderQualification(qual, c.minRuns, c.baselineModelId) +
-    ((c.qualify && c.qualify.modelId === m.id) ? renderQualifyPanel(c.qualify, c.minRuns) : '');
+    ((c.qualify && c.qualify.modelId === m.id && c.qualify.phase !== 'done')
+      ? renderQualifyPanel(c.qualify, c.minRuns) : '');
 
   // ── DENSITY: one row per model, its evidence one click inside ──────────
   // Fourteen models with a four-line note each measured 3,938px — 4.6
@@ -7559,11 +7856,28 @@ function renderModelOption(m, index, defaultId, ctx) {
       escapeHtml(c.pickError) + '</div>'
     : '';
 
+  // ── THE LANE, ON THE ROW ITSELF ──────────────────────────────────────────
+  // The same marker block 4's table carries, from the same predicate
+  // (`laneBuildsWiki(lane)`), so a row can never be marked in one list and not
+  // the other. In block 2 EVERY row is a build candidate, which is why there is
+  // a rule and an attribute here but no `builds` chip: a flag on 100% of a list
+  // carries no information — v3.16.1's finding, which removed a badge that was
+  // true of 194 of ~199 rows. What the rule buys in a list where all rows
+  // qualify is the same thing it buys in the mixed table: the lane is legible
+  // without reading across to the control.
+  //
+  // `data-build-current` marks the ONE row in force. It is deliberately a
+  // separate attribute from `model-option-default`'s class, because that class
+  // is the paint (a success border and tint) and this is the fact — a suite
+  // asking "which row is building the wiki" should not have to read a colour.
+  const laneAttr = buildsWiki ? ' data-lane="build"' : '';
+  const currentAttr = (buildsWiki && isDefault) ? ' data-build-current="1"' : '';
   return (
     '<li class="model-option' + (isDefault ? ' model-option-default' : '') +
+      (buildsWiki ? ' model-option-builds' : '') +
       (isSelected ? ' model-option-chosen' : '') +
       (pickErrorHtml ? ' model-option-refused' : '') +
-      '" data-model-id="' + idAttr + '">' +
+      '" data-model-id="' + idAttr + '"' + laneAttr + currentAttr + '>' +
       '<div class="model-option-main">' + inner + '</div>' +
       '<div class="model-option-pick">' + control + '</div>' +
       pickErrorHtml +
@@ -9256,7 +9570,25 @@ async function onQualifyGo(modelId, token) {
           } else if (type === 'stored') {
             state.qualifyAbort = null;
             stopQualifyClock();
-            state.qualify = null;
+            // ── THE RUN ENDED, AND THE SCREEN NOW SAYS SO ──────────────────
+            // This was `state.qualify = null`, so nine runs and up to 57
+            // minutes ended with the panel simply VANISHING: the row's lane
+            // cell changed to "Use for building" somewhere in a 200-row table
+            // and nothing anywhere said the thing the user had been watching
+            // was finished. The panel stays, in a `done` phase, until the user
+            // dismisses it — see renderQualifyPanel's done arm.
+            //
+            // `qualifies` is read off the FRAME, which the route recomputes
+            // through `isLocallyQualified` — the same gate the pin route uses —
+            // so the button this panel offers cannot disagree with the server
+            // about whether the pin will be accepted.
+            state.qualify = Object.assign({}, state.qualify, {
+              phase: 'done',
+              record: (ev.record && typeof ev.record === 'object') ? ev.record : null,
+              stored: (ev.stored && typeof ev.stored === 'object') ? ev.stored : null,
+              qualifies: ev.qualifies === true,
+              error: null,
+            });
             // Refetch rather than trusting the stream's echo: `loadKeys` picks
             // up `qualifications` AND `models[provider]`, i.e. what llm.js will
             // now actually resolve. Reporting the request instead of the

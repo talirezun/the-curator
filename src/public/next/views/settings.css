@@ -1314,7 +1314,21 @@
   align-items: center;
   padding: var(--space-4) 8px var(--space-4) 4px;
 }
+/* ── THE BUILD LANE, ON THE ROW ─────────────────────────────────────────────
+   The same fact block 4's table carries, from the same predicate. There is a
+   rule but no `builds` chip in this list, because EVERY row here is a build
+   candidate and a flag on 100% of a list carries no information — v3.16.1's
+   finding, which removed a badge that was true of 194 of ~199 rows. An inset
+   shadow rather than a border-left: `.model-option` already owns its border
+   (three states use its colour), so a fourth claim on the same property would
+   have to win or lose an argument with them on every row. */
+.model-option-builds { box-shadow: inset 2px 0 0 var(--accent); }
 .model-option-default { border-color: var(--success-text); background: var(--success-tint); }
+/* The row in force keeps its existing success-green chrome — that is the
+   "stronger variant", unchanged — and takes the thicker rule so the lane and
+   the in-use state stay two separately legible facts on the one row that is
+   both. */
+.model-option-builds.model-option-default { box-shadow: inset 4px 0 0 var(--accent); }
 /* The user's own pick reads in the accent, deliberately NOT the success
    green that marks "in use": on the common row where a model is both, the
    two facts must stay separately legible. Border only — a second tinted
@@ -1507,6 +1521,33 @@
    one flag treatment — only the carrier moved from the label to the tint and the
    border, so a flag can now be read as well as spotted. */
 .model-badge-flag { background: var(--attention-tint); color: var(--text); border: 1px solid var(--attention-text); }
+/* ── THE BUILD LANE, AS A CHIP ──────────────────────────────────────────────
+   The rows that can build the wiki used to look exactly like the rows that
+   cannot: in a 200-row table the only tell was whether the last of five columns
+   held a button, and that column scrolls out of view inside
+   `.browse-table-wrap`. So the fact is carried in the FIRST cell as well.
+
+   TONE IN THE TINT AND THE BORDER, LABEL AT --text — the treatment
+   `.model-badge-default` and `.model-badge-flag` already use, and for the
+   measured reason stated above them: an accent as a badge LABEL falls to 3.80
+   dark / 5.81 light on this chip's own background, while --text measures
+   14.75 / 16.16. The border carries the colour and measures 4.30 dark / 6.57
+   light against the row, over the 3:1 floor for a non-text indicator.
+
+   PRICE PLAYS NO PART IN IT. v3.16.0: price is a fact, never a gate — a free
+   model and a dear one in the same lane wear the identical chip. */
+.model-badge-lane {
+  background: var(--accent-tint);
+  color: var(--text);
+  border: 1px solid var(--accent);
+}
+/* The ONE model in force. The extra strength is bought on non-colour channels —
+   a heavier border, a different word, and (on the row itself) a thicker rule
+   and a tinted background — because every filled-accent variant measured under
+   the 4.5 text floor in at least one theme: --text on --accent is 3.89 dark /
+   2.78 light, and --surface on --accent is 4.30 dark. Keeping the tint keeps
+   the label at 14.75 / 16.16 in both. */
+.model-badge-lane-now { border-width: 2px; }
 
 .model-price { font-size: var(--text-sm); color: var(--text); font-weight: var(--weight-medium); }
 .model-price-unit { color: var(--text-2); font-weight: var(--weight-regular); font-size: var(--text-2xs); }
@@ -2378,6 +2419,23 @@
    the chat composer's menu) disagreeing about how a price is set. */
 .browse-table td.browse-num { font-size: var(--text-sm); }
 .browse-name b { font-weight: var(--weight-medium); color: var(--text); }
+/* ── A CHIP IN THIS CELL TAKES ITS OWN LINE ─────────────────────────────────
+   FOUND BY RENDERING IT, twice. The name cell is 140 px wide at 1280x900 and a
+   lane chip is 77 px of it, so an inline chip broke the model name in half:
+   `Solar Pro` / `4 [building now]`, `Flash Lite` / `2.5 [builds]`. Measured
+   both ways — hiding the chip put every name back on one line — so the chip
+   was the cause and not the column.
+
+   THE FIRST FIX WAS WRONG AND IS RECORDED BECAUSE IT LOOKED RIGHT: making the
+   `<b>` a block did straighten every name, and it also pushed the expander
+   chevron — which is an inline sibling of the name — onto a line of its own
+   above it. Breaking before the CHIP instead leaves chevron and name on line
+   one and stacks the chips under them. `width: fit-content` keeps the pill the
+   width of its label; a plain block would stretch it across the column.
+
+   It applies to every chip this cell carries, so the withdrawn-model chip, which
+   has been competing for the name's line since v3.53.0, is straightened too. */
+.browse-name .model-badge { display: block; width: fit-content; margin-top: 3px; }
 .browse-name small {
   display: block;
   margin-top: 2px;
@@ -2391,6 +2449,28 @@
   color: var(--accent-text);
   white-space: nowrap;
 }
+/* ── THE BUILD LANE, AS A RULE DOWN THE ROW ─────────────────────────────────
+   One left padding for EVERY first cell, header included, so the rule is
+   painted into space the table already reserves and a marked row's name does
+   not sit two pixels to the right of an unmarked one's. An inset shadow rather
+   than a border-left for the same reason: under `border-collapse: collapse` a
+   border on one cell changes the grid, a shadow cannot.
+
+   ACCENT, AND ONLY ACCENT. 4.30:1 dark and 6.57:1 light against the row —
+   above the 3:1 floor for a non-text indicator in both themes. The colour says
+   LANE and nothing else: not price (v3.16.0 — a fact, never a gate), not
+   availability (the withdrawn chip is the page's one warning treatment, and a
+   withdrawn build-lane row keeps this rule AND carries that chip, because "it
+   is a build model" and "it is gone" are two facts). */
+.browse-table th:first-child,
+.browse-table td:first-child { padding-left: 10px; }
+.browse-row-builds > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+/* The one model in force: a thicker rule and the accent tint across the row.
+   Measured on the tinted row — name --text 14.75 dark / 16.16 light, cells
+   --text-2 9.30 / 8.25, the sub-line --text-3 5.44 / 4.95 — so nothing on it
+   drops under the 4.5 floor in either theme. */
+.browse-row-inuse > td { background: var(--accent-tint); }
+.browse-row-inuse > td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
 /* NEITHER of these is a rejection. `chat only — measured` means we measured it
    and it cannot plan an outline; `not measured yet` means nobody looked. They
    are drawn apart because llm.js records, in as many words, that UNMEASURED
