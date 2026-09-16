@@ -220,7 +220,7 @@ async function runBatchMergeSuite(provider) {
     const result = await healthMod.fixSemanticDuplicatesBatch(domain, toMerge, () => { progressCount++; });
     ok(result.total === toMerge.length, `batch processed all ${toMerge.length} pairs (total=${result.total})`);
     ok(progressCount === toMerge.length, `progress fired once per pair (${progressCount})`);
-    ok(result.merged + result.skipped + result.errors === result.total, 'merged+skipped+errors === total');
+    ok(result.merged + (result.stale || 0) + result.skipped + result.errors === result.total, 'merged+stale+skipped+errors === total');
     ok(result.errors === 0, `no errors during batch merge (errors=${result.errors})`);
 
     // Verify each merged remove file is gone and keep file remains.
