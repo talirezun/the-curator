@@ -37,6 +37,11 @@
  *   M9  clear the recorded listing when a check fails
  *   M10 remove the free->paid fallback guard (fallbackRungsFor returns rungs)
  *   M11 drop the Anthropic dated-alias rule from catalogueAbsence
+ *   M12 drop the `isMissing` exclusion from pickCheapestMeasuredBuild, so the
+ *       cheapest-measured sentence goes on recommending a withdrawn model
+ *   M13 widen that exclusion to `!== 'present'`, so an UNCHECKED provider's
+ *       models are all silently removed from the recommendation
+ *   M14 serialise `liveMissingByModel` as a two-valued boolean map
  *
  * Isolation: CURATOR_TEST_USER_DATA_DIR + CURATOR_TEST_DOMAINS_DIR are set to a
  * fresh tempdir BEFORE any app module is imported, and the real credential files
@@ -514,6 +519,153 @@ section('§7c. A FAILED check records nothing and leaves the catalogue byte-iden
     'the persisted catalogue is sha256-IDENTICAL after the failure — this route never writes it (invariant, not mutation-backed)');
   eq(JSON.stringify(llm.getLiveModelListing('openrouter')), LISTING_BEFORE,
     '★★ the in-memory listing is UNCHANGED, so one transient DNS blip cannot read as "every model you own was removed" [M9: clearing the listing on failure reds this]');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// §7d. A WITHDRAWN MODEL MAY NOT BE RECOMMENDED BY PRICE  [M12, M13, M14]
+// ─────────────────────────────────────────────────────────────────────────
+//
+// THE DEFECT THIS PINS, as rendered on v3.53.0 against this very fixture: the
+// Providers page carried a banner reading "MiniMax M3 (free) is no longer
+// offered by OpenRouter — pick another build model", and DIRECTLY BELOW IT, in
+// the same block, "CHEAPEST MEASURED — For the keys you have connected, that is
+// MiniMax M3 (free) — the one you are already using". Two statements about one
+// model, in one block, contradicting each other — and the second one is a money
+// claim about a model that cannot answer a call.
+//
+// The cause was that `cheapestMeasured` filtered on two properties of the
+// CATALOGUE (may it build, has anyone measured it) and none of the LIVE LIST.
+// Driven here through the real route over a real HTTP round-trip, because the
+// pure function alone cannot show that the route actually passes the predicate.
+section('§7d. cheapestMeasured EXCLUDES a withdrawn model — and only a positive verdict excludes [M12, M13, M14]');
+{
+  const { pickCheapestMeasuredBuild } = await import('../src/routes/config.js');
+
+  // ── THE PURE FUNCTION, DRIVEN ON THE TWO CASES THE REAL CATALOGUE CANNOT
+  //    PRODUCE AT ONCE. Same reasoning the function's own docblock gives for
+  //    taking its population as an argument: a guard no reachable input can
+  //    exercise is a guard nobody can prove.
+  const offers = [
+    { provider: 'openrouter', entry: { id: 'gone/cheapest', input: 0.01, output: 0.02, free: false } },
+    { provider: 'openrouter', entry: { id: 'live/second', input: 0.05, output: 0.20, free: false } },
+  ];
+  const always = () => true;
+
+  const picked = pickCheapestMeasuredBuild(offers, {
+    isBuild: always, isMeasured: always,
+    isMissing: (_p, id) => id === 'gone/cheapest',
+  });
+  eq(picked && picked.model, 'live/second',
+    '★★ the cheapest row is SKIPPED when it is missing, and the NEXT cheapest is returned [M12: dropping the exclusion returns gone/cheapest]');
+
+  const noPredicate = pickCheapestMeasuredBuild(offers, { isBuild: always, isMeasured: always });
+  eq(noPredicate && noPredicate.model, 'gone/cheapest',
+    'CONTROL: with no isMissing passed, nothing is excluded — the default removes no candidate, so an older caller is byte-unchanged');
+
+  // ── THE THREE-VALUED RULE, AS A BEHAVIOUR ─────────────────────────────
+  // A `null` verdict means NOBODY CHECKED. It must leave the candidate
+  // standing — the same fail-safe direction the ingest pre-spend gate and the
+  // qualification preflight both take, and the one an over-eager rewrite
+  // (`!== 'present'`) reverses.
+  const nullVerdict = pickCheapestMeasuredBuild(offers, {
+    isBuild: always, isMeasured: always,
+    isMissing: (_p, id) => (id === 'gone/cheapest' ? null : false),
+  });
+  eq(nullVerdict && nullVerdict.model, 'gone/cheapest',
+    '★★ a NULL verdict does NOT exclude — unknown is not gone [M13: `!== \'present\'` returns live/second here and silently drops every model on an unchecked provider]');
+
+  const presentVerdict = pickCheapestMeasuredBuild(offers, {
+    isBuild: always, isMeasured: always, isMissing: () => 'present',
+  });
+  eq(presentVerdict && presentVerdict.model, 'gone/cheapest',
+    '…and neither does a truthy non-true value: the gate is `=== true`, so only the one verdict that means "withdrawn" removes anything [M13]');
+
+  const allGone = pickCheapestMeasuredBuild(offers, {
+    isBuild: always, isMeasured: always, isMissing: () => true,
+  });
+  eq(allGone, null,
+    'with every candidate withdrawn the answer is null — no recommendation at all, rather than the least-wrong dead model');
+}
+
+// ── AND NOW THROUGH THE REAL ROUTE, which is the half a pure-function test
+//    cannot reach: the predicate has to actually be WIRED to catalogueAbsence.
+{
+  llm.__clearLiveModelListings();
+  const before = (await getJson('/api/config/api-keys')).body;
+  eq(before.build.model, 'minimax/minimax-m3:free', 'fixture: the withdrawn id is the resolved build model');
+  eq(before.build.cheapestMeasured && before.build.cheapestMeasured.model, 'minimax/minimax-m3:free',
+    'fixture: with NOTHING checked it is also `cheapestMeasured` — this is the sentence the screen renders');
+  eq(before.build.cheapestMeasured.same, true,
+    '…and `same: true`, which is what makes the copy read "the one you are already using"');
+
+  // The real listing shape: OpenRouter publishes the PAID twin and not the free
+  // slug (measured 2026-09-16). Everything else the fixture offers is listed, so
+  // the only thing this recording changes is the one id.
+  const listed = llm.listOfferableModels('openrouter')
+    .map(m => m.id)
+    .filter(id => id !== 'minimax/minimax-m3:free')
+    .concat(['minimax/minimax-m3']);
+  llm.recordLiveModelListing('openrouter', listed, { source: 'network' });
+
+  const after = (await getJson('/api/config/api-keys')).body;
+  eq(after.build.liveMissing, true, 'fixture: the banner condition is now live');
+  const cm = after.build.cheapestMeasured;
+  ok(cm === null || cm.model !== 'minimax/minimax-m3:free',
+    '★★ `cheapestMeasured` NO LONGER NAMES the withdrawn model [M12: the route stops passing isMissing and this reds]');
+  ok(cm !== null,
+    '…and it is not null either: a withdrawn cheapest must be replaced by the next cheapest, not deleted, or the user is left with a banner and no way forward');
+  eq(cm.same, false,
+    '★ …so `same` is FALSE, which is the field the copy branches on — the "already using" sentence is now unreachable for a withdrawn model');
+  ok(llm.isBuildLaneModel('openrouter', cm.model),
+    '…and what replaced it is a real build-lane model, not merely the next row');
+  eq(llm.catalogueAbsence('openrouter', cm.model), 'present',
+    '…which the provider does still list');
+
+  // ── THE PER-MODEL MAP: THREE VALUES, AND OVER EXACTLY THE OFFERED SET ──
+  const map = after.liveMissingByModel;
+  ok(map && typeof map === 'object', '`liveMissingByModel` is on the wire');
+  eq(Object.keys(map).sort().join(','), 'anthropic,gemini,openrouter',
+    '…keyed by every known provider, so a client iterates a provider list instead of hand-writing names');
+  eq(Object.keys(map.openrouter).sort().join(','),
+    llm.listOfferableModels('openrouter').map(m => m.id).sort().join(','),
+    '★ …and its OpenRouter keys are exactly the ids `offerable.openrouter` serialises — a verdict for every row a client can draw, and none for a row it cannot');
+  eq(map.openrouter['minimax/minimax-m3:free'], true,
+    '★★ the withdrawn id reports TRUE [M14: a boolean map still passes this one — §7d\'s null assertion below is the one that reds]');
+  eq(map.openrouter['upstage/solar-pro4'], false,
+    '★ a listed id reports FALSE — "we checked and it is there" is its own fact, not the absence of a warning');
+  eq(Object.keys(map.gemini).length, 0,
+    'a provider with no saved key serialises {} — key-gated exactly like `offerable` (the v3.0.13 rule)');
+
+  // THE THIRD VALUE, which is the one a boolean map destroys.
+  llm.__clearLiveModelListings();
+  const unchecked = (await getJson('/api/config/api-keys')).body;
+  eq(unchecked.liveMissingByModel.openrouter['minimax/minimax-m3:free'], null,
+    '★★ with NOTHING checked every verdict is NULL, never false [M14: a two-valued map reports `false` here and the UI states a fact it does not have]');
+  eq(unchecked.liveMissingByModel.openrouter['upstage/solar-pro4'], null,
+    '…for every id alike, because the absence is a property of the PROVIDER\'S listing, not of one model [M14]');
+  eq(unchecked.build.cheapestMeasured.model, 'minimax/minimax-m3:free',
+    '★ …and the recommendation comes BACK, because an unchecked provider must not have its whole catalogue quietly suppressed [M13]');
+}
+
+// ── `offerable` IS NOT A SECOND HOME FOR THIS FACT ────────────────────────
+// The obvious place to put a per-model verdict is on the offer entry, and
+// `test-offerable-models-route.js` §7 already forbids it in as many words: it
+// asserts `offerable` is byte-identical across a `recordLiveModelListing`. That
+// suite is not this one's to edit, and the assertion is right — an availability
+// verdict is a fact ABOUT an offer, not a field OF one. Re-asserted here so the
+// reason travels with the code that obeys it rather than living only in the file
+// that would go red.
+{
+  llm.__clearLiveModelListings();
+  const offersBefore = JSON.stringify((await getJson('/api/config/api-keys')).body.offerable);
+  llm.recordLiveModelListing('openrouter', ['zz/only-this-one'], { source: 'network' });
+  const offersAfter = JSON.stringify((await getJson('/api/config/api-keys')).body.offerable);
+  eq(offersAfter, offersBefore,
+    '★★ recording a listing leaves `offerable` byte-identical — the verdict rides BESIDE the offers, never on them');
+  const nowMap = (await getJson('/api/config/api-keys')).body.liveMissingByModel;
+  eq(nowMap.openrouter['upstage/solar-pro4'], true,
+    'CONTROL: the same recording DID move the map, so the byte-identity above is not vacuous');
+  llm.__clearLiveModelListings();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

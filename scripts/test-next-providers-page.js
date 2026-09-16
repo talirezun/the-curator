@@ -109,6 +109,10 @@ const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLL
 const FNS = [
   'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
+  // v3.53.1: the per-model withdrawn verdict and its chip. Registered here
+  // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
+  // the manifest is this suite's record of what settings.js needs to evaluate.
+  'modelLiveMissing', 'renderGoneChip',
   'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
   'catalogueCountsOf', 'allCatalogueRows',
   'measurementChip', 'renderMeasurementChip',

@@ -635,6 +635,10 @@ const RENDER_FN_NAMES = [
   // `buildModelFacts` already is: each one DEGRADES to the older payload, and
   // a stub would make the degradation — the arm an older backend actually
   // takes — untestable.
+  // v3.53.1: the per-model withdrawn verdict and its chip. Registered here
+  // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
+  // the manifest is this suite's record of what settings.js needs to evaluate.
+  'modelLiveMissing', 'renderGoneChip',
   'providerConnected', 'buildLaneFacts', 'buildModelDisplayName',
   'chatStartFacts', 'catalogueCountsOf', 'allCatalogueRows',
   // The block wrapper and the three new block renderers. `renderProviders`

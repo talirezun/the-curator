@@ -2665,6 +2665,72 @@ function providerConnected(p, k) {
 }
 
 /**
+ * ── HAS THE PROVIDER WITHDRAWN THIS ONE MODEL? true | false | null ──────────
+ *
+ * Read off `liveMissingByModel`, the route's per-model map, keyed by provider
+ * then by model id. It is the SAME producer behind `build.liveMissing` and
+ * behind the `cheapestMeasured` exclusion, so a row's chip, the banner above it
+ * and the cheapest-measured sentence cannot come to disagree about one model —
+ * which is exactly what they did before this existed: the banner said
+ * `minimax/minimax-m3:free` was gone while the sentence two lines below
+ * recommended it as the cheapest thing connected and the picker offered it.
+ *
+ * THREE VALUES, AND THE THIRD IS THE ONE WITH THE RULE ON IT. `true` means the
+ * provider's own live list does not carry it. `false` means it does. ANYTHING
+ * ELSE — an absent map (an older backend), an absent provider, an absent id, a
+ * wire anomaly — is `null`, and a null must render NOTHING. A chip saying a
+ * model has been withdrawn because nobody has run a check is worse than no chip:
+ * it sends the user to change a model that is fine, on a screen about money.
+ * Read as two explicit identity tests for the reason `buildLaneFacts` states at
+ * length: a truthiness read collapses unknown into "present" (silently
+ * reassuring), a `!= null` read collapses a wire anomaly into "gone" (silently
+ * alarming), and both collapses have shipped in this file.
+ */
+function modelLiveMissing(k, provider, modelId) {
+  const map = (k && k.liveMissingByModel && typeof k.liveMissingByModel === 'object')
+    ? k.liveMissingByModel : null;
+  if (!map || typeof provider !== 'string' || typeof modelId !== 'string') return null;
+  if (!Object.hasOwn(map, provider)) return null;
+  const forProvider = map[provider];
+  if (!forProvider || typeof forProvider !== 'object') return null;
+  if (!Object.hasOwn(forProvider, modelId)) return null;
+  const v = forProvider[modelId];
+  return v === true ? true : (v === false ? false : null);
+}
+
+/**
+ * The withdrawn-model chip, or ''. ONE builder, three surfaces (the block-2
+ * picker row, the block-4 table's name cell, and the block-4 lane cell), so the
+ * three cannot word the same fact differently.
+ *
+ * IT IS A WARNING AND IT IS NEVER FOLDED — the same rule the fallback banner and
+ * the free-model caution already carry on this page, and for the same reason: a
+ * warning you have to open something to discover is not a warning (v3.16.1). It
+ * NAMES THE PROVIDER, because "no longer offered" with no subject reads as a
+ * Curator decision rather than the vendor's.
+ */
+function renderGoneChip(providerName) {
+  const who = (typeof providerName === 'string' && providerName) ? providerName : 'the provider';
+  // CO-CLASSED ON `model-badge-flag`, which is the page's EXISTING warning
+  // treatment (the attention tint behind "out-performed" and "failed on your
+  // wiki"), so this chip reads as a warning on both themes without a new colour
+  // being invented for it. `model-badge-gone` carries no styling of its own
+  // today and is the stable hook a suite addresses and a later CSS pass would
+  // use — it is not a second source of appearance.
+  //
+  // ── AND IT CARRIES NO `title=` ─────────────────────────────────────────
+  // A first cut put the consequence ("ingest refuses to start with it, nothing
+  // is re-pinned") in a tooltip, which pushed settings.js over the hover-only
+  // ceiling scripts/test-next-title-affordances.js keeps — correctly, and the
+  // right answer was to obey the rule rather than raise the ceiling. The FACT
+  // is already the chip's visible text, the CONSEQUENCE is already the banner's
+  // unfolded sub-line one block up, and a tooltip does not exist on touch. A
+  // third copy reachable only by hovering would add nothing a user can rely on.
+  return '<span class="model-badge model-badge-flag model-badge-gone">' +
+    'no longer offered by ' + escapeHtml(who) + '</span>';
+}
+
+/**
  * ── THE BUILD LANE, AS ONE RECORD ──────────────────────────────────────────
  *
  * Prefers the route's new `build` object and degrades to the older
@@ -3217,9 +3283,28 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
   const body = orderedRows.map(({ p, m, lane, qual }) => {
     const inUse = p.id === activeProvider && m.id === defaultId;
     const canBuild = laneBuildsWiki(lane);
+    // ── THE SAME VERDICT THE BLOCK-2 PICKER READS, FROM THE SAME PRODUCER ───
+    // This table was the third surface still offering a withdrawn model as if
+    // nothing were wrong: the row for `minimax/minimax-m3:free` rendered
+    // "Building your wiki" with no hint it is gone, on the same screen as a
+    // banner saying so. `=== true` only — a null verdict renders nothing, for
+    // the reason modelLiveMissing states.
+    const gone = modelLiveMissing(k, p.id, m.id) === true;
     let laneCell;
     if (inUse) {
-      laneCell = '<span class="browse-inuse">Building your wiki</span>';
+      // The lane cell states WHAT IS RUNNING, so on a withdrawn id it has to
+      // state both halves: this is still the pinned build model (nothing is
+      // re-pinned for you) AND it no longer exists. Dropping either half is a
+      // different false sentence.
+      laneCell = '<span class="browse-inuse">Building your wiki' +
+        (gone ? ' — no longer offered' : '') + '</span>';
+    } else if (canBuild && gone) {
+      // A build-lane row the provider has withdrawn: the control is withheld
+      // and REPLACED BY ITS REASON, never rendered disabled with the reason in
+      // a tooltip only. This page's own rule (v3.16.1, and the `mlist-row`
+      // comment one block up): a tooltip does not exist on touch, and it is the
+      // one sentence explaining a control the user has just found unusable.
+      laneCell = '<span class="browse-chatonly">not available to pick</span>';
     } else if (canBuild) {
       laneCell = '<button type="button" class="btn btn-secondary btn-xs"' +
         ' data-build-model="' + escapeHtml(m.id) + '" data-build-provider="' + escapeHtml(p.id) + '"' +
@@ -3303,6 +3388,10 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     // attribute that exists on only one of the two renderings could not say so.
     return '<tr data-model-id="' + escapeHtml(String(m.id == null ? '' : m.id)) + '">' +
       '<td class="browse-name">' + expander + '<b>' + escapeHtml(m.label || m.id) + '</b>' +
+        // ONE builder, shared with the block-2 picker row, so the two surfaces
+        // cannot word one fact differently — the drift this file already
+        // records for `dominated` / "out-performed".
+        (gone ? renderGoneChip(p.name) : '') +
         '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
       '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
       '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.output) || '—') + '</td>' +
@@ -3926,9 +4015,34 @@ function renderModelGoneBanner(k) {
       '<div class="provider-gone-body">' +
         '<span class="provider-gone-headline"><strong>' + escapeHtml(g.name) + '</strong> is no ' +
           'longer offered by ' + escapeHtml(g.providerLabel) + ' — pick another build model.</span>' +
-        '<span class="provider-gone-sub">Ingest, Health scans and Compile still ask for ' +
-          '<code class="mono">' + escapeHtml(g.model) + '</code> on every run. ' +
-          'The Curator falls back rather than failing, and a fallback is not always cheaper.</span>' +
+        // ── WHAT THIS SENTENCE USED TO SAY, AND WHY IT WAS FALSE ───────────
+        // "The Curator falls back rather than failing, and a fallback is not
+        // always cheaper." That was written before the pre-spend gate existed
+        // and shipped one release after it: `POST /api/ingest` and the batch
+        // queue REFUSE on a positive `missing` verdict, before the first paid
+        // call, with `code: 'MODEL_GONE'` (src/routes/ingest.js,
+        // src/brain/ingest-queue.js). Telling a user a run will quietly
+        // continue on something else, when it will not start at all, is the
+        // one direction of this mistake they cannot plan around.
+        //
+        // ── AND WHY THE REPLACEMENT STOPS WHERE IT DOES ────────────────────
+        // The obvious rewrite — "chat, Compile and Health scans fail with this
+        // message until you pick another model" — is true of the model this
+        // release was built for and NOT true in general. Those three carry no
+        // pre-spend gate at all; what happens on the call is the provider's
+        // answer, and `callLLM` treats the shapes differently: an OpenRouter
+        // refusal is tagged `curatorDeterministic` and throws, and a FREE head
+        // has every paid rung withheld (`fallbackRungsFor`) so it has nowhere
+        // to go — but a PAID Gemini or Anthropic id that 404s is `model-retired`
+        // and still walks FALLBACK_CHAINS, which is documented and deliberate.
+        // So the clause claims only what holds on every path: there is no gate,
+        // and the pin does not move. `docs/model-lifecycle.md` § "Why there is
+        // no automatic re-pin" is the source for the second half.
+        '<span class="provider-gone-sub">Ingest and the batch queue refuse to start with ' +
+          '<code class="mono">' + escapeHtml(g.model) + '</code> before spending anything. ' +
+          'Chat, Compile and Health scans carry no such gate — they go on asking for it on every ' +
+          'run. Nothing is re-pinned for you either way: this stays your build model until you ' +
+          'change it here.</span>' +
         '<span class="provider-gone-action">' +
           '<button type="button" class="btn btn-secondary btn-xs" data-model-gone-pick="' +
             escapeHtml(g.provider) + '">Pick another build model</button>' +
@@ -4315,7 +4429,24 @@ function renderBuildCurrent(k, pickDisabled, opts) {
   // measured", never "best" or "recommended", because only the first is
   // something we can show our working for.
   let cheapest = '';
-  if (b.cheapest) {
+  // ── THE SECOND LAYER, AND IT IS DELIBERATELY REDUNDANT ──────────────────
+  // The route now EXCLUDES a `missing` candidate from `cheapestMeasured`
+  // (pickCheapestMeasuredBuild's `isMissing`), so a payload from this build
+  // cannot reach here naming a withdrawn model at all. This guard is for the
+  // one that can: a server that predates the exclusion, which is precisely the
+  // install most likely to be sitting on a retired id. The defect it closes is
+  // not cosmetic — the screen carried a banner saying "minimax/minimax-m3:free
+  // is no longer offered" directly above a sentence reading "that is MiniMax M3
+  // (free) — the one you are already using", which is two contradictory
+  // statements about one model in one block.
+  //
+  // It is scoped to the SAME-MODEL arm on purpose. A cheapest row that is a
+  // DIFFERENT model carries its own chip and its own disabled control one list
+  // down, and suppressing the offer as well would leave the user with a banner,
+  // no recommendation and no route out.
+  const cheapestIsGone = !!b.cheapest && b.liveMissing === true
+    && b.cheapest.model === b.model && b.cheapest.provider === b.provider;
+  if (b.cheapest && !cheapestIsGone) {
     const cName = buildModelDisplayName(k, b.cheapest) || b.cheapest.model;
     if (b.cheapest.same) {
       cheapest = '<div class="build-cheapest"><span class="build-cheapest-tag">Cheapest measured</span>' +
@@ -4441,6 +4572,14 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
     // Per row, because this list mixes providers and a baseline from another
     // provider would compare two things that never run the same job.
     baselineModelId: (k && k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
+    // ── THE WITHDRAWN VERDICT, PASSED RATHER THAN LOOKED UP ───────────────
+    // `renderModelOption` can resolve this itself from `state.keys`, and does
+    // for the callers that render outside this list. It is passed HERE for the
+    // same reason `lane` is passed here: this function already holds `k`, so
+    // reading the module's mutable `state` back out of it would be a second
+    // route to one fact — and this list is the one the suite drives with an
+    // explicit payload rather than through a render cycle.
+    liveMissing: modelLiveMissing(k, p.id, m.id),
   })).join('');
 
   // Forced open while a refusal or a write belongs to a row inside it.
@@ -6986,6 +7125,24 @@ function renderModelOption(m, index, defaultId, ctx) {
   // two layers server-side and pinned by suites; only this label is dropped.
   badges.push(renderMeasurementChip(m, lane));
 
+  // ── THE PROVIDER HAS WITHDRAWN IT ──────────────────────────────────────
+  // Read per row off `liveMissingByModel`, the same producer that excludes a
+  // withdrawn id from `cheapestMeasured` and that drives the banner above this
+  // block — so a row cannot be offered here while the banner says it is gone,
+  // which is exactly the contradiction this chip was added to close.
+  //
+  // `=== true` ONLY. A null verdict (nobody checked, the check failed, an older
+  // backend) renders NOTHING: unknown must never read as gone. That is not a
+  // style rule, it is the fail-safe direction on a spending surface.
+  //
+  // A chip, never a fold, and never folded into the measurement chip beside it:
+  // "nobody measured this" and "the provider no longer lists this" are different
+  // claims with different actions, and collapsing two facts into one marker is
+  // the shape this file's own badge comments refuse three times over.
+  const goneHere = c.liveMissing === true
+    || (c.liveMissing === undefined && modelLiveMissing(state.keys, c.provider, m.id) === true);
+  if (goneHere) badges.push(renderGoneChip(c.providerName || providerLabel(c.provider) || ''));
+
   // KEPT, and it is the one measured fact with no other home. `dominated`
   // means a SAME-PRICED sibling measured better on every axis we recorded
   // (claude-opus-4-5 against claude-opus-5) — a comparative claim that
@@ -7214,7 +7371,27 @@ function renderModelOption(m, index, defaultId, ctx) {
   // not).
   const isPending = !!(c.busyId && c.busyId === c.provider + '::' + m.id);
   let control;
-  if (isSelected) {
+  if (goneHere && !isSelected) {
+    // ── NO CONTROL WHOSE ONLY OUTCOME IS A MODEL THAT CANNOT RUN ───────────
+    // Ordered FIRST, ahead of every lane and pick arm below, because the
+    // question it answers ("does this id still exist?") comes before any
+    // question about what the id is good FOR. A model the provider has
+    // withdrawn can still be lane-eligible, still measured, still cheapest —
+    // every one of those facts is about a model that is gone.
+    //
+    // DISABLED RATHER THAN HIDDEN, and the reason rides on the control instead
+    // of only in a tooltip: `POST /api-keys/build-model` deliberately WARNS and
+    // never REFUSES on a `missing` verdict (docs/model-lifecycle.md, "Why there
+    // is no automatic re-pin" — our list can be stale and a user who knows their
+    // model works must not be locked out of their own picker). So this is the
+    // screen's judgement, not the route's, and it must show its working: the
+    // chip above states the fact and this states the consequence.
+    //
+    // `isSelected` is excluded above for the same reason the arm below it is:
+    // the row the user has already pinned reports its state rather than offering
+    // a write that would rewrite the value it has.
+    control = '<span class="model-pick-state model-pick-state-gone">not available to pick</span>';
+  } else if (isSelected) {
     // No button at all on the model already pinned. A control whose only
     // outcome is re-writing the value it already has invites a click that
     // does nothing, and — while a write is running — a click that is refused

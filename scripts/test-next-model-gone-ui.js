@@ -59,6 +59,14 @@ function ok(cond, msg) {
   if (cond) { passed++; console.log(`  \u2713 ${msg}`); }
   else { failed++; failures.push(msg); console.log(`  \u2717 ${msg}`); }
 }
+// Identity, never `==`: the verdicts asserted below are `true | false | null`
+// and a loose compare makes `null` and `false` the same assertion, which is the
+// exact collapse those verdicts exist to prevent. The failure message carries
+// BOTH values, because "expected null" with no "got" cannot be diagnosed.
+function eq(actual, expected, msg) {
+  const same = Object.is(actual, expected);
+  ok(same, same ? msg : `${msg} (got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)})`);
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 section('\u00a70  Extraction — brace-matched, and it must END at a closing brace');
@@ -117,6 +125,7 @@ const SET_CONSTS = [
 const SET_FNS = [
   'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
+  'modelLiveMissing', 'renderGoneChip',
   'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
   'catalogueCountsOf', 'allCatalogueRows',
   'measurementChip', 'renderMeasurementChip',
@@ -698,6 +707,235 @@ section('\u00a78  THE MODEL-GONE BANNER — three values, and only one renders')
   ok(S.modelGoneFacts(mk(false)) === null, '\u2026and refuses the false case');
   ok(S.modelGoneFacts(mk(null)) === null, '\u2026and the unknown case');
   ok(S.modelGoneFacts(null) === null, '\u2026and a missing payload entirely');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§8b  THE BANNER’S SUB-LINE STATES WHAT THE APP DOES, NOT WHAT IT USED TO');
+// ══════════════════════════════════════════════════════════════════════════
+// v3.53.0 shipped the pre-spend gate and, in the same release, a banner saying
+// "The Curator falls back rather than failing, and a fallback is not always
+// cheaper." `POST /api/ingest` and the batch queue REFUSE on a positive
+// `missing` verdict before the first paid call (src/routes/ingest.js,
+// src/brain/ingest-queue.js), so the sentence told a user a run would quietly
+// continue on something else when it will not start at all.
+//
+// Pinned on BOTH sides. The presence check alone would stay green under a
+// rewrite that added the truth and kept the falsehood; the absence check alone
+// would stay green under a rewrite that deleted the sentence entirely.
+{
+  const k = keysFor(['gemini', 'openrouter']);
+  k.build.liveMissing = true;
+  k.buildModel.liveMissing = true;
+  const banner = sliceBlocks(renderWith(k)).build;
+  const sub = banner.slice(banner.indexOf('provider-gone-sub'),
+    banner.indexOf('provider-gone-action'));
+  const text = sub.replace(/<[^>]+>/g, '');
+
+  ok(/refuse/i.test(text),
+    '★★ the sub-line says ingest REFUSES [mutation: restoring "The Curator falls back rather than failing" reds this]');
+  ok(!/falls?\s+back/i.test(text),
+    '★★ …and no longer claims a fallback [mutation: the old sentence contains "falls back" and reds here]');
+  ok(/batch queue/i.test(text),
+    '…and names the OTHER surface that refuses, because a user mid-batch is the one who most needs to know');
+  ok(/re-pinned|not changed|stays your/i.test(text),
+    '…and states that nothing is re-pinned — docs/model-lifecycle.md §"Why there is no automatic re-pin"');
+  // ── THE CLAIM IT DELIBERATELY DOES NOT MAKE ───────────────────────────
+  // "chat, Compile and Health scans FAIL until you pick another" is true of a
+  // free head and of every OpenRouter refusal, and FALSE of a paid Gemini or
+  // Anthropic id that 404s: that is `model-retired`, and `callLLM` still walks
+  // FALLBACK_CHAINS for it, deliberately and documented. Replacing one
+  // over-claim with another would be the same defect wearing the opposite sign.
+  ok(!/\bfail\b/i.test(text),
+    '★ …and does NOT claim chat/Compile/Health will fail: a PAID Gemini or Anthropic 404 still walks FALLBACK_CHAINS, so that is not true on every path');
+  ok(/no such gate|carry no|carries no/i.test(text),
+    '…it states the thing that IS true of all three — there is no pre-spend gate on them');
+  ok(banner.indexOf('provider-gone-sub') > -1 && !/provider-gone-sub[\s\S]{0,300}<details/.test(banner),
+    'CONTROL: the sub-line is still unfolded');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§8c  ONE MODEL, ONE STORY — the picker and the table stop contradicting the banner');
+// ══════════════════════════════════════════════════════════════════════════
+// THE RENDERED DEFECT, on the isolated server with `minimax/minimax-m3:free`
+// seeded as the build model: the banner said the model was no longer offered,
+// block 2's sentence below it said "that is MiniMax M3 (free) — the one you are
+// already using", block 2's picker showed it as "free — this model bills
+// nothing", and block 4's table row read "Building your wiki" with no hint at
+// all. Four surfaces, one model, two incompatible stories.
+{
+  const GONE_ID = 'upstage/solar-pro4';   // a build-lane, curator-measured OR row
+  const LIVE_ID = 'gemini-2.5-flash-lite';
+
+  // `liveMissingByModel` is the route's per-model map. Written to the CONTRACT,
+  // three-valued, exactly as the wire carries it.
+  const withMap = (map, over) => {
+    const k = keysFor(['gemini', 'openrouter'], over);
+    k.liveMissingByModel = map;
+    return k;
+  };
+  const goneMap = { gemini: {}, anthropic: {}, openrouter: { [GONE_ID]: true } };
+  const nullMap = { gemini: {}, anthropic: {}, openrouter: { [GONE_ID]: null } };
+  const falseMap = { gemini: {}, anthropic: {}, openrouter: { [GONE_ID]: false } };
+
+  // ── THE PURE VERDICT, THREE VALUES AND EVERY DEGRADATION ───────────────
+  eq(S.modelLiveMissing(withMap(goneMap), 'openrouter', GONE_ID), true, 'modelLiveMissing reads a true verdict');
+  eq(S.modelLiveMissing(withMap(falseMap), 'openrouter', GONE_ID), false, '…and a false one');
+  eq(S.modelLiveMissing(withMap(nullMap), 'openrouter', GONE_ID), null, '…and a null one');
+  eq(S.modelLiveMissing(withMap(goneMap), 'openrouter', 'not/in-the-map'), null,
+    'an id the map does not carry is NULL, never false — we were told nothing about it');
+  eq(S.modelLiveMissing(withMap(goneMap), 'anthropic', GONE_ID), null,
+    'a provider with an empty map is NULL for every id — a disconnected provider is not a clean bill of health');
+  eq(S.modelLiveMissing(keysFor(['gemini']), 'openrouter', GONE_ID), null,
+    '★ an older backend that sends no map at all is NULL — the degradation is silence, not a warning');
+  eq(S.modelLiveMissing(null, 'openrouter', GONE_ID), null, '…and so is no payload');
+  eq(S.modelLiveMissing(withMap({ openrouter: { [GONE_ID]: 'yes' } }), 'openrouter', GONE_ID), null,
+    '★ a WIRE ANOMALY is null too — a `!= null` read would have made a stray string an alarm');
+
+  // ── BLOCK 2, THE PICKER ROW ────────────────────────────────────────────
+  const openList = (st) => { st.buildListOpen = true; st.modelShelfOpen = true; };
+  const goneHtml = renderWith(withMap(goneMap), openList);
+  const nullHtml = renderWith(withMap(nullMap), openList);
+  const gb = sliceBlocks(goneHtml);
+  const nb = sliceBlocks(nullHtml);
+
+  // The row, sliced by its own addressable id, so a chip drawn on some OTHER
+  // row cannot satisfy this. Containment, not adjacency — §5's lesson.
+  const liRow = (html, id) => {
+    const at = html.indexOf('data-model-id="' + id + '"');
+    if (at === -1) return '';
+    const start = html.lastIndexOf('<li', at);
+    const end = html.indexOf('</li>', at);
+    return (start === -1 || end === -1) ? '' : html.slice(start, end);
+  };
+
+  const goneRow = liRow(gb.build, GONE_ID);
+  ok(goneRow, 'fixture: the withdrawn model is still DRAWN in the block-2 picker — hiding it would remove the warning with the row');
+  ok(goneRow.includes('model-badge-gone'),
+    '★★ …carrying the withdrawn chip [mutation: dropping the badges.push reds this]');
+  ok(/no longer offered by OpenRouter/.test(goneRow),
+    '★ …which NAMES the provider, so it does not read as a Curator decision');
+  ok(!/model-badge-gone[\s\S]{0,200}<details/.test(goneRow) && goneRow.indexOf('model-badge-gone') < goneRow.indexOf('model-row-body'),
+    '…and sits in the row’s summary, never behind the fold — a warning you must click to find is not a warning');
+
+  const nullRow = liRow(nb.build, GONE_ID);
+  ok(nullRow, 'CONTROL: the same row is drawn on a NULL verdict');
+  ok(!nullRow.includes('model-badge-gone'),
+    '★★ …with NO chip [mutation: rendering on a null verdict reds this — unknown must never read as gone]');
+  ok(nullRow.includes('data-build-model="' + GONE_ID + '"'),
+    '…and its pick control intact');
+
+  // THE CONTROL IS WITHHELD, AND ITS REASON IS VISIBLE TEXT, NOT A TOOLTIP.
+  ok(!goneRow.includes('data-build-model="' + GONE_ID + '"'),
+    '★★ the withdrawn row offers NO "Use this" write [mutation: reverting the arm restores data-build-model and reds this]');
+  ok(/not available to pick/.test(goneRow.replace(/<[^>]+>/g, '')),
+    '★ …and says so in RENDERED TEXT, because a tooltip does not exist on touch');
+
+  // A LIVE ROW IN THE SAME LIST IS UNTOUCHED — the anti-vacuity control.
+  const liveRow = liRow(gb.build, LIVE_ID);
+  ok(liveRow && !liveRow.includes('model-badge-gone'),
+    'CONTROL: a listed model in the SAME render carries no chip — the chip is per row, not per page');
+  ok(liveRow.includes('data-build-model="' + LIVE_ID + '"') || liveRow.includes('model-pick-state'),
+    'CONTROL: …and keeps whatever control it had');
+
+  // ── BLOCK 4, THE "EVERY MODEL" TABLE ───────────────────────────────────
+  const trRow = (html, id) => {
+    const at = html.indexOf('data-model-id="' + id + '"');
+    if (at === -1) return '';
+    const start = html.lastIndexOf('<tr', at);
+    const end = html.indexOf('</tr>', at);
+    return (start === -1 || end === -1) ? '' : html.slice(start, end);
+  };
+
+  const goneTr = trRow(gb.all, GONE_ID);
+  ok(goneTr, 'fixture: the withdrawn model has a row in block 4’s table');
+  ok(goneTr.includes('model-badge-gone'),
+    '★★ …and it carries the SAME chip [mutation: dropping the chip from the name cell reds this]');
+  ok(!trRow(nb.all, GONE_ID).includes('model-badge-gone'),
+    '★★ …and renders nothing on a NULL verdict [mutation: rendering on null reds this]');
+  ok(!goneTr.includes('>Use for building<'),
+    '★ the table’s "Use for building" control is withheld on a withdrawn row');
+  ok(/not available to pick/.test(goneTr.replace(/<[^>]+>/g, '')),
+    '…replaced by the reason, in text');
+  ok(trRow(nb.all, GONE_ID).includes('>Use for building<'),
+    'CONTROL: the null-verdict row still offers it — so the withholding above is not vacuous');
+
+  // ── THE ROW THAT IS ACTUALLY RUNNING ───────────────────────────────────
+  // The lane cell states WHAT IS IN FORCE. On a withdrawn id it must state both
+  // halves: still pinned (nothing is re-pinned for you) AND gone.
+  {
+    const kInUse = withMap({ gemini: {}, anthropic: {},
+      openrouter: { 'upstage/solar-pro4': true } },
+      { activeProvider: 'openrouter' });
+    kInUse.build = { model: 'upstage/solar-pro4', provider: 'openrouter', source: 'default',
+      facts: { measured: 'curator', free: false, thinks: false, outlineNote: '' },
+      cheapestMeasured: null, liveMissing: true };
+    kInUse.buildModel = { provider: 'openrouter', model: 'upstage/solar-pro4',
+      source: 'default', selectedHonoured: false, measuredBy: 'curator', liveMissing: true };
+    const inUseTr = trRow(sliceBlocks(renderWith(kInUse, openList)).all, 'upstage/solar-pro4');
+    const t = inUseTr.replace(/<[^>]+>/g, '');
+    ok(/Building your wiki/.test(t),
+      'the in-use row still says it is building your wiki — because it is, and nothing was re-pinned');
+    ok(/Building your wiki — no longer offered/.test(t),
+      '★★ …and says it is gone in the SAME cell [mutation: reverting to the plain label reds this]');
+    ok(inUseTr.includes('model-badge-gone'), '…with the chip on its name cell as well');
+
+    // CONTROL: the same row on a null verdict reads the plain label.
+    const kLive = withMap({ gemini: {}, anthropic: {}, openrouter: { 'upstage/solar-pro4': null } },
+      { activeProvider: 'openrouter' });
+    kLive.build = Object.assign({}, kInUse.build, { liveMissing: null });
+    kLive.buildModel = Object.assign({}, kInUse.buildModel, { liveMissing: null });
+    const liveTr = trRow(sliceBlocks(renderWith(kLive, openList)).all, 'upstage/solar-pro4')
+      .replace(/<[^>]+>/g, '');
+    ok(/Building your wiki/.test(liveTr) && !/no longer offered/.test(liveTr),
+      'CONTROL: on a null verdict the cell reads the plain label — the suffix is earned, not always-on');
+  }
+
+  // ── BLOCK 2’S CHEAPEST-MEASURED SENTENCE ────────────────────────────
+  // The route now excludes a withdrawn candidate, so this cannot arrive from a
+  // current backend. The guard is for an OLDER one — which is exactly the
+  // install most likely to be sitting on a retired id.
+  {
+    const kStale = withMap(goneMap, { activeProvider: 'openrouter' });
+    kStale.build = { model: GONE_ID, provider: 'openrouter', source: 'default',
+      facts: { measured: 'curator', free: true, thinks: false, outlineNote: '' },
+      liveMissing: true,
+      cheapestMeasured: { model: GONE_ID, provider: 'openrouter', priceIn: null,
+        priceOut: null, free: true, same: true } };
+    kStale.buildModel = { provider: 'openrouter', model: GONE_ID, source: 'default',
+      selectedHonoured: false, measuredBy: 'curator', liveMissing: true };
+    const blk = sliceBlocks(renderWith(kStale, openList)).build;
+    ok(blk.includes('provider-gone-banner'), 'fixture: the banner is up');
+    ok(!/the one you are already using/.test(blk.replace(/<[^>]+>/g, '')),
+      '★★ the block-2 sentence does NOT say "the one you are already using" about a withdrawn model [mutation: reverting the cheapestIsGone guard reds this]');
+    ok(!/build-cheapest/.test(blk),
+      '…the whole cheapest-measured line is withheld rather than reworded — there is nothing cheapest about a model that cannot answer');
+
+    // CONTROL: the SAME payload with the verdict unknown renders the sentence,
+    // so the suppression above is earned by the verdict and not by the shape.
+    const kOk = withMap(nullMap, { activeProvider: 'openrouter' });
+    kOk.build = Object.assign({}, kStale.build, { liveMissing: null });
+    kOk.buildModel = Object.assign({}, kStale.buildModel, { liveMissing: null });
+    const blkOk = sliceBlocks(renderWith(kOk, openList)).build;
+    ok(/the one you are already using/.test(blkOk.replace(/<[^>]+>/g, '')),
+      'CONTROL: on an unknown verdict the sentence renders exactly as before — nothing else changed');
+  }
+
+  // ── THE DUMB CROSS-CHECK ───────────────────────────────────────────────
+  // A chip count taken a different way from every structural assertion above:
+  // exactly ONE model id in the whole render is marked gone, and it is the one
+  // the map named. Wrong in a different way from the row slicing, so the two
+  // disagreeing is itself a signal (CONTRIBUTING.md's second lesson).
+  {
+    const marked = new Set();
+    for (const seg of goneHtml.split('model-badge-gone').slice(1)) {
+      const back = goneHtml.slice(0, goneHtml.indexOf(seg));
+      const idAt = back.lastIndexOf('data-model-id="');
+      if (idAt !== -1) marked.add(back.slice(idAt + 15, back.indexOf('"', idAt + 15)));
+    }
+    ok(marked.size === 1 && marked.has(GONE_ID),
+      '★ exactly ONE model id in the entire render carries the chip, and it is the one the map named (saw: ' +
+      [...marked].join(', ') + ')');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════

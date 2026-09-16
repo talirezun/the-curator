@@ -1204,6 +1204,24 @@ function outlineNoteFor(entry) {
 export function pickCheapestMeasuredBuild(offers, opts = {}) {
   const canBuild = typeof opts.isBuild === 'function' ? opts.isBuild : () => false;
   const measured = typeof opts.isMeasured === 'function' ? opts.isMeasured : () => false;
+  // ── THE THIRD FILTER, AND IT IS THE ONLY ONE THAT IS ABOUT *NOW* ──────────
+  // `isBuild` and `isMeasured` are properties of the catalogue: they were true
+  // yesterday and will be true tomorrow. This one is a property of the
+  // PROVIDER'S LIVE LIST, and it is the reason this filter had to exist at all:
+  // v3.53.0 shipped a retired-model banner that said `minimax/minimax-m3:free`
+  // is no longer offered, DIRECTLY ABOVE a sentence recommending the same id as
+  // the cheapest thing the user could be running. Two statements about one
+  // model, on one screen, contradicting each other.
+  //
+  // DEFAULTS TO `() => false` — i.e. to excluding NOTHING — for the same reason
+  // the other two default to their permissive-in-the-safe-direction values: a
+  // caller that does not pass it gets the pre-existing behaviour exactly, and a
+  // degraded `catalogueAbsence` (an older llm.js, a provider nobody has
+  // checked) removes no candidate. UNKNOWN MUST NOT REMOVE A CANDIDATE. Only a
+  // POSITIVE `missing` verdict does — the same rule the ingest pre-spend gate
+  // and the qualification preflight state in as many words, and the rule this
+  // repo has broken most often in the other direction.
+  const missing = typeof opts.isMissing === 'function' ? opts.isMissing : () => false;
   for (const { provider, entry } of (Array.isArray(offers) ? offers : [])) {
     if (!entry || typeof entry !== 'object') continue;
     // BOTH CONDITIONS, and neither is redundant in principle even where the
@@ -1215,6 +1233,9 @@ export function pickCheapestMeasuredBuild(offers, opts = {}) {
     // an unmeasured model and a sentence recommending it by price.
     if (!canBuild(provider, entry.id)) continue;
     if (!measured(provider, entry.id)) continue;
+    // A model the provider has WITHDRAWN cannot be recommended by price. It has
+    // no price any more — it has no listing.
+    if (missing(provider, entry.id) === true) continue;
     return {
       model: entry.id,
       provider,
@@ -1260,6 +1281,12 @@ function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
   return pickCheapestMeasuredBuild(connectedOffers(keys), {
     isBuild: isBuildLaneAllowed,
     isMeasured,
+    // ONE PRODUCER for the availability verdict, shared with `build.liveMissing`
+    // and `liveMissingByModel` below — so the sentence in block 2 and the banner
+    // above it cannot disagree about one model. `=== true` is the whole gate:
+    // `liveMissingFor` returns null for "we could not check", and a null must
+    // leave the candidate standing.
+    isMissing: (provider, modelId) => liveMissingFor(provider, modelId) === true,
     currentProvider,
     currentModel,
   });
@@ -1397,6 +1424,45 @@ router.get('/api-keys', (_req, res) => {
       anthropic:  keys.anthropicApiKey  ? withMeasurement('anthropic')  : [],
       openrouter: keys.openrouterApiKey ? withMeasurement('openrouter') : [],
     },
+    // ── PER-MODEL AVAILABILITY, AND WHY IT IS NOT A FIELD ON THE OFFER ──────
+    //
+    // `{ <provider>: { <modelId>: true | false | null } }`, three-valued per
+    // entry, over exactly the population `offerable` above serialises — so a
+    // client can answer "has the provider withdrawn THIS row?" for any row it
+    // draws, without a second request and without re-deriving anything.
+    //
+    // THE OBVIOUS PLACE FOR IT WAS INSIDE THE OFFER ENTRY, AND THAT IS WRONG.
+    // `test-offerable-models-route.js` §7 asserts `offerable` is BYTE-IDENTICAL
+    // across a `recordLiveModelListing` call — "a listing is a fact ABOUT the
+    // offers, never a change TO them" — and that assertion is correct, not an
+    // obstacle: an availability verdict genuinely is not a property of the
+    // offer. Stamping it on the entry would make the catalogue mutate whenever
+    // somebody pressed a read-only Check button, which is the same conflation
+    // `POST /models/check`'s own docblock refuses one screen down. So the fact
+    // sits BESIDE the offers, keyed by id, and `offerable` stays frozen.
+    //
+    // NULL IS A VALUE. `liveMissingFor` returns null for "no listing for this
+    // provider — nobody checked, the check failed, or it was never connected",
+    // and on a provider nobody has checked EVERY entry here is null. A client
+    // must render that as unknown and never as a warning: a chip saying a model
+    // is withdrawn because we could not reach a list endpoint is worse than no
+    // chip at all. Key-gated exactly like `offerable` (the v3.0.13 rule), so a
+    // Disconnected provider serialises `{}` rather than a map about models no
+    // screen is offering.
+    liveMissingByModel: (() => {
+      const out = { gemini: {}, anthropic: {}, openrouter: {} };
+      const gate = {
+        gemini: keys.geminiApiKey, anthropic: keys.anthropicApiKey, openrouter: keys.openrouterApiKey,
+      };
+      for (const p of KNOWN_PROVIDERS_FALLBACK) {
+        if (!gate[p]) continue;
+        for (const entry of offerableFor(p)) {
+          if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string') continue;
+          out[p][entry.id] = liveMissingFor(p, entry.id);
+        }
+      }
+      return out;
+    })(),
     // ── THE ONE BUILD MODEL, DERIVED ─────────────────────────────────────────
     // What actually builds the wiki right now: one provider, one model, and
     // where the value came from. NOTHING NEW IS STORED for this — it is read
