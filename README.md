@@ -365,9 +365,10 @@ structural Health scans and the MCP bridge itself cost nothing at all.
 | **Anthropic Claude Haiku 4.5** | No | $1/M in · $5/M out | 10× the Gemini bill on input, 12.5× on output |
 
 Those are the *defaults*, not the only options. A hand-measured catalogue spans Gemini, Anthropic
-and OpenRouter — one route is **free**, and on a connected install the app names the cheapest
-measured model for you on the same screen. OpenRouter's pinned default is about a **third** of the
-Gemini default per token. Across the measured Gemini and Anthropic models the span is roughly
+and OpenRouter — free routes exist for chat, and on a connected install the app names the cheapest
+measured model for you on the same screen. OpenRouter's pinned default is priced close to the
+Gemini default ($0.09 in · $0.36 out per 1M tokens, measured against a billed call on 16 September
+2026). Across the measured Gemini and Anthropic models the span is roughly
 **50× on input and 62× on output**, so changing model rescales the rows above. An admin running
 cohort-scale Shared Brain synthesis weekly is more like €10–20/month.
 

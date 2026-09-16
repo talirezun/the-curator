@@ -293,7 +293,7 @@ Orphan rescue is slightly larger because it asks for up to 5 candidates with des
 - Input tokens ≈ the same shape as broken-link (orphan page content + entity/concept inventory).
 - Response ≈ **600–1000 output tokens** (5 × candidate block).
 
-On the low-cost models each provider defaults to (Gemini 2.5 Flash Lite, Claude Haiku 4.5, or OpenRouter's Solar Pro 4 — cheaper again than either, at $0.03/$0.12 per 1M tokens), each per-row Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent. On one of OpenRouter's free models it costs nothing, and no dollar figure is shown at all — see the unpriced-model paragraph in the Phase 3 **Cost** section above.
+On the low-cost models each provider defaults to (Gemini 2.5 Flash Lite, Claude Haiku 4.5, or OpenRouter's Solar Pro 4 — priced close to Flash Lite at $0.09/$0.36 per 1M tokens), each per-row Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent. On one of OpenRouter's free models it costs nothing, and no dollar figure is shown at all — see the unpriced-model paragraph in the Phase 3 **Cost** section above.
 
 The Curator does not aggregate or cache suggestions — each click is an independent call.
 

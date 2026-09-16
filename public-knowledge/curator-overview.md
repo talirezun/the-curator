@@ -104,8 +104,8 @@ The Curator itself is free, open-source software. The only paid component is the
 |---|---|---|---|---|
 | Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) | Google Gemini | Free tier available, rate-limited | $0.10 in, $0.40 out | The pinned default. About 5 euros a month at heavy solo use |
 | Claude Haiku 4.5 (`claude-haiku-4-5`) | Anthropic | No | $1.00 in, $5.00 out | The Anthropic default. 10 times the Gemini bill on input, 12.5 times on output |
-| Solar Pro 4 (`upstage/solar-pro4`) | OpenRouter | No | $0.03 in, $0.12 out | The OpenRouter default, about a third of the Gemini default per token |
-| MiniMax M3 (`minimax/minimax-m3:free`) | OpenRouter | Yes | Nothing | The free route in the measured catalogue |
+| Solar Pro 4 (`upstage/solar-pro4`) | OpenRouter | No | $0.09 in, $0.36 out | The OpenRouter default, priced close to the Gemini default (measured against a billed call on 16 September 2026) |
+| MiniMax M3 (`minimax/minimax-m3:free`) | OpenRouter | Was free | Nothing | The one free model measured for building; OpenRouter withdrew the free id in September 2026, and the app now reports it as no longer offered. Other free routes remain usable for chat |
 
 Those are the defaults, not the only options. A hand-measured catalogue spans all three providers, and on a connected install the app names the cheapest measured model you can reach on the same screen, beside each model's price and its measured pages-per-source. Across the measured Gemini and Anthropic models the span is roughly 50 times on input and 62 times on output, so changing model rescales the table above.
 
