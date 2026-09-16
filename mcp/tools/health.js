@@ -198,7 +198,28 @@ export async function fixWikiIssueHandler(args, storage) {
   if (type === 'semanticDupe') {
     const key = previewKey(issue);
     if (preview) {
-      const planned = await previewSemanticDuplicateMerge(domain.value, issue);
+      let planned;
+      try {
+        planned = await previewSemanticDuplicateMerge(domain.value, issue);
+      } catch (err) {
+        // A pair an earlier merge already consumed is ALREADY RESOLVED, not a
+        // tool failure. Returned as a structured refusal with the missing page
+        // named, so the model moves to the next pair instead of retrying this
+        // one or re-running the paid scan. No preview token is issued — there
+        // is nothing to confirm.
+        if (err && err.code === 'SEMANTIC_PAIR_STALE') {
+          return {
+            ok: false,
+            domain: domain.value,
+            type,
+            reason: 'pair-already-resolved',
+            ...(err.missing ? { missing: err.missing } : {}),
+            error: err.message,
+            report: `ALREADY RESOLVED — ${err.missing || 'one page of this pair'} no longer exists, so there is nothing to preview or merge. The scan emits every pair above threshold, so one merge inside a family of near-identical pages resolves its siblings. Move on to the next pair.`,
+          };
+        }
+        throw err;
+      }
       if (key) SEMANTIC_DUPE_PREVIEWED.add(`${domain.value}|${key}`);
       return {
         ok: true,
@@ -267,10 +288,16 @@ export async function fixWikiIssueHandler(args, storage) {
     // Machine-readable twin of the prose in `report`, so a caller can branch
     // without string-matching. Absent when the fix applied.
     ...(result?.reason ? { reason: result.reason } : {}),
+    // The `folder/slug` that is gone, on the two semanticDupe staleness
+    // reasons. Without it the model has to parse the page name back out of
+    // an English sentence to know which side of the pair went — and on a
+    // corpus where `claude-opus-5` and `claude-opus` are different pages,
+    // a parsed-out guess is how the wrong page gets merged next.
+    ...(result?.missing ? { missing: result.missing } : {}),
     details: result || null,
     report: result?.fixed
       ? `Fixed 1 ${type} issue in '${domain.value}'.`
-      : noOpReport(type, result?.reason, domain.value),
+      : noOpReport(type, result?.reason, domain.value, result?.missing),
   };
 }
 
@@ -291,8 +318,15 @@ export async function fixWikiIssueHandler(args, storage) {
  * `claude-sonnet-3.5` are different pages, a retried guess is how a wrong link
  * gets written into every page that referenced it.
  */
-function noOpReport(type, reason, domainName) {
+function noOpReport(type, reason, domainName, missing) {
   switch (reason) {
+    case 'remove-page-missing':
+    case 'keep-page-missing':
+      return `ALREADY RESOLVED — nothing was written, and nothing needs to be. ${missing || 'One page of this pair'} no longer exists: an earlier merge in this session already consumed it. The semantic-duplicate scan emits EVERY pair above threshold, so a family of near-identical pages produces many overlapping pairs and merging one of them resolves its siblings. Do NOT retry this pair and do not re-run the paid scan to "refresh" it — move on to the next pair, and re-run scan_semantic_duplicates only when you have finished the list.`;
+    case 'wiki-missing':
+      return `REFUSED — nothing was written. '${domainName}' has no wiki folder, so neither page of this pair could be read. Check the domain name with list_domains.`;
+    case 'semantic-pair-invalid':
+      return `REFUSED — nothing was written. keepSlug/removeSlug must each be a bare slug (no folder prefix, no ".md"), keepFolder/removeFolder must each be "entities" or "concepts" (never "summaries"), and the two sides must not name the same page. Pass the pair exactly as scan_semantic_duplicates returned it.`;
     case 'target-not-found':
       return `REFUSED — nothing was written. The suggestedTarget you supplied does not name a page that exists in '${domainName}', so retargeting to it would replace one broken link with another. Do NOT retry with a different guess: confirm the real slug with get_index or search_wiki, and if no page genuinely covers it, leave the link alone and tell the user (or point them at the app's bulk "Fix broken links" flow, which previews the whole plan). The broken link is still there.`;
     case 'no-suggested-target':

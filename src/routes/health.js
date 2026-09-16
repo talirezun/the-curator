@@ -269,6 +269,20 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
     const preview = await previewSemanticDuplicateMerge(domain, issue);
     res.json({ ok: true, ...preview });
   } catch (err) {
+    // A pair whose page an earlier merge already deleted is a REFUSAL, not a
+    // failure: nothing is wrong, this pair is simply already resolved. That
+    // is the same refusal-vs-failure split the client's classifyDomainError
+    // makes on 409, and a 500 here put a red "Could not build a preview"
+    // under a card whose Merge button stayed gated behind "Preview required
+    // before Merge" — a dead end with no action in it. Not logged as an
+    // error either: it is an ordinary outcome of merging a version family.
+    if (err && err.code === 'SEMANTIC_PAIR_STALE') {
+      return res.status(409).json({
+        error: err.message,
+        code: err.code,
+        ...(err.missing ? { missing: err.missing } : {}),
+      });
+    }
     console.error('[semantic-dupes preview]', err);
     res.status(err.status || 500).json({ error: err.message });
   }

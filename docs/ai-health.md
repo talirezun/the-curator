@@ -147,11 +147,29 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 5. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
 6. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
 
+### One merge can resolve several pairs (v3.53.0)
+
+The scan **pairs every candidate**, so it does not group a family of pages into one cluster — it emits every two-page combination that scores above the threshold. Eight versions of the same page produce **28 pairs**, and each of those eight pages appears in seven of them.
+
+That means merging one pair deletes a page that other pairs still name. Those pairs are not broken and they are not yours to decide any more: they are **already resolved**. The app says so directly — as soon as a page is deleted, every remaining pair naming it (on either side) moves to the **Already handled in this scan** list, labelled *"resolved by an earlier merge — entities/claude-opus-5 is gone"*.
+
+This is a local, free change to the list you already paid for. The scan is **not** re-run and the pairs you have not reached are untouched, including the medium- and low-confidence ones.
+
+It works the same way from the batch merge, which is where it matters most — a batch deletes many pages in one pass, so within one family most of its own later pairs resolve part-way through the run.
+
+**If it happens outside the app** — you delete a page in Obsidian, or an agent merges one over the MCP, while a scan is open on screen — the first Preview you open on an affected pair notices and resolves it the same way, naming the page that is gone.
+
+Before v3.53.0 none of this was reported. A sibling pair stayed on screen as an ordinary action card whose **Preview diff** failed with *"Could not build a preview — Both pages must exist to preview a merge"* and whose **Merge** button stayed disabled behind *"Preview required before Merge"* — a dead end whose only exit was re-running a paid scan. A community bug report on v3.52.0 is what surfaced it.
+
+> **A cluster-level scan is a possible future change, not a built one.** Grouping a version family into one N-page decision (instead of N·(N−1)/2 pairwise ones) would be the more direct fix, and it would change the scan's prompt, its cost model and its UI. Nothing in the code today does it — the pairwise emission is still how candidates are produced.
+
 ### Merge all high-confidence duplicates (v3.0.1-beta.15)
 
 When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is impractical. After the scan finishes, a **✨ Merge all N high-confidence duplicates** bar appears above the results. It acts ONLY on the green **high confidence** pairs — clear near-identical duplicates like `opacity-objection-ai` ↔ `opacity-objection`. Medium- and low-confidence pairs still require the manual Preview → Merge gate, because they're the ones most likely to be genuinely distinct.
 
-Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar (each card flips to ✓ Merged or ⊘ Skipped as it goes). Merges run sequentially server-side, so a pair whose file was already consumed by an earlier merge is safely skipped rather than erroring.
+Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar. Merges run sequentially server-side, so a pair whose page was already consumed by an earlier merge in the same run cannot error.
+
+Each pair ends in one of three states, and since v3.53.0 they are **named separately** because they are different events: **merged**, **resolved by an earlier merge** (a page of the pair was already gone — see above), and **skipped** (the pair failed validation for some other reason, which is also the word used when *you* press Skip on a pair). Through v3.52.0 the first and third of those were both reported as "skipped", so a merge that never ran was shown back to you as a decision you had made.
 
 **Undo:** the entire wiki is git-tracked, so a batch merge you regret is recoverable — but **not from inside the app**. See *How to actually undo a Health fix* below.
 

@@ -1282,6 +1282,29 @@
   overflow-wrap: anywhere;
 }
 .dm-sem-handled { opacity: 0.6; }
+/* A pair RESOLVED by an earlier merge is not the user's own Skip, and its row
+   carries a whole sentence where the others carry one word ("resolved by an
+   earlier merge — entities/claude-opus-5 is gone"). Two things follow, and the
+   second was found by LOOKING at the rendered row, not by reasoning about it:
+
+     1. At the inherited 0.6 opacity a sentence is harder to read than a label.
+        These rows lift to 0.8.
+     2. The sentence CANNOT share the row. `.dm-issue-main` is `flex: 1` with
+        `min-width: 0`, so it collapses to zero against any sibling with a wide
+        min-content — and the meta's longest word is a full `folder/slug`. A
+        first attempt at `flex: 0 1 auto` on the meta rendered the slug column
+        ONE CHARACTER PER LINE in the domain card's ~230 px content column
+        (photographed in the running app). The sentence therefore takes its own
+        full-width line under the pair, at every width. */
+.dm-sem-handled-resolved {
+  opacity: 0.8;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.dm-sem-handled-resolved .dm-issue-meta {
+  flex: 1 0 100%;
+  overflow-wrap: anywhere;
+}
 
 /* ── Wiki browse panel ────────────────────────────────────────────────── */
 
