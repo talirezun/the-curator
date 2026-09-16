@@ -1282,6 +1282,42 @@
   padding: 28px 0 20px;
   margin-top: auto;
 }
+/* ── THE CHAT DEFAULT IS GONE ──────────────────────────────────────────────
+   ONE LINE, above the composer box and inside its column, so it is read on the
+   way to Send rather than found afterwards. Not a fold and not a dialog: it
+   says what the next Send will do, which is a fact the user needs without
+   asking for it, and this repo's own rule is that a warning behind a click is
+   not a warning (v3.16.1).
+
+   Amber on the border and the icon; the sentence is --text, because
+   --attention-text as body text on its own tint measured 3.21 in light — the
+   same measurement the fallback banner in settings.css records. */
+.chat-composer-notice {
+  max-width: 780px;
+  margin: 0 auto var(--space-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  border: 1px solid var(--attention-text);
+  border-radius: var(--radius-md);
+  background: var(--attention-tint);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.chat-composer-notice svg { flex: none; margin-top: 2px; color: var(--attention-text); }
+.chat-composer-notice span { min-width: 0; overflow-wrap: anywhere; }
+.chat-composer-notice code {
+  font-family: var(--font-mono);
+  padding: 1px var(--space-2);
+  border-radius: 5px;
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-xs);
+}
+.chat-composer-notice button { flex: none; margin-left: auto; white-space: nowrap; }
+
 .chat-composer {
   max-width: 780px;
   margin: 0 auto;

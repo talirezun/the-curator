@@ -108,7 +108,7 @@ import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, escapeHtml, icon,
   isCurrentMount, reportAsyncMountFailure, reportAsyncActionFailure,
   beginDomainWrite, isDomainWriteBusy, getDomainWriteLabel, onWriteGateChange,
-  reportPossibleActiveJob,
+  reportPossibleActiveJob, navigate,
 } from '../app.js';
 
 // The 13 pure data helpers — byte-identical copies of src/public/app.js's
@@ -172,6 +172,11 @@ function freshState() {
     duplicate: null,        // {filename} | null
     result: null,           // {title, changes, warnings, truncated, wasOverwrite, tokenUsage, unchangedExpanded} | null
     errorMessage: null,
+    // The SSE error frame's `code`, or null. Held beside the message rather than
+    // folded into it: the sentence is what a user reads, the code is what
+    // decides which block renders it, and collapsing the two is what made
+    // every ingest failure land on one generic red wall with no action.
+    errorCode: null,
 
     // ── Server-backed activity (v3.24.0) ─────────────────────────────
     // The record GET /api/ingest/activity holds for the SELECTED domain,
@@ -1636,12 +1641,53 @@ function renderIngestForm() {
     renderRemoteProgress() +
     renderRemoteOutcome() +
     renderDuplicate() +
-    (state.errorMessage
-      ? '<div class="ing-status-block">' +
-          renderStatus({ state: 'danger', title: 'Ingest failed', detail: state.errorMessage }) +
-        '</div>'
-      : '') +
+    renderIngestFailure(state.errorMessage, state.errorCode) +
     renderResult()
+  );
+}
+
+/**
+ * ── ONE FAILURE THAT IS NOT LIKE THE OTHERS ───────────────────────────────
+ *
+ * Every ingest failure used to render the same red wall: "Ingest failed" plus
+ * whatever sentence came off the wire, and nothing to do about it. That is the
+ * right shape for a 503 or a corrupt PDF — there is no action but "try again".
+ * It is the WRONG shape for `MODEL_GONE`, where retrying is guaranteed to fail
+ * in the same way every time, and the one thing that fixes it is two clicks
+ * away on a screen this view can open.
+ *
+ * DISPATCHED ON THE CODE, never on the message text. A substring match on a
+ * sentence is a guard that breaks the day somebody rewords the sentence, and
+ * this repo has shipped that shape before (a bare `/\b429\b/` that also matched
+ * ingest's own "yielded only 429 characters").
+ *
+ * PURE and exported-by-position for the suite: takes the message and the code
+ * rather than reading `state`, so both arms can be driven offline.
+ */
+function renderIngestFailure(message, code) {
+  if (!message) return '';
+  if (code === 'MODEL_GONE') {
+    return (
+      '<div class="ing-status-block ing-model-gone" data-ingest-error-code="MODEL_GONE">' +
+        '<div class="ing-model-gone-head">' +
+          icon('alertTriangle', 15) +
+          '<b>The build model is gone</b>' +
+        '</div>' +
+        '<p class="ing-model-gone-body">' + escapeHtml(message) + '</p>' +
+        '<p class="ing-model-gone-body">Nothing was written, and retrying will fail the same way ' +
+          'until a different model is chosen. Ingest, Wiki Health and Compile all run on that one ' +
+          'model, so this is the same fix for all three.</p>' +
+        '<div class="ing-model-gone-actions">' +
+          '<button type="button" class="btn btn-primary btn-xs" id="ing-model-gone-settings">' +
+            'Open Settings → Providers &amp; keys</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+  return (
+    '<div class="ing-status-block">' +
+      renderStatus({ state: 'danger', title: 'Ingest failed', detail: message }) +
+    '</div>'
   );
 }
 
@@ -2636,6 +2682,12 @@ function wireListeners() {
   const remoteDismiss = document.getElementById('ing-remote-dismiss');
   if (remoteDismiss) remoteDismiss.addEventListener('click', () => dismissRemoteOutcome(myMountToken));
 
+  // The way out of a retired build model. There is exactly one control for it
+  // and it lives on Settings → Providers & keys; this view points at it rather
+  // than growing a second picker, for the same reason chat does not have one.
+  document.getElementById('ing-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
+  document.getElementById('ing-queue-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
+
   // The main-pane settled line. "Show me" goes through `selectDomain` — the
   // SAME writer the sidebar rows use, and one of §2's allow-listed writers of
   // `state.domain`. It is deliberately not a new adoption path: this is the
@@ -2706,6 +2758,7 @@ function pickSingleFile(token, fileList) {
   state.duplicate = null;
   state.result = null;
   state.errorMessage = null;
+  state.errorCode = null;
 
   if (!ALLOWED_EXT.includes(ext)) {
     state.file = null;
@@ -2759,6 +2812,7 @@ async function runIngest(token, overwrite) {
 
   state.submitting = true;
   state.errorMessage = null;
+  state.errorCode = null;
   state.duplicate = null;
   phaseStartedAt = Date.now();
   state.progress = { pct: 2, label: 'Starting…', waiting: false, phaseStartedAt };
@@ -2848,7 +2902,18 @@ async function runIngest(token, overwrite) {
           if (ev.type === 'progress') setProgress(ev.pct, ev.message, false);
           else if (ev.type === 'wait') setProgress(ev.pct, ev.message, true);
           else if (ev.type === 'done') { finalData = ev; break outer; }
-          else if (ev.type === 'error') throw new Error(ev.message);
+          else if (ev.type === 'error') {
+            // ── THE CODE TRAVELS WITH THE MESSAGE ──────────────────────────
+            // `throw new Error(ev.message)` threw the SENTENCE away from its
+            // CLASSIFICATION, so every failure — a provider 503, a retired
+            // build model, a corrupt PDF — arrived at the same red wall with
+            // the same "Ingest failed" heading and no action. The code is
+            // carried on the Error and read in the catch, because that is the
+            // one place both are still in scope.
+            const e = new Error(ev.message);
+            if (typeof ev.code === 'string' && ev.code) e.curatorCode = ev.code;
+            throw e;
+          }
         }
       }
     } finally {
@@ -2900,6 +2965,7 @@ async function runIngest(token, overwrite) {
     if (isCurrentMount(token)) {
       state.progress = null;
       state.errorMessage = err.message;
+      state.errorCode = (err && typeof err.curatorCode === 'string') ? err.curatorCode : null;
       render(token);
     }
   } finally {
@@ -3812,7 +3878,25 @@ function renderQueueItemRow(item, opts) {
   const isRunning = item && item.status === 'running';
   const isFailedItem = item && item.status === 'failed';
   const isCancelledItem = item && item.status === 'cancelled';
-  const errorLine = ((isFailedItem || isCancelledItem) && item.error)
+  // ── THE SAME FAILURE, THE SAME BLOCK, IN THE BATCH LIST ────────────────
+  // A batch item that died of MODEL_GONE died of the thing no retry can fix,
+  // and the row is where the user is looking. Dispatched on the CODE the wire
+  // carries (`errorCode`), never on the message text — the same rule
+  // renderIngestFailure states, and the reason the queue's own transient
+  // classifier is a structured tag rather than a `/\b429\b/`. A build whose
+  // backend does not send the field simply renders the ordinary error line,
+  // which is the degrade-quietly direction.
+  const errorLine = (isFailedItem && item.errorCode === 'MODEL_GONE' && item.error)
+    ? '<div class="ing-queue-item-error ing-model-gone" data-ingest-error-code="MODEL_GONE">' +
+        '<div class="ing-model-gone-head">' + icon('alertTriangle', 13) +
+          '<b>The build model is gone</b></div>' +
+        '<p class="ing-model-gone-body">' + escapeHtml(item.error) + '</p>' +
+        '<div class="ing-model-gone-actions">' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="ing-queue-model-gone-settings">' +
+            'Open Settings → Providers &amp; keys</button>' +
+        '</div>' +
+      '</div>'
+    : ((isFailedItem || isCancelledItem) && item.error)
     ? '<div class="ing-queue-item-error' + (isCancelledItem ? ' ing-queue-item-stopped-msg' : '') + '">' + escapeHtml(item.error) + '</div>'
     : '';
   const pages = item && item.result && Number.isFinite(item.result.pagesWritten) ? item.result.pagesWritten : null;

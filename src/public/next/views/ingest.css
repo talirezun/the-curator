@@ -1010,6 +1010,44 @@
    belongs to this file; the box itself belongs to the system.              */
 .ing-status-block { margin-top: var(--space-7); margin-bottom: var(--space-7); }
 
+/* ── THE ONE INGEST FAILURE WITH SOMETHING TO DO ABOUT IT ──────────────────
+   Every other failure here is "try again" and the generic danger block says so
+   correctly. MODEL_GONE is not: retrying is guaranteed to fail in the same way,
+   and the fix is on another screen. So it is headed, it explains what retrying
+   would do, and it carries the route — rather than the same red wall with a
+   sentence the user can only read and re-read.
+
+   Amber rather than danger, and that is deliberate: nothing was written and
+   nothing was lost. The red register belongs to failures that might have.
+   The sentence is --text because --attention-text as body text on its own tint
+   measured 3.21 in light (settings.css records the same measurement). */
+.ing-model-gone {
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--attention-text);
+  border-radius: var(--radius-md);
+  background: var(--attention-tint);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ing-model-gone-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+}
+.ing-model-gone-head svg { flex: none; color: var(--attention-text); }
+.ing-model-gone-head b { font-weight: var(--weight-semibold); color: var(--text); }
+.ing-model-gone-body {
+  margin: 0;
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.ing-model-gone-actions { margin-top: var(--space-2); }
+
 /* NOTHING PLACES THE SHARED ROLES HERE, and the absence is deliberate.
    shared/text.js owns their type AND their geometry, and
    scripts/test-next-text-system.js enforces that by failing on a `tx-`

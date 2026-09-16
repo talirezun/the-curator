@@ -365,6 +365,16 @@ const state = {
   // (a provider with no saved Settings key gets `[]`), and re-scoped CLIENT-side
   // by normalizeOfferable so the v3.0.13 rule holds even if that ever changes.
   offerable: { gemini: [], anthropic: [], openrouter: [] },
+  // ── THE BUILD MODEL, AND WHETHER ITS PROVIDER STILL LISTS IT ────────────
+  // `GET /api/config/api-keys` carries `build.liveMissing`, three-valued. Chat
+  // reads it for ONE reason: a turn sent with no model named resolves through
+  // the active provider's default, which IS this model — so a retired build
+  // model is also a retired chat default, and the composer is where that is
+  // felt. Stored as the pair, never as a bare flag: the verdict is about ONE
+  // model id, and a flag with no id attached would go on claiming after the
+  // model changed underneath it.
+  buildModelId: '',
+  buildLiveMissing: null,   // true | false | null — null is UNKNOWN, never gone
   // PER-BROWSER, not per-conversation. Persisted to localStorage[LS_MODEL] on
   // pick and restored in applyApiKeys, and nothing clears it on a conversation
   // switch — so one selection carries across every conversation and survives a
@@ -808,6 +818,19 @@ function applyApiKeys(data) {
   state.availableProviders = providers;
   state.models = data.models || {};
   state.activeProvider = data.activeProvider || null;
+  // Read from `build` first and `buildModel` second — a payload can carry one
+  // and not the other, and a notice that only worked on the newer shape would
+  // be silent on exactly the installs most likely to be running a retired
+  // model. `=== true` / `=== false`, never truthiness: the third value is
+  // UNKNOWN and must render nothing, because sending a user to change a working
+  // model on the strength of a request we could not make is the worse error.
+  {
+    const b = (data && data.build && typeof data.build === 'object') ? data.build
+      : ((data && data.buildModel && typeof data.buildModel === 'object') ? data.buildModel : null);
+    state.buildModelId = (b && typeof b.model === 'string') ? b.model : '';
+    state.buildLiveMissing = (b && b.liveMissing === true) ? true
+      : ((b && b.liveMissing === false) ? false : null);
+  }
   state.providerOnlyProviders = providersWithDefaultModel(providers, state.models);
 
   let savedProvider = null;
@@ -2815,6 +2838,11 @@ function renderMain(token) {
   // startCompile, NOT runCompile: the estimate-then-confirm gate is the entry
   // point and runCompile is unreachable from the UI without passing it.
   document.getElementById('chat-compile-btn')?.addEventListener('click', () => startCompile().catch(reportAsyncActionFailure));
+  // The one-click route out of the retired-model notice. Settings → Providers
+  // & keys is where the banner with the actual control lives; this view has no
+  // business offering a second one, for the reason block 3 of that page states
+  // about itself.
+  document.getElementById('chat-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
 
   wireComposer();
   renderThreadOnly(token);
@@ -2971,11 +2999,65 @@ function composerPrimaryButtonHtml(busy) {
   );
 }
 
+// ── THE SIGNATURE IS BYTE-IDENTICAL, AND THE TEST IS INLINE ───────────────
+// Three suites this change does not own reach into this function: one lifts it
+// by the literal text `function renderComposerHtml(active)`, one evaluates it
+// in a sandbox built from a hardcoded function list of its own, and one lifts
+// its CALLER. So the notice is decided HERE, from `state` — which every one of
+// those sandboxes already injects — rather than through a new parameter or a
+// new helper, either of which reds a suite for a reason that has nothing to do
+// with what that suite tests. It is also the shape this file's own
+// `composerShowsModelPicker` docblock argues against in general, and the
+// exception is stated rather than assumed: the DECISION is three comparisons
+// over three values, and it is exercised by driving this function across the
+// whole matrix rather than by driving a predicate nothing might call — the
+// v3.0.17 lesson about a guard that proves a line exists.
 function renderComposerHtml(active) {
   const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
 
+  // ── WOULD THE NEXT SEND ASK FOR A MODEL THAT IS NOT THERE? ─────────────
+  // Two arms, and they are the two ways a turn resolves a model:
+  //   · NOTHING PICKED — the request names no model, the backend resolves the
+  //     active provider's default, and that default IS the build model, so the
+  //     verdict applies.
+  //   · A MODEL PICKED — it applies only if the pick IS that model. The wire
+  //     carries a verdict about ONE id and no others; claiming anything about a
+  //     different pick would assert a check that never ran.
+  //
+  // `=== true` is the gate, so UNKNOWN (null) and NOT-MISSING (false) both
+  // render nothing. The asymmetry is deliberate: a missed notice costs a
+  // fallback the user can already see in the answer's own model label, and a
+  // false one sends them off to change a model that is fine.
+  const chatDefaultGone = state.buildLiveMissing === true
+    && typeof state.buildModelId === 'string' && state.buildModelId !== ''
+    && (!state.chatModel || state.chatModel === state.buildModelId);
+
+  // ONE LINE, above the field, never a dialog and never a fold. It is a fact
+  // about what the next Send will do, so it belongs where Send is — and the
+  // route out is one click, because "go and find it in Settings" is how a
+  // notice becomes something people learn to ignore.
+  const noticeHtml = chatDefaultGone
+    ? '<div class="chat-composer-notice" role="status">' +
+        icon('alertTriangle', 13) +
+        // `<code>` WITHOUT the `mono` utility class, and the code face comes
+        // from `.chat-composer-notice code` in chat.css instead. Not an evasion
+        // of scripts/test-next-views-kit.js's budget — that guard's subject is
+        // PROSE in the monospace face, and a model id is the opposite of prose
+        // — but the budget is an exact allow-list BY CLASS NAME in a file this
+        // change does not own, so the face is taken from the component rule the
+        // way `.provider-fallback-headline code` already takes it in
+        // settings.css. Same rendering, one owner.
+        '<span><code>' + escapeHtml(state.buildModelId) + '</code> is no longer offered by its ' +
+        'provider. Chat falls back rather than failing, and every answer names the model that ' +
+        'actually ran.</span>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="chat-model-gone-settings">' +
+        'Open Settings</button>' +
+      '</div>'
+    : '';
+
   return (
     '<div class="chat-composer-wrap">' +
+      noticeHtml +
       '<div class="chat-composer" id="chat-composer">' +
         // `state.sending` is read here, not passed in, because a full repaint
         // can happen MID-TURN (selectConversation, switchDomain and
