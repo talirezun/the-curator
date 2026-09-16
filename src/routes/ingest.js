@@ -5,6 +5,10 @@ import { existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { ingestFile } from '../brain/ingest.js';
+// NAMESPACE import, the degradation contract this codebase uses for the model
+// layer: a build shipped before the availability layer existed resolves these to
+// `undefined`, the gate below is skipped, and ingest behaves exactly as it did.
+import * as llmModule from '../brain/llm.js';
 import { listDomains, rawPath, domainPath, isDomainReadonly } from '../brain/files.js';
 import {
   registerWrite,
@@ -212,6 +216,55 @@ router.post('/', upload.single('file'), async (req, res) => {
     // pre-v3.24.0 behaviour (events stream to whoever is watching and are
     // remembered by nobody), never to a failed ingest.
     try { activityId = startActivity(domain, req.file.originalname); } catch { activityId = null; }
+
+    // ── PRE-SPEND GATE: THE MODEL IS GONE, SO DO NOT START ──────────────────
+    //
+    // Runs AFTER the SSE stream is open (so the refusal reaches the user as a
+    // frame rather than a JSON body the streaming client would not read) and
+    // BEFORE `ingestFile`, which is the first thing that can make a paid call.
+    //
+    // A multi-phase ingest is one outline call plus one per content batch — 25+
+    // calls on a large source — and every one of them would fail identically
+    // against a model the provider has withdrawn, after llm.js had spent its
+    // 429/503 retry ladder on each. What the user got before this gate was a raw
+    // transport error, several minutes later, with no route forward.
+    //
+    // ONLY A POSITIVE `missing` VERDICT REFUSES. `catalogueAbsence` returns null
+    // when nothing has been checked — the default state on a fresh process — and
+    // null must never block an ingest. That is the fail-safe direction and it is
+    // the only one acceptable here: a wrong refusal stops a user working with a
+    // model that is fine, while a missed detection costs them the failure they
+    // were already getting.
+    //
+    // It resolves the model through `getProviderInfo()`, the SAME call
+    // `callProvider` makes per request, so the gate cannot be about a different
+    // model from the one that would spend. A throw there (no key, no configured
+    // model) is left alone deliberately — `ingestFile` raises its own, better
+    // message for that, and this gate must not become a second error surface for
+    // a condition it does not own.
+    let goneCheck = null;
+    try {
+      const info = typeof llmModule.getProviderInfo === 'function' ? llmModule.getProviderInfo() : null;
+      if (info && typeof llmModule.catalogueAbsence === 'function'
+          && llmModule.catalogueAbsence(info.provider, info.model) === 'missing') {
+        goneCheck = llmModule.makeModelGoneError(info.provider, info.model);
+      }
+    } catch { /* no provider / no model — ingestFile reports that far better */ }
+
+    if (goneCheck) {
+      emit({
+        type: 'error',
+        // The wire code, so a client can offer "refresh the model list" instead
+        // of a generic retry. Additive beside `message`, which every existing
+        // client already renders.
+        code: 'MODEL_GONE',
+        message: goneCheck.message,
+      });
+      try { settleAbandoned(activityId); } catch { /* never fail an ingest */ }
+      try { await releaseFileLock(); } catch { /* best-effort */ }
+      releaseRegistry();
+      return res.end();
+    }
 
     try {
       const result = await ingestFile(

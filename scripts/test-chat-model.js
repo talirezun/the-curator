@@ -951,7 +951,17 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
   // against `usage.cost` on a cold probe run to six decimal places.
   const OPENROUTER_VERIFIED_PRICES = Object.freeze({
     'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
-    'upstage/solar-pro4':              { input: 0.03,  output: 0.12  },
+    // ⚠ CHANGED 2026-09-16, WHICH IS THIS GATE DOING ITS JOB. It read
+    // 0.03 / 0.12 from 2026-08-27 and went red the moment llm.js was corrected —
+    // exactly the "a person must see this" outcome the gate exists for. The new
+    // figures are the endpoints' published rate AND the bill: a cold call of 93
+    // prompt + 3 completion tokens reported cost 0.00000945, with
+    // cost_details.upstream_inference_prompt_cost 0.00000837 (93 x $0.09/1M) and
+    // ..._completions_cost 0.00000108 (3 x $0.36/1M). Both of the id's two
+    // endpoints publish the same rate, so it cannot route to another. The old
+    // figure computed 0.00000315 — a third of the truth, on the surface whose
+    // whole job is telling a user what a model costs before they pick it.
+    'upstage/solar-pro4':              { input: 0.09,  output: 0.36  },
     'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
     'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
   });

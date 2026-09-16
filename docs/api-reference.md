@@ -240,6 +240,30 @@ curl -X POST http://localhost:3333/api/ingest \
 { "error": "Unsupported file type: .docx. Allowed: .txt, .md, .pdf" }
 ```
 
+**SSE error frame — `MODEL_GONE` (pre-spend refusal)**
+
+```
+data: {"type":"error","code":"MODEL_GONE","message":"OpenRouter no longer offers `minimax/minimax-m3:free` — pick another model in Settings."}
+```
+
+Emitted **before the first paid call** when the provider no longer lists the model
+this install is pinned to. `code` is **additive** beside the `message` every
+existing client already renders, and it exists so a client can offer *"refresh the
+model list"* rather than a generic retry.
+
+The frame arrives on the **SSE stream**, not as a JSON body, because by this point
+the stream is already open and a streaming client would never read a body. No
+`done` frame follows, so nothing renders a success panel.
+
+Only a **positive** absence verdict refuses. An unchecked provider answers
+`null` and the ingest proceeds normally — *"we could not check"* may never block
+work. The batch queue applies the same gate per item, marking it `failed` with
+`errorCode: "MODEL_GONE"` and charging nothing; the error is deliberately **not**
+classified as transient, so it fails one item instead of pausing the job for ever.
+
+See [docs/model-lifecycle.md § When a provider removes a model](model-lifecycle.md#when-a-provider-removes-a-model)
+and [`POST /api/config/models/check`](#post-apiconfigmodelscheck).
+
 ## GET /api/ingest/activity
 
 What the server currently knows about **single-file** ingests (`POST /api/ingest`), so a view that was not watching while one ran can still show its progress and its outcome.
@@ -3374,7 +3398,9 @@ Returns masked API key status, the active provider, and the model-picker catalog
       "priceIn": 0.10,
       "priceOut": 0.40,
       "same": true
-    }
+    },
+    "liveMissing": false,
+    "liveListing": { "checkedAt": "2026-09-16T13:38:55.201Z", "source": "network", "count": 41 }
   },
   "catalogueCounts": { "total": 7, "canBuild": 6, "measured": 7, "free": 0, "batchHidden": null },
   "chat": { "startsOn": { "model": "gemini-2.5-flash-lite", "provider": "gemini" }, "count": 7 },
@@ -3554,6 +3580,18 @@ what the user is paying.
     source · about 48s per call"`), built from the promoted measurement *fields* rather than by
     regexing a number back out of the model's `note` prose; a clause whose field is absent is
     omitted, and `null` means nothing was measured at all.
+  - `liveMissing` — **three-valued: `true` | `false` | `null`.** Has the provider removed the model
+    this user is pinned to? `null` is a VALUE, not an omission: it means *nobody has checked in this
+    process, the last check failed, or the provider was never connected*. Render it as **unknown**,
+    never as `false` — *"we could not check"* must never be served as *"it is present"*. Populated
+    by [`POST /api/config/models/check`](#post-apiconfigmodelscheck), and for OpenRouter also at
+    boot from the persisted catalogue sidecar (no network, no key).
+    ⚠ **A `true` here does not change what runs.** `activeModel` and `build.model` above are still
+    the model the engine resolves; this field drives a message and a pre-spend refusal, never a
+    silent re-pin (v3.45.0's Option B — moving the build lane, and the bill, is the user's act).
+  - `liveListing` — what the verdict was taken against: `{checkedAt, source, count}` or `null`. A
+    verdict with no denominator is not reviewable, so the size and provenance of the list travel
+    with it. `source` is `'network'` or `'disk'`.
   - `cheapestMeasured` — the cheapest model, across the providers the user has **connected**, that
     is both build-lane and measured, or `null`. Derived from the **whole, unfiltered,
     price-ordered** population — never index 0 of a display list, which is precisely the defect the
@@ -3656,6 +3694,88 @@ not mentioning it is the surprise this release exists to remove, not to relocate
   every one was refused the build lane), `"none_left"` (no candidate at all), or `"not_active"` (the
   disconnected provider was not the one building, so nothing moved).
 - `buildLaneMoved` is `false` whenever the disconnected provider was not the active one.
+
+## POST /api/config/models/check
+
+Ask ONE provider for its current model list and record it, so the app can answer
+*"has the provider removed the model I am pinned to?"*.
+
+**Body**
+
+```json
+{ "provider": "openrouter" }
+```
+
+`provider` is one of `gemini` | `anthropic` | `openrouter`. Anything else is a
+**400**. A provider with no key **saved in Settings** is a **400** — config-scoped,
+never `.env` (the v3.0.13 rule): a provider the user Disconnected must not be
+polled with a lingering developer key.
+
+**Response — 200**
+
+```json
+{
+  "provider": "openrouter",
+  "checkedAt": "2026-09-16T13:38:55.201Z",
+  "source": "network",
+  "chosen": "minimax/minimax-m3:free",
+  "liveMissing": true,
+  "listedCount": 443
+}
+```
+
+- `chosen` — the model the verdict is **about**, resolved through the engine's own
+  `getDefaultModel()`, so the answer cannot be about a different model from the one
+  that would spend.
+- `liveMissing` — `true` | `false` | `null`, with the same three-valued meaning as
+  on `GET /api-keys` above.
+- `listedCount` — how many ids the provider published, so the verdict has a
+  denominator. `null` when nothing was recorded.
+
+**Response — 200 on FAILURE**
+
+```json
+{
+  "provider": "openrouter",
+  "checkedAt": "2026-09-16T13:41:02.884Z",
+  "source": "network",
+  "chosen": "minimax/minimax-m3:free",
+  "liveMissing": null,
+  "listedCount": null,
+  "error": "openrouter could not be reached, so nothing was checked: …"
+}
+```
+
+A failure is a **200 with a verdict**, not an HTTP error — the same posture as
+[`POST /api/config/api-keys/validate`](#post-apiconfigapi-keysvalidate), and for
+the same reason: a 502 here lands in the client's generic network-error path and
+the actionable detail is discarded. `liveMissing` is `null`, **never `false`** — a
+failed check learned nothing. **Nothing is recorded**, so a previously recorded
+listing and the persisted catalogue are left byte-identical; one transient DNS
+blip can never read as *every model you own has been removed*.
+
+**Cost: free.** All three are list endpoints — no tokens, no generation, no charge.
+
+**It may never admit a model.** This route stores a set of strings. It does not
+call `defineOfferableModel` or `setOpenRouterCatalogue`, and an offline suite
+asserts `listOfferableModels(provider)` is byte-identical across a *successful*
+check that fetched an id the app has never offered. The standing rule is that a
+model may not be offered for a feature it has never been measured against, and an
+availability check is exactly the mechanism that would erode it.
+
+**Concurrency:** carries `guardConcurrent`, so it **409**s while a write is in
+flight. That is deliberate and is the opposite of `/api-keys/validate`, which is
+exempt: this route records process-wide state that the ingest pre-spend gate
+reads, so a check landing mid-batch could change what the next item is allowed to
+do. The axis is *"does an in-flight write observe this"*, not *"does it touch the
+disk"*.
+
+⚠ **Anthropic lists dated ids** (`claude-haiku-4-5-20251001`) while the app pins
+undated aliases (`claude-haiku-4-5`). A `false` for such an alias is resolved
+through an explicit dated-suffix rule; see
+[docs/model-lifecycle.md § When a provider removes a model](model-lifecycle.md#when-a-provider-removes-a-model).
+
+---
 
 ## GET /api/config/models/new
 

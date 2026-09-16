@@ -1002,6 +1002,79 @@ section('§5c. POST /api-keys/disconnect — reassigning the build lane is guard
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// §7. `liveMissing` is ADDITIVE and cannot disturb the shapes §3 pins
+// ─────────────────────────────────────────────────────────────────────────
+section('§7. Availability fields are additive [M7, M21]');
+{
+  const llm2 = await import('../src/brain/llm.js');
+
+  const before = await (await fetch(BASE + '/api/config/api-keys')).json();
+  const keysBefore = Object.keys(before).join(',');
+  // ── AND THE NESTED OBJECT'S OWN KEYS ──────────────────────────────────
+  // The top-level comparison alone let a mutation that added a field INSIDE
+  // `build` pass green, which is the half of "additive" that actually moves:
+  // this release adds two fields to `build`, so `build` is precisely where an
+  // unannounced third would land. Sorted so a reordering is not reported as a
+  // change, and asserted as a SET, which is what "the shape did not move" means.
+  const buildKeysBefore = before.build ? Object.keys(before.build).sort().join(',') : null;
+  const modelsShape = JSON.stringify(Object.fromEntries(
+    Object.entries(before.models).map(([k, v]) => [k, typeof v])));
+
+  llm2.recordLiveModelListing('openrouter', ['zz/only-this-one'], { source: 'network' });
+  const after = await (await fetch(BASE + '/api/config/api-keys')).json();
+
+  eq(Object.keys(after).join(','), keysBefore,
+    '★ recording a listing adds NO top-level field and removes none — the response shape is byte-stable');
+  eq(after.build ? Object.keys(after.build).sort().join(',') : null, buildKeysBefore,
+    '★★ …and `build`\'s own key set is unchanged too [M21: a field added inside `build` passes the top-level check and reds only here]');
+  ok(buildKeysBefore === null || buildKeysBefore.split(',').includes('liveMissing'),
+    'non-vacuous: the pinned set really does contain the field this release added, so it is describing the current contract');
+
+  // ── A LITERAL REVIEW GATE ON `build`'s KEY SET ─────────────────────────
+  // The before/after comparison above proves a listing does not move the shape.
+  // It CANNOT catch a field added to the route itself, because that field is in
+  // both responses — measured: a mutation adding `surpriseNewField` inside
+  // `build` left every assertion above green. A literal expectation is the only
+  // thing that can say no, and it is the same REVIEW-GATE shape this repo
+  // already uses for HAND_TYPED_CEILINGS and OPENROUTER_VERIFIED_PRICES: there
+  // is no second source to derive it from, so changing it must be seen by a
+  // person.
+  //
+  // `build` is consumed by a view built against a written contract, so an
+  // unannounced field here is a contract change however harmless it looks.
+  // Adding one legitimately means updating this line in the same commit — and
+  // that edit IS the human look.
+  const BUILD_CONTRACT_KEYS = [
+    'cheapestMeasured', 'facts', 'liveListing', 'liveMissing', 'model', 'provider', 'source',
+  ].join(',');
+  if (after.build) {
+    eq(Object.keys(after.build).sort().join(','), BUILD_CONTRACT_KEYS,
+      "★★ `build` carries EXACTLY the seven fields the wire contract names [M21: any eighth reds here, and only here]");
+  }
+  eq(JSON.stringify(Object.fromEntries(Object.entries(after.models).map(([k, v]) => [k, typeof v]))), modelsShape,
+    '★ `models` is STILL a map of strings — the /old "[object Object]" hazard §3 pins is untouched by any of this');
+  ok(Array.isArray(after.offerable.openrouter), '`offerable.openrouter` is still an array');
+  eq(JSON.stringify(after.offerable), JSON.stringify(before.offerable),
+    '★ …and byte-identical: a listing is a fact ABOUT the offers, never a change TO them');
+
+  if (after.build) {
+    ok(Object.hasOwn(after.build, 'liveMissing'), 'build.liveMissing exists');
+    ok(after.build.liveMissing === true || after.build.liveMissing === false || after.build.liveMissing === null,
+      '★ …and is one of exactly three values — true, false or null [M7: a boolean collapses "we could not check" into "it is present"]');
+    ok(Object.hasOwn(after.buildModel, 'liveMissing'), 'buildModel.liveMissing exists too');
+    eq(after.build.liveMissing, after.buildModel.liveMissing,
+      '★ …and the two objects describing one model agree, because they come from one producer');
+  }
+
+  llm2.__clearLiveModelListings();
+  const cleared = await (await fetch(BASE + '/api/config/api-keys')).json();
+  if (cleared.build) {
+    eq(cleared.build.liveMissing, null,
+      '★ with the listing forgotten the verdict returns to null — it is derived on every read, never stored, so it cannot go stale [M7]');
+  }
+}
+
 await new Promise(r => server.close(r));
 
 // ─────────────────────────────────────────────────────────────────────────

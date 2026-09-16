@@ -114,7 +114,7 @@ import {
   parseJSON,
   __testing as ingestTesting,
 } from './ingest.js';
-import { OpenRouterAdapter } from './openrouter-adapter.js';
+import { OpenRouterAdapter, redactOpenRouterSecrets } from './openrouter-adapter.js';
 // ONE DEFINITION, and it lives in llm.js because it is part of the definition of
 // the BUILD LANE, which has exactly one home. The mechanical reason is also
 // decisive: this module imports ingest.js, and ingest.js imports llm.js, so
@@ -154,6 +154,75 @@ export const QUALIFY_RATE_LIMIT_ABORT_AFTER = 3;
 
 /** Delay between runs, so a probe does not itself look like an attack. */
 export const QUALIFY_SPACING_MS = 1_500;
+
+/**
+ * ── ERRORS THAT CANNOT IMPROVE ON RUN 2, SO RUN 2 MUST NOT HAPPEN ───────────
+ *
+ * Every class here is a property of the ACCOUNT, the KEY or the CATALOGUE — not
+ * of the model's ability to produce an outline — and none of them changes
+ * because we waited 1.5 seconds and asked again. Before this set, a fatal error
+ * on run 1 ran all nine, and `summariseRuns` then filed nine `FAILED` rows as
+ * `DEFECT_OBSERVED` — a measurement recorded AGAINST A MODEL for a refusal the
+ * model had no part in, which then suppresses that model from the build lane.
+ * That is the worst outcome this feature has: it spends the user's time to
+ * produce a wrong verdict, and the verdict is sticky.
+ *
+ *   OPENROUTER_MODEL_NOT_FOUND   a retirement-shaped 404. The model is gone.
+ *   OPENROUTER_BAD_REQUEST       "is not a valid model ID" — same, from a 400.
+ *   OPENROUTER_AUTH              401. The key is wrong. Nine more will be 401.
+ *   OPENROUTER_INSUFFICIENT_CREDITS  402. A negative balance refuses even free
+ *                                models; it does not clear inside a probe.
+ *   OPENROUTER_MODERATION        403. The account is not permitted this call.
+ *
+ * ── WHAT IS DELIBERATELY *NOT* HERE ────────────────────────────────────────
+ *
+ * RATE_LIMITED. It is transient by definition and already has its own bounded
+ * ladder (`QUALIFY_RATE_LIMIT_ABORT_AFTER`, three CONSECUTIVE), which resets on
+ * any non-429 — the right shape for something that clears with time.
+ *
+ * Network and timeout failures. A dropped connection or a slow upstream is
+ * exactly the kind of thing the next run may not hit, and abandoning a
+ * measurement on one is how a good model gets a bad record.
+ *
+ * ── AND THE OUTCOME IS NOT A DEFECT ────────────────────────────────────────
+ *
+ * `summariseRuns` maps any abort in this set to `NOT_MEASURED`, the same verdict
+ * a rate-limit abort gets, because that is what actually happened: nothing about
+ * the model was measured. See the `aborted` branch there.
+ */
+export const QUALIFY_FATAL_ERROR_CLASSES = Object.freeze(new Set([
+  'OPENROUTER_MODEL_NOT_FOUND',
+  'OPENROUTER_BAD_REQUEST',
+  'OPENROUTER_AUTH',
+  'OPENROUTER_INSUFFICIENT_CREDITS',
+  'OPENROUTER_MODERATION',
+]));
+
+/**
+ * ── THE PER-CALL CEILING FOR A PROBE IS NOT THE PRODUCTION CEILING ──────────
+ *
+ * The adapter's default is 600 s, chosen for a real ingest where a slow call is
+ * still a call the user wants to finish. A probe is different: it is nine calls,
+ * the user is watching a progress bar, and a run that takes ten minutes tells us
+ * nothing a two-minute cap does not — a model that cannot plan an outline in
+ * 120 s has already failed the thing being measured, and MEASURED_LATENCY_MS
+ * records the slowest SUCCESSFUL call in the reference set at ~382 s only
+ * because nothing capped it sooner.
+ *
+ * At 600 s per call with no overall bound, nine runs is a **90-minute** ceiling
+ * behind one click. At 120 s it is 18 minutes, which is a wait a person can
+ * decide to sit through.
+ *
+ * ⚠ THE OVERALL DEADLINE IS A SEPARATE GUARANTEE AND BOTH ARE NEEDED. A
+ * per-call timeout bounds ONE call; nine of them can still run to the sum. The
+ * deadline below is what makes the whole operation bounded, and it is checked
+ * BETWEEN runs — it never aborts a call that is already in flight and already
+ * paid for.
+ */
+export const QUALIFY_CALL_TIMEOUT_MS = 120_000;
+
+/** Overall ceiling: the per-call cap times the default run count. */
+export const QUALIFY_DEADLINE_MS = QUALIFY_CALL_TIMEOUT_MS * QUALIFY_DEFAULT_RUNS;
 
 /**
  * MEASURED per-call latency across candidate models, used ONLY to quote an
@@ -358,7 +427,21 @@ export function classifyProbeError(err) {
   if (status === 429 || code === 'OPENROUTER_RATE_LIMIT') errorClass = 'RATE_LIMITED';
   let message = '';
   try { message = String((err && err.message) || err); } catch { message = 'unstringifiable error'; }
-  return { errorClass, httpStatus: status, errorMessage: message.slice(0, 300) };
+  // ── REDACT HERE, NOT ONLY IN THE ADAPTER ────────────────────────────────
+  // FOUND BY A CANARY, not by reading. The adapter redacts every message IT
+  // builds, and while `errorMessage` stayed inside this module that was enough.
+  // It now rides on the `run` SSE frame, so it reaches a screen — and not every
+  // error that arrives here is adapter-built: a raw transport failure, an
+  // injected transport, or any future caller can throw an Error whose message
+  // this module has never seen. `redactOpenRouterSecrets` is the SAME function
+  // the adapter uses, imported rather than re-implemented, and redaction runs
+  // BEFORE the 300-character cap so a truncation can never slice a key into a
+  // shape the pattern no longer matches.
+  return {
+    errorClass,
+    httpStatus: status,
+    errorMessage: redactOpenRouterSecrets(message).slice(0, 300),
+  };
 }
 
 // ── prompt assembly, from the user's OWN domain ──────────────────────────────
@@ -633,6 +716,20 @@ export function summariseRuns(rows, meta = {}) {
   let outcome;
   if (meta.cancelled) outcome = 'CANCELLED';
   else if (aborted === 'NOT_MEASURED_RATE_LIMITED') outcome = 'NOT_MEASURED';
+  // ── A FATAL PROVIDER REFUSAL IS NOT A MODEL DEFECT ──────────────────────
+  // Same reasoning as the rate-limit arm directly above, and the same verdict.
+  // An abort in QUALIFY_FATAL_ERROR_CLASSES means the key, the account or the
+  // catalogue refused the call — 401, 402, 403, or the model being gone — so
+  // NOTHING about the model was measured. Recording DEFECT_OBSERVED would write
+  // an account problem into a model's permanent record and then suppress that
+  // model from the build lane on the strength of it.
+  //
+  // The prefix is the contract: the runner emits `NOT_MEASURED_<CLASS>` for
+  // exactly these classes, so this arm cannot be widened by accident — a
+  // genuine burn abort (`ABORTED_REASONING_BURN`, `ABORTED_BUDGET_EXHAUSTION`)
+  // does not carry it and still falls through to DEFECT_OBSERVED below, which
+  // is correct: that one IS the model's behaviour.
+  else if (typeof aborted === 'string' && aborted.startsWith('NOT_MEASURED_')) outcome = 'NOT_MEASURED';
   else if (aborted) outcome = 'DEFECT_OBSERVED';
   else if (unrepairable > 0 || unusable > 0 || failed > 0) outcome = 'DEFECT_OBSERVED';
   else if (completed.length === 0) outcome = 'NOT_MEASURED';
@@ -716,7 +813,15 @@ export async function qualifyModel(o) {
   const spacingMs = Number.isFinite(o.spacingMs) ? o.spacingMs : QUALIFY_SPACING_MS;
 
   const prompt = o.prompt || await assembleProbePrompt(o.domain, o);
-  const callModel = o.callModel || defaultCallModel(o.apiKey, o.timeoutMs);
+  // EXPLICIT, never the adapter's 600 s production default — see
+  // QUALIFY_CALL_TIMEOUT_MS. A caller may still override it, which is how the
+  // route passes its own value and how a suite drives a short one.
+  const timeoutMs = Number.isFinite(o.timeoutMs) ? o.timeoutMs : QUALIFY_CALL_TIMEOUT_MS;
+  const callModel = o.callModel || defaultCallModel(o.apiKey, timeoutMs);
+  // Derived from the per-call cap and the run count actually requested, so a
+  // 3-run probe is not given a 9-run budget. `o.deadlineMs` overrides for tests.
+  const deadlineMs = Number.isFinite(o.deadlineMs) ? o.deadlineMs : timeoutMs * runs;
+  const deadlineAt = deadlineMs > 0 ? now() + deadlineMs : null;
 
   emit({
     type: 'start',
@@ -726,6 +831,20 @@ export async function qualifyModel(o) {
     promptChars: prompt.promptChars,
     sourceName: prompt.sourceName,
     minRunsToQualify: QUALIFY_MIN_RUNS,
+    // ── THE TWO CEILINGS, REPORTED RATHER THAN IMPLIED ──────────────────────
+    // ADDITIVE to a frame whose existing fields are untouched. Two reasons, and
+    // the second is why they are here rather than only in a constant:
+    //   1. A user about to wait deserves the bound in the frame that opens the
+    //      wait, not a number hard-coded in a view that could drift from it.
+    //   2. It makes the RESOLVED values observable, which is the only way to
+    //      pin them behaviourally. An offline mutation that changed the default
+    //      back to the adapter's 600 s production ceiling passed the whole suite
+    //      green, because the only thing asserting the figure was a comparison
+    //      between two CONSTANTS — it proved the constant was small, never that
+    //      `qualifyModel` used it. That is this repo's "a test that proves a
+    //      line exists proves nothing about what it does", in the constants.
+    callTimeoutMs: timeoutMs,
+    deadlineMs: deadlineMs > 0 ? deadlineMs : null,
   });
 
   const rows = [];
@@ -737,6 +856,18 @@ export async function qualifyModel(o) {
 
   for (let run = 1; run <= runs; run++) {
     if (signal && signal.aborted) { cancelled = true; break; }
+    // ── THE OVERALL DEADLINE, CHECKED BETWEEN RUNS ONLY ─────────────────────
+    // Never mid-call: a call already in flight has already been paid for, and
+    // killing it converts a measurement the user financed into nothing. So the
+    // real worst case is `deadline + one call`, which is stated rather than
+    // rounded away. The per-call ceiling is what bounds that last call.
+    //
+    // `now` is the injected clock the whole ladder already uses, so a suite can
+    // drive this deterministically instead of waiting eighteen minutes.
+    if (Number.isFinite(deadlineAt) && now() >= deadlineAt) {
+      aborted = 'NOT_MEASURED_DEADLINE';
+      break;
+    }
 
     const t0 = now();
     let row;
@@ -797,10 +928,33 @@ export async function qualifyModel(o) {
       latencyMs: row.latencyMs,
       budgetBurn: row.budgetBurn,
       errorClass: row.errorClass,
+      // ── THE REASON, NOT JUST THE CLASS ──────────────────────────────────
+      // `errorClass` has always been on this frame and `errorMessage` never was,
+      // so a user watching nine runs fail saw nine identical rows reading
+      // OPENROUTER_BAD_REQUEST with no way to learn WHY — the message existed on
+      // the row object the whole time and was dropped on the way to the wire.
+      // That is this repo's dominant defect class: a consumer silently losing a
+      // field the producer honestly computed.
+      //
+      // Already flattened, capped at 300 and key-redacted by the time it gets
+      // here: `classifyProbeError` caps it, and the adapter redacts every message
+      // it builds through `_redact` before that. The offline suite asserts no
+      // `sk-or-` substring survives, using a canary key rather than trusting
+      // either layer.
+      errorMessage: row.errorMessage,
       // A REAL projection from a REAL measurement, replacing the pre-run range
       // the moment there is any evidence at all to project from.
       etaMs: projectRemainingMs(latencies, runs - run),
     });
+
+    // ── ABORT ON THE FIRST FATAL CLASS, NOT AFTER THREE ─────────────────────
+    // Checked BEFORE the counting ladders below, because those exist for
+    // conditions that can clear and this one cannot. One occurrence is the whole
+    // evidence there will ever be. See QUALIFY_FATAL_ERROR_CLASSES.
+    if (row.errorClass && QUALIFY_FATAL_ERROR_CLASSES.has(row.errorClass)) {
+      aborted = `NOT_MEASURED_${row.errorClass}`;
+      break;
+    }
 
     if (row.budgetBurn) consecutiveBurn++; else consecutiveBurn = 0;
     if (row.errorClass === 'RATE_LIMITED') consecutive429++; else consecutive429 = 0;
@@ -834,7 +988,17 @@ export async function qualifyModel(o) {
     cancelled,
   });
 
-  emit({ type: 'done', record, qualifies: isPassingRecord(record) });
+  emit({
+    type: 'done',
+    record,
+    qualifies: isPassingRecord(record),
+    // LIFTED TO THE TOP LEVEL, additively — they are already inside `record` and
+    // stay there. A consumer deciding whether to render a verdict at all should
+    // not have to reach into the record to find out that there is no verdict,
+    // and `aborted` is the field that says so. Same values, one producer.
+    aborted: record.aborted,
+    outcome: record.outcome,
+  });
   return { record, runs: rows };
 }
 

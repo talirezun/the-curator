@@ -199,7 +199,7 @@ import {
   makeUsageAccumulator,
   __testing as ingestTesting,
 } from './ingest.js';
-import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel } from './llm.js';
+import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -514,6 +514,9 @@ function wireItem(item) {
     finishedAt: wireStr(item.finishedAt, 64),
     attempts: wireNum(item.attempts),
     error: wireStr(item.error),
+    // Additive, allow-listed and capped like every other field here. Null when
+    // the failure has no code — see where it is set.
+    errorCode: wireStr(item.errorCode, 64),
     result: r && typeof r === 'object' ? {
       title: wireStr(r.title, 512),
       pagesWritten: wireNum(r.pagesWritten),
@@ -1959,7 +1962,39 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
     // Guarantee 1, at the only place it can actually be guaranteed. See
     // `enterIngest`. The increment/check is synchronous and immediately
     // precedes the await; the decrement is in the matching finally.
+    // ── PRE-SPEND GATE: THE MODEL IS GONE, SO DO NOT START THIS ITEM ────────
+    //
+    // Thrown, not returned, so it lands in the SAME catch below that every other
+    // item failure does and takes the ordinary `failed` path — one settlement
+    // path, one place that charges partial spend, one place that increments
+    // `consecutiveFailures`. A second early-return branch here would be a second
+    // copy of that bookkeeping.
+    //
+    // It is DELIBERATELY NOT TRANSIENT. `classifyTransientError` reads
+    // `err.curatorTransient` first and then the "(HTTP 429/503)" text fallback,
+    // and this error carries neither — which is the whole reason
+    // `makeModelGoneError`'s wording is a contract. If it classified transient
+    // the batch would PAUSE, and pause again on every Resume, forever, because a
+    // withdrawn model does not come back with time. It fails ONE item; the
+    // consecutive-failure circuit breaker then stops the batch on its own, which
+    // is the bounded, already-tested behaviour for "everything is failing".
+    //
+    // Only a POSITIVE `missing` verdict fires. An unchecked provider answers
+    // null and the item runs exactly as before — the fail-safe direction, and
+    // the default state of a fresh process.
     let result;
+    try {
+      const info = getProviderInfo();
+      if (catalogueAbsence(info.provider, info.model) === 'missing') {
+        throw makeModelGoneError(info.provider, info.model);
+      }
+    } catch (err) {
+      // Only OUR error stops the item. `getProviderInfo` throws its own, better
+      // message for "no key" / "no model configured", and that is ingest.js's
+      // story to tell at its own call site, not this gate's.
+      if (err && err.curatorModelGone) throw err;
+    }
+
     enterIngest();
     try {
       result = await ingestFileImpl(domain, item.stagedPath, item.name, job.overwrite, onProgress, {
@@ -1979,6 +2014,11 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
     it.status = 'done';
     it.finishedAt = new Date().toISOString();
     it.error = null;
+    // Cleared alongside `error`, for the same reason it is cleared at all: a
+    // RETRIED item that failed on an earlier attempt would otherwise carry the
+    // old attempt's code into a successful record, and a client branching on the
+    // code would offer a remedy for a failure that no longer exists.
+    it.errorCode = null;
     it.result = {
       title: result && result.title,
       pagesWritten: Array.isArray(result?.pagesWritten) ? result.pagesWritten.length : 0,
@@ -2081,6 +2121,14 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       it.status = 'failed';
       it.finishedAt = new Date().toISOString();
       it.error = scrubPaths((err && err.message) || String(err));
+      // A MACHINE-READABLE REASON BESIDE THE PROSE. Only set for the conditions
+      // this app raises itself and a client can act on differently — today only
+      // MODEL_GONE, whose remedy ("refresh the model list / pick another model")
+      // is nothing like the remedy for an unextractable PDF. Absent on every
+      // other failure rather than defaulted to a generic string: a code that
+      // means "something went wrong" carries no information and invites a client
+      // to branch on it.
+      it.errorCode = err && err.curatorModelGone ? 'MODEL_GONE' : null;
       // A failed item can also have spent money — a document that dies in
       // Phase 2 has already paid for its Phase-1 outline. Failures that spend
       // NOTHING (unextractable PDF, too-short source: both throw before any
