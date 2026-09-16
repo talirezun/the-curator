@@ -33,6 +33,12 @@ import { scrubPaths } from '../brain/scrub-paths.js';
 // not-yet-shipped export resolves to undefined and the route reports it, rather
 // than failing this file's load and taking every config endpoint down.
 import * as discoveryModule from '../brain/model-discovery.js';
+// The RAW published list, used by POST /models/check for OpenRouter. Deliberately
+// not `fetchOpenRouterDiscoveries`, which answers the narrower "eligible but not
+// yet offered" question — see that route's docblock. A named import is safe here
+// because this function has shipped since v3.15.0; `llmModule`'s namespace
+// contract exists for exports that may not be in an older build.
+import { fetchOpenRouterCatalogue } from '../brain/openrouter-adapter.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
 import {
@@ -42,6 +48,7 @@ import {
   isCancelledError,
   QUALIFY_DEFAULT_RUNS,
   QUALIFY_MIN_RUNS,
+  QUALIFY_CALL_TIMEOUT_MS,
 } from '../brain/openrouter-qualify.js';
 
 const execAsync = promisify(exec);
@@ -1224,6 +1231,31 @@ export function pickCheapestMeasuredBuild(offers, opts = {}) {
   return null;
 }
 
+/**
+ * Three-valued availability for one model, for the wire.
+ *
+ * `true | false | null`, and `null` IS A VALUE, not an omission: it means we
+ * have no listing for that provider — nobody has run a check in this process,
+ * the last one failed, or the provider was never connected. "We could not
+ * check" must never be served as "it is present". That is the same rule
+ * `syncOpenRouterCatalogue` states about expiry evaluation and
+ * `summariseOpenRouterKeyCheck` states about `valid`, and it is the rule this
+ * repo has broken most often (v3.15.0 found a fact collapsed with its absence
+ * in eight places in one release).
+ *
+ * Namespace-guarded like every other `llmModule` read here: a build shipped
+ * before `catalogueAbsence` existed resolves it to `undefined` and reports
+ * `null`, which is exactly the honest answer.
+ */
+function liveMissingFor(provider, modelId) {
+  if (!provider || !modelId) return null;
+  if (typeof llmModule.catalogueAbsence !== 'function') return null;
+  const verdict = llmModule.catalogueAbsence(provider, modelId);
+  if (verdict === 'missing') return true;
+  if (verdict === 'present') return false;
+  return null;
+}
+
 function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
   return pickCheapestMeasuredBuild(connectedOffers(keys), {
     isBuild: isBuildLaneAllowed,
@@ -1401,6 +1433,14 @@ router.get('/api-keys', (_req, res) => {
         // ONE producer for this fact — the same helper `build.facts.measured`
         // uses, so the two objects describing one model cannot disagree.
         measuredBy: measuredBy(p, provider?.model || null),
+        // ── HAS THE PROVIDER REMOVED THIS MODEL? true | false | null ─────────
+        // ADDITIVE. `null` means we could not check and must render as unknown,
+        // never as "present" — see liveMissingFor. Reported ONLY: a `true` here
+        // does not and must not change `provider.model` above, which is the very
+        // value ingest, Health and Compile resolve. Silently re-pinning on the
+        // strength of a cached list is what v3.45.0's Option B removed, and it
+        // would move the user's bill without asking.
+        liveMissing: liveMissingFor(p, provider?.model || null),
       };
     })(),
     // ── `build` — THE PROVIDERS PAGE'S BLOCK 2, WHOLE ────────────────────────
@@ -1458,6 +1498,17 @@ router.get('/api-keys', (_req, res) => {
           outlineNote: outlineNoteFor(entry),
         },
         cheapestMeasured: cheapestMeasuredBuild(keys, p, model),
+        // Same fact, same producer, same three values as `buildModel.liveMissing`
+        // above — the two objects describe one model and are derived from one
+        // expression each, which is the condition on which this file already
+        // accepts `connected` beside `hasXKey`.
+        liveMissing: liveMissingFor(p, model),
+        // WHAT THE VERDICT WAS TAKEN AGAINST. A verdict with no denominator is
+        // not reviewable: "we checked" is a different claim from "we checked 443
+        // ids that OpenRouter published 20 minutes ago". null when unchecked.
+        liveListing: typeof llmModule.getLiveModelListing === 'function'
+          ? llmModule.getLiveModelListing(p)
+          : null,
       };
     })(),
     // ── FACET COUNTS FOR THE "BROWSE EVERY MODEL" SHELF ──────────────────────
@@ -2064,6 +2115,18 @@ router.post('/api-keys/build-model', guardConcurrent('change the AI model'), (re
       activeProvider: info?.provider || null,
       activeModel:    info?.model || null,
       providerSwitched: activeAfter !== providerBefore,
+      // ── AVAILABILITY IS A WARNING HERE, NEVER A REFUSAL ──────────────────
+      // `true` means the last recorded provider listing did not contain this id.
+      // The pin is still SAVED and this is still a 200, deliberately, and the
+      // direction is the same one `applyModelOverride` already takes: a stored
+      // selection can outlive the list we hold for it, and our list can be
+      // stale, wrong or from another machine's sync. Refusing on a cached list
+      // would mean a user who knows their model works cannot select it, and it
+      // would mean one failed background check locking them out of their own
+      // picker. `null` means we never checked and must render as unknown.
+      // The surface that actually PREVENTS spend is the pre-spend gate on
+      // ingest, which runs against the same predicate at the moment it matters.
+      liveMissing: liveMissingFor(provider, stored),
       // The honest failure modes of this route, named rather than implied away:
       //  provider-not-active — the pin landed but the provider did not move.
       //    Only reachable if `setActiveProvider` refused after our own checks
@@ -2173,6 +2236,135 @@ router.get('/models/new', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/config/models/check   body `{provider}`
+ *
+ * Ask ONE provider for its current model list and record it, so
+ * `catalogueAbsence` — and therefore `liveMissing` on `GET /api-keys`, the
+ * ingest pre-spend gate and the qualification preflight — can answer for that
+ * provider. Free: all three are list endpoints, no tokens, no generation.
+ *
+ * ── IT IS READ-ONLY WITH RESPECT TO THE OFFER TABLES, BY CONSTRUCTION ───────
+ *
+ * This route may NEVER make a model offerable. That is the standing rule
+ * `model-discovery.js` opens with — *"a model may not be offered for a feature
+ * it has never been measured against"* — and an availability check is precisely
+ * the mechanism that would erode it, because the ids it fetches are exactly the
+ * ids somebody would be tempted to admit.
+ *
+ * So: it calls the discovery FETCHERS (which map records to plain
+ * `{id,label,contextLength}` rows and admit nothing) and
+ * `recordLiveModelListing`, which stores a Set of strings and touches no
+ * catalogue, no price registry and no free registry. It never calls
+ * `defineOfferableModel`, `setOpenRouterCatalogue` or `syncOpenRouterCatalogue`.
+ * The offline suite asserts `listOfferableModels(provider)` is byte-identical
+ * across a successful check — the behavioural form of that promise, rather than
+ * a source scan for a function name.
+ *
+ * ── OPENROUTER USES THE RAW CATALOGUE FETCHER, NOT THE DISCOVERY ARM ────────
+ *
+ * `fetchOpenRouterDiscoveries` deliberately answers a narrower question — which
+ * ELIGIBLE ids are not yet offered — so its list is post-filter and would report
+ * the ~200 correctly-rejected ids as absent. Availability needs the raw
+ * published set, which is what `fetchOpenRouterCatalogue` returns (public GET,
+ * no credential sent).
+ *
+ * ── A FAILED CHECK CHANGES NOTHING AND NEVER THROWS ────────────────────────
+ *
+ * `liveMissing: null` with an `error` string, HTTP 200. The verdict is the
+ * answer, not the transport's status — the same posture as
+ * `/api-keys/validate`, and for the same reason: a 502 here lands in the
+ * client's generic network-error path and the actionable detail is discarded.
+ * Nothing is recorded, so the previously-recorded listing (if any) stands
+ * byte-identical, exactly as a failed catalogue sync leaves the catalogue.
+ *
+ * ── guardConcurrent, and why it belongs here unlike on /api-keys/validate ───
+ *
+ * This one records process-wide state that the ingest pre-spend gate reads, so
+ * a check landing mid-ingest could change what the NEXT item in a running batch
+ * is allowed to do. `/api-keys/validate` records nothing, which is why it is
+ * deliberately unguarded; the distinction is state, not symmetry.
+ */
+router.post('/models/check', guardConcurrent('check a provider\'s model list'), async (req, res) => {
+  const provider = req.body && req.body.provider;
+  if (!knownProvider(provider)) return badProvider(res);
+
+  let keys;
+  try { keys = getApiKeys(); } catch (err) {
+    return res.status(500).json({ error: `Could not read your saved API keys: ${scrubPaths(String(err && err.message))}` });
+  }
+  // CONFIG-SCOPED, never getEffectiveKey/.env — the v3.0.13 rule. A provider the
+  // user Disconnected in Settings must not be polled with a lingering .env key:
+  // they told us to stop using it.
+  const KEY_FIELD_BY_PROVIDER = {
+    gemini: 'geminiApiKey', anthropic: 'anthropicApiKey', openrouter: 'openrouterApiKey',
+  };
+  const key = Object.hasOwn(KEY_FIELD_BY_PROVIDER, provider) ? keys[KEY_FIELD_BY_PROVIDER[provider]] : '';
+  if (!key) {
+    return res.status(400).json({
+      error: `No ${provider} key is saved in Settings — connect one before checking its model list.`,
+    });
+  }
+
+  // The model this check is ABOUT: whatever that provider would actually run.
+  // Resolved through the engine's own function so the verdict cannot be about a
+  // different model from the one that would spend.
+  let chosen = null;
+  try { chosen = getDefaultModel(provider); } catch { chosen = null; }
+
+  const fail = (message) => res.json({
+    provider,
+    checkedAt: new Date().toISOString(),
+    source: 'network',
+    chosen,
+    // NOT false. See liveMissingFor — a failed check has learned nothing.
+    liveMissing: null,
+    listedCount: null,
+    error: message,
+  });
+
+  try {
+    let ids = [];
+    if (provider === 'anthropic') {
+      if (typeof discoveryModule.fetchAnthropicModels !== 'function') return fail('This build cannot check the Anthropic model list. Restart The Curator, then try again.');
+      ids = (await discoveryModule.fetchAnthropicModels(key)).map(m => m.id);
+    } else if (provider === 'gemini') {
+      if (typeof discoveryModule.fetchGeminiModels !== 'function') return fail('This build cannot check the Gemini model list. Restart The Curator, then try again.');
+      ids = (await discoveryModule.fetchGeminiModels(key)).map(m => m.id);
+    } else {
+      const records = await fetchOpenRouterCatalogue({});
+      ids = (Array.isArray(records) ? records : [])
+        .filter(r => r && typeof r.id === 'string')
+        .map(r => r.id);
+    }
+
+    const checkedAt = new Date().toISOString();
+    const recorded = typeof llmModule.recordLiveModelListing === 'function'
+      ? llmModule.recordLiveModelListing(provider, ids, { checkedAt, source: 'network' })
+      : { recorded: false, count: 0 };
+    // AN EMPTY LIST IS A FAILURE, NOT AN ANSWER — the same sharp edge
+    // `syncOpenRouterCatalogue` documents. A provider publishing genuinely zero
+    // models is not a state that exists; a body we misread is, and recording it
+    // would report every model the user owns as removed.
+    if (!recorded.recorded) {
+      return fail(`${provider} returned no models, so nothing was checked. Your model list is unchanged.`);
+    }
+
+    res.json({
+      provider,
+      checkedAt,
+      source: 'network',
+      chosen,
+      liveMissing: liveMissingFor(provider, chosen),
+      listedCount: recorded.count,
+    });
+  } catch (err) {
+    // scrubPaths: a transport error can carry a local path, and this body is
+    // rendered in Settings and pasted into bug reports.
+    return fail(`${provider} could not be reached, so nothing was checked: ${scrubPaths(String((err && err.message) || err))}`);
+  }
+});
+
 router.post('/openrouter/sync', guardConcurrent('sync the OpenRouter model catalogue'), async (_req, res) => {
   try {
     const keys = getApiKeys();
@@ -2278,6 +2470,27 @@ async function preflightQualify(body) {
   if (!llmModule.isOfferableModel(provider, modelId)) {
     return {
       error: `That model is not in your current OpenRouter model list. Sync the list in Settings, then try again.`,
+      status: 400,
+    };
+  }
+
+  // ── A MODEL THE PROVIDER NO LONGER LISTS IS REFUSED BEFORE THE FIRST CALL ─
+  // Nine runs at up to 120 s each against an id that cannot answer is the worst
+  // available outcome of this feature: it costs the user real time, and every
+  // run fails, and `summariseRuns` would then file the account/catalogue refusal
+  // as `DEFECT_OBSERVED` — a measurement recorded AGAINST A MODEL for something
+  // that is not the model's fault, which then suppresses it from the build lane.
+  //
+  // Placed AFTER the offerability check and BEFORE the already-measured check so
+  // the cheapest and likeliest refusals still report first. It only fires on a
+  // POSITIVE `missing` verdict: an unchecked provider (`null`) falls through and
+  // the run proceeds, because "we could not check" may not become a refusal.
+  if (typeof llmModule.catalogueAbsence === 'function'
+      && llmModule.catalogueAbsence(provider, modelId) === 'missing') {
+    return {
+      error: `OpenRouter no longer lists "${modelId}", so there is nothing to measure. ` +
+             'Refresh the model list in Settings — if it is still absent, the model has been withdrawn.',
+      code: 'MODEL_GONE',
       status: 400,
     };
   }
@@ -2434,7 +2647,11 @@ export function storeQualification(record) {
  */
 router.get('/openrouter/qualify/estimate', async (req, res) => {
   const pre = await preflightQualify({ model: req.query.model, domain: req.query.domain });
-  if (pre.error) return res.status(pre.status).json({ error: pre.error });
+  // `code` is forwarded when the preflight set one (today: MODEL_GONE). It was
+  // being dropped, which is this repo's named defect — a consumer silently
+  // losing a field the producer honestly computed — and it is the field a client
+  // needs in order to offer "refresh the model list" rather than a generic retry.
+  if (pre.error) return res.status(pre.status).json({ error: pre.error, ...(pre.code ? { code: pre.code } : {}) });
 
   let prompt;
   try {
@@ -2502,7 +2719,11 @@ router.get('/openrouter/qualify/estimate', async (req, res) => {
  */
 router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'), async (req, res) => {
   const pre = await preflightQualify(req.body || {});
-  if (pre.error) return res.status(pre.status).json({ error: pre.error });
+  // `code` is forwarded when the preflight set one (today: MODEL_GONE). It was
+  // being dropped, which is this repo's named defect — a consumer silently
+  // losing a field the producer honestly computed — and it is the field a client
+  // needs in order to offer "refresh the model list" rather than a generic retry.
+  if (pre.error) return res.status(pre.status).json({ error: pre.error, ...(pre.code ? { code: pre.code } : {}) });
 
   const runs = Number.isFinite(Number(req.body && req.body.runs))
     ? Math.max(1, Math.min(QUALIFY_DEFAULT_RUNS, Math.trunc(Number(req.body.runs))))
@@ -2541,14 +2762,35 @@ router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'),
       prompt,
       signal: controller.signal,
       onProgress: send,
+      // EXPLICIT, from the route, rather than left to a default several layers
+      // down. The adapter's own default is the 600 s PRODUCTION ceiling, which
+      // put a 90-minute worst case behind one click with nothing bounding the
+      // whole operation. See QUALIFY_CALL_TIMEOUT_MS / QUALIFY_DEADLINE_MS.
+      timeoutMs: QUALIFY_CALL_TIMEOUT_MS,
+      deadlineMs: QUALIFY_CALL_TIMEOUT_MS * runs,
     });
 
-    // ── A CANCELLED RUN IS NOT STORED ───────────────────────────────────────
-    // It measured nothing conclusive, and persisting it would overwrite a real
-    // earlier measurement with a stub — losing evidence the user already paid
-    // for, to record that they changed their mind.
+    // ── A RUN THAT MEASURED NOTHING IS NOT STORED ───────────────────────────
+    // A cancelled run measured nothing conclusive, and persisting it would
+    // overwrite a real earlier measurement with a stub — losing evidence the
+    // user already paid for, to record that they changed their mind.
+    //
+    // EXTENDED to every `NOT_MEASURED_*` abort, which is the same argument with
+    // the same force: a 401, a 402, a withdrawn model or an elapsed deadline
+    // told us nothing about this model, and writing that over an earlier real
+    // record destroys evidence to store a non-result. `isPassingRecord` would
+    // refuse such a record anyway, so the effect is purely to protect what is
+    // already on disk.
+    //
+    // ⚠ A BURN ABORT IS STILL STORED, DELIBERATELY. `ABORTED_REASONING_BURN` and
+    // `ABORTED_BUDGET_EXHAUSTION` carry no `NOT_MEASURED_` prefix because they
+    // ARE measurements — the model spent its whole output budget on reasoning,
+    // three runs running. That is exactly the defect this feature exists to
+    // catch, and refusing to persist it would throw away the finding.
     let stored = null;
-    if (!record.cancelled) {
+    const measuredNothing = typeof record.aborted === 'string'
+      && record.aborted.startsWith('NOT_MEASURED_');
+    if (!record.cancelled && !measuredNothing) {
       stored = storeQualification(record);
     }
 

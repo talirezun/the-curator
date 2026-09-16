@@ -44,6 +44,9 @@ import { writeFileAtomicSync } from './atomic-write.js';
 // import would be a cycle and would drag the ingest queue and health.js into
 // the MCP child's import graph, where a stray stdout write corrupts JSON-RPC.
 import { scrubPaths } from './scrub-paths.js';
+// The model-gone sentence + tags, shared with openrouter-adapter.js. See that
+// module's docblock for why it is a leaf rather than a function defined here.
+import { modelGoneError, MODEL_GONE_CODE } from './model-gone.js';
 // The eligibility rules, so the HAND-TYPED tables can be held to them too (see
 // auditStaticOffers). NAMESPACE import for the same reason the adapter and
 // routes/config.js use one: a not-yet-shipped export must resolve to
@@ -282,8 +285,15 @@ const DEFAULTS = {
    *     identical prompt. Halving outline coverage by default would degrade
    *     every wiki built on it to save a fraction of a cent per call.
    *
-   * Still an affordability win: $0.03/$0.12 per 1M tokens is roughly a third of
-   * gemini-2.5-flash-lite ($0.10/$0.40), previously the cheapest model here.
+   * ⚠ THE AFFORDABILITY CLAIM WAS RE-MEASURED 2026-09-16 AND HAD TO BE CUT.
+   * This line read "$0.03/$0.12 per 1M tokens is roughly a third of
+   * gemini-2.5-flash-lite ($0.10/$0.40)". Both of this id's endpoints now
+   * publish $0.09/$0.36 and a cold call billed exactly that (see
+   * MODEL_PRICES_USD_PER_MTOK). So it is roughly NINE TENTHS of the cheapest
+   * Gemini option, not a third. It remains the pinned default on COVERAGE and
+   * JSON cleanliness, which is what the bullets above actually argue; the price
+   * is no longer part of the argument, and pretending otherwise on the line
+   * that pins a spend default is the failure this repo keeps naming.
    *
    * Chat is a separate lane and is unaffected: it passes an explicit per-call
    * model, so it never reads this value.
@@ -677,7 +687,9 @@ const FALLBACK_CHAINS = {
    * ibm-granite/granite-4.0-h-micro qualifies on all three counts: measured
    * 9/9 raw-parseable JSON on the real ingest prompt, PAID (so its availability
    * does not depend on a shared free queue), and CHEAPER than the default it
-   * backs up ($0.017/$0.112 vs $0.03/$0.12) — a net that cannot cost more than
+   * backs up ($0.017/$0.112 vs $0.09/$0.36 — the default's price was re-measured on
+   * 2026-09-16 and had tripled, which widens this gap rather than closing it)
+   * — a net that cannot cost more than
    * the thing it replaces. Its measured weakness is coverage, not correctness:
    * a median of 9 outline pages against solar-pro4's 23. Degrading to a thinner
    * plan is the right trade when the alternative is not ingesting at all, and
@@ -823,7 +835,26 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // `{input: 0, output: 0}` entry here is truthy and would silently re-arm
   // v3.3.0's inert budget cap.
   'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
-  'upstage/solar-pro4':              { input: 0.03,  output: 0.12  },
+  //
+  // ── ⚠ RE-MEASURED 2026-09-16: THIS ID GOT 3x MORE EXPENSIVE AND NOTHING
+  //    IN THE APP NOTICED ────────────────────────────────────────────────────
+  // It read $0.03/$0.12 from 2026-08-27 until today. Both of the id's two
+  // endpoints now publish $0.00000009 / $0.00000036 per token, and the BILL
+  // agrees to the cent: a cold call of 93 prompt + 3 completion tokens
+  // reported `cost: 0.00000945`, with `cost_details.upstream_inference_prompt_cost`
+  // 0.00000837 (= 93 x $0.09/1M) and `…_completions_cost` 0.00000108
+  // (= 3 x $0.36/1M). The old figure computes $0.00000315 — exactly a third.
+  //
+  // THE LESSON IS THE ONE THIS TABLE'S DOCBLOCK ALREADY STATES AND COULD NOT
+  // ENFORCE: "staleness is bounded by our own release process" is true of
+  // which IDS we ship and false of what they COST, because an OpenRouter
+  // endpoint can reprice without the id changing. That is why this entry moved
+  // BELOW `z-ai/glm-5.3-flash` in OFFERABLE_MODELS (the cheapest-first order is
+  // a shipped promise and the repricing inverted this pair), and why the
+  // picker copy that called it "roughly a third of the cheapest Gemini option"
+  // had to change: at $0.09/$0.36 against Gemini's $0.10/$0.40 it is roughly
+  // NINE TENTHS, not a third.
+  'upstage/solar-pro4':              { input: 0.09,  output: 0.36  },
   //
   // ── ADDED 2026-08-28. THE PRICE OF AN OPENROUTER ID IS A PROPERTY OF THE
   //    ENDPOINT THAT SERVES IT, NOT OF THE ID ────────────────────────────────
@@ -844,11 +875,29 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // What makes these two safe is STRUCTURAL, not luck:
   //   moonshotai/kimi-k2-0905 has exactly ONE endpoint, so its price cannot
   //     route anywhere else — the same property `ibm-granite/granite-4.0-h-micro`
-  //     has, and `upstage/solar-pro4` has in effect (2 endpoints, both $0.03).
+  //     has, and `upstage/solar-pro4` has in effect (2 endpoints, both at the
+  //     SAME rate — $0.03 when this was written, $0.09 on the 2026-09-16
+  //     re-measure; the structural property is that the two agree, not the
+  //     number they agree on).
   //   z-ai/glm-5.3-flash has three endpoints at $0.075 and twelve at $0.150,
   //     and billed the $0.075 tier on both cold runs. That is the observed
   //     figure and it is what is quoted — but it is the ONE entry here whose
   //     price could double without the id changing, so its note says so.
+  //
+  // ── ⚠ RE-MEASURED 2026-09-16: THE FIGURE HOLDS, THE MARGIN DOES NOT ───────
+  // $0.075/$0.25 is still exactly right — a cold call of 42 prompt + 3
+  // completion tokens billed `cost: 0.0000039` against a computed $0.0000039,
+  // served by DeepInfra. What moved is the DISTRIBUTION behind it: the id now
+  // has 26 endpoints, of which exactly ONE (DeepInfra) charges $0.075, one
+  // charges $0.09, four sit at $0.10-$0.105, and TWENTY charge $0.15 or more,
+  // up to Modal at $0.45/$1.50. The "three at $0.075 and twelve at $0.150"
+  // above is the 2026-08-28 shape and is kept as the record of what was seen
+  // then. The caveat this entry already carried — that its real rate could
+  // double without the id changing — is now the likelier outcome rather than
+  // the unlikely one, and the OFFERABLE entry's note says so in the user's
+  // words. Nothing is re-priced on that basis: the quoted figure is the one
+  // the bill produced, and quoting a rate we did not observe would be the
+  // invented number this table forbids.
   'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
   'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
 };
@@ -2115,21 +2164,15 @@ export const OFFERABLE_MODELS = Object.freeze({
         'pages (median 9) where solar-pro4 plans a median of 23 on the identical prompt. Fewer planned ' +
         'pages means a less detailed wiki from the same source, so pick it when cost dominates.',
     }),
-    defineOfferableModel('openrouter', {
-      id: 'upstage/solar-pro4',
-      label: 'Solar Pro 4',
-      contextLength: 524288,
-      maxOutput: 131072,
-      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
-      suitability: 'general',
-      outlinePagesLow: 14, outlinePagesHigh: 36, outlinePagesMedian: 23,
-      note:
-        'The pinned OpenRouter default. 9 of 9 runs returned raw JSON that parsed WITHOUT jsonrepair ' +
-        '— stricter than our own Anthropic default, which fences its JSON 3/3 and depends entirely on ' +
-        'the repair path — and 14-36 outline pages (median 23), coverage comparable to the cheapest ' +
-        'Gemini option at roughly a third of its price ($0.03/$0.12 against $0.10/$0.40). No hidden ' +
-        'reasoning tokens in any run, so the whole output budget goes to the answer.',
-    }),
+    // ── ⚠ ORDER CHANGED 2026-09-16, AND IT IS NOT A PREFERENCE ───────────────
+    // `z-ai/glm-5.3-flash` now precedes `upstage/solar-pro4` because this list
+    // is CHEAPEST-FIRST — a shipped promise the picker renders in order and an
+    // offline assertion pins — and solar-pro4's re-measured price ($0.09/$0.36,
+    // up from $0.03/$0.12) inverted the pair against glm's unchanged
+    // $0.075/$0.25. The PINNED DEFAULT is still solar-pro4: the head of this
+    // list has never been the default here (a free entry leads it), and the
+    // default is chosen on measured coverage and JSON cleanliness, not on
+    // position. See MODEL_PRICES_USD_PER_MTOK for the bill that settled it.
     defineOfferableModel('openrouter', {
       id: 'z-ai/glm-5.3-flash',
       label: 'GLM 5.3 Flash',
@@ -2150,10 +2193,30 @@ export const OFFERABLE_MODELS = Object.freeze({
         'after it, so a document that takes a minute on the default can take five here, and roughly ' +
         '1 call in 9 will time out and be retried. (2) HIDDEN REASONING: every run spent 4,976-9,781 ' +
         'tokens on reasoning the user never sees — 79-86% of its entire output — billed as output ' +
-        'and drawn from the same 24,576-token budget as the answer. Priced $0.075/$0.25 on the ' +
-        'cheapest of its 15 endpoints, which is what it billed on both cold runs; 12 of those 15 ' +
-        'charge $0.150/$0.50, so this is the one entry here whose real rate could double without ' +
-        'the model id changing.',
+        'and drawn from the same 24,576-token budget as the answer. Priced $0.075/$0.25, which is ' +
+        'what it billed on a cold run on 2026-09-16 as well as on both cold runs in August — but ' +
+        'that is now the rate of ONE of its 26 endpoints. Twenty of them charge $0.15/$0.50 or more, ' +
+        'up to $0.45/$1.50, so of everything here this is the id whose real cost is likeliest to ' +
+        'change without the model id changing.',
+    }),
+    defineOfferableModel('openrouter', {
+      id: 'upstage/solar-pro4',
+      label: 'Solar Pro 4',
+      contextLength: 524288,
+      maxOutput: 131072,
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'general',
+      outlinePagesLow: 14, outlinePagesHigh: 36, outlinePagesMedian: 23,
+      note:
+        'The pinned OpenRouter default, chosen on reliability rather than on price. 9 of 9 runs ' +
+        'returned raw JSON that parsed WITHOUT jsonrepair — stricter than our own Anthropic default, ' +
+        'which fences its JSON 3/3 and depends entirely on the repair path — and 14-36 outline pages ' +
+        '(median 23), coverage comparable to the cheapest Gemini option. No hidden reasoning tokens ' +
+        'in any run, so the whole output budget goes to the answer. ⚠ ITS PRICE TRIPLED: it was ' +
+        '$0.03/$0.12 when first measured on 2026-08-27 and both of its endpoints now charge ' +
+        '$0.09/$0.36, confirmed against the bill on 2026-09-16. That is roughly nine tenths of ' +
+        'gemini-2.5-flash-lite ($0.10/$0.40) rather than the third it used to be, so it is no longer ' +
+        'the affordability pick — Granite 4.0 H Micro and GLM 5.3 Flash are both cheaper.',
     }),
     defineOfferableModel('openrouter', {
       id: 'moonshotai/kimi-k2-0905',
@@ -2555,6 +2618,174 @@ export function getOpenRouterCatalogueMeta(nowMs = Date.now()) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  MODEL AVAILABILITY — "does the provider still list the model we are pinned
+//  to?", answered as a THREE-VALUED fact and never acted on automatically.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────
+//
+// `OFFERABLE_MODELS` is a frozen hand-measured table and `listOfferableModels`
+// merges it with the synced catalogue, so a sync can only ever ADD. An id we
+// ship that the provider has REMOVED therefore stays offerable forever:
+// `applyModelOverride`'s stale-pin fallback (which resolves a non-offerable
+// stored pin down to the provider default) is unreachable for it, and the user
+// discovers the removal by paying for a failed call.
+//
+// MEASURED 2026-09-16 against the live OpenRouter catalogue: `minimax/minimax-m3:free`
+// — a shipped, offerable, build-lane entry — is ABSENT from the provider's own
+// list of 443 ids (the PAID `minimax/minimax-m3` is present). Asking for it
+// returns HTTP 404 with "This model is unavailable for free. The paid version is
+// available now - use this slug instead: minimax/minimax-m3".
+//
+// ── WHAT THIS IS NOT ───────────────────────────────────────────────────────
+//
+// IT NEVER RE-PINS. A `missing` verdict changes nothing about what
+// `getProviderInfo()` resolves. That is v3.45.0's Option B applied to a new
+// signal: choosing the build model is the user's act, and silently moving the
+// lane — and the bill — on the strength of a cached list is precisely the
+// behaviour that release removed. The verdict drives a MESSAGE and a PRE-SPEND
+// REFUSAL; it never drives a substitution.
+//
+// ── THREE-VALUED, AND THE THIRD VALUE IS THE POINT ─────────────────────────
+//
+//   'present'  the provider's own list contains it (or, for Anthropic, a dated
+//              release of it — see below).
+//   'missing'  we have a listing for that provider and this id is not in it.
+//   null       we have no listing: nobody has checked in this process, the
+//              check failed, or the provider was never connected.
+//
+// `null` must never render or behave as `false`. "We could not check" is not
+// "it is present" — the rule `syncOpenRouterCatalogue` already states about
+// expiry evaluation, applied to membership.
+//
+// ── ⚠ ANTHROPIC LISTS DATED IDS AND WE PIN UNDATED ALIASES ─────────────────
+//
+// THIS IS THE TRAP THAT WOULD HAVE BROKEN EVERY ANTHROPIC USER'S INGEST.
+// Measured 2026-09-16 against the real `/v1/models`: it returns 11 ids, and
+// `claude-haiku-4-5` — THE APP'S OWN ANTHROPIC DEFAULT — is not one of them.
+// What is listed is `claude-haiku-4-5-20251001`. The undated alias resolves
+// perfectly at call time; it simply is not a catalogue entry. Same for
+// `claude-sonnet-4-5` (listed as `…-20250929`) and `claude-opus-4-5`
+// (`…-20251101`). A naive exact-id membership test would report three shipped,
+// working models as `missing`, and — with the pre-spend gate this release adds
+// — would REFUSE TO INGEST at all.
+//
+// So Anthropic gets an explicit alias rule: an undated id is PRESENT when the
+// listing carries `<id>-YYYYMMDD`. It is deliberately narrow (exactly eight
+// digits, exactly one hyphen separator) rather than a loose prefix match, which
+// would make `claude-opus-4` present because `claude-opus-4-8` is listed.
+// v3.45.0 already recorded this dated-vs-undated mismatch as a deliberate false
+// POSITIVE in the discovery feed, where the cost is one noisy row; here the
+// cost is a blocked ingest, so it is resolved rather than tolerated.
+//
+// Gemini needs no such rule — all five shipped ids were listed verbatim on the
+// same day — and OpenRouter ids are exact by construction.
+
+/** provider -> { ids: Set<string>, checkedAt: string|null, source: string|null } */
+const _liveModelIds = new Map();
+
+/** Anthropic publishes `<alias>-YYYYMMDD`; we pin `<alias>`. Exactly 8 digits. */
+const DATED_RELEASE_SUFFIX = /-\d{8}$/;
+
+/**
+ * Record what a provider's own list endpoint said, for `catalogueAbsence`.
+ *
+ * WRITE-ONLY INPUT, NO SIDE EFFECTS ON THE OFFER TABLES. This function admits
+ * nothing, prices nothing and offers nothing — it stores a set of strings. That
+ * separation is the whole reason it is not folded into
+ * `setOpenRouterCatalogue`: the catalogue is the ELIGIBILITY-FILTERED,
+ * static-superseded list (a hand-measured id is dropped from it by design, and
+ * ~200 more are refused by the eligibility rules), so its membership answers a
+ * completely different question from "did the provider list this id". Deriving
+ * absence from it would report every hand-measured model as removed.
+ *
+ * An empty or non-array `ids` is REFUSED rather than stored. A provider
+ * publishing genuinely zero models is not a state that exists; a response we
+ * misread is — and storing it would turn one bad parse into "every model you
+ * own has been removed", on the surface that gates spending.
+ *
+ * @param {string} provider
+ * @param {string[]} ids
+ * @param {{checkedAt?: string, source?: string}} [meta]
+ * @returns {{recorded: boolean, count: number}}
+ */
+export function recordLiveModelListing(provider, ids, meta = {}) {
+  if (!isKnownProvider(provider)) return { recorded: false, count: 0 };
+  const clean = Array.isArray(ids)
+    ? ids.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 256)
+    : [];
+  if (clean.length === 0) return { recorded: false, count: 0 };
+  _liveModelIds.set(provider, {
+    ids: new Set(clean),
+    checkedAt: typeof meta.checkedAt === 'string' && meta.checkedAt ? meta.checkedAt : new Date().toISOString(),
+    source: typeof meta.source === 'string' ? meta.source : null,
+  });
+  return { recorded: true, count: clean.length };
+}
+
+/**
+ * Provenance of the listing `catalogueAbsence` would consult, or null.
+ * `count` exists so a route can say how many ids the verdict was taken against
+ * — a verdict with no denominator is not reviewable.
+ */
+export function getLiveModelListing(provider) {
+  const rec = _liveModelIds.get(provider);
+  if (!rec) return null;
+  return { checkedAt: rec.checkedAt, source: rec.source, count: rec.ids.size };
+}
+
+/** Test-only: forget every recorded listing. Never called in production. */
+export function __clearLiveModelListings() { _liveModelIds.clear(); }
+
+/**
+ * Does the provider still list this model?
+ *
+ * @param {string} provider
+ * @param {string} modelId
+ * @returns {'missing'|'present'|null}
+ */
+export function catalogueAbsence(provider, modelId) {
+  if (!isKnownProvider(provider)) return null;
+  if (typeof modelId !== 'string' || modelId.length === 0) return null;
+  const rec = _liveModelIds.get(provider);
+  if (!rec || rec.ids.size === 0) return null;      // never checked — NOT "false"
+  if (rec.ids.has(modelId)) return 'present';
+  // Anthropic only: an undated alias is present when a dated release of it is.
+  // See the ⚠ block above for the measurement that makes this load-bearing.
+  if (provider === 'anthropic' && !DATED_RELEASE_SUFFIX.test(modelId)) {
+    for (const listed of rec.ids) {
+      // EQUALITY AFTER STRIPPING, NOT A PREFIX TEST. A prefix test was written
+      // first and was wrong in the one way that matters: `claude-haiku-4`
+      // prefixes `claude-haiku-4-5-20251001`, so a model id that genuinely is
+      // not offered would have reported `present` and the gate would have let
+      // a doomed ingest spend. Stripping exactly one dated suffix and comparing
+      // the whole remainder cannot over-reach.
+      if (DATED_RELEASE_SUFFIX.test(listed) && listed.replace(DATED_RELEASE_SUFFIX, '') === modelId) {
+        return 'present';
+      }
+    }
+  }
+  return 'missing';
+}
+
+/**
+ * The error every layer raises when a pinned model is gone.
+ *
+ * A thin, PROVIDER-AWARE wrapper: the sentence and the tags live in
+ * `model-gone.js`, a leaf module the OpenRouter adapter also imports, so the
+ * adapter's HTTP 400 branch and this app's pre-spend gates cannot drift apart.
+ * See that file for why the builder is not defined here (importing it back from
+ * `llm.js` closes a module cycle that fails to load) and for the substring rules
+ * the wording has to satisfy.
+ *
+ * All this adds is the display name, resolved through `providerDisplayName` so
+ * there is no second provider-label table anywhere.
+ */
+export function makeModelGoneError(provider, modelId) {
+  return modelGoneError(providerDisplayName(provider), modelId);
+}
+
 /**
  * ── WHO MEASURED THIS MODEL AGAINST THE REAL INGEST PROMPT ──────────────────
  *
@@ -2608,7 +2839,7 @@ export function measurementProvenance(provider, modelId) {
  * in memory. The user's models work this session either way; the only cost of a
  * failed write is that they work again after a restart.
  */
-function persistOpenRouterCatalogue(specs, syncedAt, funnel) {
+function persistOpenRouterCatalogue(specs, syncedAt, funnel, listedIds) {
   try {
     writeFileAtomicSync(
       openRouterCataloguePath(),
@@ -2617,7 +2848,23 @@ function persistOpenRouterCatalogue(specs, syncedAt, funnel) {
       // an older file finds the key absent and reports UNKNOWN rather than
       // zero. Bumping the version would make an older build discard a catalogue
       // it can still use perfectly.
-      JSON.stringify({ version: 1, syncedAt, specs, ...(Array.isArray(funnel) ? { funnel } : {}) }, null, 0),
+      //
+      // `listedIds` is additive on exactly the same terms, and is EVERY id the
+      // provider published — not the admitted ones. It has to be the raw list
+      // because that is the only set that answers "has the provider removed the
+      // model we are pinned to": `specs` has already lost the eligibility
+      // rejects AND every hand-measured id (dropped as `superseded`), so a
+      // shipped default is absent from it by design. Persisting it is what lets
+      // `catalogueAbsence` answer at BOOT, with no network and no key — the
+      // moment `GET /api-keys` needs it. An older file has no such key, which
+      // reads back as `null` (never checked), never as "everything is missing".
+      JSON.stringify({
+        version: 1,
+        syncedAt,
+        specs,
+        ...(Array.isArray(funnel) ? { funnel } : {}),
+        ...(Array.isArray(listedIds) && listedIds.length ? { listedIds } : {}),
+      }, null, 0),
       'utf8',
     );
     return true;
@@ -2673,7 +2920,20 @@ export function restoreOpenRouterCatalogue() {
   _openrouterCatalogueSource = 'disk';
   // Absent (an older file) leaves it null — UNKNOWN, not "nothing was rejected".
   _openrouterCatalogueFunnel = Array.isArray(parsed.funnel) ? parsed.funnel : null;
-  return { restored: true, admitted, refused, syncedAt: _openrouterCatalogueSyncedAt };
+  // Re-arm the availability answer for THIS PROCESS from the same file, so a
+  // restart does not silently downgrade every `liveMissing` to null until
+  // somebody presses Sync. `source: 'disk'` is carried through so a consumer
+  // can say how old the answer is; `recordLiveModelListing` refuses an absent
+  // or empty array, which is exactly the older-file case.
+  const listedRecorded = recordLiveModelListing('openrouter', parsed.listedIds, {
+    checkedAt: _openrouterCatalogueSyncedAt || undefined,
+    source: 'disk',
+  });
+  return {
+    restored: true, admitted, refused,
+    syncedAt: _openrouterCatalogueSyncedAt,
+    listedIds: listedRecorded.count,
+  };
 }
 
 /**
@@ -2767,11 +3027,22 @@ export async function syncOpenRouterCatalogue(opts = {}) {
   _openrouterCatalogueSource = 'network';
   _openrouterCatalogueFunnel = Array.isArray(built.funnel) ? built.funnel : null;
 
+  // ── THE RAW LISTING, RECORDED ONLY ONCE THE SYNC HAS SUCCEEDED ────────────
+  // Every id the provider published, before eligibility and before the
+  // static-supersede pass — the only set from which "the provider has removed
+  // our pinned model" can be read (see recordLiveModelListing). Taken HERE,
+  // after the two refusal gates above, so the promise that a failed sync
+  // changes nothing observable stays exactly true.
+  const listedIds = records
+    .filter(r => r && typeof r.id === 'string' && r.id.length > 0)
+    .map(r => r.id);
+  recordLiveModelListing('openrouter', listedIds, { checkedAt: syncedAt, source: 'network' });
+
   // Persist the SPECS, not the built entries: entries carry price GETTERS that
   // JSON.stringify would flatten into today's number, freezing a promotional
   // price past its expiry. Specs are plain data and are re-admitted through the
   // same factory on the way back in.
-  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt, built.funnel);
+  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt, built.funnel, listedIds);
 
   return {
     syncedAt,
@@ -5164,6 +5435,56 @@ async function callAnthropic(model, systemPrompt, userPrompt, maxTokens, respons
 }
 
 /**
+ * The fallback rungs that may be walked FROM `headModel`.
+ *
+ * ── A CHAIN MAY DEGRADE CAPABILITY; IT MAY NOT START CHARGING YOU ──────────
+ *
+ * `FALLBACK_CHAINS` is unchanged and its semantics are unchanged. This adds ONE
+ * subtraction, in one direction: a walk that starts from a FREE id may only
+ * land on another free id.
+ *
+ * The case is concrete and was live before this guard. `FALLBACK_CHAINS.openrouter`
+ * is `['ibm-granite/granite-4.0-h-micro']`, which is PAID; `minimax/minimax-m3:free`
+ * is a shipped, offerable, build-lane entry that the provider has since removed
+ * (measured 2026-09-16). A retirement-shaped 404 on that id — the one shape
+ * `classifyNotFoundReason` is allowed to call `model-retired`, and the one that
+ * keeps `.status = 404` so `isModelNotFound` fires — would have walked a user
+ * who deliberately chose a zero-cost model onto a billed one, silently, and
+ * reported success. `_activeFallback` would have told the UI afterwards; the
+ * charge would already have happened.
+ *
+ * WHY HERE AND NOT IN THE TABLE. The table is a per-provider list and the
+ * decision is a property of the PAIR (where you started, where you would land),
+ * so it cannot be expressed by removing a rung — granite is the right rung for
+ * every paid head on that provider. Pricing is read through `isFreeModel`,
+ * which is the same registry `chargeForItem` consults, so free-ness here means
+ * exactly what free-ness means to the money path.
+ *
+ * FAIL-SAFE DIRECTION, and its honest cost: a free model that is genuinely
+ * retired now surfaces an error instead of degrading onto a paid rung. That is
+ * the same trade the OpenRouter 404 classifier already takes — one visible
+ * message and one click, against a silent charge — and it is narrower here,
+ * because it fires only when the user's own pick was free.
+ *
+ * A PAID head is byte-unchanged: it gets the full chain, in order.
+ */
+function fallbackRungsFor(provider, headModel) {
+  const rungs = FALLBACK_CHAINS[provider] || [];
+  if (!isFreeModel(headModel)) return rungs;
+  const free = rungs.filter(id => isFreeModel(id));
+  if (free.length !== rungs.length) {
+    // stderr, never stdout — llm.js is imported by the MCP child process, which
+    // reserves stdout for JSON-RPC frames (v2.5.2/v3.9.1).
+    console.error(
+      `[llm] "${String(headModel).replace(/[\r\n]+/g, ' ').slice(0, 80)}" is a free model, so ` +
+      `${rungs.length - free.length} paid fallback rung(s) are withheld — a fallback may degrade ` +
+      `capability, never start billing a user who chose not to be billed.`,
+    );
+  }
+  return free;
+}
+
+/**
  * Call the active LLM with automatic fallback on model-not-found errors.
  *
  * Order of attempts:
@@ -5185,7 +5506,7 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
   // claude-sonnet-5) would otherwise be retried against its own 404 before the
   // walk moved on. A no-op for the default path — no chain contains its own
   // provider's default (asserted in test-chat-model.js §9).
-  const chain = [...new Set([model, ...(FALLBACK_CHAINS[provider] || [])])];
+  const chain = [...new Set([model, ...fallbackRungsFor(provider, model)])];
   let lastErr = null;
 
   for (let i = 0; i < chain.length; i++) {
@@ -5286,6 +5607,12 @@ export const __testing = {
   // and `isDeterministicProviderError` is what stops a 39-second retry of a
   // failure that cannot succeed.
   looksLikeMovingAlias, isDeterministicProviderError,
+  MODEL_GONE_CODE,
+  // The free->paid fallback guard, exposed so a suite can drive the PAIR
+  // decision directly. Reaching it through callLLM needs a provider double AND
+  // a retirement-shaped 404; the end-to-end path is exercised too, but this is
+  // what makes "a paid rung is withheld from a free head" provable in one line.
+  fallbackRungsFor,
   // The streaming delta funnel. Exposed so a suite can drive its truth table
   // directly — empty-drop, type normalisation, commit-before-callback, and the
   // throwing-callback rule are four separate contracts, and reaching each of

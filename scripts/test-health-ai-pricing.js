@@ -132,7 +132,19 @@ section("2. Shared-source invariant — health-ai matches llm.js's LIVE table fo
     const price = getModelPrice(id); // read live from llm.js, never re-typed here
     ok(price, `fixture sanity: llm.js currently prices "${id}"`);
     if (!price) continue;
-    const expectedUsd = price.input * 1 + price.output * 1; // 1 MTOK in + 1 MTOK out
+    // ── THE ASSOCIATION MUST MATCH THE IMPLEMENTATION'S, EXACTLY ──────────
+    // This read `price.input * 1 + price.output * 1` and compared it to
+    // `estimateUsdCost`, which computes
+    // `(inputTokens * p.input + outputTokens * p.output) / 1_000_000`. Those are
+    // the same value in arithmetic and NOT the same double: at $0.09/$0.36 the
+    // first yields 0.44999999999999996 and the second 0.45, and `eq` is exact.
+    // It agreed for every price this table had ever held and stopped agreeing
+    // the day one changed — a latent fragility in the TEST, not a defect in the
+    // code, and it would have read as a real pricing disagreement.
+    // Re-deriving through the same expression keeps this an assertion about the
+    // TABLE (does health-ai read llm.js's number) rather than about float
+    // association, which is what it was always meant to say.
+    const expectedUsd = (1_000_000 * price.input + 1_000_000 * price.output) / 1_000_000;
     const got = estimateUsdCost('irrelevant-provider-arg', id, 1_000_000, 1_000_000);
     eq(got, expectedUsd, `health-ai prices "${id}" identically to llm.js's live table`);
   }

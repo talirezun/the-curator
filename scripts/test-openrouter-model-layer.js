@@ -2048,6 +2048,169 @@ section('10. The mapper carries two PUBLISHED facts — and refuses to widen on 
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+//  A WITHDRAWN MODEL, DRIVEN THROUGH callLLM
+//
+//  Sections 1-8 above cover the adapter and the catalogue. These two cover the
+//  one path where a withdrawal turns into SPEND: `callLLM`'s fallback walk.
+//
+//  Mutations (each restored, each file re-verified by sha256):
+//    M10  fallbackRungsFor returns FALLBACK_CHAINS[provider] unfiltered
+//    M20  remove callLLM's isDeterministicProviderError gate
+// ═══════════════════════════════════════════════════════════════════════════
+const cfgMod = await import('../src/brain/config.js');
+
+// ── PIN THE PROVIDER BEFORE ANY generateText CALL, AND PROVE IT LANDED ──────
+// FOUND BY RUNNING IT: the first draft of this block called `generateText`
+// without pinning, `resolveProviderDefault` fell through to whichever provider
+// the sections above had left keyed, and the suite made a REAL Anthropic
+// request — a 401 against the live API, from `npm test`, which is supposed to
+// be free and offline. `getProviderInfo` FALLS THROUGH by design (v3.1.1's
+// recorded rule: "never infer the provider from the label"), so pinning the
+// intent is not enough; the resolution has to be ASSERTED. The assertion below
+// is what makes every `__setOpenRouterAdapterFactory` double in this block the
+// thing that actually answers.
+cfgMod.setApiKeys({ openrouterApiKey: 'k'.repeat(40) });
+cfgMod.setActiveProvider('openrouter');
+{
+  const info = llm.getProviderInfo();
+  eq(info.provider, 'openrouter',
+    'GUARD: the resolved provider is openrouter, so the injected OpenRouter transport is what answers — without this the suite reaches a real provider over the network');
+}
+
+section('8b. A free head never walks onto a paid rung [M10, M20]');
+{
+  const FREE = 'minimax/minimax-m3:free';
+  const PAID_RUNG = llm.__testing.FALLBACK_CHAINS.openrouter[0];
+  ok(llm.isFreeModel(FREE), 'fixture: the head id is free');
+  ok(!llm.isFreeModel(PAID_RUNG), 'fixture: the chain\'s only rung is PAID — which is what makes this reachable rather than theoretical');
+
+  /**
+   * A transport that answers a RETIREMENT-shaped 404 for the free id and a
+   * normal completion for anything else. The retirement shape is the one
+   * `classifyNotFoundReason` is allowed to call `model-retired`, so it keeps
+   * `.status = 404` and IS the shape that makes isModelNotFound fire — i.e.
+   * the only one that can drive a chain walk.
+   */
+  function retirementTransport() {
+    const asked = [];
+    __setOpenRouterAdapterFactory(() => ({
+      createChatCompletion: async ({ model }) => {
+        asked.push(model);
+        if (model === FREE) {
+          const e = new OpenRouterError(
+            'OPENROUTER_MODEL_NOT_FOUND',
+            `OpenRouter chat/completions → model not found: No endpoints found for ${FREE}.`,
+            404,
+          );
+          throw e;
+        }
+        return { text: 'ok', model, finishReason: 'stop', usage: null };
+      },
+    }));
+    return asked;
+  }
+
+  const prevSelected = cfgMod.getSelectedModel('openrouter');
+  // `_activeFallback` is MODULE state and an earlier section in this file has
+  // already exercised a walk, so it is not null when we get here. Asserting
+  // `=== null` therefore tested the suite's history, not this block. Comparing
+  // before/after is the assertion that was meant: NOTHING about the fallback
+  // record may change, because no fallback may occur.
+  const fallbackBefore = JSON.stringify(llm.getFallbackStatus());
+  try {
+    cfgMod.setSelectedModel('openrouter', FREE);
+    const asked = retirementTransport();
+    let threw = null;
+    try {
+      await llm.generateText('sys', 'user', 64, 'text');
+    } catch (err) { threw = err; }
+
+    eq(asked.length, 1,
+      '★★ exactly ONE provider call: the free head was asked, and the PAID rung never was [M10: unfiltered rungs make this 2 and bills the user]');
+    eq(asked[0], FREE, '…and the one call was for the model the user actually chose');
+    ok(!asked.includes(PAID_RUNG),
+      '★★ the paid rung is NEVER reached — a chain may degrade capability, it may not start billing someone who chose not to be billed [M10]');
+    ok(threw instanceof Error, 'the retirement surfaces as an error…');
+    ok(/no endpoints found/i.test(threw.message) || /not found/i.test(threw.message),
+      '…carrying the upstream\'s own retirement wording, so the user can see what happened');
+    eq(JSON.stringify(llm.getFallbackStatus()), fallbackBefore,
+      'and the fallback record is UNCHANGED across the whole attempt, because no fallback happened');
+  } finally {
+    __setOpenRouterAdapterFactory(null);
+    if (prevSelected) cfgMod.setSelectedModel('openrouter', prevSelected);
+  }
+}
+
+section('8c. …while a PAID head keeps the full chain, unchanged [M10]');
+{
+  const PAID_HEAD = 'upstage/solar-pro4';
+  const PAID_RUNG = llm.__testing.FALLBACK_CHAINS.openrouter[0];
+  const prevSelected = cfgMod.getSelectedModel('openrouter');
+  try {
+    cfgMod.setSelectedModel('openrouter', PAID_HEAD);
+    const asked = [];
+    __setOpenRouterAdapterFactory(() => ({
+      createChatCompletion: async ({ model }) => {
+        asked.push(model);
+        if (model === PAID_HEAD) {
+          throw new OpenRouterError('OPENROUTER_MODEL_NOT_FOUND',
+            `OpenRouter chat/completions → model not found: No endpoints found for ${PAID_HEAD}.`, 404);
+        }
+        return { text: 'ok', model, finishReason: 'stop', usage: null };
+      },
+    }));
+    const out = await llm.generateText('sys', 'user', 64, 'text');
+    eq(asked.length, 2, '★ a retired PAID head DOES walk — two calls, head then rung [M10 leaves this green, which is why it is stated separately]');
+    eq(asked[1], PAID_RUNG, '…landing on the chain\'s rung, byte-unchanged behaviour');
+    ok(typeof out === 'string', 'and the call succeeds on the fallback');
+    const fb = llm.getFallbackStatus();
+    ok(fb && fb.usingModel === PAID_RUNG, 'with the fallback recorded for the UI to surface');
+  } finally {
+    __setOpenRouterAdapterFactory(null);
+    if (prevSelected) cfgMod.setSelectedModel('openrouter', prevSelected);
+  }
+}
+
+section('8d. A model-gone 400 spends once and walks nothing [M20]');
+{
+  const prevSelected = cfgMod.getSelectedModel('openrouter');
+  try {
+    cfgMod.setSelectedModel('openrouter', 'upstage/solar-pro4');
+    const asked = [];
+    __setOpenRouterAdapterFactory((opts) => new OpenRouterAdapter({
+      apiKey: (opts && opts.apiKey) || 'k'.repeat(40),
+      fetchImpl: async () => {
+        asked.push(1);
+        return {
+          ok: false, status: 400, headers: new Map(),
+          json: async () => ({ error: { message: 'upstage/solar-pro4 is not a valid model ID', code: 400 } }),
+        };
+      },
+    }));
+    let threw = null;
+    try { await llm.generateText('sys', 'user', 64, 'text'); } catch (err) { threw = err; }
+    eq(asked.length, 1,
+      '★★ ONE call — the model-gone 400 is deterministic, so callLLM refuses the chain and generateText refuses the retry ladder [M20]');
+    ok(threw && threw.curatorModelGone === true, 'the error that surfaces is the model-gone one');
+    ok(threw && /pick another model/i.test(threw.message), '…with the remedy in it');
+    // ── WHY THE TAG IS ASSERTED DIRECTLY, AND AN HONEST LIMIT ─────────────
+    // The "ONE call" above passes for a SECOND, independent reason: the
+    // model-gone message satisfies none of isModelNotFound's clauses, so no
+    // walk would start even with the tag removed (measured — dropping
+    // `curatorDeterministic` leaves the call count at 1 here). The tag is the
+    // STRUCTURAL guarantee that survives a future rewording, so it is asserted
+    // as itself rather than inferred from a count it does not currently move.
+    ok(threw && llm.__testing.isDeterministicProviderError(threw) === true,
+      '★ the error is deterministic by PROPERTY, which is what callLLM checks before isModelNotFound — asserted directly, because the call count above would not notice its absence today');
+    ok(threw && !llm.__testing.is429(threw) && !llm.__testing.is503(threw),
+      '…and trips neither retry classifier, so generateText\'s ladder cannot spend on it either');
+  } finally {
+    __setOpenRouterAdapterFactory(null);
+    if (prevSelected) cfgMod.setSelectedModel('openrouter', prevSelected);
+  }
+}
+
 section('9. Isolation proof');
 eq(fingerprint(), FINGERPRINT_BEFORE,
   'the real .curator-config.json / .sync-config.json / .sharedbrain-config.json are byte-identical (sha256 + size) before and after this run');

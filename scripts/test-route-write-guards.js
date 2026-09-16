@@ -1245,7 +1245,20 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // creates the tray or the window. This tripwire fired on it, which is the
     // tripwire working: the bump IS the human look, and the exemption below
     // carries the reason.
-    expectedMutatingCount: 15,
+    // 15 -> 16: POST /models/check — asks ONE provider for its current model
+    // list and records it, so `catalogueAbsence` can answer whether the model a
+    // user is pinned to still exists. It CARRIES guardConcurrent and needs no
+    // exemption, and the bump IS the human look this comment demands.
+    //
+    // It is deliberately guarded even though it writes nothing to disk, which
+    // makes it the opposite of /api-keys/validate directly below: that route
+    // records NOTHING and is exempt, this one records PROCESS-WIDE STATE that
+    // the ingest pre-spend gate reads, so a check landing mid-batch could change
+    // what the next item is allowed to do. The distinction that decides it is
+    // "does an in-flight write observe this", not "does it touch the disk" —
+    // the same axis that exempts /ui-state and /background-mode, applied the
+    // other way round.
+    expectedMutatingCount: 16,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also

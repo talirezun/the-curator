@@ -30,7 +30,9 @@ All three pinned defaults target the **low-cost tier** of their respective provi
 
 **OpenRouter now has a pinned default, and it was earned by measurement.** Until this release the entry was `null` and the consequence was intended: OpenRouter could not build a wiki at all. That changed when three routes through it were probed against this repo's real ingest outline prompt — nine runs each — and `upstage/solar-pro4` came back cleanest. It is now a **full build-lane provider**: it can run ingest, Health and Compile, and it can be made the active provider. **Until v3.44.0 saving an OpenRouter key also made it active on the spot**, exactly as saving a Gemini or Anthropic key did — which was the surprise this note used to warn about. That is no longer true: since v3.45.0 a key save takes the build lane only when nothing holds it, and choosing a build model is the writer thereafter. See [OpenRouter](#openrouter--a-third-provider-whose-catalogue-moves-without-us) below, and [Saving a key does not change which model builds your wiki](#saving-a-key-does-not-change-which-model-builds-your-wiki-v3450) for the current rule.
 
-`upstage/solar-pro4` is also a genuine affordability win: **$0.03/$0.12 per 1M tokens**, roughly a third of `gemini-2.5-flash-lite` ($0.10/$0.40), which had been the cheapest model The Curator offered anywhere.
+⚠ **`upstage/solar-pro4` used to be an affordability win as well, and is not any more.** This line read *"$0.03/$0.12 per 1M tokens, roughly a third of `gemini-2.5-flash-lite`"* from 2026-08-27. Re-measured on **2026-09-16**, both of the id's endpoints publish **$0.09/$0.36** and a cold call billed exactly that — three times the old figure. It is now roughly **nine tenths** of `gemini-2.5-flash-lite` ($0.10/$0.40), not a third. It remains the pinned OpenRouter default on **coverage and JSON cleanliness**, which is what the measurement actually established; the cheapest OpenRouter options are now `ibm-granite/granite-4.0-h-micro` ($0.017/$0.112) and `z-ai/glm-5.3-flash` ($0.075/$0.25).
+
+That change is the reason the section [When a provider removes a model](#when-a-provider-removes-a-model) exists: **the id we ship is stable and what it costs is not**, because an OpenRouter price is a property of the endpoint that serves it.
 
 When a provider retires or supersedes one of these, we bump the constant in a new release and push. Users get the new default via **Settings → Check for Updates**.
 
@@ -573,7 +575,7 @@ A build-lane model writes a whole wiki, so none was admitted on catalogue metada
 
 | Model | Runs raw-parseable | Median outline pages | Price (in/out per 1M) |
 |---|---|---|---|
-| `upstage/solar-pro4` — **pinned default** | 9 of 9, no repair pass | **23** (range 14–36) | $0.03 / $0.12 |
+| `upstage/solar-pro4` — **pinned default** | 9 of 9, no repair pass | **23** (range 14–36) | **$0.09 / $0.36** (was $0.03/$0.12 when measured on 2026-08-27; re-measured against the bill 2026-09-16) |
 | `ibm-granite/granite-4.0-h-micro` — **fallback rung** | 9 of 9, no repair pass | **9** (range 7–13) | $0.017 / $0.112 |
 | `minimax/minimax-m3:free` — **free, chat-oriented** | 8 of 9 raw, 1 needed the repair pass, 0 unrepairable | **21** (range 15–40) | free — no price recorded |
 
@@ -836,3 +838,153 @@ Recorded so nobody reaches for these. **The adapter sends no `reasoning` key at 
 | `reasoning.exclude: true` | **Strictly worse than doing nothing.** Still burns the full reasoning budget, still truncates the answer — and merely hides the stream, so the dead air returns with the cost unchanged. |
 
 The behaviour of these parameters is upstream and per-model. Treat the table as a measurement of one model on one date, not as a general law: if any of them is ever adopted, it needs its own measurement, and the free/paid and model-family distinctions matter.
+
+---
+
+## When a provider removes a model
+
+Everything above this point assumes the id we ship still exists. Sometimes it
+does not, and until v3.53.0 the app had no way of knowing.
+
+### Why a removal used to be invisible
+
+`OFFERABLE_MODELS` is a frozen, hand-measured table, and `listOfferableModels()`
+returns it merged with whatever the OpenRouter catalogue sync last fetched. A
+sync can therefore only ever **add**. An id we ship that the provider has
+**withdrawn** stays offerable for ever, which means `applyModelOverride()`'s
+stale-pin fallback — the thing that quietly resolves a dead stored pin down to
+the provider default — is unreachable for exactly the ids that need it.
+
+Measured on **2026-09-16** against OpenRouter's live catalogue of 443 ids:
+`minimax/minimax-m3:free`, a shipped, offerable, build-lane entry, is **absent**.
+The paid `minimax/minimax-m3` is present. Asking for the free slug returns:
+
+```
+HTTP 404
+{"error":{"message":"This model is unavailable for free. The paid version is
+ available now - use this slug instead: minimax/minimax-m3","code":404}}
+```
+
+and an id OpenRouter has never heard of returns:
+
+```
+HTTP 400
+{"error":{"message":"<id> is not a valid model ID","code":400}}
+```
+
+Both are now recognised. The 400 had no branch at all before this release and
+surfaced to the user as a raw `HTTP 400` dump with no route forward.
+
+### What the app shows
+
+One sentence, from one builder (`src/brain/model-gone.js`), everywhere:
+
+> **OpenRouter no longer offers `minimax/minimax-m3:free` — pick another model in Settings.**
+
+The wording is a contract, not prose. It must avoid every substring this
+codebase's recovery classifiers key on: no `output token limit`
+(`isOutputTokenLimit` would push it into ingest's fallback ladder), no
+`not found` / `does not exist` / `404` (`isModelNotFound` would walk the
+**fallback chain** — real calls on a model nobody chose), and no `HTTP 429` /
+`HTTP 503` (`is429`/`is503` would retry with backoff, and `ingest-queue.js`'s
+`TRANSIENT_PATTERNS` would **pause the whole batch** — and pause again on every
+Resume, for ever, because this condition never clears with time).
+
+The structural half does the actual work: the error carries
+`curatorDeterministic`, which `callLLM` checks **before** `isModelNotFound`, and
+`curatorModelGone`, which lets a consumer tell this from a routing-constraint
+refusal without reading prose.
+
+### The pre-spend gate
+
+A multi-phase ingest is one outline call plus one per content batch — 25+ on a
+large source — and every one of them would fail identically against a withdrawn
+model, after the retry ladder had spent up to four attempts on each. So the
+check runs **before the first paid call**:
+
+- **`POST /api/ingest`** emits `{type: 'error', code: 'MODEL_GONE', message}` on
+  the SSE stream and never enters the pipeline.
+- **The batch queue** marks that item `failed` with `errorCode: 'MODEL_GONE'`,
+  charges nothing, and — because the error is deliberately **not** transient —
+  fails one item rather than pausing the job. The existing consecutive-failure
+  circuit breaker bounds a whole batch of them.
+- **"Test on my wiki"** refuses in its preflight, before the first of nine runs.
+
+**Only a positive verdict refuses.** `catalogueAbsence()` is three-valued —
+`'missing' | 'present' | null` — and `null` means *nobody has checked*. An
+unchecked provider never blocks work. "We could not check" must never be served
+as an answer in either direction.
+
+### Checking, per provider
+
+`POST /api/config/models/check` with `{provider}` asks one provider for its
+current model list and records it. All three are free list endpoints: no tokens,
+no generation, no charge.
+
+It is **read-only with respect to the offer tables**, by construction. It stores
+a set of strings; it never calls `defineOfferableModel` or
+`setOpenRouterCatalogue`. That is the standing rule — *a model may not be offered
+for a feature it has never been measured against* — and an availability check is
+precisely the mechanism that would erode it, because the ids it fetches are
+exactly the ids somebody would be tempted to admit. An offline suite asserts
+`listOfferableModels(provider)` is byte-identical across a successful check.
+
+A failed check returns **HTTP 200** with `liveMissing: null` and an `error`
+string, and records nothing — so one transient DNS blip can never read as *every
+model you own has been removed*.
+
+For OpenRouter the raw published list is also persisted alongside the catalogue
+sidecar, so the answer survives a restart with no network and no key.
+
+### ⚠ Anthropic lists dated ids and we pin undated aliases
+
+This is the trap that would have blocked every Anthropic user's ingest, and it is
+worth stating plainly. Measured 2026-09-16 against the real `/v1/models`:
+
+| We ship | Anthropic lists |
+|---|---|
+| `claude-haiku-4-5` — **the app's own default** | `claude-haiku-4-5-20251001` |
+| `claude-sonnet-4-5` | `claude-sonnet-4-5-20250929` |
+| `claude-opus-4-5` | `claude-opus-4-5-20251101` |
+
+The undated alias resolves perfectly at call time; it simply is not a catalogue
+entry. A naive exact-id membership test would have reported three shipped,
+working models as missing and — with the gate above — refused to ingest at all.
+
+So Anthropic gets an explicit alias rule: an undated id is **present** when the
+listing carries `<id>-YYYYMMDD`. It strips exactly one eight-digit suffix and
+compares the **whole** remainder, rather than testing a prefix — a prefix test
+makes `claude-haiku-4` "present" because `claude-haiku-4-5-20251001` starts with
+it. Gemini needs no such rule (all five shipped ids were listed verbatim the same
+day) and OpenRouter ids are exact by construction.
+
+### Why there is no automatic re-pin
+
+A `liveMissing: true` verdict **never** changes what
+`getProviderInfo()` resolves. That is v3.45.0's Option B applied to a new signal:
+choosing the build model is the user's act, and silently moving the lane — and
+the bill — on the strength of a cached list is exactly the behaviour that release
+removed. `POST /api-keys/build-model` therefore **warns** (it returns
+`liveMissing`) and never refuses: our list can be stale, wrong, or synced from
+another machine, and a user who knows their model works must not be locked out of
+their own picker by one failed background check. The surface that actually
+prevents spend is the pre-spend gate, which runs at the moment it matters.
+
+### A chain may degrade capability; it may not start billing you
+
+`FALLBACK_CHAINS.openrouter` is `['ibm-granite/granite-4.0-h-micro']`, which is
+**paid**. `minimax/minimax-m3:free` is a shipped free build-lane entry that the
+provider has withdrawn. A retirement-shaped 404 on it — the one shape allowed to
+classify as `model-retired`, and so the one that can drive a walk — would have
+moved a user who deliberately chose a zero-cost model onto a billed one,
+silently, and reported success.
+
+A walk that starts from a **free** id may now only land on another free id. The
+rule is a property of the *pair*, not of the table, so it cannot be expressed by
+removing a rung: granite is the right rung for every paid head on that provider.
+A paid head is byte-unchanged and gets the full chain, in order.
+
+The honest cost: a genuinely retired free model now surfaces an error instead of
+degrading onto a paid rung. That is the same trade the OpenRouter 404 classifier
+already takes — one visible message and one click, against a silent charge — and
+it is narrower here, because it fires only when the user's own pick was free.

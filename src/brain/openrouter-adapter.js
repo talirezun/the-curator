@@ -105,6 +105,25 @@ export const OPENROUTER_ATTRIBUTION = Object.freeze({
 /** Default per-request ceiling. Matches the 600s the Anthropic stream transport uses. */
 export const OPENROUTER_DEFAULT_TIMEOUT_MS = 600_000;
 
+// ── ⚠ WHY THIS COMES FROM `model-gone.js` AND NOT FROM `llm.js` ──────────────
+//
+// The builder is provider-generic and `llm.js` owns the model layer, so the
+// obvious edit is `import { makeModelGoneError } from './llm.js'`. That was
+// tried and it is WRONG — not stylistically, it does not load. `llm.js` imports
+// THIS module and then reads `RETRY_CLASSIFIER_TOKENS` at its own TOP LEVEL (the
+// classifier census it runs at import). So an adapter-first entry evaluates
+// `llm.js` against a half-built adapter namespace and dies with
+// `Cannot access 'RETRY_CLASSIFIER_TOKENS' before initialization` — a hard
+// module-load failure, reachable from any suite or tool that imports the adapter
+// first. Measured, not predicted.
+//
+// A second copy of the sentence was the other option and is worse than a cycle
+// would have been: the copies would be a user-facing message AND the
+// `curatorDeterministic` tag that stops a paid fallback-chain walk, so a drift
+// between them costs money. Hence a leaf module both sides depend on, with no
+// dependencies of its own and therefore no edge to close.
+import { modelGoneError } from './model-gone.js';
+
 // ── Secret redaction ─────────────────────────────────────────────────────────
 
 /**
@@ -453,6 +472,56 @@ export function classifyNotFoundReason(message) {
 }
 
 /**
+ * ── NOT EVERY 400 MEANS "THIS ID IS NOT A MODEL" ────────────────────────────
+ *
+ * MEASURED LIVE 2026-09-16, real key, real endpoint, the app's own body shape:
+ *
+ *   requested                            wire  upstream message
+ *   ───────────────────────────────────  ────  ─────────────────────────────────
+ *   zzz-nonexistent/does-not-exist-9999  400   "zzz-nonexistent/does-not-exist-9999
+ *                                              is not a valid model ID"
+ *
+ * 400 is OpenRouter's general bad-request status — a malformed body, an
+ * unsupported parameter and an oversized field all arrive as one — so the
+ * status ALONE says nothing, and the branch in `_throwForStatus` classifies from
+ * the upstream's own prose exactly as the 404 branch does.
+ *
+ * WHY A TABLE, AND WHY THE SAME SHAPE AS THE 404 TABLES. Two hand-maintained
+ * copies of one guard drifting apart is this repo's named cause of the v3.2.0
+ * CRITICAL; one table, one classifier, one call site, and the load-time block
+ * below probes every clause automatically, so adding a clause adds its proof.
+ *
+ * FAIL-SAFE DIRECTION, opposite to the 404 table's and for the opposite reason.
+ * A 404 verdict can AUTHORISE SPEND (a retirement walks the fallback chain), so
+ * there the unknown case must NOT be treated as a retirement. A 400 verdict
+ * authorises nothing — it only produces a clearer message and, upstream of the
+ * wire, a refusal to start. So an unrecognised 400 keeps today's generic tail
+ * verbatim, and only a MEASURED phrase is called model-gone. Both tables put the
+ * unmeasured case on the side that cannot spend.
+ */
+export const MODEL_GONE_400_CLAUSES = Object.freeze([
+  Object.freeze(['is not a valid model id']),
+]);
+
+/**
+ * Why did this 400 happen — the id is not a model, or something else?
+ *
+ * @param {unknown} message  the upstream's OWN `error.message`, before any of
+ *   our prose is added. Narrowest possible input, so this can never become a
+ *   substring test over a whole assembled error string (this repo shipped a
+ *   bare `/\b429\b/` that matched ingest's own "yielded only 429 characters").
+ * @returns {'model-gone'|null}
+ */
+export function classifyBadRequestReason(message) {
+  if (typeof message !== 'string' || message.length === 0) return null;
+  const m = message.toLowerCase();
+  for (const clause of MODEL_GONE_400_CLAUSES) {
+    if (clause.every(t => m.includes(t))) return 'model-gone';
+  }
+  return null;
+}
+
+/**
  * ── LOAD-TIME PROOF THAT THE NEUTRALISERS COVER THE CENSUS ───────────────────
  *
  * Runs once, at import, over ~13 short strings. It throws rather than warns
@@ -510,6 +579,21 @@ export function classifyNotFoundReason(message) {
   for (const clause of MODEL_RETIRED_404_CLAUSES) {
     if (classifyNotFoundReason(clause.join(' ')) !== 'model-retired') {
       survived.push(`retirement clause [${clause.join(' + ')}] is shadowed by a routing-constraint clause`);
+    }
+  }
+  // ── A 400 CLAUSE MUST CLASSIFY, AND MUST NOT LEAK INTO THE 404 SPACE ───────
+  // The first half is the same self-proof the 404 tables get. The second is the
+  // one that could actually cost money: if a model-gone phrase ever also
+  // satisfied `MODEL_RETIRED_404_CLAUSES`, the SAME upstream sentence arriving
+  // on a 404 would walk the paid fallback chain while arriving on a 400 refused
+  // it — one string, two spend decisions, decided by a status nobody looks at.
+  for (const clause of MODEL_GONE_400_CLAUSES) {
+    const probe = clause.join(' ');
+    if (classifyBadRequestReason(probe) !== 'model-gone') {
+      survived.push(`bad-request clause [${clause.join(' + ')}] does not classify as model-gone`);
+    }
+    if (classifyNotFoundReason(probe) !== null) {
+      survived.push(`bad-request clause [${clause.join(' + ')}] also matches a 404 verdict`);
     }
   }
   if (survived.length > 0) {
@@ -1848,6 +1932,68 @@ export class OpenRouterAdapter {
       );
       e.curatorDeterministic = true;
       e.httpStatus = status;
+      throw e;
+    }
+    if (status === 400 && classifyBadRequestReason(raw) === 'model-gone') {
+      // ── A 400 THAT MEANS "THIS ID IS NOT A MODEL", MEASURED ON THE WIRE ────
+      //
+      // MEASURED 2026-09-16 with the real key against the real endpoint, the
+      // app's own body shape (`provider: {allow_fallbacks:false,
+      // require_parameters:true}`), `max_tokens: 1`:
+      //
+      //   requested                            wire  body
+      //   ───────────────────────────────────  ────  ───────────────────────────
+      //   zzz-nonexistent/does-not-exist-9999  400   {"error":{"message":
+      //                                              "zzz-nonexistent/does-not-exist-9999
+      //                                              is not a valid model ID",
+      //                                              "code":400},"user_id":"org_…"}
+      //   minimax/minimax-m3:free              404   {"error":{"message":"This model
+      //                                              is unavailable for free. The paid
+      //                                              version is available now - use this
+      //                                              slug instead: minimax/minimax-m3",
+      //                                              "code":404},"user_id":"org_…"}
+      //
+      // ⚠ CORRECTING THE PREMISE THIS BRANCH WAS COMMISSIONED ON. The brief said
+      // OpenRouter answers a REMOVED id with this 400. It does not — not for the
+      // id that prompted the work. `minimax/minimax-m3:free` was withdrawn from
+      // the catalogue (443 ids, verified absent the same day) and still answers
+      // 404, with a migration hint, because the slug remains KNOWN. The 400 is
+      // the answer for an id OpenRouter has never heard of, or has purged
+      // entirely. Both are reachable from a stale pin — `applyModelOverride`
+      // keeps a hand-measured id offerable forever, so a purged one goes on the
+      // wire — so the branch is right; only the story about which id triggers it
+      // was wrong, and that is recorded rather than quietly corrected.
+      //
+      // BEFORE THIS BRANCH the 400 fell through to the generic tail and the user
+      // read `OpenRouter chat/completions → HTTP 400: … is not a valid model ID`
+      // with no route forward. The MONEY behaviour was already right by
+      // accident: none of `MODEL_NOT_FOUND_CLAUSES` matches "is not a valid
+      // model ID", so no chain was walked. That accident is now structural —
+      // `curatorDeterministic` stops the walk at `callLLM` and the retry at
+      // `generateText` whatever the prose says.
+      //
+      // The message is `makeModelGoneError`'s, produced by llm.js's own builder
+      // so there is ONE wording and one set of tags across the adapter, the
+      // pre-spend gates and the routes. Its substring rules are documented
+      // there. `.status` is deliberately NOT set: 400 is not a signal any
+      // classifier reads, and setting it would put a number on the property
+      // `isModelNotFound` checks for 404. `httpStatus` keeps the fact for a log.
+      //
+      // EVERY OTHER 400 KEEPS TODAY'S GENERIC TAIL, byte-identical — a malformed
+      // body, an unsupported parameter and an oversized request are all 400s and
+      // none of them means the model is gone.
+      const e = modelGoneError('OpenRouter', model);
+      // `.code` is OVERWRITTEN with the OpenRouter class, and the wire value
+      // moves to `.curatorErrorCode`. Both consumers need it that way:
+      // `openrouter-qualify.js`'s `classifyProbeError` classifies STRUCTURALLY
+      // on `err.code` and keys its fatal set on `OPENROUTER_*` names, while the
+      // SSE frames want `MODEL_GONE`. Nothing reads `.code` expecting the
+      // generic value — every gate in this app tests `curatorModelGone`, which
+      // is a boolean and cannot be confused with either.
+      e.code = code;
+      e.curatorErrorCode = 'MODEL_GONE';
+      e.httpStatus = status;
+      if (detail) e.upstreamDetail = detail;
       throw e;
     }
     if (status === 401) {

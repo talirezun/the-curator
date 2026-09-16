@@ -815,6 +815,203 @@ console.log(`\n${'─'.repeat(60)}`);
   ok(fast > 0 && fast < slow, 'the quoted range is ordered and positive');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  A FATAL PROVIDER REFUSAL IS NOT A MODEL DEFECT
+//
+//  Before this block the runner had ONE stopping rule per condition and all of
+//  them counted to three. A 401, a 402 or a withdrawn model on run 1 therefore
+//  ran all nine — nine calls, up to nine per-call timeouts of wall clock — and
+//  `summariseRuns` filed the nine FAILED rows as DEFECT_OBSERVED, writing an
+//  ACCOUNT problem into a MODEL's permanent record and suppressing that model
+//  from the build lane on the strength of it.
+//
+//  Mutations run against this block (each restored, each file re-verified by
+//  sha256 afterwards):
+//    M15  delete the fatal-class break from the run loop      -> 4 assertions red
+//    M16  drop `errorMessage` from the `run` frame            -> 3 assertions red
+//    M17  drop the adapter's redaction (canary key)           -> 1 assertion red
+//    M18  map a NOT_MEASURED_* abort to DEFECT_OBSERVED       -> 3 assertions red
+//    M19  drop the explicit per-call timeout from qualifyModel -> 2 assertions red
+// ═══════════════════════════════════════════════════════════════════════════
+section('Fatal provider refusals abort on the FIRST occurrence [M15, M18]');
+
+/** An error shaped exactly as the adapter raises it, with the code it sets. */
+function providerErr(code, message, status) {
+  const e = new Error(message);
+  e.code = code;
+  if (status !== undefined) e.status = status;
+  return e;
+}
+
+/** A transport that counts its calls and always throws the same error. */
+function throwingCaller(err) {
+  let calls = 0;
+  const fn = async () => { calls++; throw err; };
+  fn.calls = () => calls;
+  return fn;
+}
+
+for (const code of [...q.QUALIFY_FATAL_ERROR_CLASSES]) {
+  t = 0;
+  const caller = throwingCaller(providerErr(code, `upstream refused: ${code}`));
+  const events = [];
+  const { record: r, runs: rows } = await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 9, prompt: P, spacingMs: 0,
+    callModel: caller, now: fakeNow, onProgress: e => events.push(e),
+  });
+  eq(caller.calls(), 1, `${code}: EXACTLY ONE call — run 2 cannot tell us anything run 1 did not [M15]`);
+  eq(rows.length, 1, `${code}: one row recorded`);
+  eq(r.aborted, `NOT_MEASURED_${code}`, `${code}: the abort names the class that caused it`);
+  eq(r.outcome, 'NOT_MEASURED', `${code}: the outcome is NOT_MEASURED, never DEFECT_OBSERVED — nothing about the MODEL was measured [M18]`);
+  ok(!isPassingRecord(r), `${code}: and it certainly does not qualify`);
+  const doneFrame = events.find(e => e.type === 'done');
+  eq(doneFrame.aborted, `NOT_MEASURED_${code}`, `${code}: the done frame carries the abort at its top level`);
+  eq(doneFrame.outcome, 'NOT_MEASURED', `${code}: …and the outcome, so a client need not reach into the record to learn there is no verdict`);
+}
+
+section('…while the conditions that CAN clear, or that ARE the model, keep their old ladders');
+{
+  // A rate limit is transient: three CONSECUTIVE, not one.
+  t = 0;
+  const caller = throwingCaller(providerErr('OPENROUTER_RATE_LIMIT', 'rate limited', 429));
+  const { record: r } = await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 9, prompt: P, spacingMs: 0,
+    callModel: caller, now: fakeNow,
+  });
+  eq(caller.calls(), q.QUALIFY_RATE_LIMIT_ABORT_AFTER,
+    'a 429 still takes THREE consecutive before abandoning — it clears with time, so one is not evidence [M15 must not widen to this]');
+  eq(r.aborted, 'NOT_MEASURED_RATE_LIMITED', '…with its own long-standing abort value');
+  eq(r.outcome, 'NOT_MEASURED', '…and NOT_MEASURED, unchanged');
+}
+{
+  // A network failure is not in the set at all.
+  t = 0;
+  const caller = throwingCaller(providerErr('OPENROUTER_NETWORK', 'connection reset'));
+  const { record: r } = await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 4, prompt: P, spacingMs: 0,
+    callModel: caller, now: fakeNow,
+  });
+  eq(caller.calls(), 4, 'a NETWORK failure is not fatal — the next run may well succeed, and abandoning on one is how a good model gets a bad record');
+  eq(r.outcome, 'DEFECT_OBSERVED', '…and four outright failures are still a defect, unchanged');
+}
+{
+  // A burn abort IS the model's behaviour and must stay DEFECT_OBSERVED.
+  const burn = summariseRuns(
+    [1, 2, 3].map(run => ({ run, outcome: 'COMPLETED', parseClass: 'unrepairable', usable: false, budgetBurn: 'reasoning', latencyMs: 1 })),
+    { modelId: GLM, aborted: 'ABORTED_REASONING_BURN' },
+  );
+  eq(burn.outcome, 'DEFECT_OBSERVED',
+    '★ a REASONING-BURN abort is still DEFECT_OBSERVED — it carries no NOT_MEASURED_ prefix because it IS a measurement, and it is the defect this feature exists to catch [M18 must not swallow it]');
+}
+
+section('Every run frame carries the REASON, not just the class [M16, M17]');
+{
+  t = 0;
+  const events = [];
+  const caller = throwingCaller(providerErr('OPENROUTER_BAD_REQUEST', 'z-ai/glm-4.7 is not a valid model ID'));
+  await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 9, prompt: P, spacingMs: 0,
+    callModel: caller, now: fakeNow, onProgress: e => events.push(e),
+  });
+  const runFrames = events.filter(e => e.type === 'run');
+  eq(runFrames.length, 1, 'one run frame (the fatal abort stopped the loop)');
+  ok(Object.hasOwn(runFrames[0], 'errorMessage'), '★ the run frame HAS an errorMessage field [M16]');
+  ok(typeof runFrames[0].errorMessage === 'string' && runFrames[0].errorMessage.length > 0,
+    '★ …and it is a non-empty string, so a user watching a run fail can learn WHY [M16]');
+  ok(runFrames[0].errorMessage.includes('is not a valid model ID'),
+    '★ …carrying the upstream\'s own words [M16]');
+  eq(runFrames[0].errorClass, 'OPENROUTER_BAD_REQUEST', 'beside the class it has always carried');
+}
+{
+  // Redaction, proven with a CANARY rather than trusted. The key shape is
+  // assembled from parts so the repo's secret hook never sees a literal.
+  const CANARY = ['sk', 'or', 'v1', 'C'.repeat(48)].join('-');
+  const long = `auth failed for Bearer ${CANARY} on this request`;
+  const cls = classifyProbeError(providerErr('OPENROUTER_AUTH', long, 401));
+  ok(!cls.errorMessage.includes('sk-or'),
+    '★ a credential-shaped string never survives into errorMessage [M17: removing the adapter/redaction layer leaks the canary]');
+  ok(cls.errorMessage.length <= 300, 'and the message is capped at 300 characters before it reaches any frame');
+
+  const huge = classifyProbeError(providerErr('OPENROUTER_AUTH', 'x'.repeat(5000), 401));
+  eq(huge.errorMessage.length, 300, 'a 5,000-character upstream message is truncated to exactly the cap');
+  const multiline = classifyProbeError(providerErr('OPENROUTER_AUTH', 'line one\nline two', 401));
+  ok(typeof multiline.errorMessage === 'string', 'a multi-line message still classifies without throwing');
+}
+
+section('The per-call ceiling and the overall deadline are both real [M19]');
+{
+  // ── THE CONSTANT IS NOT THE BEHAVIOUR, AND THAT COST A GREEN MUTATION ────
+  // The three assertions immediately below compare two CONSTANTS. A mutation
+  // that changed qualifyModel's DEFAULT back to the adapter's 600 s production
+  // ceiling left every one of them green, because none of them asks what the
+  // function actually resolved. The `start` frame now reports the resolved
+  // values, and this block reads them — the difference between proving a
+  // constant is small and proving it is used.
+  {
+    let clock = 0;
+    const events = [];
+    await qualifyModel({
+      modelId: GLM, domain: 'articles', runs: 3, prompt: P, spacingMs: 0,
+      callModel: async () => ({ text: '{"pages":[{"path":"concepts/a.md","summary":"s"}]}', model: GLM, finishReason: 'stop', usage: { completion_tokens: 10 } }),
+      now: () => (clock += 10), onProgress: e => events.push(e),
+    });
+    const start = events.find(e => e.type === 'start');
+    ok(start, 'the start frame is emitted');
+    eq(start.callTimeoutMs, q.QUALIFY_CALL_TIMEOUT_MS,
+      '★★ the RESOLVED per-call ceiling is the qualification ceiling, not the adapter’s 600 s production default [M22: changing the default reds exactly here and nowhere else]');
+    eq(start.deadlineMs, q.QUALIFY_CALL_TIMEOUT_MS * 3,
+      '★ and the overall deadline is derived from it and from the run count ACTUALLY requested — a 3-run probe is not handed a 9-run budget [M22]');
+    eq(start.runs, 3, 'with the run count it was asked for');
+    eq(start.minRunsToQualify, q.QUALIFY_MIN_RUNS, 'and the existing fields on that frame are untouched');
+    ok(typeof start.promptChars === 'number', '…including promptChars');
+    ok(typeof start.sourceName === 'string', '…and sourceName');
+  }
+
+  ok(Number.isFinite(q.QUALIFY_CALL_TIMEOUT_MS) && q.QUALIFY_CALL_TIMEOUT_MS > 0,
+    'QUALIFY_CALL_TIMEOUT_MS is a real number');
+  ok(q.QUALIFY_CALL_TIMEOUT_MS < 600_000,
+    '★ …and is BELOW the adapter\'s 600 s production default, which is the whole point: nine runs at 600 s is a 90-minute ceiling behind one click [M19]');
+  eq(q.QUALIFY_DEADLINE_MS, q.QUALIFY_CALL_TIMEOUT_MS * q.QUALIFY_DEFAULT_RUNS,
+    'and the overall deadline is derived from it, never hand-typed');
+
+  // A transport that NEVER resolves, abandoned at the deadline under an
+  // injected clock. Without the deadline this hangs forever and the suite times
+  // out — which is exactly the production symptom.
+  let clock = 0;
+  const step = q.QUALIFY_CALL_TIMEOUT_MS + 1;
+  const stepping = () => (clock += step);
+  let calls = 0;
+  const slowCaller = async () => {
+    calls++;
+    // Resolve, but consume more than a whole call's budget on the injected
+    // clock. The DEADLINE is what must stop the loop, not the transport.
+    return { text: '{"pages":[{"path":"concepts/a.md","summary":"s"}]}', model: GLM, finishReason: 'stop', usage: { completion_tokens: 10 } };
+  };
+  const { record: r } = await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 9, prompt: P, spacingMs: 0,
+    callModel: slowCaller, now: stepping,
+    deadlineMs: q.QUALIFY_CALL_TIMEOUT_MS * 3,
+  });
+  ok(calls < 9, `★ the run stopped BEFORE all nine because the deadline elapsed (${calls} calls) [M19]`);
+  eq(r.aborted, 'NOT_MEASURED_DEADLINE', '★ …and says so, with an abort value that maps to NOT_MEASURED');
+  eq(r.outcome, 'NOT_MEASURED', '…so an elapsed deadline is never filed as a model defect either');
+}
+{
+  // Non-vacuous control: with a generous deadline the SAME transport completes
+  // all nine, so the assertions above are about the deadline and not about the
+  // fixture being unable to finish.
+  let clock = 0;
+  const stepping = () => (clock += 1000);
+  let calls = 0;
+  const caller = async () => { calls++; return { text: '{"pages":[{"path":"concepts/a.md","summary":"s"}]}', model: GLM, finishReason: 'stop', usage: { completion_tokens: 10 } }; };
+  const { record: r } = await qualifyModel({
+    modelId: GLM, domain: 'articles', runs: 9, prompt: P, spacingMs: 0,
+    callModel: caller, now: stepping, deadlineMs: 10_000_000,
+  });
+  eq(calls, 9, 'control: with a generous deadline the same transport completes all nine runs');
+  eq(r.aborted, null, '…with no abort');
+}
+
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ }
 if (failed) {
