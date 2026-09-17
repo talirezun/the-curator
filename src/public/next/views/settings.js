@@ -7377,7 +7377,7 @@ function renderQualifyPanel(q, minRuns, buildNow) {
           // Dismiss goes through the SAME handler Cancel on the confirm panel
           // uses — one way to clear `state.qualify`, so a second path cannot
           // leave the clock or the abort controller behind.
-          '<button type="button" class="btn btn-secondary btn-xs" data-qualify-cancel="1">Close</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-qualify-cancel="1">Close</button>' +
         '</div>' +
       '</div>'
     );
