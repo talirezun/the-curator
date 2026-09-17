@@ -608,14 +608,27 @@ function buildNav({ durInstant = '80ms', hidden = false, present = ['view-root',
   h.navigate('chat');
   h.navigate('domains');
   let ran = -1;
-  h.afterViewMount(() => { ran = h.log.filter(e => e.op === 'onEnter').length; });
+  let calls = 0;
+  h.afterViewMount(() => { calls++; ran = h.log.filter(e => e.op === 'onEnter').length; });
   ok(ran === -1, 'afterViewMount() waits while an exit is in flight');
   h.runTimers();
   ok(ran === 2, `…then runs AFTER the mount it was waiting for (saw ${ran} mounts)`);
+  // The drain takes the queue BY VALUE and empties it, so a callback cannot be
+  // replayed. views/onboarding.js's step 2 opens a create form through this —
+  // a second run would open it twice.
+  ok(calls === 1, `…exactly once (ran ${calls} time(s)) — the queue is taken by value and emptied, never replayed`);
 
+  // SYNCHRONOUS when nothing is pending, and the word matters: this is the
+  // arm a reduced-motion user and a first navigation both take, and
+  // views/onboarding.js's step 2 opens its create form through it. A
+  // microtask or a rAF here would make every one of those wait a frame for
+  // no reason. Asserted by reading the flag on the line AFTER the call, so
+  // anything deferred at all reads false.
   let immediate = false;
+  const timersBefore = h.timers.length;
   h.afterViewMount(() => { immediate = true; });
-  ok(immediate === true, '…and runs immediately when nothing is pending');
+  ok(immediate === true, '…and runs the callback IN THE SAME TASK when nothing is pending');
+  ok(h.timers.length === timersBefore, '…without arming a timer of its own');
 
   let threw = false;
   try { h.afterViewMount(() => { throw new Error('boom'); }); } catch { threw = true; }

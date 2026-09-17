@@ -70,7 +70,7 @@
 //
 // Owns views/onboarding.css (the `obp-` prefix, used nowhere else).
 
-import { navigate, icon, escapeHtml } from '../app.js';
+import { navigate, afterViewMount, icon, escapeHtml } from '../app.js';
 import { loadUiState, durableStorage } from '../shared/ui-state.js';
 
 // Namespaced like every other /next key (curator-next-theme,
@@ -678,7 +678,16 @@ function go(stepId) {
   // views/settings.js's freshState() opens on the 'providers' section,
   // which IS the API-keys section — so plain navigation lands on the right
   // screen with no reach into that view's internals.
-  if (stepId === 'domain') goToDomainsCreate();
+  //
+  // THROUGH afterViewMount, NOT DIRECTLY. v3.57.0 gave navigate() an exit
+  // animation, so the new view is mounted after that ~80ms rather than
+  // before navigate() returns. A bare call here would look for a button that
+  // does not exist yet and the `?.` below would swallow it SILENTLY — step 2
+  // would degrade to "you land on Domains and no form opens", every time, with
+  // nothing in the console. afterViewMount runs the callback once the pending
+  // mount has happened, and IMMEDIATELY when nothing is pending, so this is
+  // also correct with motion off and on a first navigation.
+  if (stepId === 'domain') afterViewMount(goToDomainsCreate);
 
   // The panel stays open on purpose: the user is meant to see step 2 next.
   // Re-check now so a step they completed a moment ago ticks over without
@@ -695,12 +704,15 @@ function go(stepId) {
 // views/domains.js, which this change does not own. So: click the real
 // button the real view already renders.
 //
-// It is SYNCHRONOUS and needs no staleness guard. navigate() calls the
-// view's onEnter synchronously; domains' onEnter calls loadDomainsList(),
-// whose FIRST statement after setting flags is render(token) — before any
-// await. So the sidebar, including #dm-new-domain-btn (rendered in BOTH the
-// loading and the loaded branch), is already in the DOM by the time
-// navigate() returns.
+// WHEN IT MAY RUN, precisely. Domains' onEnter calls loadDomainsList(), whose
+// FIRST statement after setting flags is render(token) — before any await — so
+// the sidebar, including #dm-new-domain-btn (rendered in BOTH the loading and
+// the loaded branch), is in the DOM by the time onEnter RETURNS. What changed
+// in v3.57.0 is WHEN onEnter runs: navigate() now plays an exit animation
+// first, so the mount lands up to `--dur-instant` later. This function is
+// therefore called from go() through afterViewMount() rather than inline; it
+// still needs no staleness guard of its own, because that callback runs
+// exactly once, immediately after the mount it was queued for.
 //
 // DEGRADATION CONTRACT, matching views/domains.js's own for
 // requestChatScope: if that id is ever renamed or removed, `?.` makes this

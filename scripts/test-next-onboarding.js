@@ -442,47 +442,111 @@ section('5. Every step POINTS. Nothing here writes anything.');
   ok(readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8').includes('id="dm-new-domain-btn"'),
     'that id really exists in views/domains.js today (this guard would rot silently otherwise)');
 
-  // ── THE ORDER IS THE MECHANISM, and it was unpinned ────────────────────
-  // Found by adversarial audit: swapping go()'s two statements to
-  // click-then-navigate left this suite at 161 passed / 0 failed. Step 2
-  // works ONLY because navigate(view) runs FIRST — Domains' render() →
-  // renderSidebar() → setSidebar() chain is synchronous, so the
-  // `!state.loaded` branch has already emitted and bound #dm-new-domain-btn
-  // by the time the click lands. Click first and the button does not exist
-  // yet; the `?.` then swallows it SILENTLY and step 2 degrades to "you land
+  // ── THE ORDER IS THE MECHANISM, and it is now EXECUTED ────────────────
+  // Found by adversarial audit in v3.49.0: swapping go()'s two statements to
+  // click-then-navigate left this suite at 161 passed / 0 failed. Step 2 works
+  // only because the create button exists by the time the click lands — click
+  // first and the `?.` swallows it SILENTLY, so step 2 degrades to "you land
   // on Domains and no form opens", with no error in the console, no failed
   // request, and nothing anywhere to notice.
   //
-  // The six-line comment in onboarding.js reasons about this correctly and
-  // is verified correct — but a comment is not a guard, and this is exactly
-  // the "correct today, untested" shape that rots on the next refactor of
-  // Domains' mount path. Asserted on the extracted body of go() rather than
-  // on the whole file, so an unrelated navigate( elsewhere cannot satisfy
-  // it. Mutation-proven immediately below.
-  const goBody = extractFunction(obCode, 'go');
-  const iNav = goBody.indexOf('navigate(');
-  const iCreate = goBody.indexOf('goToDomainsCreate(');
-  ok(iNav >= 0, 'go() calls navigate()');
-  ok(iCreate >= 0, 'go() reaches the create flow via goToDomainsCreate()');
-  ok(iNav >= 0 && iCreate >= 0 && iNav < iCreate,
-    'go() navigates BEFORE opening the create form — the button only exists after Domains mounts');
-  // Covers the inlined variant too: if the click site is ever moved into
-  // go() directly, it must still sit after the navigate.
-  const iBtn = goBody.indexOf('dm-new-domain-btn');
-  ok(iBtn === -1 || iBtn > iNav,
-    'if the button is ever reached from inside go() directly, it is still after navigate()');
+  // v3.57.0 MADE THAT SILENT FAILURE THE DEFAULT, and that is why this block
+  // stopped being a source scan. navigate() gained an exit animation, so the
+  // mount now happens ~80ms after it returns instead of before — the ordering
+  // of two STATEMENTS says nothing at all about the ordering of the two EVENTS
+  // any more. go() therefore queues the click through the shell's
+  // afterViewMount(), and what has to be proven is a sequence in time: the
+  // click lands AFTER the mount, and it lands EXACTLY ONCE.
+  //
+  // So go() and goToDomainsCreate() are lifted and RUN, against a document
+  // whose button only appears when the mount does. Both arms are driven: the
+  // deferred one (motion on) and the immediate one (motion off, or a first
+  // navigation, where afterViewMount runs its callback in the same task).
+  const goSrc = extractFunction(obCode, 'go') + '\n' + extractFunction(obCode, 'goToDomainsCreate');
+  ok(/afterViewMount\(/.test(goSrc),
+    'go() hands the create click to the shell’s afterViewMount() rather than calling it inline');
+  ok(/import \{[^}]*\bafterViewMount\b[^}]*\} from '\.\.\/app\.js'/.test(obCode),
+    '…and imports it from app.js, the one module that knows when a mount has happened');
+  ok(/export function afterViewMount\(/.test(
+      readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8')),
+    '…which app.js really exports today (this guard would rot silently otherwise)');
 
-  // Mutation proof (in memory — this suite never writes to disk): reproduce
-  // the exact swap the audit used and confirm the assertion above goes RED.
+  /** Run the REAL go() with a document whose #dm-new-domain-btn only exists
+   *  once the mount has happened, exactly as the live shell behaves. */
+  function runGo(stepId, { deferMount }) {
+    const log = [];
+    // An ARRAY, because that is what app.js's afterViewMount really keeps. A
+    // single-slot stub would silently collapse a double-queue into one call
+    // and report the "exactly one click" assertion below as green.
+    const queued = [];
+    let mounted = false;
+    const btn = { click: () => log.push('click') };
+    const api = new Function(
+      'navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+      goSrc + '\nreturn { go };')(
+      (v) => { log.push('navigate:' + v); if (!deferMount) mounted = true; },
+      (cb) => {
+        log.push('afterViewMount');
+        if (deferMount) { queued.push(cb); return; }
+        cb();
+      },
+      (id) => (id === 'domain' ? 'domains' : id === 'api-key' ? 'settings' : null),
+      { getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null) },
+      () => log.push('refresh'),
+      0,
+    );
+    let threw = null;
+    try { api.go(stepId); } catch (e) { threw = e; }
+    return {
+      log, threw,
+      flushMount() { mounted = true; const q = queued.splice(0); for (const c of q) c(); },
+    };
+  }
+
   {
-    const swapped = goBody
-      .replace(/\n(\s*)navigate\(view\);\n(\s*)if \(stepId === 'domain'\) goToDomainsCreate\(\);\n/,
-        "\n$2if (stepId === 'domain') goToDomainsCreate();\n$1navigate(view);\n");
-    ok(swapped !== goBody, 'the mutation actually LANDED in the copy (a no-op replace would prove nothing)');
-    const mNav = swapped.indexOf('navigate(');
-    const mCreate = swapped.indexOf('goToDomainsCreate(');
-    ok(!(mNav >= 0 && mCreate >= 0 && mNav < mCreate),
-      'CONFIRMED RED: click-then-navigate in a copy of go() trips the ordering assertion the real source passes');
+    // MOTION ON — the mount is one tick away.
+    const r = runGo('domain', { deferMount: true });
+    ok(r.threw === null, 'go() does not throw while the mount is still pending');
+    ok(!r.log.includes('click'),
+      'THE DEFECT, GUARDED: the create button is NOT clicked while the exit animation is still playing — it does not exist yet, and `?.` would swallow the miss in silence');
+    r.flushMount();
+    ok(r.log.includes('click'), '…and IS clicked once the view has mounted');
+    ok(r.log.indexOf('navigate:domains') < r.log.indexOf('click'),
+      'the navigation precedes the click (the button only exists after Domains mounts)');
+    ok(r.log.filter((e) => e === 'click').length === 1, 'exactly one click — the queue is not replayed');
+  }
+
+  {
+    // MOTION OFF / FIRST NAVIGATION — afterViewMount runs in the same task,
+    // so a user with reduced motion must not wait a frame for their form.
+    const r = runGo('domain', { deferMount: false });
+    ok(r.log.includes('click'), 'with nothing pending the click happens inside go() itself — no extra frame');
+    ok(r.log.indexOf('navigate:domains') < r.log.indexOf('click')
+      && r.log.indexOf('click') < r.log.indexOf('refresh'),
+      `navigate → click → refresh, in that order (got ${r.log.join(' → ')})`);
+  }
+
+  {
+    // Only step 2 opens a form, and a missing button is still a no-op.
+    const other = runGo('api-key', { deferMount: false });
+    ok(!other.log.includes('click'), 'a step that is not step 2 never reaches the create flow');
+    ok(other.log.includes('navigate:settings'), 'CONTROL: it did navigate');
+
+    const unknown = runGo('nope', { deferMount: false });
+    ok(unknown.log.length === 0, 'an unknown step id navigates nowhere and clicks nothing');
+  }
+
+  {
+    // DEGRADATION CONTRACT: a renamed id is a silent no-op, never a throw.
+    const log = [];
+    const api = new Function('navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+      goSrc + '\nreturn { go };')(
+      () => log.push('navigate'), (cb) => cb(), () => 'domains',
+      { getElementById: () => null }, () => log.push('refresh'), 0);
+    let threw = null;
+    try { api.go('domain'); } catch (e) { threw = e; }
+    ok(threw === null, 'a renamed or removed button leaves the user on Domains rather than throwing');
+    ok(log.includes('refresh'), '…and the panel still refreshes afterwards');
   }
 }
 
