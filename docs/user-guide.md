@@ -598,13 +598,17 @@ flowchart LR
 
 ### Turning it on
 
-**Settings → General → Menu bar.** It takes effect immediately; there is nothing to restart, and you can switch it back off the same way.
+**Settings → General → Appearance → Menu bar.** It takes effect immediately; there is nothing to restart, and you can switch it back off the same way.
 
-| Choice | What you get |
+It is a **switch with a checkbox under it**, which is how macOS draws a facility you turn on plus a choice that only exists once it is on:
+
+| Control | What you get |
 |---|---|
-| **Off** | No menu bar icon. The Dock icon and the window behave exactly as they always have. **This is the default.** |
-| **On** | A menu bar icon, alongside your Dock icon |
-| **On, hide the Dock icon** | Remembered, but **the Dock icon is not actually hidden yet** — this behaves as **On** today. [Why](#what-is-not-finished-and-what-has-never-been-seen) |
+| **Show the menu bar icon** — off | No menu bar icon. The Dock icon and the window behave exactly as they always have. **This is the default**, and the line under the control says so. |
+| **Show the menu bar icon** — on | A menu bar icon, alongside your Dock icon |
+| **Hide the Dock icon while it is showing** | The dependent checkbox. It is greyed out until the switch is on — shown rather than hidden, so you can see the option exists. Your choice is remembered, but **the Dock icon is not actually hidden yet**; today this behaves as *on* with the Dock icon still there. [Why](#what-is-not-finished-and-what-has-never-been-seen) |
+
+> *Corrected in v3.54.0.* This guide described three segmented choices — **Off** / **On** / **On, hide the Dock icon** — which is what the control looked like until v3.44.0 replaced it with the switch-and-checkbox pair above. What the setting **does** is unchanged; only its shape was wrong here.
 
 ### What you see when you click it
 
@@ -1166,6 +1170,15 @@ Two captions are shortened to fit the column — **Shared Brain** reads *Shared*
 and **Agent memory** reads *Memory*. Hovering any rail icon still shows its
 full name, and that is also the name a screen reader announces.
 
+> **The main column got wider in v3.54.0 — 900px to 1200px.** On a large
+> monitor, Ingest, Shared Brain, Agent memory and Settings used to sit in a
+> narrow strip with the rest of the window empty, while Chat filled it. They
+> now use the width, so cards and tables can sit side by side. **Paragraphs did
+> not get wider**: a run of prose still stops at about 66–68 characters, which
+> is where a line stays comfortable to read. The rule is *cap the sentence,
+> never the card* — so a wide window buys you more table and more list, not
+> longer lines.
+
 ### Which screen you land on
 
 **The first time you open The Curator, it opens on Domains** — the overview, so
@@ -1209,6 +1222,59 @@ including the largest.
 
 **Wiki Health** lives **inside a domain**. Open **Domains**, pick a domain, and the **Wiki health** panel is right there on that domain's page — because a health problem is always a problem with one specific wiki, not with the app. See [§17](#17-wiki-health).
 
+### How help works in the app
+
+Every screen in The Curator explains itself the same way, in three layers. Once
+you know the shape you can stop reading it and just use it.
+
+| Layer | What it looks like | What is in it |
+|---|---|---|
+| **The lede** | One short sentence under a title or a block heading, never more than about twenty words | The one fact you need in order to know what this is for |
+| **The ⓘ** | A small violet **ⓘ** at the end of that sentence | The argument behind it — why it works this way, what the trade-off is, what happens if you leave it alone. Click to open a panel with a **violet left edge**; click again, or press **Esc**, to close it |
+| **Read more in the guide** | A link at the bottom of that panel | The section of this guide that covers the subject properly |
+
+**Violet means "there is an explanation here."** The ⓘ mark is the app's accent
+colour wherever it appears — in a view header, on a Settings block, in a
+sidebar — and the panel it opens carries the same colour as a bar down its left
+edge. That is the whole affordance: one colour, one shape, one meaning. Before
+v3.54.0 the mark was the same grey as the sentence beside it and read as
+punctuation.
+
+**Nothing you need is hidden behind it.** Explanations fold. These never do:
+
+- **warnings and banners** — a warning you have to click to find is not a warning
+- **what something costs** — the price stays on the button
+- **refusals and errors** — including the reason a scan would not start
+- **the result of something you just pressed** — a self-test outcome, a saved
+  confirmation, a validation message
+
+If a fold is open when the screen refreshes underneath you, it stays open.
+
+### Buttons — what the look tells you
+
+Buttons are a system, not a palette. **The look is the button's job, not its
+importance**, and it is the same on every screen:
+
+| Look | Name | What it means | Example |
+|---|---|---|---|
+| **Filled violet** | primary | *The* action that finishes the step in front of you. There is at most one per card, row or panel | **Choose files**, **Re-connect**, **Save scan limits** |
+| **Outlined** | secondary | Every other real action — fetch, test, inspect, go back | **Check for updates**, **Run self-test**, **View config** |
+| **Plain text, no box** | ghost | Reversible or dismissive: Cancel, Dismiss, Close, Copy, Skip, Disconnect | **Copy snippet**, **Cancel** |
+| **Violet tint with a ✦** | spends money | This one makes a paid AI call — and the estimate is written on the label | **Ingest**, **Start batch**, **Compile to wiki**, **Verify AI connection · $0.0001** |
+| **Red tint** | destroys data | Deletes something. Filled red only ever appears **inside a confirmation dialog**, where deleting *is* the action you came for | **Delete**, **Revoke** |
+
+Two things follow from that, and both are deliberate:
+
+- **The buttons that cost you something are never the most inviting thing on
+  screen.** A paid or destructive action is *tinted*, never filled and never
+  glossy, so a filled violet button is always safe to press.
+- **A panel with two filled buttons is a bug**, not a choice. If you see one,
+  it is worth [reporting](https://github.com/talirezun/the-curator/issues).
+
+Buttons come in two heights and you do not have to think about which: a button
+standing on its own in a section is the regular size, and a button inside a
+card, a row or a table is the small one.
+
 ### Where did that tab go?
 
 If you used The Curator before this release, this is the whole map:
@@ -1237,9 +1303,14 @@ The **Agent memory** rail item opens a browser for the working state your agents
 each other. Almost all of it is **read-only** — agents write this over MCP and the app shows it —
 with exactly one exception, the **standing brief**, which is your document and has an Edit button.
 
-![The top of the Agent memory view. Down the left, the icon rail with Memory highlighted. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS eyebrow with a Refresh link, and projects grouped under their domain: under PROJECTS, three rows — "projects · 3 scopes · 3 days ago", "lumina · 7 scopes · 3 days ago" (selected), "curator · 10 scopes · 3 days ago" — and under POSTS, one row, "posts · 1 scope · 1 week ago". At the foot of the panel, beside a padlock, the note "Agents write the handoffs here through MCP. You write the standing brief." The main column opens with the eyebrow "YOUR AGENTS' BRAIN" over the title "Agent memory", a breadcrumb reading "projects / lumina", and a "Copy agent instructions" button on the right. Below it the save-status card: "Last saved" over "3 days ago" in large monospace, then "session-2026-09-10-lumina-d366-alert-history · Claude Code (desktop app)". A "summary shortened" chip sits underneath with its explanation — that the handoff itself was written in full, that what got shortened is a label attached to the save, most often its one-line summary, that the label matters because it is the only thing a future session sees before deciding whether to open this state, and "headline: truncated to 200 chars (was 210)". Then the line "This file arrived on this computer 3 days ago — the reading above is the agent's own clock, not the file's.", and at the foot of the card "Standing brief — 3 days ago". Under the card sit a "Work-stream" dropdown set to session-2026-09-10-lumina-d366-alert-history, "Machine talis-macbook-pro-acb035", an amber chip reading "from talis-macbook-pro-acb035", and beneath them "synced here — local paths and processes may differ".](images/curator-agent-memory.png)
+![The Agent memory view with a project open. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS eyebrow with a Refresh link, and under a second PROJECTS heading — the domain’s name — four rows: "field-notes, 1 scope · 22 hr ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago", and "curator, 13 scopes · 2 weeks ago", which is selected. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator". Below that the save-status card: a small square mark beside "Last saved" over "2 weeks ago" in large monospace, then "curator-v3-17-1-acceptance · claude-code"; under it "This file arrived on this computer 40 min ago — the reading above is the agent’s own clock, not the file’s."; then "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 41 min ago."; and at the foot of the card, below a hairline, "Standing brief — 40 min ago". A row under the card holds a "Work-stream" dropdown set to curator-v3-17-1-acceptance, "Machine talis-macbook-pro-17d23c", an amber chip reading "from talis-macbook-pro-17d23c", and the note "synced here — local paths and processes may differ". Last, a panel with a violet bar down its left edge: a downward chevron, the label "CURRENT HANDOFF" and a small square freshness mark on the left, and on the right "Saved" over "2 weeks ago" with "claude-code · opus · updates live" beneath it. Its body opens with the headline "v3.17.1 fixes are complete and green in the working tree, uncommitted; the connector acceptance pass is the last step.", then a WHERE THINGS STAND paragraph, then a FIRM DECISIONS — DO NOT RE-LITIGATE list of five bullets, with a TRAPS AND DEAD ENDS heading just visible at the bottom edge.](images/curator-agent-memory.png)
 
-*One project's state, open. The card across the middle is the [save-status strip](#the-save-status-strip) described below — this one is showing two of its qualifying lines at once.*
+*One project's state, open. The card across the middle is the [save-status strip](#the-save-status-strip)
+described below — this one is showing two of its qualifying lines at once, including the
+**Newer state in this project** warning that another work-stream has been saved to more recently.
+The panel at the bottom is the **current handoff**, which opens by default and is the only one of
+the three panels marked with a violet edge. Its own heading repeats the reading from the card
+above — and the age in it **ticks while you watch**, which is what "updates live" is telling you.*
 
 - **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
   nested under their domain, each project with its work-stream count and how long ago it was last
@@ -1260,19 +1331,41 @@ with exactly one exception, the **standing brief**, which is your document and h
 - **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
   was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
   the model and [§10](#projects-inside-a-domain) for how to add a second project.
-- **The main column shows the current handoff** for one work-stream — the project's most
-  recently written one, unless you pick another: the one-line headline, how long ago it was
-  saved, which harness and model saved it, and the document itself — where things stand, what is
-  next, what is settled, what to avoid, what is still open.
 - **A Scope and a Machine picker** appear when there is more than one of either. Ask for a
   work-stream without picking a machine and you get the most recently written one; if that was a
   different computer, a small **from &lt;machine&gt;** badge says so, because the next steps below it
   were observed somewhere else and local paths may not match.
-- **The standing brief and the session journal** sit behind collapsed sections — the brief because
-  it rarely changes, the journal because it is history rather than state. The brief opens by
-  default when there is no handoff yet, since then it is the only content there is, and it
-  carries an **Edit** button: the brief is the project's one human-written tier, and it is the
-  one thing on this screen the app will write.
+
+**Below the pickers the screen is three panels, and they are ranked** (*reorganised in v3.54.0*):
+
+| Panel | Open when you arrive? | What it holds |
+|---|---|---|
+| **CURRENT HANDOFF** | **Yes** — it is the answer you came for | Where things stand right now for one work-stream: the headline, then where things stand, what is next, what is settled, what to avoid, what is still open |
+| **Standing brief** | No | The part that rarely changes — the goal, the firm decisions, the working model. Carries an **Edit** button |
+| **Session journal** | No | One line per save: when, which harness, which model, and the headline. History, not state |
+
+Only the handoff carries a **violet edge**; the other two are plain. That is the
+point of it — one panel marked out of three tells you where to look, and marking
+all three would tell you nothing.
+
+- **The handoff is collapsible now, and it remembers.** It used to be the one thing on this screen
+  you could not close, so a long handoff was something you scrolled past to reach the brief and
+  the journal. Close it and it stays closed; the app only ever opens it for you the first time.
+- **The standing brief no longer opens itself on every visit** (*fixed in v3.54.0*). It opens on
+  its own in exactly one case — when there is no handoff yet, because then it is the only content
+  on the page — and otherwise it opens when you open it and stays however you left it.
+- **The handoff's own heading carries two readings from the [menu bar widget](#6b-the-menu-bar-icon-mac-app)**,
+  so you get them without a Mac: a **freshness mark** (the same five steps as the card above) and
+  an age that **counts up while the screen is open** — *"22 hr ago · updates live"*. The phrase
+  *updates live* is only shown when the clock really is running; a reading that cannot tick does
+  not claim to.
+- **The brief carries the Edit button** because it is the project's one human-written tier, and it
+  is the one thing on this screen the app will write.
+- **"How this works" is the ⓘ beside the title**, not a card at the bottom of the page. It explains
+  the three tiers, the per-machine layout and the read-only rule — read once, then never again,
+  which is exactly what the ⓘ is for. The sidebar has its own ⓘ carrying the short version:
+  agents save handoffs here over MCP, you write the standing brief, and the screen re-checks by
+  itself when you come back to it.
 
 #### The save-status strip
 
@@ -1300,11 +1393,12 @@ each has something to say**, up to five qualifying lines:
 > **It says "Last saved", never "you are saved".** It knows when the last save happened; it cannot
 > know whether anything has changed since. That inference is left where it belongs — with you.
 
-> ⚠️ **Most of this strip has still never been looked at on a screen.** Two of its lines have —
-> the **`summary shortened`** badge and *"This file arrived on this computer N ago"*, both visible
-> in the screenshot above, which is the first time any of it has been photographed rendering. The
-> rest is covered by the automated tests and by nothing else. If a line reads wrongly, that is
-> worth [reporting](https://github.com/talirezun/the-curator/issues).
+> ⚠️ **Most of this strip has still never been looked at on a screen.** Three of its lines have
+> now been photographed rendering: *"This file arrived on this computer N ago"* and
+> *"Newer state in this project"*, both visible in the screenshot above, and the
+> **`summary shortened`** badge, which was in the v3.52.0 screenshot this one replaced. The rest
+> is covered by the automated tests and by nothing else. If a line reads wrongly, that is worth
+> [reporting](https://github.com/talirezun/the-curator/issues).
 
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
@@ -1386,9 +1480,9 @@ flowchart TD
 
 ### How to ingest
 
-![The Ingest view, caught with a batch half-assembled. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a "+ Choose files" button, and a DESTINATION list of six domains — Articles, Business, Lectures, Posts, Projects, Research — each showing a page count and a last-write date, e.g. "3421 pages · last write 2026-09-03", with Articles ticked as the current destination. The main column holds a domain dropdown set to Articles above a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started". Under it, a heading "Batch ingest — 4 files" over "303.0 KB total · gemini · gemini-2.5-flash-lite", then "WILL BE INGESTED (LARGEST FIRST)" listing four Markdown files with their sizes — 26.9 KB, 14.1 KB, 184.3 KB and 77.6 KB — each with an × to remove it. Below that a boxed estimate: "Estimated cost $0.15 — $0.29", followed by a long monospaced explanation saying the figure is computed for the "articles" domain at its current 611 entities, 2720 concepts and 132 KB index, that this existing content works out to about 2.4x the input tokens the same files would cost against an empty domain, that the estimate is size-based rather than a real text extraction, and that usdLow assumes prompt caching applies while usdHigh assumes it does not. Then "Estimated tokens 2,562,101 in / 86,684 out", a "Budget cap (optional)" field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and three controls: Start batch, Add more files, Clear all.](images/curator-ingest.png)
+![The Ingest view with a four-file batch assembled. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a filled "+ Choose files" button, and a DESTINATION list of two domains. The first reads "Demo" over "2 pages ·" a dashed ring, a small clock and "nothing written yet". The second, ticked as the current destination, reads "Projects" over "0 pages ·" a filled dot, a clock and "1 week ago", with a second line underneath: "Ingested · Lumina Project Overview and …". The main column opens with the eyebrow "THE WAY MATERIAL GETS IN" over the title "Ingest", then a "Domain" dropdown set to Projects, then a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started". Under it, a heading "Batch ingest — 4 files" over "295.8 KB total · gemini · gemini-2.5-flash-lite", then "WILL BE INGESTED (LARGEST FIRST)" listing four Markdown files with their sizes — the-energy-and-water-footprint-of-generative-ai.md 26.3 KB, two-worlds-of-code.md 13.8 KB, lumina-project-overview.md 180.0 KB and compiled-knowledge-vs-retrieval.md 75.8 KB — each with an × to remove it. Below that a boxed estimate: "Estimated cost $0.09 — $0.15", followed by a long monospaced explanation saying the figure is computed for Gemini "gemini-2.5-flash-lite" against the "projects" domain at its current 0 entities, 0 concepts and 108 KB index, that cost depends heavily on how large the wiki already is because every AI call re-sends the existing page list so the model can link to rather than duplicate what is there, that for this batch the existing content works out to about 1.1x the input tokens the same files would cost against an empty domain, that the figure is computed for these specific files rather than being a rule of thumb, that the estimate is size-based rather than a real text extraction, and that usdLow assumes prompt caching applies while usdHigh assumes it does not — ending "Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did." Then "Estimated tokens 1,156,234 in / 85,017 out", a "Budget cap (optional)" field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and three controls: a violet-tinted "✦ Start batch", an outlined "Add more files", and a plain "Clear all".](images/curator-ingest.png)
 
-*The Ingest view with four files queued. The top half — destination list, domain picker, drop zone — is the single-file flow described below; everything from "Batch ingest — 4 files" down is the confirm screen covered in [Batch ingest](#batch-ingest--queue-many-files-at-once). Note the drop zone's wording: it reads "Drop a source here" with "2 or more files at once starts a batch" underneath when nothing is queued yet, and changes to the wording above once a batch is being built.*
+*The Ingest view with four files queued. The top half — destination list, domain picker, drop zone — is the single-file flow described below; everything from "Batch ingest — 4 files" down is the confirm screen covered in [Batch ingest](#batch-ingest--queue-many-files-at-once). Note the drop zone's wording: it reads "Drop a source here" with "2 or more files at once starts a batch" underneath when nothing is queued yet, and changes to the wording above once a batch is being built. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
 
 1. Click **Ingest** in the rail
 2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
@@ -1399,7 +1493,44 @@ flowchart TD
 
 > The chat sidebar also shows a drop zone. It is **not connected** — it says so on itself, and clicking **Ingest** on it brings you here. Ingesting from chat isn't wired up yet.
 
-**The panel beside the rail is a destination list.** Every other view's side panel is a list of the things that view acts on, and Ingest's is the place your file is about to land: one row per domain, each showing how many pages it holds and when it was last written to. That second figure says *last write* rather than *last ingest* on purpose — compiling a conversation writes to a domain too, and calling that an ingest would be wrong. While something is being written, the rows are **disabled rather than hidden**, so the list doesn't rearrange itself under your cursor mid-run.
+**The panel beside the rail is a destination list.** Every other view's side panel is a list of the things that view acts on, and Ingest's is the place your file is about to land: one row per domain, each showing how many pages it holds, how long ago it was last written to, and what that last write was. While something is being written, the rows are **disabled rather than hidden**, so the list doesn't rearrange itself under your cursor mid-run — and a domain being ingested into somewhere else in the app is marked **Ingesting** on its own row, whichever row you have selected.
+
+#### Reading a destination row
+
+Both sidebars that list domains — **DESTINATION** here and **KNOWLEDGE** in
+[Domains](#the-domains-view) — carry the same status line, rewritten in v3.54.0.
+It used to read `3421 pages · last write 2026-09-03`, an absolute date you had
+to subtract from today. It now answers *"is this domain current?"* at a glance:
+
+```
+Projects
+3,445 pages  ·  ●  🕐  3 days ago
+Ingested · The Energy and Water Footprint of Generative AI
+```
+
+| Part | What it says |
+|---|---|
+| **The page count** | How many wiki pages the domain holds. A count that could not be read says `page count unknown` rather than `0` |
+| **The freshness dot** | Four steps — **today**, **this week**, **this month**, **older**. A domain nothing has ever been written to gets a **dashed ring** instead |
+| **The age** | `today` · `yesterday` · `3 days ago` · `2 weeks ago` · `5 months ago`. A domain with no writes reads **nothing written yet** — never a made-up date |
+| **The last event** | What the most recent write actually was: `Ingested · <source title>` or `Compiled · <conversation title>`. When the log did not name which, it reads the neutral **Last write** rather than guessing. A domain that has never been written to has no second line at all |
+
+Three things are worth knowing about that reading:
+
+- **It is a calendar-day age, not a clock.** The date comes from the `## [YYYY-MM-DD]`
+  heading in the domain's `wiki/log.md`, which carries no time of day — so *"today"*
+  means today, and there is deliberately no *"7 hr ago"* precision the data cannot support.
+- **The dot and the words can never disagree**, because the dot is cut on the same
+  bands as the phrase beside it. The dot is also never the only carrier: the words
+  say the same thing, and a screen reader reads the words.
+- **The exact date is still there.** It is in the row's accessible name — so a screen
+  reader announces *"Projects, 3,445 pages · 3 days ago (2026-09-14), Ingested · …"* —
+  rather than in a tooltip, which a keyboard or touch user could never reach.
+
+> **Compile counts as a write.** Compiling a chat thread to your wiki writes to
+> the same log as an ingest, which is why the verb is read from the log rather
+> than assumed. A domain you only ever compile into reads **Compiled · …**, and
+> always did the work — it just used to be labelled "last ingest".
 
 **The drop zone answers two different questions.** Hovering it looks one way — *you could drop here* — and dragging a file over it looks another, louder way — *let go and this happens*. They are deliberately distinct states, not one highlight doing double duty.
 
@@ -2076,10 +2207,19 @@ A domain is a focused knowledge silo — a dedicated wiki for one topic area. Ea
 
 ### The Domains view
 
-Click **Domains** in the rail. The panel beside the rail lists every domain under a **KNOWLEDGE** heading, one row each, showing the domain's name and its page count. Two markers can appear on a row:
+Click **Domains** in the rail. The panel beside the rail lists every domain under a **KNOWLEDGE** heading, one row each: the domain's name, its page count, a freshness dot with how long ago it was last written to, and what that last write was — *"Projects · 767 pages · 🕐 3 days ago / Ingested · Lumina Project Overview"*. That status line is the same anatomy the Ingest sidebar uses and is described in full at [Reading a destination row](#reading-a-destination-row) (*new in v3.54.0 — the row used to show the name and the page count and nothing else*).
+
+Three separate marks can appear on a row, and they answer three different questions:
+
+| Mark | Question it answers |
+|---|---|
+| The **coloured dot on the left** | Which domain is this? (identity — each domain keeps its colour) |
+| The **freshness dot in the status line** | How current is it? |
+| A small **dot on the right** | Does it have open health issues? |
+
+And one badge:
 
 - **RO** — this is a read-only Shared Brain mirror
-- a small dot on the right — this domain has open health issues
 
 Above the list are **New domain** and **Use existing folder** — the second points the app at a `domains/` folder you already have rather than creating an empty one ([§16](#pick-the-folder-that-contains-your-domains)). Click any row to open that domain in the main column.
 
@@ -2101,6 +2241,11 @@ Then **four sections**, each in its own card under its own heading, in this orde
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of six domains, each with a coloured identity dot, its name and its page count — Articles 3,421 pages (with a small orange dot on the right marking open health issues), Business 50, Lectures 379, Posts 668, Projects 767 and selected, Research 64. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 3. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 26; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ, the line "A domain is one compounding wiki; a project is a thing you build inside it.", then a project row: "projects" with a "Standing brief" pill, "last save 3 days ago · newest work-stream session-2026-09-09-lumina-d363-d364-excel-setup-guide · the domain's own project — it cannot be renamed or deleted", and the buttons "Copy marker line" and "Copy agent instructions".](images/curator-domains.png)
 
 *The four sections in order, on a real domain: the counts, then the wiki itself, then the projects built with it. **Wiki health** is the fourth and sits below the fold here — see [§17](#17-wiki-health).*
+
+> **This photograph predates v3.54.0's status line.** The KNOWLEDGE rows in it
+> show the name and the page count only; on the version you are running each row
+> also carries the freshness dot, the relative age and the last-write line
+> described [above](#reading-a-destination-row). Nothing else on the screen moved.
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -2397,9 +2542,18 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 > **Which AIs can use it.** The bridge is a **stdio JSON-RPC server** — an ordinary local program — so it works with **any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor, and others.** It is not an integration with one assistant. The one real limit is the transport rather than the vendor: **ChatGPT's web app cannot run a local server, so it cannot connect.** The setup steps below and in the wizard are written for Claude Desktop because that is the most common case — only the file you paste the entry into changes. Full detail in [docs/mcp-user-guide.md](mcp-user-guide.md).
 
-![Settings → MCP bridge, connected. The Settings panel beside the rail lists five sections with their subtitles — General (Software update, appearance), Providers & keys (Gemini, Anthropic, OpenRouter, local), Knowledge base (Vault folder, Obsidian), MCP bridge (My Curator, default write domain) and Health & scan limits (Cost ceilings, candidate pairs) — with MCP bridge selected, and at the foot "The Curator v3.52.0" beside an Updates button. The main column reads "CONFIGURATION" over the title "MCP bridge" with an ⓘ mark. A status card shows a green "Connected" pill and the chain "Claude Desktop → my-curator → " followed by the knowledge-folder path, which is blurred out in this image. Below it: "Works with any MCP client that runs local servers — Claude Desktop, Claude Code, Cursor, and others. ChatGPT's web app cannot run a local server, so it cannot connect.", then a "Read the MCP guide." link and four controls — Re-run setup, Run self-test, View config, Copy snippet. Under them a ticked result line reads "Bridge responds" beside the monospace summary "22 tools (list_domains, get_index, get_graph_overview, get_tags, search_wiki, search_cross_domain, …) · 6 domain(s) visible". Last, a "Default domain for MCP writes" block explaining that when a client calls a write tool and the user says "my wiki" without naming a domain, this one is used, and that leaving it unset forces the model to always name a domain; its dropdown is set to "projects".](images/curator-mcp-bridge.png)
+![Settings → MCP bridge. The Settings panel beside the rail lists five sections with their subtitles — General (Software update, appearance), Providers & keys (Gemini, Anthropic, OpenRouter, local), Knowledge base (Vault folder, Obsidian), MCP bridge (My Curator, default write domain) and Health & scan limits (Cost ceilings, candidate pairs) — with MCP bridge selected, and at the foot "The Curator v3.53.1" beside an Updates button. The main column reads "CONFIGURATION" over the title "MCP bridge" with an ⓘ mark, then a hairline. Below it, block ① "Connect a client" opens with one sentence — "Works with any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor." — followed by a "Read the MCP guide." link and an ⓘ. A status card holds an amber "Needs re-connect" pill beside the monospace chain "Claude Desktop → my-curator → ~/Curator/domains" (the real path is long, and is shortened here). Under the card, four controls: a filled violet "Re-connect", outlined "Run self-test" and "View config", and a plain "Copy snippet" with a copy icon. A second hairline, then block ② "Default domain for MCP writes" with the single line "Used when a client says “my wiki” without naming a domain." and an ⓘ, over a dropdown set to "demo".](images/curator-mcp-bridge.png)
 
-*A connected bridge, reporting itself. **Run self-test** is what produced the "Bridge responds" line — it spawns the server exactly the way your pasted config does and counts what answered. The **Default domain for MCP writes** block at the bottom is covered in [§16](#default-domain-for-mcp-writes-v252).*
+*The bridge screen, in the shape every Settings section now takes: a numbered block, a one-line
+lede with an **ⓘ** beside it, then the controls. The two blocks really are steps — you connect a
+client, and only then does "which domain does *my wiki* mean?" become a question you can have.
+The four buttons are the [button family](#buttons--what-the-look-tells-you): one filled primary
+(the wizard, which is what completes the block), two outlined inspections, and Copy as plain text.
+This install needs re-connecting — its knowledge folder moved since the config was written — which
+is why the pill is amber and the primary button reads **Re-connect**. On a healthy install the
+pill is a green **Connected** and **Run self-test** adds a ticked "Bridge responds" line reporting
+the tool count and how many domains the bridge can see. The **Default domain for MCP writes**
+block is covered in [§16](#default-domain-for-mcp-writes-v252).*
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
@@ -3041,7 +3195,7 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 
 | Section | What's in it |
 |---|---|
-| **General** | **Software update** (first), Appearance / Text size / Menu bar, System check, Show setup guide |
+| **General** | Four blocks: **Software update** (first), **Appearance** (theme / text size / menu bar), **System check**, **Setup guide** |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read what chat starts on, browse the whole catalogue ([§16b](#16b-choosing-your-ai-model)) |
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
@@ -3059,6 +3213,40 @@ At the bottom of that list you'll see the version — e.g. `The Curator v3.52.0`
 **Updates** button, which switches to **General** and runs the check. That landing is now at the
 **top** of the section it lands on.
 
+### Every section is the same shape
+
+*New in v3.54.0.* Every section of Settings is now a stack of **blocks**, and
+every block is built the same way:
+
+```
+  ①  Connect a client                       ← bold title (a numeral only when it is a step)
+      Works with any MCP client that … ⓘ    ← one sentence, then the help mark
+      [ Re-connect ]  [ Run self-test ] …   ← the controls
+  ──────────────────────────────────────    ← a hairline, then the next block
+```
+
+- **The lede is one sentence**, never more than about twenty words. Everything
+  that used to follow it is behind the **ⓘ** — see
+  [How help works in the app](#how-help-works-in-the-app). **Nothing was deleted**:
+  every sentence that left the page is one click away, unchanged.
+- **The blocks are evenly spaced** — 24px, a hairline, 24px — so a section break
+  reads as bigger than a paragraph break. **Providers & keys** got this in
+  v3.53.0, where the gap *between* two blocks had measured **17px** against
+  **14px** *inside* one — three pixels, which is not read as a break at all, and
+  is why that page read, in the maintainer's words, as "a sea of information".
+  v3.54.0 brings the other four sections onto the same rhythm; before it they
+  each spaced themselves by hand.
+- **A number means the blocks are steps.** Only two sections are numbered, and
+  in both the order is an argument rather than decoration:
+
+| Section | Blocks | Numbered? |
+|---|---|---|
+| **General** | Software update · Appearance · System check · Setup guide | No — none of these comes before another |
+| **Providers & keys** | ① Connect a provider · ② What builds your wiki · ③ Chat · ④ All models | **Yes** — you cannot choose a model before you own a key |
+| **Knowledge base** | Vault folder | No |
+| **MCP bridge** | ① Connect a client · ② Default domain for MCP writes | **Yes** — ② answers a question ① has to raise first |
+| **Health & scan limits** | Semantic-duplicate scan limits | No |
+
 ### The page is four numbered steps
 
 **Settings → Providers & keys** reads top to bottom as a sequence, and the numbers are on the page:
@@ -3072,9 +3260,9 @@ At the bottom of that list you'll see the version — e.g. `The Curator v3.52.0`
 
 **No block is ever hidden.** Before you have connected anything, blocks 2, 3 and 4 each say what they are waiting for rather than disappearing — otherwise the numbered flow would silently lose steps and stop reading as a sequence.
 
-**Each block opens with one sentence, and the rest is behind the ⓘ.** The four introductions used to run to about 130 words in total, read before you could touch a single control; the maintainer's verdict on the page was "a sea of information". Each block now states the one fact you need to know what it is for, and the argument behind it — why there is only one build model, what happens to your key, why chat has no second control here — sits behind the small ⓘ beside that sentence, the same fold the Domains screen uses. **Nothing was deleted**: every sentence that left the page is one click away, unchanged.
+**Each block opens with one sentence, and the rest is behind the ⓘ** — the shape [above](#every-section-is-the-same-shape). The four introductions on this page used to run to about 130 words in total, read before you could touch a single control. The argument behind each — why there is only one build model, what happens to your key, why chat has no second control here — is now one click away.
 
-Three things are deliberately **never** folded, because a warning you have to open something to find is not a warning: the amber banners at the top of the page, the caution about free models, and the rule that a model only leaves the build lane by failing a measurement — never by price.
+Three things on this page are deliberately **never** folded, because a warning you have to open something to find is not a warning: the amber banners at the top of the page, the caution about free models, and the rule that a model only leaves the build lane by failing a measurement — never by price.
 
 ![Settings → Providers & keys, showing steps 1 and 2. The Settings panel beside the rail lists General, Providers & keys (selected), Knowledge base, MCP bridge and Health & scan limits, with "The Curator v3.52.0" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "Providers & keys" with an ⓘ mark. Step ① "Connect a provider" opens with "One key per provider — connect as many as you like. The Curator calls the provider directly with your key; nothing goes through us." Three rows follow, each with a coloured dot, a name and vendor, a key field and a status: Gemini / Google, a masked key ending "zpAY", a green "Connected" pill, then Disconnect and Replace key; Anthropic / Anthropic, the field reading "No key", a "Not connected" pill, and a primary "Add key" button; OpenRouter / "One key onto many vendors", a masked key ending "b7cf", a green "Connected" pill, then Test this key, Disconnect and Replace key. Beneath the rows, a sentence: "A local model — Ollama, LM Studio, llama.cpp — will connect here once there is a base-URL setting to point it at. It is not missing from your install; it does not exist yet." Then a padlocked line: "Keys live in .curator-config.json at 0600 on this machine. Never committed, never sent anywhere except the provider you call." Step ② "What builds your wiki" states in bold that "Ingest, Health scans and Compile all run on this one model", and explains that they always share one, that one model keeps the ingest prompt cache warm and keeps one bill to read, and that choosing a model from another provider makes that provider the active one so the bill moves with it. Inside an accented card sits a picker reading "Flash Lite 2.5", with "Gemini gemini-2.5-flash-lite" and an ⓘ underneath, then three chips — "$0.10 in · $0.40 out per 1M tokens", "plans 18–20 pages per source" and "measured by The Curator" — and the line "Nobody has chosen one, so this follows the app default and can change when The Curator updates." Under a "CHEAPEST MEASURED" eyebrow: "For the keys you have connected, that is MiniMax M3 (free) — free, against the $0.10 in · $0.40 out you are paying now." with a "Use it" button. At the foot, "Change… every model that can build your wiki" on the left and "11 measured for this job" on the right.](images/curator-providers-keys.png)
 
@@ -3200,12 +3388,37 @@ Ingest, Wiki Health and Compile all run on the one model, so there is one fix fo
 
 ### Appearance and the setup guide
 
-**Settings → General** holds five things:
+**Settings → General** is four blocks, in this order. None of them is numbered
+— they are four separate things, not four steps.
+
+![Settings → General. The Settings panel beside the rail lists five sections with their subtitles — General (selected), Providers & keys, Knowledge base, MCP bridge and Health & scan limits — with "The Curator v3.53.1" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "General", with no ⓘ beside it, then a hairline. Four blocks follow, each separated by a hairline and none of them numbered. "Software update": "Installs the published version over this copy. Your knowledge base, keys and sync settings are untouched." with an ⓘ, then a sub-label "Going back to an earlier version" with its own ⓘ, then an outlined "Check for updates" button. "Appearance": "Theme, text size and the menu bar icon. Saved in this browser." with an ⓘ, over a rounded card of three rows separated by hairlines — "Appearance" with a Dark / Light segmented control set to Dark; "Text size" with the note "Larger is easier to read; smaller fits more." and a Compact / Default / Large / Largest segmented control set to Default; and "Menu bar" with the note "Shows what your agents just saved. Mac app only.", a "Show the menu bar icon" switch in the off position, a greyed-out checkbox "Hide the Dock icon while it is showing", and the line "No menu bar icon. The Dock icon and the window behave exactly as they do now." "System check": "Confirms the app is set up. Free, instant, never reads your wiki." with an ⓘ, then two buttons side by side — an outlined "Run system check" and a violet-tinted "✦ Verify AI connection · $0.0001". "Setup guide": "Re-opens the first-run checklist: AI key, first domain, first source." with an ⓘ, then an outlined "Show setup guide" button.](images/curator-settings-general.png)
+
+*General, top to bottom. Note what is **not** on the page: no paragraph under the
+title (this section is the one with no **ⓘ** beside its heading, because everything
+it holds is explained beside the control it belongs to), and one sentence per block
+instead of the four paragraphs that used to sit here.*
+
+| Block | What it is |
+|---|---|
+| **1. Software update** | Checks for, and installs, a newer version — [below](#version-and-updates). It leads the section because it is what most people open Settings for |
+| **2. Appearance** | Theme, text size and the menu bar icon: how the app presents itself **on this machine**. All three are instant, reversible, and saved in this browser |
+| **3. System check** | Is the app itself set up correctly — [below](#system-check) |
+| **4. Setup guide** | Re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). Dismissing that panel is never permanent; this is the one place it can be found again |
+
+**The three Appearance rows sit in one card**, separated by hairlines, because
+they belong to each other and the blocks around them do not:
 
 - **Appearance** — a **Dark** / **Light** pair. The same switch is the ☀/☾ button in the rail footer; either one works and they stay in step.
-- **Text size** — four steps from compact to largest, sitting directly under Appearance because it is the same kind of choice. It applies across the whole app and is remembered in this browser.
-- **Menu bar** — **Off** / **On** / **On, and hide the Dock icon**. Puts a small icon in the macOS menu bar showing what your coding agents have just saved. **Off by default**, and it applies to the Mac app only — a browser install has no menu bar presence, and the control says so rather than hiding itself. Everything it does, and the three ways a new menu bar icon can silently fail to appear, is [§6b](#6b-the-menu-bar-icon-mac-app).
-- **System check** — below.
+- **Text size** — four steps from compact to largest. It applies across the whole app and is remembered in this browser. Why it is a *density* trade rather than a zoom — icons, controls and the layout keep their size — is under the block's **ⓘ**.
+- **Menu bar** — a **switch** (*Show the menu bar icon*) with a dependent **checkbox** underneath (*Hide the Dock icon while it is showing*). It puts a small icon in the macOS menu bar showing what your coding agents have just saved. **Off by default**, and it applies to the Mac app only — a browser install has no menu bar presence, and the row says so rather than hiding itself. Everything it does, and the three ways a new menu bar icon can silently fail to appear, is [§6b](#6b-the-menu-bar-icon-mac-app).
+
+> **The menu bar failure note is never folded.** Turn the icon on and a short
+> note appears under the row naming the three ways it can silently not show up
+> — pushed behind the notch on a narrow screen, filed away by a menu bar
+> organiser such as Bartender or Ice, or withheld by the *menu bar items*
+> permission in System Settings → Privacy & Security. macOS gives an app no way
+> to tell which, so it names all three. That note stays in the open while the
+> icon is on: it is a failure mode, and failure modes do not go behind a click.
 
 > **Text size now reaches the controls too.** Buttons, text boxes and dropdowns are the one place a browser does *not* pass your font settings down on its own — left alone, they fall back to the browser's built-in face at a fixed size. Until now a handful of them did exactly that, so a few labels sat in a different typeface from every word around them and ignored this setting entirely. They now take the app's own typeface and follow the scale like everything else. Control heights and icons still deliberately stay put, so nothing grows into anything else.
 
@@ -3226,11 +3439,9 @@ Ingest, Wiki Health and Compile all run on the one model, so there is one fix fo
 > | The **ingest progress ring** | It is the only sign the app is still working during a paid write that can run for minutes. Removing it would leave a still screen you cannot distinguish from a crash. |
 > | The **accent bar** marking your place in the Settings and Chat lists | It is a position marker, not an animation. Only the sliding is removed; the bar itself stays exactly where it is. |
 
-- **Setup guide** — **Show setup guide** re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). Dismissing that panel is never permanent; this is the one place it can be found again.
-
 ### System check
 
-**Settings → General → System check** confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider.
+**Settings → General → System check** confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider. Its lede says the three things you weigh before pressing it: what it looks at, that it is free, and that it never opens a wiki page.
 
 - **Run system check** (free, instant) checks a short list of things locally — no network call, no cost, and it never touches your wiki content: your installed version; **which install you are running** and how updates reach it; whether an AI key is configured; that your knowledge folder is writable; that your credential files are locked down (`0600`); whether `git` is available; your sync status; and your application log file. Each row shows OK, needs attention, failed, or info, with a one-line summary above them.
 
@@ -3373,21 +3584,67 @@ but a menu you have to pull down to read is not a progress display.
 > like for like rather than silently migrating you to another chip's build behind a
 > progress bar.
 
+### MCP bridge — ① Connect a client
+
+**Settings → MCP bridge** is two numbered blocks, and the numbers mean what they
+say: you connect a client first, and only then can *"which domain does ‘my wiki’
+mean?"* be a question you have. There is a [picture of it](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252)
+in §13.
+
+Block ① opens with the one fact a newcomer needs — **"Works with any MCP client
+that runs local servers: Claude Desktop, Claude Code, Cursor."** — and a link to
+the [MCP guide](mcp-user-guide.md). Under the **ⓘ** beside it: that ChatGPT's web
+app cannot connect because it cannot run a local server (the limit is the
+transport, not the vendor), that the bridge is a separate process the client
+launches on demand so The Curator need not be running, and that setting up writes
+a launch command into the client's own config file — which is why it has to be
+re-run whenever your knowledge folder, the app, or Node moves.
+
+Below the lede sits a **status card** — a pill and, in monospace, the chain
+`Claude Desktop → my-curator → <your knowledge folder>` — and four controls:
+
+| Control | Look | What it does |
+|---|---|---|
+| **Set up Claude Desktop** / **Re-connect** / **Re-run setup** | Filled violet | Opens the wizard. The label follows your actual state, and it is the one action that finishes this block |
+| **Run self-test** | Outlined | Spawns the bridge exactly the way your pasted config does, and reports what answered — the tool count and how many domains it can see |
+| **View config** | Outlined | Shows the JSON snippet in place |
+| **Copy snippet** | Plain text | Puts it on the clipboard |
+
+Three things in this block are **never** folded, because two of them are outcomes
+of something you just did and the third is a warning: the **self-test result**,
+the **stale-config note** (*"this confirms the bridge software itself works — it
+does not check what Claude Desktop has saved"*), and any inline error.
+
+Full walkthrough: [mcp-user-guide.md](mcp-user-guide.md).
+
 ### Default domain for MCP writes (v2.5.2+)
 
-When you talk to Claude Desktop via My Curator MCP and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to use. **Settings → MCP bridge → Default domain for MCP writes** sets that fallback.
+Block ②. When you talk to Claude Desktop via My Curator MCP and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to use. **Settings → MCP bridge → Default domain for MCP writes** sets that fallback. Its lede is exactly that one line — *"Used when a client says ‘my wiki’ without naming a domain."*
 
 Pick a domain from the dropdown, or leave it on *"— none (require an explicit domain) —"*. Claude's write tools will use it whenever you don't specify; if it's unset, Claude must explicitly ask you which domain to write to.
 
-> Multi-domain users: leaving this unset is the safer default — every MCP write requires you to confirm the domain. Single-domain users can set the default for smoother conversation flow.
-
-The same section holds the MCP setup wizard (**Set up Claude Desktop** / **Re-connect** / **Re-run setup**, depending on your current state), **Run self-test**, **View config**, and **Copy snippet**. Full walkthrough: [mcp-user-guide.md](mcp-user-guide.md).
+> Multi-domain users: leaving this unset is the safer default — every MCP write requires you to confirm the domain, and that is what the block's **ⓘ** says: a mis-aimed compile writes its pages into the wrong wiki, and nothing about that is obvious afterwards. Single-domain users can set the default for smoother conversation flow.
 
 ### Knowledge base folder
 
-**Settings → Knowledge base** shows where your `domains/` folder lives and lets you move it — **Choose folder** (macOS only) or **Copy** the path to paste into Obsidian's *Open folder as vault*. Moving the folder loses nothing: point The Curator at the new location and the graph is picked up as-is.
+**Settings → Knowledge base** is one unnumbered block, **Vault folder** — there
+is no step 2 for it to be step 1 of. Its lede is *"The folder every domain lives
+in. Point Obsidian at it as a vault."*, and under the **ⓘ**: that every domain is
+a folder of plain markdown with no database and no index, that opening this same
+folder in Obsidian with *Open folder as vault* renders the wikilinks as the graph,
+and that choosing a new folder **points** The Curator at it rather than copying or
+moving anything — the move itself is yours to make in Finder.
 
-The **Choose folder** button greys out while anything is writing to your wiki. That's deliberate — changing the folder mid-ingest would scatter the rest of that document's pages into the new location.
+The block itself is one row: the path in monospace, a filled **Choose folder**
+(macOS only) and a plain **Copy** to paste the path into Obsidian. Under it, one
+visible line — *"Moving this folder loses nothing; the graph is picked up as-is."*
+That one stays in the open on purpose: it is the reassurance that makes the button
+safe to press, not an explanation.
+
+The **Choose folder** button greys out while anything is writing to your wiki, and
+an amber banner appears **above** the block's heading saying so. That's deliberate,
+and it is why the banner is not foldable — changing the folder mid-ingest would
+scatter the rest of that document's pages into the new location.
 
 **Where it starts out** is the third of the four differences between the two installs:
 
@@ -3543,6 +3800,33 @@ markdown files — which is the whole point.
 > app** it does not: the app launches the bridge through a small launcher of its own that
 > reads your current setting each time, so the entry has no folder path baked into it to
 > go stale. This is the fourth and last of the four differences.
+
+### Health & scan limits
+
+One unnumbered block, **Semantic-duplicate scan limits**. It caps what a single AI
+duplicate scan may cost, and it is used only by the **✨ Find duplicate pages** scan
+you start from a domain's health panel ([§17](#17-wiki-health)). Nothing here
+affects the free structural health scan.
+
+![Settings → Health & scan limits. The Settings panel beside the rail lists the five sections, with Health & scan limits selected and "The Curator v3.53.1" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "Health & scan limits" with an ⓘ mark, then a hairline. One unnumbered block, "Semantic-duplicate scan limits", opens with "Caps what one AI duplicate scan may cost. Used by Health → Ask AI scans." and an ⓘ. Under it a rounded card holds two rows separated by a hairline: "Cost ceiling per scan" with the note "Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite." and a monospace number field reading 50000 with the suffix "tokens"; and "Maximum candidate pairs per scan" with the note "After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500." and a monospace number field reading 500. Below the card, a filled violet "Save scan limits" button.](images/curator-health-limits.png)
+
+*Two fields in one card, with the Save button clear of it. Before v3.54.0 the
+button sat 12px under the second field, close enough to read as part of that
+field rather than as the action for both of them.*
+
+| Setting | Default | Raise it when … |
+|---|---|---|
+| **Cost ceiling per scan** | 50,000 tokens — about **$0.01** on Gemini Flash Lite | a scan refuses to start on a large wiki |
+| **Maximum candidate pairs per scan** | 500 | you want a wider sweep. **Lower** it for a cheaper first look at a domain you have not scanned before |
+
+> **A ceiling refuses; it does not truncate.** A scan estimates its own cost
+> before it starts and simply **does not run** when the estimate is over the
+> ceiling — so nothing is ever half-scanned and no partial bill is run up. That
+> is the whole model, and it is what the block's **ⓘ** says.
+
+Defaults suit domains up to roughly 5,000 pages. The hard caps that are **not**
+adjustable — including the 20,000-page refusal — are in
+[ai-health.md](ai-health.md#scale-caps-baked-into-the-code).
 
 ---
 

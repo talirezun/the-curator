@@ -728,7 +728,7 @@ This is the part to read before you trust what comes back.
 The rule in the title is the default, and it is right for **tiers 2 and 3**: `current.md`
 and `journal.jsonl` are written by agents, they arrive over Personal Sync from other
 machines, and inside a `shared-*` mirror they can have been written by another person. It
-is **wrong for tier 1**, and [the exception below](#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner)
+is **wrong for tier 1**, and [the exception below](#tier-1-is-not-tier-2-the-brief-is-the-owners)
 says why. Everything between here and there is about tiers 2 and 3, and none of it is
 weakened by the exception.
 
@@ -1011,7 +1011,7 @@ mechanism.** There the constraint was not merely disagreed with — the response
 told the model that the owner's standing instruction was an earlier session's untrusted
 note, so a clash with the agent's harness prompt was resolved silently against the owner
 rather than argued with. That was a framing defect rather than a behavioural limit, and it
-is fixed ([§4](#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner)). The limit
+is fixed ([§4](#tier-1-is-not-tier-2-the-brief-is-the-owners)). The limit
 measured here is independent of it and still stands: naming the tier correctly stops a
 constraint being *labelled* away, not a model deciding it knows better.
 
@@ -1041,7 +1041,37 @@ domain with its latest work-stream first. The **Domains** view carries the other
 typed confirmation, given a standing brief, and where **Copy marker line** hands you the
 `.curator-project` line for a repository, with **Copy agent instructions** beside it.
 
-![The Curator's Agent memory screen. The sidebar lists projects grouped by domain — under PROJECTS: "projects, 3 scopes", "lumina, 7 scopes" and "curator, 10 scopes"; under POSTS: "posts, 1 scope" — above a note reading "Agents write the handoffs here through MCP. You write the standing brief." The main pane is headed YOUR AGENTS' BRAIN / Agent memory, with a "projects / lumina" breadcrumb and a "Copy agent instructions" button. A card reads "Last saved 3 days ago" over the work-stream name and the harness that wrote it, "Claude Code (desktop app)"; a "summary shortened" chip explains that the handoff itself was written in full and only its one-line label was truncated; below that, "This file arrived on this computer 3 days ago — the reading above is the agent's own clock, not the file's", and "Standing brief — 3 days ago". Underneath sit a Work-stream dropdown, a Machine name with a matching "from that machine" chip, and the caption "synced here — local paths and processes may differ".](images/curator-agent-memory.png)
+![The Curator's Agent memory screen with a project open. The sidebar lists projects grouped by domain — under PROJECTS: "field-notes, 1 scope · 22 hr ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago" and "curator, 13 scopes · 2 weeks ago", the last of which is selected — under a heading "Agent memory" carrying an ⓘ mark and a PROJECTS eyebrow with a Refresh link. The main pane is headed YOUR AGENTS’ BRAIN / Agent memory, with an ⓘ beside the title, a "Copy agent instructions" button to its right, and a "projects / curator" breadcrumb. A card reads "Last saved 2 weeks ago" over the work-stream name curator-v3-17-1-acceptance and the harness that wrote it, claude-code; below that, "This file arrived on this computer 40 min ago — the reading above is the agent’s own clock, not the file’s", then "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 41 min ago", and, under a hairline, "Standing brief — 40 min ago". Underneath sit a Work-stream dropdown, a Machine name with a matching "from talis-macbook-pro-17d23c" chip, and the caption "synced here — local paths and processes may differ". Last, a panel with a violet bar down its left edge: a downward chevron, the label CURRENT HANDOFF and a small square freshness mark on the left, and on the right "Saved 2 weeks ago" over "claude-code · opus · updates live". Its body opens with the headline "v3.17.1 fixes are complete and green in the working tree, uncommitted; the connector acceptance pass is the last step.", followed by WHERE THINGS STAND and FIRM DECISIONS — DO NOT RE-LITIGATE.](images/curator-agent-memory.png)
+
+**What the view puts in front of you (reorganised in v3.54.0).** It is one column
+of panels, and they are ranked rather than equal:
+
+| Panel | Open on arrival | Why |
+|---|---|---|
+| **CURRENT HANDOFF** | Yes, unless you closed it | It is the answer the screen exists to give. The only one carrying an accent edge — marking all three would mark none |
+| **Standing brief** | No | It rarely changes. It opens on its own in exactly one case: when there is no handoff yet, because then it is the only content there is |
+| **Session journal** | No | History, not state |
+
+Two readings the [menu bar widget](#a-second-read-surface-the-menu-bar-widget-mac-app-off-by-default)
+already carried are now on the web surface too, so they are not Mac-only:
+
+- a **freshness mark** on the handoff's own heading, cut on the same five bands
+  as the save-status card above it and computed from the same `effectiveSave`
+  reading, so the mark and the words can never name two different times;
+- an **age that counts up while the screen is open** — *"22 hr ago · updates
+  live"*. The phrase is appended only when the interval really exists, and it is
+  withheld when the reading is a raw timestamp rather than an age, because that
+  string does not tick.
+
+Three smaller corrections went with it: the handoff can now be **collapsed** (it
+was the one panel on the page that could not be), the standing brief **no longer
+opens itself on every visit**, and the explanation of the three tiers moved from
+a card at the foot of the page into the header's **ⓘ** — read once per user,
+then never again, which is what that mark is for. The sidebar's floating
+"agents write the handoffs here" card moved into the sidebar's own **ⓘ** at the
+same time, where it reads *"Agents save handoffs here over MCP; you write the
+standing brief."* — the same division of labour, said in one place instead of
+two.
 
 **One project on that list can be neither renamed nor deleted: the domain's own.** Its folder
 *is* the domain's state root, so renaming it would sweep every other project in the domain into
@@ -1108,7 +1138,7 @@ seeded from it.
 nothing writes a brief as a side effect, a read can tell a model that the standing instructions
 in front of it are the user's own — given by hand, or commissioned deliberately — rather than an
 earlier session's notes. See
-[§4](#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
+[§4](#tier-1-is-not-tier-2-the-brief-is-the-owners).
 
 ### A second read surface: the menu bar widget (Mac app, off by default)
 
