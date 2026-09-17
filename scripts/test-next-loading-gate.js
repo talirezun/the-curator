@@ -48,8 +48,19 @@
  *    shared-brain-wizard.js's populateDomains all commit their state and
  *    paint from several branches of their own, so a result landing between
  *    200 ms and 600 ms paints through the clamp instead of waiting it out.
- *    All three were measured at ~2-3 ms, so the loader never appears there
- *    at all — but the gap is real and this suite does not test for it.
+ *    THE "~2-3 ms, so the loader never appears" CLAIM THAT USED TO SIT HERE
+ *    WAS FALSE for settings.js's key loader, and by two orders of magnitude:
+ *    `GET /api/config/api-keys` was measured at 270 ms (handler body 242 ms)
+ *    on an install with three keys and the real 193-entry OpenRouter
+ *    catalogue, because the derived offer list was rebuilt 660 times per
+ *    request. It landed squarely in the 200–600 ms window this bullet says
+ *    is untested — a loader shown and then painted through. v3.57.0 memoised
+ *    the list (`offerMemoFor` in `src/brain/llm.js`) and re-measured the same
+ *    endpoint at **3.5 ms** median over HTTP, so the clamp is once again out
+ *    of reach for that loader. The gap itself is unchanged and still
+ *    untested, and the number above is a MEASUREMENT OF ONE FIXTURE: a
+ *    slower disk, a larger catalogue or a future per-row join can put any of
+ *    these three back over 200 ms without anything here going red.
  *  · Only SINGLE-QUOTED string literals are scanned in §5. A loading
  *    placeholder written with a template literal or double quotes is
  *    invisible to it. Neither form appears in this tree today, and the

@@ -784,8 +784,19 @@ section('§10  Structural invariants');
   // here would be a hand-maintained copy"). A guard that reds on the prose
   // describing the invariant gets "fixed" by deleting the explanation. This is
   // the same trap already recorded 10 lines above for config.js.
+  //
+  // WIDENED A SECOND TIME IN v3.57.0, for the same reason and in the same
+  // direction as the v3.15.0 widening above: the RULE is unchanged — exactly
+  // ONE membership decision over the offerable catalogue — while the SHAPE that
+  // expresses it moved again. `listOfferableModels` is now memoised per
+  // (provider, catalogue identity) and carries an id → entry `Map` beside the
+  // list, so `findOfferableModel`'s decision is a lookup rather than a scan.
+  // Left un-widened, this guard counted ZERO scans and went red on a change
+  // that did not touch the invariant at all — and the tempting "fix" (drop the
+  // count to 0, or delete the assertion) would have retired the only thing
+  // standing between the app and a second, disagreeing membership test.
   const CATALOGUE_SCAN_RE =
-    /(?:OFFERABLE_MODELS\s*\[[^\]]*\]|listOfferableModels\s*\([^)]*\))\s*\.\s*(?:some|find|findIndex|filter|includes|indexOf)\s*\(/g;
+    /(?:OFFERABLE_MODELS\s*\[[^\]]*\]|listOfferableModels\s*\([^)]*\))\s*\.\s*(?:some|find|findIndex|filter|includes|indexOf)\s*\(|offerMemoFor\s*\([^)]*\)\s*\.\s*index\s*\.\s*get\s*\(/g;
   const llmCode = llmSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const impls = (llmCode.match(CATALOGUE_SCAN_RE) || []).length;
   eq(impls, 1, 'exactly ONE allow-list scan over the offerable catalogue exists in llm.js');
@@ -796,6 +807,8 @@ section('§10  Structural invariants');
     'control: a planted SECOND scan in the OLD direct-table shape is detected');
   eq((`${llmCode}\nreturn listOfferableModels(provider).find(e => e.id === id);`.match(CATALOGUE_SCAN_RE) || []).length, 2,
     'control: a planted SECOND scan in the NEW accessor shape is detected');
+  eq((`${llmCode}\nreturn offerMemoFor(provider).index.get(id) || null;`.match(CATALOGUE_SCAN_RE) || []).length, 2,
+    'control: a planted SECOND lookup in the MEMOISED-INDEX shape is detected — the widening has teeth, it is not a way of counting to one');
 
   // ── The lane check must SHARE that one scan, not open a second front ──────
   // `isBuildLaneModel` (v3.15.0) is a second question asked of the same entry:
