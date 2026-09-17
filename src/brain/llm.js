@@ -2828,8 +2828,11 @@ export function measurementProvenance(provider, modelId) {
   if (entry === null) return null;
   // Identity, not `id` equality: two entries can never share an id (the static
   // table is hand-ordered and the dynamic half is built from a Map), but
-  // identity cannot be fooled by one anyway.
-  if (!_openrouterCatalogue.includes(entry)) return 'curator';
+  // identity cannot be fooled by one anyway. A `Set` of the SAME objects the
+  // `includes` scanned, invalidated with the memo above — identity semantics
+  // are unchanged (`Set` membership is SameValueZero, and no entry is `NaN`),
+  // only the ~193-element linear scan is gone.
+  if (!dynamicEntrySet().has(entry)) return 'curator';
   return isLocallyQualified(provider, modelId) ? 'user' : null;
 }
 
@@ -3329,17 +3332,106 @@ export function isLocallyQualified(provider, modelId) {
 }
 
 /**
- * The models a user may currently pick on a provider — the static table plus,
- * for OpenRouter, whatever the live catalogue admitted.
+ * ── THE DERIVED OFFER LIST, MEMOISED ON ITS INPUTS' IDENTITY ────────────────
  *
- * This is the accessor every consumer should read (including the route that
- * serialises the picker), because OFFERABLE_MODELS alone is a partial view for
- * OpenRouter. Returns a frozen array, never null, so a caller can iterate
- * without a guard.
+ * WHY. `listOfferableModels` is the documented accessor, and three predicates
+ * (`isOfferableModel`, `isBuildLaneModel`, `measurementProvenance`, plus
+ * `isLocallyQualified` through the first) resolve through it, so a screen that
+ * asks a question PER ROW asks this PER ROW. Measured on an isolated install
+ * with the real persisted catalogue (198 offers): ONE
+ * `GET /api/config/api-keys` drove **660** calls at **0.389 ms** each — the
+ * merge re-spreads, re-sorts and re-freezes ~198 entries every time — and the
+ * handler body took **242 ms** for a 180 KB response. With no key configured
+ * the same endpoint answers in 0.6 ms, which is why this was invisible until a
+ * three-provider install was measured.
+ *
+ * ── THE KEY IS CORRECT BY CONSTRUCTION, NOT BY REMEMBERING TO INVALIDATE ────
+ * This function reads EXACTLY TWO inputs, and the memo is keyed on the
+ * identity of both:
+ *
+ *   1. `OFFERABLE_MODELS` — a module `const`, `Object.freeze`d at its single
+ *      declaration. There is no writer; `grep 'OFFERABLE_MODELS\s*='` returns
+ *      that one line. Its identity cannot change within a process.
+ *   2. `_openrouterCatalogue` — ONE writer, `setOpenRouterCatalogue`, which
+ *      assigns a FRESH `Object.freeze([...])` on every call (the comment at
+ *      that assignment already states it is the only writer, and the entry
+ *      points that reach it — `syncOpenRouterCatalogue` after a network fetch,
+ *      `restoreOpenRouterCatalogue` at boot, and a direct test teardown —
+ *      all funnel through it). So a catalogue change is ALWAYS an identity
+ *      change, and `_memoCatalogue !== _openrouterCatalogue` cannot miss one.
+ *
+ * WHAT IS DELIBERATELY *NOT* MEMOISED, and why that is the whole safety
+ * argument: `_localQualifications` (written by `recordLocalQualification`,
+ * `restoreLocalQualifications` and `clearLocalQualifications`) feeds
+ * `isLocallyQualified` and therefore `isBuildLaneModel` and
+ * `measurementProvenance` — but it does NOT feed this list. Those two functions
+ * still recompute their verdict on every call; only the MEMBERSHIP lookup under
+ * them is cached. A qualify run that persists a verdict is visible on the very
+ * next read with no invalidation step, because there is nothing to invalidate.
+ * Config (the build-model pin, the active provider) does not reach this
+ * function at all — the ROUTE key-gates the list it serialises, downstream.
+ *
+ * Gemini and Anthropic do not read the catalogue, so keying their index on it
+ * is over-conservative: a sync rebuilds two ~3-entry Maps for nothing. That is
+ * one rule instead of two, and it errs toward extra work rather than toward a
+ * stale answer.
+ *
+ * The cached array is the SAME FROZEN OBJECT on every hit — callers must not be
+ * able to mutate what the next caller sees. `Object.freeze` is shallow, but the
+ * entries were already shared and frozen before this memo existed
+ * (`defineOfferableModel` freezes each one), so nothing new is exposed.
  */
-export function listOfferableModels(provider) {
-  if (!isKnownProvider(provider)) return Object.freeze([]);
-  const stat = OFFERABLE_MODELS[provider] || Object.freeze([]);
+let _offerMemoCatalogue = null;          // the `_openrouterCatalogue` the per-provider memo describes
+const _offerMemo = new Map();            // provider -> { list, index }
+let _offerMemoDynamicSet = null;         // Set of the entries that came from the catalogue
+let _offerMemoDynamicCatalogue = null;   // …and the catalogue THAT Set describes (see dynamicEntrySet)
+
+const EMPTY_OFFERS = Object.freeze([]);
+
+function offerMemoFor(provider) {
+  if (_offerMemoCatalogue !== _openrouterCatalogue) {
+    _offerMemo.clear();
+    _offerMemoCatalogue = _openrouterCatalogue;
+  }
+  const hit = _offerMemo.get(provider);
+  if (hit) return hit;
+  const built = { list: buildOfferableList(provider), index: new Map() };
+  // FIRST OCCURRENCE WINS, byte-for-byte what the `.find(e => e.id === id)`
+  // this replaced returned. Duplicate ids are refused at admission, so the
+  // distinction is unobservable today — which is exactly why it is preserved
+  // deliberately rather than left to chance.
+  for (const e of built.list) {
+    if (e && typeof e.id === 'string' && !built.index.has(e.id)) built.index.set(e.id, e);
+  }
+  _offerMemo.set(provider, built);
+  return built;
+}
+
+/**
+ * Entries that came from the fetched catalogue, as a Set — see
+ * `measurementProvenance`, which used to `includes()` its way down ~193
+ * entries to answer "did we measure this, or did a fetch hand it to us".
+ *
+ * ── IT CARRIES ITS OWN KEY, AND THAT WAS FOUND BY A MUTATION ────────────────
+ * The first version reused `_offerMemoCatalogue` and called `offerMemoFor`
+ * first, on the reasoning that there should be ONE invalidation rule. Deleting
+ * its identity check left the suite GREEN: every caller reaches
+ * `findOfferableModel` before it, which turns the memo over and nulls the set,
+ * so the clause could not fail and was not a guard at all — it only looked like
+ * one. Keying it independently makes the staleness this Set could have real,
+ * and therefore provable (M7 in the mutation set).
+ */
+function dynamicEntrySet() {
+  if (_offerMemoDynamicCatalogue !== _openrouterCatalogue) {
+    _offerMemoDynamicSet = new Set(_openrouterCatalogue);
+    _offerMemoDynamicCatalogue = _openrouterCatalogue;
+  }
+  return _offerMemoDynamicSet;
+}
+
+/** The uncached derivation. Called once per (provider, catalogue) by the memo. */
+function buildOfferableList(provider) {
+  const stat = OFFERABLE_MODELS[provider] || EMPTY_OFFERS;
   if (provider !== 'openrouter') return stat;
   if (_openrouterCatalogue.length === 0) return stat;
   // ── THE MERGE IS THE ONLY PLACE THE ORDER CAN BE ESTABLISHED ─────────────
@@ -3360,6 +3452,24 @@ export function listOfferableModels(provider) {
   // two-hand-maintained-copies shape. This function is the documented accessor
   // every consumer reads, so ordering here makes an unsorted list unobservable.
   return Object.freeze([...stat, ..._openrouterCatalogue].sort(compareOfferablePrice));
+}
+
+/**
+ * The models a user may currently pick on a provider — the static table plus,
+ * for OpenRouter, whatever the live catalogue admitted.
+ *
+ * This is the accessor every consumer should read (including the route that
+ * serialises the picker), because OFFERABLE_MODELS alone is a partial view for
+ * OpenRouter. Returns a frozen array, never null, so a caller can iterate
+ * without a guard.
+ *
+ * Memoised per (provider, catalogue identity) — see `offerMemoFor` above for
+ * the key and for what is deliberately left uncached. Two calls with unchanged
+ * inputs return the IDENTICAL frozen array.
+ */
+export function listOfferableModels(provider) {
+  if (!isKnownProvider(provider)) return EMPTY_OFFERS;
+  return offerMemoFor(provider).list;
 }
 
 /**
@@ -3414,16 +3524,23 @@ export function compareOfferablePrice(a, b) {
  * the rest open and create a second hand-maintained copy of the guard, which is
  * exactly what produced the v3.2.0 CRITICAL.
  *
- * The lookup is an array scan comparing with `===`, so `'__proto__'`,
- * `'constructor'` and `'toString'` are structurally unable to resolve to
- * anything — there is no object indexed by the caller's string at any point
- * (the v3.0.9 normalizeResponseStyle bug shape, closed by construction rather
- * than by remembering to call Object.hasOwn).
+ * ── THE PROTOTYPE-POLLUTION PROPERTY SURVIVED THE INDEX, AND THAT IS WHY IT ──
+ *    IS A `Map`.
+ * This used to be an array scan comparing with `===`, whose docblock argued
+ * that `'__proto__'`, `'constructor'` and `'toString'` were structurally unable
+ * to resolve because "there is no object indexed by the caller's string at any
+ * point" (the v3.0.9 normalizeResponseStyle bug shape). The scan is now an
+ * index, because 660 of these ran per Providers-page load — but a `Map` has NO
+ * prototype chain to walk: `map.get('__proto__')` is `undefined` unless an
+ * entry whose `id` is literally the string `'__proto__'` was admitted, which
+ * `defineOfferableModel` would have had to build. A PLAIN OBJECT here WOULD
+ * reopen v3.0.9 and must never be substituted. Asserted in
+ * `test-offer-list-memo.js`.
  */
 function findOfferableModel(provider, modelId) {
   if (!isKnownProvider(provider)) return null;
   if (typeof modelId !== 'string' || modelId.length === 0) return null;
-  return listOfferableModels(provider).find(entry => entry.id === modelId) || null;
+  return offerMemoFor(provider).index.get(modelId) || null;
 }
 
 export function isOfferableModel(provider, modelId) {
