@@ -1,43 +1,16 @@
 /* View: Sync — owned by views/sync.js. */
 
-/* ── Small utilities also used in settings.css ──────────────────────────
-   Duplicated on purpose rather than shared: both files are owned by this
-   same view-pair, but each view's CSS should stand on its own (README:
-   "put every rule specific to your view's markup" in its own file) so a
-   future edit to settings.css can never silently break sync.js. */
-
-/* 26 -> --control-sm (28px). macOS's DEFAULT control target, and the change
-   settings.css's own copy of this rule already took in the design pass — all
-   four copies have to move together or the app has two sizes of small button
-   depending on which view you are looking at. Its BOX grew; the type and the
-   glyphs inside it did not. */
-.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
-
-.theme-segmented {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 2px;
-  gap: 2px;
-  border-radius: 7px;
-  background: var(--surface-inset);
-  border: 1px solid var(--border);
-}
-.theme-seg-btn {
-  height: 28px;
-  padding: 0 14px;
-  border-radius: 5px;
-  border: none;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: var(--weight-medium);
-  background: transparent;
-  color: var(--text-2);
-  transition: background var(--t-state), color var(--t-state);
-}
-.theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
+/* ── Small utilities this view USES but no longer declares ──────────────
+   `.btn-xs`, `.theme-segmented` and `.theme-seg-btn` were copied in here,
+   with a comment saying each view should own its own rules so an edit to
+   settings.css "can never silently break sync.js". That was the opposite of
+   what shipped: index.html links every view stylesheet into ONE document at
+   identical specificity with settings.css last, so settings.css's copies
+   rendered this view too and these ones were dead text — this file's
+   `.theme-seg-btn` still carried `font-size: 12.5px` and a 7px radius that
+   nobody ever saw. All three now live once, in shell.css, beside `.btn`.
+   `.settings-hint-text` and `.settings-inline-error` went the same way,
+   back to views/settings.css which was already rendering them. */
 
 .status-pill {
   display: inline-flex;
@@ -50,23 +23,6 @@
 }
 .status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
-
-.settings-hint-text {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-2);
-  line-height: var(--leading-normal);
-  max-width: 66ch;
-}
-
-.settings-inline-error {
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--danger-text);
-  background: var(--danger-tint);
-  color: var(--danger-text);
-  font-size: var(--text-sm);
-}
 
 /* ── Sidebar: per-domain list ─────────────────────────────────────────── */
 

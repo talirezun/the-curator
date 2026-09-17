@@ -40,6 +40,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { docsUrl } from '../src/public/next/shared/docs-links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1053,11 +1054,21 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
   // rather than that a string exists somewhere in the file.
   const step1Src = /function panelStep1\(\)\s*\{[\s\S]*?\n\}/.exec(wizCode);
   ok(!!step1Src, 'panelStep1() is found in mcp-wizard.js');
-  const urlSrc = /export const MCP_GUIDE_URL = '([^']+)';/.exec(wizCode);
-  ok(!!urlSrc, 'MCP_GUIDE_URL is exported from mcp-wizard.js — one constant, two readers');
+  // The constant is now RESOLVED from shared/docs-links.js rather than typed
+  // here: a hand-typed anchor survives a heading being renamed and silently
+  // starts landing at the top of the page, and nothing in the repo could see
+  // it. So the source assertion pins the CALL, and the value the panel is
+  // rendered with comes from the real module — which is what keeps the href
+  // assertions below proof of what a user is given, rather than proof that
+  // two strings in the repo match each other.
+  const urlSrc = /export const MCP_GUIDE_URL = docsUrl\('([^']+)'\);/.exec(wizCode);
+  ok(!!urlSrc, 'MCP_GUIDE_URL is exported from mcp-wizard.js, resolved through shared/docs-links.js — one constant, two readers, one checkable destination');
+  const GUIDE_URL = urlSrc ? docsUrl(urlSrc[1]) : null;
+  ok(GUIDE_URL === 'https://github.com/talirezun/the-curator/blob/main/docs/mcp-user-guide.md',
+    'and it still resolves to the mcp-user-guide.md URL byte for byte — the migration moved no link');
   let step1 = null;
-  if (step1Src && urlSrc) {
-    step1 = new Function('MCP_GUIDE_URL', step1Src[0] + '\nreturn panelStep1;')(urlSrc[1])();
+  if (step1Src && GUIDE_URL) {
+    step1 = new Function('MCP_GUIDE_URL', step1Src[0] + '\nreturn panelStep1;')(GUIDE_URL)();
   }
   ok(!!step1 && step1.length > 200, 'CONTROL: panelStep1() really rendered (' + (step1 ? step1.length : 0) + ' chars)');
   if (step1) {
@@ -1069,9 +1080,9 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     }
     ok(/ChatGPT[^.]*cannot run a local server/.test(step1),
       'the one honest exclusion states the MECHANISM — a web app cannot run a local server');
-    ok(step1.includes('href="' + urlSrc[1] + '"') && /Read the MCP guide/.test(step1),
+    ok(step1.includes('href="' + GUIDE_URL + '"') && /Read the MCP guide/.test(step1),
       'and it links to the MCP guide');
-    ok(/rel="noopener noreferrer"/.test(step1.slice(step1.indexOf(urlSrc[1]) - 200)),
+    ok(/rel="noopener noreferrer"/.test(step1.slice(step1.indexOf(GUIDE_URL) - 200)),
       'the outbound link carries rel="noopener noreferrer"');
   }
 
@@ -1079,7 +1090,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
   const mcpSrc = /function renderMcp\(\)\s*\{[\s\S]*?\n\}/.exec(settingsCode);
   ok(!!mcpSrc, 'renderMcp() is found in settings.js');
   let mcpHtml = null;
-  if (mcpSrc && urlSrc) {
+  if (mcpSrc && GUIDE_URL) {
     const deps = {
       state: { mcpError: null, mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d' },
                selfTest: null, configSnippetOpen: false, configSnippet: null,
@@ -1089,7 +1100,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       renderSelfTestResult: () => '', shouldShowMcpStaleNote: () => false,
       escapeHtml: (x) => String(x), icon: () => '',
       renderListboxHtml: () => '<LISTBOX/>', pendingListboxes: [],
-      MCP_GUIDE_URL: urlSrc[1], myMountToken: 1, onSaveDefaultDomain: () => {},
+      MCP_GUIDE_URL: GUIDE_URL, myMountToken: 1, onSaveDefaultDomain: () => {},
     };
     const names = Object.keys(deps);
     mcpHtml = new Function(...names, mcpSrc[0] + '\nreturn renderMcp;')(...names.map((n) => deps[n]))();
@@ -1100,7 +1111,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       'the MCP section carries the same claim — a user who never opens the wizard still reads it');
     for (const c of CLIENTS) ok(mcpHtml.includes(c), `…and names ${c} there too`);
     ok(/ChatGPT[^.]*cannot run a local server/.test(mcpHtml), '…and the same honest exclusion');
-    ok(mcpHtml.includes('href="' + urlSrc[1] + '"'), '…linking to the same guide as the wizard');
+    ok(mcpHtml.includes('href="' + GUIDE_URL + '"'), '…linking to the same guide as the wizard');
     ok(/class="settings-hint-text"/.test(mcpHtml.slice(mcpHtml.indexOf('Works with any MCP client') - 200)),
       'it renders in the kit\'s SECONDARY text face, not as a status or a warning — it is orientation, not an alert');
   }

@@ -1264,11 +1264,21 @@ const TX_INFO_GLYPH =
  * @param {string} id     stable DOM id for the panel (the button gets id + '-btn')
  * @param {string} label  accessible name, e.g. 'About the build lane'
  * @param {string} info   the prose that used to live in a title=
+ * @param {{html?: boolean}} [opts]  `{html: true}` treats `info` as a TRUSTED
+ *   HTML fragment instead of escaping it, so a fold can carry a link, a
+ *   <strong> or a <code>. Mirrors shared/text.js's `infoHtml` option, which is
+ *   the same decision taken once already on the view header's fold, down to
+ *   the `=== true` — a truthy check would let a stray string through.
+ *   DEFAULT IS ESCAPED, and every existing caller passes nothing, so this
+ *   option cannot change a single byte of what ships today. The fragment is
+ *   the CALLER's responsibility: interpolating anything a user or a provider
+ *   typed into it, unescaped, is how this becomes an injection.
  * @returns {{btn: string, panel: string}} two fragments; the caller places each
  *   where its own layout wants them, because a panel is a block and the mark
  *   is inline. They are only ever emitted together.
  */
-function infoMark(id, label, info) {
+function infoMark(id, label, info, opts) {
+  const asHtml = !!opts && opts.html === true;
   const text = typeof info === 'string' ? info.trim() : '';
   if (!id || !text) return { btn: '', panel: '' };
   const name = label || 'More information';
@@ -1282,7 +1292,7 @@ function infoMark(id, label, info) {
       '</button>',
     panel:
       '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
-        ' aria-label="' + escapeHtml(name) + '" hidden>' + escapeHtml(text) + '</div>',
+        ' aria-label="' + escapeHtml(name) + '" hidden>' + (asHtml ? text : escapeHtml(text)) + '</div>',
   };
 }
 
@@ -3681,12 +3691,24 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
  * thing it explains cannot be separated by a repaint or by a later edit that
  * moves one of them.
  *
- * `infoText` is PLAIN TEXT, never markup: `infoMark` escapes it. That is not a
- * limitation to work around — a fold is prose, and the one thing a fold must
- * never contain is a control (shared/text.js's delegated listener toggles on
- * the button, and a control inside the panel would be reachable only after
- * that toggle). An absent `infoText` renders no mark at all, so a block with
- * nothing to fold is unchanged.
+ * `infoText` is PLAIN TEXT BY DEFAULT: `infoMark` escapes it unless
+ * `infoOpts` is `{html: true}`, in which case the caller is handing over a
+ * TRUSTED fragment and owns escaping anything interpolated into it. The one
+ * thing a fold must never contain is a CONTROL — shared/text.js's delegated
+ * listener toggles on the button, and a control inside the panel would be
+ * reachable only after that toggle — so the licence is for a link, a
+ * <strong> or a <code>, not for a <button>. An absent `infoText` renders no
+ * mark at all, so a block with nothing to fold is unchanged.
+ *
+ * `num` MAY BE null, and a null is a statement rather than a missing value.
+ * The numerals on Providers & keys are an argument: that page reads top to
+ * bottom as a sequence. A section that is merely a section — General's
+ * Software update, Appearance, System check — is not step 1 of anything, and
+ * a numeral there would claim an order the page does not have. A null renders
+ * no `.settings-block-num` AND adds `settings-block-unnumbered`, which zeroes
+ * the 32px indent that exists only to clear a numeral; without that the prose
+ * would hang inside a heading with nothing to its left. Every caller that
+ * passes a number is byte-identical to before.
  *
  * `noticeHtml` is rendered ABOVE the heading and INSIDE this wrapper. Block 2
  * is the only caller: a banner about the build model belongs to block 2 and to
@@ -3694,13 +3716,21 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
  * break the `.settings-job-block + .settings-job-block` adjacency that is now
  * the page's only source of block-to-block spacing.
  */
-function settingsBlock(num, id, title, ledeHtml, bodyHtml, infoText, noticeHtml) {
-  const info = infoMark('settings-block-info-' + id, 'More about ' + title, infoText);
+function settingsBlock(num, id, title, ledeHtml, bodyHtml, infoText, noticeHtml, infoOpts) {
+  const info = infoMark('settings-block-info-' + id, 'More about ' + title, infoText, infoOpts);
+  // `== null` on purpose — undefined from a 6-argument call and an explicit
+  // null both mean "this block is not a step". A falsy test would swallow 0,
+  // and while no block is numbered 0 today, a numbering scheme silently
+  // losing one of its values is the kind of thing nobody finds twice.
+  const numbered = num != null;
   return (
-    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
+    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '' +
+      (numbered ? '' : ' settings-block-unnumbered') + '">' +
       (noticeHtml || '') +
       '<div class="settings-block-hd">' +
-        '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(num)) + '</span>' +
+        (numbered
+          ? '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(num)) + '</span>'
+          : '') +
         '<h2 class="settings-job-title">' + escapeHtml(title) + '</h2>' +
       '</div>' +
       (ledeHtml
@@ -7062,7 +7092,10 @@ function renderQualifyPanel(q, minRuns, buildNow) {
         '<div class="model-qual-actions">' +
           '<button type="button" class="btn btn-primary btn-xs" id="qualify-go" data-qualify-go="' +
             escapeHtml(String(q.modelId)) + '">Start</button>' +
-          '<button type="button" class="btn btn-secondary btn-xs" id="qualify-cancel" data-qualify-cancel="1">Cancel</button>' +
+          // GHOST: Cancel is tier 3 everywhere else on this page (the key
+          // replace row's Cancel is already btn-ghost btn-xs), and a Cancel
+          // at the same weight as the rest of the row competes with Start.
+          '<button type="button" class="btn btn-ghost btn-xs" id="qualify-cancel" data-qualify-cancel="1">Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -7247,7 +7280,15 @@ function renderQualifyPanel(q, minRuns, buildNow) {
     // this file's named invitation-to-a-no-op.
     const alreadyBuilding = typeof buildNow === 'string' && buildNow !== '' && buildNow === d.modelId;
     const act = (d.qualifies && d.provider && d.modelId && !alreadyBuilding)
-      ? '<button type="button" class="btn btn-primary btn-xs"' +
+      // SECONDARY, not primary, and that is the taxonomy in shell.css being
+      // applied rather than a preference: the block 4 table and the "Cheapest
+      // measured" line render the byte-identical control as btn-secondary, so
+      // one screen was painting the same action two different weights
+      // depending on which surface you reached it from. This is also the
+      // v3.53.1 known-and-unfixed "a freshly passed row offers the build
+      // control twice" — the duplication is still there, but the two copies
+      // no longer disagree about how important it is.
+      ? '<button type="button" class="btn btn-secondary btn-xs"' +
           ' data-build-model="' + escapeHtml(d.modelId) + '"' +
           ' data-build-provider="' + escapeHtml(d.provider) + '">Use for building</button>'
       : (alreadyBuilding ? '<span class="model-pick-state">Building your wiki</span>' : '');

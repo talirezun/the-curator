@@ -68,11 +68,14 @@
  *  §8 The KNOWN REMAINING GAP is counted: --success-text as TEXT measures 4.05
  *     light (3.59 over its own tint), under the 4.5 floor. It was NOT part of
  *     this brief and is NOT fixed. The count stops it growing quietly.
- *  §9 The INERT-COPY DEFECT — .settings-hint-text and .theme-seg-btn, whose
- *     winning copy lives in views/settings.css. Was a tripwire asserting that
- *     copy was still broken; settings.css has since been fixed, so it is now
- *     INVERTED and guards the fix, including the ABSENCE of a second, later
- *     --text-3 declaration in the same file (a presence-only check misses it).
+ *  §9 The INERT-COPY DEFECT — .settings-hint-text (once three copies) and
+ *     .theme-seg-btn (once two). Was a tripwire asserting the WINNING copy was
+ *     still broken; it was fixed, so the assertion was INVERTED to guard the
+ *     fix — and the duplicates have since been DELETED, so §9a now asserts
+ *     their absence and §9b holds the colour on the one file left
+ *     (views/settings.css for the hint, shell.css for the segment label),
+ *     including the ABSENCE of a second, later --text-3 declaration in it (a
+ *     presence-only check misses that).
  *§10b The two SIDEBAR EMPTY-STATE roles, also in shell.css: .sidebar-hint (on
  *     --surface) and .sidebar-note (on its OWN --surface-inset, which is the
  *     backdrop that makes the LIGHT figure the worse of the two — grading it
@@ -100,9 +103,10 @@
  *    with every other view. Recorded, deliberately untouched.
  *  · Any file other than the three named — EXCEPT views/settings.css, which is
  *    READ (never written) by §9, because it OVERRIDES two of the fixes here.
- *  · §9 covers .settings-hint-text and .theme-seg-btn, whose winning copy is in
- *    settings.css, NOT in a file this wave owns. It was a TRIPWIRE asserting
- *    that copy was still broken; settings.css has since been fixed, so it is
+ *  · §9 covers .settings-hint-text and .theme-seg-btn, whose surviving copy is
+ *    in settings.css / shell.css, NOT in a file this wave owns. It was a
+ *    TRIPWIRE asserting that copy was still broken; it has since been fixed
+ *    and the duplicates deleted, so it is
  *    now INVERTED and guards the fix. §4 reporting green on those two selectors
  *    still proves nothing on its own — §9 is what makes them real.
  *  · Whether a rule is REACHED at runtime at all.
@@ -576,28 +580,40 @@ section('§9  THE INERT-COPY DEFECT — history kept, tripwire INVERTED');
 //   .settings-hint-text        8.55 dark / 7.02 light   (was 4.38 / 4.00)
 //   .theme-seg-btn inactive    8.45 dark / 6.79 light   (was 4.33 / 3.87)
 //   .theme-seg-btn.active     16.22 dark / 18.27 light  — the step survives
-// and the live cascade for each element now reads --text-2 at EVERY rung:
+// and the live cascade for each element then read --text-2 at EVERY rung:
 //   .settings-hint-text  shared.css #13 -> sync.css #16 -> settings.css #17
 //   .theme-seg-btn                         sync.css #16 -> settings.css #17
-// so no copy can win and reintroduce the failure.
+//
+// ── AND THEN THE DUPLICATES WERE DELETED (v3.54.0 design foundation) ──────
+// Keeping three copies in step is a discipline; having one is a fact. The
+// dead `.settings-hint-text` copies in views/shared.css and views/sync.css
+// are GONE, and `.theme-seg-btn` moved to shell.css with the rest of the
+// button family. There is no longer a rung that can rot, because there is
+// only one rung. §9a therefore asserts the ABSENCE it used to assert the
+// colour of — the stronger statement, and the one that stays true without
+// anybody maintaining it — while §9b keeps the colour assertion on whichever
+// file now holds each declaration. The measured figures above are unchanged:
+// the surviving declarations are the ones that were rendering when they were
+// taken. scripts/test-next-button-family.js owns the count.
 const settingsCss = stripComments(readFileSync(join(NEXT, 'views/settings.css'), 'utf8'));
+const shellCss = stripComments(readFileSync(join(NEXT, 'shell.css'), 'utf8'));
 
-section('§9a  the OWNED copies (inert, but pinned so they cannot rot back)');
-ok(/\.settings-hint-text\s*\{[^}]*color:\s*var\(--text-2\)/.test(stripComments(FILES.shared)) &&
-   /\.settings-hint-text\s*\{[^}]*color:\s*var\(--text-2\)/.test(stripComments(FILES.sync)),
-   'both OWNED copies of .settings-hint-text are --text-2 — they cannot rot back, even while inert');
-ok(/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-2\)/.test(stripComments(FILES.sync)),
-   'the OWNED copy of .theme-seg-btn is --text-2');
+section('§9a  the defect is CLOSED BY CONSTRUCTION — the inert copies are gone');
+ok(!/\.settings-hint-text\s*\{/.test(stripComments(FILES.shared)) &&
+   !/\.settings-hint-text\s*\{/.test(stripComments(FILES.sync)),
+   'views/shared.css and views/sync.css declare .settings-hint-text NOWHERE — the two copies that could rot back were deleted, not kept in step');
+ok(!/\.theme-seg-btn\s*\{/.test(stripComments(FILES.sync)),
+   'and views/sync.css declares .theme-seg-btn nowhere either — that copy still carried a 12.5px literal nobody could see');
 
-section('§9b  the copy the CASCADE LANDS ON — views/settings.css, read never written');
+section('§9b  the copy the CASCADE LANDS ON — the one that is left');
 ok(/\.settings-hint-text\s*\{[^}]*color:\s*var\(--text-2\)/.test(settingsCss),
    'INVERTED TRIPWIRE (1/3): views/settings.css paints .settings-hint-text --text-2. This is the copy that ' +
    'RENDERS — it is linked after views/shared.css and views/sync.css at identical specificity — so it is the ' +
    'only one of the three whose value a user ever sees. Measured live after the fix: 8.55 dark / 7.02 light, ' +
    'against 4.38 / 4.00 before it. This assertion used to demand the OPPOSITE, as a tripwire announcing that ' +
    'the owned copies above were inert; it was inverted rather than deleted when settings.css was fixed.');
-ok(/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-2\)/.test(settingsCss),
-   'INVERTED TRIPWIRE (2/3): views/settings.css paints .theme-seg-btn --text-2 — the INACTIVE segment labels, ' +
+ok(/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-2\)/.test(shellCss),
+   'INVERTED TRIPWIRE (2/3): shell.css paints .theme-seg-btn --text-2 — the INACTIVE segment labels, ' +
    'real words on --surface-inset, measured live at 8.45 dark / 6.79 light against 4.33 / 3.87 before. The ' +
    'active/inactive step survives: .theme-seg-btn.active is --text on --surface-raised at 16.22 / 18.27.');
 // A count-free presence check would stay green if a SECOND, later --text-3
@@ -606,8 +622,8 @@ ok(/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-2\)/.test(settingsCss),
 // exactly the way this whole section exists to record. So the absence is
 // asserted too, over the whole file.
 ok(!/\.settings-hint-text\s*\{[^}]*color:\s*var\(--text-3\)/.test(settingsCss) &&
-   !/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-3\)/.test(settingsCss),
-   'INVERTED TRIPWIRE (3/3): and --text-3 appears for NEITHER selector anywhere in views/settings.css. ' +
+   !/\.theme-seg-btn\s*\{[^}]*color:\s*var\(--text-3\)/.test(shellCss),
+   'INVERTED TRIPWIRE (3/3): and --text-3 appears for NEITHER selector anywhere in the file that declares it. ' +
    'Presence of the good value is not enough on its own — a second, later declaration in the same file wins ' +
    'at identical specificity and would make the passing one inert, which is the precise defect this section ' +
    'was created to record.');

@@ -962,7 +962,13 @@ console.log('\n§7  The type ramp is expressed against the scale');
   // move while everything around it does reads as a rendering bug.
   const hard = [...settingsCss.matchAll(/font-size:\s*([\d.]+)px/g)];
   eq(hard.length, 0, 'settings.css has no hardcoded px font-size left — the whole screen follows the setting');
-  const segBtn = blockFor(settingsCss, '.theme-seg-btn');
+  // `.theme-seg-btn` moved to shell.css with the rest of the button family
+  // (it was declared here AND in views/sync.css, and the sync.css copy —
+  // carrying a 12.5px literal — was dead). The ASSERTION does not move: the
+  // one control that changes text size must not be the only thing that does
+  // not follow it, wherever the declaration lives.
+  const shellCss = readFileSync(join(NEXT, 'shell.css'), 'utf8');
+  const segBtn = blockFor(shellCss, '.theme-seg-btn');
   ok(/font-size:\s*var\(--text-/.test(segBtn),
     'including the segmented control itself — the one control that changes text size must not be the only thing that does not');
 }

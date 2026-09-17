@@ -1412,6 +1412,46 @@ body.guide-docked .main {
 
 /* ── Buttons (subset of the Button component's variants) ──────────────── */
 
+/* ── THE BUTTON TAXONOMY — WHICH VARIANT, AND WHO DECIDES THE SIZE ────────
+   The variants below are a SYSTEM, not a palette. Four tiers, in descending
+   weight, and a size that is chosen by the container rather than the author.
+   This block is the rule the rest of the app is being brought to; nothing in
+   this pass re-tiers a consumer site, so a button that disagrees with it
+   today is a finding, not a contradiction.
+
+   TIER 1 · COMMIT — `.btn-primary`
+     The single action that COMPLETES the step in front of the user. At most
+     one per card, row or panel; a screen with two is a screen that has not
+     decided what it is asking for. views/settings.js already encodes the
+     test in one expression — `hasKeyField ? 'secondary' : 'primary'` on the
+     Save button: pasting your FIRST key is the step, and replacing a key you
+     already have is not.
+
+   TIER 2 · ACT — `.btn-secondary`
+     Every other real action: fetch, test, disclose, navigate, choose an
+     alternative, go back. THE DEFAULT. Reaching for primary instead is how a
+     panel ends up with three of them.
+
+   TIER 3 · QUIET — `.btn-ghost`
+     Reversible, dismissive, or one of many on a row: Cancel, Dismiss, Close,
+     Copy, Skip, Set active, Disconnect. A control the user can press without
+     having to think first.
+
+   TIER 4 · CONSEQUENCE — `.btn-ai` (spends money) and `.btn-danger`
+     (destroys data)
+     Tinted, never filled, never glossed — and the tint REPLACES tier 1
+     rather than decorating it, so the two controls in the app that cost you
+     something are never also the most inviting thing on screen (the refusal
+     is written out again beside each rule below). `.btn-danger-solid` is the
+     ONE exception: a confirm dialog whose primary action IS the deletion,
+     where the filled danger face is the tier-1 slot being used honestly.
+
+   SIZE IS SET BY THE CONTAINER, NOT THE AUTHOR
+     A button standing directly in a section body is `--control-md` (the
+     `.btn` default). Inside a card, a row, a notice, a table or a confirm
+     strip it takes `.btn-xs` (--control-sm). That is a property of where the
+     button IS, so it is never a judgement call at the call site. */
+
 /* ── THE TWO NATIVE TELLS, AND THEY COST ONE LINE EACH ────────────────────
    `cursor: default` and `user-select: none` are the cheapest things in this
    whole redesign and, per the design research, worth more than the entire
@@ -1496,6 +1536,27 @@ body.guide-docked .main {
     box-shadow var(--t-hover-in),
     transform var(--t-press);
 }
+
+/* ── THE SMALL SIZE, DECLARED ONCE ────────────────────────────────────────
+   WAS 26px, and it was the one interactive element under the 28x28pt target
+   macOS uses as its default control size (its minimum is 20x20; iOS's 44
+   does not apply to a pointer-driven Mac app). --control-sm IS 28px, so this
+   is the token catching up with the literal rather than a new size entering
+   the system. It cannot take the ::before hit-box trick the shell uses on
+   .reader-close and .cur-switch, because `.btn::before` is already spoken
+   for by the gloss face — so here the box genuinely grows.
+
+   IT USED TO BE DECLARED FIVE TIMES, and the comment beside one of the
+   copies claimed each view "owns its own" so an edit elsewhere could never
+   change it. That was FALSE, and measurably so: index.html links every view
+   stylesheet into one document, all five copies sit at identical
+   specificity, and views/settings.css is linked last — so settings.css's
+   copy rendered every `.btn-xs` in the app, including Agent memory's and
+   Shared Brain's, and four of the five files were editing dead text. Same
+   shape as the INERT-COPY DEFECT views/settings.css records for
+   `.settings-hint-text`. One declaration, in the shell, is the only version
+   of this rule that can be true. */
+.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
 
 /* ── THE FACE GRADIENT IS A ::before, NOT A background-image ──────────────
    So the FACE and the button's own background-COLOR stay independent: a
@@ -1941,6 +2002,109 @@ body.guide-docked .main {
 .btn-ai:active { background-color: var(--accent-tint-strong); box-shadow: var(--gloss-pressed); }
 .btn-ghost:active { background-color: var(--surface-active); color: var(--text); }
 
+/* ── THE SEGMENTED CONTROL — the kit's other push-button family ───────────
+   Promoted here from views/settings.css, where it was declared alongside a
+   shorter, DRIFTED copy in views/sync.css: sync.css had `border-radius: 7px`
+   and `font-size: 12.5px` literals where this one carries tokens, and no
+   gloss on the lifted chip at all. Both sat at identical specificity with
+   settings.css linked last, so THIS is the version both views have been
+   rendering all along, and the sync.css copy was four years of dead text
+   nobody could see change. It belongs beside `.btn` because it is the same
+   kind of thing: a row of push buttons where exactly one is held down.
+
+   The `.fs-*` and `.bgmode-*` modifiers stay in views/settings.css — they
+   exist only because Settings renders three- and four-option segmented
+   controls in a 272px-constrained column, which is a Settings problem. */
+/* ── General: appearance segmented control ──────────────────────────── */
+
+.theme-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  gap: 2px;
+  /* The track is the control's radius plus its own 2px inset, so the segments
+     and the track stay concentric instead of the track looking squarer than
+     the chips inside it. */
+  border-radius: calc(var(--radius-control) + 2px);
+  background: var(--surface-sunken);
+  /* THE TRACK IS SUNKEN AND THE SELECTED SEGMENT IS RAISED. That inversion is
+     the whole reading of an NSSegmentedControl: a well with one chip lifted
+     out of it. It was a flat --surface-inset box with a 1.2:1 --border, so
+     the only thing distinguishing "selected" was a slightly lighter fill.
+     The track's own edge is SHAPING, not identification — the SEGMENTS are
+     what a user aims at, and each carries its own state.
+
+     --seg-track-edge / --seg-track-inset (tokens/material.css), not
+     --control-edge-quiet / --gloss-well-quiet directly: on light the
+     maintainer's own screenshot called the shared tokens "a mistake" — a
+     boxed outline round the whole control, where AppKit shows a
+     barely-there tinted fill and no visible outline. Dark is unchanged
+     (--seg-track-edge aliases --control-edge-quiet there, byte for byte);
+     light gets a hairline. ONE rule, both themes — no [data-theme]
+     override needed here because the difference lives in the tokens. */
+  border: 1px solid var(--seg-track-edge);
+  box-shadow: var(--seg-track-inset);
+}
+.theme-seg-btn {
+  height: 28px;
+  /* NOT SNAPPED TO THE 4pt SCALE, and that is a refusal rather than an
+     oversight. 14 -> 16 widens every segment by 2px, and this file already
+     records that .fs-segmented and .bgmode-segmented exist ONLY because four
+     and three segments barely fit the 272px-constrained main column at the
+     Largest text scale — the trap being that picking "Largest" must not push
+     the control that picked it off screen. Nothing was rendered in this pass,
+     so a 2px-per-segment widening could not be checked at 1.18x and is not
+     being made blind. Same for .fs-seg-btn's 11px below. */
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: inherit;
+  /* Was 12.5px. THIS ONE IS LOAD-BEARING for the Text size control, which
+     reuses .theme-seg-btn: a fixed size there would leave the one control
+     that changes text size as the only thing on screen not changing. */
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  background: transparent;
+  /* SECOND HALF OF THE INERT-COPY DEFECT (views/settings.css records the
+     first half, for .settings-hint-text). `.theme-seg-btn` used to be
+     declared in views/sync.css AND views/settings.css at identical
+     specificity; settings.css is linked later, so the settings copy won and
+     the sync.css fix was inert. Both are gone and this is the only
+     declaration left. These are the INACTIVE segment labels — real words on
+     --surface-inset — measured 4.33 dark / 3.87 light at --text-3, and
+     8.45 / 6.79 at the --text-2 below.
+     The active/inactive step survives: active is --text on --surface-raised. */
+  color: var(--text-2);
+  transition: background var(--t-state), color var(--t-state), box-shadow var(--t-state), transform var(--t-press);
+}
+/* The lifted chip: a quiet specular for the lit top edge and --elev-1 for the
+   contact shadow that says it is sitting ON the track rather than painted
+   into it. Two devices, not three — a face gradient on a 28px chip is below
+   the threshold where a <=6% L* ramp is readable as form. */
+.theme-seg-btn.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--gloss-specular-quiet), var(--elev-1);
+}
+/* Press. Written ONCE, here, with the rest of the component —
+   `.theme-seg-btn:active` at 0,2,0 outranks the plain `.theme-seg-btn` from
+   any file, so a second copy in a view stylesheet would buy nothing and
+   would be exactly the drift the note above records.
+
+   The `prefers-reduced-motion` opt-out for this line is at the foot of this
+   file with the rest of the button family's, NOT in views/settings.css where
+   it used to sit: it removes the TRAVEL and keeps the colour step, and it
+   belongs beside the press it cancels.
+
+   NO translate: a segment sits inside a 2px-padded track it exactly fills,
+   so shifting it down pushes it against the track's own border. The scale
+   contracts inside the track instead, which is the gesture the shape
+   supports. The colour step is what tells you which segment you hit. */
+.theme-seg-btn:active { background: var(--surface-active); color: var(--text); transform: scale(var(--press-scale)); }
+
 /* ── Rail: pressing a section acknowledges it ─────────────────────────────
    The rail is what "clicking through the sections" means, and it did nothing
    at all: measured on a real mousedown through Chrome's input pipeline, a
@@ -2277,5 +2441,13 @@ body.guide-docked .main {
   .rail-home:active,
   .rail-theme-toggle:active,
   .reader-close:active,
+  /* Arrived with the segmented control when it was promoted out of
+     views/settings.css. The opt-out has to live in the SAME file as the
+     press it cancels — scripts/test-next-press-motion.js asserts exactly
+     that, and caught this rule being left behind in settings.css, where it
+     would still have WORKED (settings.css is linked later) and would have
+     been unfindable from the rule it governs. views/settings.css keeps the
+     `.settings-nav-row:active` half, which is its own. */
+  .theme-seg-btn:active,
   .reader-backlink-row:active { transform: none; }
 }

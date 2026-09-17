@@ -32,24 +32,6 @@
 .sb-outcome-line-detail,
 .sb-member-meta { font-variant-numeric: var(--numeric-tabular); }
 
-.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
-
-.settings-hint-text {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-2);
-  line-height: var(--leading-normal);
-  max-width: 66ch;
-}
-
-.settings-inline-error {
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--danger-text);
-  background: var(--danger-tint);
-  color: var(--danger-text);
-  font-size: var(--text-sm);
-}
 
 /* ── Sidebar title "beta" pill ───────────────────────────────────────── */
 

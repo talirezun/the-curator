@@ -926,7 +926,12 @@ section('11. Nothing interactive in the owned files is under 28px');
     '.cur-switch keeps its 22pt NSSwitch track and does the same');
   ok(/--hit-min:\s*28px/.test(materialClean),
     "--hit-min is 28px — macOS's DEFAULT control size, not iOS's 44 and not macOS's 20pt minimum");
-  ok(/\.btn-xs\s*\{[^}]*height:\s*var\(--control-sm\)/.test(bodies['views/settings.css']),
+  // shell.css, not views/settings.css: the rule was declared in FIVE view
+  // stylesheets and none of them could see the other four (all at identical
+  // specificity in one document, settings.css linked last and therefore the
+  // only one rendering). It now lives once, beside `.btn`.
+  // scripts/test-next-button-family.js owns the count; this keeps the SIZE.
+  ok(/\.btn-xs\s*\{[^}]*height:\s*var\(--control-sm\)/.test(bodies['shell.css']),
     '.btn-xs grew its BOX instead (26 -> --control-sm) — it cannot use the ::before trick, because .btn::before is already the gloss face');
 
   // ── ANTI-VACUITY, three ways, because this scan has three ways to lie ────

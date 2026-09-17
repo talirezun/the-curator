@@ -242,6 +242,7 @@
 // closed. ../shared/ingest-queue-logic.js imports nothing itself, so this
 // creates no cycle.
 import { queueBusyTransition } from './shared/ingest-queue-logic.js';
+import { docsUrl } from './shared/docs-links.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -2466,8 +2467,12 @@ document.addEventListener('keydown', (e) => {
 // chrome pass and changes nothing about the markup.
 const INSTANCE_BANNER_ID = 'instance-banner';
 const INSTANCE_BANNER_DISMISS_KEY = 'curator-next-instance-banner-dismissed-v1';
-const INSTANCE_DOCS_URL =
-  'https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#two-installs-one-knowledge-folder';
+// Through shared/docs-links.js rather than typed here: a heading rename in
+// docs/user-guide.md silently turns a hand-typed anchor into a link that
+// lands at the top of the page, and nothing in the repo could see it. The
+// resolved string is byte-identical to the literal this replaced, pinned by
+// scripts/test-docs-links.js.
+const INSTANCE_DOCS_URL = docsUrl('app.two-installs');
 
 // sessionStorage, not localStorage: "dismissed for this session" is exactly
 // what sessionStorage means, and a permanent dismissal would silence the

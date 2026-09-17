@@ -281,15 +281,21 @@
   align-items: center;
   gap: 4px;
 }
-/* ── THE INERT-COPY DEFECT ────────────────────────────────────────────────
-   `.settings-hint-text` is declared THREE times — views/shared.css, views/sync.css
-   and here — at IDENTICAL specificity, and index.html links settings.css AFTER
-   both of the others. So THIS declaration is the one that renders, and fixing the
-   other two (which a previous pass did) changed nothing a user could see: the
-   live document still measured 4.38 dark / 4.00 light.
+/* ── THE INERT-COPY DEFECT, AND HOW IT WAS FINALLY CLOSED ─────────────────
+   `.settings-hint-text` was declared THREE times — views/shared.css,
+   views/sync.css and here — at IDENTICAL specificity, and index.html links
+   settings.css AFTER both of the others. So THIS declaration was the one that
+   rendered, and fixing the other two (which a previous pass did) changed
+   nothing a user could see: the live document still measured 4.38 dark /
+   4.00 light.
    A fix in a duplicated selector is only real in the copy the cascade lands on.
-   Verified after this change by reading getComputedStyle on the rendered element,
-   not by reading this file. */
+   Verified at the time by reading getComputedStyle on the rendered element,
+   not by reading this file.
+   The two dead copies are now DELETED rather than kept in step, so there is
+   no longer a copy that can rot back: this is the only one. `.btn-xs` and
+   `.theme-seg-btn`, which had the same defect in five and two files, went to
+   shell.css for the same reason — a class every view uses belongs to the
+   shell, not to whichever view's stylesheet happens to be linked last. */
 .settings-hint-text {
   margin: 0;
   font-size: var(--text-sm);
@@ -420,17 +426,10 @@
 .settings-saved-note { color: var(--text); }
 .settings-saved-note svg { color: var(--success-text); }
 
-/* ── Buttons — small variant used throughout Settings rows ─────────── */
-/* WAS 26px, and it was the ONE interactive element in this view under the
-   28x28pt target macOS uses as its default control size (its minimum is
-   20x20; iOS's 44 does not apply to a pointer-driven Mac app). --control-sm
-   IS 28px, so this is the token catching up with the literal rather than a
-   new size entering the system. Two pixels, on the Settings sidebar's own
-   "Check for updates" button among others.
-   It cannot take the ::before hit-box trick the shell uses on .reader-close
-   and .cur-switch, because `.btn::before` is already spoken for by the gloss
-   face — so here the box genuinely grows. */
-.btn-xs { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-xs); }
+/* `.btn-xs` — the small button — is declared ONCE, in shell.css, beside
+   `.btn`. It was copied into five view stylesheets including this one; they
+   all sat at identical specificity in one document and this file, linked
+   last, was the only copy that rendered. */
 
 /* The one "spends tokens" action in this view (mirrors the sparkles
    convention from the Health panel spec — accent-tinted, never plain). */
@@ -455,89 +454,15 @@
 }
 .btn-ai-cost:hover { background: var(--accent-tint-strong); }
 
-/* ── General: appearance segmented control ──────────────────────────── */
+/* ── General: appearance segmented control ────────────────────────────
+   `.theme-segmented` / `.theme-seg-btn` — the base control, its .active chip
+   and its press — now live in shell.css beside the button family. They were
+   declared HERE and in views/sync.css at identical specificity, settings.css
+   is linked last, so this copy rendered both views and the sync.css one was
+   dead text (the INERT-COPY DEFECT recorded above for .settings-hint-text).
+   Only the two MODIFIERS below are Settings' own, because only Settings
+   renders a segmented control with more than two options. */
 
-.theme-segmented {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 2px;
-  gap: 2px;
-  /* The track is the control's radius plus its own 2px inset, so the segments
-     and the track stay concentric instead of the track looking squarer than
-     the chips inside it. */
-  border-radius: calc(var(--radius-control) + 2px);
-  background: var(--surface-sunken);
-  /* THE TRACK IS SUNKEN AND THE SELECTED SEGMENT IS RAISED. That inversion is
-     the whole reading of an NSSegmentedControl: a well with one chip lifted
-     out of it. It was a flat --surface-inset box with a 1.2:1 --border, so
-     the only thing distinguishing "selected" was a slightly lighter fill.
-     The track's own edge is SHAPING, not identification — the SEGMENTS are
-     what a user aims at, and each carries its own state.
-
-     --seg-track-edge / --seg-track-inset (tokens/material.css), not
-     --control-edge-quiet / --gloss-well-quiet directly: on light the
-     maintainer's own screenshot called the shared tokens "a mistake" — a
-     boxed outline round the whole control, where AppKit shows a
-     barely-there tinted fill and no visible outline. Dark is unchanged
-     (--seg-track-edge aliases --control-edge-quiet there, byte for byte);
-     light gets a hairline. ONE rule, both themes — no [data-theme]
-     override needed here because the difference lives in the tokens. */
-  border: 1px solid var(--seg-track-edge);
-  box-shadow: var(--seg-track-inset);
-}
-.theme-seg-btn {
-  height: 28px;
-  /* NOT SNAPPED TO THE 4pt SCALE, and that is a refusal rather than an
-     oversight. 14 -> 16 widens every segment by 2px, and this file already
-     records that .fs-segmented and .bgmode-segmented exist ONLY because four
-     and three segments barely fit the 272px-constrained main column at the
-     Largest text scale — the trap being that picking "Largest" must not push
-     the control that picked it off screen. Nothing was rendered in this pass,
-     so a 2px-per-segment widening could not be checked at 1.18x and is not
-     being made blind. Same for .fs-seg-btn's 11px below. */
-  padding: 0 14px;
-  border-radius: var(--radius-md);
-  border: none;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  font-family: inherit;
-  /* Was 12.5px. THIS ONE IS LOAD-BEARING for the Text size control, which
-     reuses .theme-seg-btn: a fixed size there would leave the one control
-     that changes text size as the only thing on screen not changing. */
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  background: transparent;
-  /* SECOND HALF OF THE INERT-COPY DEFECT (see .settings-hint-text above).
-     `.theme-seg-btn` is declared in views/sync.css AND here at identical
-     specificity; settings.css is linked later, so this copy wins and the
-     sync.css fix was inert. These are the INACTIVE segment labels — real words
-     on --surface-inset — measured 4.33 dark / 3.87 light at --text-3.
-     The active/inactive step survives: active is --text on --surface-raised. */
-  color: var(--text-2);
-  transition: background var(--t-state), color var(--t-state), box-shadow var(--t-state), transform var(--t-press);
-}
-/* The lifted chip: a quiet specular for the lit top edge and --elev-1 for the
-   contact shadow that says it is sitting ON the track rather than painted
-   into it. Two devices, not three — a face gradient on a 28px chip is below
-   the threshold where a <=6% L* ramp is readable as form. */
-.theme-seg-btn.active {
-  background: var(--surface-raised);
-  color: var(--text);
-  box-shadow: var(--gloss-specular-quiet), var(--elev-1);
-}
-/* Press. This class is declared in views/sync.css AND here at identical
-   specificity, and settings.css is linked later so this copy wins (see the
-   note above). The press is written ONCE, here, on the winning copy —
-   `.theme-seg-btn:active` at 0,2,0 outranks the plain `.theme-seg-btn` in
-   either file, so a second copy in sync.css would buy nothing and would be
-   the drift this file already documents.
-
-   NO translate: a segment sits inside a 2px-padded track it exactly fills,
-   so shifting it down pushes it against the track's own border. The scale
-   contracts inside the track instead, which is the gesture the shape
-   supports. The colour step is what tells you which segment you hit. */
-.theme-seg-btn:active { background: var(--surface-active); color: var(--text); transform: scale(var(--press-scale)); }
 
 /* ── General: text size ──────────────────────────────────────────────────
    Reuses .theme-segmented / .theme-seg-btn wholesale — it is the same kind
@@ -2128,8 +2053,11 @@
    element rule, and it is why there is no blanket "transform: none" sweep
    in this tree. */
 @media (prefers-reduced-motion: reduce) {
-  .settings-nav-row:active,
-  .theme-seg-btn:active { transform: none; }
+  /* `.theme-seg-btn:active` used to be on this line. It left with the
+     control, to shell.css, where the press it cancels now lives — a
+     reduced-motion opt-out that is not in the same file as its press still
+     works and cannot be found from it. */
+  .settings-nav-row:active { transform: none; }
   .settings-nav-row::before { transition: none; }
 }
 
@@ -2153,7 +2081,13 @@
 .settings-block-hd {
   display: flex;
   align-items: baseline;
-  gap: var(--space-5);
+  /* WAS --space-5 (10px) while the indent below was 32px = 20px numeral +
+     12px, so the heading text started at 30px and the lede under it at 32px.
+     A 2px step between a title and the sentence under it is not read as a
+     step — it is read as one of them being slightly wrong, which is what it
+     was. --space-6 IS the 12px the indent was derived from; this is the gap
+     catching up with the arithmetic that was already written down. */
+  gap: var(--space-6);
   margin-bottom: var(--space-3);
 }
 .settings-block-num {
@@ -2175,10 +2109,22 @@
 }
 /* The lede and the body sit under the heading TEXT, not under the numeral, so
    the numerals form a column down the left edge and the prose forms a second
-   column beside it. 32px = 20px numeral + the 12px gap, derived rather than
-   guessed: a hand-picked indent drifts the moment the numeral changes size. */
+   column beside it. 32px = the 20px numeral + the 12px gap `.settings-block-hd`
+   above now really uses, derived rather than guessed: a hand-picked indent
+   drifts the moment the numeral changes size. */
 .settings-block-lede { margin-left: 32px; }
 .settings-block-body { margin-left: 32px; }
+/* ── A BLOCK THAT IS NOT A STEP WEARS NO NUMBER, AND NO INDENT WITH IT ────
+   The numerals are an ARGUMENT — Providers & keys reads top to bottom as a
+   sequence and the number is part of what it is saying. A section that is
+   merely a section (General's Software update, Appearance, System check) is
+   not step 1 of anything, and numbering it would claim an order that does
+   not exist. `settingsBlock(null, ...)` renders no `.settings-block-num`,
+   and this class zeroes the indent that only existed to clear one: without
+   it the prose would hang 32px inside a heading with nothing to its left. */
+.settings-block-unnumbered .settings-block-lede,
+.settings-block-unnumbered .settings-block-body,
+.settings-block-unnumbered .settings-block-info { margin-left: 0; }
 .settings-block-footnote {
   margin: var(--space-6) 0 0;
   font: var(--type-body-sm);

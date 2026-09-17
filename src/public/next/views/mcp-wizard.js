@@ -109,6 +109,7 @@
 // `glyph.innerHTML = icon(...)`, which is likewise a fixed internal string.
 import { icon } from '../app.js';
 import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
+import { docsUrl } from '../shared/docs-links.js';
 
 
 // ── ONE URL FOR THE VENDOR-NEUTRALITY CLAIM ──────────────────────────────
@@ -117,7 +118,10 @@ import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
 // they must not be able to point at different pages, so the constant lives
 // here (settings.js already imports this module; the reverse would be a
 // cycle) and is imported there.
-export const MCP_GUIDE_URL = 'https://github.com/talirezun/the-curator/blob/main/docs/mcp-user-guide.md';
+// Resolved from shared/docs-links.js, where every docs destination in the app
+// now lives and where a test can check the file still exists. Byte-identical
+// to the literal it replaces.
+export const MCP_GUIDE_URL = docsUrl('settings.mcp-bridge');
 
 // ── Facts about the bridge, pinned against mcp/tools/index.js ────────────
 // Hardcoded here because the wizard must state them BEFORE any connection
