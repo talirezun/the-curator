@@ -696,6 +696,19 @@ const BRIEF_MAX_BYTES_SRC = (() => {
   if (!m) throw new Error('BRIEF_MAX_BYTES not found in memory.js — §16g would be a paraphrase');
   return m[1];
 })();
+
+// The work-stream table's window, its step and the size above which the step
+// stops being "all the rest" — all three off LIVE SOURCE, for the same reason.
+// A copy typed here could agree with every assertion in §6e while the shipped
+// table painted a different number of rows.
+const numConst = (name) => {
+  const m = new RegExp('^const ' + name + ' = (\\d+);$', 'm').exec(viewSrc);
+  if (!m) throw new Error(name + ' not found in memory.js — §6e would be a paraphrase');
+  return Number(m[1]);
+};
+const WS_WINDOW_SRC = numConst('WS_WINDOW');
+const WS_STEP_SRC = numConst('WS_STEP');
+const WS_STEP_ALL_MAX_SRC = numConst('WS_STEP_ALL_MAX');
 // It is the STORE's wall, not a number of this view's choosing, and it is
 // compared against the real exported constant rather than against a copy typed
 // here. A view refusing at a DIFFERENT figure from the server would either
@@ -705,6 +718,21 @@ ok('the editor’s byte wall IS the store’s MAX_BRIEF_BYTES, not a number of i
   Number(BRIEF_MAX_BYTES_SRC) === ws.MAX_BRIEF_BYTES,
   'memory.js caps the brief at ' + BRIEF_MAX_BYTES_SRC +
   ' bytes; the store refuses at ' + ws.MAX_BRIEF_BYTES);
+
+/**
+ * THE HANDOFF'S MARKUP, wherever it is painted.
+ *
+ * v3.56.0: `renderHandoff` returned the page fragment; `handoffReaderContent`
+ * returns the openReader PAYLOAD and its `bodyHtml` is that same markup one
+ * layer in. Every assertion that used to call the first reads through this, so
+ * what each of them pins is unchanged — and '' when there is nothing to open,
+ * which is what a missing fragment used to be, so an assertion expecting markup
+ * still reds.
+ */
+function handoffHtml(R) {
+  const c = R.handoffReaderContent();
+  return c ? (c.bodyHtml || '') : '';
+}
 
 function makeRenderers(stateObj) {
   // Every collaborator the render functions close over is injected, so this
@@ -755,9 +783,24 @@ function makeRenderers(stateObj) {
     // words must be one reading, and a copy here could agree with the words
     // while the shipped one disagreed.
     extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
+    // ── THE TABLE SHOWS A WINDOW (v3.56.0) ──────────────────────────────
+    // The newest five, with a "Show N more" footer. `WS_WINDOW`, `WS_STEP` and
+    // `WS_STEP_ALL_MAX` are injected as the shipped LITERALS (below) for the
+    // same reason BRIEF_MAX_BYTES is, and `wsShownCount` — the arithmetic that
+    // also stretches the window to reach an open row — is lifted rather than
+    // inlined so the window on screen and the window this suite asserts are
+    // one function. `wsRowHtml` and `wsMoreHtml` are the two fragments
+    // renderWorkStreams composes and the "Show more" path re-emits.
+    extractFunction(viewSrc, 'wsShownCount', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'wsMoreHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'wsRowHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderWorkStreams', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'workStreamCounts', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'renderHandoff', 'memory.js') + '\n' +
+    // ── THE HANDOFF LEFT THE PAGE (v3.56.0) ─────────────────────────────
+    // `renderHandoff` is gone. A work-stream row press opens the document in
+    // the shell's READER overlay, and `handoffReaderContent` composes that
+    // payload — so what is lifted is the composer, and §17b drives it.
+    extractFunction(viewSrc, 'handoffReaderContent', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderJournal', 'memory.js') + '\n' +
     // The v3.48.0 brief editor. Lifted WITH renderBrief, because renderBrief
     // calls it in both of its branches — a stub would leave §6's escaping
@@ -768,6 +811,9 @@ function makeRenderers(stateObj) {
     // driven directly (§16g). `BRIEF_MAX_BYTES` is the route's own wall and is
     // injected as the literal, for the same reason BRIEF_TEMPLATE is.
     'const BRIEF_MAX_BYTES = ' + BRIEF_MAX_BYTES_SRC + ';\n' +
+    'const WS_WINDOW = ' + WS_WINDOW_SRC + ';\n' +
+    'const WS_STEP = ' + WS_STEP_SRC + ';\n' +
+    'const WS_STEP_ALL_MAX = ' + WS_STEP_ALL_MAX_SRC + ';\n' +
     extractFunction(viewSrc, 'briefStats', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderBriefEditor', 'memory.js') + '\n' +
@@ -802,7 +848,8 @@ function makeRenderers(stateObj) {
     // scope name, a machine id, a harness — is now interpolated by
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
-    'renderHandoff, renderJournal, renderBrief, aboutInfoHtml, ' +
+    'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
+    'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, renderSaveStatus, freshnessStep, freshnessTier, ' +
     'effectiveSave, briefStats, briefDismissDecision, ' +
@@ -873,7 +920,7 @@ const html = [
   R.renderWorkStreams([{ scope: XSS, machine: XSS, headline: XSS, harness: XSS, model: XSS,
     writtenAgeSeconds: 120, writtenAt: '2026-08-28T09:00:00.000Z' },
   { scope: 'other', machine: 'boxb', headline: 'ok', writtenAgeSeconds: 900 }], hostileDetail),
-  R.renderHandoff(),
+  handoffHtml(R),
   R.renderJournal(),
   R.renderBrief(hostileState.projectRead),
   R.aboutInfoHtml(),
@@ -935,7 +982,7 @@ ok('every attribute value in the output is balanced', (() => {
 // The body text goes through the shared renderer — proven end to end here,
 // not asserted by reading the source.
 ok('the handoff BODY is rendered through the shared markdown renderer (escape-first)',
-  R.renderHandoff().includes('chat-md-h'));
+  handoffHtml(R).includes('chat-md-h'));
 ok('the brief BODY is rendered through the shared markdown renderer',
   R.renderBrief(hostileState.projectRead).includes('chat-md-h'));
 
@@ -975,9 +1022,9 @@ ok('an explicit machineIsThisMachine:false says the handoff was written elsewher
 }
 
 // Truncation / unknown-total honesty.
-ok('a truncated handoff renders a note saying so', R.renderHandoff().includes('mem-note'));
+ok('a truncated handoff renders a note saying so', handoffHtml(R).includes('mem-note'));
 ok('read-side sanitisation is stated, not hidden',
-  R.renderHandoff().toLowerCase().includes('neutralised'));
+  handoffHtml(R).toLowerCase().includes('neutralised'));
 {
   const unknownTotal = makeRenderers({
     ...hostileState,
@@ -1151,7 +1198,16 @@ ok('read-side sanitisation is stated, not hidden',
   const T = makeRenderers(hostileState);
   // The OPEN pair is `d-agent-oldest`, which the fix moves from the second row
   // to the second-to-last: the mark has to travel with the row.
-  const out = T.renderWorkStreams(rows, { scope: 'd-agent-oldest', machine: 'boxa' });
+  //
+  // EVERY ROW IS PAINTED HERE, and that is a deliberate argument rather than a
+  // convenience. v3.56.0 cut the table to the newest five with a "Show N more"
+  // footer, and this section's subject is the ORDER — the two clocks disagreeing
+  // in the reverse direction, the no-clock row sorting last. Five of these six
+  // rows fit; asserting the order of five would quietly stop testing the two
+  // ends the fixture was built to separate. The window is a THIRD parameter,
+  // defaulted to the shipped `WS_WINDOW`, so passing Infinity here removes the
+  // window from this section and nothing else. §6e drives the default.
+  const out = T.renderWorkStreams(rows, { scope: 'd-agent-oldest', machine: 'boxa' }, Infinity);
   const order = [...out.matchAll(/data-mem-scope="([^"]*)" data-mem-machine="([^"]*)"/g)]
     .map((m) => m[1]);
 
@@ -1221,6 +1277,130 @@ ok('read-side sanitisation is stated, not hidden',
   ok('an empty list still renders no table at all', T.renderWorkStreams([], null) === '');
 }
 
+// ── §6e — THE TABLE SHOWS THE LATEST FIVE, AND A WAY PAST THEM ─────────
+//
+// THE REPORT. v3.55.0 put every (scope, machine) pair on screen, which was the
+// right call against the two pickers it replaced and the wrong size for a real
+// project: one that has run for a month across two machines is twenty rows, and
+// the table then owns the page the way the journal did before it was folded.
+// The maintainer asked for the newest five and a way to the rest.
+//
+// THE SHAPE IS THE DOMAINS LIST'S (v3.50.0): a footer row OUTSIDE the scroll
+// container, "Showing N of M" tracking it, and an APPEND rather than a
+// re-render. What is different is the STEP — see WS_STEP_ALL_MAX in memory.js —
+// and the open row, which must never be the one the window hides.
+{
+  const T = makeRenderers(hostileState);
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({
+    scope: 'ws-' + String(i).padStart(2, '0'), machine: 'boxa',
+    headline: 'stream ' + i, harness: 'claude-code',
+    // Ages ascend with the index, so the fixture's own order IS the rendered
+    // order and "the first five" is unambiguous.
+    writtenAgeSeconds: 60 * (i + 1),
+    writtenAt: new Date(Date.now() - 60_000 * (i + 1)).toISOString(),
+  }));
+  const rowsOf = (html) => [...html.matchAll(/data-mem-scope="([^"]*)"/g)].map((m) => m[1]);
+
+  // ── SEVEN PAIRS: five rows and a footer offering the other two ──────────
+  const seven = mk(7);
+  const out7 = T.renderWorkStreams(seven, null);
+  eq('seven work-streams paint FIVE rows', rowsOf(out7).length, WS_WINDOW_SRC);
+  eq('...and they are the five NEWEST, in order',
+    rowsOf(out7).join(','), 'ws-00,ws-01,ws-02,ws-03,ws-04');
+  ok('...with a footer row offering the other two, by number',
+    /id="mem-ws-more"[\s\S]*?Show 2 more/.test(out7), out7.slice(out7.indexOf('mem-ws-more') - 60));
+  ok('THE FOOTER IS OUTSIDE THE SCROLL CONTAINER, so it cannot sit below the '
+    + 'fold of the list it extends',
+  out7.indexOf('id="mem-ws-more"') > out7.indexOf('</table></div>'),
+  out7.slice(out7.indexOf('</tbody>')));
+  ok('...and it is a real <button>, so it is reachable by keyboard',
+    /<button type="button" class="cur-group-row mem-ws-more"/.test(out7));
+
+  // ── THE ROW SAYS WHAT PRESSING IT DOES ──────────────────────────────────
+  // Its visible text is the slug, which names the row and not the ACTION — and
+  // the action changed in v3.56.0 from "select this scope" to "open this
+  // handoff". The machine rides in the label too, because two rows can carry
+  // the same slug and a screen reader hears only this button.
+  ok('every row announces the action AND the machine, not just the slug',
+    (out7.match(/aria-label="Open the handoff for ws-\d\d on boxa"/g) || []).length === WS_WINDOW_SRC,
+    (out7.match(/aria-label="[^"]*"/g) || []).join(' | '));
+
+  // ── THE PRESS: every remaining row, and no footer ───────────────────────
+  const pressed = T.renderWorkStreams(seven, null, 7);
+  eq('after the press all seven are painted', rowsOf(pressed).length, 7);
+  ok('...and the footer is gone, because there is nothing left to offer',
+    !pressed.includes('id="mem-ws-more"'));
+
+  // ── THE STEP: "all the rest" until it would be a wall ───────────────────
+  // Two work-streams hidden is not worth a second press; forty is not worth
+  // one paint. WS_STEP_ALL_MAX is where the judgement changes, and it is read
+  // off live source, so this asserts the shipped rule rather than a number.
+  const justUnder = WS_WINDOW_SRC + WS_STEP_ALL_MAX_SRC;
+  ok('with exactly WS_STEP_ALL_MAX hidden, one press shows them ALL',
+    new RegExp('Show ' + WS_STEP_ALL_MAX_SRC + ' more').test(T.renderWorkStreams(mk(justUnder), null)),
+    T.renderWorkStreams(mk(justUnder), null).slice(-200));
+  ok('...and ONE more than that steps by WS_STEP instead of painting a wall',
+    new RegExp('Show ' + WS_STEP_SRC + ' more').test(T.renderWorkStreams(mk(justUnder + 1), null)),
+    T.renderWorkStreams(mk(justUnder + 1), null).slice(-200));
+  ok('CONTROL: those two are different numbers, so the branch is real',
+    WS_STEP_ALL_MAX_SRC !== WS_STEP_SRC);
+
+  // ── NOTHING TO OFFER: a list that fits says nothing about its own length ──
+  ok('five work-streams paint five rows and NO footer',
+    rowsOf(T.renderWorkStreams(mk(5), null)).length === 5
+    && !T.renderWorkStreams(mk(5), null).includes('mem-ws-more'));
+
+  // ── THE OPEN PAIR IS VISIBLE FROM THE FIRST PAINT ───────────────────────
+  // It is reached by STRETCHING the window, not by hoisting the row: this
+  // table's header says "newest first", and a highlighted row sitting above one
+  // three minutes younger is the same lie v3.55.0's third defect was — a table
+  // claiming an order it does not render — in a smaller font.
+  const eight = mk(8);
+  const open6 = T.renderWorkStreams(eight, { scope: 'ws-06', machine: 'boxa' });
+  const openRows = rowsOf(open6);
+  ok('an open pair at index 6 is on screen without any press',
+    openRows.includes('ws-06'), openRows.join(','));
+  eq('...reached by stretching the window to it, so the order is untouched',
+    openRows.join(','), 'ws-00,ws-01,ws-02,ws-03,ws-04,ws-05,ws-06');
+  ok('...NOT by hoisting it to the top, which would make "newest first" false',
+    openRows[0] === 'ws-00', openRows.join(','));
+  ok('...and it is still the row marked open',
+    /<tr class="mem-ws-row mem-ws-row-open"[\s\S]*?data-mem-scope="ws-06"/.test(open6));
+  ok('...with the last row still offering the one that is left',
+    /Show 1 more/.test(open6), open6.slice(-200));
+  eq('CONTROL: with no pair open the same fixture paints five',
+    rowsOf(T.renderWorkStreams(eight, null)).length, WS_WINDOW_SRC);
+
+  // ── THE COUNT LINE KEEPS THE STORE'S TOTALS AND ADDS THE WINDOW ─────────
+  const counts = T.workStreamCounts({ savedCopies: 8, distinctScopeCount: 8 }, 8, 5);
+  ok('the count line still reports the store\'s uncapped totals',
+    counts.includes('8 work-streams') && counts.includes('8 saved copies'), counts);
+  ok('...and says how much of them is on screen',
+    counts.includes('showing 5 of 8'), counts);
+  ok('...and says nothing about a window when everything is shown',
+    !T.workStreamCounts({ savedCopies: 8, distinctScopeCount: 8 }, 8, 8).includes('showing 5 of'),
+    T.workStreamCounts({ savedCopies: 8, distinctScopeCount: 8 }, 8, 8));
+  // TWO CAPS, TWO SENTENCES. The store's own cap on how many pairs it LISTS is
+  // a different fact from this table's window, and collapsing them would report
+  // one as the other.
+  const both = T.workStreamCounts(
+    { savedCopies: 99, distinctScopeCount: 40, scopesTruncated: true }, 20, 5);
+  ok('the store\'s cap and the table\'s window are stated separately',
+    both.includes('showing the 20 most recently saved') && both.includes('showing 5 of 20'), both);
+
+  // ── wsShownCount, DRIVEN DIRECTLY ───────────────────────────────────────
+  eq('a short list is shown whole', T.wsShownCount(mk(3), null, 5), 3);
+  eq('a long list is cut to the window', T.wsShownCount(mk(30), null, 5), 5);
+  eq('an open row inside the window does not move it',
+    T.wsShownCount(mk(30), { scope: 'ws-02', machine: 'boxa' }, 5), 5);
+  eq('an open row outside it stretches the window exactly far enough',
+    T.wsShownCount(mk(30), { scope: 'ws-09', machine: 'boxa' }, 5), 10);
+  eq('a machine that is not in the list stretches nothing',
+    T.wsShownCount(mk(30), { scope: 'ws-09', machine: 'elsewhere' }, 5), 5);
+  eq('Infinity means every row — the seam §6c uses to test the ORDER',
+    T.wsShownCount(mk(30), null, Infinity), 30);
+}
+
 // ── §6d — A RE-ORDER IS A REPAINT, AND ONLY THEN ─────────────────────
 //
 // The other half of the same defect. `screenSignature` is the no-op guard: the
@@ -1229,10 +1409,62 @@ ok('read-side sanitisation is stated, not hidden',
 // Two saves in the same age band crossing each other move every row and no cell
 // — which is exactly the case a projection off `pr.scopes` cannot see.
 {
-  const sigOf = (st) => new Function('state',
-    ['formatAge', 'effectiveSave', 'workStreamOrder', 'newestPair', 'projectMetaLine',
-      'screenSignature'].map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
-    + '\nreturn screenSignature();')(st);
+  // `wsShownCount` joins them in v3.56.0: the table paints a WINDOW — the newest
+  // five with a "Show N more" footer — so the mark is the rows on screen plus
+  // the number hidden behind it, and that split is this function's arithmetic.
+  // Lifted from live source, never stubbed: a stub would let the mark describe a
+  // window the table is not painting, which is the same class of bug as the one
+  // this section exists for. WS_WINDOW is injected as the shipped literal.
+  const sigOf = (st) => new Function('state', 'WS_WINDOW',
+    ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
+      'projectMetaLine', 'screenSignature']
+      .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
+    + '\nreturn screenSignature();')(st, WS_WINDOW_SRC);
+
+  // ── THE WINDOW IS PART OF THE MARK (v3.56.0) ──────────────────────────
+  // The table paints five of N. A signature that folded in EVERY row would
+  // repaint the pane when a hidden row's age crossed a band — no pixel moves,
+  // and the repaint closes the ⓘ and churns focus. One that folded in the shown
+  // rows ALONE would miss a save appearing behind the footer, whose label and
+  // whose count line both have to move. So it is the shown rows PLUS the hidden
+  // count, and both halves are asserted.
+  {
+    const many = (n, extraAge) => ({
+      activeDomain: 'acme', activeProject: 'lumina', staleWrite: false, indexError: null,
+      scope: 'a-00', machine: 'boxa', projects: [], detail: null, wsWindow: WS_WINDOW_SRC,
+      projectRead: { savedCopies: n, distinctScopeCount: n,
+        scopes: Array.from({ length: n }, (_, i) => ({
+          scope: 'a-' + String(i).padStart(2, '0'), machine: 'boxa', headline: 'h' + i,
+          // The LAST row's age is the one the caller can move, so a change
+          // behind the footer is expressible without touching a shown row.
+          writtenAgeSeconds: (i === n - 1 && extraAge) ? extraAge : 60 * (i + 1),
+        })),
+        brief: { present: false } },
+    });
+
+    ok('OPENING THE WINDOW REPAINTS — the rows behind the footer are now on screen',
+      sigOf(many(8)) !== sigOf({ ...many(8), wsWindow: 8 }));
+    ok('A SAVE APPEARING BEHIND THE FOOTER REPAINTS — the footer\'s own label and '
+      + 'the count line both move, and no shown row does',
+    sigOf(many(8)) !== sigOf(many(9)));
+    ok('CONTROL: a HIDDEN row\'s age crossing a band does NOT repaint — nothing '
+      + 'on screen would look different, and a repaint closes the ⓘ',
+    sigOf(many(8, 3600)) === sigOf(many(8, 7200)));
+    ok('CONTROL: the same age change on a SHOWN row DOES repaint, so the check '
+      + 'above is about visibility rather than about ages being ignored',
+    (() => {
+      // The first row stays FIRST at either age — every other row is a week old
+      // — so this moves a word on screen and nothing else. (Written first with
+      // the fixture above and re-done: bumping its row 0 to an hour made it the
+      // OLDEST of eight one-minute rows and sent it behind the footer, so the
+      // assertion was measuring the hidden case twice.)
+      const bump = (secs) => { const st = many(8); st.projectRead.scopes.forEach((x, i) => {
+        x.writtenAgeSeconds = i === 0 ? secs : 7 * 86400 + i; }); return st; };
+      return sigOf(bump(3600)) !== sigOf(bump(7200));
+    })());
+    ok('CONTROL: an identical state still produces an identical mark',
+      sigOf(many(8)) === sigOf(many(8)));
+  }
 
   // A third row is strictly the newest in both states, so `newestPair` — which
   // reads the raw response and is folded in separately — CANNOT be what moves
@@ -1280,18 +1512,31 @@ function summariesIn(markup) {
 }
 
 const allSummaries = summariesIn(html);
-// TWO, not three, since v3.55.0. The standing brief stopped being a <details>
-// when it became a block with a pencil beside its title, so the page's folds
-// are the handoff and the journal. The floor is lowered rather than deleted —
-// it exists so the scan below cannot pass over a page that rendered NO
-// summaries at all — and the block directly under it pins which two they are,
-// so a third fold reappearing or one of these two vanishing is still caught.
-ok('the fixture rendered at least 2 <summary> elements (the scan is not vacuous)',
-  allSummaries.length >= 2, 'found ' + allSummaries.length);
+// ONE, not two, since v3.56.0 — and three before v3.55.0. The standing brief
+// stopped being a <details> when it became a block with a pencil beside its
+// title; the HANDOFF's fold went with the block it led, because the document
+// now opens in the shell's reader overlay, which has its own close and no
+// collapsed state to remember. The journal is the page's only fold.
+//
+// The floor is lowered rather than deleted — it exists so the scan below cannot
+// pass over a page that rendered NO summaries at all — and the block directly
+// under it pins which fold it is, so one reappearing or this one vanishing is
+// still caught.
+ok('the fixture rendered at least 1 <summary> element (the scan is not vacuous)',
+  allSummaries.length >= 1, 'found ' + allSummaries.length);
 {
   const folds = (html.match(/data-mem-fold="([a-z]+)"/g) || []).sort().join(',');
-  ok('...and the two folds are the handoff and the journal, by name',
-    folds === 'data-mem-fold="handoff",data-mem-fold="journal"', folds);
+  ok('...and the page\'s one fold is the journal, by name',
+    folds === 'data-mem-fold="journal"', folds);
+  // THE HANDOFF FOLD IS GONE FROM THE PAGE, and named here so a revert reds
+  // rather than merely changing a count. Over COMMENT-STRIPPED source on the
+  // second half, like the brief's line below: memory.js explains at length why
+  // the fold left, and a raw scan would fire on the explanation.
+  ok('THE HANDOFF IS NOT A FOLD EITHER: it opens in the reader, so there is no '
+    + 'lead <details> and no `.mem-fold-lead` on the page',
+    !html.includes('data-mem-fold="handoff"') && !html.includes('mem-fold-lead')
+    && !stripComments(viewSrc).includes('data-mem-fold="handoff"')
+    && !stripComments(viewSrc).includes('mem-fold-lead'));
   // Over COMMENT-STRIPPED source on the second half: this file's history
   // records a mutation that a comment satisfied, and memory.js's wire() names
   // the retired attribute in prose while explaining why it is gone.
@@ -1804,6 +2049,11 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     // over the response, so the function that decides that order travels
     // with screenSignature everywhere it is executed.
     extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
+    // ...and, since v3.56.0, the WINDOW that order is sliced by: the table
+    // paints the newest five with a "Show N more" footer, so the mark is the
+    // rows on screen plus the number behind the footer. Lifted for the same
+    // reason `workStreamOrder` is — the mark has to describe what is painted.
+    extractFunction(viewSrc, 'wsShownCount', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
@@ -1818,7 +2068,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
 
   const api = new Function(
     'state', 'renderSidebar', 'renderMain', 'wire', 'isCurrentMount', 'fetch', 'document',
-    'FOCUSABLE_IDS', 'FOCUS_FALLBACK',
+    'FOCUSABLE_IDS', 'FOCUS_FALLBACK', 'WS_WINDOW',
     'setTimeout', 'clearTimeout', 'POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS', body)(
     stateObj,
     // Counted on renderMain so one render() is one tick, and the sidebar half
@@ -1830,7 +2080,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     () => mounted,
     fakeFetch,
     { hidden: !!opts.hidden, activeElement: null, getElementById: () => null, querySelector: () => null },
-    FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC,
+    FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC, WS_WINDOW_SRC,
     fakeSetTimeout, fakeClearTimeout,
     // The REAL constants, read off the live source above. A change to any of
     // them moves this harness, so §11a's arithmetic is a claim about
@@ -2634,7 +2884,12 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
   const fullState = { ...base,
     projectRead: { ...hostileState.projectRead, scopes: [{ scope: 'a' }, { scope: 'b' }] } };
   const full = makeRenderers(fullState).renderProject();
-  ok('branch check: the FULL fixture really renders the handoff card', full.includes('CURRENT HANDOFF'));
+  // RE-POINTED (v3.56.0): there is no "CURRENT HANDOFF" eyebrow any more — the
+  // document opens in the reader — so the FULL branch is identified by what it
+  // does render instead, the work-stream TABLE. Still a positive identification
+  // of the branch, which is the property this line exists for.
+  ok('branch check: the FULL fixture really renders the work-stream table',
+    full.includes('mem-ws-table') && full.includes('data-mem-scope="a"'));
   ok('the offer reaches the FULL branch (scopes + a handoff)', full.includes('id="mem-reload"'));
 
   const briefOnly = makeRenderers({ ...base, detail: null,
@@ -3156,6 +3411,11 @@ section('§16 — Projects inside a domain (v3.48.0)');
       'state', 'document', 'render', 'saveBrief', 'reportAsyncMountFailure', 'keyOf', 'activeKey',
       'selectProject', 'copyAgentInstructions', 'loadScope', 'refreshIndex', 'reloadActive',
       'BRIEF_TEMPLATE', 'BRIEF_MAX_BYTES', 'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingFocusId',
+      // v3.56.0: wire() hands the table's rows to `bindWorkStreamRows` and its
+      // footer to `showMoreWorkStreams`. Neither is this block's subject, but a
+      // free identifier inside a lifted function is a CRASH rather than a
+      // failing assertion — §17c drives both for real.
+      'bindWorkStreamRows', 'showMoreWorkStreams',
       extractFunction(viewSrc, 'briefStats', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
@@ -3167,7 +3427,8 @@ section('§16 — Projects inside a domain (v3.48.0)');
       () => { renders.push(1); },
       async () => {}, () => {}, (d, q) => d + '/' + q, () => 'a/b',
       async () => {}, async () => {}, async () => {}, async () => {}, async () => {},
-      '', Number(BRIEF_MAX_BYTES_SRC), 10, 50, null);
+      '', Number(BRIEF_MAX_BYTES_SRC), 10, 50, null,
+      () => {}, () => {});
     api.wire(1);
     ok('the input handler was bound', typeof field._input === 'function');
 
@@ -3192,6 +3453,141 @@ section('§16 — Projects inside a domain (v3.48.0)');
     eq('THE DRAFT IN STATE IS WHAT THE SAVE WILL SEND', st.briefEdit.text, 'back under');
     eq('AND NOT ONE RENDER HAPPENED — a render rebuilds the textarea and takes '
       + 'the caret and the selection with it', renders.length, 0);
+  }
+
+  // ── §16h — THE WALL IS INVISIBLE BELOW THE CAP, BY COMPUTED EFFECT ──────
+  //
+  // THE DEFECT, REPORTED FROM PRODUCTION. On a standing brief of 8,484 of
+  // 32,768 bytes — a quarter of the budget — the maintainer's screenshot shows
+  // the status line reading `unchanged · 1309 words · 8484 of 32768 bytes` and,
+  // directly beneath it, the amber "Too long to save. The standing brief is
+  // capped at 32768 bytes…" wall, fully visible, with Save enabled. A warning
+  // about a limit the draft is nowhere near, on the one screen whose entire job
+  // is to say whether a save will land.
+  //
+  // WHY EVERY ASSERTION ABOVE STAYED GREEN THROUGH IT. They are all about the
+  // MARKUP, and the markup was never wrong: renderBriefEditor emits the wall
+  // with `hidden` below the cap (§16 asserts it) and the input handler flips
+  // `.hidden` without a render (§16g drives all three transitions). The defect
+  // is one layer down, in the CASCADE: `[hidden] { display: none }` is a
+  // USER-AGENT rule, and `.mem-note { display: flex }` is an AUTHOR rule.
+  // Author beats UA at every specificity, so the wall was `display: flex` in
+  // every state it has ever had, `hidden` attribute or not.
+  //
+  // views/chat.css records this exact hazard for `.chat-cost-panel` — "a rule
+  // setting `display` on this selector would override the UA's `[hidden] {
+  // display: none }`" — and memory.css simply did not carry the counter-rule.
+  //
+  // SO THIS GUARD RESOLVES THE CASCADE rather than reading either layer alone:
+  // it takes the wall's REAL class list off the rendered markup, finds every
+  // rule in memory.css that could match that element, and asks what `display`
+  // wins when `hidden` is present. A markup-only assertion cannot see this, and
+  // a CSS-only grep for `display` would fire on every correct stylesheet.
+  {
+    const over = 'x'.repeat(Number(BRIEF_MAX_BYTES_SRC) + 1);
+    // 8,484 bytes — the maintainer's own draft size, to the byte, so this
+    // fixture is the reported case rather than a nearby one.
+    const real = 'x'.repeat(8484);
+    const at8k = mkEdit({ text: real, loaded: real }).renderBriefEditor(present, false);
+
+    ok('THE REPORTED CASE: an 8,484-byte draft reports itself as unchanged and '
+      + 'a quarter of the budget', /unchanged/.test(at8k) && at8k.includes('8484 of 32768 bytes'),
+    at8k.slice(at8k.indexOf('mem-brief-stats'), at8k.indexOf('mem-brief-stats') + 220));
+    ok('...and Save is offered, because the save WILL land',
+      !/id="mem-brief-save"[^>]* disabled/.test(at8k));
+    ok('...and the wall carries the `hidden` attribute',
+      /id="mem-brief-over" hidden>/.test(at8k), at8k.slice(at8k.indexOf('mem-brief-over') - 40,
+        at8k.indexOf('mem-brief-over') + 120));
+
+    // THE ELEMENT'S REAL CLASS LIST, off the markup — never retyped, or this
+    // would resolve the cascade for a class the editor does not emit.
+    const wallTag = (/<div class="([^"]*)" id="mem-brief-over"/.exec(at8k) || [])[1];
+    ok('SETUP: the wall\'s class list was read off the rendered markup',
+      !!wallTag && wallTag.includes('mem-note'), String(wallTag));
+    const wallClasses = new Set(String(wallTag || '').split(/\s+/).filter(Boolean));
+
+    // A DELIBERATELY SMALL MATCHER. It understands exactly the shapes this
+    // stylesheet uses for the wall — a compound of classes and attribute
+    // selectors, optionally with descendant ancestors — and answers only for a
+    // STANDALONE element carrying `hidden`. An ancestor-qualified rule is
+    // treated as POSSIBLY matching (its rightmost compound is what decides),
+    // which is the conservative direction: it can report a rule this guard
+    // cannot rule out, never miss one that applies.
+    const compoundMatches = (compound, withHidden) => {
+      const parts = compound.match(/\.[A-Za-z0-9_-]+|\[[^\]]+\]|:[A-Za-z-]+(?:\([^)]*\))?|[A-Za-z][A-Za-z0-9-]*/g) || [];
+      for (const part of parts) {
+        if (part.startsWith('.')) { if (!wallClasses.has(part.slice(1))) return false; }
+        else if (part === '[hidden]') { if (!withHidden) return false; }
+        else if (part.startsWith('[')) return false;          // some other attribute: cannot match
+        else if (part.startsWith(':')) return false;          // a state we are not in
+        else if (part !== 'div') return false;                // an element that is not this one
+      }
+      return true;
+    };
+    const specificity = (compound) => {
+      const ids = (compound.match(/#[A-Za-z0-9_-]+/g) || []).length;
+      const cls = (compound.match(/\.[A-Za-z0-9_-]+|\[[^\]]+\]|:[A-Za-z-]+/g) || []).length;
+      return ids * 100 + cls * 10;
+    };
+
+    // Every `display` declaration in memory.css that could reach this element,
+    // in source order, with its specificity and whether it needs `[hidden]`.
+    const displayRules = [];
+    const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    const wallCss = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
+    while ((m = RULE_RE.exec(wallCss)) !== null) {
+      const selectors = m[1].split(',').map((x) => x.trim()).filter(Boolean);
+      const decl = /(?:^|;)\s*display\s*:\s*([^;!]+)(!important)?/i.exec(m[2]);
+      if (!decl) continue;
+      for (const sel of selectors) {
+        if (/[>+~]/.test(sel)) continue;                      // a combinator this element is not in
+        const compound = sel.split(/\s+/).pop();
+        if (!compoundMatches(compound, true)) continue;
+        displayRules.push({
+          sel, compound, value: decl[1].trim(), important: !!decl[2],
+          needsHidden: compound.includes('[hidden]'),
+          spec: specificity(compound),
+        });
+      }
+    }
+
+    ok('SETUP: the resolver found the `display` rules that reach this element '
+      + '(the cascade check below is not vacuous)',
+    displayRules.length > 0, JSON.stringify(displayRules.map((r) => r.sel)));
+
+    // WHAT WINS WITH `hidden` PRESENT. Highest `!important`, then highest
+    // specificity, then last in source order — the cascade, for this one
+    // element, with the UA's `display: none` as the starting point.
+    const winner = displayRules.reduce((best, r) => {
+      if (!best) return r;
+      if (r.important !== best.important) return r.important ? r : best;
+      if (r.spec !== best.spec) return r.spec > best.spec ? r : best;
+      return r;                                               // later in source order
+    }, null);
+    ok('THE WALL IS `display: none` WHEN `hidden` IS SET — resolved through the '
+      + 'stylesheet, not read off the attribute',
+    winner && winner.value === 'none', winner ? winner.sel + ' -> ' + winner.value : 'no rule');
+    ok('...and the rule that wins is one GUARDED by [hidden], so the visible '
+      + 'state is untouched', !!winner && winner.needsHidden, winner ? winner.sel : 'none');
+
+    // ...and the other direction, so this is not a stylesheet that hides the
+    // wall unconditionally: with `hidden` absent, a `display` must still apply.
+    const shown = displayRules.filter((r) => !r.needsHidden);
+    ok('CONTROL: with `hidden` absent the wall is still laid out — the fix hid '
+      + 'the element, it did not delete it',
+    shown.length > 0 && shown.every((r) => r.value !== 'none'),
+    JSON.stringify(shown.map((r) => r.sel + ' -> ' + r.value)));
+
+    // AND THE THREE TRANSITIONS, at the markup layer, over the real sizes.
+    ok('TRANSITION 1 — first paint under the cap: hidden',
+      /id="mem-brief-over" hidden>/.test(at8k));
+    ok('TRANSITION 2 — over the cap: shown, and Save disabled',
+      !/id="mem-brief-over" hidden>/.test(mkEdit({ text: over }).renderBriefEditor(present, false))
+      && /id="mem-brief-save"[^>]* disabled/.test(mkEdit({ text: over }).renderBriefEditor(present, false)));
+    ok('TRANSITION 3 — shrunk back under it: hidden again, and Save offered',
+      /id="mem-brief-over" hidden>/.test(at8k)
+      && !/id="mem-brief-save"[^>]* disabled/.test(at8k));
   }
 
   // ── THE DRAFT'S READOUT ─────────────────────────────────────────────────
@@ -3263,6 +3659,9 @@ section('§16 — Projects inside a domain (v3.48.0)');
     'state', 'document', 'render', 'saveBrief', 'reportAsyncMountFailure', 'keyOf', 'activeKey',
     'selectProject', 'copyAgentInstructions', 'loadScope', 'refreshIndex', 'reloadActive',
     'BRIEF_TEMPLATE', 'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingFocusId',
+    // See the note in §16g: wire() reaches for both of the table's wiring
+    // functions, and a free identifier inside a lifted function is a crash.
+    'bindWorkStreamRows', 'showMoreWorkStreams',
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire, pending: () => pendingFocusId };')(
@@ -3272,7 +3671,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
     async () => { calls.save++; },
     () => {}, (d, p) => d + '/' + p, () => 'a/b',
     async () => {}, async () => {}, async () => {}, async () => {}, async () => {},
-    '', 10, 50, null);
+    '', 10, 50, null, () => {}, () => {});
   api.wire(1);
   ok('the keydown handler was bound to the textarea', typeof el._keydown === 'function');
 
@@ -3661,7 +4060,20 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   }
 }
 
-// ── 18d · THE RENDERED HANDOFF: a lead fold with the widget's readings ─────
+// ── 18d · THE HANDOFF, AS A READER PAYLOAD (v3.56.0) ────────────────────
+//
+// WHAT CHANGED, AND WHY EVERY ASSERTION BELOW MOVED WITH IT. This section used
+// to drive `renderHandoff`, which printed the whole document on the page as a
+// lead <details>. The maintainer's verdict on that in production was that a
+// dashboard should not also be a document viewer, so the row press now opens
+// the handoff in the shell's READER overlay — the wiki's own answer to the same
+// question — and `handoffReaderContent` composes the payload.
+//
+// So the fold assertions (open by default, remembered close, the leader's
+// accent rule, the pip in the summary) are gone WITH THE ELEMENT THEY PINNED,
+// and what replaces them pins the facts that had to survive the move: the
+// document, the Saved reading, the live clock, the badges, the scope and the
+// machine, and the way back to the row.
 {
   const now = Date.now();
   const st = (over = {}) => ({
@@ -3681,53 +4093,98 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     ...over,
   });
 
-  const h = makeRenderers(st()).renderHandoff();
-  ok('the handoff is a <details> the user can collapse, like the other two',
-    /<details[^>]*data-mem-fold="handoff"/.test(h), h.slice(0, 260));
-  ok('...OPEN by default, because it is the answer this screen exists to give',
-    /<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/.test(h), h.slice(0, 260));
-  ok('...marked as the LEADER, so three cards do not have to be read to be ranked',
-    /class="[^"]*\bmem-fold-lead\b/.test(h), h.slice(0, 260));
+  const c = makeRenderers(st()).handoffReaderContent();
+  ok('a work-stream with a handoff produces a reader payload', !!c, String(c));
+  ok('THE PATH LINE carries the project, the work-stream AND the machine — the '
+    + 'three facts that address the file, and the reason two rows can share a name',
+    c.slug === 'state/lumina/main/boxa/current.md', c.slug);
+  ok('...and the machine and work-stream are chips as well, so they are readable '
+    + 'rather than parsed out of a path',
+    c.tags.includes('work-stream: main') && c.tags.includes('machine: boxa'),
+    JSON.stringify(c.tags));
+  ok('THE TITLE is the agent\'s own headline, promoted out of the preamble',
+    c.title === 'Headline', c.title);
+  ok('the document is rendered through the shared markdown renderer (escape-first)',
+    c.bodyHtml.includes('chat-md-h'), c.bodyHtml.slice(0, 200));
+  ok('...and the preamble it was promoted from is not repeated in the body',
+    !c.bodyHtml.includes('&gt; Headline'), c.bodyHtml.slice(0, 300));
 
-  const sum = (m => m ? m[0] : '')(/<summary[\s\S]*?<\/summary>/.exec(h));
-  ok('the summary really exists (the checks below are not vacuous)', sum.length > 60, sum);
-  ok('THE PIP is in the summary, at the step the age says — the SAME class the '
-    + 'save strip uses, never a second freshness ladder',
-    /class="mem-save-pip mem-save-pip-s2"/.test(sum), sum);
-  ok('THE LIVE CLOCK is in the summary, carrying the stamp effectiveSave resolved',
-    /data-mem-age-at="[^"]+"/.test(sum), sum);
-  ok('...and the words beside it are the age, not a raw timestamp',
-    /class="tx-readout-value">2 hr ago</.test(sum), sum);
+  ok('THE SAVED READING travels with the document, as the same instrument the '
+    + 'Status block uses — never a second vocabulary',
+    /class="tx-readout-value">2 hr ago</.test(c.bodyHtml), c.bodyHtml.slice(0, 400));
+  ok('...with harness · model as its provenance',
+    /class="tx-readout-prov">claude-code · opus-5/.test(c.bodyHtml), c.bodyHtml.slice(0, 500));
   ok('...saying it updates live, because it does',
-    /updates live/.test(sum), sum);
-  for (const control of ['<button', '<select', '<input', '<textarea', '<a ']) {
-    ok('the summary holds no ' + control + '> — a control there toggles its own section',
-      !sum.toLowerCase().includes(control), sum);
-  }
-  ok('the document itself is in the fold BODY, not the summary',
-    /class="mem-fold-body"[\s\S]*chat-md-h/.test(h));
+    /updates live/.test(c.bodyHtml), c.bodyHtml.slice(0, 500));
+  ok('THE LIVE CLOCK\'s hook rides on the reading, so tickAges rewrites the words '
+    + 'inside the overlay exactly as it does on the page',
+    /data-mem-age-at="[^"]+"/.test(c.bodyHtml), c.bodyHtml.slice(0, 400));
+  ok('THE EXACT STAMP is reachable as text, not as a tooltip',
+    c.bodyHtml.includes('class="visually-hidden"') && !/title="/.test(c.bodyHtml),
+    c.bodyHtml.slice(0, 400));
+
+  ok('ESCAPE AND THE ✕ RETURN FOCUS TO THE ROW that opened it',
+    c.returnFocusTo === 'mem-ws-active', String(c.returnFocusTo));
+  ok('NO `domain` on the payload — a handoff is not a wiki page, so the reader\'s '
+    + 'RAW-source bar must not fire a request that can only answer "no"',
+    !('domain' in c), JSON.stringify(Object.keys(c)));
+  ok('...and no pip: the overlay carries a reading, not the page\'s freshness mark',
+    !/mem-save-pip/.test(c.bodyHtml), c.bodyHtml.slice(0, 300));
 
   // "updates live" IS A CLAIM. With no clock armed it must not be made.
-  const still = makeRenderers(st({ ageTickerArmed: false })).renderHandoff();
+  const still = makeRenderers(st({ ageTickerArmed: false })).handoffReaderContent();
   ok('CONTROL: with no clock armed the reading does NOT claim to update live',
-    !/updates live/.test(still) && /class="tx-readout-value">2 hr ago</.test(still), still.slice(0, 600));
+    !/updates live/.test(still.bodyHtml)
+    && /class="tx-readout-value">2 hr ago</.test(still.bodyHtml), still.bodyHtml.slice(0, 600));
 
-  // A REMEMBERED CLOSE WINS over the default, exactly as the brief's does.
-  const closed = makeRenderers(st({ openFolds: { handoff: false } })).renderHandoff();
-  ok('a fold the user closed STAYS closed across the next render',
-    !/<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/.test(closed), closed.slice(0, 200));
+  // ── THE BADGES. `trimmed` is the attention badge (content did not survive the
+  // save) and `clipped` the quiet one (a label was shortened). They must never
+  // share a class: badging `clipped` as `incomplete` is the exact false alarm
+  // the two verdicts were split to stop, and the reader is a SECOND surface
+  // where that could now happen.
+  const trimmed = makeRenderers(st({
+    detail: { ...st().detail, current: { ...st().detail.current, lastSaveKind: 'trimmed' } },
+  })).handoffReaderContent();
+  ok('a TRIMMED save badges the document `incomplete`, on the reading itself',
+    /mem-badge-attn">incomplete</.test(trimmed.bodyHtml), trimmed.bodyHtml.slice(0, 500));
+  const clipped = makeRenderers(st({
+    detail: { ...st().detail, current: { ...st().detail.current, lastSaveKind: 'clipped' } },
+  })).handoffReaderContent();
+  ok('a CLIPPED save says `summary shortened`, in the QUIET badge',
+    /mem-badge-quiet">summary shortened</.test(clipped.bodyHtml), clipped.bodyHtml.slice(0, 500));
+  ok('...and never the other one — nothing was lost, and saying so would be the '
+    + 'false alarm the two verdicts exist to keep apart',
+    !/incomplete/.test(clipped.bodyHtml), clipped.bodyHtml.slice(0, 500));
+  ok('CONTROL: a complete save carries neither badge',
+    !/mem-badge/.test(c.bodyHtml), c.bodyHtml.slice(0, 400));
 
-  // AN UNKNOWN AGE is the dashed ring and words, never step 0 and never "0s".
+  // AN UNKNOWN AGE is words, never step 0 and never "0s".
   const unknown = makeRenderers(st({
     detail: { ...st().detail, current: { ...st().detail.current, writtenAgeSeconds: null, writtenAt: null, savedAt: null },
       journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-  })).renderHandoff();
-  ok('an unknown age takes the dashed -unknown ring, not step 0',
-    /mem-save-pip-unknown/.test(unknown) && !/mem-save-pip-s0/.test(unknown), unknown.slice(0, 400));
-  ok('...and says so in words rather than showing a bare mark',
-    /time unknown/.test(unknown), unknown.slice(0, 400));
+  })).handoffReaderContent();
+  ok('an unknown age renders NO readout — a readout states a READING, and there '
+    + 'is none; "unknown" is not a figure',
+    !/tx-readout/.test(unknown.bodyHtml), unknown.bodyHtml.slice(0, 400));
+  ok('...and says so in words rather than leaving the reading simply absent',
+    /time unknown/.test(unknown.bodyHtml), unknown.bodyHtml.slice(0, 400));
   ok('...and emits NO clock hook, because there is nothing to recount',
-    !/data-mem-age-at/.test(unknown), unknown.slice(0, 400));
+    !/data-mem-age-at/.test(unknown.bodyHtml), unknown.bodyHtml.slice(0, 400));
+
+  // AN ABSENT HANDOFF IS SAID, NOT RENDERED AS AN EMPTY PANEL.
+  const absent = makeRenderers(st({
+    detail: { ...st().detail, current: { present: false }, message: 'STORE-SAYS-SO' },
+  })).handoffReaderContent();
+  ok('a pair whose handoff could not be read still opens, saying so in the '
+    + 'store\'s own words rather than as a blank document',
+    /STORE-SAYS-SO/.test(absent.bodyHtml), absent.bodyHtml.slice(0, 300));
+  ok('...and does NOT invent a reading for a document that is not there',
+    !/tx-readout/.test(absent.bodyHtml) && !/time unknown/.test(absent.bodyHtml),
+    absent.bodyHtml.slice(0, 300));
+
+  // NOTHING TO OPEN IS NULL, not an empty panel.
+  ok('with no scoped read at all there is no payload',
+    makeRenderers(st({ detail: null })).handoffReaderContent() === null);
 }
 
 // ── 18d2 · A MID-READ FOLD MUST NOT EMIT A STATE IT DOES NOT MEAN ────────
@@ -3775,31 +4232,363 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     + 'close the transient by hiding the section',
     /id="mem-brief-edit"/.test(out));
 
-  // THE HANDOFF IS THE LIVE SUBJECT OF THE ORIGINAL RULE, in both directions.
+  // ── AND THE HANDOFF'S FOLD IS GONE TOO (v3.56.0), so the rule's remaining
+  // subject on this page is the JOURNAL, which is the one fold left. The two
+  // CONTROLs below were "with a handoff to read, its fold IS emitted open" and
+  // "a user who closed it keeps it closed"; both pinned an element that no
+  // longer exists, because the document opens in the reader overlay and an
+  // overlay has no collapsed state to be raced into.
+  //
+  // What replaces them is the positive form of the same claim: the page emits
+  // NO handoff fold at all, in any state, and the document is still reachable —
+  // through a row whose press opens it.
   const settledWithHandoff = { ...midRead, detailLoading: false,
     detail: { scope: 'main', machine: 'boxa', machines: [],
       current: { present: true, writtenAgeSeconds: 120, writtenAt: new Date().toISOString(),
         text: '## Where things stand\n\nx' },
       journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } } };
-  ok('CONTROL: with a handoff to read, its fold IS emitted open',
-    /<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/
-      .test(makeRenderers(settledWithHandoff).renderProject()));
-  ok('CONTROL: and a user who closed it keeps it closed',
-    !/<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/
-      .test(makeRenderers({ ...settledWithHandoff, openFolds: { handoff: false } }).renderProject()));
+  const settled = makeRenderers(settledWithHandoff).renderProject();
+  ok('with a handoff to read, the page emits NO fold for it — and no document',
+    !/data-mem-fold="handoff"/.test(settled)
+    && !/Where things stand/.test(settled), settled.slice(0, 200));
+  ok('...and the way to it is a row whose press opens the reader',
+    /class="mem-ws-open"/.test(settled) && /data-mem-scope="main"/.test(settled));
+  ok('CONTROL: the journal fold is still there, so "no fold" is about the '
+    + 'handoff rather than about folds having been deleted wholesale',
+    /data-mem-fold="journal"/.test(settled));
 
   // AND THE EMPTY CASE STILL SHOWS SOMETHING. The rule the brief's transient
-  // came from — "do not leave the page blank" — is now answered by block ③
-  // carrying the no-handoff card rather than by opening a different section.
+  // came from — "do not leave the page blank" — is answered by the Work-streams
+  // block, which carries the no-handoff card in place of the table when a
+  // project has no saved pairs at all.
   const settledNoHandoff = { ...midRead, detailLoading: false,
+    projectRead: { scopes: [], brief: midRead.projectRead.brief },
     detail: { scope: 'main', machine: 'boxa', current: { present: false }, machines: [],
       journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } } };
   const empty = makeRenderers(settledNoHandoff).renderProject();
-  ok('with no handoff, the Current handoff block says so in its own body',
-    /No handoff under this scope yet/.test(empty), empty.slice(0, 200));
+  ok('with nothing saved, the Work-streams block says so in its own body — the '
+    + 'missing thing is missing where you looked for it',
+    /No handoff saved yet/.test(empty), empty.slice(0, 300));
   ok('...and the brief is still fully on the page beneath it',
     /id="mem-brief-edit"/.test(empty));
 }
+// ── §17c — A ROW PRESS OPENS THE READER, AND THE FOOTER APPENDS ────────
+//
+// The two behaviours v3.56.0 added, driven through the REAL handlers `wire`
+// binds, against a fake document that knows only the elements the table emits.
+// A markup assertion cannot see either of them: one is an `openReader` call and
+// the other is an `insertAdjacentHTML` into a live <tbody>.
+{
+  const now = Date.now();
+  const iso = (secs) => new Date(now - secs * 1000).toISOString();
+  const scopes = Array.from({ length: 8 }, (_, i) => ({
+    scope: 'ws-' + String(i).padStart(2, '0'), machine: 'boxa',
+    headline: 'stream ' + i, harness: 'claude-code', model: 'opus-5',
+    writtenAgeSeconds: 60 * (i + 1), writtenAt: iso(60 * (i + 1)),
+  }));
+
+  // A row button, and a <tr> that owns it — enough for both the bind pass and
+  // the append pass, which reaches for `tbody.children` and `querySelectorAll`.
+  const mkBtn = (scope, machine) => ({
+    dataset: { memScope: scope, memMachine: machine }, _click: null,
+    matches: (sel) => sel.includes('mem-ws-open'),
+    addEventListener(t, fn) { if (t === 'click') this._click = fn; },
+  });
+  const mkTr = (btn) => ({ _btn: btn, querySelectorAll: (sel) =>
+    (sel.includes('mem-ws-open') ? [btn] : []) });
+
+  function rig(over = {}) {
+    const calls = { reader: [], scopesLoaded: [], render: 0 };
+    const rowButtons = (over.rows || ['ws-00']).map((r) => mkBtn(r, 'boxa'));
+    const tbody = {
+      children: rowButtons.map(mkTr),
+      _appended: '',
+      insertAdjacentHTML(where, html) {
+        this._appended += html;
+        // One <tr> per row, faithfully enough for the bind pass that follows.
+        for (const m of html.matchAll(/data-mem-scope="([^"]*)" data-mem-machine="([^"]*)"/g)) {
+          this.children.push(mkTr(mkBtn(m[1], m[2])));
+        }
+      },
+    };
+    const moreBtn = { _click: null, _removed: false, _label: 'Show 3 more',
+      addEventListener(t, fn) { if (t === 'click') this._click = fn; },
+      remove() { this._removed = true; },
+      querySelector: () => ({ get textContent() { return moreBtn._label; },
+        set textContent(v) { moreBtn._label = v; } }) };
+    const countEl = { _html: '', set outerHTML(v) { this._html = v; }, get outerHTML() { return this._html; } };
+    const st = {
+      activeDomain: 'acme', activeProject: 'lumina', scope: null, machine: null,
+      journalLimit: 10, wsWindow: WS_WINDOW_SRC, openFolds: {}, ageTickerArmed: true,
+      projectRead: { scopes, savedCopies: 8, distinctScopeCount: 8, brief: { present: false } },
+      detail: over.detail === undefined ? null : over.detail,
+      ...(over.state || {}),
+    };
+    const document = {
+      querySelectorAll: (sel) => (sel.includes('mem-ws-open') ? rowButtons : []),
+      getElementById: (id) => ({ 'mem-ws-more': moreBtn, 'mem-ws-body': tbody,
+        'mem-ws-count': countEl })[id] || null,
+    };
+    const api = new Function(
+      'state', 'document', 'render', 'saveBrief', 'reportAsyncMountFailure', 'keyOf', 'activeKey',
+      'selectProject', 'copyAgentInstructions', 'loadScope', 'refreshIndex', 'reloadActive',
+      'BRIEF_TEMPLATE', 'BRIEF_MAX_BYTES', 'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingFocusId',
+      'openReader', 'isCurrentReader', 'isCurrentMount',
+      'WS_WINDOW', 'WS_STEP', 'WS_STEP_ALL_MAX',
+      'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout', 'renderDescription',
+      // The freshness tier a row's dot wears — the REAL one from shared/age.js,
+      // as §6 lifts it, so an appended row and a painted one cannot be marked
+      // on two different scales.
+      'freshnessTier',
+      // Every one of these is the SHIPPED function. The point of the section is
+      // that the press really reaches openReader through the real chain, so a
+      // stub anywhere along it would be this suite testing its own harness.
+      [...['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'workStreamOrder',
+        'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
+        'handoffReaderContent', 'bindWorkStreamRows', 'openWorkStream',
+        'showMoreWorkStreams', 'wire']]
+        .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
+      + '\nreturn { wire, pending: () => pendingFocusId };')(
+      st, document,
+      () => { calls.render++; },
+      async () => {}, () => {}, (d, q) => d + '/' + q, () => 'acme/lumina',
+      async () => {}, async () => {},
+      // loadScope, faithful in the ONE way that matters: it writes state.detail,
+      // which is what handoffReaderContent then reads.
+      async (scope, machine) => {
+        calls.scopesLoaded.push(scope + '/' + machine);
+        st.scope = scope; st.machine = machine;
+        st.detail = over.loadedDetail || {
+          scope, machine, machineIsThisMachine: true,
+          current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120),
+            text: '# T\n\n> The headline\n\n## Where things stand\n\nBody.\n' },
+          journal: { returned: 1, total: 1, totalUnknown: false,
+            entries: [{ at: iso(120), harness: 'claude-code', model: 'opus-5', headline: 'h', rejections: [] }] },
+        };
+      },
+      async () => {}, async () => {},
+      '', Number(BRIEF_MAX_BYTES_SRC), 10, 50, null,
+      (content) => { calls.reader.push(content); return calls.reader.length; },
+      (epoch) => epoch === calls.reader.length,
+      () => true,
+      WS_WINDOW_SRC, WS_STEP_SRC, WS_STEP_ALL_MAX_SRC,
+      escapeHtml, () => '<svg></svg>', renderMarkdown, renderReadout, renderDescription,
+      makeRenderers({}).freshnessTier);
+    api.wire(1);
+    return { api, calls, rowButtons, tbody, moreBtn, countEl, st };
+  }
+
+  // ── A ROW PRESS OPENS THE READER ────────────────────────────────────────
+  {
+    const r = rig();
+    ok('SETUP: the row\'s click handler was bound', typeof r.rowButtons[0]._click === 'function');
+    r.rowButtons[0]._click();
+    await new Promise((res) => setImmediate(res));
+
+    eq('pressing a row reads that work-stream', r.calls.scopesLoaded.join(','), 'ws-00/boxa');
+    ok('...and the reader is opened TWICE: a loading panel in the frame of the '
+      + 'press, then the document', r.calls.reader.length === 2, r.calls.reader.length);
+    ok('the first open is the loading panel, so the press is acknowledged before '
+      + 'the round trip rather than a second later', r.calls.reader[0].loading === true,
+    JSON.stringify(r.calls.reader[0]));
+    const paid = r.calls.reader[1];
+    ok('THE DOCUMENT REACHES THE READER, rendered through the shared renderer',
+      paid.bodyHtml.includes('chat-md-h') && paid.bodyHtml.includes('Where things stand'),
+      paid.bodyHtml.slice(0, 200));
+    ok('THE TITLE LINE carries the work-stream AND the machine',
+      paid.slug === 'state/lumina/ws-00/boxa/current.md', paid.slug);
+    ok('THE SAVED READING travels with it',
+      /class="tx-readout-value">2 min ago</.test(paid.bodyHtml), paid.bodyHtml.slice(0, 300));
+    ok('...and the harness and model beside it',
+      /claude-code · opus-5/.test(paid.bodyHtml), paid.bodyHtml.slice(0, 400));
+    eq('ESCAPE AND THE ✕ RETURN FOCUS TO THE ROW', paid.returnFocusTo, 'mem-ws-active');
+    eq('...and the same is true of the loading panel, so a close mid-fetch also '
+      + 'lands back on the row', r.calls.reader[0].returnFocusTo, 'mem-ws-active');
+    eq('the row records itself as the focus target for the render the read causes',
+      r.api.pending(), 'mem-ws-active');
+    eq('the journal is reset to its first page, as a scope change always does',
+      r.st.journalLimit, 10);
+  }
+
+  // ── THE BADGES REACH THE READER when the save was not complete ──────────
+  {
+    const r = rig({ loadedDetail: {
+      scope: 'ws-00', machine: 'boxa',
+      current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120),
+        lastSaveKind: 'trimmed', text: '## x\n\ny' },
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } } });
+    r.rowButtons[0]._click();
+    await new Promise((res) => setImmediate(res));
+    ok('a TRIMMED save reaches the reader badged `incomplete`',
+      /mem-badge-attn">incomplete</.test(r.calls.reader[1].bodyHtml),
+      r.calls.reader[1].bodyHtml.slice(0, 400));
+  }
+
+  // ── PRESSING THE ROW THAT IS ALREADY OPEN RE-OPENS THE DOCUMENT ─────────
+  // It used to return early, which was right while the handoff was ON the page
+  // and is wrong now that the press IS the open: a press that does nothing is
+  // the defect, not the optimisation.
+  {
+    const opened = { scope: 'ws-00', machine: 'boxa',
+      current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120), text: '## x\n\ny' },
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } };
+    const r = rig({ detail: opened });
+    r.rowButtons[0]._click();
+    await new Promise((res) => setImmediate(res));
+    eq('pressing the OPEN row opens the reader', r.calls.reader.length, 1);
+    ok('...without a loading panel, because nothing is being fetched',
+      !r.calls.reader[0].loading, JSON.stringify(r.calls.reader[0]));
+    eq('...and without re-reading it', r.calls.scopesLoaded.length, 0);
+  }
+
+  // ── "SHOW N MORE" APPENDS ───────────────────────────────────────────────
+  {
+    const r = rig();
+    ok('SETUP: the footer\'s click handler was bound', typeof r.moreBtn._click === 'function');
+    r.moreBtn._click();
+
+    const added = [...r.tbody._appended.matchAll(/data-mem-scope="([^"]*)"/g)].map((m) => m[1]);
+    eq('the press appends the REMAINING rows — three, from a list of eight',
+      added.join(','), 'ws-05,ws-06,ws-07');
+    eq('...and the window records what is now on screen', r.st.wsWindow, 8);
+    ok('...and the footer removes itself, because it is the list\'s last row and '
+      + 'a hidden row still occupies the rule above it', r.moreBtn._removed === true);
+    ok('the count line is rebuilt and stops claiming a window',
+      r.countEl.outerHTML.includes('8 saved copies')
+      && !r.countEl.outerHTML.includes('showing 5 of 8'), r.countEl.outerHTML);
+
+    // AN APPEND, NOT A RENDER. A render replaces the whole pane: the page's
+    // scroll position moves, any open ⓘ is rebuilt, and every row already on
+    // screen is re-parsed.
+    eq('NOT ONE RENDER HAPPENED — the rows already read do not move', r.calls.render, 0);
+
+    // ...and the appended rows are LIVE. Binding only the new nodes is what
+    // stops a row already on screen getting a second listener and opening the
+    // reader twice.
+    const fresh = r.tbody.children[r.tbody.children.length - 1]._btn;
+    ok('the appended rows are wired', typeof fresh._click === 'function');
+    fresh._click();
+    await new Promise((res) => setImmediate(res));
+    eq('...and pressing one opens ITS work-stream', r.calls.scopesLoaded.join(','), 'ws-07/boxa');
+    eq('CONTROL: the rows that were already on screen were not re-bound — a '
+      + 'second listener opens the reader twice',
+    r.rowButtons[0]._click === r.rowButtons[0]._click && r.calls.reader.filter((c) => c.loading).length, 1);
+  }
+
+  // ── SWITCHING PROJECT RESETS THE WINDOW ────────────────────────────────
+  //
+  // A window opened on one project is not a statement about the next, exactly
+  // as the journal's page size is not. Driven through the SHIPPED
+  // `selectProject` rather than asserted as a line of source: this file's own
+  // history records that "a test that proves a line exists proves nothing about
+  // what it does", and the reset is one assignment among a dozen.
+  {
+    const st = { activeDomain: 'acme', activeProject: 'lumina',
+      wsWindow: 40, journalLimit: 50, briefEdit: { text: 'x' }, copied: { ok: true },
+      projectRead: { scopes: [] }, detail: { scope: 'old' } };
+    const api = new Function('state', 'isCurrentMount', 'render', 'keyOf', 'activeKey',
+      'rememberProject', 'fetchState', 'refreshIndex', 'loadScope', 'reportAsyncMountFailure',
+      'JOURNAL_PAGE', 'WS_WINDOW',
+      extractFunction(viewSrc, 'selectProject', 'memory.js')
+      + '\nreturn { selectProject };')(
+      st, () => true, () => {}, (d, q) => d + '/' + q,
+      () => st.activeDomain + '/' + st.activeProject,
+      () => {}, async () => ({ data: { scopes: [], brief: { present: false } }, error: null }),
+      async () => {}, async () => {}, () => {},
+      10, WS_WINDOW_SRC);
+
+    await api.selectProject('acme', 'other', 1);
+    eq('switching project resets the work-stream window', st.wsWindow, WS_WINDOW_SRC);
+    eq('...alongside the journal\'s page size, for the same reason', st.journalLimit, 10);
+    eq('CONTROL: the switch really happened', st.activeProject, 'other');
+    eq('...and the pending brief edit was abandoned with it', st.briefEdit, null);
+  }
+
+  // ── ESCAPE AND THE ✕ REALLY DO RETURN FOCUS ─────────────────────────────
+  //
+  // The payload's `returnFocusTo` is half of the contract; the shell honouring
+  // it is the other half, and it lives in app.js. This drives the SHIPPED
+  // `dismissReader` — the function Escape, the scrim and the ✕ all call — over
+  // a fake document, so "Escape returns focus to the row" is a measurement
+  // rather than a field nobody reads.
+  //
+  // THE ONE SMALL EXTENSION TO THE SHELL'S READER API, and it is here because a
+  // reader the keyboard cannot get out of is not an alternative to a document
+  // on the page. `closeReader()` is untouched — `navigate()` still calls it, so
+  // leaving the view does NOT pull focus into a pane that is about to be
+  // replaced — and a payload without the field behaves exactly as every payload
+  // did before it existed.
+  {
+    const appSrc = readFileSync(join(NEXT, 'app.js'), 'utf8');
+    const focused = [];
+    const row = { id: 'mem-ws-active', focus(o) { focused.push(o); } };
+    const mkShell = (reader) => {
+      const closed = [];
+      const api = new Function('state', 'closeReader', 'document',
+        extractFunction(appSrc, 'dismissReader', 'app.js')
+        + '\nreturn { dismissReader };')(
+        { reader },
+        () => { closed.push(1); },
+        { getElementById: (id) => (id === 'mem-ws-active' ? row : null) });
+      return { api, closed };
+    };
+
+    const withField = mkShell({ slug: 'x', returnFocusTo: 'mem-ws-active' });
+    withField.api.dismissReader();
+    eq('dismissing the reader closes it', withField.closed.length, 1);
+    eq('...and returns focus to the row that opened it', focused.length, 1);
+    ok('...without scrolling to it — the row is where the user left it',
+      focused[0] && focused[0].preventScroll === true, JSON.stringify(focused[0]));
+
+    const noField = mkShell({ slug: 'x' });
+    const before = focused.length;
+    noField.api.dismissReader();
+    eq('CONTROL: a payload WITHOUT the field still closes', noField.closed.length, 1);
+    eq('...and moves no focus at all — every caller before v3.56.0 behaves as it did',
+      focused.length, before);
+
+    const gone = mkShell({ slug: 'x', returnFocusTo: 'not-on-this-page' });
+    let threw = null;
+    try { gone.api.dismissReader(); } catch (e) { threw = e; }
+    eq('a row that is no longer in the document is skipped, never a crash', threw, null);
+
+    // AND THE THREE DISMISS PATHS GO THROUGH IT, while navigate()'s close does
+    // not. Asserted over comment-stripped source, because app.js explains the
+    // distinction at length and a raw scan would fire on the explanation.
+    const appCode = stripComments(appSrc);
+    ok('Escape dismisses through it', /state\.reader\)\s*\{\s*dismissReader\(\);/.test(appCode), 'escape');
+    ok('the scrim dismisses through it', /reader-scrim'\)\s*dismissReader\(\);/.test(appCode), 'scrim');
+    ok('the ✕ dismisses through it',
+      /reader-close-btn'\)\.addEventListener\('click', dismissReader\)/.test(appCode), 'close button');
+    ok('...and navigate() still calls the PLAIN close, so leaving the view does '
+      + 'not pull focus into a pane that is about to be replaced',
+    /\n  closeReader\(\);\n/.test(appCode), 'navigate');
+  }
+
+  // ── AND THE PAGE ITSELF NO LONGER PRINTS THE DOCUMENT ───────────────────
+  {
+    const page = makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', scope: 'ws-00', machine: 'boxa',
+      detailLoading: false, journalLimit: 10, openFolds: {}, projects: [],
+      projectRead: { scopes, savedCopies: 8, distinctScopeCount: 8,
+        brief: { present: true, text: '# B\n\n## Goal\n\nShip it.', updatedAt: iso(600) } },
+      detail: { scope: 'ws-00', machine: 'boxa',
+        current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120),
+          text: '# T\n\n> The headline\n\n## Where things stand\n\nUNIQUE-BODY-MARKER\n' },
+        journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
+    }).renderProject();
+    ok('the handoff\'s body is NOT on the page', !page.includes('UNIQUE-BODY-MARKER'),
+      page.slice(0, 200));
+    ok('...and neither is its headline, its lead fold or its stamp',
+      !page.includes('The headline') && !page.includes('mem-fold-lead')
+      && !page.includes('mem-doc-headline') && !page.includes('mem-doc-stamp'),
+      page.slice(0, 200));
+    ok('CONTROL: the STANDING BRIEF is still a document on the page, so this is '
+      + 'about the handoff rather than about documents having been removed',
+    page.includes('class="mem-doc"') && page.includes('Ship it'));
+  }
+}
+
 // ── 18e · THE PAGE: an ⓘ in the header, and no explainer card ───────────
 {
   const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
@@ -3984,17 +4773,24 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   };
   const page = makeRenderers(full).renderProject();
 
-  // ── FIVE BLOCKS, NAMED ────────────────────────────────────────────────
+  // ── FOUR BLOCKS, NAMED ────────────────────────────────────────────────
+  // FIVE until v3.56.0. `memory-handoff` is gone: the Current handoff block
+  // printed the whole document under the table, and a row press opens it in the
+  // shell's reader overlay instead. Its two EMPTY arms — "no handoff saved yet"
+  // and "nothing saved for this project" — moved into `memory-streams`, because
+  // the missing thing has to be missing in the place you looked for it.
   const ids = [...page.matchAll(/settings-block-(memory-[a-z]+)\b/g)].map((m) => m[1]);
   const uniq = [...new Set(ids)];
-  eq('the page is FIVE blocks, in the order the design names them',
-    uniq.join(','), 'memory-status,memory-streams,memory-handoff,memory-brief,memory-journal');
+  eq('the page is FOUR blocks, in the order the design names them',
+    uniq.join(','), 'memory-status,memory-streams,memory-brief,memory-journal');
+  ok('...and the handoff is not one of them, by name',
+    !uniq.includes('memory-handoff'), uniq.join(','));
 
   // ── UNNUMBERED, DELIBERATELY ──────────────────────────────────────────
   // shared/block.js's own note: a numeral is an argument for SEQUENCE, and
   // these five are readings about one project rather than steps.
   eq('every one of them is unnumbered — this page is not a sequence of steps',
-    (page.match(/settings-block-unnumbered/g) || []).length, 5);
+    (page.match(/settings-block-unnumbered/g) || []).length, 4);
   ok('...so no numeral is emitted at all', !page.includes('settings-block-num'));
 
   // ── ≤ 20 VISIBLE WORDS PER LEDE ─────────────────────────────────────────
@@ -4006,7 +4802,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       .replace(/<[^>]+>/g, ' ')
       .replace(/&[a-z#0-9]+;/g, 'x')
       .trim());
-  eq('every block carries a lede (the scan is not vacuous)', ledes.length, 5);
+  eq('every block carries a lede (the scan is not vacuous)', ledes.length, 4);
   for (const lede of ledes) {
     const words = lede.split(/\s+/).filter(Boolean).length;
     ok('lede is at most 20 visible words (' + words + '): "' + lede.slice(0, 60) + '…"',
@@ -4015,9 +4811,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 
   // ── THE DEPTH IS BEHIND THE MARK, AND IT IS REALLY THERE ──────────────
   eq('every block carries an ⓘ with a panel of its own',
-    (page.match(/data-tx-info="settings-block-info-memory-/g) || []).length, 5);
+    (page.match(/data-tx-info="settings-block-info-memory-/g) || []).length, 4);
   eq('...and every one of those panels is hidden on first paint',
-    (page.match(/class="tx-vh-panel" id="settings-block-info-memory-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 5);
+    (page.match(/class="tx-vh-panel" id="settings-block-info-memory-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 4);
 
   // ── WHAT MAY NEVER FOLD (v3.16.1) ─────────────────────────────────────
   // A warning behind a click is not a warning. The Reload offer, the save
@@ -4028,7 +4824,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // found by writing it that way first and watching it fail on correct output.
   const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
+  eq('CONTROL: the four folds were really found (the scan is not vacuous)', panels.length, 4);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   for (const marker of ['id="mem-reload"', 'mem-save-line', 'mem-working', 'mem-note-loud']) {
@@ -4105,12 +4901,20 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // edit — so the cap is gone from the view entirely and the assertion is now
   // that it is ABSENT. It survives where it belongs: `.settings-job-lede`
   // caps a block's lede at 66ch in shell.css, because a lede IS a sentence.
-  for (const sel of ['.mem-doc', '.mem-doc-headline', '.mem-save-line']) {
+  //
+  // TWO SELECTORS, NOT THREE, SINCE v3.56.0. `.mem-doc-headline` was the
+  // handoff's one-line agent summary and is GONE with the card it led — the
+  // document opens in the shell's reader, whose own `.reader-title` carries
+  // that line. Dropped from this loop rather than kept as a dead assertion; the
+  // pair below names it, so a silent re-introduction is still caught.
+  for (const sel of ['.mem-doc', '.mem-save-line']) {
     const r = ruleOf(sel);
     ok(sel + ' exists', !!r);
     ok(sel + ' no longer caps the TEXT either — every block on this page runs '
       + 'the column, which is what a dashboard is', !!r && !/max-width/.test(r), r || '');
   }
+  ok('.mem-doc-headline is GONE — the handoff\'s headline is the reader\'s title now',
+    !ruleOf('.mem-doc-headline') && !stripComments(viewSrc).includes('mem-doc-headline'));
   ok('...and `--prose-max` appears nowhere in this stylesheet at all',
     !/var\(--prose-max\)/.test(css), (/[^\n]*var\(--prose-max\)[^\n]*/.exec(css) || [''])[0]);
   // ANTI-VACUITY: `ruleOf` finds a rule by an exact `"<sel> {"` substring, so a
@@ -4119,11 +4923,18 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // proves the extractor itself still finds a cap when there is one to find.
   ok('CONTROL: ruleOf really would see a max-width — shell.css still caps the lede',
     /max-width:\s*66ch/.test(readFileSync(join(NEXT, 'shell.css'), 'utf8')));
-  ok('the lead fold is marked with the accent, and only the lead fold',
-    /\.mem-fold-lead \{[^}]*var\(--accent\)/.test(css)
-    && !/\.mem-fold \{[^}]*var\(--accent\)/.test(css));
-  ok('...and it is a rule plus weight plus elevation, not colour alone',
-    /\.mem-fold-lead \{[^}]*border-left:[^;]*var\(--accent\)[\s\S]*?box-shadow:\s*var\(--elev-1\)/.test(css));
+  // ── THE LEAD FOLD IS GONE, AND THAT IS v3.16.1's OWN RULE ──────────────
+  // These two pinned `.mem-fold-lead`: a 3px accent rule, the full --border and
+  // one step of elevation, so that ONE of three folds read first. The handoff
+  // card it marked is gone — a row press opens the document in the reader — and
+  // the journal is the only fold left on the page. A flag on one of one carries
+  // no information, which is exactly the rule the original marking was argued
+  // from, so the assertions invert rather than being deleted.
+  ok('the lead-fold chrome is gone, with the card it marked',
+    !/\.mem-fold-lead\s*[,{]/.test(css) && !/mem-fold-summary-lead/.test(css));
+  ok('...and the one remaining fold takes NO accent — one flag on one row says '
+    + 'nothing, which is why the leader was marked in the first place',
+    !/\.mem-fold \{[^}]*var\(--accent\)/.test(css));
   ok('no block declares its own top or bottom margin to fight the one rule',
     !/\.mem-(save|stale|controls|doc-card|fold|project-head) \{[^}]*margin-(top|bottom):/.test(css),
     'a section still carries its own margin');
@@ -4164,7 +4975,13 @@ const EXECUTED = new Set([
   // screenSignature, which §11/§6c both execute.
   'workStreamOrder',
   'briefStats', 'briefDismissDecision',
-  'renderHandoff', 'renderJournal', 'renderBrief', 'aboutInfoHtml',
+  // v3.56.0: the table shows a WINDOW and the handoff opens in the reader.
+  // `wsShownCount` is driven directly in §6e (and folded into screenSignature,
+  // which §6d and §11 execute); `wsRowHtml` and `wsMoreHtml` are the two
+  // fragments renderWorkStreams composes, both rendered in §6/§6e;
+  // `handoffReaderContent` replaces renderHandoff and is driven in §18d.
+  'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'handoffReaderContent', 'selectProject',
+  'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderCopyOutcome', 'renderProject',
   'render', 'captureFocus', 'restoreFocus',
@@ -4186,8 +5003,15 @@ const NOT_EXECUTED = {
   renderMain: 'same — DOM-bound; its three branches are the render* functions §6/§14 execute directly',
   renderNoProjects: 'a constant string with no inputs and no branches',
   loadIndex: 'orchestration over fetchIndex + selectProject, both executed; its own logic is one sort, covered by §2',
-  selectProject: 'orchestration over fetchState + loadScope, both executed; reloadActive (§15) covers the same shape',
+  // (`selectProject` moved to EXECUTED in v3.56.0 — §17c drives it to prove the
+  // work-stream window resets on a project switch.)
   wire: 'addEventListener over a real DOM; its call targets are executed and its call sites are counted',
+  // v3.56.0 — the three the row press and the footer are built from. Each is
+  // DOM-bound in a way the two above are not, and each is driven for real in
+  // §17c against a fake document, through the handlers wire() binds.
+  bindWorkStreamRows: 'a querySelectorAll + addEventListener pass over a real DOM; §17c drives the handler it binds and asserts the reader opens',
+  openWorkStream: 'async orchestration over loadScope + openReader, both of which §17c injects and counts; its own branches (already-open, fetch-then-open) are asserted there through the row handler',
+  showMoreWorkStreams: 'insertAdjacentHTML into a live <tbody>; §17c drives it against a fake table and asserts the appended rows, the label and the count line',
   copyAgentInstructions: 'needs navigator.clipboard; EXECUTED for real (both the granted and the refused arm, plus the switch-mid-copy stamp) in test-agent-instructions.js, which lifts it from this same file',
 };
 

@@ -431,7 +431,20 @@ function renderBlock(o) {
     (o.ledeHtml ? '<p>' + o.ledeHtml + '</p>' : '') +
     '<div>' + (o.bodyHtml || '') + '</div></section>';
 }
-function renderHandoff() { return '<!--HANDOFF-->'; }
+// v3.56.0: renderHandoff is gone. The handoff is no longer printed on the
+// page -- a work-stream row press opens it in the shell's reader -- so what
+// replaced it is handoffReaderContent (a PAYLOAD, not markup) plus the wiring
+// functions wire() reaches for. None is exercised here, but wire IS lifted and
+// would throw on a free identifier, so each is stubbed: an undefined
+// collaborator is a crash, not a failing assertion. (No backticks in this
+// block -- the whole PREAMBLE is a template literal, and one would end it.)
+function handoffReaderContent() { return null; }
+function bindWorkStreamRows() {}
+function showMoreWorkStreams() {}
+function openWorkStream() {}
+function wsShownCount() { return 0; }
+function workStreamOrder(x) { return x || []; }
+const WS_WINDOW = 5;
 function renderJournal() { return '<!--JOURNAL-->'; }
 function renderBrief() { return '<!--BRIEF-->'; }
 function keyOf(d, p) { return d + '/' + p; }

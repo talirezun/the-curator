@@ -417,7 +417,15 @@ section('§6  NO NEW HOVER-ONLY `title=` ON A NON-FOCUSABLE ELEMENT');
  */
 const FOCUSABLE = /<(?:button|a|input|select|textarea)\b/i;
 const TITLE_ALLOW = {
-  'memory.js': 3,            // mem-doc-stamp, mem-fold-meta, mem-j-when: ISO stamp behind a humanised age.
+  // RATCHETED DOWN 3 -> 1 in v3.56.0, which is the only direction this table
+  // allows. `mem-doc-stamp` was the handoff card's tooltip and left with the
+  // card: the document opens in the shell's reader now, and the exact stamp
+  // rides there in a `.visually-hidden` span — the same PROMOTION the
+  // work-stream table's age cell made, not a deletion of the fact. The
+  // `mem-fold-meta` tooltip went with the same summary. `mem-j-when` is the
+  // survivor: an ISO stamp behind a humanised age, on a journal list that pages
+  // to 50, where a disclosure per row would be fifty controls.
+  'memory.js': 1,            // mem-j-when: ISO stamp behind a humanised age.
   'sync.js': 0,
   'onboarding.js': 0,
   'mcp-wizard.js': 0,

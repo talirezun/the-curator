@@ -121,6 +121,28 @@
 //                                    navigate itself; the caller decides
 //                                    (typically by calling openReader()
 //                                    again for the new page).
+//       returnFocusTo     string   — the id of the control that opened the
+//                                    reader. When the USER dismisses the
+//                                    overlay (Esc, the scrim, the ✕) focus
+//                                    goes back to that element, so a
+//                                    keyboard reader lands where they left
+//                                    rather than at <body>. Added in
+//                                    v3.56.0 for the Agent memory table,
+//                                    whose rows open a handoff here instead
+//                                    of printing it on the page. BY ID, not
+//                                    by node: every view in this shell
+//                                    repaints by innerHTML while the reader
+//                                    is up, so the node that was pressed is
+//                                    routinely gone by the time it closes.
+//                                    Deliberately NOT honoured on the close
+//                                    that navigate() performs — leaving the
+//                                    view is not a dismissal, and pulling
+//                                    focus into a pane that is about to be
+//                                    replaced would take it off the rail
+//                                    control the user just pressed. Absent
+//                                    (every caller before this) means focus
+//                                    is left exactly where it was, which is
+//                                    the behaviour this field extends.
 //       domain            string   — the domain this page belongs to. The
 //                                    ONE fact the reader cannot derive for
 //                                    itself, and the only thing an entry
@@ -842,6 +864,28 @@ export function closeReader() {
   renderReader();
 }
 
+// THE USER DISMISSING THE READER, as opposed to navigate() closing it on the
+// way out of a view. Only this path honours `returnFocusTo` (see the payload
+// contract above): after Esc, the scrim or the ✕ the user is still on the page
+// they opened the reader from, so focus belongs on the control they pressed;
+// after a navigation that control is about to be destroyed and the focus the
+// user actually wants is the rail item they just activated.
+//
+// Reads the id BEFORE closeReader() clears `state.reader`, and focuses AFTER —
+// the overlay is `aria-modal`, so moving focus while it is still in the DOM
+// would put it behind the dialog.
+function dismissReader() {
+  const back = state.reader && typeof state.reader.returnFocusTo === 'string'
+    ? state.reader.returnFocusTo : null;
+  closeReader();
+  if (!back) return;
+  const el = document.getElementById(back);
+  if (!el || typeof el.focus !== 'function') return;
+  // preventScroll: the row is where the user left it, and scrolling to it
+  // would undo the reading position the page kept while the reader was up.
+  try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
+}
+
 // Renders the FULL overlay (scrim + header + body) from `state.reader` on
 // every call, including a call that only updates already-open content (e.g.
 // a view swapping a loading placeholder for the fetched page, or following
@@ -919,9 +963,9 @@ function renderReader() {
     '</div>';
 
   document.getElementById('reader-scrim').addEventListener('click', (e) => {
-    if (e.target.id === 'reader-scrim') closeReader();
+    if (e.target.id === 'reader-scrim') dismissReader();
   });
-  document.getElementById('reader-close-btn').addEventListener('click', closeReader);
+  document.getElementById('reader-close-btn').addEventListener('click', dismissReader);
 
   if (!p.loading && !p.error && typeof p.onBacklinkClick === 'function') {
     const backlinks = Array.isArray(p.backlinks) ? p.backlinks : [];
@@ -2431,7 +2475,7 @@ import { maybeShowOnboarding } from './views/onboarding.js';
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (state.reader) { closeReader(); return; }
+  if (state.reader) { dismissReader(); return; }
 });
 
 // ── "Another Curator is running over this same folder" ──────────────────

@@ -750,6 +750,64 @@
 }
 .mem-ws-cell-who { white-space: nowrap; }
 /* The two counts under the table. Tabular for the same reason the age is. */
+/* ── "SHOW N MORE" — THE TABLE'S OWN LAST ROW ────────────────────────────
+
+   The footer of the work-streams table, and it sits OUTSIDE `.mem-ws-wrap`:
+   that element is `overflow-x: auto`, and a control for extending a list must
+   never be able to end up inside the box it extends. views/domains.js's builder
+   measured the same row landing ~130 rows below the fold when it was the list's
+   last child, which is "the one way forward, hidden".
+
+   It is `.cur-group-row` — the kit's own full-width row button, the shape
+   v3.48.1 settled for "+ New project" and v3.50.0 reused for "Show 150 more".
+   The table draws its own bottom hairline on the last cell, so this only needs
+   to close the gap and match the table's leading padding: the label lines up
+   with the Work-stream column above it rather than floating in the middle.
+
+   NO PRESS TRANSFORM of its own — `.cur-group-row` carries the kit's, and the
+   reduced-motion block at the foot of this file already covers that family.  */
+.mem-ws-more {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* THE <button> CHROME IS TURNED OFF HERE, not fought. `.cur-group-row` is a
+     layout rule and declares no border, so a bare <button> wearing it falls
+     through to Chromium's 2px outset UA bevel — the exact class
+     scripts/test-next-button-chrome.js exists to catch, and it caught this row
+     on its first draft. The same three declarations `.dm-browse-more` and
+     `.dm-proj-footer` carry, for the same reason. */
+  border: 0;
+  background: none;
+  color: var(--accent);
+  width: 100%;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  transition: background var(--t-state), transform var(--t-press);
+}
+/* The separator is drawn EXPLICITLY, as domains.js's footer draws its own: the
+   kit's `.cur-group-row + .cur-group-row::before` needs the element above to be
+   a `.cur-group-row` too, and the element above this one is `.mem-ws-wrap`. The
+   precondition does not hold, so the line is stated rather than inherited. */
+.mem-ws-more::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 0;
+  top: 0;
+  height: var(--hairline-w);
+  background: var(--hairline-strong);
+}
+.mem-ws-more:hover { background: var(--surface-hover); }
+.mem-ws-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.mem-ws-more:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+/* The label lines up with the Work-stream column above it — the table's first
+   cell takes the same 10px — rather than floating at the row's own padding. */
+.mem-ws-more-label { font-weight: var(--weight-medium); }
+
 .mem-ws-count {
   margin-top: var(--space-4);
   font-size: var(--text-2xs);
@@ -805,51 +863,13 @@
   border: 1px solid var(--border);
   background: var(--surface);
 }
-/* `.mem-doc-head` IS GONE. It was the handoff card's title row — an eyebrow on
-   the left, the save stamp on the right — and both of those are in the lead
-   fold's <summary> now, which is itself a flex row and needs no second one.
-   Deleted rather than left standing: a rule nothing can match is a claim about
-   the screen that is no longer true.
-
-   WHEN it was saved and WHO saved it are ONE instrument — a readout from
-   shared/text.js — so this rule no longer paints text. It survives only as the
-   carrier of the exact ISO timestamp on `title`, which formatAge's own docblock
-   relies on when it rounds to "2 hr ago"; a readout states a reading and takes
-   no tooltip of its own.
-
-   NOTHING BELOW RESTYLES THE COMPONENT, and that is enforced rather than
-   promised: scripts/test-next-text-system.js fails if any other /next
-   stylesheet carries a `tx-` selector at all, so the system's type cannot be
-   overridden from a view. It caught a first draft of this file doing exactly
-   that — stepping the readout's figure down a size because it looked loud
-   beside the headline. It is MEANT to be loud: the figure is the valuable
-   thing on this screen and reading as chrome is the defect being fixed. */
-/* It was `display: block` inside `.mem-doc-head`. The stamp lives in the lead
-   fold's <summary> now and is a flex item there. `min-width: 0` is the same
-   load-bearing declaration `.mem-ctl` carries: a flex item's default
-   `min-width: auto` is a CONTENT-based floor, and this one holds a harness
-   name and a model id. */
-.mem-doc-stamp { min-width: 0; }
-
-/* The one-line headline the agent wrote, promoted out of the document's
-   preamble (see splitHandoffPreamble in memory.js). It is the only part of
-   that preamble that says something the controls above do not. */
-.mem-doc-headline {
-  /* NO max-width — see this file's header. It is ONE line of the agent's own
-     summary at the top of the handoff, and capping a single line at 68ch while
-     the document under it runs the column is the ragged edge this release
-     removed rather than an act of typography. */
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  color: var(--text);
-  line-height: var(--leading-snug);
-}
-/* `.mem-doc-who` is gone: harness and model are the readout's `provenance`
-   line in the head, beside the save age they belong with. The headline takes
-   over the 14px that element used to contribute, so the gap above the
-   document is unchanged. */
-.mem-doc-headline { margin-bottom: 14px; }
-.mem-doc-headline:last-child { margin-bottom: 0; }
+/* `.mem-doc-head`, `.mem-doc-who`, `.mem-doc-stamp` and `.mem-doc-headline`
+   are all gone, and the last two left in v3.56.0 with the handoff card itself.
+   The save reading is `.mem-reader-meta` inside the reader overlay; the agent's
+   one-line headline is that overlay's own `.reader-title`. What remains of this
+   family is the two CARDS that stand in for a handoff when there is none —
+   `.mem-doc-card` above and its dashed `.mem-doc-empty` variant — which the
+   Work-streams block renders in place of the table. */
 
 .mem-doc-empty { border-style: dashed; }
 .mem-doc-empty-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-2); margin-bottom: 5px; }
@@ -879,6 +899,28 @@
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
+/* ── THE `hidden` ATTRIBUTE NEEDS THIS RULE TO SURVIVE THE ONE ABOVE ──────
+   REPORTED FROM PRODUCTION: the standing brief's "Too long to save" wall was
+   fully visible under a status line reading `unchanged · 1309 words · 8484 of
+   32768 bytes`, with Save enabled — a warning about a limit the draft was
+   nowhere near, on the one screen whose job is to say whether a save will land.
+
+   The markup was never wrong. renderBriefEditor emits the wall with `hidden`
+   below the cap and the input handler flips `.hidden` without a render, and
+   both are asserted. The defect is the CASCADE: `[hidden] { display: none }`
+   lives in the USER-AGENT stylesheet, and `display: flex` in the rule above is
+   an AUTHOR declaration on a class — author beats UA at every specificity, so
+   the wall was `display: flex` in every state it has ever had. Any element that
+   is toggled by the `hidden` attribute and carries a class setting `display`
+   needs its own `[hidden]` rule; views/chat.js's `.chat-cost-panel[hidden]`
+   records the same hazard, and this file simply did not have it.
+
+   `.mem-note[hidden]` is (0,2,0) against `.mem-note`'s (0,1,0) and
+   `.mem-note-loud`'s (0,1,0), so it wins on specificity without `!important`
+   and without touching the visible state. scripts/test-next-memory-view.js
+   §16h resolves the cascade over this file for the wall's real class list, so
+   a future `display` added to either class fails rather than re-opening this. */
+.mem-note[hidden] { display: none; }
 .mem-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 /* THE "state on disk that is not being read" NOTE.
@@ -900,7 +942,14 @@
 
 /* Rendered markdown. `.chat-md-h` is emitted by shared/markdown.js (the
    shared renderer, not chat.js's own markup) — styled here SCOPED under
-   .mem-doc so nothing leaks into or out of any other view. */
+   .mem-doc so nothing leaks into or out of any other view.
+
+   ITS ONE REMAINING DOCUMENT IS THE STANDING BRIEF (and the editor's Preview,
+   which is the same document). The handoff used to be the other, and the
+   header block's reversal below still reads as though it were; it is kept
+   verbatim because the reversal it records is what stopped this class capping
+   the brief, and that is still live. The handoff's markdown is the reader's,
+   under `.reader-body-text` in shell.css, which this file does not own.    */
 /* THE HANDOFF'S OWN PROSE, and the single most important use of the measure
    limit in this file: an agent's handoff is the longest running text on the
    screen. 68ch here, on the TEXT, rather than on the card that frames it. */
@@ -982,36 +1031,23 @@
   background: var(--surface);
 }
 
-/* THE LEADER — the current handoff, and only ever one of the three.
+/* THE LEADER IS GONE, WITH THE BLOCK IT LED (v3.56.0).
 
-   Why it is marked at all: the ask was that the three important cards "read
-   fast", and a page of identical cards ranks nothing. Why only ONE: v3.16.1's
-   rule — a flag on every row carries no information. So the handoff takes the
-   accent rule and the other two stay exactly as they were.
+   `.mem-fold-lead` gave the Current handoff fold a 3px accent rule, the full
+   --border and one step of elevation, so that one card out of three read
+   first. There is no handoff card any more: a row press opens the document in
+   the shell's reader (views/memory.js `handoffReaderContent`), and the journal
+   is now the only fold on the page — one of one, which is exactly the case
+   v3.16.1 says must not be flagged.
 
-   THREE STEPS, NOT ONE, because a single signal is a single point of failure:
-     · a 3px accent rule down the leading edge — the same device v3.53.1 used
-       to mark the build lane, at the same weight;
-     · the full --border rather than --border-subtle, so the box reads one step
-       more present even with colour stripped out;
-     · one step of elevation (--elev-1), which lifts it off the flat pair.
+   `.mem-fold-summary-lead`, `.mem-doc-stamp` and `.mem-doc-headline` went with
+   it: the eyebrow, the pip, the save reading and the agent's one-line headline
+   were all that summary's contents. The reading is `.mem-reader-meta` in the
+   overlay now and the headline is the reader's own `.reader-title`.
 
-   CONTRAST. The rule is a graphical boundary, so 3:1 governs, and --accent on
-   --surface measures 4.30 dark / 6.57 light in this file's own table — the
-   same measurement .mem-save-pip-s2 and .mem-project-mark are built on. No
-   TEXT takes an accent colour here: the eyebrow, the reading and the
-   provenance all keep the type system's own colours, so nothing in this card
-   is decoded from hue alone.                                                */
-.mem-fold-lead {
-  border-color: var(--border);
-  border-left: 3px solid var(--accent);
-  box-shadow: var(--elev-1);
-}
-/* The 3px rule eats 2px of the left padding, so the summary's contents would
-   sit 2px right of the other two folds' and the column would read as ragged.
-   Taken back here rather than by re-declaring every child's padding. */
-.mem-fold-lead > .mem-fold-summary { padding-left: 12px; }
-.mem-fold-lead > .mem-fold-body { padding-left: 14px; }
+   Deleted rather than left standing: a rule nothing can match is a claim about
+   the screen that is no longer true — the same call this file made when
+   `.mem-doc-head` and `.mem-doc-who` went.                                  */
 .mem-fold-summary {
   display: flex;
   align-items: center;
@@ -1043,30 +1079,12 @@
 .mem-fold[open] > .mem-fold-summary svg { transform: rotate(90deg); }
 /* --text-2: 8.34 dark / 7.26 light on --surface. Same reasoning as
    .mem-row-meta — the entry count and the age are information, and
-   --text-3 does not clear 4.5:1 on any surface in this file. */
+   --text-3 does not clear 4.5:1 on any surface in this file.
+   Its callers are the JOURNAL's summary (the entry count, and "empty"); the
+   handoff summary's "time unknown" fallback was the other and went with the
+   lead fold in v3.56.0. */
 .mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 .mem-fold-body { padding: 2px 16px 15px; }
-
-/* ── THE LEAD SUMMARY: an eyebrow, a pip, and a reading ──────────────────
-
-   The other two summaries are a word and a meta value. This one carries the
-   menubar widget's readings, so the break goes BEFORE the pip: the pip belongs
-   with the reading it qualifies, and keeping them adjacent is what lets the
-   pair wrap together at a narrow width instead of the pip stranding itself on
-   one line and its words on another. (Exactly the lesson v3.53.1 recorded in
-   the other direction, where a chip broke every model name in half.)
-
-   TABULAR FIGURES on the reading, because it is a CLOCK now — tickAges
-   rewrites it every second, and proportional digits make the words jitter as
-   they change. The numeral set is the one tokens/typography.css already
-   defines; this only asks for it.
-
-   `flex-wrap` because a machine id, a harness and a model name are all long
-   and the reading must be able to drop to its own line rather than push the
-   chevron off the left edge.                                                */
-.mem-fold-summary-lead { gap: 10px; flex-wrap: wrap; }
-.mem-fold-summary-lead .mem-save-pip { margin-left: auto; }
-.mem-fold-summary-lead .mem-doc-stamp { font-variant-numeric: var(--numeric-tabular); }
 
 /* `.mem-quiet` IS GONE, and its removal is the point of this pass. It carried
    FOUR unrelated roles at once — the About fold's static explanation, the
@@ -1381,4 +1399,47 @@
      opt-out lives beside it — in the SAME file as the transform, which is what
      scripts/test-next-press-motion.js requires. */
   .mem-ws-row:active { transform: none; }
+  /* The table's footer presses like its rows, so its opt-out sits beside
+     theirs — in the SAME file as the transform, which is what
+     scripts/test-next-press-motion.js requires. */
+  .mem-ws-more:active { transform: none; }
 }
+/* ── THE HANDOFF, INSIDE THE SHELL'S READER (v3.56.0) ────────────────────
+
+   The document left this page for the reader overlay (views/memory.js
+   `handoffReaderContent`). Two elements travel with it, and BOTH are scoped to
+   classes this view owns rather than to `.reader-*`: the reader's own chrome —
+   the panel, the header, the title, the chips, the body type — belongs to
+   shell.css and to the views that built it, and reaching into it from here
+   would be this file styling another file's component.
+
+   `.mem-reader-meta` is the SAVED reading: a `renderReadout` from
+   shared/text.js with, when the save was not complete, one `.mem-badge` beside
+   it — the same instrument and the same two badge classes the Status block
+   uses, so the page and the overlay cannot state the same save differently. It
+   carries `data-mem-age-at`, so the once-a-second clock (tickAges) rewrites the
+   words here exactly as it does on the page.
+
+   Nothing here sets a colour or a size on the readout: shared/text.js owns
+   that, and scripts/test-next-text-system.js fails any `tx-` selector in a view
+   stylesheet. Layout only.                                                  */
+/* "Saved — time unknown", in words. It is a STATEMENT, not a reading, so it
+   takes the meta line's own size and the --text-2 every quiet fact on this
+   screen takes; the readout role is deliberately not used, because a readout
+   states a figure and there is none. */
+.mem-reader-unknown { font-size: var(--text-2xs); color: var(--text-2); }
+.mem-reader-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+/* The rendered handoff markdown inside the reader. `.reader-body-text` in
+   shell.css already sets the body type and chat.css supplies the heading and
+   code rules, so this adds nothing but the one thing a wrapper is for: it
+   exists so the notes above it are separated from the document, and so the
+   document's own first and last margins do not fight the panel's padding. */
+.mem-reader-doc > *:first-child { margin-top: 0; }
+.mem-reader-doc > *:last-child { margin-bottom: 0; }

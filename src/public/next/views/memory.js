@@ -53,19 +53,30 @@
 // inventing a restriction the backend does not enforce.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// DESIGN — A DASHBOARD, IN FIVE BLOCKS (v3.55.0)
+// DESIGN — A DASHBOARD, IN FOUR BLOCKS (v3.55.0, narrowed v3.56.0)
 // ─────────────────────────────────────────────────────────────────────────
 // The maintainer's verdict on the v3.54.0 page was "not okay", in six parts,
 // and the shape below is each of them answered. See `renderProject` for the
 // list and for which block answers which.
 //
 //   ① STATUS         — "Working on:", the Last-saved reading, every caveat
-//   ② WORK-STREAMS   — a TABLE of the project's (scope, machine) pairs
-//   ③ CURRENT HANDOFF— the lead fold, the document you came to read
-//   ④ STANDING BRIEF — yours, with a pencil beside the title and an editor
-//   ⑤ SESSION JOURNAL— history, folded, last
+//   ② WORK-STREAMS   — a TABLE of the project's (scope, machine) pairs,
+//                      the newest FIVE with a "Show N more" footer; press a
+//                      row and its handoff opens in the shell's READER
+//   ③ STANDING BRIEF — yours, with a pencil beside the title and an editor
+//   ④ SESSION JOURNAL— history, folded, last
 //
-// ONE COLUMN, ONE RIGHT EDGE, ONE RHYTHM. The five blocks are
+// THERE IS NO "CURRENT HANDOFF" BLOCK (v3.56.0). It printed the whole document
+// under the table, which made a dashboard into a document viewer: the thing
+// that answers "where does this project stand" was sitting on top of fifteen
+// hundred words about ONE work-stream. The wiki settled this years ago — a list
+// of pages, and a press opens one in the right-hand reader — and a handoff is
+// the same shape of thing. `handoffReaderContent` composes the payload;
+// `openWorkStream` performs the press. Nothing new was added to the backend:
+// the read is the one `loadScope` already made, and views/domains.js has opened
+// a memory row in that same reader through that same route since v3.50.0.
+//
+// ONE COLUMN, ONE RIGHT EDGE, ONE RHYTHM. The four blocks are
 // shared/block.js's `renderBlock`, so shell.css's `.settings-job-block`
 // declaration — 24 | 1px hairline | 24 — owns every gap between them, and this
 // view declares that gap nowhere. `.mem-section` survives for the elements
@@ -81,11 +92,12 @@
 // right for a DOCUMENT and wrong for a dashboard, and memory.css records the
 // reversal against the rule it reverses.
 //
-// TWO FOLDS, NOT THREE. The handoff keeps its <details> (a fifteen-hundred-word
-// handoff is not what every visit is for) and so does the journal (fifty rows
-// of history, and it is the section that made the page long). The standing
-// brief is NOT a fold: a block head is a heading, and a pencil in a <summary>
-// would be the hazard below.
+// ONE FOLD. The journal keeps its <details> — fifty rows of history, and it is
+// the section that made the page long. The standing brief is NOT a fold: a
+// block head is a heading, and a pencil in a <summary> would be the hazard
+// below. The handoff's fold went with the block it led: a document that opens
+// in an overlay has no collapsed state to remember, and the reader's own ✕ and
+// `esc` are the close.
 //
 // "How this works" is not a card. It explains the three tiers and the
 // read-only rule, which is read once per user and then never again, so it is
@@ -102,12 +114,12 @@
 // THE <summary> HAZARD (v3.0.1-beta.18, and settings.js's model picker):
 // an interactive control placed inside a <summary> toggles its own section
 // when clicked. Every control in this view — the work-stream table's row
-// buttons, the journal's "Show more", the brief's pencil, Save, Preview,
-// Cancel — is a SIBLING of its <details>, or lives in a <details> BODY, or
-// sits in a block that is not a <details> at all. The handoff's summary holds
-// spans only: an eyebrow, a pip and a readout, no button and no link. There is
-// therefore no propagation path to suppress, so no later edit can drop a
-// stopPropagation that isn't there.
+// buttons, its "Show N more" footer, the journal's "Show more", the brief's
+// pencil, Save, Preview, Cancel — is a SIBLING of its <details>, or lives in a
+// <details> BODY, or sits in a block that is not a <details> at all. The one
+// remaining <summary>, the journal's, holds spans only. There is therefore no
+// propagation path to suppress, so no later edit can drop a stopPropagation
+// that isn't there.
 //
 // SQUARE marker, not round: agent memory is a different KIND of thing from a
 // knowledge domain, and the rail already puts them side by side. Domains use
@@ -118,6 +130,13 @@
 import {
   registerView, setSidebar, setMain, escapeHtml, icon,
   isCurrentMount, reportAsyncMountFailure,
+  // THE SHELL'S READER, the panel the wiki opens a page in. A work-stream row
+  // opens its handoff there instead of the page printing it (see
+  // handoffReaderContent). `isCurrentReader` is the epoch guard every caller of
+  // openReader owes it: the loading panel is painted BEFORE the fetch, and a
+  // user who presses Escape while it is in flight must not have the document
+  // reopened on top of whatever they went back to.
+  openReader, isCurrentReader,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE text system in /next (shared/text.js). Imported, never re-implemented:
@@ -203,6 +222,30 @@ const BRIEF_MAX_BYTES = 32768;
 // the store stays the authority on the ceiling.
 const JOURNAL_PAGE = 10;
 const JOURNAL_MORE = 50;
+
+// ── THE WORK-STREAMS TABLE SHOWS THE LATEST FIVE ─────────────────────────
+//
+// v3.55.0 put every (scope, machine) pair on screen, which was right against
+// the two pickers it replaced and wrong at the size a real project reaches: a
+// project that has run for a month across two machines is twenty rows, and the
+// table then owns the page the same way the journal did before it was folded.
+// Five is what the menubar widget shows for the same reason, and it is enough
+// to answer the question the table exists for — "which of these moved today?".
+//
+// THE FOOTER IS THE LIST'S OWN ROW, the shape views/domains.js settled for
+// "Show 150 more": a <button> that IS a row, OUTSIDE the scroll container so it
+// cannot sit below the fold of the thing it extends. Pressing it APPENDS the
+// next window rather than re-rendering, so the rows already read do not move.
+//
+// THE STEP IS "ALL THE REST", NOT ANOTHER FIVE, up to a point. A project with
+// seven work-streams has two hidden, and asking someone to press twice for two
+// rows is the friction, not the rows. Past WS_STEP_ALL_MAX the same press would
+// paint a wall, so it becomes WS_STEP — the same judgement domains.js makes
+// with a fixed 150 over a list that runs to thousands, at the scale this one
+// actually reaches.
+const WS_WINDOW = 5;
+const WS_STEP_ALL_MAX = 20;
+const WS_STEP = 10;
 
 // ── Revalidation ─────────────────────────────────────────────────────────
 //
@@ -307,6 +350,13 @@ function freshState() {
     machine: null,
     journalLimit: JOURNAL_PAGE,
 
+    // HOW MANY WORK-STREAM ROWS ARE PAINTED. The single source of truth for
+    // the table, the footer's label and the "showing N of M" clause, so a full
+    // render after a "Show more" paints exactly what the append left on screen.
+    // Reset to WS_WINDOW on every project change (selectProject) — a window
+    // opened on one project is not a statement about the next one.
+    wsWindow: WS_WINDOW,
+
     // WHICH DISCLOSURES THE USER HAS OPENED, by stable key.
     //
     // Every render re-emits the whole main pane, so a <details> written
@@ -317,11 +367,13 @@ function freshState() {
     // or machine change.
     //
     // A key is written here only when the user actually toggles one, so
-    // `undefined` still means "no opinion" and each fold keeps its own
-    // default — the HANDOFF opens (it is the answer this screen gives) and
-    // the JOURNAL stays shut (it is history, and it is the section that made
-    // this page long). There are only those two keys since v3.55.0: the
-    // standing brief is a block rather than a fold.
+    // `undefined` still means "no opinion" and the fold keeps its default.
+    //
+    // THERE IS EXACTLY ONE KEY SINCE v3.56.0: `journal`, which stays shut (it
+    // is history, and it is the section that made this page long). The standing
+    // brief stopped being a fold in v3.55.0, and the HANDOFF fold went with the
+    // block it led — the handoff opens in the shell's reader now, which has its
+    // own open state and its own Escape.
     openFolds: {},
 
     // ── Revalidation bookkeeping (see the Revalidation block above) ──────
@@ -398,7 +450,10 @@ const FOCUSABLE_IDS = [
   // rather than through captureFocus: at the moment of the click the pressed
   // button has no id at all, and a moment later it is the selected row.
   'mem-ws-active',
-  'mem-fold-handoff', 'mem-fold-journal',
+  // THE TABLE'S FOOTER. Like "Show more" on the journal it can REMOVE itself
+  // (the last press exhausts the list), so it needs the fallback below.
+  'mem-ws-more',
+  'mem-fold-journal',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -430,6 +485,10 @@ const FOCUSABLE_IDS = [
 // just inside.
 const FOCUS_FALLBACK = {
   'mem-journal-more': '#mem-fold-journal',
+  // The last "Show N more" press paints the remaining rows and takes the
+  // button with them. The newly-revealed last row is what the user was
+  // reaching for, and it is the nearest stable thing to it.
+  'mem-ws-more': '.mem-ws-table tbody tr:last-child .mem-ws-open',
   // Reloading dismisses the notice this button lives in. The sidebar's
   // Refresh is the nearest stable control that does the same KIND of thing.
   'mem-reload': '#mem-refresh',
@@ -797,14 +856,27 @@ function screenSignature() {
   // off `pr.scopes` directly would also mean the signature described a
   // different arrangement than the one on screen, which is the shape of bug
   // this whole function exists to avoid.
+  //
+  // ── AND IT PAINTS A WINDOW, SO THE MARK IS THE WINDOW ──────────────────
+  // v3.56.0 cut the table to the newest five with a "Show N more" footer. The
+  // mark is therefore the rows that are ON SCREEN plus the NUMBER that is not:
+  // folding in every row would repaint the pane when a hidden row's age crossed
+  // a band — no pixel moves, and the repaint would close the ⓘ and churn focus
+  // — while folding in the shown rows ALONE would miss a save appearing behind
+  // the footer, whose count line and label both have to move. The hidden count
+  // is a number rather than a projection for the same reason: what those rows
+  // SAY is not on screen, only how many of them there are.
   const pr = state.projectRead;
-  const tableRows = pr && Array.isArray(pr.scopes)
-    ? workStreamOrder(pr.scopes).map((s) => [
+  const wsOrdered = pr && Array.isArray(pr.scopes) ? workStreamOrder(pr.scopes) : null;
+  const wsPainted = wsOrdered ? wsShownCount(wsOrdered, state.detail, state.wsWindow) : 0;
+  const tableRows = wsOrdered
+    ? wsOrdered.slice(0, wsPainted).map((s) => [
       s && s.scope, (s && s.machine) || null, (s && s.headline) || null,
       formatAge(effectiveSave(s).seconds),
       (s && s.harness) || null, (s && s.model) || null,
     ])
     : null;
+  const wsHidden = wsOrdered ? wsOrdered.length - wsPainted : 0;
   // ── THE SAVE-STATUS STRIP IS A CLOCK, AND A CLOCK HAS TO TICK ──────────
   //
   // The same lesson as `pickerScopes` directly above, one pane over: a no-op
@@ -865,6 +937,7 @@ function screenSignature() {
     state.scope,
     state.machine,
     tableRows,
+    wsHidden,
     savedMark,
     newestMark,
     sharedMark,
@@ -1225,6 +1298,10 @@ async function selectProject(domain, project, token, opts = {}) {
   state.scope = null;
   state.machine = null;
   state.journalLimit = JOURNAL_PAGE;
+  // A window opened on one project says nothing about the next. Reset with the
+  // journal's page size and for the same reason: both are "how much of this
+  // list have I asked to see", and the answer does not travel.
+  state.wsWindow = WS_WINDOW;
   state.detailLoading = true;
   // The START of the read that is about to produce what goes on screen.
   // Conservative on purpose: a write landing mid-fetch is reported as
@@ -2030,53 +2107,47 @@ function renderProject() {
     : '';
 
   // ── BLOCK ② — WORK-STREAMS ───────────────────────────────────────────────
-  const streamsBlock = scopes.length
-    ? renderBlock({
-      num: null,
-      id: 'memory-streams',
-      title: 'Work-streams',
-      ledeHtml: 'Every work-stream of this project, newest first. Open one to read its handoff.',
-      infoText:
-        '<p>A <b>work-stream</b> is one thread of work — the files call it a <i>scope</i>, and the slug is '
-        + 'still shown as one. Parallel threads get their own, so they never overwrite each other.</p>'
-        + '<p>Each machine writes to its OWN folder inside a work-stream, which is what makes two computers '
-        + 'safe over sync: no two of them ever touch one file. So one work-stream can appear here as several '
-        + 'rows — one saved copy per machine — and the count below the table says both numbers.</p>'
-        + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one machine '
-        + 'can, and they overwrite each other, because the folder has no harness segment. Block ① names that '
-        + 'explicitly when the journal shows it, and the remedy is to give each tool its own work-stream.</p>'
-        + '<p>Only the most recently saved copies are listed when a project has a great many; the line under '
-        + 'the table says so and gives the real total.</p>'
-        + '<p>' + docsLinkHtml('memory.session-journal', 'Read more in the guide') + '</p>',
-      infoHtml: true,
-      bodyHtml: renderWorkStreams(scopes, d) + workStreamCounts(read, scopes.length),
-    })
-    : '';
-
-  // ── BLOCK ③ — CURRENT HANDOFF ────────────────────────────────────────────
-  // Its body is the lead fold when there IS a handoff, the "no handoff yet"
-  // card when a brief exists without one, and the empty-project card when
-  // there is nothing at all — the missing thing is missing in the place you
-  // looked for it, which is the v3.17.1 rule this branch was built for.
-  const handoffBody = scopes.length
-    ? renderHandoff()
-    : (hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted));
-  const handoffBlock = renderBlock({
+  //
+  // ── IT ABSORBED BLOCK ③ ────────────────────────────────────────────────
+  // "Current handoff" was its own block, carrying the whole document when
+  // there was one and the "nothing saved yet" card when there was not. The
+  // document opens in the reader now (see handoffReaderContent), and the two
+  // empty cards moved HERE rather than disappearing with it — the missing
+  // thing has to be missing in the place you looked for it (v3.17.1), and the
+  // place you look for a work-stream is the block called Work-streams. A
+  // project with nothing saved therefore still gets this block, with a card
+  // instead of a table and a lede that says which of the two it is.
+  const wsEmpty = hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted);
+  const wsShown = scopes.length ? wsShownCount(workStreamOrder(scopes), d, state.wsWindow) : 0;
+  const streamsBlock = renderBlock({
     num: null,
-    id: 'memory-handoff',
-    title: 'Current handoff',
-    ledeHtml: 'What the last session left for the next one — overwritten on every save.',
+    id: 'memory-streams',
+    title: 'Work-streams',
+    ledeHtml: scopes.length
+      ? 'Every work-stream of this project, newest first. Open one to read its handoff.'
+      : 'One row per work-stream, once an agent has saved one.',
     infoText:
-      '<p>The handoff is where things stand RIGHT NOW: what an agent leaves for the next session, so that '
-      + 'session starts knowing what you already settled. There is one per work-stream per machine, and it '
-      + 'is <b>overwritten</b> on every save rather than appended to — which is the whole point. State has '
-      + 'to be able to say “no longer true”, and a store that only accumulates cannot.</p>'
-      + '<p>Your agents write this through the <span class="mono">my-curator</span> MCP tools and this '
-      + 'screen never does — a handoff is worth something because an agent observed it. It is plain '
-      + 'markdown on disk, so a text editor works too.</p>'
+      '<p>A <b>work-stream</b> is one thread of work — the files call it a <i>scope</i>, and the slug is '
+      + 'still shown as one. Parallel threads get their own, so they never overwrite each other.</p>'
+      + '<p>Press a row to read that work-stream’s <b>handoff</b> — what the last session left for the '
+      + 'next one — in the reader. It is <b>overwritten</b> on every save rather than appended to, which '
+      + 'is the whole point: state has to be able to say “no longer true”, and a store that only '
+      + 'accumulates cannot. Your agents write it through the <span class="mono">my-curator</span> MCP '
+      + 'tools and this screen never does; it is plain markdown on disk, so a text editor works too.</p>'
+      + '<p>Each machine writes to its OWN folder inside a work-stream, which is what makes two computers '
+      + 'safe over sync: no two of them ever touch one file. So one work-stream can appear here as several '
+      + 'rows — one saved copy per machine — and the count below the table says both numbers.</p>'
+      + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one machine '
+      + 'can, and they overwrite each other, because the folder has no harness segment. Block ① names that '
+      + 'explicitly when the journal shows it, and the remedy is to give each tool its own work-stream.</p>'
+      + '<p>The five most recently saved are shown; the row under the table shows the rest. Only the most '
+      + 'recently saved copies are LISTED at all when a project has a great many, and the count line says '
+      + 'so and gives the real total.</p>'
       + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
     infoHtml: true,
-    bodyHtml: handoffBody,
+    bodyHtml: scopes.length
+      ? renderWorkStreams(scopes, d, state.wsWindow) + workStreamCounts(read, scopes.length, wsShown)
+      : wsEmpty,
   });
 
   // ── BLOCK ④ — STANDING BRIEF ─────────────────────────────────────────────
@@ -2124,7 +2195,7 @@ function renderProject() {
     })
     : '';
 
-  return header + statusBlock + streamsBlock + handoffBlock + briefBlock + journalBlock;
+  return header + statusBlock + streamsBlock + briefBlock + journalBlock;
 }
 
 /**
@@ -2698,9 +2769,59 @@ function workStreamOrder(scopes, now = Date.now()) {
  * A SIBLING of every <details> on the page, exactly as the pickers were — the
  * <summary> hazard in this file's header is unaffected.
  */
-function renderWorkStreams(scopes, open) {
-  const rows = workStreamOrder(scopes);
-  if (!rows.length) return '';
+/**
+ * HOW MANY ROWS THIS PAINT SHOWS, given the window and which pair is open.
+ *
+ * ── THE OPEN PAIR IS NEVER HIDDEN, AND THE WINDOW IS STRETCHED TO REACH IT
+ *    RATHER THAN THE ROW HOISTED TO THE TOP ──────────────────────────────
+ * Both were on the table. Hoisting is rejected: the header of this table says
+ * "newest first", and v3.55.0's third defect was that same table claiming an
+ * order it did not render — a highlighted row sitting above one three minutes
+ * younger is the identical lie in a smaller font. Stretching keeps every row in
+ * one order and costs at most a few extra rows on the one project where the
+ * user has deliberately opened an old work-stream.
+ *
+ * Pure, and takes the ordered list, so the window arithmetic is drivable
+ * without a DOM.
+ */
+function wsShownCount(ordered, open, windowSize) {
+  const total = ordered.length;
+  const want = Number.isFinite(windowSize) ? Math.max(1, Math.floor(windowSize)) : total;
+  let n = Math.min(total, want);
+  if (open && open.scope) {
+    const openMachine = open.machine || null;
+    const i = ordered.findIndex((s) => s && s.scope === open.scope
+      && ((s.machine || null) === openMachine));
+    if (i >= n) n = i + 1;
+  }
+  return n;
+}
+
+/**
+ * "Show N more" — the list's own last row, and NOTHING when nothing is left.
+ *
+ * Emitted by renderWorkStreams OUTSIDE `.mem-ws-wrap`: that element scrolls
+ * (`overflow-x: auto`), and a control for extending a list must not be able to
+ * end up inside the box it extends. Same reason views/domains.js keeps its
+ * footer outside `.dm-browse-list`, where the builder measured the row landing
+ * ~130 rows below the fold.
+ */
+function wsMoreHtml(shown, total) {
+  if (total <= shown) return '';
+  const rest = total - shown;
+  const step = rest <= WS_STEP_ALL_MAX ? rest : WS_STEP;
+  return (
+    '<button type="button" class="cur-group-row mem-ws-more" id="mem-ws-more">' +
+      '<span class="mem-ws-more-label">Show ' + step.toLocaleString() + ' more</span>' +
+    '</button>'
+  );
+}
+
+function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
+  const ordered = workStreamOrder(scopes);
+  if (!ordered.length) return '';
+  const shown = wsShownCount(ordered, open, windowSize);
+  const rows = ordered.slice(0, shown);
   const openScope = (open && open.scope) || null;
   const openMachine = (open && open.machine) || null;
   // POSITIVE EVIDENCE ONLY. The scoped response carries `machineIsThisMachine`
@@ -2717,7 +2838,34 @@ function renderWorkStreams(scopes, open) {
   // a different installation).
   const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
 
-  const body = rows.map((s) => {
+  const body = rows.map((s) => wsRowHtml(s, openScope, openMachine, mineMachine)).join('');
+
+  return (
+    '<div class="mem-ws-wrap">' +
+      '<table class="mem-ws-table">' +
+        '<thead><tr>' +
+          '<th scope="col">Work-stream</th>' +
+          '<th scope="col">Working on</th>' +
+          '<th scope="col">Last saved</th>' +
+          '<th scope="col">Machine</th>' +
+          '<th scope="col">Harness</th>' +
+        '</tr></thead>' +
+        '<tbody id="mem-ws-body">' + body + '</tbody>' +
+      '</table>' +
+    '</div>' +
+    wsMoreHtml(shown, ordered.length)
+  );
+}
+
+/**
+ * ONE ROW. Extracted from renderWorkStreams for the same reason domains.js
+ * extracted `browseRowHtml`: the "Show N more" path APPENDS rows into the live
+ * <tbody> rather than repainting the table, so two call sites emit this markup
+ * and two hand-maintained copies is how the appended rows quietly stop matching
+ * the painted ones.
+ */
+function wsRowHtml(s, openScope, openMachine, mineMachine) {
+  {
     const eff = effectiveSave(s);
     const tier = freshnessTier(eff.seconds);
     const age = formatAge(eff.seconds);
@@ -2728,7 +2876,18 @@ function renderWorkStreams(scopes, open) {
       '<tr class="mem-ws-row' + (isOpen ? ' mem-ws-row-open' : '') + '"' +
         (isOpen ? ' aria-current="true"' : '') + '>' +
         '<td class="mem-ws-cell-name">' +
+          // THE ROW IS THE CONTROL, AND IT SAYS SO. Its visible text is the
+          // work-stream slug, which names the row but not the ACTION — and the
+          // action is no longer "select this scope", it is "open this handoff".
+          // An `aria-label` states it for anyone who reaches the row without the
+          // block's lede in view, and it names the machine too, because two rows
+          // can carry the same slug and a screen reader hears only this button.
+          // Deliberately NOT a visible chevron: the first cell already carries
+          // the freshness dot and the slug in a column v3.53.1 measured as tight
+          // at 140px, and a third mark there costs more than it says.
           '<button type="button" class="mem-ws-open"' +
+            ' aria-label="' + escapeHtml('Open the handoff for ' + s.scope
+              + (s.machine ? ' on ' + s.machine : '')) + '"' +
             (isOpen ? ' id="mem-ws-active"' : '') +
             ' data-mem-scope="' + escapeHtml(s.scope) + '"' +
             ' data-mem-machine="' + escapeHtml(s.machine || '') + '">' +
@@ -2757,22 +2916,7 @@ function renderWorkStreams(scopes, open) {
         '<td class="mem-ws-cell-who">' + (who || '—') + '</td>' +
       '</tr>'
     );
-  }).join('');
-
-  return (
-    '<div class="mem-ws-wrap">' +
-      '<table class="mem-ws-table">' +
-        '<thead><tr>' +
-          '<th scope="col">Work-stream</th>' +
-          '<th scope="col">Working on</th>' +
-          '<th scope="col">Last saved</th>' +
-          '<th scope="col">Machine</th>' +
-          '<th scope="col">Harness</th>' +
-        '</tr></thead>' +
-        '<tbody>' + body + '</tbody>' +
-      '</table>' +
-    '</div>'
-  );
+  }
 }
 
 /**
@@ -2787,17 +2931,29 @@ function renderWorkStreams(scopes, open) {
  * Deriving either from `scopes.length` would report a CAP as a measurement —
  * the collapse `distinctScopeCount` was added to undo.
  */
-function workStreamCounts(read, shown) {
+function workStreamCounts(read, listed, painted) {
   if (!read) return '';
-  const pairs = typeof read.savedCopies === 'number' ? read.savedCopies : shown;
+  const pairs = typeof read.savedCopies === 'number' ? read.savedCopies : listed;
   const streams = typeof read.distinctScopeCount === 'number' ? read.distinctScopeCount : null;
   const parts = [];
   if (streams !== null) parts.push(streams + ' work-stream' + (streams === 1 ? '' : 's'));
   parts.push(pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'));
   const truncated = read.scopesTruncated
-    ? ' · showing the ' + shown + ' most recently saved'
+    ? ' · showing the ' + listed + ' most recently saved'
     : '';
-  return '<div class="mem-ws-count">' + escapeHtml(parts.join(' · ') + truncated) + '</div>';
+  // ── "SHOWING N OF M", AND ONLY WHILE IT IS TRUE ────────────────────────
+  // A THIRD number, because the window is a third fact: `listed` is what the
+  // store handed over and `painted` is what the table is showing of it. It is
+  // withheld when they are equal — a list that fits says nothing about its own
+  // length, which is what every small project sees — and it is deliberately
+  // separate from the `scopesTruncated` clause above, which is about the
+  // STORE's cap rather than about this table's window. Two caps, two sentences;
+  // collapsing them would report one as the other.
+  const windowed = (typeof painted === 'number' && painted < listed)
+    ? ' · showing ' + painted + ' of ' + listed
+    : '';
+  return '<div class="mem-ws-count" id="mem-ws-count">' +
+    escapeHtml(parts.join(' · ') + truncated + windowed) + '</div>';
 }
 
 /**
@@ -2836,159 +2992,182 @@ function newerOnAnotherMachine(scopes, d) {
 }
 
 /**
- * THE HANDOFF — the answer this screen exists to give, and now an instrument.
+ * THE HANDOFF OPENS IN THE READER, AND IS NO LONGER PRINTED ON THE PAGE.
  *
- * ── A FOLD, LIKE THE OTHER TWO ────────────────────────────────────
- * It was the one card on this page that could not be collapsed, so a page with
- * a long handoff was a page you scrolled past to reach the brief and the
- * journal. It is a native <details> now — same `.mem-fold` family, same
- * delegated `toggle` listener, same remembered-open bookkeeping — and it
- * OPENS BY DEFAULT: `state.openFolds.handoff === undefined` means the user has
- * expressed no opinion, and the default for the answer to the question is to
- * show it. Once they close it, it stays closed, exactly as renderBrief does.
+ * ── WHAT THIS REPLACES, AND WHY ──────────────────────────────────────────
+ * v3.55.0 gave this screen a work-streams TABLE and left the handoff below it
+ * as block ③ — a lead fold carrying the whole document. The maintainer's
+ * verdict on that page in production: a dashboard should say where things
+ * stand, and reading fifteen hundred words of one work-stream is a different
+ * act that should not be happening underneath the summary of all of them. The
+ * wiki answered the same question years ago — a list of pages, and a press
+ * opens ONE in the right-hand reader — and this screen now uses that answer.
  *
- * ── THE LEADER ─────────────────────────────────────────────
- * Three folds that look identical are three folds you have to read to rank.
- * `.mem-fold-lead` gives this one a 3px accent rule, the full --border and one
- * step of elevation; the brief and the journal keep --border-subtle and no
- * shadow. One row is marked out of three, which is the v3.16.1 rule: a flag on
- * every row carries nothing.
+ * So there is no block ③. The table is the index, a row press is the open, and
+ * the shell's reader overlay (app.js `openReader`) is where the document goes:
+ * a slide-in panel over the main column with an `esc` chip, a ✕, the file's
+ * path in mono along the top and the rendered markdown below. The rail and the
+ * sidebar stay live behind it, which is exactly right for a document you are
+ * reading ABOUT a project you are still looking at.
  *
- * ── THE WIDGET'S READINGS, ON THE WEB ────────────────────────────
- * The menubar widget carries two things this screen did not: a freshness
- * COLOUR and an age that MOVES. Every non-Mac user has neither. So the summary
- * carries the same `.mem-save-pip` the save strip does — the SAME class, from
- * the SAME freshnessStep(effectiveSave(…).seconds), never a second ladder (the
- * tray's own 120 / 1800 / 43200 bands would desync the mark from the word) —
- * and the age words tick once a second (see tickAges).
+ * ── NO NEW ROUTE, AND NO SECOND FETCH ────────────────────────────────────
+ * `GET /api/memory/:domain/:project?scope=&machine=` is the read this view
+ * already performs when a row is pressed, and `state.detail.current` is the
+ * result. views/domains.js opens a memory row in the same reader through the
+ * same route (v3.50.0) — this is the second consumer of that decision, not a
+ * new one. What this function does is COMPOSE the payload; the fetch is
+ * `loadScope`'s, unchanged.
  *
- * ONE VOCABULARY, TWO PLACEMENTS. The strip above still answers "am I saved?"
- * for the whole project; this answers it for the document you are about to
- * read, and both are rendered from effectiveSave, so they cannot name two
- * different times for one save.
+ * ── WHAT TRAVELS WITH THE DOCUMENT ───────────────────────────────────────
+ * Everything block ③'s summary carried, because each of those facts qualifies
+ * the document rather than decorating it:
+ *   · the SAVED reading — the age words, and harness · model beside them,
+ *     through the same `effectiveSave` + `renderReadout` the Status block uses,
+ *     so the two can never name different times for one save;
+ *   · the `incomplete` / `summary shortened` badges off `lastSaveKind`, on the
+ *     reading rather than under it (v3.55.0's own rule: a completeness caveat
+ *     below the figure is one the glance never reaches);
+ *   · the truncation and read-sanitisation notes, in full, because they are
+ *     warnings and warnings never fold (v3.16.1);
+ *   · the scope and the machine — in the header path line AND as chips, since
+ *     "which work-stream, on which computer" is the whole reason two rows can
+ *     carry the same name.
  *
- * ── NO CONTROL IN THE <summary> ────────────────────────────────
- * The v3.0.1-beta.18 hazard this view's header block records: an interactive
- * control inside a <summary> toggles its own section when clicked. Everything
- * in this summary is a <span> or a <div> — no button, no select, no input, no
- * link — so there is no propagation path for a later edit to forget to stop.
+ * ── `data-mem-age-at` RIDES ALONG ────────────────────────────────────────
+ * The age in the reader is the same instrument as the age on the page, so it
+ * ticks the same way: tickAges walks the whole document once a second and
+ * writes into `.tx-readout-value` inside any `[data-mem-age-at]`, and the
+ * overlay is in that document. The claim "· updates live" is still made only
+ * off `state.ageTickerArmed`, never off the attribute's presence.
+ *
+ * ── UNTRUSTED TEXT ───────────────────────────────────────────────────────
+ * The body goes through renderMarkdown (shared/markdown.js), which escapes the
+ * whole string before emitting any markup. State text arrives over sync from
+ * other machines and, inside a shared mirror, from other people; the reader
+ * inserts `bodyHtml` as-is and says so, so the escaping duty is here.
+ *
+ * Returns the openReader payload, or null when there is nothing to open.
  */
-function renderHandoff() {
+function handoffReaderContent() {
   const d = state.detail;
-  if (state.detailLoading) {
-    return '<div class="mem-doc-card">' + gatedLoader(loadGate, 'Reading handoff…') + '</div>';
-  }
-  if (!d) return '';
-  if (!d.current || !d.current.present) {
-    return (
-      '<div class="mem-doc-card mem-doc-empty">' +
-        '<div class="mem-doc-empty-title">No handoff under this scope yet</div>' +
-        renderDescription(d.message || 'Nothing has been saved here.') +
-      '</div>'
-    );
-  }
+  if (!d) return null;
+  const scope = d.scope || state.scope || '';
+  const machine = d.machine || state.machine || '';
+  // The file's real location, which is what the reader's path chip is for and
+  // what a person needs in order to find it in Obsidian or in their synced
+  // repository. Built from the same three names the request was addressed by.
+  const slug = 'state/' + (state.activeProject || '') + '/' + scope
+    + (machine ? '/' + machine : '') + '/current.md';
 
-  // Through effectiveSave, exactly as the strip above does, so the document's
-  // own byline and the freshness reading at the top of the pane are ONE
-  // measurement rendered twice rather than two that can disagree.
-  const savedWhen = effectiveSave(d.current);
+  const present = !!(d.current && d.current.present);
+  const cur = present ? d.current : null;
+  const split = splitHandoffPreamble((cur && cur.text) || '');
+  const headline = split.headline;
+
+  // ── THE SAVED READING ──────────────────────────────────────────────────
+  const savedWhen = cur ? effectiveSave(cur) : { seconds: null, at: null, source: null };
   const savedAge = formatAge(savedWhen.seconds);
-  const step = freshnessStep(savedWhen.seconds);
-  // WHEN this was saved and WHO saved it are one measurement. renderReadout is
-  // the instrument role: the figure is mono at full --text, the provenance
-  // steps back by SIZE and FAMILY rather than by dropping under the contrast
-  // floor.
-  //
-  // ABSENT IS NOT ZERO, and this is the case that proves it: with no savedAt
-  // and no journal entry there is no reading, so nothing renders — never
-  // "unknown", never a dash. Each fact is still shown when only the other is
-  // missing, so consolidating the two elements cannot drop one of them.
-  const savedValue = savedAge || d.current.savedAt || null;
+  // ABSENT IS NOT ZERO. With no savedAt and no journal entry there is no
+  // reading, so nothing renders — never "unknown", never a dash.
+  const savedValue = savedAge || (cur && cur.savedAt) || null;
   // Harness and model come from the journal's newest entry — STRUCTURED
-  // fields, never scraped out of the document's prose provenance line. A
-  // parser over that sentence would break the first time its wording moved.
+  // fields, never scraped out of the document's prose provenance line.
   const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
   const who = j0 ? [j0.harness, j0.model].filter(Boolean).join(' · ') : '';
-  // "· updates live" IS A CLAIM, AND IT IS ONLY MADE WHEN IT IS TRUE. It is
-  // appended off `state.ageTickerArmed`, which onEnter writes only after the
-  // interval really exists — not off the presence of the attribute, which
-  // would be this view asserting its own intent rather than reporting a fact.
-  // It is also withheld when the reading is a raw ISO stamp rather than an age
-  // (the savedAge-less fallback below), because that string does not tick.
+  const clock = savedWhen.source === 'filesystem' ? 'file time' : null;
   const live = savedAge && state.ageTickerArmed ? '· updates live' : '';
-  const prov = [who, live].filter(Boolean).join(' ');
+  const prov = [who, clock, live].filter(Boolean).join(' ');
   const readout = savedValue
     ? renderReadout({ label: 'Saved', value: savedValue, provenance: prov || undefined })
     : (who ? renderReadout({ label: 'Written by', value: who }) : '');
-  // The exact ISO stamp stays reachable on hover, which formatAge's own
-  // docblock relies on when it rounds to "2 hr ago". A wrapper carries it
-  // because a readout states a reading and takes no tooltip of its own.
-  // When the two clocks are both known the tooltip names BOTH, because that is
-  // the one place the exact pair is worth having; when only the file's time is
-  // known it carries that alone, unqualified, exactly as it always did.
-  const stampTitle = savedWhen.source === 'agent' && savedWhen.at
-    ? 'Saved ' + savedWhen.at + (d.current.arrivedAt ? ' · arrived here ' + d.current.arrivedAt : '')
-    : (d.current.savedAt || null);
-  // `data-mem-age-at` is the clock's only hook, and it is emitted ONLY when
-  // there is an age to move: an ISO-stamp fallback has no seconds to recount,
-  // and a reading with no time at all has nothing. tickAges skips an
-  // unparseable stamp too, so a bad value freezes rather than printing junk.
+  const kind = (cur && cur.lastSaveKind) || null;
+  // Same two badges, same two classes, as the Status block: `clipped` is the
+  // QUIET badge (a label was shortened, nothing was lost) and `trimmed` the
+  // attention one (content did not survive the save). Sharing one class is the
+  // exact false alarm the two verdicts exist to keep apart.
+  const badges =
+    (kind === 'trimmed' ? '<span class="mem-badge mem-badge-attn">incomplete</span>'
+      : kind === 'clipped' ? '<span class="mem-badge mem-badge-quiet">summary shortened</span>' : '');
   const ageAttr = savedAge && savedWhen.at
     ? ' data-mem-age-at="' + escapeHtml(savedWhen.at) + '"' : '';
-  const stamp = readout
-    ? '<span class="mem-doc-stamp"' + ageAttr +
-      (stampTitle ? ' title="' + escapeHtml(stampTitle) + '"' : '') + '>' + readout + '</span>'
+  // THE EXACT STAMP, AS TEXT RATHER THAN AS A TOOLTIP. The fold this replaces
+  // carried it on `title=`, which v3.20.0 counted as one of eleven facts in this
+  // app reachable only by hover. The work-stream table already had to promote
+  // the same fact into a `.visually-hidden` span; this is the third and it is
+  // promoted the same way, so memory.js's `title=` ratchet SHRINKS from three
+  // allowances to one rather than being spent again.
+  const exact = savedAge && savedWhen.at
+    ? '<span class="visually-hidden"> (' + escapeHtml(savedWhen.at) +
+      (savedWhen.source === 'filesystem' ? ', file time' : '') +
+      (cur && cur.arrivedAt ? '; arrived here ' + escapeHtml(cur.arrivedAt) : '') + ')</span>'
+    : '';
+  // NO READING IS STILL A READING TO REPORT, and the rule survives the move.
+  // With neither an age nor an author there is no instrument — a readout states
+  // a READING, and inventing "unknown" as its value would be the fact-and-
+  // absence collapse this view exists to refuse — but the document must still
+  // say that its time is not known, in words. The fold said it beside a dashed
+  // pip; there is no pip in the reader, so the words stand alone.
+  const unknown = (!readout && present)
+    ? '<span class="mem-reader-unknown">Saved — time unknown</span>' : '';
+  // ONLY WHEN THERE IS A DOCUMENT. A save reading is a statement about the
+  // handoff in front of you; with no handoff to read, a journal line naming a
+  // harness would print "Written by claude-code" over a panel that says nothing
+  // was ever written here — a reading invented for a document that is not
+  // there, which is the same collapse the `unknown` branch above refuses.
+  const meta = (present && (readout || badges || unknown))
+    ? '<div class="mem-reader-meta"' + ageAttr + '>' + readout + exact + badges + unknown + '</div>'
     : '';
 
   const notes = [];
-  if (d.current.truncated) {
+  if (cur && cur.truncated) {
     notes.push('This handoff was longer than the state budget — the tail is not shown. ' +
       'The file on disk is complete up to that budget; nothing below it was ever written.');
   }
-  if (d.current.sanitisedOnRead) {
+  if (cur && cur.sanitisedOnRead) {
     notes.push('Protocol-shaped text in this file was neutralised on read (it can arrive over sync from another ' +
       'machine, or from another person inside a shared mirror). The words are unchanged; only their markup is.');
   }
-  const noteHtml = notes.length
-    ? notes.map((n) => '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>' + escapeHtml(n) + '</span></div>').join('')
-    : '';
+  const noteHtml = notes.map((n) =>
+    '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>' + escapeHtml(n) + '</span></div>').join('');
 
-  const { headline, body } = splitHandoffPreamble(d.current.text || '');
+  // AN ABSENT HANDOFF IS SAID, NOT RENDERED AS AN EMPTY PAGE. A pair can be
+  // listed and its `current.md` still be unreadable — and a blank panel would
+  // read as "this handoff is empty", which is a different claim.
+  const bodyHtml = present
+    ? meta + noteHtml + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>'
+    : meta + noteHtml + renderDescription(d.message
+      || 'Nothing has been saved under this work-stream on this machine yet.');
 
-  // The user's own toggle wins; `undefined` (never touched) opens. Same rule
-  // and the same shape as renderBrief, so the three folds behave alike.
-  const remembered = state.openFolds ? state.openFolds.handoff : undefined;
-  const foldAttr = (remembered === undefined ? true : !!remembered) ? ' open' : '';
-
-  // renderMarkdown (shared/markdown.js) HTML-escapes the whole string before
-  // emitting any markup — the escape-first invariant that module's own suite
-  // pins. State text is untrusted (syncs from other machines; inside a
-  // shared-* mirror it can be another person's), so it must never reach the
-  // DOM any other way.
-  return (
-    // `.mem-section` is gone: the FOLD is the body of block ③ now and the
-    // block owns its own spacing. The fold itself stays — the maintainer asked
-    // to be able to collapse a fifteen-hundred-word handoff, and the block head
-    // above it is a heading rather than a second disclosure.
-    '<details class="mem-fold mem-fold-lead" data-mem-fold="handoff"' + foldAttr + '>' +
-      '<summary class="mem-fold-summary mem-fold-summary-lead" id="mem-fold-handoff">' +
-        icon('chevronRight', 14) +
-        '<span class="cur-eyebrow">CURRENT HANDOFF</span>' +
-        '<span class="mem-save-pip' +
-          (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
-          '" aria-hidden="true"></span>' +
-        // NO READING IS STILL A READING TO REPORT. With neither an age nor a
-        // provenance the summary says so in words rather than showing a bare
-        // eyebrow beside a dashed ring nobody can decode.
-        (stamp || '<span class="mem-fold-meta">time unknown</span>') +
-      '</summary>' +
-      '<div class="mem-fold-body">' +
-        (headline ? '<div class="mem-doc-headline">' + escapeHtml(headline) + '</div>' : '') +
-        noteHtml +
-        '<div class="mem-doc">' + renderMarkdown(body) + '</div>' +
-      '</div>' +
-    '</details>'
-  );
+  return {
+    slug,
+    // The handoff's own first line is the best title it has; the scope is the
+    // fallback, because a document titled after its file is still addressable.
+    title: headline || (scope ? 'Handoff — ' + scope : 'Handoff'),
+    type: 'memory',
+    typeLabel: 'handoff',
+    tags: [
+      scope ? 'work-stream: ' + scope : null,
+      machine ? 'machine: ' + machine : null,
+      d.machineIsThisMachine === true ? 'this machine' : null,
+      d.machineIsThisMachine === false ? 'synced from another machine' : null,
+      cur && cur.truncated ? 'truncated at the read cap' : null,
+      cur && cur.sanitisedOnRead ? 'sanitised on read' : null,
+    ].filter(Boolean),
+    readonly: !!d.readonly,
+    bodyHtml,
+    backlinks: [],
+    // ESCAPE AND THE ✕ PUT FOCUS BACK ON THE ROW. `mem-ws-active` is the id the
+    // OPEN row carries — the row that was just pressed, by the time this closes
+    // — and it is an id rather than a node because every render on this screen
+    // replaces the pane by innerHTML while the reader is up. See app.js's
+    // `dismissReader` for why a navigation deliberately does not do this.
+    returnFocusTo: 'mem-ws-active',
+    // NO `domain`, DELIBERATELY. That field switches on the reader's RAW-source
+    // bar, which asks GET /api/wiki/:domain/source about a wiki page. A handoff
+    // is not a wiki page and has no ingested source, so supplying it would buy
+    // a request that can only ever answer "no". views/domains.js omits it for
+    // the same reason on the same kind of row.
+  };
 }
 
 /**
@@ -3498,6 +3677,160 @@ function aboutInfoHtml() {
 
 // ── Wiring ───────────────────────────────────────────────────────────────
 
+/**
+ * Binds the work-stream rows inside `root`.
+ *
+ * `root` is the DOCUMENT on a full paint and the newly-appended rows on a
+ * "Show N more" — which is the whole reason it is a parameter, and the shape
+ * views/domains.js's `bindBrowseRowClicks` settled on: re-scanning the document
+ * after an append would re-bind every row already on screen, and a second
+ * listener on a row opens the reader twice.
+ *
+ * One listener per row rather than one delegated listener on the table: `wire`
+ * runs after every paint and the whole pane is replaced each time, so there is
+ * nothing to accumulate on, and a per-row handler keeps the data it needs on
+ * its own element.
+ */
+function bindWorkStreamRows(root, token) {
+  root.querySelectorAll('.mem-ws-open[data-mem-scope]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openWorkStream(btn.dataset.memScope, btn.dataset.memMachine || null, token)
+        .catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+}
+
+/**
+ * A ROW PRESS: select the pair, then open its handoff in the shell's reader.
+ *
+ * ── WHY THE READER OPENS FIRST, EMPTY ────────────────────────────────────
+ * The read behind a row takes a round trip, and the wiki's own rows have
+ * answered that with a `loading: true` panel since the reader existed. Painting
+ * it here means the press is acknowledged in the frame it happened in rather
+ * than up to a second later (v3.27.0's finding, one screen over).
+ *
+ * `isCurrentReader(epoch)` is the guard that goes with it: a user who presses
+ * Escape while the fetch is in flight must not have the document reopened on
+ * top of whatever they went back to. `isCurrentMount(token)` covers leaving the
+ * view entirely; the two are different questions and both are asked.
+ *
+ * ── PRESSING THE OPEN ROW RE-OPENS THE READER ───────────────────────────
+ * It used to return early — re-reading would have dropped the document and
+ * painted a loader over a page that was already correct. That was right while
+ * the handoff was ON the page; now the press IS the open, so a press on the
+ * row that is already selected must still produce the document. It does so
+ * from `state.detail`, with no request at all.
+ *
+ * FOCUS IS RECORDED EXPLICITLY, and this is the one place in the view that
+ * does so: `captureFocus` only remembers an id in FOCUSABLE_IDS, and the button
+ * being pressed has NO id unless it is already the open row (ids must be unique
+ * and a scope slug is not a safe id fragment). A moment after this press the
+ * pressed row IS the open row and carries `mem-ws-active`, which is also the id
+ * the reader returns focus to when it is dismissed.
+ */
+async function openWorkStream(scope, machine, token) {
+  pendingFocusId = 'mem-ws-active';
+  const wanted = machine || null;
+  const already = !!(state.detail && state.detail.scope === scope
+    && (state.detail.machine || null) === wanted);
+
+  if (already) {
+    const content = handoffReaderContent();
+    if (content) openReader(content, token);
+    return;
+  }
+
+  const epoch = openReader({
+    slug: 'state/' + (state.activeProject || '') + '/' + scope
+      + (wanted ? '/' + wanted : '') + '/current.md',
+    title: scope,
+    loading: true,
+    returnFocusTo: 'mem-ws-active',
+  }, token);
+
+  state.journalLimit = JOURNAL_PAGE;
+  await loadScope(scope, wanted, token);
+  if (!isCurrentMount(token)) return;
+  if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we read
+
+  const content = handoffReaderContent();
+  if (content) openReader(content, token);
+  else openReader({
+    slug: scope, title: scope,
+    error: state.detailError || 'That work-stream could not be read.',
+  }, token);
+}
+
+/**
+ * Paints the NEXT window of work-stream rows — by APPENDING them.
+ *
+ * ── WHY APPEND, NOT RENDER ───────────────────────────────────────────────
+ * The same three costs views/domains.js measured on its own list: a render
+ * replaces the whole main pane by innerHTML, so the page's scroll position
+ * moves, any open ⓘ panel is rebuilt, and every row already on screen is
+ * re-parsed. Appending touches only the nodes that are new, and the rows above
+ * the button do not move.
+ *
+ * `state.wsWindow` stays the single source of truth, so a later full render — a
+ * poll, a save landing, a brief edit — paints exactly what is on screen now.
+ * The two paths cannot disagree about how much is shown.
+ *
+ * The button is REPLACED rather than hidden, because it is the list's last row
+ * and a hidden row still occupies the rule above it.
+ */
+function showMoreWorkStreams(token) {
+  const pr = state.projectRead;
+  const scopes = (pr && pr.scopes) || [];
+  const tbody = document.getElementById('mem-ws-body');
+  const moreBtn = document.getElementById('mem-ws-more');
+  if (!tbody || !moreBtn || !scopes.length) return;
+
+  const ordered = workStreamOrder(scopes);
+  const from = wsShownCount(ordered, state.detail, state.wsWindow);
+  const rest = ordered.length - from;
+  if (rest <= 0) { moreBtn.remove(); return; }
+  const to = from + (rest <= WS_STEP_ALL_MAX ? rest : WS_STEP);
+
+  const open = state.detail;
+  const openScope = (open && open.scope) || null;
+  const openMachine = (open && open.machine) || null;
+  const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
+
+  const before = tbody.children.length;
+  tbody.insertAdjacentHTML('beforeend', ordered.slice(from, to)
+    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine)).join(''));
+  // `wsWindow` records what was ASKED for, which `wsShownCount` may still
+  // stretch to reach an open row further down. Storing the stretched figure
+  // would silently make the open row's position part of the user's request.
+  state.wsWindow = to;
+
+  // Bind ONLY what was just inserted — see bindWorkStreamRows. Taken as the
+  // tail of the list by INDEX rather than by counting back from a sibling, so
+  // a row the painter ever renders as two elements cannot bind the wrong set.
+  const added = Array.prototype.slice.call(tbody.children, before);
+  bindWorkStreamRows({
+    querySelectorAll: (sel) => added.reduce((acc, el) => (
+      el.querySelectorAll ? acc.concat(Array.prototype.slice.call(el.querySelectorAll(sel))) : acc), []),
+  }, token);
+
+  const count = document.getElementById('mem-ws-count');
+  if (to >= ordered.length) {
+    moreBtn.remove();
+  } else {
+    const label = moreBtn.querySelector('.mem-ws-more-label');
+    const left = ordered.length - to;
+    if (label) label.textContent = 'Show ' + (left <= WS_STEP_ALL_MAX ? left : WS_STEP).toLocaleString() + ' more';
+  }
+  // The count line is rebuilt rather than patched: it is ONE escaped string
+  // over four facts (work-streams, saved copies, the store's own cap, this
+  // window), and patching a clause out of the middle of it is how the two
+  // would start to disagree.
+  if (count) {
+    count.outerHTML = workStreamCounts(pr, scopes.length,
+      wsShownCount(ordered, state.detail, state.wsWindow));
+  }
+}
+
 function wire(token) {
   document.querySelectorAll('.mem-row[data-mem-project]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -3526,18 +3859,11 @@ function wire(token) {
   // after this click the pressed row IS the open row and carries
   // `mem-ws-active`, so naming that id now is what puts focus back where the
   // keyboard user left it.
-  document.querySelectorAll('.mem-ws-open[data-mem-scope]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const scope = btn.dataset.memScope;
-      const machine = btn.dataset.memMachine || null;
-      // Already open — re-reading would drop the document and repaint a
-      // loader over a page that is already correct.
-      if (state.detail && state.detail.scope === scope
-        && (state.detail.machine || null) === machine) return;
-      pendingFocusId = 'mem-ws-active';
-      state.journalLimit = JOURNAL_PAGE;
-      loadScope(scope, machine, token).catch((err) => reportAsyncMountFailure(token, err));
-    });
+  bindWorkStreamRows(document, token);
+
+  // ── "SHOW N MORE" ─────────────────────────────────────────────────────
+  document.getElementById('mem-ws-more')?.addEventListener('click', () => {
+    showMoreWorkStreams(token);
   });
 
   document.getElementById('mem-copy-agent')?.addEventListener('click', () => {

@@ -157,8 +157,12 @@ ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside re
   callSiteCount(memSrc, 'renderStatus', { within: 'renderSidebar' }) > 0);
 ok('memory.js: the journal count is a READOUT (renderReadout inside renderJournal)',
   callSiteCount(memSrc, 'renderReadout', { within: 'renderJournal' }) > 0);
-ok('memory.js: the handoff provenance is a READOUT (renderReadout inside renderHandoff)',
-  callSiteCount(memSrc, 'renderReadout', { within: 'renderHandoff' }) > 0);
+// RE-POINTED (v3.56.0), and the claim is unchanged: the handoff's provenance is
+// an INSTRUMENT. What moved is where it is painted — `renderHandoff` printed the
+// document on the page and is gone; `handoffReaderContent` composes the payload
+// the shell's reader overlay shows. The readout is in that payload's body.
+ok('memory.js: the handoff provenance is a READOUT (renderReadout inside handoffReaderContent)',
+  callSiteCount(memSrc, 'renderReadout', { within: 'handoffReaderContent' }) > 0);
 // EXPIRED CLAIM, REPLACED — the assertion was right and its premise is gone.
 // It pinned a renderDescription call inside ingest's renderMain, i.e. a
 // paragraph rendered under the <h1>. That paragraph is DELETED: every clause of
@@ -231,6 +235,22 @@ function liftFrom(groups) {
   return bodies + '\nreturn { ' + all.join(', ') + ' };';
 }
 
+/**
+ * THE HANDOFF'S MARKUP, wherever it is painted.
+ *
+ * v3.56.0: `renderHandoff` returned the page fragment; `handoffReaderContent`
+ * returns the openReader PAYLOAD and its `bodyHtml` is the same markup, one
+ * layer in. Every assertion below reads through this rather than being rewritten
+ * one by one, so what each of them pins is unchanged.
+ *
+ * Returns '' when there is nothing to open, which is what a missing fragment
+ * used to be — so an assertion that expected markup still reds.
+ */
+function handoffHtml(R) {
+  const c = R.handoffReaderContent();
+  return c ? (c.bodyHtml || '') : '';
+}
+
 function memRenderers(stateObj) {
   // `effectiveSave` joins the list because renderHandoff now reads the save
   // time through it: the shipped field `current.savedAt` is filesystem mtime,
@@ -251,7 +271,7 @@ function memRenderers(stateObj) {
   // went app-wide and that is where it lives now; memory.js imports it.
   // `aboutInfoHtml` replaces `renderAbout`: same words, no <details> around them.
   const body = liftFrom([
-    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderHandoff', 'renderJournal',
+    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'renderJournal',
       'renderBriefEditor', 'renderBrief', 'aboutInfoHtml'], memSrc, 'memory.js'],
     [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
   ]);
@@ -306,55 +326,77 @@ const baseState = {
   // AND IT IS ON THE PAGE. A panel nothing passes to the header is a panel
   // nobody can open, which a source scan for the function would not notice.
   ok('the page itself emits NO explainer card any more',
-    !/tx-explainer/.test(R.renderHandoff() + R.renderJournal() + R.renderBrief(baseState.projectRead, false)));
+    !/tx-explainer/.test(handoffHtml(R) + R.renderJournal() + R.renderBrief(baseState.projectRead, false)));
 
   // The handoff's provenance is an instrument.
-  const h = R.renderHandoff();
+  const h = handoffHtml(R);
   ok('the handoff renders a READOUT for when it was saved', /class="tx-readout"/.test(h), h.slice(0, 300));
   ok('...with the age as the VALUE', /class="tx-readout-value">2 hr ago</.test(h), h.slice(0, 400));
+  // WIDENED DELIBERATELY (v3.56.0): the provenance now also names the CLOCK
+  // when the reading had to fall back to the file's timestamp, which this
+  // fixture does (a `savedAt` and no journal time). The page's own two-clock
+  // rule has always been that such a reading "says `file time` in its own
+  // provenance line, in words, rather than in a tooltip" — the save strip and
+  // every table cell did, and the handoff byline was the one place that did
+  // not. The assertion keeps its subject: harness and model are the provenance.
   ok('...and harness + model as its PROVENANCE',
-    /class="tx-readout-prov">claude-code · opus-5</.test(h), h.slice(0, 500));
-  ok('...and the exact ISO stamp is still reachable on hover',
-    new RegExp('title="' + baseDetail.current.savedAt + '"').test(h), h.slice(0, 300));
+    /class="tx-readout-prov">claude-code · opus-5/.test(h), h.slice(0, 500));
+  ok('...which also names the CLOCK when the reading fell back to the file time',
+    /class="tx-readout-prov">[^<]*file time/.test(h), h.slice(0, 500));
+  // RE-POINTED (v3.56.0). The fact is the same and it is now reachable by MORE
+  // people: it was a `title=` on the fold's stamp — hover only, so invisible to
+  // keyboard and to touch — and it is a `.visually-hidden` span in the reader,
+  // the same promotion the work-stream table's age cell already made. memory.js's
+  // `title=` allowance in test-next-header-adoption.js shrinks from 3 to 1 with
+  // this, which is the direction that ratchet permits.
+  ok('...and the exact ISO stamp is still reachable, as text rather than as a tooltip',
+    h.includes('class="visually-hidden"') && h.includes(baseDetail.current.savedAt)
+    && !/title="/.test(h), h.slice(0, 400));
 
   // ABSENT IS NOT ZERO — the component's most load-bearing rule, at the site
   // where this view could most easily have broken it.
-  const noProv = memRenderers({
+  const noProvR = memRenderers({
     ...baseState,
     detail: { ...baseDetail, current: { ...baseDetail.current, savedAt: null }, journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-  }).renderHandoff();
-  // RE-POINTED DELIBERATELY, and the rule it enforces is unchanged: ABSENT IS
-  // NOT ZERO. What changed is that the handoff is a <details> now, so there is
-  // a <summary> on screen whether or not there is a reading — and a summary
-  // showing an eyebrow beside a dashed ring, with no words at all, is a mark
-  // nobody can decode. The honest output is to SAY the age is unknown.
+  });
+  const noProv = handoffHtml(noProvR);
+  // RE-POINTED AGAIN (v3.56.0), and the rule it enforces is still unchanged:
+  // ABSENT IS NOT ZERO. What changed is that there is no <summary> and no pip
+  // any more — the document opens in the reader — so the third assertion, which
+  // pinned the dashed ring, becomes its inverse: there is no mark to decode at
+  // all, and the words carry the whole fact.
   //
   // So: still no instrument (a readout states a READING, and there is none),
-  // still no invented figure, and the pip takes the dashed `-unknown` ring
-  // rather than step 0 — "we do not know when" and "a long time ago" are
-  // different facts. Three assertions where there was one, and every one of
-  // them reds if an absent time is rendered as a number.
+  // still no invented figure, and the time is still said to be unknown in
+  // words. Every one of the three reds if an absent time is rendered as a
+  // number.
   ok('no save time and no journal entry renders NO readout — never a figure, never a dash',
     !/tx-readout/.test(noProv), noProv.slice(0, 400));
   ok('...saying the time is unknown IN WORDS, rather than leaving a bare mark',
     /time unknown/.test(noProv), noProv.slice(0, 400));
-  ok('...with the dashed -unknown pip, not step 0 — "we do not know" is not "long ago"',
-    /mem-save-pip-unknown/.test(noProv) && !/mem-save-pip-s\d/.test(noProv), noProv.slice(0, 400));
+  ok('...and no pip at all — there is no mark in the reader for a dashed ring to be',
+    !/mem-save-pip/.test(noProv), noProv.slice(0, 400));
 
   // Each fact still shown when only the OTHER is missing: consolidating two
   // elements into one instrument must not be able to drop one of them.
-  const onlyWho = memRenderers({
+  const onlyWho = handoffHtml(memRenderers({
     ...baseState,
     detail: { ...baseDetail, current: { ...baseDetail.current, savedAt: null } },
-  }).renderHandoff();
+  }));
   ok('with no save time but a known author, the AUTHOR is still stated',
     /tx-readout-value">claude-code · opus-5</.test(onlyWho), onlyWho.slice(0, 400));
-  const onlyWhen = memRenderers({
+  const onlyWhen = handoffHtml(memRenderers({
     ...baseState,
     detail: { ...baseDetail, journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
-  }).renderHandoff();
+  }));
+  // The `!prov` half of this became false for a REASON rather than by drift —
+  // see the widening above: with no author the provenance is not empty, it is
+  // the clock. What the assertion is for is that the TIME survives when the
+  // author does not, and that is what it now says, plus the positive form of
+  // the missing author: no harness, no model.
   ok('with a save time but no known author, the TIME is still stated',
-    /tx-readout-value">2 hr ago</.test(onlyWhen) && !/tx-readout-prov/.test(onlyWhen), onlyWhen.slice(0, 400));
+    /tx-readout-value">2 hr ago</.test(onlyWhen)
+    && !/claude-code/.test(onlyWhen) && !/opus-5/.test(onlyWhen), onlyWhen.slice(0, 400));
 
   // The journal count is a figure, not a sentence — and the framing prose
   // beside it is a description, so the two no longer share a voice.
@@ -389,7 +431,7 @@ const baseState = {
       journal: { returned: 1, total: 1, totalUnknown: false, entries: [{ at: null, harness: XSS, model: XSS, headline: XSS, rejections: [] }] } },
     projectRead: { scopes: [], brief: { present: false } },
   });
-  const out = R.renderHandoff() + R.renderJournal();
+  const out = handoffHtml(R) + R.renderJournal();
   ok('the hostile fixture produced markup (not an empty string)', out.length > 300, out.length);
   ok('no raw <img> survives anywhere in the adopted output', !/<img\s/i.test(out), out.slice(0, 300));
 }
@@ -397,10 +439,10 @@ const baseState = {
 // The store's own message reaches the screen through the description role —
 // the v3.17.1 defect was this sentence being dropped entirely.
 {
-  const noHandoff = memRenderers({
+  const noHandoff = handoffHtml(memRenderers({
     ...baseState,
     detail: { ...baseDetail, current: { present: false }, message: 'STORE-SAYS-SO' },
-  }).renderHandoff();
+  }));
   ok('the store’s own "nothing here" sentence is rendered, in the description role',
     /class="tx-desc"[^>]*>[^<]*STORE-SAYS-SO/.test(noHandoff), noHandoff.slice(0, 300));
 }

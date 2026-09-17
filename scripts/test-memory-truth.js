@@ -779,6 +779,11 @@ section('§8 — The strip answers the other three questions, and only when true
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§8b — The strip TICKS: screenSignature can see the pane it paints');
+// The view's own window size, read off live source rather than retyped: a copy
+// here could agree with the assertions while the shipped table painted a
+// different number of rows.
+const WS_WINDOW_SRC = Number((/^const WS_WINDOW = (\d+);$/m.exec(viewSrc) || [])[1]);
+if (!Number.isFinite(WS_WINDOW_SRC)) throw new Error('WS_WINDOW not found in memory.js');
 // ═════════════════════════════════════════════════════════════════════════
 //
 // A poll re-renders only when the screen would look different, which is right
@@ -791,11 +796,17 @@ section('§8b — The strip TICKS: screenSignature can see the pane it paints');
   // response — the two clocks disagree on every synced machine, and a mark
   // describing an arrangement that is not on screen is the exact shape of
   // bug this section exists to catch.
-  const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'newestPair',
+  // `wsShownCount` joins them in v3.56.0: the table shows the newest FIVE with a
+  // "Show N more" footer, so the mark is the rows ON SCREEN plus the NUMBER
+  // hidden behind it, and that split is this function's arithmetic. Lifted from
+  // live source with the rest rather than stubbed — a stub would let the mark
+  // describe a window the table is not painting, which is the same class of bug
+  // §8b was written for one release earlier.
+  const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
     'projectMetaLine', 'screenSignature'];
-  const sigOf = (st) => new Function('state',
+  const sigOf = (st) => new Function('state', 'WS_WINDOW',
     SIG.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
-    + '\nreturn screenSignature();')(st);
+    + '\nreturn screenSignature();')(st, WS_WINDOW_SRC);
 
   const st = (over = {}) => ({
     activeProject: 'proj', staleWrite: false, indexError: null,
