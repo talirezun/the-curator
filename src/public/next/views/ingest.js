@@ -1507,7 +1507,7 @@ function renderSidebar(token) {
           '<span class="ing-dest-meta">' +
             '<span class="ing-dest-figure">' + escapeHtml(destinationFigureText(d)) + '</span>' +
             '<span class="ing-dest-sep" aria-hidden="true">·</span>' +
-            freshnessDotHtml('ing', d.lastIngestDate, now) +
+            freshnessDotHtml(d.lastIngestDate, now) +
             clockGlyph(12) +
             '<span class="ing-dest-age">' + escapeHtml(destinationAgeText(d, now)) + '</span>' +
             // THE ABSOLUTE DATE, kept and REACHABLE. Visually hidden rather

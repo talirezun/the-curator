@@ -40,6 +40,22 @@
  * "1 week ago". A second, independently-tuned threshold table is how those
  * two readings drift apart, and v3.34.0 records that class.
  *
+ * ── ONE SCALE, TWO VOCABULARIES FOR IT ──────────────────────────────────
+ * `freshnessStep` / `dayFreshnessStep` return NUMBERS (4…0 and 3…0). They
+ * are the original vocabulary and they are kept, unchanged, because
+ * views/memory.js's five `.mem-save-pip-s*` class names are pinned by two
+ * suites and their numeric matrix is the thing those suites assert.
+ *
+ * `freshnessTier` / `dayFreshnessTier` return NAMES — live, recent, today,
+ * week, dormant, unknown — and those names are the app-wide scale that
+ * shared/freshness.css paints. A name survives a renumbering; `s2` does not
+ * mean anything on its own, and the three ladders this file replaces proved
+ * it by giving `s2` two different meanings in two files.
+ *
+ * The two vocabularies are NOT independent: `freshnessTier` is asserted to
+ * be a relabelling of `freshnessStep` over a matrix, in
+ * scripts/test-freshness-scale.js, so they cannot drift into two scales.
+ *
  * ── NO DOM AT IMPORT ────────────────────────────────────────────────────
  * Pure functions and one string-returning glyph. Nothing here touches
  * `document`, so a suite can import this module in plain Node.
@@ -118,6 +134,100 @@ export function dayFreshnessStep(dateStr, now = Date.now()) {
   return 0;
 }
 
+/**
+ * THE FIVE FRESHNESS STEPS, and why they are exactly these five.
+ *
+ * MOVED HERE FROM views/memory.js, where it was declared beside the view that
+ * happened to need it first. It is now one half of the app-wide scale and
+ * views/memory.js imports it; nothing about the numbers changed, and
+ * scripts/test-memory-truth.js still drives the same matrix through it.
+ *
+ * The question the Agent-memory screen has to answer in about a second is
+ * "am I saved?", asked by someone whose context is running out and who is
+ * least able to go reading. A word alone does not do it — "5 min ago" and
+ * "4 hr ago" are the same shape at a glance — so the reading carries a
+ * pre-attentive mark too.
+ *
+ * The steps are NOT tuned constants. They are formatAge's own unit bands, so
+ * the mark and the word change at the same instant and can never contradict
+ * each other on screen:
+ *
+ *   4  under a minute   "just now"        an agent is saving right now
+ *   3  minutes          "N min ago"       this session
+ *   2  hours            "N hr ago"        today
+ *   1  days             "N days ago"      this week
+ *   0  weeks and older  "N weeks ago"+    dormant
+ *
+ * A NULL AGE IS NULL, not step 0. "We do not know when this was saved" and
+ * "this was saved a long time ago" are different facts and the mark must not
+ * merge them.
+ *
+ * NOT a bar and not a percentage: "how old" has no maximum, so a half-full
+ * meter would be inventing one. Five discrete states, always beside the words.
+ */
+export function freshnessStep(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds < 60) return 4;
+  if (seconds < 3600) return 3;
+  if (seconds < 86400) return 2;
+  if (seconds < 604800) return 1;
+  return 0;
+}
+
+// ── The app-wide scale, by NAME ──────────────────────────────────────────
+//
+// The five steps above, relabelled — and the relabelling is what makes the
+// scale portable. `s2` means "hours" in memory.js's ladder and meant "this
+// week" in the two sidebar ladders this replaces; `today` means one thing
+// everywhere. shared/freshness.css paints exactly these names.
+//
+// DERIVED FROM freshnessStep RATHER THAN RE-CUT. A second copy of the band
+// boundaries here would be a second threshold table, which is precisely the
+// drift this module exists to prevent — the fact that `freshnessStep` and
+// `formatAge` share bands would then have to be true TWICE.
+const TIER_BY_STEP = ['dormant', 'week', 'today', 'recent', 'live'];
+
+/** Tier name for a second-resolution age. null seconds -> 'unknown'. */
+export function freshnessTier(seconds) {
+  const step = freshnessStep(seconds);
+  return step === null ? 'unknown' : TIER_BY_STEP[step];
+}
+
+/**
+ * Tier name for a DAY-resolution date, which enters the scale at `today`.
+ *
+ * It CANNOT return 'live' or 'recent', and that is a property of the data
+ * rather than a simplification: `lastIngestDate` is a `YYYY-MM-DD` heading
+ * with no time of day in it, so there is no honest way to say "12 minutes
+ * ago" about one. Feeding a fabricated midnight into the second-resolution
+ * ladder would manufacture exactly that precision.
+ *
+ * COARSER THAN dayFreshnessStep, DELIBERATELY. The step ladder splits
+ * "this month" (step 1) from "a month or more" (step 0); the tier ladder puts
+ * both in `dormant`, because the app-wide scale's bottom rung is "not lately"
+ * and the extra rung was a distinction only one of the three old ladders drew.
+ * The WORDS still carry it ("3 weeks ago" vs "2 months ago"): what is lost is
+ * a shade of ring, not a fact. `dayFreshnessStep` is kept, unchanged, for the
+ * callers and suites that reason in steps.
+ */
+export function dayFreshnessTier(dateStr, now = Date.now()) {
+  const days = dayDelta(dateStr, now);
+  if (days === null) return 'unknown';
+  // A date AHEAD of the clock takes the coldest tier, never the freshest —
+  // the same call dayFreshnessStep makes, and for the same reason: we do not
+  // know what it means, and the one thing we must not do is paint it as new.
+  if (days < 0) return 'dormant';
+  if (days < 1) return 'today';
+  if (days < 7) return 'week';
+  return 'dormant';
+}
+
+/** Every tier name the two functions above can return. The stylesheet must
+ *  carry a rule for each, and may carry no others — both directions asserted
+ *  in scripts/test-freshness-scale.js, so this stays a set rather than a
+ *  suggestion. */
+export const FRESHNESS_TIERS = ['live', 'recent', 'today', 'week', 'dormant', 'unknown'];
+
 // Whole calendar days between a `YYYY-MM-DD` string and `now`, in LOCAL time.
 // null when the string is absent or not a real date. Built from local date
 // COMPONENTS, not from Date.parse — which reads a bare `YYYY-MM-DD` as UTC
@@ -143,23 +253,22 @@ function dayDelta(dateStr, now) {
 
 // ── The freshness mark ──────────────────────────────────────────────────
 //
-// WHY THE CLASS PREFIX IS A PARAMETER. The two views that carry status rows
-// own their own stylesheets; shell.css belongs to another change, so the dot
-// RULES are declared twice, once per view, with identical values and
-// different prefixes (`.ing-fresh-*`, `.dm-fresh-*`), and a suite asserts the
-// two ladders are byte-identical modulo the prefix. The DECISION — which step
-// a date is on, and what "unknown" looks like — is not duplicated: it is this
-// function, and it is the only place `dayFreshnessStep` is turned into a
-// class name. A follow-up promoting the rules into shell.css deletes one of
-// the CSS copies and changes nothing here.
+// THE CLASS PREFIX USED TO BE A PARAMETER, and it is gone. The two views that
+// carry status rows owned their own stylesheets, so the dot RULES were
+// declared twice with identical values and different prefixes
+// (`.ing-fresh-*`, `.dm-fresh-*`) and a suite asserted the copies were
+// byte-identical modulo the prefix — a guard against a duplication rather
+// than a reason for one, and recorded as KNOWN AND UNFIXED in v3.54.0. Both
+// copies are deleted: the rules live in shared/freshness.css, which owns the
+// `fresh-` prefix outright, and the only question left for a caller is the
+// DATE. A function that takes a prefix is a function that expects more than
+// one ladder to exist.
 //
 // aria-hidden: the dot is a redundant encoding of the age phrase rendered
 // immediately beside it, never a fact of its own. That is also why colour is
 // never the only carrier — the words say the same thing.
-export function freshnessDotHtml(prefix, dateStr, now = Date.now()) {
-  const step = dayFreshnessStep(dateStr, now);
-  const mod = step === null ? 'unknown' : 's' + step;
-  return '<span class="' + prefix + '-fresh ' + prefix + '-fresh-' + mod +
+export function freshnessDotHtml(dateStr, now = Date.now()) {
+  return '<span class="fresh-dot fresh-' + dayFreshnessTier(dateStr, now) +
     '" aria-hidden="true"></span>';
 }
 

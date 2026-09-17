@@ -211,12 +211,24 @@ section('§4  BEHAVIOURAL — the real memory renderers, asserted on OUTPUT');
 // that renders from one that is merely mentioned.
 
 function lift(names, src, label) {
-  const bodies = names.map((n) => {
+  return liftFrom([[names, src, label]]);
+}
+
+/** The same, over SEVERAL sources. A screen composed of functions from two
+ *  modules has to be lifted from two modules — `freshnessStep` moved to
+ *  shared/age.js when the freshness scale went app-wide, and memory.js now
+ *  imports it. Stubbing it instead would let this file's text-role assertions
+ *  run past a mark the shipped screen really emits, which is the thing every
+ *  lift in this file exists to avoid. */
+function liftFrom(groups) {
+  const all = [];
+  const bodies = groups.map(([names, src, label]) => names.map((n) => {
+    all.push(n);
     const b = functionSource(src, n);
     if (b === null) throw new Error(`lift: ${n} not found in ${label} — the scan would pass vacuously`);
     return b.replace(/^export\s+/, '');
-  }).join('\n');
-  return bodies + '\nreturn { ' + names.join(', ') + ' };';
+  }).join('\n')).join('\n');
+  return bodies + '\nreturn { ' + all.join(', ') + ' };';
 }
 
 function memRenderers(stateObj) {
@@ -234,11 +246,15 @@ function memRenderers(stateObj) {
   // `freshnessStep` joins the list because the handoff's <summary> now carries
   // the save strip's own freshness pip — the menubar widget's mark, on the web,
   // for everyone who has no menu bar — and it is cut on formatAge's unit bands
-  // so the mark and the word can never contradict each other.
+  // so the mark and the word can never contradict each other. It is lifted
+  // from shared/age.js rather than from memory.js, because the freshness scale
+  // went app-wide and that is where it lives now; memory.js imports it.
   // `aboutInfoHtml` replaces `renderAbout`: same words, no <details> around them.
-  const body = lift(['formatAge', 'effectiveSave', 'freshnessStep', 'splitHandoffPreamble',
-    'renderHandoff', 'renderJournal', 'renderBriefEditor', 'renderBrief',
-    'aboutInfoHtml'], memSrc, 'memory.js');
+  const body = liftFrom([
+    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderHandoff', 'renderJournal',
+      'renderBriefEditor', 'renderBrief', 'aboutInfoHtml'], memSrc, 'memory.js'],
+    [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
+  ]);
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
     'renderDescription', 'renderStatus', 'renderReadout', 'docsLinkHtml', body)(

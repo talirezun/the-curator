@@ -177,6 +177,49 @@
   --danger-tint: rgba(239,85,104,0.13);
   --info-tint:   var(--accent-tint);
 
+  /* ── Freshness — HOW RECENTLY, and nothing else ──────────────────────
+     ONE app-wide scale for "when did this last happen": the Agent-memory
+     save pip, both sidebar status rows, and (in its own colour space, since
+     desktop/ may not import src/) the menubar tray.
+
+     A SEPARATE FAMILY RATHER THAN THE STATUS ONE, DELIBERATELY. --attention
+     means "a human has to do something" in this app — the header above says
+     so, and amber is shared with `summary` for exactly that reason. "Saved
+     today" is not a call to action, and "this domain has not been written to
+     in six weeks" is not a failure: a finished work-stream is SUPPOSED to
+     look dormant. Painting either with --attention / --success would make
+     every quiet row read as a task, which is the reading the whole scale
+     exists to avoid. The hues are borrowed from the status ramps — the
+     palette has no others — but the NAMES are the contract, and a view must
+     name these.
+
+     The hues match the tray's own semantics (desktop/lib/menu-dots.js: teal
+     hot, amber mid, neutral cold) so the same reading looks like the same
+     reading in the menu bar and in the window, without either side importing
+     the other.
+
+     MEASURED against --surface, the method in
+     scripts/test-next-contrast-ratchet.js (plain WCAG arithmetic over these
+     token values; reproducible from the hexes above):
+
+       --fresh-hot   7.74 dark / 4.05 light
+       --fresh-mid   8.78 dark / 3.58 light
+       --fresh-cold  8.34 dark / 5.84 light
+
+     All three clear the 3:1 NON-TEXT floor (WCAG 1.4.11) in both themes,
+     which is the floor that applies: these paint an 8px dot and a 12px pip,
+     never a word. THEY ARE NEVER A TEXT COLOUR — the age phrase beside the
+     mark stays on --text-2/--text-3, and scripts/test-freshness-scale.js
+     fails any `color:` declaration naming one of these.
+
+     The halo is a glow AROUND the live mark, not the mark, so it is exempt
+     from that floor — the dot it surrounds is --fresh-hot and clears on its
+     own. */
+  --fresh-hot:      var(--teal-500);
+  --fresh-mid:      var(--summary-500);
+  --fresh-cold:     var(--ink-200);
+  --fresh-hot-halo: rgba(47,184,138,0.22);
+
   /* Charts / graph */
   --graph-edge:      rgba(168,168,188,0.22);
   --graph-edge-live: rgba(124,90,245,0.55);
@@ -237,6 +280,29 @@
   --danger:      var(--red-600);
   --danger-text: var(--red-600);
   --danger-tint: rgba(195,51,69,0.09);
+
+  /* Freshness — see the long note in the :root block above. Each rung drops
+     to the ramp step that clears 3:1 against a WHITE surface: teal-500 and
+     summary-500 measure 2.52 and 2.22 on white, so the light theme takes the
+     600 rung of each (4.05 / 3.58). --fresh-cold goes ink-200 -> ink-400
+     (2.34 -> 5.84) for the same reason; ink-400 is also the nearest ramp step
+     to the tray's own light neutral (#6B6B80), so the two surfaces read as
+     one scale without sharing a line of code. */
+  --fresh-hot:      var(--teal-600);
+  --fresh-mid:      var(--summary-600);
+  --fresh-cold:     var(--ink-400);
+  --fresh-hot-halo: rgba(30,143,105,0.18);
+
+  /* MISSING SINCE THIS FILE WAS WRITTEN, found when
+     scripts/test-css-tokens.js §11's theme-parity guard was widened from
+     tokens/material.css to every token file. --border-focus is declared once
+     at :root as var(--violet-500) — a PALETTE primitive, which is not
+     restated per theme — so the light theme was painting the dark accent on
+     every focus ring in the app (22 sites: listbox, checkbox, five settings
+     outlines, six chat controls, the sync and Shared Brain inputs). Dark's
+     value is exactly dark's --accent, so light's is light's: violet-600.
+     Measured on white, this also RAISES the ring from 4.53 to 6.57. */
+  --border-focus:  var(--violet-600);
 
   --graph-edge:      rgba(20,20,31,0.18);
   --graph-edge-live: rgba(101,56,224,0.45);

@@ -1,0 +1,154 @@
+/* ── freshness.css — the ONE freshness scale in /next ─────────────────────
+   Owns the `fresh-` prefix outright. No other stylesheet may declare a
+   `.fresh-` rule; scripts/test-freshness-scale.js fails one that does, the
+   same discipline shared/text.css holds over `tx-`.
+
+   ── WHAT THIS REPLACES ─────────────────────────────────────────────────
+   Three ladders said "how recently" in three visual languages:
+
+     · views/memory.css   `.mem-save-pip-s0…s4`  five steps, accent violet,
+                          filled -> ring -> fainter ring
+     · views/ingest.css   `.ing-fresh-s0…s3`     four day-resolution steps
+     · views/domains.css  `.dm-fresh-s0…s3`      a byte-identical copy of it
+     · desktop/lib/menu-dots.js                  teal / amber / neutral
+
+   The first three all painted BRAND VIOLET, which in this app means identity
+   and primary action, and none of them agreed with the tray a user sees in
+   the same glance. The scale below is the tray's semantics brought into the
+   window: hot, mid, cold, with the ink coming from tokens/color.css's
+   --fresh-* family and the three view sheets naming nothing else.
+
+   ── WHY NOT --success / --attention ────────────────────────────────────
+   Recorded in tokens/color.css beside the tokens: --attention means "a human
+   has to act" and "saved today" is not a call to action. A dormant domain is
+   a finished one, not a failed one.
+
+   ── CUT ON formatAge's OWN BANDS ───────────────────────────────────────
+   The tier a mark wears comes from `freshnessTier` / `dayFreshnessTier` in
+   shared/age.js, which read their boundaries off `formatAge` / `formatDayAge`
+   rather than from a second threshold table. So the mark and the word beside
+   it change at the same instant and can never contradict each other — the
+   v3.34.0 rule this whole file is written against.
+
+     .fresh-live      < 60 s        "just now"          hot, filled + halo
+     .fresh-recent    < 1 hr        "N min ago"         hot, filled
+     .fresh-today     < 24 hr       "N hr ago" / today  mid, filled
+     .fresh-week      < 7 days      "N days ago"        cold, filled
+     .fresh-dormant   >= 7 days     "N weeks ago"+      cold, HOLLOW
+     .fresh-unknown   no age at all                     dashed ring
+
+   Everything is filled except `dormant`, which is outlined, and `unknown`,
+   which is dashed. AN UNKNOWN AGE IS NOT AGE ZERO and it is not "old"
+   either: it is the one state that must look different in KIND rather than
+   merely further along the ramp, so it is the one state that changes the
+   border STYLE.
+
+   ── THE PRE-ATTENTIVE CUT IS AT ONE HOUR ───────────────────────────────
+   Deliberately, and it is the reason `live` and `recent` share an ink while
+   `today` takes a different hue: "5 minutes ago" and "4 hours ago" have to
+   differ before you read them. Inside an hour the halo is the only extra
+   signal, because inside an hour the only question left is "is an agent
+   writing right now".
+
+   ── live AND recent CURRENTLY HAVE NO `.fresh-dot` CONSUMER ────────────
+   Stated rather than hidden. Both sidebars that use `.fresh-dot` read a
+   `YYYY-MM-DD` heading out of log.md, which has no time of day, so
+   `dayFreshnessTier` enters the scale at `today` and can never return `live`
+   or `recent`. The two rules exist because `freshnessTier` — the
+   second-resolution half of the same scale, and the one the Agent-memory pip
+   is cut on — CAN return them, and a tier the scale names with no rule
+   behind it is an invisible mark on the first second-resolution consumer.
+   scripts/test-freshness-scale.js asserts the set of rules here equals the
+   set of tiers those two functions can return, in both directions, so this
+   stays a completeness property rather than a wish.
+
+   ── MEASURED CONTRAST ──────────────────────────────────────────────────
+   Every value is a --fresh-* token; the arithmetic is WCAG over the token
+   values in tokens/color.css, the method in
+   scripts/test-next-contrast-ratchet.js (helper validated by controls: 1.00
+   on an identical pair, 21.00 black on white), and the browser pass over a
+   static harness agreed to the hundredth.
+
+                    --surface            --surface-raised
+                    dark    light        dark    light
+     --fresh-hot    7.74    4.05         7.51    4.05
+     --fresh-mid    8.78    3.58         8.52    3.58
+     --fresh-cold   8.34    5.84         8.09    5.84
+     --text-faint   3.47    3.61         3.37    3.61   (the unknown ring)
+
+   (--surface-raised is #FFFFFF in the light theme, the same value as
+   --surface, which is why the light columns repeat. Stated so the repetition
+   reads as a fact about the palette rather than as a copy-paste.)
+
+   The floor is 3:1, not 4.5:1, and that is the correct floor: these paint a
+   GRAPHIC — an 8px dot, a 12px pip — under WCAG 1.4.11, never a word. THE
+   WORD BESIDE THE MARK STAYS ON A TEXT TOKEN. Colour is never the only
+   carrier here: every mark in this app sits immediately beside the age in
+   words, which is also why every one of them is aria-hidden.
+
+   ── A THIRD BACKDROP THE ARITHMETIC DOES NOT COVER, MEASURED ───────────
+   A SELECTED sidebar row paints `rgba(255,255,255,0.10)` over --surface, so
+   the dot on it sits on a lighter backdrop than the token tables above
+   assume. Composited and measured in the browser, dark theme:
+
+     --fresh-hot   6.10     --fresh-cold  6.57
+     --fresh-mid   6.92     --text-faint  2.74   ← UNDER THE FLOOR
+
+   In the light theme the same tint over #FFFFFF is still #FFFFFF, so the
+   light column is unchanged.
+
+   The dashed `unknown` ring on a SELECTED row is therefore 2.74:1 in the
+   dark theme. It is REPORTED rather than fixed here: --text-faint is the
+   ring all three retired ladders already used, tokens/color.css names it as
+   the rung that deliberately sits under the text floor, and the mark is
+   redundant with the words "nothing written yet" printed beside it. Moving
+   it to --text-3 (4.85 on that backdrop) is a one-token change and is the
+   maintainer's call, not a foundation step's. scripts/test-freshness-scale.js
+   grades --surface and --surface-raised only, and says so.
+
+   ── NO TRANSITION, NO ANIMATION ────────────────────────────────────────
+   Every view in /next re-renders by replacing innerHTML, so a class-keyed
+   transition on a mark could never run — it would be a declaration that
+   reads as behaviour and is dead on arrival, the shape v3.27.0 found in
+   progress-ring.js. views/memory.css records the same rule for its pip and
+   scripts/test-next-memory-view.js pins it. The `live` halo is a static
+   box-shadow for the same reason: a pulse would be the one thing on this
+   screen that moves, and it would move forever.                             */
+
+/* ── The SHAPE: an 8px round dot, for a sidebar status row ───────────────
+   ROUND, because a knowledge domain's row is a different KIND of thing from
+   an agent-memory work-stream, whose pip is a 12px square with a 2px radius
+   and keeps its shape rules in views/memory.css. That distinction is a
+   recorded decision, not an oversight: the two marks share a SCALE (the
+   tokens below), not a silhouette. Only the tier modifiers are shared, and
+   they are shape-agnostic by construction — they set ink and fill and touch
+   no geometry — so any future mark can wear them. */
+.fresh-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+/* ── The TIERS: ink and fill only. No geometry. ──────────────────────────
+   under a minute — an agent is saving right now. The halo is the only
+   difference from `recent`, and it is enough: inside the hour the question
+   is no longer "how old" but "is this happening now". */
+.fresh-live    { background: var(--fresh-hot); box-shadow: 0 0 0 3px var(--fresh-hot-halo); }
+/* minutes — this session */
+.fresh-recent  { background: var(--fresh-hot); }
+/* hours, or a day-resolution "today" */
+.fresh-today   { background: var(--fresh-mid); }
+/* days — this week */
+.fresh-week    { background: var(--fresh-cold); }
+/* a week or more — dormant, and NOT a failure state: a finished work-stream
+   or a finished domain is supposed to look like this. Hollow rather than
+   faint, so it stays a legible mark at 8px instead of fading toward the
+   background — the same call desktop/lib/menu-dots.js records for its own
+   coldest dot, which shrinks but keeps a rim rather than becoming a sliver. */
+.fresh-dormant { box-shadow: inset 0 0 0 2px var(--fresh-cold); }
+/* AGE UNKNOWN IS NOT AGE ZERO. A dashed ring in the faintest text ink, so
+   the one state we cannot measure differs in KIND rather than in degree. */
+.fresh-unknown { border: 1.5px dashed var(--text-faint); }

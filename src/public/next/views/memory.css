@@ -395,18 +395,39 @@
 /* THE PIP — five discrete steps, and NOT a bar.
 
    "How old" has no maximum, so a meter that is half full would be inventing
-   one. Five states, cut on formatAge's own unit bands (see freshnessStep in
-   memory.js) so the mark and the word change at the same instant and can never
-   contradict each other on screen.
+   one. Five states, cut on formatAge's own unit bands (see freshnessStep,
+   which now lives in shared/age.js) so the mark and the word change at the
+   same instant and can never contradict each other on screen.
 
-   The pre-attentive contrast is deliberately concentrated at the boundary that
-   was ASKED FOR — "5 minutes ago" against "4 hours ago" — which is the filled/
-   hollow line at one hour. Inside "filled", the halo separates the last minute;
-   inside "hollow", the ring's colour and weight separate days from weeks.
-   Colour is never the only signal: the age is in words immediately beside it.
+   ── SHAPE HERE, INK FROM THE SHARED SCALE ────────────────────────────────
+   The five class names below are this view's own and stay in this file,
+   because the GEOMETRY is genuinely this view's: a 12px square with a 2px
+   radius, the same rule the project rows follow, because agent memory is a
+   different KIND of thing from a knowledge domain and a knowledge domain's
+   mark is a round 8px dot. Two marks that looked alike would read as one
+   thing.
 
-   SQUARE, 2px radius — the same rule the project rows follow (agent memory is
-   a different KIND of thing from a knowledge domain, which uses a round dot).
+   What was NOT this view's own is the COLOUR. Every step below used to paint
+   BRAND VIOLET, which in this app means identity and primary action — see
+   tokens/color.css's header — while the two sidebar ladders painted the same
+   violet on a different number of steps and the menubar tray, which a user
+   sees in the same glance, painted teal/amber/neutral. Three answers to one
+   question. The ink now comes from the --fresh-* family in tokens/color.css,
+   which shared/freshness.css paints on `.fresh-dot` for both sidebars and
+   which matches the tray's semantics without either side importing the other.
+
+   THE MAPPING IS THE SCALE, NOT A SECOND TABLE. s4/s3 are `live`/`recent`
+   (hot), s2 is `today` (mid), s1 is `week` and s0 is `dormant` (cold, filled
+   then hollow). scripts/test-freshness-scale.js asserts each of these five
+   rules names the token its tier names, so a recolour here that disagreed
+   with the dot would be red.
+
+   The pre-attentive contrast stays concentrated at the boundary that was
+   ASKED FOR — "5 minutes ago" against "4 hours ago" — which is now the hue
+   change from hot to mid at one hour, a stronger cut than the filled/hollow
+   line it replaces. Inside "hot", the halo separates the last minute; at the
+   cold end, filled against hollow separates days from weeks. Colour is never
+   the only signal: the age is in words immediately beside it.
 
    NO TRANSITION, deliberately. Every render replaces the whole main pane by
    innerHTML, so a class-keyed transition here could never run — it would be a
@@ -420,17 +441,17 @@
   border-radius: 2px;
   background: transparent;
 }
-/* under a minute — an agent is saving right now */
-.mem-save-pip-s4 { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
-/* minutes — this session */
-.mem-save-pip-s3 { background: var(--accent); }
-/* hours — today */
-.mem-save-pip-s2 { box-shadow: inset 0 0 0 2px var(--accent); }
-/* days — this week */
-.mem-save-pip-s1 { box-shadow: inset 0 0 0 2px var(--text-3); }
-/* weeks and older — dormant. NOT a failure state: a finished work-stream is
-   supposed to look like this, so it gets the quietest ring and no colour. */
-.mem-save-pip-s0 { box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+/* live — under a minute; an agent is saving right now */
+.mem-save-pip-s4 { background: var(--fresh-hot); box-shadow: 0 0 0 3px var(--fresh-hot-halo); }
+/* recent — minutes; this session */
+.mem-save-pip-s3 { background: var(--fresh-hot); }
+/* today — hours */
+.mem-save-pip-s2 { background: var(--fresh-mid); }
+/* week — days */
+.mem-save-pip-s1 { background: var(--fresh-cold); }
+/* dormant — weeks and older. NOT a failure state: a finished work-stream is
+   supposed to look like this, so it is the one step that is hollow. */
+.mem-save-pip-s0 { box-shadow: inset 0 0 0 2px var(--fresh-cold); }
 /* AGE UNKNOWN IS NOT AGE ZERO and it is not "old" either — a dashed ring, so
    the one state where we do not know is the one state that looks different in
    kind rather than merely further along the ramp. */

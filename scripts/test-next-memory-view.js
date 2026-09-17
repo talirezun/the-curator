@@ -551,6 +551,9 @@ function extractFunction(src, name, where) {
 }
 
 const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
+// The shared age vocabulary. `freshnessStep` lives here since the freshness
+// scale went app-wide; everything else the strip reads is still in the view.
+const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
 const viewCss = readFileSync(join(NEXT, 'views/memory.css'), 'utf8');
 // The shared listbox's RENDER half. Lifted rather than stubbed, so §6's
 // escaping battery runs through the component that actually paints these two
@@ -685,7 +688,12 @@ function makeRenderers(stateObj) {
     // battery below covers the strip too — it interpolates a scope name, a
     // machine id and a harness name, all of which arrive from disk.
     extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'freshnessStep', 'memory.js') + '\n' +
+    // `freshnessStep` MOVED to shared/age.js when the freshness scale became
+    // app-wide (it is now one half of the scale shared/freshness.css paints,
+    // rather than this screen's private ladder). Still the REAL shipped
+    // function, lifted from its new home — memory.js imports it, so a stub
+    // here would be a paraphrase of the thing under test.
+    extractFunction(ageSrc, 'freshnessStep', 'shared/age.js') + '\n' +
     extractFunction(viewSrc, 'newestPair', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'harnessOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'firstNote', 'memory.js') + '\n' +
@@ -3178,10 +3186,17 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
   'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
-  // The freshness surface (v3.31.0). All seven are lifted from live source by
+  // The freshness surface (v3.31.0). All six are lifted from live source by
   // §6's makeRenderers and reached through renderProject, which §6/§14 execute;
   // effectiveSave is additionally lifted into §5 and §11.
-  'effectiveSave', 'freshnessStep', 'renderSaveStatus', 'newestPair', 'harnessOf',
+  //
+  // `freshnessStep` IS NOT ON THIS LIST ANY MORE, and its absence is the
+  // point: this census is taken over memory.js's own top-level functions, and
+  // that one now lives in shared/age.js as one half of the app-wide freshness
+  // scale. §6 still lifts and runs it — from there — so the strip is executed
+  // exactly as before; naming it here would make the census claim a function
+  // this file does not contain. scripts/test-freshness-scale.js owns it now.
+  'effectiveSave', 'renderSaveStatus', 'newestPair', 'harnessOf',
   'firstNote', 'saveLine',
   'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',

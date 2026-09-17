@@ -488,10 +488,24 @@ const { renderDescription, renderStatus, renderReadout, renderExplainer } =
 const escapeHtml = new Function(extractFunction(
   readFileSync(join(NEXT, 'app.js'), 'utf8'), 'escapeHtml', 'app.js') + '\nreturn escapeHtml;')();
 
-const LIFT = ['formatAge', 'effectiveSave', 'freshnessStep', 'newestPair', 'harnessOf',
+// `freshnessStep` MOVED to shared/age.js when the freshness scale became
+// app-wide, so it is lifted from THERE. Left in this list pointing at
+// memory.js, extractFunction would have thrown `"freshnessStep" not found in
+// memory.js` and taken the whole suite down — and a one-line
+// `export { freshnessStep } from '../shared/age.js'` in memory.js would have
+// thrown the same way, because this extractor matches on a `function <name>(`
+// declaration and a re-export is not one. Re-pointing the lift is the only
+// option that keeps this suite executing the REAL shipped function rather
+// than a copy of it.
+const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
   'firstNote', 'saveLine', 'renderSaveStatus'];
+const LIFT_AGE = ['freshnessStep'];
+const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
+const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
 function lifted(stateObj) {
-  const body = LIFT.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n') +
+  const body = LIFT_VIEW.map((n) => extractFunction(viewSrc, n, 'memory.js'))
+    .concat(LIFT_AGE.map((n) => extractFunction(ageSrc, n, 'shared/age.js')))
+    .join('\n') +
     '\nreturn { ' + LIFT.join(', ') + ' };';
   return new Function('state', 'escapeHtml', 'icon', 'renderReadout', body)(
     stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', renderReadout);
@@ -541,6 +555,25 @@ const V = lifted({});
   const missing = [0, 1, 2, 3, 4].filter((s) => !viewCss.includes('.mem-save-pip-s' + s));
   ok('every one of the five steps has its own CSS rule', missing.length === 0, JSON.stringify(missing));
   ok('...and so does the unknown state', viewCss.includes('.mem-save-pip-unknown'));
+  // THE INK IS THE APP-WIDE SCALE'S, not this view's own. The five steps used
+  // to paint brand violet, which means identity and primary action; the two
+  // sidebar ladders painted the same violet on a different number of steps,
+  // and the menubar tray a user sees in the same glance painted teal/amber/
+  // neutral. scripts/test-freshness-scale.js owns the full mapping; this
+  // assertion is here so a recolour of the pip alone reds the suite that is
+  // ABOUT the pip.
+  //
+  // COMMENTS STRIPPED FIRST, and it is load-bearing rather than tidy: the
+  // block above these rules EXPLAINS that the pip used to paint
+  // `var(--accent)`, so a raw scan reads the explanation and reports the
+  // opposite of the truth. The first draft of this assertion did exactly
+  // that and went red against a correct file.
+  const pipCss = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('the pip names no colour but the shared --fresh-* family (and --text-faint for unknown)',
+    !/\.mem-save-pip[^{]*\{[^}]*var\(--(accent|text-3)\b/.test(pipCss)
+    && /\.mem-save-pip-s4[^{]*\{[^}]*var\(--fresh-hot\)/.test(pipCss));
+  ok('CONTROL — the stripped copy still holds the rules, so the assertion above is not green over an empty string',
+    /\.mem-save-pip-s0[^{]*\{/.test(pipCss) && pipCss.length > 2000);
   ok('the pip carries NO transition — every render replaces the pane, so one could never run',
     !/\.mem-save-pip[^{]*\{[^}]*transition/.test(viewCss));
 }

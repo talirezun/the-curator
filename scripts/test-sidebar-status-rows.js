@@ -33,23 +33,29 @@
  *
  *   §4/§5  THE ROWS THEMSELVES, rendered. The real renderers are executed
  *       against stubs and the emitted HTML is read: the dot class must match
- *       what `dayFreshnessStep` independently says, the age must be the
+ *       what `dayFreshnessTier` independently says, the age must be the
  *       words `formatDayAge` independently says, a title carrying markup
  *       must arrive escaped, and no row may carry a hover-only `title=`.
  *
- *   §6  THE TWO CSS LADDERS are byte-identical modulo their prefix. They are
- *       declared twice — once per view — because shell.css belongs to another
- *       change; a follow-up promotes them and deletes one copy. Until then
- *       nothing but this assertion stops them drifting.
+ *   §6  THE TWO CSS LADDERS ARE GONE, and this section now guards their
+ *       ABSENCE. `.ing-fresh-*` and `.dm-fresh-*` were byte-identical modulo
+ *       their prefix, and this section used to assert that identity — a guard
+ *       against a duplication rather than a reason for one, and recorded as
+ *       KNOWN AND UNFIXED in v3.54.0. Both are deleted; the rules live in
+ *       shared/freshness.css, which owns the `fresh-` prefix outright, and
+ *       the ASSERTION IS INVERTED to guard the fix rather than deleted. The
+ *       scale itself — tiers, tokens and measured contrast — is
+ *       scripts/test-freshness-scale.js's subject, not this suite's.
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────
  *  - Nothing here renders in a browser. Dot colours, contrast and the
  *    two-line meta's clipping were measured in a real browser in both themes
  *    and are not re-derived offline; a hand-rolled cascade resolver is the
  *    decorative-guard shape this repo keeps hitting.
- *  - §6 compares RULE TEXT. A rule moved to another stylesheet, or a value
- *    reached through a differently-named token, is invisible to it. It fails
- *    in the safe direction (a false red), never by silently permitting.
+ *  - §6 scans RULE TEXT for the retired prefixes. It proves the two copies
+ *    are gone and that the shared sheet carries the shape; it does NOT prove
+ *    the shared rules are reached at runtime, or that the cascade resolves
+ *    the way the arithmetic assumes.
  *  - The parser's grammar covers the two headings ingest.js and compile.js
  *    write. A Shared Brain pull's log line has no `##` and is deliberately
  *    not matched — it never was.
@@ -77,6 +83,14 @@ function eq(actual, expected, label) {
 function section(t) { console.log('\n' + t); }
 
 const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
+
+/** Comments stripped before any CSS scan. Load-bearing here: the two view
+ *  stylesheets now carry PROSE explaining that their private `.ing-fresh-*` /
+ *  `.dm-fresh-*` ladders were deleted and where the rules went, and that prose
+ *  names the classes. A raw scan would read the explanation and report the
+ *  opposite of the truth — the exact shape test-next-contrast-ratchet.js
+ *  records for its own stripper. */
+const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
 /** Extract `function NAME(` by brace-matching, skipping strings, template
  *  literals, regexes and comments. Returns null when not found — every caller
@@ -111,14 +125,16 @@ const ageUrl = pathToFileURL(path.join(ROOT, 'src/public/next/shared/age.js')).h
 const brain = await import(filesUrl);
 const ageMod = await import(ageUrl);
 const { __readLogLatest: readLogLatest } = brain;
-const { formatAge, formatDayAge, dayFreshnessStep, freshnessDotHtml, clockGlyph } = ageMod;
+const { formatAge, formatDayAge, dayFreshnessStep, dayFreshnessTier, freshnessDotHtml,
+  clockGlyph } = ageMod;
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0  Positive control — everything this suite needs really loaded');
 ok(typeof readLogLatest === 'function', 'files.js exports the log parser under its test name');
 ok(typeof formatDayAge === 'function' && typeof dayFreshnessStep === 'function' &&
+   typeof dayFreshnessTier === 'function' &&
    typeof freshnessDotHtml === 'function' && typeof clockGlyph === 'function',
-  'shared/age.js exports the day ladder, the step, the dot and the glyph');
+  'shared/age.js exports the day ladder, the step, the TIER, the dot and the glyph');
 ok(extractFunction('function nope(){}', 'notThere') === null,
   'CONTROL — the extractor returns null for a function that does not exist');
 
@@ -456,42 +472,44 @@ section('§5  formatAge — one vocabulary in three files, pinned');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§6  The freshness dot — one decision, two prefixed ladders');
+section('§6  The freshness dot — one decision, ONE ladder');
 {
   const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
-  ok(/class="ing-fresh ing-fresh-s3"/.test(freshnessDotHtml('ing', '2026-09-17', NOW)),
-    'the dot\'s class carries the step the ladder decided');
-  ok(/class="dm-fresh dm-fresh-unknown"/.test(freshnessDotHtml('dm', null, NOW)),
-    'an unknown age gets the `-unknown` modifier, NOT `-s0` — a different kind of state, ' +
+  ok(/class="fresh-dot fresh-today"/.test(freshnessDotHtml('2026-09-17', NOW)),
+    'the dot\'s class carries the TIER the shared scale decided');
+  ok(/class="fresh-dot fresh-unknown"/.test(freshnessDotHtml(null, NOW)),
+    'an unknown age gets the `unknown` tier, NOT `dormant` — a different kind of state, ' +
     'not a further rung on the ramp');
-  ok(/aria-hidden="true"/.test(freshnessDotHtml('ing', '2026-09-17', NOW)),
+  ok(/aria-hidden="true"/.test(freshnessDotHtml('2026-09-17', NOW)),
     'the dot is aria-hidden — it is a redundant encoding of the age phrase beside it');
+  ok(!/-fresh-s\d/.test(freshnessDotHtml('2026-09-17', NOW) + freshnessDotHtml(null, NOW)),
+    'and it emits no `-s<N>` modifier at all — the numbered vocabulary was per-view and ' +
+    'meant different things in different views');
 
-  // THE TWO CSS LADDERS. Declared twice because shell.css belongs to another
-  // change; a follow-up promotes them and deletes one copy. Until then this
-  // assertion is the only thing stopping them drifting.
-  const ladder = (css, prefix) => {
-    const rules = [];
-    const re = new RegExp('^\\.' + prefix + '-fresh(?:-[a-z0-9]+)?\\s*\\{([^}]*)\\}', 'gm');
-    let m;
-    while ((m = re.exec(css))) {
-      rules.push([m[0].slice(0, m[0].indexOf('{')).trim().replace('.' + prefix + '-', '.'),
-        m[1].replace(/\s+/g, ' ').trim()]);
-    }
-    return rules;
-  };
-  const ing = ladder(read('src/public/next/views/ingest.css'), 'ing');
-  const dm = ladder(read('src/public/next/views/domains.css'), 'dm');
-  ok(ing.length === 6,
-    `ingest.css declares the whole ladder (base + s0..s3 + unknown) — found ${ing.length}`);
-  eq(dm, ing,
-    'the `.dm-fresh-*` ladder is byte-identical to `.ing-fresh-*` modulo the prefix — ' +
-    'two hand-maintained copies of one visual ladder is this repo\'s named drift shape, ' +
-    'and the promotion into shell.css is a follow-up, not this change');
-  ok(ing.some(([sel]) => sel === '.fresh-unknown') && ing.some(([sel]) => sel === '.fresh-s3'),
-    'CONTROL — the scan really found the two ends of the ladder, so the comparison is not over an empty list');
-  ok(!/#[0-9a-fA-F]{3,8}\b/.test(ing.map(([, body]) => body).join(' ')),
-    'no colour LITERAL anywhere in the ladder — every value is a token');
+  // THE TWO CSS LADDERS ARE GONE. `.ing-fresh-*` and `.dm-fresh-*` were
+  // byte-identical modulo the prefix and this section used to ASSERT that
+  // identity — a guard against a duplication rather than a reason for one,
+  // recorded as KNOWN AND UNFIXED in v3.54.0. Both copies are deleted and the
+  // rules live in shared/freshness.css, so the assertion is INVERTED: it now
+  // guards the deletion, which is this project's practice for a fixed
+  // tripwire. A view that re-declares a private ladder is red again.
+  const ing = read('src/public/next/views/ingest.css');
+  const dm = read('src/public/next/views/domains.css');
+  const sharedCss = read('src/public/next/shared/freshness.css');
+  ok(!/\.ing-fresh/.test(stripComments(ing)) && !/\.dm-fresh/.test(stripComments(dm)),
+    'neither view stylesheet declares a private freshness ladder any more');
+  ok(/\.ing-fresh/.test(ing) && /\.dm-fresh/.test(dm),
+    'CONTROL — both files still MENTION the retired names, in the prose recording where the ' +
+    'rules went; the assertion above is green because the comments were stripped, not ' +
+    'because the scanner stopped matching');
+  ok(!/\.fresh-/.test(stripComments(ing)) && !/\.fresh-/.test(stripComments(dm)),
+    '…and neither redeclares the SHARED prefix either — shared/freshness.css owns `fresh-` ' +
+    'outright, the same way shared/text.css owns `tx-`');
+  ok(/^\.fresh-dot\s*\{/m.test(sharedCss) && /^\.fresh-unknown\s*\{/m.test(sharedCss),
+    'CONTROL — the shared sheet really does carry the shape and both ends of the scale, so ' +
+    'the two absence assertions above are not green because the rules vanished entirely');
+  ok(!/#[0-9a-fA-F]{3,8}\b/.test(stripComments(sharedCss)),
+    'no colour LITERAL anywhere in the shared ladder — every value is a token');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -581,16 +599,16 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     return html.slice(start, end + 9);
   };
 
-  // The dot class must be the one dayFreshnessStep independently says — an
+  // The dot class must be the one dayFreshnessTier independently says — an
   // INDEPENDENT recomputation, not a re-read of what the row emitted.
   for (const [slug, date] of [['today', NOW_DAY], ['three', daysAgo(3)], ['six', daysAgo(42)]]) {
-    const step = dayFreshnessStep(date, Date.now());
-    ok(rowOf(slug).includes('ing-fresh-s' + step),
-      `the "${slug}" row carries ing-fresh-s${step}, matching what the ladder independently decides`);
+    const tier = dayFreshnessTier(date, Date.now());
+    ok(rowOf(slug).includes('fresh-dot fresh-' + tier),
+      `the "${slug}" row carries fresh-dot fresh-${tier}, matching what the scale independently decides`);
     ok(rowOf(slug).includes(formatDayAge(date, Date.now())),
       `…and the relative age "${formatDayAge(date, Date.now())}" in visible text`);
   }
-  ok(rowOf('never').includes('ing-fresh-unknown') && rowOf('never').includes('nothing written yet'),
+  ok(rowOf('never').includes('fresh-dot fresh-unknown') && rowOf('never').includes('nothing written yet'),
     'a domain with no log reads "nothing written yet" with the DASHED ring — never a guessed date');
   ok(!rowOf('never').includes('ing-dest-event'),
     '…and carries NO event line, so its row is one line of meta rather than one plus a blank');
@@ -710,9 +728,9 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   };
 
   for (const [slug, date] of [['articles', today], ['business', daysAgo(42)]]) {
-    const step = dayFreshnessStep(date, Date.now());
-    ok(rowOf(slug).includes('dm-fresh-s' + step),
-      `the "${slug}" row carries dm-fresh-s${step}, matching what the ladder independently decides`);
+    const tier = dayFreshnessTier(date, Date.now());
+    ok(rowOf(slug).includes('fresh-dot fresh-' + tier),
+      `the "${slug}" row carries fresh-dot fresh-${tier}, matching what the scale independently decides`);
     ok(rowOf(slug).includes(formatDayAge(date, Date.now())),
       `…and the relative age "${formatDayAge(date, Date.now())}" in visible text`);
   }
@@ -722,7 +740,7 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     'a compile-only domain says Compiled — the fact the old row could not carry at all');
   ok(rowOf('articles').includes('&lt;b&gt;') && !rowOf('articles').includes('<b>fresh</b>'),
     'a title carrying markup arrives escaped');
-  ok(rowOf('fresh').includes('dm-fresh-unknown') && rowOf('fresh').includes('nothing written yet'),
+  ok(rowOf('fresh').includes('fresh-dot fresh-unknown') && rowOf('fresh').includes('nothing written yet'),
     'a brand-new domain reads "nothing written yet" with the dashed ring');
   ok(!rowOf('fresh').includes('dm-row-event'), '…and carries no event line');
   ok(rowOf('articles').includes('(' + today + ')') && rowOf('articles').includes('visually-hidden'),
