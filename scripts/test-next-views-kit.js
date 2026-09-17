@@ -574,7 +574,23 @@ section('7. The monospace face is spent on LITERALS, not on facts');
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string
     'views/mcp-wizard.js': 4, // the config snippet and the config-file paths
-    'views/memory.js': 4,     // `state/` and `my-curator` — a folder to open and a package to configure
+    /* v3.55.0 RAISED IT FROM 4 TO 6, for two spans and the same rule. The
+       Agent-memory page became five blocks, each with its own ⓘ fold, and two
+       of those folds name the same two kinds of literal the budget already
+       exists for: `my-curator` (the package a user configures, in the Current
+       handoff fold) and `state/<project>/project.md` (the file a user opens in
+       a text editor, in the Standing brief fold). Both are things the reader
+       retypes or opens, which is exactly the case the four existing spans are
+       allowed for.
+       WHAT WAS REFUSED in the same pass: a `mono` span around the words
+       "file time" in the Status fold. That is the app quoting its OWN UI text,
+       not a literal anyone types, and it was rewritten in quotation marks
+       instead — so this is 6 rather than 7.
+       ALSO REFUSED: the work-stream table's slug column. It genuinely wants
+       the code face, and it takes it through a named rule (`.mem-ws-slug` in
+       views/memory.css) rather than through the utility class, because a table
+       cell's type belongs in the stylesheet that owns the table. */
+    'views/memory.js': 6,
   };
   const findings = [];
   for (const rel of OWNED_JS) {

@@ -396,7 +396,6 @@ function renderStatus(o) {
     '</b><i>' + escapeHtml(o.detail || '') + '</i></div>';
 }
 const loadGate = null;
-const pendingListboxes = [];
 function gatedLoader() { return '<!--LOADER-->'; }
 function unlistedCount() { return 0; }
 function renderUnlistedNote() { return '<!--UNLISTED-->'; }
@@ -419,7 +418,19 @@ function renderViewHeader(o) {
 let mainHtml = '';
 function setMain(html) { mainHtml = html; }
 function renderBriefOnlyNotice() { return '<!--BRIEFONLY-->'; }
-function renderScopeControls() { return '<!--SCOPES-->'; }
+// v3.55.0: the two pickers are gone and the page is five shared blocks.
+// renderWorkStreams + workStreamCounts replaced renderScopeControls, and
+// renderProject now composes through shared/block.js's renderBlock -- stubbed
+// here to a marker that CARRIES its id and its body, so an assertion can still
+// tell which block a fragment landed in and a dropped body would red rather
+// than quietly pass.
+function renderWorkStreams() { return '<!--SCOPES-->'; }
+function workStreamCounts() { return '<!--WSCOUNT-->'; }
+function renderBlock(o) {
+  return '<section data-block="' + escapeHtml(o.id) + '"><h2>' + escapeHtml(o.title) + '</h2>' +
+    (o.ledeHtml ? '<p>' + o.ledeHtml + '</p>' : '') +
+    '<div>' + (o.bodyHtml || '') + '</div></section>';
+}
 function renderHandoff() { return '<!--HANDOFF-->'; }
 function renderJournal() { return '<!--JOURNAL-->'; }
 function renderBrief() { return '<!--BRIEF-->'; }
@@ -430,7 +441,8 @@ function saveBrief() {}
 function refreshIndex() {}
 function reloadActive() {}
 function loadScope() {}
-function mountListbox() {}
+function briefDismissDecision() { return 'close'; }
+function docsLinkHtml() { return '<a>guide</a>'; }
 const JOURNAL_PAGE = 5;
 const JOURNAL_MORE = 50;
 let document = { getElementById: () => null, querySelectorAll: () => [] };

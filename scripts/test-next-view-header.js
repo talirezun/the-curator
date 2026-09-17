@@ -153,9 +153,21 @@ section('§1  THE SIGNATURE HAS NO PROSE SLOT — the defect is inexpressible');
   }
   ok('the ONE prose field is `info`, and it is read',
     body.includes('str(o.info)'), body.slice(0, 200));
+  // The class opens with `class="tx-vh-panel` and no longer CLOSES there:
+  // v3.55.0 added the `panelWide` opt-in, which appends ` tx-vh-panel-wide`
+  // inside the same attribute, so the literal `class="tx-vh-panel"` this used
+  // to match no longer appears in the source. The property being asserted is
+  // unchanged — `info` is emitted inside the panel element and nowhere else —
+  // and the match is now anchored on the class NAME rather than on the exact
+  // attribute, which is the part that was ever load-bearing.
   ok('...and `info` is only ever emitted inside the tx-vh-panel element',
-    /class="tx-vh-panel"[\s\S]*?escapeHtml\(info\)|class="tx-vh-panel"[\s\S]*?\? info :/.test(body),
+    /class="tx-vh-panel[\s\S]*?escapeHtml\(info\)|class="tx-vh-panel[\s\S]*?\? info :/.test(body),
     body.slice(0, 400));
+  // ANTI-VACUITY for the loosened anchor: the panel element must still be the
+  // ONLY place the class is emitted from, so a future edit cannot satisfy the
+  // pin above by printing the class somewhere harmless.
+  ok('...and the class is emitted exactly once in the function',
+    (body.match(/class="tx-vh-panel/g) || []).length === 1, body.slice(0, 400));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

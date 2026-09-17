@@ -9,36 +9,80 @@
    therefore neutralised under prefers-reduced-motion by tokens/motion.css.
    A literal `0.16s ease` here would silently bypass that (v3.9.2). */
 
-/* ── ONE COLUMN, ONE RHYTHM ──────────────────────────────────
+/* ── ONE COLUMN, ONE RHYTHM, AND NO MEASURE CAP AT ALL ────────────────────
 
-   THE DEFECT, MEASURED on the shipped screen. Three blocks capped themselves
-   at `--prose-max` (68ch) — .mem-save, .mem-doc-card and .mem-fold — and five
-   more (.mem-stale, .mem-note, .mem-controls, .empty-card, the explainer) did
-   not, so one page carried FOUR different right edges inside an 844px content
-   box: roughly 360, 526, 676 and full width. The maintainer's words for it
-   were "squeezed, with the right third empty".
+   ── WHAT v3.54.0 FIXED, AND WHAT IT LEFT ──────────────────────────────────
+   That release removed FOUR right edges from this page by taking the prose cap
+   off the three CARDS that carried it (.mem-save, .mem-doc-card, .mem-fold)
+   and moving it INWARD onto the text — .mem-doc, .mem-doc-headline and
+   .mem-save-line. That was the right move for a document and the wrong one for
+   this page, and the maintainer's verdict on the result was "not okay": the
+   handoff body, the "summary shortened" explanation, the standing brief and
+   the header's ⓘ panel all stopped at 68ch — MEASURED at roughly 47% of the
+   1200px column — while the session journal beside them ran the full width.
+   Four widths became two, and the page "reads endlessly long" precisely
+   because everything on it was half as wide as the space it had.
 
-   A MEASURE LIMIT BELONGS ON PROSE, NOT ON A CARD. 68ch exists so a LINE OF
-   TEXT is readable; a card is a container, and capping the container caps the
-   border with it. So the cap moved inward — onto .mem-doc, .mem-doc-headline
-   and the strip's own lines — and every box now ends at the same right edge.
-   `--prose-max` is used on text elements in this file and on no box.
+   ── THE REVERSAL, AND WHY IT IS NOT A REGRESSION ──────────────────────────
+   A measure cap is a rule about READING PROSE. This screen is a dashboard: a
+   status strip, a table, a handoff you scan for headings, a brief you edit and
+   a journal you skim. `--prose-max` is therefore used on NOTHING in this file
+   any more, and scripts/test-next-memory-view.js §18f asserts the ABSENCE of
+   it on `.mem-doc` — the inverse of what it asserted in v3.54.0, with the
+   reason recorded in the assertion itself so the next reader finds the
+   decision rather than the smell.
 
-   ONE RULE OWNS EVERY GAP. The page used to space itself with a margin-top or
-   a margin-bottom on each block: eight declarations, all free to disagree,
-   which is how "How this works" came to sit at 0px from the journal above it
-   (the shared explainer declares no margin at all, and nothing else supplied
-   one — that class may not even be NAMED here, by a guard in
-   scripts/test-next-memory-ingest-text.js, comments included).
-   Now every top-level block carries `.mem-section`, each one's own margin is
-   zeroed below, and the single adjacency rule here decides the spacing — the
-   same 24px rhythm, and the same fix, v3.50.0 applied to the Domains screen
-   after finding 24+4 / 22 / 0 coming from four different declarations.
+   The cap survives where it still belongs: `.settings-job-lede` caps a block's
+   LEDE at 66ch in shell.css, because a lede really is a sentence.
+
+   ── ONE RULE OWNS EVERY GAP — TWO RULES, ONE VALUE ────────────────────────
+   The five sections of this page are `renderBlock`s, so shell.css's
+   `.settings-job-block + .settings-job-block` owns the gap between them:
+   24 | 1px hairline | 24, the same declaration Providers & keys and all four
+   Settings sections use. This file does not restate it.
+
+   `.mem-section` survives for what sits ABOVE the first block — the
+   breadcrumb, the read-only note, the copy confirmation — and for the error
+   and loading arms, which are single cards rather than blocks. Two rules, the
+   same `--space-12`, and the second exists only to make the step INTO the
+   first block the same size as every step after it.
 
    THE FIRST SECTION TAKES NO MARGIN, deliberately: `+` is an adjacency
    selector, so the top of the column sits where the view header leaves it. */
 
 .mem-section + .mem-section { margin-top: var(--space-12); }
+/* The bridge. `.settings-job-block` already carries `padding-top: 24px` and a
+   1px top border, so this supplies only the 24 above the hairline and the
+   rhythm reads 24 | 1 | 24 across that boundary exactly as it does between two
+   blocks. Not a copy of the block rule: the block rule spaces two blocks, this
+   one spaces a card and a block. */
+.mem-section + .settings-job-block { margin-top: var(--space-12); }
+
+/* ── INSIDE A BLOCK, THE GAP IS SMALLER — AND THAT IS THE WHOLE POINT ──────
+   Block ① stacks the Last-saved reading, the Reload offer and the "state on
+   disk we are not reading" note. Those three belong TOGETHER: each qualifies
+   the one above it. Spacing them at the block rhythm (24) would read as three
+   sections; 10 reads as one reading with its caveats, which is what it is.
+   One declaration, so the three cannot drift apart. */
+.mem-status-stack { display: flex; flex-direction: column; gap: var(--space-5); }
+
+/* ── A BLOCK'S OWN TOOLBAR ROW ────────────────────────────────────────────
+   Block ④ needs a control beside its title and `renderBlock` has no slot for
+   one — deliberately: its head is a numeral, a heading and nothing else, and
+   giving it an actions slot would invite every adopter to put something there.
+   So the toolbar is the first row of the BODY, right-aligned, carrying the
+   brief's age on the left and the pencil on the right.
+
+   `align-items: center` rather than baseline: the pencil is a 28px control and
+   the age is a 10px line, so a baseline would hang the button below the text
+   it sits beside. */
+.mem-block-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
 
 /* ── Sidebar: project list ───────────────────────────────────────────── */
 
@@ -167,13 +211,41 @@
 /* Ages and entry counts, one per sidebar row. Tabular digits so `11 min
    ago` and `20 hr ago` occupy the same width down the column. */
 .mem-row-meta {
+  /* A FLEX ROW NOW, because the freshness dot rides in it. `min-width: 0` on
+     the text child is what lets the ellipsis happen inside a flex line; the
+     dot is `flex: none` from shared/freshness.css and needs nothing here. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.mem-row-meta > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "WORKING ON:" IN THE RAIL — one line, and only when there is one.
+   `headline` has ridden on every index row since v3.48.0 and nothing rendered
+   it; the menubar widget leads with it. It sits between the project NAME and
+   its meta line because that is the reading order of the question: which
+   project, what is it doing, how fresh is that.
+
+   --text-2 like the meta line, and a step SMALLER than the name above it:
+   hierarchy by size, which is this file's standing rule (see .mem-row-meta's
+   note on why --text-3 is not used for prose here). */
+.mem-row-head {
   font-size: var(--text-2xs);
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-variant-numeric: var(--numeric-tabular);
 }
+.mem-row.active .mem-row-head { color: var(--text); }
 /* A project row with nothing saved yet. It was --text-3, which this file's own
    note on .mem-row-meta six lines above already argues against in principle:
    "Sub-threshold contrast is not a hierarchy device." --text-3 measures
@@ -473,7 +545,12 @@
   display: flex;
   align-items: flex-start;
   gap: 7px;
-  max-width: var(--prose-max);
+  /* NO max-width. It was `--prose-max`, and on the 1200px column that stopped
+     the "summary shortened" explanation and the two-clocks note at roughly 47%
+     of the width while the table under them ran the full column — one of the
+     two widths v3.55.0 removed. These lines are short qualifications under a
+     reading, not running prose, and the block they sit in is a dashboard
+     panel. See this file's header for the reversal and its reason. */
   margin-top: 9px;
   /* --text-2, not --text-3: these are the strip's quietest WARNINGS, and this
      file's standing rule is that a caution must never be the hardest sentence
@@ -505,65 +582,194 @@
   font-size: var(--text-2xs);
 }
 
-/* ── Controls: scope / machine ───────────────────────────────────────── */
+/* ── THE WORK-STREAMS TABLE (block ②) ─────────────────────────
 
-.mem-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
+   WHAT THIS REPLACES. `.mem-controls` held a scope listbox beside a machine
+   listbox, and with them go `.mem-ctl`, `.mem-ctl-label`, `.mem-ctl-static`,
+   `.mem-ctl-note` and the two `.lb` sizing rules. Deleted rather than left
+   standing: a rule nothing can match is a claim about the screen that is no
+   longer true, and this file has had to say that twice already.
+
+   THE RECIPE IS views/settings.css's `.browse-table` (the model catalogue),
+   REPLICATED rather than borrowed, and the reason is the one shell.css records
+   for the block component: index.html links views/settings.css LAST of the
+   view sheets, so a rule this view depended on from there would sit at a
+   different point in the cascade than its own and a future edit to a Settings
+   table would silently repaint Agent memory. Same values, own names:
+   overflow-x on the wrapper, uppercase --text-2xs headers on a strong
+   hairline, a hairline under every row, tabular figures where digits are
+   compared.
+
+   The brief quoted settings.css:2401-2439 for the recipe; it is at 2281-2366.
+   Recorded because the next person will look where the brief said.          */
+
+/* THE TABLE SCROLLS INSIDE ITSELF rather than making the page scroll
+   sideways. Five columns, one of which is a machine id, at the Largest text
+   scale in a narrow window will overflow; a page that scrolls horizontally is
+   worse than a table that does. */
+.mem-ws-wrap { overflow-x: auto; }
+.mem-ws-table { width: 100%; border-collapse: collapse; }
+.mem-ws-table th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  /* --text-2, not --text-3. This file's standing rule (see .mem-row-meta) is
+     that the third rung is for labels on surfaces where it clears the floor,
+     and a guard in scripts/test-next-memory-ingest-text.js counts every
+     `color: var(--text-3)` in this file and allows none. */
+  color: var(--text-2);
+  padding: 0 var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline-strong);
+  white-space: nowrap;
 }
-/* min-width: 0 is load-bearing, not tidiness. A flex item defaults to
-   min-width: auto — a content-based floor — so .mem-ctl refused to shrink
-   below its widest child and the control's own `max-width: 100%` then
-   resolved against a box that was ALREADY overflowing. Measured at a 640px
-   viewport: the select's right edge landed at 651 and the main column grew a
-   horizontal scrollbar (scrollWidth 319 vs clientWidth 308). Both boxes need
-   it — the <select> is itself a flex item whose intrinsic minimum is its
-   longest option, and machine ids are long and hex-suffixed. */
-.mem-ctl { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-/* ── A FIELD LABEL, NOT AN EYEBROW ────────────────────────────────────────
-   This took `--type-eyebrow`, which is a MONO token, but without the
-   uppercase and the tracking that make an eyebrow an eyebrow — so it
-   rendered "Scope" and "Machine" in sentence-case code type beside two
-   dropdowns. Found by rendering the page and counting the faces, not by
-   reading the rule. It is the label of a control, so it takes the text face
-   at the same size and colour; the eyebrows on this view (PROJECTS, CURRENT
-   HANDOFF) keep the mono idiom, which is what that token is for. */
-.mem-ctl-label {
-  flex: none;
+.mem-ws-table td {
+  padding: var(--space-3) var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+.mem-ws-table tbody tr:last-child td { border-bottom: none; }
+
+/* ── THE ROW IS A CONTROL, AND IT HAS TO FEEL LIKE ONE ────────────────
+   Hover and press are on the `<tr>`, not on the button inside it, so the
+   whole row lights up even though only the first cell is focusable — the
+   button is what the keyboard reaches and the row is what the eye reads.
+
+   `--mat-row-hover` is the same overlay the rail's rows take, so a row in the
+   table and a row in the sidebar respond identically. The press TRANSFORM is
+   on the row for the same reason and is neutralised under reduced motion at
+   the foot of this file, beside `.mem-row`'s. */
+.mem-ws-row { transition: background var(--t-state), transform var(--t-press); }
+.mem-ws-row:hover { background: var(--mat-row-hover); }
+.mem-ws-row:active { transform: translateX(var(--press-shift)); }
+/* THE OPEN ROW. Accent tint, the same marker `.mem-row.active` uses in the
+   rail, so "which one am I reading" is answered the same way in both lists.
+   The 2px rule is an inset SHADOW rather than a border-left because under
+   `border-collapse: collapse` a border on one cell changes the grid and a
+   shadow cannot — the call views/settings.css records for its build lane. */
+.mem-ws-row-open { background: var(--accent-tint); }
+.mem-ws-row-open:hover { background: var(--accent-tint); }
+.mem-ws-row-open > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.mem-ws-table th:first-child,
+.mem-ws-table td:first-child { padding-left: 10px; }
+
+/* The first cell's button. It carries the dot and the slug, it stretches to
+   the cell so the whole name column is clickable, and it paints NOTHING of
+   its own — the row behind it owns hover, press and selection. */
+.mem-ws-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  /* `cursor: default` with `user-select: none` — the kit's rule for chrome, and
+     scripts/test-next-views-kit.js pairs them: a control that shows an I-beam
+     and drag-selects its own label reads as text rather than as a row you can
+     press. */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mem-ws-open:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+/* The work-stream slug is the one piece of DATA in this table a user retypes
+   — into an agent prompt, or into `get_working_state` — so it takes the code
+   face. The headline and the harness beside it are prose and do not. */
+.mem-ws-slug {
+  font: var(--type-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-ws-row-open .mem-ws-slug { font-weight: var(--weight-medium); }
+
+/* ONE LINE, ELLIPSISED. A headline is one sentence by construction, but an
+   agent can write a long one and a wrapped cell would make every OTHER row in
+   the table taller. The full text is in the handoff the row opens. */
+.mem-ws-cell-head { width: 40%; min-width: 0; }
+.mem-ws-headline {
+  display: block;
+  max-width: 0;                     /* forces the ellipsis inside a table cell */
+  min-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+/* TABULAR FIGURES, because this column is a clock: tickAges rewrites it every
+   second and proportional digits make the words jitter as they change. */
+.mem-ws-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
+.mem-ws-cell-machine { min-width: 0; }
+.mem-ws-machine { overflow-wrap: anywhere; }
+/* "this machine" is IDENTITY, not metadata, so it sits in the cell rather than
+   under it — and it is rendered ONLY where the response said so explicitly.
+   Quiet: it marks one row of several, and v3.16.1's rule is that a flag on
+   every row carries nothing. */
+.mem-ws-mine {
+  margin-left: var(--space-3);
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+  color: var(--text);
+  white-space: nowrap;
+}
+.mem-ws-cell-who { white-space: nowrap; }
+/* The two counts under the table. Tabular for the same reason the age is. */
+.mem-ws-count {
+  margin-top: var(--space-4);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── "Working on:" — block ①'s headline line ───────────────────────
+   The menubar widget's lead reading, which this screen never carried although
+   every read has always contained it. It sits ABOVE the Last-saved strip: what
+   the project is doing is the question, when it was last written down is the
+   qualification. */
+.mem-working {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+}
+/* The pip is a 12px block on a baseline row, so it needs its own alignment or
+   it rides the text baseline and sits a third of its height too low. */
+.mem-working .mem-save-pip { align-self: center; }
+.mem-working-label {
   font: var(--weight-medium) var(--text-2xs)/1 var(--font-sans);
   letter-spacing: var(--track-body);
-  /* 2.31 dark / 2.26 light at --text-faint; 8.55 / 7.02 at --text-2, over
-     --canvas. See the note on .mem-row-meta for why not --text-3. */
+  text-transform: uppercase;
   color: var(--text-2);
 }
-.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); min-width: 0; overflow-wrap: anywhere; font-variant-numeric: var(--numeric-tabular); }
-/* A truncation disclosure sits beside the new "not addressable" note and
-   states the same class of fact, so it is held to the same legibility. */
-.mem-ctl-note { font-size: var(--text-2xs); color: var(--text-2); }
-
-/* ── THE PICKERS ARE NO LONGER <select>s ──────────────────────────────
-   Everything visual now comes from shared/listbox.css (`.lb-*`), linked
-   globally from next/index.html. Nothing about the control's look lives
-   here any more; what remains below is only the FLEX SIZING this row needs.
-
-   Why the native control went, recorded rather than quietly dropped: the
-   note that stood here said a hand-rolled listbox "costs the keyboard
-   model, the screen reader model and the platform picker on touch, all of
-   which a <select> gives for nothing", and concluded that trade was not
-   worth a chevron. The first two costs were real and are now PAID — the
-   component implements Up/Down/Home/End/Enter/Escape/Tab, type-ahead, and
-   the APG select-only-combobox roles. The third is genuine and unpaid: on
-   a touch device the OS wheel/sheet picker is gone. This is a desktop
-   localhost app, so that is a cost we can take; it is stated here so the
-   next reader is not told the trade was free.
-
-   `min-width: 0` on the control is load-bearing for the same reason it was
-   on the select — see the .mem-ctl note above; a machine id is long and
-   hex-suffixed and would otherwise push this row past the viewport. */
-.mem-ctl .lb { min-width: 0; max-width: 100%; }
-.mem-ctl .lb-btn { max-width: 100%; }
+.mem-working-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  line-height: var(--leading-snug);
+}
+.mem-working-age {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
 
 /* ── The handoff document ────────────────────────────────────────────── */
 
@@ -607,7 +813,10 @@
    preamble (see splitHandoffPreamble in memory.js). It is the only part of
    that preamble that says something the controls above do not. */
 .mem-doc-headline {
-  max-width: var(--prose-max);
+  /* NO max-width — see this file's header. It is ONE line of the agent's own
+     summary at the top of the handoff, and capping a single line at 68ch while
+     the document under it runs the column is the ragged edge this release
+     removed rather than an act of typography. */
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
   color: var(--text);
@@ -673,7 +882,14 @@
 /* THE HANDOFF'S OWN PROSE, and the single most important use of the measure
    limit in this file: an agent's handoff is the longest running text on the
    screen. 68ch here, on the TEXT, rather than on the card that frames it. */
-.mem-doc { max-width: var(--prose-max); color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+/* NO max-width, and this is the reversal the header block explains. v3.54.0
+   put the measure cap HERE, on the text, having taken it off the card — right
+   for a document, wrong for this page: the handoff and the standing brief both
+   stopped at 68ch (roughly 47% of the 1200px column, measured) beside a
+   full-width journal, and that is what "not okay" and "endlessly long" were
+   about. scripts/test-next-memory-view.js §18f now asserts the ABSENCE of a
+   cap here and carries the reason in the assertion. */
+.mem-doc { color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
 .mem-doc > *:first-child { margin-top: 0; }
 .mem-doc > *:last-child { margin-bottom: 0; }
 .mem-doc p { margin: 0 0 10px; }
@@ -932,12 +1148,11 @@
      reflow — stack it above the headline instead of squeezing both. */
   .mem-j-row { flex-direction: column; gap: 2px; }
   .mem-j-when { width: auto; }
-  .mem-controls { gap: 8px 12px; }
-  /* The .lb wrapper is the flex item; the trigger follows at max-width:
-     100%. The MENU is not capped here — it is a <body> child positioned
-     against the viewport by listbox.js, so a narrow trigger does not force
-     a narrow menu. */
-  .mem-ctl .lb, .mem-ctl .lb-btn { max-width: 46vw; }
+  /* The three picker rules that lived here are gone with the pickers. The
+     work-stream table needs none: it scrolls inside `.mem-ws-wrap` at any
+     width, which is the whole reason that wrapper exists. What it DOES need
+     is for the headline column to stop claiming 40% of a narrow viewport. */
+  .mem-ws-cell-head { width: auto; }
 }
 
 /* ── PLACING THE SHARED TEXT ROLES ───────────────────────────────────────
@@ -1003,14 +1218,88 @@
    is the one no later edit can undo: there is no propagation path, because
    the control is not there.                                                */
 
-.mem-brief-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
+/* `.mem-brief-actions` IS GONE. It was the column that held the "Edit brief"
+   button and its explanation BELOW the rendered brief — the maintainer's
+   "buried" — and both of its contents moved: the control is the pencil in
+   `.mem-block-toolbar` beside the block's title, and the sentence about
+   replace-not-merge is inside the editor, where it is read at the moment it
+   matters rather than before anyone has decided to edit.
+
+   The pencil takes the kit's quiet rung (`btn btn-ghost btn-xs`) and declares
+   only what the kit cannot know: that it holds a glyph and a word on one line.
+   It is NOT icon-only — a glyph alone would need its accessible name to do all
+   the work, and "Edit" next to a pencil costs 28px and removes the guess. */
+.mem-brief-edit { display: inline-flex; align-items: center; gap: var(--space-3); flex: none; }
+.mem-brief-edit svg { flex: none; }
+.mem-brief-age {
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
 .mem-brief-editor { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ── THE DRAFT'S OWN READOUT ──────────────────────────────────
+   Three facts on one line: whether the draft differs from what was loaded, how
+   many words it is, and how many of the route's 32,768 bytes it uses. Tabular
+   figures because two of the three are numbers that change as you type and
+   proportional digits would make the line jitter.
+
+   The OVER state colours nothing — the words say "Too long to save" in the
+   loud note directly under it and Save is disabled. Colour is never the only
+   carrier here, and --attention-text at --text-2xs is under the 4.5 floor in
+   the light theme anyway (this file measures it at 3.58). What the over state
+   does change is WEIGHT, which is a graphic property and carries at any
+   contrast. */
+.mem-brief-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.mem-brief-stats-over { font-weight: var(--weight-semibold); }
+
+/* ── THE UNSAVED-DRAFT BAR ────────────────────────────────────
+   IN FLOW, NOT A MODAL, and that is the decision rather than an economy: the
+   text the user would lose has to stay on screen while they decide whether to
+   lose it. A dialog would cover it.
+
+   Accent rather than amber, the same call `.mem-stale` records one block up:
+   nothing is wrong and nothing has been lost — a draft exists and the user
+   pressed Escape. Amber in this file means "there is state we are not showing
+   you" and "content did not survive a save"; a third amber thing would flatten
+   both. */
+.mem-brief-discard {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent);
+  background: var(--accent-tint);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+.mem-brief-discard > span { flex: 1; min-width: 0; }
+
+/* The rendered draft, in place of the field. It borrows `.mem-doc`'s type by
+   carrying that class in the markup and adds only the WELL — so a reader can
+   see at a glance that they are looking at a preview of an unsaved draft and
+   not at the saved document. */
+.mem-brief-preview {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--control-edge);
+  background: var(--surface-inset);
+}
 .mem-brief-label {
   /* Same split as .mem-group-head: `.cur-eyebrow` in the markup owns the type
      and the colour; this owns only that it is a block. */
@@ -1024,7 +1313,12 @@
 .mem-brief-text {
   width: 100%;
   box-sizing: border-box;
-  min-height: 220px;
+  /* 320, not 220. A standing brief with the four template headings is already
+     close to twenty lines, so the shipped field opened SHORTER than the
+     document it was editing and the first thing a user did was drag it. It is
+     still `resize: vertical`, so the drag is available where a longer brief
+     needs it — what changed is where it starts. */
+  min-height: 320px;
   resize: vertical;
   padding: var(--space-4);
   border-radius: var(--radius-md);
@@ -1061,4 +1355,8 @@
      no longer owns — and it would go on "working" if the kit ever changed,
      which is how a stale local copy survives. `.mem-row` is still ours. */
   .mem-row:active { transform: none; }
+  /* The work-stream table's rows press the same way the rail's do, so their
+     opt-out lives beside it — in the SAME file as the transform, which is what
+     scripts/test-next-press-motion.js requires. */
+  .mem-ws-row:active { transform: none; }
 }

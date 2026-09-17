@@ -107,6 +107,15 @@
    4.5 floor when this was written, and since the ramp was fixed at source it
    measures 6.16 / 5.60 and would clear. The quiet step is STILL made with
    size and family, because no role in this file uses a third colour rung. */
+/* THE MEASURE CAP LIVES HERE, because only this file may write a `tx-` rule.
+   scripts/test-next-text-system.js and scripts/test-next-contrast-ratchet.js
+   both fail any OTHER /next stylesheet that declares one, so a view whose
+   provenance line runs too long cannot cap it at its own call site — it has
+   to be capped once, for every consumer, here. Added for the Ingest readout,
+   which carries a destination path and ran the full 1200px column; every
+   other provenance line in the tree is far shorter than the cap and is
+   unaffected. `--prose-max` rather than a literal: it is the same measure the
+   rest of the app's running text uses. */
 .tx-readout-prov {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -114,6 +123,7 @@
   letter-spacing: var(--track-mono);
   color: var(--text-2);
   overflow-wrap: anywhere;
+  max-width: var(--prose-max);
 }
 
 .tx-readout-group {
@@ -563,6 +573,20 @@
 }
 
 .tx-vh-panel > * + * { margin-top: 8px; }
+
+/* ── THE ONE OPT-OUT FROM THE MEASURE CAP ────────────────────────────────
+   `renderViewHeader({ panelWide: true })` appends this class, and it exists
+   for the page whose sections are NOT prose: Agent memory is a dashboard
+   whose every block runs the column's width, and a help panel stopping at
+   68ch beside a full-width table was the last of the four widths v3.55.0
+   removed from that screen.
+
+   DECLARED AFTER `.tx-vh-panel`, deliberately — same specificity, so the
+   cascade decides and the later rule wins. Nothing else about the panel
+   changes: the rule, the wash, the type and the entrance are all inherited
+   from the rule above, so a wide panel is the same component at a different
+   measure rather than a second treatment. */
+.tx-vh-panel-wide { max-width: none; }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    The info mark's press transform is DISABLED — its background step lands

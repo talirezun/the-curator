@@ -53,30 +53,47 @@
 // inventing a restriction the backend does not enforce.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// DESIGN
+// DESIGN — A DASHBOARD, IN FIVE BLOCKS (v3.55.0)
 // ─────────────────────────────────────────────────────────────────────────
-// Dense information, quiet presentation. What a person coming here actually
-// wants is one thing — "where did my agent leave this?" — so the handoff is
-// what is open by default and everything else is folded beside it.
+// The maintainer's verdict on the v3.54.0 page was "not okay", in six parts,
+// and the shape below is each of them answered. See `renderProject` for the
+// list and for which block answers which.
 //
-// ONE COLUMN, THREE FOLDS, ONE LEADER. Every top-level block carries
-// `.mem-section` and ONE adjacency rule in memory.css owns every gap between
-// them, so the cards, the notices, the picker row and the folds all end at the
-// same right edge and sit 24px apart — the Domains rhythm. The three that
-// carry state are native <details> of the same family:
+//   ① STATUS         — "Working on:", the Last-saved reading, every caveat
+//   ② WORK-STREAMS   — a TABLE of the project's (scope, machine) pairs
+//   ③ CURRENT HANDOFF— the lead fold, the document you came to read
+//   ④ STANDING BRIEF — yours, with a pencil beside the title and an editor
+//   ⑤ SESSION JOURNAL— history, folded, last
 //
-//   · the CURRENT HANDOFF — open unless the user has closed it, and the only
-//     one with the accent rule, because it is the answer the screen exists to
-//     give. Its <summary> carries the menubar widget's two readings: the
-//     freshness pip and an age that ticks once a second (see tickAges);
-//   · the standing brief (rarely changes; the handoff is what churns) —
-//     EXCEPT when there is no handoff, where it opens, because then it is
-//     the only content there is;
-//   · the journal (history, not state).
+// ONE COLUMN, ONE RIGHT EDGE, ONE RHYTHM. The five blocks are
+// shared/block.js's `renderBlock`, so shell.css's `.settings-job-block`
+// declaration — 24 | 1px hairline | 24 — owns every gap between them, and this
+// view declares that gap nowhere. `.mem-section` survives for the elements
+// ABOVE the first block (the breadcrumb, the read-only note, the copy
+// confirmation) and for the error and loading arms, with ONE bridging rule in
+// memory.css so the step into the first block is the same 24.
 //
-// "How this works" is NOT a fourth card. It explains the three tiers and the
+// NOTHING IS CAPPED AT READING WIDTH ANY MORE, and that is a deliberate
+// reversal. `.mem-doc`, `.mem-doc-headline` and `.mem-save-line` each stopped
+// at `--prose-max` while the journal beside them ran the full column; on a
+// 1200px column that is 47% of the width, and the page read as endlessly long
+// because everything on it was half as wide as it could be. A measure cap is
+// right for a DOCUMENT and wrong for a dashboard, and memory.css records the
+// reversal against the rule it reverses.
+//
+// TWO FOLDS, NOT THREE. The handoff keeps its <details> (a fifteen-hundred-word
+// handoff is not what every visit is for) and so does the journal (fifty rows
+// of history, and it is the section that made the page long). The standing
+// brief is NOT a fold: a block head is a heading, and a pencil in a <summary>
+// would be the hazard below.
+//
+// "How this works" is not a card. It explains the three tiers and the
 // read-only rule, which is read once per user and then never again, so it is
-// the header's ⓘ panel — a mark beside the title (see renderMain).
+// the header's ⓘ panel — a mark beside the title (see renderMain). Each block
+// carries its own ⓘ for the same reason, with the lede at twenty visible words
+// or fewer and the depth behind the mark. WHAT NEVER FOLDS is a warning
+// (v3.16.1): every save verdict, the stale notice and the unlisted note are in
+// block ①'s BODY.
 //
 // Native <details> rather than a hand-rolled disclosure: keyboard operation
 // and screen-reader announcement come free, which is the same reasoning
@@ -84,13 +101,13 @@
 //
 // THE <summary> HAZARD (v3.0.1-beta.18, and settings.js's model picker):
 // an interactive control placed inside a <summary> toggles its own section
-// when clicked. Every control in this view — the two pickers, the journal's
-// "Show more" button, the brief's Edit/Save/Cancel — is a SIBLING of its
-// <details>, or lives in the <details> BODY. The handoff's summary is the
-// newest place this could have gone wrong and it holds spans only: an eyebrow,
-// a pip and a readout, no button and no link. There is therefore no
-// propagation path to suppress, so no later edit can drop a stopPropagation
-// that isn't there.
+// when clicked. Every control in this view — the work-stream table's row
+// buttons, the journal's "Show more", the brief's pencil, Save, Preview,
+// Cancel — is a SIBLING of its <details>, or lives in a <details> BODY, or
+// sits in a block that is not a <details> at all. The handoff's summary holds
+// spans only: an eyebrow, a pip and a readout, no button and no link. There is
+// therefore no propagation path to suppress, so no later edit can drop a
+// stopPropagation that isn't there.
 //
 // SQUARE marker, not round: agent memory is a different KIND of thing from a
 // knowledge domain, and the rail already puts them side by side. Domains use
@@ -118,7 +135,13 @@ import {
 // ends with one rather than with a hand-typed URL that nothing can verify.
 import { docsLinkHtml } from '../shared/docs-links.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
-import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
+// THE PAGE RHYTHM, imported rather than re-declared. v3.53.0 built the section
+// block for Providers & keys, v3.54.0 moved the other four Settings sections
+// onto it and lifted it into shared/block.js, and this screen is the first
+// consumer outside Settings. Its CSS (24 | hairline | 24, the `.settings-*`
+// names shared/block.js's header explains) lives in shell.css, so a view can
+// rely on it without depending on another view's stylesheet.
+import { renderBlock } from '../shared/block.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -130,7 +153,12 @@ import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/li
 // Node) copies it in the other direction, and scripts/test-sidebar-status-
 // rows.js pins the two bodies against each other. Importing a pure numeric
 // function out of that DOM-free module has no such constraint.
-import { freshnessStep } from '../shared/age.js';
+// `freshnessTier` comes with it: the same scale under its app-wide NAMES, which
+// is what shared/freshness.css paints on `.fresh-dot`. The work-stream table
+// and the rail rows wear the DOT (round, 8px, the shared mark); the save strip
+// and the handoff summary keep the `.mem-save-pip-s*` SQUARE, whose geometry is
+// this view's own. One scale, two silhouettes — never two ladders.
+import { freshnessStep, freshnessTier } from '../shared/age.js';
 
 // The paste-into-your-entry-file block. ONE text, shared with the Domains
 // view — see that module's header for what was measured and why the wording
@@ -139,14 +167,36 @@ import { freshnessStep } from '../shared/age.js';
 // that the agent's harness never activated the skill, and this is the fix.
 import { composeAgentInstructions, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
 
-// ── The render -> wire handoff for the two pickers ───────────────────────
-// renderScopeControls builds each control's cfg while it has the data in
-// hand; wireScopeControls hydrates from the SAME objects after the paint.
-// Rebuilding the cfg at wiring time would be two descriptions of one
-// control, free to disagree about its options — this repo's most reliable
-// failure shape. Cleared at the top of every renderScopeControls call, so a
-// render that emits no picker leaves nothing for the wiring pass to mount.
-const pendingListboxes = [];
+// ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
+//
+// `renderScopeControls` built a scope listbox and a machine listbox, and a
+// module-level `pendingListboxes` array carried each control's cfg from the
+// render pass to the wiring pass. Both are deleted.
+//
+// WHY. The maintainer's verdict on the shipped screen was that work-streams
+// were hard to FIND: a dropdown answers "which one am I looking at" and
+// refuses to answer "what have I got, and which of them moved today" — you
+// have to open it, read it, close it, and hold the list in your head. The
+// menubar widget has answered that question for Mac users since v3.37.0 by
+// showing the rows; this screen now shows the same rows, which is also the
+// first time a Windows or Linux user has been able to see them at all.
+//
+// `renderWorkStreams` therefore renders a TABLE, one row per (scope, machine)
+// pair, newest first, each row a button. There is no cfg to carry across the
+// paint, so there is no handoff array and no `mountListbox` pass in wire().
+// scripts/test-next-listbox.js counts this view's adoptions and now expects
+// ZERO of them.
+//
+// The `<summary>` hazard this file's header records is unaffected: the table
+// is a SIBLING of every <details> on the page, exactly as the pickers were.
+
+// The standing brief's wall. src/routes/memory.js refuses a longer document
+// with 400 `brief_too_large`, so the editor shows the limit rather than
+// letting someone write past it and lose the write. Read as BYTES because that
+// is what the route measures — a brief full of em-dashes and arrows runs out
+// sooner than its character count suggests, and a counter that said otherwise
+// would be wrong in the direction that costs the user their text.
+const BRIEF_MAX_BYTES = 32768;
 
 // Journal page sizes. The store clamps journalLimit to [1, 50] itself
 // (MAX_JOURNAL_ENTRIES); these are just the two steps this view offers, and
@@ -237,7 +287,10 @@ function freshState() {
     // copied. Cleared whenever the selection changes.
     copied: null,
     // The standing-brief editor, or null when nothing is being edited.
-    //   { domain, project, text, busy, error, savedAt }
+    //   { domain, project, loaded, text, busy, error, preview, confirmDiscard }
+    // `loaded` is the document the editor OPENED on and never changes; `text`
+    // is the draft. The pair is what makes "is this dirty?" answerable without
+    // re-reading the server, which is what Escape has to know.
     // Stamped with its own (domain, project) so a reply that lands after the
     // user has moved on cannot be applied to a different project's brief —
     // the same stamp discipline the rest of this view uses for scopes.
@@ -266,7 +319,9 @@ function freshState() {
     // A key is written here only when the user actually toggles one, so
     // `undefined` still means "no opinion" and each fold keeps its own
     // default — the HANDOFF opens (it is the answer this screen gives) and
-    // the brief opens when it is the only content there is.
+    // the JOURNAL stays shut (it is history, and it is the section that made
+    // this page long). There are only those two keys since v3.55.0: the
+    // standing brief is a block rather than a fold.
     openFolds: {},
 
     // ── Revalidation bookkeeping (see the Revalidation block above) ──────
@@ -336,8 +391,14 @@ let state = freshState();
 let pendingFocusId = null;
 
 const FOCUSABLE_IDS = [
-  'mem-scope-select', 'mem-machine-select', 'mem-journal-more',
-  'mem-fold-handoff', 'mem-fold-brief', 'mem-fold-journal',
+  'mem-journal-more',
+  // THE WORK-STREAM TABLE'S SELECTED ROW. Only one row carries an id — the one
+  // that is open — because ids must be unique and a scope slug is not a safe
+  // id fragment. Clicking a row therefore records this id EXPLICITLY in wire()
+  // rather than through captureFocus: at the moment of the click the pressed
+  // button has no id at all, and a moment later it is the selected row.
+  'mem-ws-active',
+  'mem-fold-handoff', 'mem-fold-journal',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -352,6 +413,14 @@ const FOCUSABLE_IDS = [
   // replaced by the textarea), so it needs the same fallback treatment as
   // "Show more" below; the textarea is where the user actually is.
   'mem-brief-edit', 'mem-brief-text', 'mem-brief-save', 'mem-brief-cancel',
+  // Preview swaps the textarea for rendered markdown and back, so whichever of
+  // the two is on screen the toggle itself stays put — it is the one control
+  // in the editor that survives its own click, and it must not lose focus on
+  // the render it causes.
+  'mem-brief-preview',
+  // The unsaved-draft bar. Both REMOVE themselves — Discard closes the editor,
+  // Keep editing dismisses the bar — so both fall back below.
+  'mem-brief-discard', 'mem-brief-keep',
 ];
 
 // Where focus goes when the exact control did not come back. "Show more" is
@@ -372,6 +441,11 @@ const FOCUS_FALLBACK = {
   // stable control that does the same KIND of thing.
   'mem-brief-save': '#mem-brief-edit',
   'mem-brief-cancel': '#mem-brief-edit',
+  // Discard closes the editor, so the pencil that reopens it is the nearest
+  // stable control; Keep editing dismisses only the bar, so the field the user
+  // asked to stay in is where they should land.
+  'mem-brief-discard': '#mem-brief-edit',
+  'mem-brief-keep': '#mem-brief-text',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -442,13 +516,14 @@ registerView('memory', {
       // walking a DOM that belongs to whatever view mounted next, once a
       // second, for the life of the page.
       if (ageTimer !== null) { clearInterval(ageTimer); ageTimer = null; }
-      // navigate() closes the reader itself but explicitly does NOT reach
-      // into view-owned popovers (see its comment) — so a menu left open on
-      // a rail click is this view's to close. The component also self-closes
-      // when its trigger leaves the document; this is the deliberate second
-      // layer, because a teardown that depends on a repaint happening is not
-      // a teardown.
-      closeAllListboxes();
+      // NO POPOVER TO CLOSE ANY MORE. This used to call `closeAllListboxes()`
+      // because navigate() explicitly does not reach into view-owned popovers,
+      // so a scope or machine menu left open on a rail click was this view's to
+      // shut. Both pickers are gone (see the note where `pendingListboxes` was
+      // declared) and the work-stream table opens nothing, so there is no menu
+      // that can outlive a teardown. Deleted rather than left standing: a
+      // teardown step with nothing to tear down is a claim about the screen
+      // that is no longer true.
       if (wakeHandler) {
         if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
@@ -523,15 +598,25 @@ function schedulePoll(token) {
  * the pane repaints with the right mark. Re-deriving the class here would be a
  * second implementation of that rule, free to disagree with the first.
  *
- * ── THE TARGET ──────────────────────────────────────────────────────────
+ * ── THE TARGETS, PLURAL SINCE v3.55.0 ───────────────────────────────────
  * `data-mem-age-at` carries the ISO stamp that effectiveSave resolved, and it
- * sits on the WRAPPER this view owns. The words themselves live inside a
- * shared/text.js readout, whose `value` is HTML-ESCAPED by the component — so
- * a view cannot place an element of its own around the figure and has to reach
- * the component's emitted `.tx-readout-value` instead. If that class is ever
- * renamed the clock FREEZES rather than overwriting the label beside it, and a
- * frozen reading is at most one poll stale because the signature still moves.
- * That is the fail-safe direction, and it is a trade-off, not an oversight.
+ * sits on the WRAPPER this view owns. Inside it the clock looks for exactly
+ * two named elements, in this order:
+ *
+ *   · `.tx-readout-value` — the handoff summary and the save strip, where the
+ *     words live inside a shared/text.js readout. That component HTML-ESCAPES
+ *     its `value`, so a view cannot place an element of its own around the
+ *     figure and has to reach the component's own class instead. If it is ever
+ *     renamed the clock FREEZES rather than overwriting the label beside it,
+ *     and a frozen reading is at most one poll stale because the signature
+ *     still moves. That is the fail-safe direction, and it is a trade-off.
+ *   · `.mem-age-words` — the work-stream table's age cell and the "Working on"
+ *     line, which are a cell and a sentence rather than instruments and carry
+ *     a plain span this view owns.
+ *
+ * It never writes the WRAPPER's own text: the table's age cell also holds a
+ * visually-hidden exact stamp, and an unnamed fallback is how a future edit
+ * would start silently deleting it.
  */
 function tickAges() {
   if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
@@ -544,7 +629,19 @@ function tickAges() {
     if (!Number.isFinite(t)) continue;
     const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
     if (words === null) continue;
-    const target = el.querySelector('.tx-readout-value');
+    // TWO SHAPES CARRY AN AGE ON THIS SCREEN, and the clock has to reach both.
+    // A readout (`renderReadout`) escapes its own value, so the words are
+    // inside the component's `.tx-readout-value` and a view cannot put an
+    // element of its own around them — that is the handoff summary and the
+    // save strip. The work-stream table and the "Working on" line are not
+    // instruments, they are cells and a sentence, so they carry a plain
+    // `.mem-age-words` span this view owns outright.
+    //
+    // NAMED TARGETS BOTH WAYS, never `el.textContent`: writing the wrapper's
+    // own text would delete whatever else it holds (the table's age cell also
+    // carries a visually-hidden exact stamp), and an unnamed fallback is how a
+    // future edit would silently start clobbering a sibling.
+    const target = el.querySelector('.tx-readout-value') || el.querySelector('.mem-age-words');
     // Written only when it CHANGED. A no-op assignment still dirties the node
     // for the browser and, on a screen reader watching a live region, still
     // reads. Most of the 60 ticks in a minute have nothing to say.
@@ -660,20 +757,42 @@ async function fetchIndex(token) {
  * to 320s does not. Re-render iff the pixels would differ.
  */
 function screenSignature() {
-  // The scope picker's own contents, deduplicated the same way
-  // renderScopeControls deduplicates them, so this is what is literally in
-  // the picker rather than the raw (scope, machine) pairs behind it.
+  // ── THE WORK-STREAM TABLE IS A PANE, AND IT PAINTS EVERY PAIR ───────────
   //
-  // OMITTING THIS WAS HALF THE BUG. Once refreshIndex re-reads the scope
-  // list, a newly written scope changes nothing else the signature looks at
-  // in the general case — the sidebar row can be identical when a save adds
-  // a MACHINE under an existing scope, and staleWrite is already true from
-  // an earlier poll — so the render would be skipped as a no-op and the
-  // fresh data would sit in state, unpainted. A no-op guard that cannot see
-  // a pane is not a guard for that pane.
+  // This used to fold in a DEDUPLICATED list of scope NAMES, because the pane
+  // it was guarding was a dropdown: two copies of `main` were one option, so
+  // reporting a duplicate as a change would have closed a picker somebody had
+  // open for no visible difference. That was the over-firing side of the
+  // guard and the reasoning was right for a picker.
+  //
+  // IT IS NOW EXACTLY WRONG FOR A TABLE. `main` on two machines is TWO ROWS,
+  // each with its own age, headline and harness, and each one of those is a
+  // thing on screen that can change on its own. So the mark is the rendered
+  // content of the rows, in order, and a duplicated pair genuinely moves it —
+  // the inverted assertions in scripts/test-memory-truth.js §8b and
+  // scripts/test-next-memory-view.js §11b record that this reversal is
+  // deliberate rather than a regression.
+  //
+  // Folded through `formatAge` for the same reason everything else here is:
+  // the signature must change exactly when the PIXELS would. A raw age in
+  // seconds would re-render on every single poll; a raw timestamp would never
+  // change and the table's clock would freeze between bands.
+  //
+  // OMITTING THIS ENTIRELY WAS HALF OF THE ORIGINAL BUG, and that half still
+  // stands: once refreshIndex re-reads the scope list, a newly written
+  // work-stream changes nothing else the signature looks at in the general
+  // case — the sidebar row is identical when a save adds a MACHINE under an
+  // existing scope, and staleWrite is already true from an earlier poll — so
+  // the render would be skipped as a no-op and the fresh data would sit in
+  // state, unpainted. A no-op guard that cannot see a pane is not a guard for
+  // that pane.
   const pr = state.projectRead;
-  const pickerScopes = pr && Array.isArray(pr.scopes)
-    ? [...new Set(pr.scopes.map((s) => s.scope))]
+  const tableRows = pr && Array.isArray(pr.scopes)
+    ? pr.scopes.map((s) => [
+      s && s.scope, (s && s.machine) || null, (s && s.headline) || null,
+      formatAge(effectiveSave(s).seconds),
+      (s && s.harness) || null, (s && s.model) || null,
+    ])
     : null;
   // ── THE SAVE-STATUS STRIP IS A CLOCK, AND A CLOCK HAS TO TICK ──────────
   //
@@ -697,12 +816,11 @@ function screenSignature() {
   const savedMark = cur
     ? [formatAge(effectiveSave(cur).seconds), effectiveSave(cur).source, cur.lastSaveKind || null]
     : null;
-  // EXACTLY WHAT THE STRIP PAINTS FROM THE PAIR LIST, and nothing else. The
-  // first draft folded in every row, which made a DUPLICATED pair read as a
-  // change while the strip's output was byte-identical — the over-firing side
-  // of this guard, and the one that closes a picker somebody has open. The
-  // strip reads two things out of `scopes`: which pair is newest, and which
-  // pairs two harnesses are sharing.
+  // The strip reads two things out of `scopes` that `tableRows` above does not
+  // carry: which pair is newest (for the "newer state in this project" line)
+  // and which pairs two harnesses are sharing. Kept separate rather than
+  // merged into the row mark, because both are DERIVED readings — a change in
+  // which row is newest can move the strip without any row's own cell moving.
   const newest = pr && Array.isArray(pr.scopes) ? newestPair(pr.scopes) : null;
   const newestMark = newest
     ? [newest.scope, newest.machine || null, formatAge(effectiveSave(newest).seconds)] : null;
@@ -720,7 +838,12 @@ function screenSignature() {
   // written straight into state without a re-render (see wire()), exactly as
   // the Domains lifecycle form does, so that the caret survives.
   const editMark = state.briefEdit
-    ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null]
+    ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null,
+      // Preview and the unsaved-draft bar BOTH change what is on screen and
+      // neither is derivable from the draft text, which is deliberately not
+      // folded in here (it moves on every keystroke and is written into state
+      // without a render, so that the caret survives).
+      !!state.briefEdit.preview, !!state.briefEdit.confirmDiscard]
     : null;
 
   return JSON.stringify([
@@ -730,7 +853,7 @@ function screenSignature() {
     state.indexError,
     state.scope,
     state.machine,
-    pickerScopes,
+    tableRows,
     savedMark,
     newestMark,
     sharedMark,
@@ -740,7 +863,13 @@ function screenSignature() {
     // projects with the same name in two domains are two different rows, and
     // a signature that could not tell them apart would skip the render that
     // moves the selection between them.
-    state.projects.map((p) => [p.domain, p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
+    // `headline` joined the row when the rail gained its "Working on" line;
+    // the freshness DOT deliberately did not, because `freshnessTier` is cut
+    // on `formatAge`'s own bands and `projectMetaLine` already folds the age
+    // through `formatAge` — the dot cannot change without those words changing
+    // first. Folding it in as well would be a second copy of one fact.
+    state.projects.map((p) => [p.domain, p.project, p.hasBrief, p.scopeCount > 0,
+      p.headline || null, projectMetaLine(p)]),
   ]);
 }
 
@@ -1461,6 +1590,14 @@ export function renderProjectGroups(projects, activeDomain, activeProject) {
     const inner = byDomain.get(domain).map((p) => {
       const active = p.domain === activeDomain && p.project === activeProject;
       const has = p.scopeCount > 0 || p.hasBrief;
+      // THE FRESHNESS DOT, on the app-wide scale. The rail said "3 scopes ·
+      // 2 hr ago" and made you READ it to rank two projects; the dot answers
+      // the same question pre-attentively, from `freshnessTier` — the same
+      // function the work-stream table's dots and (under its other name,
+      // `freshnessStep`) the save strip's pip are cut on, so a project row and
+      // its own newest work-stream can never disagree about how fresh it is.
+      // It is aria-hidden: the words beside it say the same thing.
+      const tier = freshnessTier(effectiveSave(p).seconds);
       return (
         '<button class="mem-row' + (active ? ' active' : '') + (has ? '' : ' mem-row-quiet') + '"' +
           ' data-mem-domain="' + escapeHtml(domain) + '"' +
@@ -1470,7 +1607,18 @@ export function renderProjectGroups(projects, activeDomain, activeProject) {
           '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
           '<span class="mem-row-main">' +
             '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
-            '<span class="mem-row-meta">' + escapeHtml(projectMetaLine(p)) + '</span>' +
+            // "WORKING ON:" IN THE RAIL. `headline` rides on every index row
+            // and nothing had ever rendered it; the menubar widget leads with
+            // it. One line, ellipsised, and OMITTED rather than filled with a
+            // placeholder when there is none — an em dash under every project
+            // with no saves would be noise on the one list you scan.
+            (p.headline
+              ? '<span class="mem-row-head">' + escapeHtml(p.headline) + '</span>'
+              : '') +
+            '<span class="mem-row-meta">' +
+              '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
+              '<span>' + escapeHtml(projectMetaLine(p)) + '</span>' +
+            '</span>' +
           '</span>' +
         '</button>'
       );
@@ -1631,6 +1779,14 @@ function renderMain(token) {
       title: 'Agent memory',
       info: aboutInfoHtml(),
       infoHtml: true,
+      // THE PANEL RUNS THE COLUMN, like everything under it. This page's five
+      // blocks, its table and its two documents all end at one right edge, and
+      // a help panel stopping at 68ch beside them was the last of the four
+      // widths v3.54.0 started removing from this screen. `panelWide` is an
+      // opt-in on the shared component (shared/text.js) rather than a change
+      // to its default, because the cap is right for every view whose header
+      // panel really is a paragraph of prose.
+      panelWide: true,
       actionsHtml: state.activeProject
         ? '<button type="button" class="btn btn-secondary btn-xs" id="mem-copy-agent">'
           + 'Copy agent instructions</button>'
@@ -1734,6 +1890,48 @@ async function copyAgentInstructions(token) {
   render(token);
 }
 
+/**
+ * THE PROJECT PAGE — five blocks, one right edge, one rhythm.
+ *
+ * ── WHAT THIS PAGE IS FOR, RESTATED, BECAUSE THE SHAPE FOLLOWS FROM IT ─────
+ * The maintainer's verdict on the v3.54.0 page was "not okay", in six parts:
+ * four of its elements were capped at reading width while the journal beside
+ * them ran the full column; the way to edit the brief was below the brief;
+ * work-streams were hard to find; the cards were inconsistently sized; there
+ * was no colour to make "what moved when" glanceable; and two readings the
+ * menubar widget has had for six releases — the "Working on:" headline and
+ * "another machine saved after this one" — existed nowhere in the app.
+ *
+ * So this is a DASHBOARD, not a document, and every one of those follows:
+ *
+ *   ① STATUS         — where the project stands, across every machine
+ *   ② WORK-STREAMS   — the table, newest first, one row per saved copy
+ *   ③ CURRENT HANDOFF— the document you came to read
+ *   ④ STANDING BRIEF — yours, with a pencil beside the title
+ *   ⑤ SESSION JOURNAL— history, folded, last
+ *
+ * ── THE BLOCKS ARE shared/block.js's, AND THE RHYTHM COMES WITH THEM ───────
+ * `renderBlock` emits `.settings-job-block`, whose shell.css rule is
+ * 24 | 1px hairline | 24 between adjacent blocks — the same declaration
+ * Providers & keys and all four Settings sections are built on. This view
+ * therefore does NOT re-declare that gap; memory.css carries ONE bridging rule
+ * so a `.mem-section` above the first block (the breadcrumb, a notice, the
+ * copy confirmation) is separated by the same 24.
+ *
+ * ── UNNUMBERED, DELIBERATELY ──────────────────────────────────────────────
+ * `num: null` on every block. shared/block.js's own note is that a numeral is
+ * an argument for SEQUENCE, and this page is not a sequence of steps — it is
+ * five readings about one project, any of which may be the one you came for.
+ * Providers & keys is numbered because block 1 is the only thing a fresh
+ * install can do; nothing here has that property.
+ *
+ * ── EVERY LEDE IS AT MOST TWENTY VISIBLE WORDS ────────────────────────────
+ * The rest goes behind the block's own ⓘ, which is the rule v3.54.0 set for
+ * Settings and the reason those pages stopped being "a sea of information".
+ * What may NEVER fold is a warning: v3.16.1's rule is that a warning behind a
+ * click is not a warning, which is why the stale notice, the unlisted note and
+ * every save verdict are in block ①'s BODY and not in its fold.
+ */
 function renderProject() {
   const read = state.projectRead;
   const d = state.detail;
@@ -1784,87 +1982,138 @@ function renderProject() {
   const hasBrief = !!(read && read.brief && read.brief.present);
   const unlisted = unlistedCount(read);
 
-  // Placed immediately under the header, ABOVE the controls, in every state:
-  // it qualifies the claim the pickers below it are about to make. A static
-  // "Scope main" label affirms "there is exactly one scope", and it must not
-  // say that while a second scope directory sits unread on disk.
-  const unlistedNote = renderUnlistedNote(read, d);
+  // ── BLOCK ① — STATUS ─────────────────────────────────────────────────────
   // FIRST, ABOVE EVERYTHING IT COULD BE QUALIFIED BY, and that placement is
   // the feature. It answers "am I saved?" — asked by someone with almost no
-  // context left — so it must not sit under two conditional notes and a pair
-  // of pickers on the days those appear. The stale notice renders directly
-  // beneath it, so when a save has landed since the page loaded the reading
-  // and the offer to reload read as one block.
-  const saveStatus = renderSaveStatus(read, d);
-  // Sits with the unlisted note, above the controls, for the same reason: it
-  // qualifies the claim everything below it is about to make. Present in
-  // every content branch — the empty-project one most of all, where "nothing
-  // saved yet" is precisely the sentence a just-written handoff falsifies.
-  const staleNote = renderStaleNotice();
-
-  if (!scopes.length && !hasBrief) {
-    return header + saveStatus + staleNote + unlistedNote + renderEmptyProject(unlisted);
-  }
-
-  // A brief with no handoff: the store says so (`message`) and the view used
-  // to drop it, so the page rendered the brief and simply never mentioned
-  // that the thing this screen exists to show is missing. Absence communicated
-  // by absence — and the SIDEBAR row for the same project says "brief only —
-  // no sessions yet", so the two surfaces disagreed about how much explaining
-  // was owed. This is also the documented happy path (write the brief, then
-  // let agents save), so it is a common first experience.
-  if (!scopes.length) {
-    return (
-      header + saveStatus + staleNote + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
-      renderBrief(read, true)
-    );
-  }
-
-  // ── ONE COLUMN, ONE RHYTHM ───────────────────────────────────
-  // Every block below is a `.mem-section`, and ONE adjacency rule in
-  // memory.css owns every gap between them — the same 24 / 24 / 24 rhythm
-  // v3.50.0 measured onto the Domains screen after finding four different
-  // declarations producing 24+4 / 22 / 0. Each block's own margin is zeroed
-  // there, so there is exactly one place a gap can be wrong.
+  // context left — so it must not sit under two conditional notes and a table
+  // on the days those appear.
   //
-  // THREE FOLDS, ONE LEADER. The handoff is the answer this screen exists to
-  // give, so it opens by default and takes the accent rule; the brief and the
-  // journal are context and stay shut. It is a <details> like the other two
-  // because the maintainer asked to be able to collapse it — reading a
-  // fifteen-hundred-word handoff is not what every visit is for — and because
-  // three cards that behave three different ways cannot be learned at a glance.
-  return (
-    header +
-    saveStatus +
-    staleNote +
-    unlistedNote +
-    renderScopeControls(scopes) +
-    renderHandoff() +
-    // The brief opens only when there is no handoff to read — then it is the
-    // only content on the page, and folding it away would leave a blank view.
-    //
-    // …AND NOT WHILE ONE IS STILL BEING READ, which is a defect found by
-    // LOOKING at the rendered page rather than by any assertion. `state.detail`
-    // is dropped before a scope read paints, deliberately, so this branch runs
-    // once with `d === null` — "there is no handoff", which is true for about
-    // 200ms and false afterwards — and emits the fold OPEN.
-    //
-    // THAT TRANSIENT IS PERMANENT, because of a browser behaviour this repo has
-    // met before: Chrome QUEUES a `toggle` event for a <details> parsed WITH an
-    // `open` attribute (measured in the harness: a freshly-innerHTML'd
-    // `<details open>` fires one). wire()'s listener then writes
-    // `openFolds.brief = true`, and a remembered value beats the default
-    // forever after. So the standing brief was open on every visit — on a page
-    // whose whole design is that the handoff is what you came for.
-    //
-    // This is the same class as v3.53.1's finding on Providers & keys (a render
-    // landing in the middle of the spec's queued `toggle`), and the fix is the
-    // same shape: do not emit a state you do not mean. While the read is in
-    // flight nothing is known about whether there is a handoff, and the honest
-    // default for "unknown" is the one the user chose — closed.
-    renderBrief(read, !state.detailLoading && !(d && d.current && d.current.present)) +
-    renderJournal()
-  );
+  // The stale notice renders directly beneath the reading, so when a save has
+  // landed since the page loaded the figure and the offer to reload read as one
+  // block; the unlisted note sits with them because it qualifies every claim
+  // the page is about to make. NONE of the three is inside the fold.
+  const saveStatus = renderSaveStatus(read, d);
+  const staleNote = renderStaleNotice();
+  const unlistedNote = renderUnlistedNote(read, d);
+  const statusBody = saveStatus + staleNote + unlistedNote;
+  const statusBlock = statusBody
+    ? renderBlock({
+      num: null,
+      id: 'memory-status',
+      title: 'Status',
+      ledeHtml: 'Where this project stands right now, across every machine.',
+      infoText:
+        '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
+        + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
+        + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
+        + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
+        + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
+        + 'than in a tooltip.</p>'
+        + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
+        + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
+        + 'with you.</p>'
+        + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+      infoHtml: true,
+      bodyHtml: '<div class="mem-status-stack">' + statusBody + '</div>',
+    })
+    : '';
+
+  // ── BLOCK ② — WORK-STREAMS ───────────────────────────────────────────────
+  const streamsBlock = scopes.length
+    ? renderBlock({
+      num: null,
+      id: 'memory-streams',
+      title: 'Work-streams',
+      ledeHtml: 'Every work-stream of this project, newest first. Open one to read its handoff.',
+      infoText:
+        '<p>A <b>work-stream</b> is one thread of work — the files call it a <i>scope</i>, and the slug is '
+        + 'still shown as one. Parallel threads get their own, so they never overwrite each other.</p>'
+        + '<p>Each machine writes to its OWN folder inside a work-stream, which is what makes two computers '
+        + 'safe over sync: no two of them ever touch one file. So one work-stream can appear here as several '
+        + 'rows — one saved copy per machine — and the count below the table says both numbers.</p>'
+        + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one machine '
+        + 'can, and they overwrite each other, because the folder has no harness segment. Block ① names that '
+        + 'explicitly when the journal shows it, and the remedy is to give each tool its own work-stream.</p>'
+        + '<p>Only the most recently saved copies are listed when a project has a great many; the line under '
+        + 'the table says so and gives the real total.</p>'
+        + '<p>' + docsLinkHtml('memory.session-journal', 'Read more in the guide') + '</p>',
+      infoHtml: true,
+      bodyHtml: renderWorkStreams(scopes, d) + workStreamCounts(read, scopes.length),
+    })
+    : '';
+
+  // ── BLOCK ③ — CURRENT HANDOFF ────────────────────────────────────────────
+  // Its body is the lead fold when there IS a handoff, the "no handoff yet"
+  // card when a brief exists without one, and the empty-project card when
+  // there is nothing at all — the missing thing is missing in the place you
+  // looked for it, which is the v3.17.1 rule this branch was built for.
+  const handoffBody = scopes.length
+    ? renderHandoff()
+    : (hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted));
+  const handoffBlock = renderBlock({
+    num: null,
+    id: 'memory-handoff',
+    title: 'Current handoff',
+    ledeHtml: 'What the last session left for the next one — overwritten on every save.',
+    infoText:
+      '<p>The handoff is where things stand RIGHT NOW: what an agent leaves for the next session, so that '
+      + 'session starts knowing what you already settled. There is one per work-stream per machine, and it '
+      + 'is <b>overwritten</b> on every save rather than appended to — which is the whole point. State has '
+      + 'to be able to say “no longer true”, and a store that only accumulates cannot.</p>'
+      + '<p>Your agents write this through the <span class="mono">my-curator</span> MCP tools and this '
+      + 'screen never does — a handoff is worth something because an agent observed it. It is plain '
+      + 'markdown on disk, so a text editor works too.</p>'
+      + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+    infoHtml: true,
+    bodyHtml: handoffBody,
+  });
+
+  // ── BLOCK ④ — STANDING BRIEF ─────────────────────────────────────────────
+  const briefBlock = renderBlock({
+    num: null,
+    id: 'memory-brief',
+    title: 'Standing brief',
+    ledeHtml: 'Your goals, firm decisions and working model — read by every agent, written by you.',
+    infoText:
+      '<p>This is the one tier a human owns. Agents READ it on every call and, unless you ask one to, '
+      + 'never write it; you edit it here with the pencil, or open '
+      + '<span class="mono">state/&lt;project&gt;/project.md</span> in any text editor.</p>'
+      + '<p>Saving <b>replaces the whole document</b> — it is not merged with what was there — so send the '
+      + 'complete brief rather than an addition. That is the same rule a handoff save follows, and for the '
+      + 'same reason.</p>'
+      + '<p>It is the part that rarely changes: the goal, the firm decisions not to re-litigate, the working '
+      + 'model, and pointers to where the depth lives. An OLD brief is not a stale one, which is why it '
+      + 'carries a date and deliberately no freshness mark.</p>'
+      + '<p>' + docsLinkHtml('memory.standing-brief', 'Read more in the guide') + '</p>',
+    infoHtml: true,
+    bodyHtml: renderBrief(read),
+  });
+
+  // ── BLOCK ⑤ — SESSION JOURNAL ────────────────────────────────────────────
+  const journalBody = renderJournal();
+  const journalBlock = journalBody
+    ? renderBlock({
+      num: null,
+      id: 'memory-journal',
+      title: 'Session journal',
+      ledeHtml: 'One line per save, newest first. History, not the present.',
+      infoText:
+        '<p>The journal is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN SUPERSEDED — a '
+        + 'blocker named in an old headline can have been fixed three saves ago. The current handoff above '
+        + 'is what is true now.</p>'
+        + '<p>Each line carries when, which harness, which model and the save’s own headline, plus any '
+        + 'NOTES the store recorded about that save. Most notes are ordinary normalisation — a value filled '
+        + 'in and disclosed — and the line says so in words; a note about content actually lost is the only '
+        + 'one marked.</p>'
+        + '<p>It survives things the handoff cannot: two agent tools writing one work-stream overwrite each '
+        + 'other’s handoff, and both trails are still here.</p>'
+        + '<p>' + docsLinkHtml('memory.session-journal', 'Read more in the guide') + '</p>',
+      infoHtml: true,
+      bodyHtml: journalBody,
+    })
+    : '';
+
+  return header + statusBlock + streamsBlock + handoffBlock + briefBlock + journalBlock;
 }
 
 /**
@@ -1882,8 +2131,11 @@ function renderProject() {
  */
 function renderStaleNotice() {
   if (!state.staleWrite) return '';
+  // `.mem-section` is GONE from this box for the same reason it left
+  // `.mem-save`: the notice sits INSIDE block ①, under the reading it
+  // qualifies, and the gap there belongs to `.mem-status-stack`.
   return (
-    '<div class="mem-stale mem-section" role="status">' +
+    '<div class="mem-stale" role="status">' +
       '<span class="mem-stale-text">An agent has saved to this project since you opened it — ' +
         'what is below may not be the latest.</span>' +
       // btn-secondary is NAMED, not implied. `.btn` alone carries no
@@ -1969,6 +2221,42 @@ function renderSaveStatus(read, d) {
   const lines = [];
   let primary = '';
 
+  // ── "WORKING ON:" — THE WIDGET'S HEADLINE, IN THE APP ────────────────────
+  //
+  // The menubar widget leads with it and this screen never showed it at all,
+  // although every read carried it: `scopes[].headline` is the one-line summary
+  // the agent wrote into its own save, and the index row carries the project's.
+  //
+  // THE PROJECT'S ANSWER, NOT THE OPEN ROW'S. This is the top of a block
+  // titled "Status" whose lede says "where this project stands right now", so
+  // it takes the NEWEST pair's headline even when you are reading an older
+  // work-stream — the table below gives every row its own. Falling back to the
+  // index row covers the moment `projectRead` has not landed yet.
+  //
+  // The pip and the age are the newest pair's too, for the same reason and
+  // from the same `effectiveSave`, so the mark, the words and the sentence
+  // cannot name three different saves.
+  const newestForHead = newestPair(scopes);
+  const indexRow = (state.projects || []).find(
+    (p) => p && p.domain === state.activeDomain && p.project === state.activeProject) || null;
+  const headline = (newestForHead && newestForHead.headline)
+    || (indexRow && indexRow.headline) || null;
+  if (headline) {
+    const hEff = effectiveSave(newestForHead || indexRow || {});
+    const hStep = freshnessStep(hEff.seconds);
+    const hAge = formatAge(hEff.seconds);
+    primary +=
+      '<div class="mem-working"' +
+        (hAge && hEff.at ? ' data-mem-age-at="' + escapeHtml(hEff.at) + '"' : '') + '>' +
+        '<span class="mem-save-pip' +
+          (hStep === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + hStep) +
+          '" aria-hidden="true"></span>' +
+        '<span class="mem-working-label">Working on</span>' +
+        '<span class="mem-working-text">' + escapeHtml(headline) + '</span>' +
+        (hAge ? '<span class="mem-age-words mem-working-age">' + escapeHtml(hAge) + '</span>' : '') +
+      '</div>';
+  }
+
   if (cur) {
     const eff = effectiveSave(cur);
     const step = freshnessStep(eff.seconds);
@@ -1986,7 +2274,11 @@ function renderSaveStatus(read, d) {
     const kind = cur.lastSaveKind || null;
 
     if (age) {
-      primary =
+      // `+=`, NOT `=`. The "Working on" line is written into `primary` above
+      // this branch, and a plain assignment here silently DELETED it — caught
+      // by §18g the first time it ran, which is the whole argument for driving
+      // the rendered output rather than reading the source.
+      primary +=
         '<div class="mem-save-main">' +
           '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
             '" aria-hidden="true"></span>' +
@@ -2086,6 +2378,43 @@ function renderSaveStatus(read, d) {
     }
   }
 
+  // ── "WHAT YOU ARE READING WAS WRITTEN SOMEWHERE ELSE" ───────────────────
+  // This was a `from <machine>` badge and a note beside the machine picker.
+  // The picker is gone; the FACT is not, and it is a real signal rather than
+  // decoration: the next steps in the handoff below were observed on another
+  // computer, so paths, running processes and local checkouts may not match
+  // what is in front of you.
+  //
+  // POSITIVE EVIDENCE ONLY — an explicit `false`, never an absent field. An
+  // older response that omits `machineIsThisMachine` must not be reported as
+  // either answer. And it is a rendered LINE, not a `title=`: it used to be a
+  // tooltip on a non-focusable span, so the one sentence explaining why the
+  // steps below may not apply reached neither keyboard nor touch users.
+  if (d && d.machineIsThisMachine === false) {
+    lines.push(saveLine('', '',
+      'Written on <span class="mem-name">' + escapeHtml(d.machine || 'another machine')
+      + '</span> and synced here — local paths and processes may differ from what the handoff describes.',
+      true));
+  }
+
+  // ── "ANOTHER COMPUTER SAVED AFTER THIS ONE" ─────────────────────────────
+  // The menubar widget's `newerElsewhereNotice`, which a Windows or Linux user
+  // has never had and which a Mac user only saw in the menu. It is a DIFFERENT
+  // question from the "newer state in this project" line above: that one is
+  // about a scope you are not watching on this machine, this one is about the
+  // same work continuing somewhere else — the case where pulling first is the
+  // right next move and starting to type is not. See newerOnAnotherMachine for
+  // the rule, and why every clause of it is load-bearing.
+  const elsewhere = newerOnAnotherMachine(scopes, d);
+  if (elsewhere) {
+    lines.push(saveLine('', '',
+      '<span class="mem-name">' + escapeHtml(elsewhere.machine)
+      + '</span> saved after this computer — <span class="mem-name">'
+      + escapeHtml(elsewhere.scope) + '</span>, '
+      + escapeHtml(formatAge(effectiveSave(elsewhere).seconds) || 'unknown age')
+      + '. Pull before you continue, or that work will be waiting there.', true));
+  }
+
   // ── THE STANDING BRIEF — always, and on its own terms ───────────────────
   if (read) {
     const briefAge = brief && brief.present
@@ -2097,7 +2426,12 @@ function renderSaveStatus(read, d) {
   }
 
   if (!primary && !lines.length) return '';
-  return '<section class="mem-save mem-section" aria-label="Save status">' + primary + lines.join('') + '</section>';
+  // NO `.mem-section` ANY MORE. This is the body of block ① now, not a
+  // top-level sibling, so the page's adjacency rule must not put 24px between
+  // it and the two notices beside it — `.mem-status-stack` in memory.css owns
+  // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
+  // between blocks. One gap, one owner, at each level.
+  return '<section class="mem-save" aria-label="Save status">' + primary + lines.join('') + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -2184,7 +2518,7 @@ function renderUnlistedNote(read, d) {
     : '';
 
   return (
-    '<div class="mem-note mem-note-loud mem-section">' + icon('alertTriangle', 13) +
+    '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
       '<span><b>Some state here is on disk but is not being read.</b> ' +
       escapeHtml(reason + machineClause) + '</span></div>'
   );
@@ -2257,135 +2591,180 @@ function renderEmptyProject(unlistedEntries) {
 }
 
 /**
- * Scope + machine pickers.
+ * THE WORK-STREAMS TABLE — the widget's grouped rows, brought into the app.
  *
- * Both are the shared listbox (next/shared/listbox.js) and both are SIBLINGS
- * of every <details> on the page (see the <summary> hazard note in this
- * file's header). Each appears only when there is genuinely something to
- * choose: one scope with one machine renders as a quiet label, not a
- * dropdown with a single option.
+ * ── WHAT IT REPLACES, AND WHY A TABLE IS NOT A BIGGER DROPDOWN ───────────
+ * This was a scope listbox beside a machine listbox. The maintainer's verdict
+ * on that screen was that work-streams were hard to FIND, and the mechanism is
+ * worth naming: a picker answers "which one am I looking at" and structurally
+ * cannot answer "what have I got, and which of them moved today" — you open
+ * it, read it, close it, and carry the list in your head. Every fact the store
+ * already computes for each pair (a headline, an age, a machine, a harness)
+ * was fetched on every read and shown to nobody; `scopes[].headline` had NEVER
+ * been read by this view at all.
  *
- * ── WHY THESE ARE NO LONGER NATIVE SELECT ELEMENTS ──────────────────────
- * `appearance: none` and a CSS chevron got the CLOSED control on-design and
- * could never reach the OPEN list, which the OS paints outside the document.
- * The component replaces the popup outright and owes back the keyboard and
- * screen-reader behaviour the platform control provided — see its header.
+ * The menubar widget has rendered exactly these rows since v3.37.0. This is
+ * the first time a Windows or Linux user can see them.
  *
- * The cfg object is built ONCE per control and handed to both
- * renderListboxHtml (markup) and mountListbox (behaviour). Two cfg literals
- * would be two hand-maintained copies of one control's option list.
+ * ── ONE ROW PER (SCOPE, MACHINE) PAIR, NEWEST FIRST ──────────────────────
+ * The store returns pairs, newest first, and they are NOT collapsed by scope
+ * here. `main` on the laptop and `main` on the desktop are two handoffs, two
+ * ages and two different pieces of work in flight; merging them would hide the
+ * exact case the per-machine layout exists for. The count line below the table
+ * says both numbers — work-streams and saved copies — so the distinction is
+ * stated rather than left to be inferred from row arithmetic.
+ *
+ * ── THE FIRST CELL IS THE CONTROL ────────────────────────────────────────
+ * A real <button>, so the row is reachable by keyboard and announces itself;
+ * the freshness dot rides inside it so the marks form a column down the left
+ * edge without costing a cell of their own. Only the OPEN row carries an id
+ * (`mem-ws-active`), because ids must be unique and a scope slug is not a safe
+ * id fragment — see FOCUSABLE_IDS for how a click still restores focus.
+ *
+ * ── NO TOOLTIPS ──────────────────────────────────────────────────────────
+ * The exact stamp behind a humanised age rides in a `.visually-hidden` span,
+ * not a `title=`. v3.20.0 counted eleven facts in this app reachable only by
+ * hover, and a table of them would have been the twelfth through the
+ * seventeenth; both `title=` ratchets over this file stay where they are.
+ *
+ * A SIBLING of every <details> on the page, exactly as the pickers were — the
+ * <summary> hazard in this file's header is unaffected.
  */
-function renderScopeControls(scopes) {
-  const d = state.detail;
-  const machines = (d && d.machines) || [];
-  const scopeNames = [];
-  for (const s of scopes) if (!scopeNames.includes(s.scope)) scopeNames.push(s.scope);
-
-  // Built here, consumed twice: once for markup below and once by
-  // wireScopeControls() after the paint. `pendingListboxes` is the handoff —
-  // see its declaration for why the cfg is not rebuilt at wiring time.
-  pendingListboxes.length = 0;
-
-  const scopeCfg = {
-    id: 'mem-scope-select',
-    ariaLabel: 'Scope',
-    value: state.scope,
-    triggerClass: 'lb-sm mono',
-    minWidth: 180,
-    options: scopeNames.map((s) => ({ value: s, label: s })),
-  };
-  if (scopeNames.length > 1) pendingListboxes.push(scopeCfg);
-
-  const scopeCtl = scopeNames.length > 1
-    ? '<span class="mem-ctl"><span class="mem-ctl-label" id="mem-scope-label">Work-stream</span>' +
-        renderListboxHtml(scopeCfg) + '</span>'
-    : (state.scope
-        ? '<span class="mem-ctl"><span class="mem-ctl-label">Work-stream</span>' +
-          '<span class="mem-ctl-static">' + escapeHtml(state.scope) + '</span></span>'
-        : '');
-
-  // "WHICH OF THESE IS MINE?" — on a feature whose whole premise is
-  // cross-machine continuity, two opaque hex-suffixed ids with neither marked
-  // was a real gap. The payload carries `machineIsThisMachine` for the
-  // SELECTED machine only, so that is the only entry that can be marked, and
-  // only on an explicit `true` — the same positive-evidence rule as the badge
-  // below. The negative case is already covered: an explicit `false` renders
-  // the amber "from <machine>" badge. An unselected entry is left unmarked
-  // because the response says nothing about it, and guessing would be the
-  // fact-and-absence collapse this view exists to refuse.
-  const selectedIsMine = !!(d && d.machineIsThisMachine === true);
-  const MINE = ' · this machine';
-
-  // The age is a `detail` rather than part of the label, so type-ahead
-  // matches on the machine name a user actually types at and not on "3 hr
-  // ago". The " · this machine" marker stays IN the label: it is identity,
-  // not metadata, and it is the answer to "which of these is mine?".
-  const machineCfg = {
-    id: 'mem-machine-select',
-    ariaLabel: 'Machine',
-    value: d && d.machine,
-    triggerClass: 'lb-sm mono',
-    minWidth: 240,
-    options: machines.map((m) => {
-      const sel = !!(d && m.machine === d.machine);
-      return {
-        value: m.machine,
-        label: m.machine + (sel && selectedIsMine ? MINE : ''),
-        // THE AGENT'S CLOCK, where the store could recover one. This detail
-        // was mtime, so on the one control whose entire job is "which computer
-        // wrote this, and when" every machine that arrived over sync showed
-        // the age of the pull. effectiveSave falls back to mtime and the strip
-        // above says when it had to.
-        detail: formatAge(effectiveSave(m).seconds) || 'unknown age',
-        typeahead: m.machine,
-      };
-    }),
-  };
-  if (machines.length > 1) pendingListboxes.push(machineCfg);
-
-  const machineCtl = machines.length > 1
-    ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
-        renderListboxHtml(machineCfg) + '</span>'
-    : (d && d.machine
-        ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
-          '<span class="mem-ctl-static">' + escapeHtml(d.machine) +
-          (selectedIsMine ? MINE : '') + '</span></span>'
-        : '');
-
-  // "Written on another machine" is a real signal, not decoration: it tells
-  // you the next steps below were observed somewhere else, so paths, running
-  // processes and local checkouts may not match what is in front of you.
-  // Rendered ONLY on positive evidence (an explicit `false`) — an older
-  // response that omits the field must not be reported as either.
+function renderWorkStreams(scopes, open) {
+  const rows = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+  if (!rows.length) return '';
+  const openScope = (open && open.scope) || null;
+  const openMachine = (open && open.machine) || null;
+  // POSITIVE EVIDENCE ONLY. The scoped response carries `machineIsThisMachine`
+  // for the machine it RESOLVED and says nothing at all about any other, so
+  // with no explicit `true` no row is marked.
   //
-  // The REASON is rendered, not hovered. It was a `title=` on a non-focusable
-  // <span>, so the one sentence explaining why the steps below may not apply
-  // here reached neither keyboard nor touch users. `.mem-ctl-note` is the
-  // existing visible-note role in this same row (the truncation note uses it).
-  const elsewhere = d && d.machineIsThisMachine === false
-    ? '<span class="mem-badge mem-badge-attn">' +
-      'from ' + escapeHtml(d.machine || 'another machine') + '</span>' +
-      '<span class="mem-ctl-note">synced here — local paths and processes may differ</span>'
-    : '';
+  // With one, EVERY row in that machine's folder is marked, and that is a fact
+  // rather than an inference: `<machine>` is one installation's folder name,
+  // so if the read identified `mac-studio-a1b2` as this installation then every
+  // pair under `mac-studio-a1b2` is on this computer. What is never done is the
+  // other direction — guessing from a name that merely looks similar, which is
+  // the fact-and-absence collapse this view exists to refuse (and the D9 case
+  // working-state.js records, where a folder can share a hostname and belong to
+  // a different installation).
+  const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
 
-  // The index cap applies to (scope, machine) PAIRS, so the note compares
-  // pairs against pairs. Comparing the shown pair count against a work-stream
-  // count would be apples to oranges and could read as "showing 3 of 2".
-  //
-  // `savedCopies` is preferred over `scopeCount` because the two endpoints
-  // currently use `scopeCount` for two DIFFERENT quantities: the index route
-  // derives it as DISTINCT scopes, while the store's unscoped read sets it to
-  // the PAIR total. Reading whichever pair-count field is actually present
-  // keeps the note comparing pairs to pairs whichever way that name settles.
-  const pr = state.projectRead;
-  const pairTotal = pr && (typeof pr.savedCopies === 'number' ? pr.savedCopies : pr.scopeCount);
-  const truncated = (pr && pr.scopesTruncated)
-    ? '<span class="mem-ctl-note">showing the ' + scopes.length + ' most recent saved copies of ' +
-      escapeHtml(String(pairTotal || scopes.length)) + '</span>'
-    : '';
+  const body = rows.map((s) => {
+    const eff = effectiveSave(s);
+    const tier = freshnessTier(eff.seconds);
+    const age = formatAge(eff.seconds);
+    const isOpen = s.scope === openScope && (s.machine || null) === (openMachine || null);
+    const mine = !!(mineMachine && s.machine === mineMachine);
+    const who = [s.harness, s.model].filter(Boolean).map((x) => escapeHtml(x)).join(' · ');
+    return (
+      '<tr class="mem-ws-row' + (isOpen ? ' mem-ws-row-open' : '') + '"' +
+        (isOpen ? ' aria-current="true"' : '') + '>' +
+        '<td class="mem-ws-cell-name">' +
+          '<button type="button" class="mem-ws-open"' +
+            (isOpen ? ' id="mem-ws-active"' : '') +
+            ' data-mem-scope="' + escapeHtml(s.scope) + '"' +
+            ' data-mem-machine="' + escapeHtml(s.machine || '') + '">' +
+            '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
+            '<span class="mem-ws-slug">' + escapeHtml(s.scope) + '</span>' +
+          '</button>' +
+        '</td>' +
+        '<td class="mem-ws-cell-head"><span class="mem-ws-headline">' +
+          escapeHtml(s.headline || '—') + '</span></td>' +
+        // `data-mem-age-at` is emitted ONLY when there is a resolved stamp AND
+        // words to recount — tickAges rewrites `.mem-age-words` inside it. An
+        // unknown age has nothing to move and gets no hook, exactly as the
+        // handoff summary's does not.
+        '<td class="mem-ws-cell-age"' +
+          (age && eff.at ? ' data-mem-age-at="' + escapeHtml(eff.at) + '"' : '') + '>' +
+          '<span class="mem-age-words">' + escapeHtml(age || 'unknown') + '</span>' +
+          (eff.at
+            ? '<span class="visually-hidden"> (' + escapeHtml(eff.at) +
+              (eff.source === 'filesystem' ? ', file time' : '') + ')</span>'
+            : '') +
+        '</td>' +
+        '<td class="mem-ws-cell-machine">' +
+          '<span class="mem-ws-machine">' + escapeHtml(s.machine || '—') + '</span>' +
+          (mine ? '<span class="mem-ws-mine">this machine</span>' : '') +
+        '</td>' +
+        '<td class="mem-ws-cell-who">' + (who || '—') + '</td>' +
+      '</tr>'
+    );
+  }).join('');
 
-  if (!scopeCtl && !machineCtl && !elsewhere && !truncated) return '';
-  return '<div class="mem-controls mem-section">' + scopeCtl + machineCtl + elsewhere + truncated + '</div>';
+  return (
+    '<div class="mem-ws-wrap">' +
+      '<table class="mem-ws-table">' +
+        '<thead><tr>' +
+          '<th scope="col">Work-stream</th>' +
+          '<th scope="col">Working on</th>' +
+          '<th scope="col">Last saved</th>' +
+          '<th scope="col">Machine</th>' +
+          '<th scope="col">Harness</th>' +
+        '</tr></thead>' +
+        '<tbody>' + body + '</tbody>' +
+      '</table>' +
+    '</div>'
+  );
+}
+
+/**
+ * "N work-streams · M saved copies", plus whatever the store could not show.
+ *
+ * TWO NUMBERS, BECAUSE THEY ARE TWO FACTS and the table's row count is
+ * neither of them on a capped read. `savedCopies` is the store's UNCAPPED
+ * pair total and `distinctScopeCount` its uncapped work-stream count; the
+ * route's own header records that `scopeCount` means DIFFERENT quantities on
+ * the two endpoints, which is exactly why neither is read here.
+ *
+ * Deriving either from `scopes.length` would report a CAP as a measurement —
+ * the collapse `distinctScopeCount` was added to undo.
+ */
+function workStreamCounts(read, shown) {
+  if (!read) return '';
+  const pairs = typeof read.savedCopies === 'number' ? read.savedCopies : shown;
+  const streams = typeof read.distinctScopeCount === 'number' ? read.distinctScopeCount : null;
+  const parts = [];
+  if (streams !== null) parts.push(streams + ' work-stream' + (streams === 1 ? '' : 's'));
+  parts.push(pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'));
+  const truncated = read.scopesTruncated
+    ? ' · showing the ' + shown + ' most recently saved'
+    : '';
+  return '<div class="mem-ws-count">' + escapeHtml(parts.join(' · ') + truncated) + '</div>';
+}
+
+/**
+ * "Somebody else's computer saved after yours."
+ *
+ * THE TRAY'S READING, DERIVED THE TRAY'S WAY — see `newerElsewhereNotice` in
+ * desktop/lib/tray-model.js, whose rule this reproduces. It is NOT imported:
+ * `desktop/` and `src/` may not import each other (one ships inside an Electron
+ * main process, the other is served to a browser), so the RULE is copied and
+ * the copy is tested behaviourally rather than by byte-identity.
+ *
+ * THE RULE, and every clause of it is load-bearing:
+ *   · AGENT CLOCKS ONLY. A filesystem age is the moment a file ARRIVED here,
+ *     which on a synced folder is the moment of the pull — comparing one
+ *     machine's pull time against another's save time would manufacture this
+ *     notice out of sync traffic.
+ *   · THE SPLIT NEEDS POSITIVE EVIDENCE. Only the scoped read says which
+ *     machine is this installation (`machineIsThisMachine`), so with no such
+ *     evidence there is no local side and nothing is claimed.
+ *   · BOTH SIDES MUST EXIST. One machine cannot have saved after itself.
+ *   · STRICTLY NEWER. A tie is not news.
+ *
+ * Returns the winning row, or null. The caller owns the sentence.
+ */
+function newerOnAnotherMachine(scopes, d) {
+  if (!d || d.machineIsThisMachine !== true || !d.machine) return null;
+  const rows = (Array.isArray(scopes) ? scopes : [])
+    .filter((s) => s && effectiveSave(s).source === 'agent');
+  const local = rows.filter((s) => s.machine === d.machine);
+  const foreign = rows.filter((s) => s.machine !== d.machine);
+  if (!local.length || !foreign.length) return null;
+  const newestLocal = Math.min(...local.map((s) => effectiveSave(s).seconds));
+  const best = foreign.reduce(
+    (a, b) => (effectiveSave(b).seconds < effectiveSave(a).seconds ? b : a));
+  return effectiveSave(best).seconds < newestLocal ? best : null;
 }
 
 /**
@@ -2429,12 +2808,12 @@ function renderScopeControls(scopes) {
 function renderHandoff() {
   const d = state.detail;
   if (state.detailLoading) {
-    return '<div class="mem-doc-card mem-section">' + gatedLoader(loadGate, 'Reading handoff…') + '</div>';
+    return '<div class="mem-doc-card">' + gatedLoader(loadGate, 'Reading handoff…') + '</div>';
   }
   if (!d) return '';
   if (!d.current || !d.current.present) {
     return (
-      '<div class="mem-doc-card mem-doc-empty mem-section">' +
+      '<div class="mem-doc-card mem-doc-empty">' +
         '<div class="mem-doc-empty-title">No handoff under this scope yet</div>' +
         renderDescription(d.message || 'Nothing has been saved here.') +
       '</div>'
@@ -2519,7 +2898,11 @@ function renderHandoff() {
   // shared-* mirror it can be another person's), so it must never reach the
   // DOM any other way.
   return (
-    '<details class="mem-fold mem-fold-lead mem-section" data-mem-fold="handoff"' + foldAttr + '>' +
+    // `.mem-section` is gone: the FOLD is the body of block ③ now and the
+    // block owns its own spacing. The fold itself stays — the maintainer asked
+    // to be able to collapse a fifteen-hundred-word handoff, and the block head
+    // above it is a heading rather than a second disclosure.
+    '<details class="mem-fold mem-fold-lead" data-mem-fold="handoff"' + foldAttr + '>' +
       '<summary class="mem-fold-summary mem-fold-summary-lead" id="mem-fold-handoff">' +
         icon('chevronRight', 14) +
         '<span class="cur-eyebrow">CURRENT HANDOFF</span>' +
@@ -2541,46 +2924,161 @@ function renderHandoff() {
 }
 
 /**
- * The standing-brief editor's markup, or the Edit affordance.
+ * HOW BIG THE DRAFT IS, in the two units that matter.
  *
- * IT LIVES IN THE FOLD BODY, NEVER IN THE <summary>. An interactive control
- * inside a <summary> toggles its own section when clicked — the v3.0.1-beta.18
- * hazard this view's header block records — and the fix used here is the one
- * that cannot be undone by a later edit: there is no propagation path to
- * suppress, because the control is not in the summary.
+ * BYTES ARE THE WALL. src/routes/memory.js refuses a longer brief with 400
+ * `brief_too_large`, and it measures UTF-8 bytes — so a brief full of
+ * em-dashes, arrows and accented names runs out sooner than its character
+ * count suggests. A counter that said "31,900 characters" while the route was
+ * about to refuse 33,100 bytes would be wrong in the one direction that costs
+ * the user the text they just wrote.
  *
- * Read-only mirrors get NO editor at all: the backend refuses the write
- * (403), and offering a control whose only outcome is a refusal is worse
- * than not offering it.
+ * WORDS ARE THE UNIT A WRITER THINKS IN, and they are the reason both are
+ * shown: "24,000 of 32,768 bytes" answers "will this save?", "410 words"
+ * answers "is this a brief or a novel?". Neither substitutes for the other.
+ *
+ * `TextEncoder` is the measurement the route uses and is available in every
+ * browser this app supports and in Node; there is deliberately no fallback to
+ * `.length`, because a silent fallback would report the wrong unit under the
+ * same label.
+ */
+function briefStats(text) {
+  const s = typeof text === 'string' ? text : '';
+  const bytes = new TextEncoder().encode(s).length;
+  const words = s.trim() ? s.trim().split(/\s+/).length : 0;
+  return { bytes, words, over: bytes > BRIEF_MAX_BYTES };
+}
+
+/**
+ * WHAT ESCAPE SHOULD DO, as a value rather than as a branch.
+ *
+ * Three answers, and the shape is views/shared-brain-wizard.js's
+ * `dismissDecision` — the same question was answered there for a wizard that
+ * can be mid-flight, and giving it one name in both places means the next
+ * reader learns the vocabulary once.
+ *
+ *   'blocked' — a save is in flight. Closing now would leave the user with no
+ *               idea whether their text reached disk, and the reply cannot be
+ *               cancelled. Escape does nothing and the editor says why.
+ *   'confirm' — the draft differs from what was loaded. Escape must NOT throw
+ *               that away silently: it raises an inline Discard / Keep editing
+ *               bar, in flow, rather than a modal, because the text the user
+ *               would lose has to stay visible while they decide.
+ *   'close'   — nothing has changed. Escape closes, which is what Escape means.
+ *
+ * Pure, and takes the edit record rather than reading `state`, so the three
+ * answers can be driven directly.
+ */
+function briefDismissDecision(e) {
+  if (!e) return 'close';
+  if (e.busy) return 'blocked';
+  return (e.text || '') !== (e.loaded || '') ? 'confirm' : 'close';
+}
+
+/**
+ * The standing-brief EDITOR. Empty unless the user has opened it.
+ *
+ * ── IT IS NO LONGER INSIDE A <details>, AND THAT REMOVES THE HAZARD RATHER
+ *    THAN GUARDING IT ───────────────────────────────────────────────────────
+ * The brief used to be a fold whose <summary> said "Standing brief" and whose
+ * body held the editor, with a standing note that a control must never go in
+ * the summary (the v3.0.1-beta.18 hazard). The block's head IS the heading
+ * now, so there is no <summary> on this section at all: the hazard is not
+ * suppressed, it is inexpressible. The pencil that opens this editor sits in
+ * the block body's own toolbar row, which is an ordinary <div>.
+ *
+ * ── WHY THE EDITOR IS WORTH THE SPACE ────────────────────────────────────
+ * "Edit brief" was a button UNDER the rendered brief, so on a brief of any
+ * length the way to change it was below the thing you were reading — which is
+ * the maintainer's report that it was "buried". A pencil beside the title is
+ * where every document surface puts it.
+ *
+ * Read-only mirrors get NO editor and NO pencil: the backend refuses the write
+ * (403), and offering a control whose only outcome is a refusal is worse than
+ * not offering it.
  */
 function renderBriefEditor(read, readonly) {
   const e = state.briefEdit;
-  if (readonly) return '';
+  if (readonly || !e) return '';
+  const stats = briefStats(e.text || '');
+  const dirty = (e.text || '') !== (e.loaded || '');
 
-  if (!e) {
-    const has = !!(read && read.brief && read.brief.present);
-    return (
-      '<div class="mem-brief-actions">' +
-        '<button type="button" class="btn btn-secondary" id="mem-brief-edit">' +
-          (has ? 'Edit brief' : 'Write a brief') + '</button>' +
-        renderDescription('The standing brief is yours to write — agents read it, they do not own it. '
-          + 'Saving replaces the whole document, so send the complete brief rather than an addition.') +
+  // THE WALL, STATED BEFORE IT IS HIT. Over budget the route answers 400 and
+  // the draft would survive in the box — but a refusal the user could have
+  // seen coming is a refusal that should not have been offered, so Save is
+  // disabled and the reason is printed beside the figure rather than behind a
+  // request.
+  // ── IT IS A COUNTER, AND A COUNTER HAS TO COUNT ─────────────────────────
+  // Every part of this line is addressable by a `data-brief-stat` hook, and
+  // the wall below is emitted ALWAYS and merely `hidden`, because the input
+  // handler updates both WITHOUT a render — a render here would rebuild the
+  // textarea and take the caret and the selection with it (the same reason
+  // views/domains.js's lifecycle form writes straight to state).
+  //
+  // FOUND BY TYPING INTO IT. The first draft rendered these figures once, on
+  // open, and then never again: the counter read "916 of 32768 bytes" while
+  // the draft grew past the wall, and the refusal only appeared after a save
+  // the user could no longer make. A figure that has quietly stopped being
+  // true is the exact class `effectiveSave` and `tickAges` exist for, and it
+  // is worse here than a missing counter would be.
+  const statusLine =
+    '<div class="mem-brief-stats' + (stats.over ? ' mem-brief-stats-over' : '') + '" id="mem-brief-stats">' +
+      '<span data-brief-stat="dirty">' + (dirty ? 'modified' : 'unchanged') + '</span>' +
+      '<span data-brief-stat="words">' + escapeHtml(String(stats.words)) +
+        ' word' + (stats.words === 1 ? '' : 's') + '</span>' +
+      '<span data-brief-stat="bytes">' + escapeHtml(String(stats.bytes)) + ' of ' +
+        escapeHtml(String(BRIEF_MAX_BYTES)) + ' bytes</span>' +
+    '</div>' +
+    '<div class="mem-note mem-note-loud" id="mem-brief-over"' + (stats.over ? '' : ' hidden') + '>' +
+      icon('alertTriangle', 13) +
+      '<span><b>Too long to save.</b> The standing brief is capped at ' +
+      escapeHtml(String(BRIEF_MAX_BYTES)) + ' bytes — the count above is this draft. ' +
+      'Shorten it, or move the detail into a wiki page and point at it from here.</span></div>';
+
+  // THE UNSAVED-DRAFT BAR. Raised by Escape (see briefDismissDecision), never
+  // by a timer and never by the poll, and it is INLINE rather than a modal so
+  // the text under discussion stays on screen while the user decides.
+  const discardBar = e.confirmDiscard
+    ? '<div class="mem-brief-discard" role="alertdialog" aria-label="Unsaved changes">' +
+        '<span>You have unsaved changes to this brief.</span>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-brief-discard">Discard</button>' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-brief-keep">Keep editing</button>' +
       '</div>'
-    );
-  }
+    : '';
+
+  // PREVIEW SWAPS THE FIELD, IT DOES NOT SIT BESIDE IT. Two copies of one
+  // document on screen at once, one of them stale the moment a key is pressed,
+  // is the same trade this file already refused for the rendered brief while
+  // the editor is up. The draft lives in `state.briefEdit.text`, so toggling
+  // back restores it byte for byte — nothing is read out of the DOM.
+  const field = e.preview
+    ? '<div class="mem-doc mem-brief-preview" aria-label="Brief preview">' +
+        renderMarkdown(splitHandoffPreamble(e.text || '').body) + '</div>'
+    : '<textarea class="mem-brief-text" id="mem-brief-text" rows="18" spellcheck="true"' +
+        (e.busy ? ' disabled' : '') + '>' + escapeHtml(e.text || '') + '</textarea>';
 
   return (
     '<div class="mem-brief-editor">' +
       (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error }) : '') +
       '<label class="mem-brief-label cur-eyebrow" for="mem-brief-text">Standing brief (Markdown)</label>' +
-      '<textarea class="mem-brief-text" id="mem-brief-text" rows="18" spellcheck="true"' +
-        (e.busy ? ' disabled' : '') + '>' + escapeHtml(e.text || '') + '</textarea>' +
+      field +
+      statusLine +
+      discardBar +
       '<div class="mem-brief-buttons">' +
+        // THE BLOCK'S ONE COMMIT. shell.css's taxonomy allows at most one
+        // primary per card or panel, and this is it; Preview only changes what
+        // is displayed and Cancel leaves, so both sit below it.
         '<button type="button" class="btn btn-primary" id="mem-brief-save"' +
-          (e.busy ? ' disabled' : '') + '>' + (e.busy ? 'Saving…' : 'Save brief') + '</button>' +
+          (e.busy || stats.over ? ' disabled' : '') + '>' +
+          (e.busy ? 'Saving…' : 'Save brief') + '</button>' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-brief-preview"' +
+          (e.busy ? ' disabled' : '') + '>' +
+          (e.preview ? 'Back to editing' : 'Preview') + '</button>' +
         '<button type="button" class="btn btn-ghost" id="mem-brief-cancel"' +
           (e.busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
+      renderDescription('The standing brief is yours to write — agents read it, they do not own it. '
+        + 'Saving replaces the whole document, so send the complete brief rather than an addition.') +
     '</div>'
   );
 }
@@ -2615,57 +3113,76 @@ export const BRIEF_TEMPLATE = [
   '',
 ].join('\n');
 
-function renderBrief(read, openIt) {
-  // The user's own toggle wins over the default when they have expressed one;
-  // `undefined` (never touched) falls through to `openIt`, so the "this is the
-  // only content on the page" rule below still applies on first paint.
-  const remembered = state.openFolds ? state.openFolds.brief : undefined;
-  const isOpen = remembered === undefined ? !!openIt : remembered;
-
-  // An editor that is OPEN forces its fold open, whatever the remembered
-  // state says: a textarea the user is typing into, hidden behind a
-  // collapsed disclosure, is the "clicked Show more and the section shut on
-  // top of it" defect this view already carries a fix for.
+/**
+ * BLOCK ④'s BODY — the standing brief, at the column's width, with a pencil.
+ *
+ * ── WHAT CHANGED, AND WHY EVERY PART OF IT WAS ASKED FOR ─────────────────
+ * It was a collapsed <details> whose body capped the rendered markdown at the
+ * prose measure and whose only way in was an "Edit brief" button BELOW that
+ * markdown. Three complaints in one element: the section was a fold competing
+ * with two other folds, the document stopped at roughly 47% of the column
+ * while the journal beside it ran full width, and the edit affordance was
+ * under the thing it edits.
+ *
+ * Now: a block head that is a heading, a toolbar row carrying the pencil and
+ * the brief's own age, and the document at the column's width. `.mem-doc`'s
+ * measure cap is gone from the stylesheet — see memory.css, where the reversal
+ * is recorded against the rule it reverses.
+ *
+ * THE PENCIL IS NOT `icon('pencil')`: app.js's ICON_BODY has no such entry and
+ * `icon()` renders a loud placeholder for a name it does not know rather than
+ * guessing (v3.9.0), so inventing one would ship a broken glyph. It follows
+ * the kit's own geometry exactly — 24-unit viewBox, `fill: none`,
+ * `currentColor` stroke, width 1.7, round caps — so it reads as a member of
+ * the same set, and it carries an `aria-label` because a glyph-only button
+ * has no accessible name of its own.
+ */
+function renderBrief(read) {
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
+  const has = !!(read && read.brief && read.brief.present);
+  const b = has ? read.brief : null;
   const editing = !!state.briefEdit;
-  const foldAttr = (isOpen || editing) ? ' open' : '';
-  const readonly = !!(state.detail && state.detail.readonly)
-    || !!(read && read.readonly);
+  const age = b && b.updatedAt
+    ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)))
+    : null;
 
-  if (!read || !read.brief || !read.brief.present) {
-    return (
-      '<details class="mem-fold mem-section" data-mem-fold="brief"' + foldAttr + '>' +
-        '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
-          '<span>Standing brief</span><span class="mem-fold-meta">not written</span></summary>' +
-        '<div class="mem-fold-body">' +
-          renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, ' +
-            'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.') +
-          renderBriefEditor(read, readonly) +
-        '</div>' +
-      '</details>'
-    );
+  const pencil = readonly ? '' :
+    '<button type="button" class="btn btn-ghost btn-xs mem-brief-edit" id="mem-brief-edit"' +
+      ' aria-label="' + (has ? 'Edit standing brief' : 'Write a standing brief') + '">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
+      '<span>' + (has ? 'Edit' : 'Write a brief') + '</span>' +
+    '</button>';
+
+  // THE AGE, AND DELIBERATELY NO PIP. The brief changes on the order of weeks;
+  // an old brief is not a stale one, and marking it the way a handoff is
+  // marked would state something false. Same call the save strip makes for the
+  // same fact, one block up.
+  const toolbar =
+    '<div class="mem-block-toolbar">' +
+      '<span class="mem-brief-age">' +
+        (has ? escapeHtml(age ? 'Updated ' + age : 'Updated at an unknown time')
+          : 'Not written yet') + '</span>' +
+      pencil +
+    '</div>';
+
+  if (editing) return toolbar + renderBriefEditor(read, readonly);
+
+  if (!has) {
+    return toolbar +
+      renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, '
+        + 'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.');
   }
-  const b = read.brief;
-  const age = formatAge(b.updatedAt ? Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)) : null);
+
   return (
-    '<details class="mem-fold mem-section" data-mem-fold="brief"' + foldAttr + '>' +
-      '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
-        '<span>Standing brief</span>' +
-        '<span class="mem-fold-meta"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
-          escapeHtml(age || 'updated') + '</span></summary>' +
-      '<div class="mem-fold-body">' +
-        (b.truncated ? '<div class="mem-note">' + icon('alertTriangle', 13) +
-          '<span>Longer than the brief budget — the tail is not shown.</span></div>' : '') +
-        // Same preamble strip as the handoff: this fold's own header already
-        // says "Standing brief" and when it was updated, so the document's
-        // title and `_Updated: …_` line are duplicate chrome here too.
-        // The DOCUMENT is hidden while the editor is up: two copies of one
-        // text on screen at once, one of them stale the moment a key is
-        // pressed, is worse than a taller editor.
-        (state.briefEdit ? ''
-          : '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble(b.text || '').body) + '</div>') +
-        renderBriefEditor(read, readonly) +
-      '</div>' +
-    '</details>'
+    toolbar +
+    (b.truncated ? '<div class="mem-note">' + icon('alertTriangle', 13) +
+      '<span>Longer than the brief budget — the tail is not shown.</span></div>' : '') +
+    // Same preamble strip as the handoff: the block head already says
+    // "Standing brief" and the toolbar says when it was updated, so the
+    // document's own title and `_Updated: …_` line are duplicate chrome here.
+    '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble(b.text || '').body) + '</div>'
   );
 }
 
@@ -2679,12 +3196,23 @@ function renderJournal() {
   // brace-matching and executes it with a fixed set of injected collaborators,
   // so a module-level helper called from here would be a ReferenceError there
   // (the v3.11.0 hardcoded-function-list blind spot).
+  // ── THE SUMMARY NO LONGER REPEATS THE BLOCK'S TITLE ──────────────────────
+  // This fold now sits INSIDE block ⑤, whose head already reads "Session
+  // journal". A summary saying the same words again is the v3.50.0 finding on
+  // Wiki health — a section that names itself twice — recorded there as KNOWN
+  // AND UNFIXED and not repeated here. "Recent saves" names what is behind the
+  // chevron rather than restating what is above it.
+  //
+  // The fold STAYS, and it stays CLOSED by default, because the journal is the
+  // one section that can be fifty rows long and it is history rather than
+  // state — the maintainer's report was that this page "reads endlessly long",
+  // and this is the section that made it so.
   const journalOpen = (state.openFolds && state.openFolds.journal) ? ' open' : '';
   if (!j.returned) {
     return (
-      '<details class="mem-fold mem-section" data-mem-fold="journal"' + journalOpen + '>' +
+      '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-          '<span>Session journal</span><span class="mem-fold-meta">empty</span></summary>' +
+          '<span>Recent saves</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body">' +
           renderDescription('No saves recorded under this scope and machine yet.') +
         '</div>' +
@@ -2819,9 +3347,9 @@ function renderJournal() {
     : '';
 
   return (
-    '<details class="mem-fold mem-section" data-mem-fold="journal"' + journalOpen + '>' +
+    '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-        '<span>Session journal</span>' +
+        '<span>Recent saves</span>' +
         '<span class="mem-fold-meta">' + escapeHtml(String(j.returned)) + '</span></summary>' +
       '<div class="mem-fold-body">' +
         // The journal is APPEND-ONLY history, newest first, and any entry
@@ -2916,6 +3444,34 @@ function wire(token) {
     });
   });
 
+  // ── THE WORK-STREAM TABLE ─────────────────────────────────────────────
+  // One listener per row button, the same shape the rail rows use, rather
+  // than one delegated listener on the table: `wire` runs after every paint
+  // and the whole pane is replaced each time, so there is nothing to
+  // accumulate on and a per-row handler keeps the data it needs on its own
+  // element.
+  //
+  // FOCUS IS RECORDED EXPLICITLY HERE, and this is the one place in the view
+  // that does so. `captureFocus` only remembers an id in FOCUSABLE_IDS, and
+  // the button being clicked has NO id unless it is already the open row —
+  // ids must be unique and a scope slug is not a safe id fragment. A moment
+  // after this click the pressed row IS the open row and carries
+  // `mem-ws-active`, so naming that id now is what puts focus back where the
+  // keyboard user left it.
+  document.querySelectorAll('.mem-ws-open[data-mem-scope]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const scope = btn.dataset.memScope;
+      const machine = btn.dataset.memMachine || null;
+      // Already open — re-reading would drop the document and repaint a
+      // loader over a page that is already correct.
+      if (state.detail && state.detail.scope === scope
+        && (state.detail.machine || null) === machine) return;
+      pendingFocusId = 'mem-ws-active';
+      state.journalLimit = JOURNAL_PAGE;
+      loadScope(scope, machine, token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+
   document.getElementById('mem-copy-agent')?.addEventListener('click', () => {
     copyAgentInstructions(token).catch((err) => reportAsyncMountFailure(token, err));
   });
@@ -2926,16 +3482,23 @@ function wire(token) {
     briefEdit.addEventListener('click', () => {
       const read = state.projectRead;
       const present = !!(read && read.brief && read.brief.present);
+      // The WHOLE stored document, preamble included — this is an editor,
+      // not a reader, and stripping the title and provenance lines here
+      // would save them away on the next write. renderBrief strips them
+      // for DISPLAY only.
+      const text = present ? (read.brief.text || '') : BRIEF_TEMPLATE;
       state.briefEdit = {
         domain: state.activeDomain,
         project: state.activeProject,
-        // The WHOLE stored document, preamble included — this is an editor,
-        // not a reader, and stripping the title and provenance lines here
-        // would save them away on the next write. renderBrief strips them
-        // for DISPLAY only.
-        text: present ? (read.brief.text || '') : BRIEF_TEMPLATE,
+        // `loaded` never moves after this. It is what "is this dirty?" is
+        // measured against, and measuring against a re-read would make the
+        // answer depend on whether a poll happened to land mid-edit.
+        loaded: text,
+        text,
         busy: false,
         error: null,
+        preview: false,
+        confirmDiscard: false,
       };
       render(token);
     });
@@ -2948,13 +3511,101 @@ function wire(token) {
   // for the same reason; the save handler reads state, never the DOM, so the
   // two cannot disagree.
   briefText?.addEventListener('input', () => {
-    if (state.briefEdit) state.briefEdit.text = briefText.value;
+    if (!state.briefEdit) return;
+    state.briefEdit.text = briefText.value;
+    // ── THE COUNTER, THE WALL AND SAVE, UPDATED IN PLACE ──────────────────
+    // `textContent` and one attribute each, exactly as tickAges does, and for
+    // the same reason: a render would rebuild the field under the caret. This
+    // is the one place in the view that writes to the DOM outside render(),
+    // and it writes only to elements renderBriefEditor emitted for it.
+    const stats = briefStats(briefText.value);
+    const box = document.getElementById('mem-brief-stats');
+    if (box) {
+      const set = (key, text) => {
+        const el = box.querySelector('[data-brief-stat="' + key + '"]');
+        if (el && el.textContent !== text) el.textContent = text;
+      };
+      set('dirty', briefText.value !== (state.briefEdit.loaded || '') ? 'modified' : 'unchanged');
+      set('words', stats.words + ' word' + (stats.words === 1 ? '' : 's'));
+      set('bytes', stats.bytes + ' of ' + BRIEF_MAX_BYTES + ' bytes');
+      box.classList.toggle('mem-brief-stats-over', stats.over);
+    }
+    const over = document.getElementById('mem-brief-over');
+    if (over) over.hidden = !stats.over;
+    // SAVE IS THE POINT OF ALL OF IT. The route refuses above the wall with a
+    // 400, so offering a save that cannot land is offering a refusal.
+    const save = document.getElementById('mem-brief-save');
+    if (save) save.disabled = stats.over;
+  });
+
+  // ── THE KEYBOARD CONTRACT, ON THE FIELD ITSELF ────────────────────────
+  //
+  // Cmd/Ctrl+S and Cmd/Ctrl+Enter save. BOTH, because they mean the same
+  // thing to two different kinds of writer: ⌘S is the reflex of anyone who
+  // has ever used a text editor, ⌘↵ is the reflex of anyone who has ever
+  // used a composer. `preventDefault` on ⌘S is load-bearing — without it the
+  // browser opens its "Save page as…" dialog over an app that has just
+  // saved, which reads as the save having failed.
+  //
+  // Escape asks `briefDismissDecision` rather than deciding here, so the
+  // three outcomes are a value that can be driven directly and the handler
+  // is the one thing that cannot be: a dirty draft raises the inline bar and
+  // an in-flight save refuses outright.
+  //
+  // Bound on the TEXTAREA and not on the document: a document-level key
+  // handler would fire while the user is typing in the rail's filter or
+  // anywhere else on the page, and it would have to be removed on teardown.
+  // This one dies with the element it is on.
+  briefText?.addEventListener('keydown', (ev) => {
+    const mod = ev.metaKey || ev.ctrlKey;
+    if (mod && (ev.key === 's' || ev.key === 'S' || ev.key === 'Enter')) {
+      ev.preventDefault();
+      saveBrief(token).catch((err) => reportAsyncMountFailure(token, err));
+      return;
+    }
+    if (ev.key === 'Escape') {
+      const decision = briefDismissDecision(state.briefEdit);
+      if (decision === 'blocked') return;
+      ev.preventDefault();
+      if (decision === 'confirm') {
+        state.briefEdit.confirmDiscard = true;
+        render(token);
+        return;
+      }
+      state.briefEdit = null;
+      render(token);
+    }
+  });
+
+  document.getElementById('mem-brief-preview')?.addEventListener('click', () => {
+    if (!state.briefEdit) return;
+    state.briefEdit.preview = !state.briefEdit.preview;
+    render(token);
+  });
+
+  document.getElementById('mem-brief-discard')?.addEventListener('click', () => {
+    state.briefEdit = null;
+    render(token);
+  });
+  document.getElementById('mem-brief-keep')?.addEventListener('click', () => {
+    if (state.briefEdit) state.briefEdit.confirmDiscard = false;
+    render(token);
   });
 
   document.getElementById('mem-brief-save')?.addEventListener('click', () => {
     saveBrief(token).catch((err) => reportAsyncMountFailure(token, err));
   });
+  // Cancel goes through the SAME decision as Escape. Two ways out of one
+  // editor that answer differently about an unsaved draft is how a draft gets
+  // destroyed by the safer-looking control.
   document.getElementById('mem-brief-cancel')?.addEventListener('click', () => {
+    const decision = briefDismissDecision(state.briefEdit);
+    if (decision === 'blocked') return;
+    if (decision === 'confirm') {
+      state.briefEdit.confirmDiscard = true;
+      render(token);
+      return;
+    }
     state.briefEdit = null;
     render(token);
   });
@@ -2963,11 +3614,10 @@ function wire(token) {
   // `toggle` fires only on a real change, never on parse, so emitting `open`
   // in the markup above does not feed back into this.
   //
-  // ONE SELECTOR AGAIN. It used to cover `[data-tx-explainer]` as well, for the
-  // shared About fold; that fold is the header's ⓘ now and its open state is
-  // handled by render()'s own capture/restore (a panel is not a <details> and
-  // emits no `toggle`). The three folds this page still has — handoff, brief,
-  // journal — all carry `data-mem-fold`, so one attribute is again enough.
+  // TWO FOLDS NOW, not three: the standing brief is a BLOCK rather than a
+  // <details>, so `data-mem-fold="brief"` no longer exists and the transient
+  // "open because nothing else is on the page" state v3.54.0 had to chase is
+  // not merely fixed but inexpressible.
   document.querySelectorAll('[data-mem-fold]').forEach((el) => {
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
@@ -2975,24 +3625,6 @@ function wire(token) {
       if (key) state.openFolds[key] = el.open;
     });
   });
-
-  // Hydrate the two pickers from the cfg objects renderScopeControls built.
-  // onChange is attached HERE rather than in the cfg because it closes over
-  // the mount token, which the render pass has no business knowing about.
-  for (const cfg of pendingListboxes) {
-    if (cfg.id === 'mem-scope-select') {
-      cfg.onChange = (value) => {
-        state.journalLimit = JOURNAL_PAGE;
-        loadScope(value, null, token).catch((err) => reportAsyncMountFailure(token, err));
-      };
-    } else if (cfg.id === 'mem-machine-select') {
-      cfg.onChange = (value) => {
-        state.journalLimit = JOURNAL_PAGE;
-        loadScope(state.scope, value, token).catch((err) => reportAsyncMountFailure(token, err));
-      };
-    }
-    mountListbox(cfg);
-  }
 
   const refresh = document.getElementById('mem-refresh');
   if (refresh) {
@@ -3028,4 +3660,8 @@ function wire(token) {
 export const __testing = {
   formatAge, projectMetaLine, splitHandoffPreamble,
   keyOf, initialPick, renderProjectGroups, readRememberedProjects, BRIEF_TEMPLATE,
+  // The three pure decisions the v3.55.0 dashboard added. Exported for the
+  // same reason `initialPick` is: each is the only part of a path that makes a
+  // decision, and the rest around it is I/O or markup.
+  briefStats, briefDismissDecision, newerOnAnotherMachine,
 };

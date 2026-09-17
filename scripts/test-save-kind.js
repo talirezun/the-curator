@@ -356,7 +356,12 @@ const escapeHtml = new Function(extractFunction(
 // declaration, so neither the old path nor a one-line re-export in memory.js
 // would resolve; re-pointing is what keeps the suite executing the REAL
 // shipped function.
+// v3.55.0: renderSaveStatus grew the "Working on" headline (which reads
+// `freshnessStep` and `state.projects`) and the tray's newer-elsewhere reading
+// (`newerOnAnotherMachine`), so both travel with it. A lift list that is short
+// by one collaborator is a ReferenceError, not a failing assertion.
 const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
+  'newerOnAnotherMachine',
   'firstNote', 'saveLine', 'renderSaveStatus'];
 const LIFT_AGE = ['freshnessStep'];
 const LIFT = [...LIFT_VIEW, ...LIFT_AGE];

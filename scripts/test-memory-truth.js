@@ -497,7 +497,12 @@ const escapeHtml = new Function(extractFunction(
 // declaration and a re-export is not one. Re-pointing the lift is the only
 // option that keeps this suite executing the REAL shipped function rather
 // than a copy of it.
+// v3.55.0: renderSaveStatus grew the "Working on" headline (which reads
+// `freshnessStep` and `state.projects`) and the tray's newer-elsewhere reading
+// (`newerOnAnotherMachine`), so both travel with it. A lift list that is short
+// by one collaborator is a ReferenceError, not a failing assertion.
 const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
+  'newerOnAnotherMachine',
   'firstNote', 'saveLine', 'renderSaveStatus'];
 const LIFT_AGE = ['freshnessStep'];
 const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
@@ -818,11 +823,29 @@ section('§8b — The strip TICKS: screenSignature can see the pane it paints');
 
   // ...and the other side, which is what stops this becoming a busy poll.
   ok('CONTROL: an identical state produces an identical signature', sigOf(st()) === base);
-  ok('CONTROL: a DUPLICATED pair is one option in the picker and one row in the '
-    + 'strip, so it must NOT read as a change',
+  // ── INVERTED IN v3.55.0, DELIBERATELY, AND THE REASON IS THE WHOLE POINT ──
+  //
+  // This used to assert the OPPOSITE: that a duplicated (scope, machine) pair
+  // must NOT move the signature. That was correct while the pane behind it was
+  // a DROPDOWN — two copies of `main` were one option, and reporting a
+  // duplicate as a change would have closed a picker somebody had open for no
+  // visible difference. It was the over-firing side of the guard, and the
+  // comment it carried said so.
+  //
+  // The pane is now a TABLE (renderWorkStreams), and in a table a duplicated
+  // pair is TWO ROWS — two ages, two headlines, two harnesses, each of which
+  // can move on its own. The signature must change exactly when the pixels
+  // would, so the same input that had to be invisible now has to be visible.
+  // Nothing about the rule changed; the thing it is measuring did.
+  //
+  // The under-firing side it was guarding against is covered by the control
+  // directly below (an age moving WITHIN one band still costs no render), which
+  // is the assertion that actually stops this becoming a busy poll.
+  ok('a DUPLICATED pair is TWO ROWS in the work-stream table, so it MUST read '
+    + 'as a change — the inverse of what a dropdown needed',
     sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 },
       { scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
-    brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) === base);
+    brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) !== base);
   ok('CONTROL: an age moving WITHIN one band does not repaint (300s -> 320s both read "5 min ago")',
     sigOf(st({ detail: { scope: 'main', machine: 'boxa',
       current: { present: true, writtenAgeSeconds: 300, lastSaveKind: 'complete' } } }))

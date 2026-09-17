@@ -447,6 +447,11 @@ const NAMED_FAMILIES = [
   ['theme-seg-btn', 'the segmented controls', true],
   ['dm-row', 'domain rows', true],
   ['mem-row', 'memory rows', true],
+  // The Agent-memory work-stream table, v3.55.0. It is a ROW LIST in a
+  // <table>, and the maintainer's complaint that "clicking through the
+  // sections acknowledges nothing" is exactly about lists you select from —
+  // so it is held to the same press its sibling in the rail is.
+  ['mem-ws-row', 'agent-memory work-stream rows', true],
   ['ing-dest-row', 'ingest destination rows', true],
   ['chat-scope-pill', 'chat scope pills', true],
   ['chat-conv-row', 'conversation rows', true],

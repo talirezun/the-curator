@@ -504,8 +504,23 @@ export function renderExplainer(o) {
  * from the title alone shipped duplicate DOM ids on Sync and made one panel
  * permanently unreachable; the reasoning is at the derivation itself.
  *
+ * ── `panelWide` — ONE OPT-IN, FOR A PAGE THAT IS NOT PROSE ──────────────────
+ *
+ * The panel caps itself at 68ch because it is normally a paragraph or two and
+ * 68ch is the width at which a LINE OF TEXT is comfortable. Agent memory is a
+ * dashboard: v3.55.0 puts every one of its sections at the column's own width,
+ * and a help panel that stopped at 47% of the column while the table under it
+ * ran the full width was the single most visible remnant of the four-widths
+ * page the maintainer rejected. `panelWide: true` appends `tx-vh-panel-wide`,
+ * which shared/text.css defines as `max-width: none`, and nothing else moves.
+ *
+ * It is an OPT-IN, not a new default, and the test is `=== true` rather than
+ * truthy — the cap is right for every view whose header panel really is prose,
+ * and a stray string must not silently widen one.
+ *
  * @param {{eyebrow?:string, title:string, info?:string, infoHtml?:boolean,
- *          infoId?:string, actionsHtml?:string, variant?:string}} o
+ *          infoId?:string, actionsHtml?:string, variant?:string,
+ *          panelWide?:boolean}} o
  *   `infoId` overrides the derived panel id. It is needed only when the title
  *   is DYNAMIC (views/domains.js renders a domain's own name, which could be
  *   the literal word "Domains"); the sidebar-vs-main case derives correctly on
@@ -573,7 +588,8 @@ export function renderViewHeader(o) {
         (actions ? '<div class="tx-vh-actions">' + actions + '</div>' : '') +
       '</div>' +
       (info
-        ? '<div class="tx-vh-panel" id="' + escapeHtml(panelId) + '" role="group"' +
+        ? '<div class="tx-vh-panel' + (o.panelWide === true ? ' tx-vh-panel-wide' : '') +
+            '" id="' + escapeHtml(panelId) + '" role="group"' +
             ' aria-label="' + escapeHtml(name) + '" hidden>' +
             (o.infoHtml === true ? info : escapeHtml(info)) +
           '</div>'

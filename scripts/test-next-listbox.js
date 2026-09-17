@@ -383,11 +383,23 @@ ok(/export function closeAllListboxes/.test(lbJs),
   'reader but explicitly does NOT reach into view-owned popovers');
 
 // ═══════════════════════════════════════════════════════════════════════
-section('§5  The adoptions — ONE component, eleven call sites');
+section('§5  The adoptions — ONE component, nine call sites');
 
 const VIEWS = path.join(NEXT, 'views');
 const viewFiles = readdirSync(VIEWS).filter((f) => f.endsWith('.js'));
-const ADOPTERS = ['memory.js', 'ingest.js', 'settings.js', 'chat.js'];
+// ── memory.js LEFT THIS LIST IN v3.55.0 ──────────────────────────────────
+// Agent memory's scope and machine pickers are gone: the work-stream table
+// (`renderWorkStreams`) shows every (scope, machine) pair as a ROW, because a
+// dropdown structurally cannot answer "what have I got, and which of them
+// moved today" — you have to open it, read it, close it and hold the list in
+// your head. That was the maintainer's report, and the table is the fix.
+//
+// The count moved 11 -> 9 and memory.js's own 2 -> 0. Both numbers are pinned
+// rather than left open for the reason the note above gives: an unpinned count
+// is how a hand-rolled menu gets added back beside the shared one. §5b below
+// asserts memory.js is now free of the component in BOTH directions, so this
+// removal cannot be a silent regression back to a private picker.
+const ADOPTERS = ['ingest.js', 'settings.js', 'chat.js'];
 
 // A whole-tree walk, never a hardcoded file list: a hardcoded list is how a
 // previous guard in this repo went blind (v3.9.2).
@@ -420,7 +432,7 @@ ok(selectOffenders.length === 0,
 // The count is pinned rather than left open because an UNPINNED count is how a
 // hand-rolled menu gets added back beside the shared one without anything
 // noticing — which is the state chat.js was in when this file was written.
-const expectAdoptions = { 'memory.js': 2, 'ingest.js': 2, 'settings.js': 5, 'chat.js': 2 };
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 2 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -437,11 +449,36 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 11, `ELEVEN adoptions across four views (found ${total})`);
+ok(total === 9, `NINE adoptions across three views (found ${total})`);
+
+// ── §5b — memory.js is free of the component, in BOTH directions ──────────
+// Dropping a file from ADOPTERS removes every assertion about it, so without
+// this block the view could quietly grow a picker again — or, worse, a
+// hand-rolled one — and nothing here would notice. Asserted over the RAW
+// source for the import and over COMMENT-STRIPPED code for the calls, because
+// this file's own header records a mutation that a comment satisfied.
+{
+  const memSrc = readFileSync(path.join(VIEWS, 'memory.js'), 'utf8');
+  const memCode = memSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  for (const name of ['renderListboxHtml', 'mountListbox', 'closeAllListboxes', 'pendingListboxes']) {
+    ok(!new RegExp(name).test(memCode),
+      `memory.js no longer reaches for \`${name}\` — the pickers are a table now`);
+  }
+  ok(!/shared\/listbox\.js/.test(memCode),
+    'memory.js no longer imports the listbox component at all');
+  // AND IT DID NOT REPLACE ONE POPUP WITH ANOTHER. The table is a <table> of
+  // <button>s; a view that grew its own menu would show up here.
+  ok(!/role="listbox"|role="combobox"|aria-haspopup/.test(memSrc),
+    'memory.js did not hand-roll a replacement popup');
+  ok(/renderWorkStreams/.test(memCode) && /<table class="mem-ws-table">/.test(memSrc),
+    'CONTROL: memory.js really does render the work-stream TABLE that replaced them');
+}
 
 // The render -> wire handoff. This is the assertion that makes "one
 // component" mean something: markup and behaviour must come from ONE object.
-for (const f of ['memory.js', 'settings.js', 'chat.js']) {
+// memory.js left this list with ADOPTERS above, in v3.55.0 — it no longer
+// renders a listbox at all, so it has no cfg to hand from render to wire.
+for (const f of ['settings.js', 'chat.js']) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
   ok(/const pendingListboxes = \[\]/.test(src),
     `${f} uses the render -> wire handoff array`);
