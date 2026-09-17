@@ -119,7 +119,17 @@ export const UPDATE_FAILURES = Object.freeze({
   'install-dir-cross-device': 'The Curator is installed on a different disk from the folder the update was prepared in, so the swap could not be made safely. Move The Curator to your Applications folder and try again.',
 
   // ── downloading ──
+  // TWO SENTENCES FOR TWO DIFFERENT FACTS, and the reason they are two is a
+  // production incident rather than a preference. On 2026-09-17 GitHub's own
+  // release-download host answered HTTP 500 twice in seven requests, and this
+  // dialog told the maintainer to check an internet connection that was
+  // working perfectly. "Check your internet connection" is correct ONLY for
+  // the class where the connection really is the suspect; a 5xx from a server
+  // that answered is the opposite case, and the only useful thing to say about
+  // it is whose side it is on. `{attempts}` is filled by `updateFailure` and
+  // can never reach a dialog unsubstituted — see `fillAttempts`.
   'download-failed': 'The download did not complete. Check your internet connection and try again.',
+  'download-server-error': 'GitHub’s download service answered with a server error {attempts}, so the download never started. That is on GitHub’s side rather than yours — wait a minute and try again, or download the installer from the release page.',
   'download-not-found': 'The download address for this release is no longer valid. Check the releases page.',
   'download-truncated': 'The download ended early and is incomplete, so it was discarded. Try again.',
   'download-oversized': 'The download was larger than the release says it should be, so it was discarded.',
@@ -215,17 +225,50 @@ export function updateWarning(reason) {
     'Move The Curator to your Applications folder once the update has finished.';
 }
 
-/** A refusal. `detail` is for the LOG, never for the dialog. */
-export function updateFailure(reason, detail = null) {
-  const message = Object.hasOwn(UPDATE_FAILURES, reason)
+/**
+ * The one thing a failure sentence may be parameterised by: HOW MANY TIMES it
+ * was tried.
+ *
+ * TOTAL, and that is the whole design. A sentence holding a `{attempts}` token
+ * goes through here on every path out of `updateFailure`, so an absent or
+ * nonsensical count degrades to a phrase that is still true rather than
+ * printing a brace at a person — the failure mode that makes templated user
+ * copy a bad idea in the first place.
+ */
+const ATTEMPTS_TOKEN = '{attempts}';
+
+export function fillAttempts(message, attempts) {
+  if (typeof message !== 'string' || !message.includes(ATTEMPTS_TOKEN)) return message;
+  const phrase = !Number.isInteger(attempts) || attempts < 1
+    ? 'every time it was asked'
+    : (attempts === 1 ? 'once' : `${attempts} times in a row`);
+  return message.split(ATTEMPTS_TOKEN).join(phrase);
+}
+
+/**
+ * A refusal. `detail` is for the LOG, never for the dialog.
+ *
+ * `extra` carries FACTS, not copy: `attempts` and `lastStatus`, both read off
+ * the download ladder. They are picked one by one rather than spread, so a
+ * caller can never reach `ok`, `reason` or `message` through this parameter —
+ * the message stays the table's, which is the property the whole table exists
+ * for.
+ */
+export function updateFailure(reason, detail = null, extra = null) {
+  const template = Object.hasOwn(UPDATE_FAILURES, reason)
     ? UPDATE_FAILURES[reason]
     // An unmapped reason is a bug in this file, not in the caller. It still
     // must not become an empty dialog, and it must be obvious in a log.
     : 'The update could not be completed.';
+  const e = (extra && typeof extra === 'object') ? extra : {};
+  const attempts = Number.isInteger(e.attempts) && e.attempts > 0 ? e.attempts : null;
+  const lastStatus = Number.isInteger(e.lastStatus) ? e.lastStatus : null;
   return {
     ok: false,
     reason,
-    message,
+    message: fillAttempts(template, attempts),
+    ...(attempts === null ? {} : { attempts }),
+    ...(lastStatus === null ? {} : { lastStatus }),
     ...(detail ? { detail: String(detail) } : {}),
   };
 }

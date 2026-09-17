@@ -82,6 +82,86 @@ export const PROGRESS_BYTES = 256 * 1024;
 export const STAGE_PREFIX = '.the-curator-update-';
 export const BACKUP_PREFIX = '.the-curator-backup-';
 
+/**
+ * ── THE INITIAL REQUEST IS RETRIED. WHAT THAT IS FOR, MEASURED ─────────────
+ *
+ * 2026-09-17, v3.57.0, on the maintainer's own machine: Check for Updates
+ * answered "The download did not complete. Check your internet connection and
+ * try again." His connection was fine and the release assets were correct —
+ * six of seven `curl -L` of
+ * `https://github.com/<owner>/<repo>/releases/download/v3.57.0/<asset>`
+ * returned exactly the byte count the Releases API publishes. The other two
+ * answered **HTTP 500 with GitHub's own "Server Error" HTML page** (~160 KB)
+ * BEFORE the redirect to `objects.githubusercontent.com`, both times on the
+ * first request of a series. The same instability had failed that evening's
+ * asset UPLOAD twice (500, then 504) while githubstatus.com read "All Systems
+ * Operational".
+ *
+ * So one transient 500 cost the whole update and blamed the user's network for
+ * it. Both halves of that are fixed here: the transient class is retried, and
+ * when it survives three attempts the sentence says whose side it is on.
+ *
+ * WHAT IS RETRIED, AND WHAT IS DELIBERATELY NOT:
+ *
+ *   retried   5xx (500–599)          GitHub's own server error, the incident
+ *   retried   429                    rate limited; a wait is the documented fix
+ *   retried   a fetch REJECTION whose code or message is network-shaped
+ *                                    (see RETRYABLE_NETWORK_CODES below)
+ *   NOT       404 / 410              the asset is gone; asking again cannot
+ *                                    bring it back — stays `download-not-found`
+ *   NOT       any other 4xx          the request itself is wrong; a retry is a
+ *                                    second wrong request
+ *   NOT       AbortError             the USER cancelled. Retrying a cancel is
+ *                                    the one behaviour a cancel must not have
+ *   NOT       anything after the body has started arriving. A stream that dies
+ *                                    mid-body is `download-truncated`, which is
+ *                                    its own reason with its own sentence, and
+ *                                    resuming it would need a range request
+ *                                    this engine does not make. Untouched.
+ *
+ * Three attempts and two short waits, not an exponential ladder: a person is
+ * watching a progress ring, and 4 s of silence is the most this may spend
+ * before either succeeding or saying something true.
+ */
+export const DOWNLOAD_ATTEMPTS = 3;
+export const DOWNLOAD_BACKOFF_MS = Object.freeze([1000, 3000]);
+
+/**
+ * Fetch rejections worth trying again, by `err.code` or `err.cause.code`.
+ *
+ * `cause` is load-bearing: undici reports nearly every transport failure as a
+ * bare `TypeError: fetch failed` and puts the real errno on `err.cause`, so a
+ * table that reads only `err.code` matches almost nothing in production.
+ */
+const RETRYABLE_NETWORK_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT',
+  'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN',
+  'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+]);
+
+/** …and by message, for the shapes that carry no code at all. Narrow on
+ *  purpose: a programming error (`x is not a function`) must NOT be retried
+ *  three times before it is reported. */
+const RETRYABLE_NETWORK_MESSAGE = /fetch failed|socket hang up|network error|connection (?:reset|closed)|other side closed|terminated/i;
+
+const isAbortError = (err) => !!err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
+
+/** A rejection from `fetch` that is worth asking again about. */
+export function isRetryableNetworkError(err) {
+  if (!err || isAbortError(err)) return false;
+  const codes = [err.code, err.cause && err.cause.code];
+  if (codes.some((c) => typeof c === 'string' && RETRYABLE_NETWORK_CODES.has(c))) return true;
+  const messages = [err.message, err.cause && err.cause.message];
+  return messages.some((m) => typeof m === 'string' && RETRYABLE_NETWORK_MESSAGE.test(m));
+}
+
+/** A RESPONSE status worth asking again about. 404/410 is excluded by being
+ *  answered earlier; this predicate is only ever reached for a non-OK status
+ *  that is not one of those two. */
+export function isRetryableStatus(status) {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
 const noop = () => {};
 
 /**
@@ -101,6 +181,10 @@ export function createUpdateEngine(deps = {}) {
   const {
     resolveRelease,
     fetchImpl = globalThis.fetch,
+    // Injected for the same reason `fetchImpl` is: the suite must be able to
+    // prove the retry ladder — including that an abort DURING a wait is
+    // answered at once — without spending 4 s of real time per case.
+    sleepImpl = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     execPath = null,
     homeDir = null,
     arch = null,
@@ -325,18 +409,111 @@ export function createUpdateEngine(deps = {}) {
    * fill the user's disk before the length check ever ran, and the failure the
    * user would see is "your disk is full", not "that download was wrong".
    */
-  async function downloadAsset({ asset, dmgPath, signal, emit }) {
-    let response;
-    try {
-      response = await fetchImpl(asset.url, { redirect: 'follow', signal: signal || undefined });
-    } catch (err) {
-      if (err && (err.name === 'AbortError' || err.code === 'ABORT_ERR')) return updateFailure('download-cancelled');
-      return updateFailure('download-failed', err && err.message);
+  /**
+   * Wait, but never longer than the user's patience for a cancel.
+   *
+   * Resolves `true` if the wait completed, `false` if the signal aborted —
+   * whichever happens first. Without the abort arm, a user who quits during
+   * the 3 s wait would sit through it before being told the update was
+   * cancelled, on a path whose whole point is that nothing is happening.
+   */
+  const waitBeforeRetry = async (ms, signal) => {
+    if (signal && signal.aborted) return false;
+    const listens = signal && typeof signal.addEventListener === 'function';
+    let release = null;
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+      if (listens) {
+        release = () => { try { signal.removeEventListener('abort', done); } catch { /* not an EventTarget after all */ } };
+        signal.addEventListener('abort', done, { once: true });
+      }
+      Promise.resolve(sleepImpl(ms)).then(done, done);
+    });
+    if (release) release();
+    return !(signal && signal.aborted);
+  };
+
+  /** A response we are walking away from still holds a socket. GitHub's 500
+   *  page is ~160 KB of HTML; three of them undrained is three sockets held
+   *  open for the lifetime of the process. */
+  const discardBody = async (response) => {
+    try { if (response && response.body && typeof response.body.cancel === 'function') await response.body.cancel(); } catch { /* already gone */ }
+  };
+
+  /**
+   * Make the initial request, retrying ONLY the transient class.
+   *
+   * Returns `{ok:true, response, attempts}` with a body that has not been
+   * touched, or a named failure. NOTHING is hashed or written here — that is
+   * structural, and it is what stops the 160 KB "Server Error" page of the
+   * incident above from ever reaching the digest or the .dmg on disk.
+   */
+  async function openDownload({ asset, signal }) {
+    let lastStatus = null;
+    let lastDetail = null;
+    // Which sentence the exhausted ladder gets. Set from the LAST observation,
+    // because that is the one the user's next move should be based on.
+    let serverSide = false;
+
+    for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+      if (signal && signal.aborted) return updateFailure('download-cancelled', null, { attempts: attempt - 1 });
+
+      let response = null;
+      try {
+        response = await fetchImpl(asset.url, { redirect: 'follow', signal: signal || undefined });
+      } catch (err) {
+        if (isAbortError(err)) return updateFailure('download-cancelled', null, { attempts: attempt });
+        if (!isRetryableNetworkError(err)) return updateFailure('download-failed', err && err.message, { attempts: attempt });
+        serverSide = false;
+        lastStatus = null;
+        lastDetail = (err && err.message) || 'network error';
+        if (attempt === DOWNLOAD_ATTEMPTS) break;
+        if (!await waitBeforeRetry(DOWNLOAD_BACKOFF_MS[attempt - 1], signal)) {
+          return updateFailure('download-cancelled', null, { attempts: attempt });
+        }
+        continue;
+      }
+
+      // A `fetchImpl` that resolves with nothing is a wiring bug, not weather.
+      if (!response) return updateFailure('download-failed', 'no response', { attempts: attempt });
+      if (response.status === 404 || response.status === 410) {
+        await discardBody(response);
+        return updateFailure('download-not-found', `status ${response.status}`, { attempts: attempt, lastStatus: response.status });
+      }
+      if (response.ok) {
+        if (!response.body) return updateFailure('download-failed', 'response carried no body', { attempts: attempt });
+        return { ok: true, response, attempts: attempt };
+      }
+
+      await discardBody(response);
+      serverSide = true;
+      lastStatus = response.status;
+      lastDetail = `status ${response.status}`;
+      if (!isRetryableStatus(response.status)) {
+        return updateFailure('download-failed', `status ${response.status}`, { attempts: attempt, lastStatus: response.status });
+      }
+      if (attempt === DOWNLOAD_ATTEMPTS) break;
+      if (!await waitBeforeRetry(DOWNLOAD_BACKOFF_MS[attempt - 1], signal)) {
+        return updateFailure('download-cancelled', null, { attempts: attempt, lastStatus: response.status });
+      }
     }
-    if (!response) return updateFailure('download-failed', 'no response');
-    if (response.status === 404 || response.status === 410) return updateFailure('download-not-found', `status ${response.status}`);
-    if (!response.ok) return updateFailure('download-failed', `status ${response.status}`);
-    if (!response.body) return updateFailure('download-failed', 'response carried no body');
+
+    const extra = { attempts: DOWNLOAD_ATTEMPTS, ...(lastStatus === null ? {} : { lastStatus }) };
+    const detail = `${lastDetail} after ${DOWNLOAD_ATTEMPTS} attempts`;
+    // TWO reasons, because the user's next move differs and the v3.57.0 report
+    // is the proof: told to check an internet connection that was working, he
+    // had nothing to do. Told GitHub is answering with a server error, the
+    // next move is to wait a minute or use the release page.
+    return serverSide
+      ? updateFailure('download-server-error', detail, extra)
+      : updateFailure('download-failed', detail, extra);
+  }
+
+  async function downloadAsset({ asset, dmgPath, signal, emit }) {
+    const opened = await openDownload({ asset, signal });
+    if (!opened.ok) return opened;
+    const { response } = opened;
 
     const hash = createHash(asset.digest ? asset.digest.algorithm : 'sha256');
     const out = createWriteStream(dmgPath, { mode: 0o600 });

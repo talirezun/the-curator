@@ -297,7 +297,12 @@ flowchart TD
 4. Five named steps run, on a progress ring: **Finding · Downloading · Checking ·
    Preparing · Installing**. While downloading you see real byte counts
    (`58.2 MB of 137 MB · 43%`). If the total size is not known the app says so
-   rather than showing a bar sitting at 0%.
+   rather than showing a bar sitting at 0%. If GitHub answers the download with a
+   server error, or the connection drops before any bytes arrive, the request is
+   **made up to three times** (waiting a second, then three); only if all three fail
+   is anything reported, and the message then says whether it was **GitHub's server**
+   or **the connection** — a download address that no longer exists, and a download
+   you cancelled, are never retried.
 5. **The download does not stop if you navigate away.** Switch to Chat, or reload
    the page entirely, and the update keeps going — the stream is a view of the job,
    not the job. It also means **there is no cancel**.
