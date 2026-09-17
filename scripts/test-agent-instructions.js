@@ -361,7 +361,19 @@ section('S4 -- Agent memory: the project header');
 
 const MEMORY_SRC = read('src/public/next/views/memory.js');
 
-const MEM_FNS = ['renderCopyOutcome', 'renderProject', 'copyAgentInstructions', 'wire'];
+// `renderMain` JOINS THE LIFT LIST, DELIBERATELY. The button moved out of
+// `renderProject`'s breadcrumb row — where a `margin-left: auto` floated it
+// alone at the far right of the page — into renderViewHeader's `actionsHtml`
+// slot, which renderMain owns. A suite that went on lifting renderProject alone
+// would have gone GREEN-BY-ABSENCE: the assertions below would simply stop
+// finding the button and would have to be deleted, which is the one outcome
+// this file exists to prevent. So the lift follows the control.
+//
+// renderMain is DOM-bound (it ends in setMain), so the preamble stubs setMain
+// and captures what it was handed; everything the header needs — the component
+// itself and the About panel's HTML — is stubbed with named markers so an
+// assertion cannot pass over a page that rendered nothing.
+const MEM_FNS = ['renderCopyOutcome', 'renderProject', 'renderMain', 'copyAgentInstructions', 'wire'];
 
 const memBox = (() => {
   // The sub-renderers below `renderProject`'s header are stubbed with NAMED
@@ -391,7 +403,21 @@ function renderUnlistedNote() { return '<!--UNLISTED-->'; }
 function renderSaveStatus() { return '<!--SAVESTATUS-->'; }
 function renderStaleNotice() { return '<!--STALE-->'; }
 function renderEmptyProject() { return '<!--EMPTY-->'; }
-function renderAbout() { return '<!--ABOUT-->'; }
+function aboutInfoHtml() { return '<!--ABOUT-->'; }
+function renderNoProjects() { return '<!--NOPROJECTS-->'; }
+// The REAL component's contract, reduced to what these assertions read: the
+// actions slot and the info panel. Faithful on the one property that matters
+// here: actionsHtml is emitted verbatim, so a header that dropped the slot
+// would red rather than quietly pass. (No backticks in this block -- the whole
+// PREAMBLE is a template literal, and one would end it.)
+function renderViewHeader(o) {
+  return '<header class="tx-vh"><h1>' + escapeHtml(o.title || '') + '</h1>' +
+    (o.actionsHtml ? '<div class="tx-vh-actions">' + o.actionsHtml + '</div>' : '') +
+    (o.info ? '<div class="tx-vh-panel" hidden>' + (o.infoHtml ? o.info : escapeHtml(o.info)) + '</div>' : '') +
+    '</header>';
+}
+let mainHtml = '';
+function setMain(html) { mainHtml = html; }
 function renderBriefOnlyNotice() { return '<!--BRIEFONLY-->'; }
 function renderScopeControls() { return '<!--SCOPES-->'; }
 function renderHandoff() { return '<!--HANDOFF-->'; }
@@ -426,6 +452,7 @@ const navigator = { clipboard: { writeText: async (t) => {
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.clipboard.length = 0; calls.failures = 0; },
        __setDocument: (d) => { document = d; },
+       __main: () => mainHtml,
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
   )(composeAgentInstructions, COPY_SUCCESS_BANNER);
@@ -439,20 +466,37 @@ const memState = (over) => ({
 });
 
 {
+  // THE WHOLE PANE, not just renderProject: the control lives in the view
+  // header now, so the only output that can prove it reaches the user is the
+  // one setMain is handed.
   memBox.__setState(memState());
-  const html = memBox.renderProject();
+  memBox.renderMain(1);
+  const html = memBox.__main();
   ok('the header carries the action', html.includes('id="mem-copy-agent"'));
   ok('...labelled in the words the docs use', html.includes('Copy agent instructions'));
+  ok('...in the header\'s sanctioned ACTION slot, not floating in the breadcrumb row',
+    /tx-vh-actions[\s\S]{0,160}id="mem-copy-agent"/.test(html), html.slice(0, 400));
   ok('CONTROL -- the rest of the page really did render, so the check is not vacuous',
     html.includes('<!--EMPTY-->') && html.includes('<!--ABOUT-->'));
+  ok('CONTROL -- and the breadcrumb row itself no longer carries it',
+    !memBox.renderProject().includes('id="mem-copy-agent"'));
 
   const ro = (() => {
     memBox.__setState(memState({ detail: { readonly: true } }));
-    return memBox.renderProject();
+    memBox.renderMain(1);
+    return memBox.__main();
   })();
   ok('a read-only Shared Brain mirror gets it too -- nothing here writes',
     ro.includes('id="mem-copy-agent"'));
   ok('CONTROL -- ...and still says it is a mirror', ro.includes('shared mirror'));
+
+  // NO PROJECT, NO BUTTON. composeAgentInstructions needs the pair, and a
+  // button whose only outcome is a refusal is worse than no button -- the same
+  // rule the brief editor follows on a read-only mirror.
+  memBox.__setState(memState({ activeProject: null, activeDomain: null }));
+  memBox.renderMain(1);
+  ok('with no project selected the action is withheld rather than offered dead',
+    !memBox.__main().includes('id="mem-copy-agent"'), memBox.__main().slice(0, 300));
 }
 
 {

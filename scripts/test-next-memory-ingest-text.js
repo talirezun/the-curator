@@ -61,6 +61,10 @@ import { stripComments, functionSource, callSiteCount } from './test-helpers/sou
 import {
   renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderExplainer,
 } from '../src/public/next/shared/text.js';
+// Same contract, same reason: shared/docs-links.js takes no imports and THROWS
+// on an unknown key, so the About panel's link is proven to resolve rather than
+// merely to have been interpolated.
+import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(__dirname, '..', 'src', 'public', 'next');
@@ -123,8 +127,32 @@ for (const name of ingImports) {
 
 // The two named asks, pinned to the FUNCTION that must contain them, so a
 // call somewhere else in the file cannot satisfy them.
-ok('memory.js: the About fold is the shared explainer (renderExplainer inside renderAbout)',
-  callSiteCount(memSrc, 'renderExplainer', { within: 'renderAbout' }) > 0);
+//
+// EXPIRED CLAIM, INVERTED — the same treatment this file already gives ingest's
+// renderMain a few lines down. It pinned `renderExplainer` inside `renderAbout`,
+// i.e. that Agent memory's mechanism explanation was a <details> card appended
+// to every branch of the page. That card is GONE: it was the widest element on
+// the screen, under the three cards that carry state, glued to the journal above
+// it with a 0px gap (.tx-explainer declares no margin), and it is read once per
+// user. Its words are the header's ⓘ panel now — renderViewHeader's own
+// documented home for exactly that content, and this view's fold is the pattern
+// that component was generalised FROM.
+//
+// So the claim is inverted rather than dropped: the centre header must reach
+// the header component AND carry an `info` field, and the explainer must be
+// absent from the file entirely. Reverting the move reds both halves.
+ok('memory.js: renderMain builds its header with renderViewHeader',
+  callSiteCount(memSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
+ok('memory.js: ...and that header carries the mechanism explanation as its `info`',
+  /info: aboutInfoHtml\(\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
+// COMMENT-STRIPPED, and that is not a loosening. memory.js's own docblocks
+// explain the move and NAME the component that used to do it ("this was a
+// renderExplainer <details>"), which is exactly the history this repo wants
+// kept; a scan over raw text would red on the explanation rather than on any
+// live call. `memCode` is the stripped source every other scan in this file
+// already uses.
+ok('memory.js: the explainer component is gone — not imported, not called, not emitted',
+  !/renderExplainer/.test(memCode));
 ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside renderSidebar)',
   callSiteCount(memSrc, 'renderStatus', { within: 'renderSidebar' }) > 0);
 ok('memory.js: the journal count is a READOUT (renderReadout inside renderJournal)',
@@ -203,15 +231,21 @@ function memRenderers(stateObj) {
   // this suite's text-role assertions run past markup the shipped screen
   // emits — and this file's whole subject is which text role a sentence
   // renders in.
-  const body = lift(['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderHandoff',
-    'renderJournal', 'renderBriefEditor', 'renderBrief', 'renderAbout'], memSrc, 'memory.js');
+  // `freshnessStep` joins the list because the handoff's <summary> now carries
+  // the save strip's own freshness pip — the menubar widget's mark, on the web,
+  // for everyone who has no menu bar — and it is cut on formatAge's unit bands
+  // so the mark and the word can never contradict each other.
+  // `aboutInfoHtml` replaces `renderAbout`: same words, no <details> around them.
+  const body = lift(['formatAge', 'effectiveSave', 'freshnessStep', 'splitHandoffPreamble',
+    'renderHandoff', 'renderJournal', 'renderBriefEditor', 'renderBrief',
+    'aboutInfoHtml'], memSrc, 'memory.js');
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
-    'renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer', body)(
+    'renderDescription', 'renderStatus', 'renderReadout', 'docsLinkHtml', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>', (s) => '<p>' + s + '</p>', () => '<div class="loader"></div>', null, 10, 50,
-    renderDescription, renderStatus, renderReadout, renderExplainer);
+    renderDescription, renderStatus, renderReadout, docsLinkHtml);
 }
 
 const baseDetail = {
@@ -229,22 +263,34 @@ const baseState = {
 
 {
   const R = memRenderers(baseState);
-  const about = R.renderAbout();
+  const about = R.aboutInfoHtml();
 
-  // THE FOUR PROPERTIES THE EXPLAINER MUST KEEP.
-  ok('About renders a NATIVE <details> (keyboard + AT support come free)', /<details\b/.test(about), about.slice(0, 160));
-  ok('About is DEFAULT CLOSED — needed once, then never again', !/<details[^>]*\sopen[\s>]/.test(about), about.slice(0, 160));
-  ok('About uses the SHARED explainer, not a re-implemented fold',
-    /class="tx-explainer"/.test(about) && !/mem-fold-summary/.test(about), about.slice(0, 200));
-  ok('About still carries an identity the open-fold memory can key on',
-    /data-tx-explainer="about"/.test(about), about.slice(0, 200));
-  ok('About renders NO warning box — it explains a mechanism and carries no caution',
+  // THE PROPERTIES THE EXPLANATION MUST KEEP, NOW THAT IT IS A PANEL.
+  //
+  // Three of the four the fold was pinned on came from its <details> and have
+  // MOVED rather than gone: the affordance is still a real, keyboard-operable
+  // control and the text is still hidden on first paint — renderViewHeader
+  // emits a <button> with aria-expanded / aria-controls and a `hidden` panel,
+  // and scripts/test-next-view-header.js is where that component's own
+  // behaviour is proven. What is asserted HERE is what this view owes: the
+  // words, and the fact that they carry no caution.
+  ok('the explanation still says what the three tiers are',
+    /Standing brief/.test(about) && /Current handoff/.test(about) && /Session journal/.test(about),
+    about.slice(0, 200));
+  ok('...and who writes which — the read-only rule, stated as the design fact it is',
+    /this screen never does/.test(about), about.slice(-400));
+  ok('the panel is CONTENT, not a container — the component owns the disclosure',
+    !/<details\b/.test(about) && !/tx-explainer/.test(about), about.slice(0, 200));
+  ok('it renders NO warning box — it explains a mechanism and carries no caution',
     !/tx-status/.test(about));
+  ok('...and it ends with a real docs link from the frozen table, not a typed URL',
+    /<a href="https:\/\/github\.com\/[^"]*working-state\.md"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/.test(about),
+    about.slice(-300));
 
-  // ...and it re-opens when the user has opened it, which is the whole point
-  // of tracking the fold at all.
-  const opened = memRenderers({ ...baseState, openFolds: { about: true } }).renderAbout();
-  ok('About re-opens when the user has opened it before', /<details[^>]*\sopen[\s>]/.test(opened), opened.slice(0, 160));
+  // AND IT IS ON THE PAGE. A panel nothing passes to the header is a panel
+  // nobody can open, which a source scan for the function would not notice.
+  ok('the page itself emits NO explainer card any more',
+    !/tx-explainer/.test(R.renderHandoff() + R.renderJournal() + R.renderBrief(baseState.projectRead, false)));
 
   // The handoff's provenance is an instrument.
   const h = R.renderHandoff();
@@ -261,8 +307,23 @@ const baseState = {
     ...baseState,
     detail: { ...baseDetail, current: { ...baseDetail.current, savedAt: null }, journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
   }).renderHandoff();
-  ok('no save time and no journal entry renders NO readout at all — never "unknown", never a dash',
-    !/tx-readout/.test(noProv) && !/unknown/i.test(noProv), noProv.slice(0, 300));
+  // RE-POINTED DELIBERATELY, and the rule it enforces is unchanged: ABSENT IS
+  // NOT ZERO. What changed is that the handoff is a <details> now, so there is
+  // a <summary> on screen whether or not there is a reading — and a summary
+  // showing an eyebrow beside a dashed ring, with no words at all, is a mark
+  // nobody can decode. The honest output is to SAY the age is unknown.
+  //
+  // So: still no instrument (a readout states a READING, and there is none),
+  // still no invented figure, and the pip takes the dashed `-unknown` ring
+  // rather than step 0 — "we do not know when" and "a long time ago" are
+  // different facts. Three assertions where there was one, and every one of
+  // them reds if an absent time is rendered as a number.
+  ok('no save time and no journal entry renders NO readout — never a figure, never a dash',
+    !/tx-readout/.test(noProv), noProv.slice(0, 400));
+  ok('...saying the time is unknown IN WORDS, rather than leaving a bare mark',
+    /time unknown/.test(noProv), noProv.slice(0, 400));
+  ok('...with the dashed -unknown pip, not step 0 — "we do not know" is not "long ago"',
+    /mem-save-pip-unknown/.test(noProv) && !/mem-save-pip-s\d/.test(noProv), noProv.slice(0, 400));
 
   // Each fact still shown when only the OTHER is missing: consolidating two
   // elements into one instrument must not be able to drop one of them.
@@ -595,9 +656,25 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   ok('memory.js still renders no contenteditable and no <form>',
     !/contenteditable|<form\b/i.test(memCode));
 }
-ok('the sidebar still states the split UNFOLDED — who writes what, not tucked into the explainer',
-  /Agents write the handoffs here through MCP\. You write the standing brief\./.test(memCode) &&
-  !new RegExp('Agents write the handoffs here[\\s\\S]{0,80}renderExplainer').test(memCode));
+// RE-POINTED, and the property under test is narrowed HONESTLY rather than
+// quietly. It was: the "who writes what" split must be stated unfolded, in the
+// sidebar foot, never inside the explainer. The foot card is gone — a lock
+// glyph and a sentence under the project list, belonging to nothing — and the
+// sentence is the second line of the rail's own ⓘ panel.
+//
+// SO THE CLAIM IS WEAKER, AND SAYING SO IS THE POINT: the fact is now behind a
+// click. It is behind a REAL control (a <button> with aria-expanded, Escape to
+// close, focus returned) rather than inside a disclosure whose summary is a
+// line of prose, and it sits beside the only other sentence describing what
+// this screen is — one mark, one panel, one voice. What is still pinned is that
+// the sentence exists, that it is the rail header's `info` and not a floating
+// block, and that the block has not come back.
+ok('the sidebar states the split in the rail header\u2019s own \u24d8, in one sentence',
+  /Agents save handoffs here over MCP; you write the standing brief\./.test(memCode));
+ok('...as part of that header\u2019s info field, not as a paragraph beside it',
+  new RegExp("variant: 'sidebar',[\\s\\S]{0,600}Agents save handoffs here over MCP").test(memCode));
+ok('...and the floating foot card it replaces has not come back',
+  !/mem-sidebar-foot/.test(memCode));
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  POSITIVE CONTROLS — every detector above is shown to FIRE');
@@ -688,7 +765,13 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
 {
   const ingSrc = read('views/ingest.js');
   for (const [label, src, fns] of [
-    ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer']],
+    // `renderExplainer` LEFT this list, and — exactly as with ingest's
+    // renderDescription below — that is the point of the release rather than a
+    // coverage loss. Its single call site was the "How this works" <details>
+    // card at the foot of every branch of the page; renderViewHeader's `info`
+    // panel replaces it, and `renderViewHeader` joins the list in its place so
+    // the count stays honest about the roles this view really does reach.
+    ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout', 'renderViewHeader']],
     // renderDescription is NO LONGER in ingest's list, and that is the point of
     // this release rather than a coverage loss: its single call site was the
     // paragraph under the <h1>. renderViewHeader replaces it as the adopted

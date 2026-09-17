@@ -313,10 +313,27 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   const m = SRC['memory.js'], s = SRC['sync.js'];
   ok('memory.js sidebar: the component, in the sidebar density',
     /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Agent memory',/.test(m));
-  ok('memory.js centre: the component, eyebrow + title and NO info field',
-    /renderViewHeader\(\{ eyebrow: '[^']*', title: 'Agent memory' \}\)/.test(m));
-  ok('memory.js centre deliberately hides nothing — renderAbout() still owns the mechanism',
-    /renderExplainer\(\{/.test(m) && /summary: 'How this works'/.test(m));
+  // INVERTED DELIBERATELY, and the assertion it replaces was right when it was
+  // written. It pinned "eyebrow + title, NO info", because at the time a second
+  // description of the three tiers behind the mark would have been a COPY of
+  // the renderAbout() fold below it — two hand-maintained texts free to drift.
+  //
+  // What shipped since is a MOVE, not a copy: renderAbout is gone, its four
+  // call sites with it, and the header's `info` panel is now the only place
+  // this view explains itself. That is the shape renderViewHeader documents for
+  // content read once per user, and it took the explainer's full-width card off
+  // the foot of every branch of the page. So the claim is inverted rather than
+  // deleted — an info-less regression at this exact call site would still red,
+  // because the `info` clause is mandatory in the pattern, not optional (the
+  // same treatment sync.js's centre header got in v3.24.0, three assertions
+  // below, for the same reason).
+  ok('memory.js centre: the component, eyebrow + title + info (the mechanism, moved behind the mark)',
+    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Agent memory',\s*info: [A-Za-z][A-Za-z0-9_$]*\(\)/.test(m),
+    'the centre header no longer carries an info field');
+  ok('memory.js centre: ...as raw HTML, which is what lets the panel carry its list and its docs link',
+    /infoHtml: true/.test(m));
+  ok('memory.js: the explainer component is GONE from this view — not imported, not called',
+    !/renderExplainer/.test(m) && !/summary: 'How this works'/.test(m));
   ok('sync.js sidebar: the component, in the sidebar density',
     /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Sync',/.test(s));
   // v3.24.0: this site GAINED an `info` field (the maintainer flagged the
@@ -348,8 +365,20 @@ section('§5  WHAT WAS CUT HAS NOT RETURNED, IN EITHER SHAPE');
   // split now that the view writes the standing brief, so a bare "Read-only
   // here" would be FALSE. The property being guarded is unchanged: the fact
   // lives in the foot, not behind a disclosure.
-  ok('memory.js: ...and the sidebar foot really is where that fact lives now',
-    /Agents write the handoffs here through MCP\. You write the standing brief\./.test(m));
+  // RE-POINTED, and the property is unchanged: the fact must live somewhere a
+  // user can reach, not behind a disclosure they have to know to open.
+  //
+  // It was a `.mem-sidebar-foot` card — a lock glyph and a sentence under the
+  // project list, belonging to nothing, which the maintainer called out as
+  // undesigned. It is the second sentence of the RAIL'S OWN ⓘ panel now, which
+  // is the same content class as the sentence already there (what this screen
+  // is and who writes it) and is a real, keyboard-operable control rather than
+  // a floating block. So this pins the wording at its new site and pins that
+  // the old card is gone, rather than pinning the container.
+  ok('memory.js: ...and the sidebar\u2019s own ⓘ is where that fact lives now',
+    /Agents save handoffs here over MCP; you write the standing brief\./.test(m));
+  ok('memory.js: ...and the floating foot card it replaces is gone',
+    !/mem-sidebar-foot/.test(m));
   ok('sync.js: the .view-body sentence is gone and has not come back as a description',
     !/class="view-body"/.test(s) && !/lives on your disk and backs up/.test(s));
   ok('sync.js: the sidebar sentence is the header’s info, not a .sidebar-hint div',
