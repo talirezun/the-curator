@@ -188,6 +188,15 @@ function makeStubStore(seed) {
   function rowFor(domain, project) {
     const p = data[domain][project];
     const newest = p.scopes.length ? p.scopes[0] : null;
+    // WHERE THE REAL STORE TAKES THESE FROM, modelled rather than invented.
+    // `listProjects` reads its headline, harness, model, save kind and newest
+    // scope off the FIRST pair of `listWorkingScopes` — the MTIME-newest one
+    // — and that is the whole subject of the agent-clock fixture below. A
+    // seed that declares `wsPairs` gets exactly that behaviour; one that does
+    // not keeps the flat placeholders the rest of this suite was written
+    // against, so nothing else in the file moves.
+    const first = Array.isArray(p.wsPairs) && p.wsPairs.length ? p.wsPairs[0] : null;
+    const pick = (k, fallback) => (first ? (first[k] ?? null) : fallback);
     return {
       // A HOOK FOR FIELDS THE ROUTER HAS NEVER HEARD OF, spread FIRST so an
       // allow-listed name still wins. Without it the allow-list assertion
@@ -207,16 +216,17 @@ function makeStubStore(seed) {
       unlistedEntries: 0,
       unlistedReason: null,
       layoutWarning: p.layoutWarning || null,
-      lastWriteAt: newest ? newest.lastWriteAt : null,
-      ageSeconds: newest ? 10 : null,
-      writtenAt: newest ? newest.lastWriteAt : null,
-      writtenAgeSeconds: newest ? 10 : null,
-      headline: newest ? 'a headline' : null,
-      harness: newest ? 'claude-code' : null,
-      lastSaveKind: null,
+      lastWriteAt: pick('lastWriteAt', newest ? newest.lastWriteAt : null),
+      ageSeconds: pick('ageSeconds', newest ? 10 : null),
+      writtenAt: pick('writtenAt', newest ? newest.lastWriteAt : null),
+      writtenAgeSeconds: pick('writtenAgeSeconds', newest ? 10 : null),
+      headline: pick('headline', newest ? 'a headline' : null),
+      harness: pick('harness', newest ? 'claude-code' : null),
+      model: pick('model', null),
+      lastSaveKind: pick('lastSaveKind', null),
       lastSaveNotes: [],
-      newestScope: newest ? newest.scope : null,
-      newestMachine: newest ? newest.machine : null,
+      newestScope: first ? first.scope : (newest ? newest.scope : null),
+      newestMachine: first ? first.machine : (newest ? newest.machine : null),
       harnessShared: false,
       harnessSharedScopes: [],
       harnessScanned: p.scopes.length,
@@ -239,6 +249,22 @@ function makeStubStore(seed) {
       const d = data[domain] || {};
       const rows = Object.keys(d).map((p) => rowFor(domain, p));
       return { ok: true, domain, projects: rows, total: rows.length, truncated: false };
+    },
+    // WHAT `withScopeFacts` PAYS FOR — the per-pair list, in the STORE'S OWN
+    // ORDER (mtime, newest first). Opt-in through `wsPairs`: a seed that does
+    // not declare it answers with no pairs, which is byte-identical to what
+    // every assertion above already saw, because this method did not exist
+    // and the route's own try/catch turned the TypeError into an empty list.
+    async listWorkingScopes(domain, opts) {
+      record('listWorkingScopes', [domain, opts]);
+      const project = opts && opts.project ? opts.project : domain;
+      const p = (data[domain] || {})[project];
+      const pairs = (p && Array.isArray(p.wsPairs)) ? p.wsPairs : [];
+      return {
+        ok: true, project, domain, scopes: pairs, total: pairs.length,
+        distinctScopeCount: new Set(pairs.map((s) => s.scope)).size,
+        truncated: false, unlistedEntries: 0, unlistedReason: null,
+      };
     },
     async listAllProjects() {
       record('listAllProjects', []);
@@ -612,6 +638,127 @@ section('S3 -- GET /api/memory: one row per PROJECT');
   ok('CONTROL: the allow-listed fields ARE forwarded',
     Object.keys(idx.body.projects[0]).includes('project')
     && Object.keys(idx.body.projects[0]).includes('domain'));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ONE PROJECT, ONE CLOCK — the row speaks for the AGENT-newest pair.
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The store sorts pairs by mtime and `listProjects` reads its headline off
+// the first of them. Every age the page renders comes from `effectiveSave`,
+// which prefers the journal's `writtenAt`. On a synced or copied store the
+// two disagree — git rewrites mtime on checkout — and the sidebar row then
+// names a fortnight-old work-stream beside a Status block reporting a save
+// three hours ago on a different scope. Both readings were of one project,
+// from one fetch.
+//
+// The store's mtime sort is NOT the thing under test and is NOT changed:
+// `scope=latest` and the tray consume it. The fixture returns pairs in that
+// order and asserts the ROUTE re-picks.
+{
+  const stub = install({
+    alpha: {
+      // mtime order (the store's own), agent order REVERSED against it.
+      reversed: {
+        brief: null,
+        scopes: [
+          { scope: 'file-newest', machine: 'm1', lastWriteAt: '2026-09-17T00:00:00.000Z' },
+          { scope: 'agent-newest', machine: 'm2', lastWriteAt: '2026-09-16T00:00:00.000Z' },
+          { scope: 'no-journal', machine: 'm3', lastWriteAt: '2026-09-15T00:00:00.000Z' },
+        ],
+        wsPairs: [
+          // Newest FILE clock, oldest AGENT clock: a fortnight-old handoff
+          // that a checkout stamped with today's mtime.
+          {
+            scope: 'file-newest', machine: 'm1',
+            lastWriteAt: '2026-09-17T00:00:00.000Z', ageSeconds: 3600,
+            writtenAt: '2026-09-03T00:00:00.000Z', writtenAgeSeconds: 1209600,
+            headline: 'a fortnight-old handoff that git restamped',
+            harness: 'opencode', model: 'glm', lastSaveKind: 'full',
+          },
+          // The real newest save, three hours old, and second by mtime.
+          {
+            scope: 'agent-newest', machine: 'm2',
+            lastWriteAt: '2026-09-16T00:00:00.000Z', ageSeconds: 90000,
+            writtenAt: '2026-09-16T21:00:00.000Z', writtenAgeSeconds: 10800,
+            headline: 'the save this project actually made',
+            harness: 'claude-code', model: 'opus', lastSaveKind: 'full',
+          },
+          // No journal time at all. An ABSENCE, never an age of zero: it must
+          // not displace a pair that has a reading.
+          {
+            scope: 'no-journal', machine: 'm3',
+            lastWriteAt: '2026-09-15T00:00:00.000Z', ageSeconds: 180000,
+            writtenAt: null, writtenAgeSeconds: null,
+            headline: null, harness: null, model: null, lastSaveKind: null,
+          },
+        ],
+      },
+    },
+  });
+  // PRECONDITION. Without it the assertions below could pass over a store
+  // that already answered with the agent-newest pair, proving nothing.
+  const raw = await stub.listProjects('alpha');
+  eq('PRECONDITION: the STORE row names the file-newest pair',
+    raw.projects[0].newestScope, 'file-newest');
+  eq('PRECONDITION: ...and carries that pair headline',
+    raw.projects[0].headline, 'a fortnight-old handoff that git restamped');
+
+  const r = await call('get', '/:domain/projects', { params: { domain: 'alpha' } });
+  const p = r.body.projects.find((x) => x.project === 'reversed');
+  eq('the row names the AGENT-newest work-stream', p.newestScope, 'agent-newest');
+  eq('...and its machine', p.newestMachine, 'm2');
+  eq('...and its headline', p.headline, 'the save this project actually made');
+  eq('...and its harness', p.harness, 'claude-code');
+  eq('...and its model', p.model, 'opus');
+  eq('...and its agent stamp', p.writtenAt, '2026-09-16T21:00:00.000Z');
+  eq('...and its agent age', p.writtenAgeSeconds, 10800);
+  // THE FILE CLOCK IS LEFT ALONE. It is disclosed as the file's, and a
+  // consumer asking when bytes last landed on this disk has nowhere else to
+  // read it. Two clocks, two fields, neither pretending to be the other.
+  eq('the FILE clock still reports the file-newest write',
+    p.lastWriteAt, '2026-09-17T00:00:00.000Z');
+  eq('...and its age', p.ageSeconds, 3600);
+  // The index route folds the same facts, so it must make the same pick.
+  const all = await call('get', '/');
+  const pi = all.body.projects.find((x) => x.domain === 'alpha' && x.project === 'reversed');
+  eq('GET /api/memory makes the same pick', pi.newestScope, 'agent-newest');
+}
+{
+  // THE FALLBACK IS LOAD-BEARING. A pair whose journal recorded no time still
+  // has a file time, and it can legitimately beat a pair whose agent clock is
+  // a fortnight old — which is exactly what the Work-streams table does with
+  // it. Drop the fallback and this pair becomes unselectable, handing the row
+  // back to the stale save.
+  install({
+    alpha: {
+      mixed: {
+        brief: null,
+        scopes: [{ scope: 'stale-agent', machine: 'm1', lastWriteAt: '2026-09-17T00:00:00.000Z' }],
+        wsPairs: [
+          {
+            scope: 'stale-agent', machine: 'm1',
+            lastWriteAt: '2026-09-17T00:00:00.000Z', ageSeconds: 100,
+            writtenAt: '2026-08-01T00:00:00.000Z', writtenAgeSeconds: 1000000,
+            headline: 'saved in August', harness: 'opencode', model: 'glm', lastSaveKind: 'full',
+          },
+          {
+            scope: 'fresh-file-no-journal', machine: 'm2',
+            lastWriteAt: '2026-09-16T22:00:00.000Z', ageSeconds: 5000,
+            writtenAt: null, writtenAgeSeconds: null,
+            headline: 'no journal time, but written an hour ago', harness: null,
+            model: null, lastSaveKind: null,
+          },
+        ],
+      },
+    },
+  });
+  const r = await call('get', '/:domain/projects', { params: { domain: 'alpha' } });
+  const p = r.body.projects.find((x) => x.project === 'mixed');
+  eq('a pair with no agent clock still wins on its FILE clock',
+    p.newestScope, 'fresh-file-no-journal');
+  eq('...and says so by reporting no agent stamp', p.writtenAt, null);
+  eq('...with the age absent rather than zero', p.writtenAgeSeconds, null);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

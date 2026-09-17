@@ -250,6 +250,88 @@ function projectRow(domain, r) {
 }
 
 /**
+ * The pair a project row SPEAKS FOR, on the clock the row DISPLAYS.
+ *
+ * ── TWO READINGS OF ONE PROJECT ON ONE SCREEN ────────────────────────────
+ * `listProjects` reads its headline, harness, model, save kind and newest
+ * scope off `listWorkingScopes(...).scopes[0]` — the FIRST pair, and the
+ * store sorts pairs by `mtimeMs`, the FILE clock. That sort is correct for
+ * what it serves (the tray and the route's own `scope=latest` consume it)
+ * and is NOT changed.
+ *
+ * But every age this app renders goes through the view's `effectiveSave`,
+ * which prefers the AGENT'S clock — `writtenAt`, out of the journal — and
+ * falls back to the file's only when there is no journal time at all. On
+ * every synced machine after a checkout, and in any copied folder, git
+ * rewrites mtime and the two clocks disagree. The sidebar row then read
+ * "curator-v3-17-1-acceptance · 2 weeks ago" with a dormant dot while the
+ * Status block beside it, on the same fetch, said the newest save was three
+ * hours ago on another scope. v3.55.0 put the freshness DOT, the age WORDS
+ * and the table ORDER in lockstep on the agent clock; the PROJECT ROW was
+ * left on the other one.
+ *
+ * ── THE RULE, STATED PLAINLY ─────────────────────────────────────────────
+ * Each pair's effective time is its agent time when it has one, else its
+ * file time — the same preference `effectiveSave` applies, so the row and
+ * the page cannot disagree about which save is newest. Newest wins; ties
+ * keep the store's order, so this is a total order and a re-poll cannot swap
+ * two rows. A pair with NO readable time at all never wins over one that has
+ * a reading (absence is not an age of zero), and wins only by being alone.
+ *
+ * THE FALLBACK IS LOAD-BEARING, not a formality. A pair whose journal never
+ * recorded a time still has a file time, and it can legitimately beat a pair
+ * whose agent time is a fortnight old — which is precisely what the table
+ * beside this row does with it. Dropping the fallback would make such a pair
+ * unselectable and hand the row back to a stale save.
+ *
+ * WHAT IS DELIBERATELY NOT TOUCHED: `lastWriteAt` / `ageSeconds`. They are
+ * the FILE clock, they are named and documented as such, and a consumer that
+ * wants to show when bytes last landed on this disk has nowhere else to read
+ * it. So when the winning pair carries no agent clock at all, this row
+ * reports `writtenAt: null` beside a `lastWriteAt` belonging to a different
+ * pair — an absence and a fact, which is the pair of things this module
+ * refuses to collapse.
+ *
+ * Costs nothing: a pure pick over the array `withScopeFacts` has already
+ * fetched. No extra call, no extra read, the 900 ms index budget untouched.
+ *
+ * @returns {object|null} the winning pair, or null when there are none.
+ */
+function agentNewestPair(scopes) {
+  const secs = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const fromStamp = (s) => {
+    if (typeof s !== 'string' || !s) return null;
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : null;
+  };
+  // Younger is newer, so the comparison is on AGE and the smallest wins.
+  // Ages are taken over stamps where the store computed them, because it
+  // computed every one of them against a single `now`.
+  const ageOf = (p) => {
+    if (!p || typeof p !== 'object') return null;
+    const w = secs(p.writtenAgeSeconds);
+    if (w !== null) return w;
+    const wAt = fromStamp(p.writtenAt);
+    if (wAt !== null) return Math.max(0, Math.round((Date.now() - wAt) / 1000));
+    const f = secs(p.ageSeconds);
+    if (f !== null) return f;
+    const fAt = fromStamp(p.lastWriteAt);
+    if (fAt !== null) return Math.max(0, Math.round((Date.now() - fAt) / 1000));
+    return null;
+  };
+  let best = null;
+  let bestAge = null;
+  for (const p of Array.isArray(scopes) ? scopes : []) {
+    if (!p || typeof p !== 'object') continue;
+    const age = ageOf(p);
+    if (best === null) { best = p; bestAge = age; continue; }
+    if (age === null) continue;                       // absence never displaces a reading
+    if (bestAge === null || age < bestAge) { best = p; bestAge = age; }
+  }
+  return best;
+}
+
+/**
  * Fold the per-work-stream facts into a row the store answers cheaply.
  *
  * ── WHAT IS MISSING FROM A STORE ROW, AND WHY IT IS MISSING ──────────────
@@ -286,8 +368,31 @@ async function withScopeFacts(store, rows) {
     try { idx = await store.listWorkingScopes(row.domain, { project: row.project }); }
     catch { idx = null; }
     const scopes = idx && idx.ok && Array.isArray(idx.scopes) ? idx.scopes : [];
+    const speaker = agentNewestPair(scopes);
     out.push({
       ...row,
+      // ONE PROJECT, ONE CLOCK. See agentNewestPair: the store hands this row
+      // the pair that is newest by MTIME, the page renders every age off the
+      // AGENT'S clock, and on any synced or copied store the two disagree.
+      // A FIXED set of keys, never a spread of the pair — projectRow's
+      // allow-list rule holds here too, and `scopes[]` carries fields
+      // (`harnesses`, `journalEntriesScanned`, `bytes`) that are not on this
+      // wire contract.
+      ...(speaker ? {
+        headline: speaker.headline ?? null,
+        harness: speaker.harness ?? null,
+        model: speaker.model ?? null,
+        lastSaveKind: speaker.lastSaveKind ?? null,
+        // The notes come off the SAME journal line as the kind. Taking one
+        // from the new pair and leaving the other on the old one would make
+        // the row describe two different saves at once — this module's own
+        // recorded defect class, committed deliberately.
+        lastSaveNotes: Array.isArray(speaker.lastSaveNotes) ? speaker.lastSaveNotes : [],
+        newestScope: speaker.scope ?? null,
+        newestMachine: speaker.machine ?? null,
+        writtenAt: speaker.writtenAt ?? null,
+        writtenAgeSeconds: Number.isFinite(speaker.writtenAgeSeconds) ? speaker.writtenAgeSeconds : null,
+      } : {}),
       scopesTruncated: !!(idx && idx.ok && idx.truncated),
       unlistedEntries: idx && idx.ok && Number.isInteger(idx.unlistedEntries) ? idx.unlistedEntries : 0,
       unlistedReason: (idx && idx.ok && idx.unlistedReason) || null,

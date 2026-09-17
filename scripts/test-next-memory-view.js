@@ -1631,6 +1631,16 @@ ok('memory.css contains no hardcoded hex colour (every colour is a token)',
   !/:\s*#[0-9a-f]{3,8}\b/i.test(cssNoComments));
 ok('every var() used in memory.css resolves (delegated to test-css-tokens.js, which walks this file)',
   (viewCss.match(/var\(--/g) || []).length > 20);
+// A machine id is `<hostname-slug>-<install-id>` and used to arrive under
+// `overflow-wrap: anywhere`, which broke `talis-macbook-pro-acb035` across
+// four lines and made every other row in the table taller with it.
+ok('the MACHINE column is one ellipsised line, never a four-line stack',
+  (() => {
+    const r = ruleFor(viewCss, '.mem-ws-machine');
+    return !!r && /white-space:\s*nowrap/.test(r) && /text-overflow:\s*ellipsis/.test(r)
+      && /overflow:\s*hidden/.test(r) && /max-width:\s*\d+ch/.test(r)
+      && !/overflow-wrap:\s*anywhere/.test(r);
+  })());
 ok('wide content scrolls inside its own box (pre gets overflow-x)',
   /\.mem-doc pre \{[\s\S]*?overflow-x: auto/.test(viewCss));
 ok('focus is visible on the project rows', viewCss.includes('.mem-row:focus-visible'));

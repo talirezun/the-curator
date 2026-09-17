@@ -710,8 +710,30 @@
 /* TABULAR FIGURES, because this column is a clock: tickAges rewrites it every
    second and proportional digits make the words jitter as they change. */
 .mem-ws-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
-.mem-ws-cell-machine { min-width: 0; }
-.mem-ws-machine { overflow-wrap: anywhere; }
+/* ONE LINE, ELLIPSISED — the same call `.mem-ws-headline` makes, for a
+   different reason. `overflow-wrap: anywhere` broke a machine id at ANY
+   character, so `talis-macbook-pro-acb035` came down the column four lines
+   tall and made every other row in the table taller with it. A machine id is
+   `<hostname-slug>-<install-id>` and reads left to right — the hostname is
+   the part a person recognises — so cutting the tail is the cheap end.
+   Nothing is lost: the full id is in the Status block and in the handoff the
+   row opens, and the table already scrolls inside `.mem-ws-wrap` rather than
+   pushing the page sideways.
+
+   `ch`, not px: it is the font's own measure, so the bound tracks the text
+   scale instead of fighting it. ~24 characters clears a default macOS
+   hostname plus its six-hex install id. The badge beside it is a SIBLING, so
+   the cap sits on the span and `nowrap` on the cell keeps the two on one
+   line. */
+.mem-ws-cell-machine { min-width: 0; white-space: nowrap; }
+.mem-ws-machine {
+  display: inline-block;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 /* "this machine" is IDENTITY, not metadata, so it sits in the cell rather than
    under it — and it is rendered ONLY where the response said so explicitly.
    Quiet: it marks one row of several, and v3.16.1's rule is that a flag on
