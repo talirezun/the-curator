@@ -3782,7 +3782,12 @@ only come from GitHub's own hosts. Nothing on the screen claims Apple checked an
 
 **If it fails.** Every failure names a reason in plain language, says what was *not*
 changed, and offers both **Try again** and the download page. The copy you are running
-keeps working. The swap itself is two renames of neighbouring folders on the same disk,
+keeps working. A download that GitHub answers with a server error, or that drops on its
+way out, is **tried three times** (waiting a second, then three) before anything is
+reported — so a momentary blip on GitHub's side no longer costs you the whole update.
+If it still fails, the message distinguishes the two cases: **GitHub answering with a
+server error** — their side, wait a minute or use the release page — from a **connection
+that could not be made**, where checking your own network is the right next move. The swap itself is two renames of neighbouring folders on the same disk,
 so "half-replaced" is not a state that can exist — either the old app is complete or
 the new one is.
 

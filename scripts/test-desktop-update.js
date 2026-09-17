@@ -34,6 +34,8 @@
  *   §7  THE SWAP, EXECUTED — happy path, rollback, and every refusal
  *   §8  resolveInstallerRelease — delegation to the REAL src/routes/config.js
  *   §9  prepareUpdate, EXECUTED — download, verify, stage, and each failure
+ *   §9b the download RETRY ladder — what a transient GitHub 500 costs now
+ *       (nothing), what is deliberately never retried, and the two sentences
  *   §10 installUpdate, EXECUTED — the token boundary and the write guard
  *   §11 source discipline
  *
@@ -653,6 +655,11 @@ function makeHarness(overrides = {}) {
   const quits = [];
   const spawned = [];
   const toolCalls = [];
+  // Every wait the download ladder asks for, in order and in milliseconds.
+  // Faked so the retry cases cost microseconds instead of 4 real seconds each
+  // — and so the SCHEDULE itself becomes an assertable value rather than a
+  // number in a comment.
+  const sleeps = [];
 
   const runCommand = async (cmd, args) => {
     toolCalls.push([cmd, ...args].join(' '));
@@ -687,6 +694,7 @@ function makeHarness(overrides = {}) {
       },
     })),
     fetchImpl: overrides.fetchImpl || (async () => new Response(DMG_BYTES, { status: 200 })),
+    sleepImpl: overrides.sleepImpl || (async (ms) => { sleeps.push(ms); }),
     execPath: path.join(target, 'Contents', 'MacOS', 'The Curator'),
     homeDir: dir,
     arch: 'arm64',
@@ -701,7 +709,7 @@ function makeHarness(overrides = {}) {
     pid: 999999,
     randomId: (() => { let n = 0; return () => `id${n++}`; })(),
   });
-  return { eng, dir, installDir, target, workDir, events, quits, spawned, toolCalls,
+  return { eng, dir, installDir, target, workDir, events, quits, spawned, toolCalls, sleeps,
     onProgress: (e) => events.push(e) };
 }
 
@@ -758,8 +766,11 @@ function makeHarness(overrides = {}) {
     }, 'download-truncated'],
     ['a corrupted download', { digest: 'f'.repeat(64) }, 'digest-mismatch'],
     ['a 404 on the asset', { fetchImpl: async () => new Response('', { status: 404 }) }, 'download-not-found'],
-    ['a 500 on the asset', { fetchImpl: async () => new Response('', { status: 500 }) }, 'download-failed'],
-    ['a dropped connection', { fetchImpl: async () => { throw new Error('socket hang up'); } }, 'download-failed'],
+    // A 500 that NEVER clears is its own reason as of the v3.57.0 incident —
+    // see §9b. It used to be `download-failed`, whose sentence blames the
+    // user's internet for GitHub's server.
+    ['a 500 on the asset that never clears', { fetchImpl: async () => new Response('', { status: 500 }) }, 'download-server-error'],
+    ['a dropped connection that never recovers', { fetchImpl: async () => { throw new Error('socket hang up'); } }, 'download-failed'],
     ['the user quitting mid-download', { fetchImpl: async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); } }, 'download-cancelled'],
     ['a bundle at the wrong version', { stagedVersion: '1.2.3' }, 'staged-version-mismatch'],
     ['an image with no app in it', { toolFail: (c, a) => c.endsWith('ditto') }, 'copy-failed'],
@@ -841,6 +852,248 @@ function makeHarness(overrides = {}) {
     const h = makeHarness();
     const r = await h.eng.prepareUpdate({ onProgress: () => { throw new Error('the UI blew up'); } });
     ok(r.ok, 'a throwing progress callback does not break the download — the UI is not load-bearing');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9b The download RETRY ladder — the v3.57.0 incident, EXECUTED');
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-09-17: Check for Updates said "The download did not complete. Check
+// your internet connection and try again." The connection was fine and the
+// assets were correct — the release-download URL answered HTTP 500 with
+// GitHub's own ~160 KB "Server Error" HTML page on two of seven requests, both
+// times the first of a series. One transient 500 cost the whole update and
+// blamed the user for it.
+//
+// Everything below is EXECUTED against the real engine with a fake fetch and a
+// fake clock: the retries really happen, the bytes really stream, the sha256
+// is really computed, and the staged bundle is really on disk.
+{
+  /** The 500 page GitHub actually serves, in miniature. It must never be
+   *  hashed, written or counted — hence its distinctive bytes. */
+  const SERVER_ERROR_HTML = Buffer.from('<html><body>Server Error</body></html>'.repeat(200));
+  const serverError = () => new Response(SERVER_ERROR_HTML, { status: 500 });
+
+  /** A fetch that answers from a script of responses, and counts its calls.
+   *  The last entry repeats, so a one-entry script is "always this". */
+  const scripted = (script) => {
+    const calls = { n: 0 };
+    const fetchImpl = async () => {
+      const step = script[Math.min(calls.n, script.length - 1)];
+      calls.n += 1;
+      return typeof step === 'function' ? step() : step;
+    };
+    return { fetchImpl, calls };
+  };
+
+  eq(engine.DOWNLOAD_ATTEMPTS, 3, 'the ladder is THREE attempts — named, not buried in a loop bound');
+  eq([...engine.DOWNLOAD_BACKOFF_MS], [1000, 3000],
+     'with two waits of 1 s and 3 s, so the worst case is ~4 s of silence rather than an exponential ladder in front of a progress ring');
+  eq(engine.DOWNLOAD_BACKOFF_MS.length, engine.DOWNLOAD_ATTEMPTS - 1,
+     'one wait per GAP between attempts — a third wait would be time spent after the last try, for nothing');
+
+  // ── 1. A transient 500 clears on the retry, and its body is not the file ─
+  {
+    const { fetchImpl, calls } = scripted([serverError, () => new Response(DMG_BYTES, { status: 200 })]);
+    let dmgOnDisk = null;
+    const h = makeHarness({
+      fetchImpl,
+      // Not a failure injection — a tap. It reads the .dmg off disk at the
+      // moment the engine mounts it, which is the only instant at which the
+      // downloaded file still exists.
+      toolFail: (cmd, args) => {
+        if (cmd.endsWith('hdiutil') && args[0] === 'attach') { try { dmgOnDisk = readFileSync(args[1]); } catch { dmgOnDisk = null; } }
+        return false;
+      },
+    });
+    const r = await h.eng.prepareUpdate({ onProgress: h.onProgress });
+    ok(r.ok, 'A TRANSIENT 500 NO LONGER COSTS THE UPDATE — the second attempt succeeds and prepare completes');
+    eq(calls.n, 2, 'exactly two requests were made: the 500, then the good one');
+    eq([...h.sleeps], [1000], 'with exactly one 1 s wait between them');
+    eq(r.bytes, DMG_BYTES.length, 'the byte count is the 200 response\'s, not the error page\'s');
+    eq(r.verifiedDigest, `sha256:${DMG_SHA}`,
+       'AND THE DIGEST IS THE GOOD PAYLOAD\'S — the 500 page never reached the hash, which is structural: nothing is hashed until a response has been accepted');
+    eq(dmgOnDisk ? createHash('sha256').update(dmgOnDisk).digest('hex') : null, DMG_SHA,
+       'and the .dmg the engine mounted IS the good payload, byte for byte — the error page was never written either');
+    ok(dmgOnDisk ? !dmgOnDisk.includes('Server Error') : false, '…with no trace of the error page in it');
+    const stageDirs = readdirSync(h.installDir).filter((n) => n.startsWith(engine.STAGE_PREFIX));
+    ok(stageDirs.length === 1 && readIf(path.join(h.installDir, stageDirs[0], 'The Curator.app', 'Contents', 'Info.plist')).includes('3.32.0'),
+       'and a complete 3.32.0 bundle is staged beside the installed app');
+  }
+
+  // ── 2. A 500 that never clears: the truth, and whose side it is on ───────
+  {
+    const { fetchImpl, calls } = scripted([serverError]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-server-error', 'a 500 on all three attempts is its OWN reason, not the generic download failure');
+    eq(calls.n, 3, 'three attempts were made');
+    eq(r.attempts, 3, 'and the failure SAYS three — the count is on the object, not only in a log line');
+    eq(r.lastStatus, 500, 'along with the status that was last seen');
+    eq([...h.sleeps], [1000, 3000], 'with the 1 s and 3 s waits between them, and none after the last');
+    ok(/server error/i.test(r.message) && /3 times in a row/.test(r.message),
+       'the sentence names a server error and how many times it happened');
+    ok(!/internet connection/i.test(r.message),
+       'AND IT DOES NOT BLAME THE USER\'S INTERNET — the v3.57.0 defect, in one assertion');
+    ok(/release page/i.test(r.message), 'while still naming the way that always works');
+    ok(!/500|<html|Server Error<|http/i.test(r.message),
+       'and no status code, HTML or URL is splashed into the dialog — those belong to `detail`, which is for the log');
+    ok(typeof r.detail === 'string' && r.detail.includes('500') && r.detail.includes('3 attempts'),
+       'which is where the status and the attempt count really are recorded');
+  }
+
+  // ── 3. 429 is the other transient status, and it clears the same way ─────
+  {
+    const { fetchImpl, calls } = scripted([() => new Response('slow down', { status: 429 }), () => new Response(DMG_BYTES, { status: 200 })]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    ok(r.ok, 'a 429 is retried and the update completes');
+    eq(calls.n, 2, 'on the second attempt');
+  }
+
+  // ── 4. A network-shaped REJECTION is retried; undici hides it in `cause` ─
+  {
+    const { fetchImpl, calls } = scripted([
+      () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) }); },
+      () => new Response(DMG_BYTES, { status: 200 }),
+    ]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    ok(r.ok, 'a dropped connection on attempt 1 is retried and succeeds');
+    eq(calls.n, 2, 'on the second attempt');
+    // THE MESSAGE HERE DELIBERATELY MATCHES NOTHING. The first draft of this
+    // assertion used undici's real `TypeError: fetch failed`, whose MESSAGE is
+    // already in the table — so the mutation that deletes the `err.cause.code`
+    // arm came back GREEN and this line had never been able to fail. Only the
+    // cause can carry this one.
+    const causeOnly = () => Object.assign(new TypeError('the request did not go through'), { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) });
+    ok(engine.isRetryableNetworkError(causeOnly()),
+       'the classifier reads err.cause.code — WITHOUT THAT it matches almost nothing in production, because undici reports every transport failure as a bare "fetch failed" with the real errno on `cause`');
+    ok(!engine.isRetryableNetworkError(new TypeError('the request did not go through')),
+       'CONTROL — the same error with no cause and no code is NOT retryable, so the line above is really reading the cause');
+    {
+      const cause = scripted([() => { throw causeOnly(); }, () => new Response(DMG_BYTES, { status: 200 })]);
+      const h2 = makeHarness({ fetchImpl: cause.fetchImpl });
+      ok((await h2.eng.prepareUpdate({})).ok, 'and end to end: a rejection identifiable only by its cause is retried and the update completes');
+      eq(cause.calls.n, 2, 'on the second attempt');
+    }
+    for (const code of ['ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_HEADERS_TIMEOUT']) {
+      ok(engine.isRetryableNetworkError(Object.assign(new Error('x'), { code })), `${code} is retryable`);
+    }
+    ok(engine.isRetryableNetworkError(new Error('socket hang up')), 'and so is a "socket hang up" that carries no code at all');
+  }
+
+  // ── 5. WHAT MUST NOT BE RETRIED ──────────────────────────────────────────
+  {
+    const { fetchImpl, calls } = scripted([() => new Response('', { status: 404 })]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-not-found', 'a 404 keeps its own reason');
+    eq(calls.n, 1, 'AND IS NOT RETRIED — the asset is gone; asking twice more cannot bring it back');
+    eq([...h.sleeps], [], 'so nothing was waited for');
+    eq(r.attempts, 1, 'and the failure says one attempt, honestly');
+  }
+  {
+    const { fetchImpl, calls } = scripted([() => new Response('', { status: 410 })]);
+    const h = makeHarness({ fetchImpl });
+    eq((await h.eng.prepareUpdate({})).reason, 'download-not-found', 'nor is a 410');
+    eq(calls.n, 1, '…which is also asked exactly once');
+  }
+  {
+    const { fetchImpl, calls } = scripted([() => new Response('', { status: 403 })]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-failed', 'a 403 is a request that is wrong, not weather');
+    eq(calls.n, 1, 'so it is asked once — a retry would only be a second wrong request');
+  }
+  {
+    const { fetchImpl, calls } = scripted([() => { throw new TypeError('u is not a function'); }]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-failed', 'a PROGRAMMING error rejecting the fetch is a failure...');
+    eq(calls.n, 1, '...reported at once, not three times over four seconds');
+    ok(!/is not a function/.test(r.message), '...and its text never reaches the dialog');
+    ok(!engine.isRetryableNetworkError(new TypeError('u is not a function')), 'the classifier is narrow BY DESIGN, and says so directly');
+  }
+
+  // ── 6. A CANCEL IS NEVER RETRIED. It is the one thing a retry must not do ─
+  {
+    const { fetchImpl, calls } = scripted([() => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); }]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-cancelled', 'an AbortError on attempt 1 is a cancellation');
+    eq(calls.n, 1, 'and the request is NOT made again — retrying a cancel is the one behaviour a cancel cannot have');
+    eq([...h.sleeps], [], 'nor is anything waited for');
+    ok(!engine.isRetryableNetworkError(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+       'the classifier refuses an abort explicitly, whatever else it matches');
+    ok(!engine.isRetryableNetworkError(Object.assign(new Error('The operation was aborted'), { code: 'ABORT_ERR' })), '…by code as well as by name');
+  }
+
+  // ── 7. AN ABORT DURING THE WAIT IS ANSWERED AT ONCE ──────────────────────
+  // The fake sleep here NEVER resolves. If the ladder simply awaited it, this
+  // case would hang the suite; it returns because the abort listener is what
+  // unblocks the wait. That is the assertion — a user who quits during a 3 s
+  // backoff must not sit through the rest of it first.
+  {
+    const controller = new AbortController();
+    const { fetchImpl, calls } = scripted([serverError]);
+    const h = makeHarness({
+      fetchImpl,
+      sleepImpl: () => { controller.abort(); return new Promise(() => {}); },
+    });
+    const started = Date.now();
+    // Raced against a real 1.5 s timer so that a ladder which DOES sit out the
+    // wait reddens an assertion instead of hanging the suite — the shape this
+    // file's own §9 docblock records as worse than a failure. `unref` keeps
+    // the timer from holding the process open once the race is decided.
+    let stuckTimer = null;
+    const stuck = new Promise((resolve) => {
+      stuckTimer = setTimeout(() => resolve({ reason: '__the-wait-was-never-interrupted__' }), 1500);
+    });
+    const r = await Promise.race([h.eng.prepareUpdate({ signal: controller.signal }), stuck]);
+    clearTimeout(stuckTimer);
+    eq(r.reason, 'download-cancelled', 'quitting DURING the backoff wait cancels');
+    eq(calls.n, 1, 'without a further request');
+    ok(Date.now() - started < 2000, `and promptly — ${Date.now() - started} ms, not the length of the wait`);
+  }
+
+  // ── 8. A STREAM THAT DIES MID-BODY IS NOT RETRIED (pinning what was) ─────
+  // Deliberately out of scope: resuming a half-written 140 MB body needs a
+  // range request this engine does not make, and `download-truncated` already
+  // has its own reason and its own sentence. The ladder covers the INITIAL
+  // request only, and this is what proves that boundary is real.
+  {
+    const { fetchImpl, calls } = scripted([() => new Response(new ReadableStream({
+      start(c) { c.enqueue(new Uint8Array(DMG_BYTES.subarray(0, 64))); c.error(new Error('socket hang up')); },
+    }), { status: 200 })]);
+    const h = makeHarness({ fetchImpl });
+    const r = await h.eng.prepareUpdate({});
+    eq(r.reason, 'download-truncated', 'a body that dies mid-stream keeps its own reason');
+    eq(calls.n, 1, 'AND IS NOT RETRIED — the ladder covers the initial request only');
+    eq([...h.sleeps], [], 'so no wait was spent on it either');
+  }
+
+  // ── 9. The two sentences, and the token that can never reach a person ────
+  {
+    ok(/internet connection/i.test(plan.UPDATE_FAILURES['download-failed']),
+       'the network sentence still tells the user to check their connection — right for THAT class, and only that one');
+    ok(!/internet connection/i.test(plan.UPDATE_FAILURES['download-server-error']),
+       'and the server sentence does not');
+    for (const reason of Object.keys(plan.UPDATE_FAILURES)) {
+      const m = plan.updateFailure(reason).message;
+      ok(!m.includes('{') && !m.includes('}'),
+         `"${reason}" renders with no unsubstituted template token even when nothing is passed`);
+    }
+    eq(plan.updateFailure('download-server-error', null, { attempts: 1 }).message.includes('once'), true,
+       'a single attempt reads "once" rather than "1 times"');
+    eq(plan.updateFailure('download-server-error', null, { attempts: 'lots' }).message.includes('every time it was asked'), true,
+       'and an unusable count degrades to a phrase that is still true');
+    const spoofed = plan.updateFailure('download-server-error', null, { ok: true, reason: 'nope', message: 'trust me', attempts: 2 });
+    eq(spoofed.ok, false, 'the extra facts cannot forge `ok`...');
+    eq(spoofed.reason, 'download-server-error', '...nor the reason...');
+    ok(/server error/.test(spoofed.message), '...nor the sentence, which stays the table\'s');
+    eq(Object.hasOwn(plan.updateFailure('download-failed'), 'attempts'), false,
+       'and a failure with no count carries no `attempts` field at all — absent is not zero');
   }
 }
 

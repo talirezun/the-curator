@@ -450,7 +450,8 @@ export function describeUpdate(payload, installer = {}) {
  * ── AND THE SENTENCE IS THE SERVER'S ───────────────────────────────────────
  *
  * `outcome.error` is relayed verbatim: it is written by the engine's own
- * 36-entry `UPDATE_FAILURES` table or by the route's shared refusal shapes,
+ * `UPDATE_FAILURES` table — count it there, never here — or by the route's
+ * shared refusal shapes,
  * always by the side that knows what actually happened, and each one already
  * names the fix. `outcome.hint` too. This function chooses a HEADLINE, an
  * icon, and which button to offer — nothing else.
