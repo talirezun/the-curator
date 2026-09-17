@@ -490,7 +490,7 @@ function renderSetupDecision(f) {
         '<div class="sync-decision-actions">' +
           '<button type="button" class="btn btn-primary" id="btn-decide-go"' + dis + '>' +
             (busy ? 'Connecting\u2026' : 'Connect') + '</button>' +
-          '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">Cancel</button>' +
+          '<button type="button" class="btn btn-ghost" id="btn-decide-cancel">Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -530,7 +530,7 @@ function renderSetupDecision(f) {
             (busy && f.mode === 'merge' ? 'Merging\u2026' : 'Merge \u2014 keep both') + '</button>' +
           '<button type="button" class="btn btn-danger" id="btn-decide-overwrite"' + dis + '>' +
             (busy && f.mode === 'pull' ? 'Overwriting\u2026' : 'Overwrite my local files') + '</button>' +
-          '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">Cancel</button>' +
+          '<button type="button" class="btn btn-ghost" id="btn-decide-cancel">Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -681,7 +681,7 @@ function renderDisconnect() {
       '</div>'
     );
   }
-  return '<button type="button" class="sync-disconnect-link" id="btn-disconnect-open"' + (disabled ? ' disabled' : '') + '>Disconnect this repository</button>';
+  return '<button type="button" class="btn btn-ghost btn-xs" id="btn-disconnect-open"' + (disabled ? ' disabled' : '') + '>Disconnect this repository</button>';
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────

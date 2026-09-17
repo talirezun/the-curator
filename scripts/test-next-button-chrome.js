@@ -574,11 +574,42 @@ for (const prop of ['background', 'color', 'border']) {
 ok(dangerRules.some(r => /:hover/.test(r.selector) && /--danger-tint/.test(r.body)),
   '.btn-danger:hover tints with --danger-tint (the design system\'s danger variant)');
 
-// The Shared Brain revoke deliberately keeps a heavier, filled treatment.
-const revoke = rulesFor('btn-danger', 'views/shared.css')
-  .find(r => /\.sb-revoke-go/.test(r.selector) && /^[^:]*$/.test(r.selector));
-ok(!!revoke && /background\s*:\s*var\(--danger\)/.test(revoke.body),
-  '.sb-revoke-go .btn-danger keeps its FILLED treatment (higher specificity wins)');
+/* ── THE SHARED BRAIN REVOKE: SAME JUDGEMENT, DIFFERENT MECHANISM ────────
+   This assertion USED to read: the revoke keeps a heavier, FILLED treatment
+   via `.sb-revoke-go .btn-danger` in views/shared.css, "higher specificity
+   wins". The judgement was right — the GDPR Article 17 revoke erases another
+   person's contributions and earns more weight than an ordinary confirm —
+   and the mechanism was wrong in three ways recorded in views/shared.css:
+   it repainted another variant from a view sheet, it filled with `--danger`
+   (white on it is 3.40:1, an AA failure), and it made the button half one
+   variant and half another because the gloss pseudo-elements key on the
+   class NAME.
+
+   shell.css now ships `.btn-danger-solid` for exactly this case. So the pin
+   is INVERTED rather than deleted, in both halves: the button must USE the
+   variant, and this stylesheet must declare NO `.btn-danger` rule at all —
+   a presence-only check on the first half would pass while a scoped repaint
+   quietly came back. */
+const revokeMarkup = readFileSync(path.join(NEXT, 'views/shared.js'), 'utf8');
+ok(/data-sb-action="revoke-run"/.test(revokeMarkup),
+  'CONTROL: the revoke button is still emitted by views/shared.js');
+const revokeBtn = /<button[^>]*?class="([^"]*)"[^>]*?data-sb-action="revoke-run"/.exec(revokeMarkup)
+  || /class="([^"]*)"[^>]*data-sb-action="revoke-run"/.exec(revokeMarkup);
+ok(!!revokeBtn && /\bbtn-danger-solid\b/.test(revokeBtn[1]),
+  'the revoke takes the FILLED danger variant by NAME — btn btn-danger-solid — not a scoped repaint ' +
+  `(class list: ${revokeBtn ? revokeBtn[1] : 'NOT FOUND'})`);
+ok(!!revokeBtn && !/\bbtn-danger\b(?!-)/.test(revokeBtn[1]),
+  '…and not both at once, which would put the tinted outline and the filled face on one element');
+const sharedCssRaw = stripComments(readFileSync(path.join(NEXT, "views/shared.css"), "utf8"));
+ok(!/\.btn-danger(?![-\w])/.test(sharedCssRaw),
+  'views/shared.css declares NO `.btn-danger` rule anywhere — the override that hid the canonical variant is gone, ' +
+  'not merely unused');
+ok(/\.btn-danger(?![-\w])/.test('.sb-revoke-go .btn-danger { background: var(--danger); }'),
+  'CONTROL: that absence check fires on the exact rule it replaced');
+const solidRules = rulesFor('btn-danger-solid', 'shell.css');
+const solidBase = solidRules.find(r => /^\.btn-danger-solid$/.test(r.selector));
+ok(!!solidBase && /--danger-fill/.test(solidBase.body),
+  '…and the variant it moved to fills with --danger-fill (4.51:1 against --text-on-accent), not --danger (3.40:1)');
 
 const delRules = rulesFor('chat-conv-delete', 'views/chat.css');
 const delBase = delRules.find(r => /^\.chat-conv-delete$/.test(r.selector));

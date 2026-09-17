@@ -112,7 +112,7 @@
  *  · Whether a rule is REACHED at runtime at all.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -880,6 +880,201 @@ section('§10  THE TWO SHARED FIXES IN shell.css, AND THE LOAD ORDER THEY REST O
        .test('.sidebar-hint { color: var(--text-2); color: var(--text-3); }'),
      'CONTROL: the ABSENCE check fires on a rule that keeps --text-2 and appends a later --text-3 — the ' +
      'shape a presence-only assertion cannot see');
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11  THE HELP AFFORDANCE — one colour, everywhere, and it measures');
+// ═════════════════════════════════════════════════════════════════════════
+
+/* WHY THIS SECTION EXISTS, in the maintainer's words: users must be able to
+   RECOGNISE the help system on sight, on any screen. The ⓘ mark rendered at
+   --text-2 — the same colour as the sentence beside it — on eleven surfaces
+   (every view header, plus Settings' update-recovery mark and every
+   settingsBlock fold), so it read as punctuation rather than as an offer.
+
+   It is accent-coloured now, at rest, with an --accent-tint hover/focus ring
+   and an --accent-tint-strong open state; the panel it opens carries a 2px
+   --accent left rule over a faint --accent-tint wash, so the thing that
+   appears is visibly the thing the violet ⓘ promised.
+
+   WHAT IS ADDED HERE IS THE RATCHET, not the measurement. The figures were
+   taken in a real browser first — headless Chrome via scripts/visual, both
+   themes, an isolated server on an ephemeral port, getComputedStyle on the
+   live element with its backdrop composited up the ancestor chain — and the
+   arithmetic below reproduces them from the token values so they cannot rot.
+
+   THE GLYPH AGREES EXACTLY. Browser and arithmetic both read 9.55 / 8.84 at
+   rest on --canvas, 8.54 / 7.82 on hover, 7.58 / 7.12 open — identical to
+   the second decimal in every theme and state. That agreement is what makes
+   this section trustworthy as a proxy.
+
+   THE PANEL DOES NOT, AND THE DISAGREEMENT IS UNDERSTOOD. The browser reads
+   the rule at 4.17 / 6.57 and the text at 10.23 / 9.33; the arithmetic here
+   reads 3.66 / 5.81 and 8.96 / 8.25. The wash is the difference:
+   `getComputedStyle(...).backgroundColor` reports the background-COLOR layer
+   only, so a probe walking ancestors sees --surface-raised and never the
+   --accent-tint background-IMAGE laid over it. The arithmetic composites the
+   tint, so it is the CONSERVATIVE reading and it is what the floors below
+   are held to. Do not "correct" these figures upward from a browser run.
+
+   THE SIDEBAR IS NOT GRADED HERE AT ALL. `.tx-vh-sidebar`'s mark sits on
+   --mat-sidebar, a blurred MATERIAL; no arithmetic composites a backdrop
+   filter. Measured in the browser only: 8.74 dark / 8.51 light. That gap is
+   stated rather than papered over with a surface the mark does not sit on.
+
+   TWO DIFFERENT FLOORS APPLY AND THE DIFFERENCE IS THE POINT:
+     · the ⓘ GLYPH is a non-text UI component under WCAG 1.4.11 -> 3:1.
+       It is a character, and it clears 4.5 as well, which is asserted
+       separately rather than assumed from the 3:1 pass.
+     · the PANEL TEXT is text -> 4.5.
+     · the panel's 2px LEFT RULE is a non-text UI component -> 3:1. This is
+       the binding one on dark and has the least headroom of anything here.
+
+   THE BACKDROP IS NAMED, not guessed. The mark sits in a view header inside
+   `.main`, whose background is --canvas, and in Settings inside a block on
+   --surface. Both are graded below; the sidebar is not, for the reason
+   above. */
+{
+  const textCss = stripComments(readFileSync(join(NEXT, 'shared/text.css'), 'utf8'));
+
+  // ── The rules are actually there, and on the right selectors ───────────
+  const infoBase = /\.tx-vh-info\s*\{[^}]*\}/.exec(textCss);
+  ok(!!infoBase && /color:\s*var\(--accent-text\)/.test(infoBase[0]),
+     `shared/text.css paints the ⓘ mark --accent-text at REST — ${C(D, '--accent-text', '--surface')} dark / ` +
+     `${C(L, '--accent-text', '--surface')} light on --surface, ${C(D, '--accent-text', '--canvas')} / ` +
+     `${C(L, '--accent-text', '--canvas')} on --canvas. It was --text-2, i.e. the colour of the sentence beside it.`);
+  ok(!!infoBase && !/color:\s*var\(--text-2\)/.test(infoBase[0]),
+     '…and --text-2 is GONE from that rule rather than merely joined by --accent-text (a presence-only check ' +
+     'passes while a second, later declaration in the same rule still wins)');
+
+  const infoHover = /\.tx-vh-info:hover,\s*\n?\s*\.tx-vh-info:focus-visible\s*\{[^}]*\}/.exec(textCss);
+  ok(!!infoHover && /background:\s*var\(--accent-tint\)/.test(infoHover[0]),
+     `hover tints with --accent-tint (glyph over it: ${C(D, '--accent-text', '--surface', '--accent-tint')} / ` +
+     `${C(L, '--accent-text', '--surface', '--accent-tint')})`);
+  ok(!!infoHover && /border-color:\s*var\(--accent-border\)/.test(infoHover[0]),
+     '…and the RING is the transparent border this element already declares taking a colour — no geometry moves, ' +
+     'which is why hover, focus and open can be one family without three box sizes');
+  ok(!!infoHover && /:focus-visible/.test(infoHover[0]),
+     '…and :focus-visible is named ALONGSIDE :hover, so a keyboard user reaches the same affordance rather than ' +
+     'only the base.css outline');
+
+  const infoOpen = /\.tx-vh-info\[aria-expanded="true"\]\s*\{[^}]*\}/.exec(textCss);
+  ok(!!infoOpen && /background:\s*var\(--accent-tint-strong\)/.test(infoOpen[0]) &&
+     /color:\s*var\(--accent-text\)/.test(infoOpen[0]),
+     `open is one step further in the SAME family — --accent-tint-strong (glyph over it: ` +
+     `${C(D, '--accent-text', '--surface', '--accent-tint-strong')} / ` +
+     `${C(L, '--accent-text', '--surface', '--accent-tint-strong')})`);
+  ok(!!infoOpen && /background/.test(infoOpen[0]) && /color/.test(infoOpen[0]),
+     '…and open is never carried by COLOUR ALONE: the fill moves, aria-expanded is set, and the panel appears');
+
+  const panel = /\.tx-vh-panel\s*\{[^}]*\}/.exec(textCss);
+  ok(!!panel && /border-left:\s*2px solid var\(--accent\)/.test(panel[0]),
+     `the panel carries a 2px --accent left rule — ${C(D, '--accent', '--surface-raised', '--accent-tint')} dark / ` +
+     `${C(L, '--accent', '--surface-raised', '--accent-tint')} light against its own tinted face`);
+  ok(!!panel && /background-image:\s*linear-gradient\(var\(--accent-tint\), var\(--accent-tint\)\)/.test(panel[0]),
+     '…over a faint --accent-tint wash laid as a background-IMAGE on a background-COLOR, so the translucent tint ' +
+     'and the raised surface stay independent and a theme that moves one need not restate the other');
+  ok(!!panel && /color:\s*var\(--text-2\)/.test(panel[0]),
+     `…and its text stays --text-2 — ${C(D, '--text-2', '--surface-raised', '--accent-tint')} / ` +
+     `${C(L, '--text-2', '--surface-raised', '--accent-tint')} over the tinted face`);
+
+  // ── THE FLOORS, as arithmetic ──────────────────────────────────────────
+  const NON_TEXT_FLOOR = 3.0;
+  for (const [label, base] of [['--surface', '--surface'], ['--canvas', '--canvas']]) {
+    ok(C(D, '--accent-text', base) >= NON_TEXT_FLOOR && C(L, '--accent-text', base) >= NON_TEXT_FLOOR,
+       `GLYPH FLOOR on ${label}: the ⓘ clears the ${NON_TEXT_FLOOR}:1 non-text floor in BOTH themes ` +
+       `(${C(D, '--accent-text', base)} / ${C(L, '--accent-text', base)})`);
+    ok(C(D, '--accent-text', base) >= TEXT_FLOOR && C(L, '--accent-text', base) >= TEXT_FLOOR,
+       `…and the ${TEXT_FLOOR}:1 TEXT floor too, which matters because ⓘ is a character (` +
+       `${C(D, '--accent-text', base)} / ${C(L, '--accent-text', base)})`);
+  }
+  for (const tint of ['--accent-tint', '--accent-tint-strong']) {
+    ok(C(D, '--accent-text', '--surface', tint) >= TEXT_FLOOR && C(L, '--accent-text', '--surface', tint) >= TEXT_FLOOR,
+       `…and over its own ${tint} fill, composited, in both themes ` +
+       `(${C(D, '--accent-text', '--surface', tint)} / ${C(L, '--accent-text', '--surface', tint)})`);
+  }
+  ok(C(D, '--text-2', '--surface-raised', '--accent-tint') >= TEXT_FLOOR &&
+     C(L, '--text-2', '--surface-raised', '--accent-tint') >= TEXT_FLOOR,
+     `PANEL TEXT FLOOR: --text-2 over the tinted panel clears ${TEXT_FLOOR}:1 in both themes ` +
+     `(${C(D, '--text-2', '--surface-raised', '--accent-tint')} / ` +
+     `${C(L, '--text-2', '--surface-raised', '--accent-tint')}) — the wash costs it ~1.2 points on dark and it ` +
+     'still has ~4.5 of headroom');
+  ok(C(D, '--accent', '--surface-raised', '--accent-tint') >= NON_TEXT_FLOOR &&
+     C(L, '--accent', '--surface-raised', '--accent-tint') >= NON_TEXT_FLOOR,
+     `PANEL RULE FLOOR: the 2px --accent rule clears ${NON_TEXT_FLOOR}:1 against its own tinted face in both ` +
+     `themes (${C(D, '--accent', '--surface-raised', '--accent-tint')} / ` +
+     `${C(L, '--accent', '--surface-raised', '--accent-tint')}). The DARK figure is the binding one anywhere in ` +
+     'this section and has the least headroom — if --accent or --accent-tint moves, this is the assertion that ' +
+     'goes red first.');
+
+  // ── The ownership rule this treatment depends on ──────────────────────
+  const txLeaks = (function () {
+    const out = [];
+    (function walk(dir) {
+      for (const e of readdirSync(dir).sort()) {
+        const q = join(dir, e);
+        if (statSync(q).isDirectory()) walk(q);
+        else if (q.endsWith('.css') && !q.endsWith('shared/text.css') &&
+                 /\.tx-[a-z]/.test(stripComments(readFileSync(q, 'utf8')))) out.push(q.slice(NEXT.length + 1));
+      }
+    })(NEXT);
+    return out;
+  })();
+  ok(txLeaks.length === 0,
+     'no stylesheet OTHER than shared/text.css declares a `tx-` rule — the whole point of putting the cue here is ' +
+     'that ONE file reaches all eleven surfaces; a second declaration anywhere would let one view have a ' +
+     'differently-coloured help mark' + (txLeaks.length ? ` (found: ${txLeaks.join(', ')})` : ''));
+
+  // ── POSITIVE CONTROLS — each detector fired against the pre-fix value ──
+  ok(!/color:\s*var\(--accent-text\)/.test('.tx-vh-info { color: var(--text-2); }'),
+     'CONTROL: the rest-colour check goes RED on the pre-fix declaration');
+  ok(/color:\s*var\(--text-2\)/.test('.tx-vh-info { color: var(--accent-text); color: var(--text-2); }'),
+     'CONTROL: the ABSENCE check fires on a rule that keeps --accent-text and appends a later --text-2 — the shape ' +
+     'a presence-only assertion cannot see');
+  ok(!/border-left:\s*2px solid var\(--accent\)/.test('.tx-vh-panel { border: 1px solid var(--border); }'),
+     'CONTROL: the panel-rule check goes RED on the pre-fix declaration');
+  ok(C(D, '--text-2', '--surface-raised', '--accent-tint') < C(D, '--text-2', '--surface-raised'),
+     'CONTROL: the compositor is doing real work — the wash genuinely LOWERS the panel text ratio ' +
+     `(${C(D, '--text-2', '--surface-raised', '--accent-tint')} tinted vs ` +
+     `${C(D, '--text-2', '--surface-raised')} untinted). A no-op compositor would report them equal and every ` +
+     'floor above would be measuring the wrong backdrop.');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12  THE ONE-LINE NOTE — the sanctioned clarification under a control');
+// ═════════════════════════════════════════════════════════════════════════
+
+/* `.tx-desc` is a PARAGRAPH that explains a screen. `.tx-note` is the single
+   sentence that qualifies the control immediately above it. The shape it
+   replaces is a bare <div>/<span> with an ad-hoc px font-size — the
+   untracked-treatment shape .tx-desc already removed for paragraphs, and the
+   one that produces text frozen at 1x against the text-size setting. */
+{
+  const textCss = stripComments(readFileSync(join(NEXT, 'shared/text.css'), 'utf8'));
+  const note = /\.tx-note\s*\{[^}]*\}/.exec(textCss);
+  ok(!!note, '.tx-note is declared, in shared/text.css — the only file allowed to hold a `tx-` rule');
+  ok(!!note && /margin:\s*var\(--space-4\)\s+0\s+0/.test(note[0]),
+     '…attached to the element above it: a top margin of --space-4 and NO bottom margin');
+  ok(!!note && /font-size:\s*var\(--text-xs\)/.test(note[0]) && !/font-size:\s*[\d.]+px/.test(note[0]),
+     '…with a RAMP token font-size, never a px literal — a literal silently freezes at 1x while everything ' +
+     'around it follows Settings > General');
+  ok(!!note && /color:\s*var\(--text-2\)/.test(note[0]),
+     `…muted at --text-2, which clears the ${TEXT_FLOOR}:1 text floor on every surface a note can land on: ` +
+     `${C(D, '--text-2', '--surface')} / ${C(L, '--text-2', '--surface')} on --surface, ` +
+     `${C(D, '--text-2', '--surface-inset')} / ${C(L, '--text-2', '--surface-inset')} on --surface-inset, ` +
+     `${C(D, '--text-2', '--surface-raised', '--accent-tint')} / ` +
+     `${C(L, '--text-2', '--surface-raised', '--accent-tint')} inside a help panel — which is why it is not ` +
+     '--text-3 even though "muted" is its whole job');
+  ok(!!note && /display:\s*flex/.test(note[0]) && /align-items:\s*center/.test(note[0]),
+     '…icon-led: a flex row, centred, because a note is ONE line by contract (a note that wraps is a .tx-desc ' +
+     'that has not admitted it yet)');
+  for (const base of ['--surface', '--surface-inset']) {
+    ok(C(D, '--text-2', base) >= TEXT_FLOOR && C(L, '--text-2', base) >= TEXT_FLOOR,
+       `…asserted as arithmetic on ${base}, not as a colour name (${C(D, '--text-2', base)} / ${C(L, '--text-2', base)})`);
+  }
+  ok(!/margin:\s*var\(--space-4\)\s+0\s+0/.test('.tx-note { margin: 8px 0 0; }'),
+     'CONTROL: the margin check goes RED on a px literal, which is what the token exists to prevent');
 }
 
 console.log('\n' + '='.repeat(60));

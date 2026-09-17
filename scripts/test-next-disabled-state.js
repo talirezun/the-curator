@@ -53,6 +53,11 @@
  * cancels a `--danger-text` hover so a disabled Disconnect does not turn red
  * — and with pointer-events suppressed that rule could never match. Removing
  * the suppression made an already-written, already-correct rule live.
+ * [UPDATED, button-family pass: that rule and the class it belonged to are
+ * now GONE — Disconnect is a `.btn-ghost`, whose hover is not red, so the
+ * cancel had nothing left to cancel. The evidence above is kept because it is
+ * the reasoning that identified the pairing as accidental; §4's assertion is
+ * inverted and now guards the ABSENCE of a red hover on that control.]
  *
  * ── WHAT IS NOT ENFORCED ─────────────────────────────────────────────────
  *  - CASCADE AND SPECIFICITY. This suite reads declarations, not winners.
@@ -269,21 +274,50 @@ ok(contradictions.length === 0,
        'one dead declaration, in any rule, disabled or not'));
 
 /**
- * REMOVING THE SUPPRESSION MADE A DORMANT RULE LIVE, so that rule is now
- * load-bearing and is pinned. `.sync-disconnect-link:hover` paints
- * `--danger-text`; the `[disabled]:hover` rule below it cancels that back to
- * `--text-2`. While `pointer-events: none` was set, the cancel could never
- * match and deleting it would have changed nothing. It can match now, and
- * deleting it would make a DISABLED Disconnect turn red under the cursor —
- * a control that reads as armed while refusing to act, on the destructive
- * end of the Sync view.
+ * ── INVERTED, AND THE HAZARD IS GONE RATHER THAN CANCELLED ───────────────
+ * This USED to assert that `.sync-disconnect-link[disabled]:hover` was still
+ * present. The reasoning was sound at the time: removing `pointer-events:
+ * none` made that dormant rule live, and without it a DISABLED Disconnect
+ * would turn `--danger-text` under the cursor — a control reading as armed
+ * while refusing to act, on the destructive end of the Sync view.
+ *
+ * `.sync-disconnect-link` no longer exists. The button is `btn btn-ghost
+ * btn-xs`, and `.btn-ghost:hover` paints `--text`, not `--danger-text` — so
+ * there is no red hover left to cancel. A rule that cancels nothing is worse
+ * than no rule: it is a guard the next reader will trust.
+ *
+ * The assertion is therefore inverted in BOTH halves rather than deleted:
+ * the cancel is gone, AND nothing anywhere paints a danger colour on the
+ * hover of a disconnect control. The second half is what keeps this
+ * meaningful — a future edit that gives Disconnect a red hover back
+ * reintroduces the exact hazard, and an absence-only check would stay green
+ * through it.
  */
 const syncHoverCancel = RULES.filter(r =>
   /\.sync-disconnect-link\[disabled\]:hover/.test(r.selector) && valueOf(r.body, 'color') !== null);
-ok(syncHoverCancel.length === 1,
-   'the .sync-disconnect-link[disabled]:hover colour cancel is still present ' +
-   `(${syncHoverCancel.length}) — it was DEAD CODE until pointer-events was removed and is ` +
-   'load-bearing now: without it a disabled Disconnect turns --danger-text on hover');
+ok(syncHoverCancel.length === 0,
+   `the .sync-disconnect-link[disabled]:hover cancel is GONE (${syncHoverCancel.length}) along with the class it ` +
+   'guarded — the Disconnect control is a .btn-ghost now, whose hover paints --text');
+const disconnectRedHover = RULES.filter(r =>
+  /sync-disconnect/.test(r.selector) && /:hover/.test(r.selector) &&
+  /--danger/.test(valueOf(r.body, 'color') || ''));
+ok(disconnectRedHover.length === 0,
+   'and NO rule paints a --danger* colour on the hover of any `sync-disconnect*` control' +
+   (disconnectRedHover.length
+     ? ` — found ${disconnectRedHover.length}: ${disconnectRedHover.map(r => `${r.file} "${r.selector}"`).join('; ')}`
+     : ' — so the hazard the deleted cancel existed for is removed at source, not merely undone'));
+{
+  // CONTROL, both directions, on the detector that now carries the weight.
+  const probe = [
+    { file: 'p.css', selector: '.sync-disconnect-link:hover', body: 'color: var(--danger-text);' },
+    { file: 'p.css', selector: '.sync-disconnect-link:hover', body: 'color: var(--text);' },
+  ];
+  const fires = probe.filter(r =>
+    /sync-disconnect/.test(r.selector) && /:hover/.test(r.selector) &&
+    /--danger/.test(valueOf(r.body, 'color') || ''));
+  ok(fires.length === 1,
+     'CONTROL: the red-hover detector fires on a planted --danger-text hover and NOT on a --text one');
+}
 
 const peSuppressed = DISABLED_RULES.filter(r => valueOf(r.body, 'pointer-events') === 'none');
 ok(peSuppressed.length === 0,
@@ -514,10 +548,12 @@ ok(CSS_FILES.length > 15,
 ok(RULES.length > 500,
    `the CSS parse still produces rules (${RULES.length}) — every "no rule does X" assertion is ` +
    'satisfied trivially by a parse that produced nothing');
-ok(DISABLED_RULES.length >= 15,
-   `${DISABLED_RULES.length} disabled rules found (18 at the time of writing: 17 that dim, plus ` +
-   '`.sync-disconnect-link[disabled]:hover`, which only cancels a colour) — if this collapses, ' +
-   'the selector test has stopped matching and §2-§4 are green over nothing');
+ok(DISABLED_RULES.length >= 13,
+   `${DISABLED_RULES.length} disabled rules found — it was 18 (17 that dim, plus ` +
+   '`.sync-disconnect-link[disabled]:hover`, which only cancelled a colour). The button-family pass retired four ' +
+   'hand-built controls onto `.btn` variants, and `.btn[disabled]` is ONE rule where each of them carried its own, ' +
+   'so the count legitimately dropped and the floor moved with it. If this collapses further, the selector test ' +
+   'has stopped matching and §2-§4 are green over nothing.');
 ok(MARKUP_FILES.length > 10,
    `the markup walk still reaches the tree (${MARKUP_FILES.length} files) — §5 needs it`);
 

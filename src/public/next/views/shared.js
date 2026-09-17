@@ -517,7 +517,7 @@ function renderEnabled() {
             '<h4 class="sb-cta-title">' + icon('sparkles', 16) + ' I’m starting a new Shared Brain</h4>' +
             '<p class="sb-cta-desc">Set one up for my cohort or team.</p>' +
           '</div>' +
-          '<button type="button" class="btn btn-secondary" id="btn-sb-create">Set up →</button>' +
+          '<button type="button" class="btn btn-primary" id="btn-sb-create">Set up →</button>' +
         '</div>' +
       '</div>'
     );
@@ -751,7 +751,7 @@ function renderCard(conn) {
                 '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="leave-cancel">Cancel</button>' +
               '</div>' +
             '</div>'
-          : '<button type="button" class="sb-leave-link" data-sb-action="leave-open"' + (busy ? ' disabled' : '') + '>Leave this Shared Brain</button>') +
+          : '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="leave-open"' + (busy ? ' disabled' : '') + '>Leave this Shared Brain</button>') +
       '</div>' +
     '</div>'
   );
@@ -803,7 +803,7 @@ function renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) {
     if (card.pushConfirmOpen) {
       html += renderPushConfirm(conn, pushDisabled);
     } else {
-      html += '<button type="button" class="btn btn-primary" data-sb-action="push-open"' + (pushDisabled ? ' disabled' : '') + '>' +
+      html += '<button type="button" class="btn btn-ai" data-sb-action="push-open"' + (pushDisabled ? ' disabled' : '') + '>' +
         icon('sparkles', 14) + ' ' + (card.acting === 'push' ? 'Pushing…' : 'Push contributions') + '</button>';
     }
   }
@@ -815,7 +815,7 @@ function renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) {
     if (card.synthesizeConfirmOpen) {
       html += renderSynthesizeConfirm(pullSynthDisabled);
     } else {
-      html += '<button type="button" class="btn btn-ghost" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
+      html += '<button type="button" class="btn btn-ai" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
         icon('sparkles', 14) + ' ' + (card.acting === 'synthesize' ? 'Synthesizing…' : 'Run synthesis (admin)') + '</button>';
     }
   }
@@ -1583,7 +1583,7 @@ function renderAdminToken(card, aff, busy, connId) {
         '</div>' +
         '<code class="sb-token-value mono">' + escapeHtml(card.shownAdminToken) + '</code>' +
         '<div class="sb-token-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="token-copy">' + icon('copy', 12) + ' Copy</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="token-copy">' + icon('copy', 12) + ' Copy</button>' +
           '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="token-hide">I’ve stored it — hide</button>' +
         '</div>' +
       '</div>';
@@ -1761,7 +1761,7 @@ function renderRevokePanel(conn, card, busy, mirrorBusy) {
         '</p>' +
       '</div>' +
       '<div class="sb-revoke-go">' +
-        '<button type="button" class="btn btn-danger" data-sb-action="revoke-run"' + (gate.unlocked ? '' : ' disabled') + '>' +
+        '<button type="button" class="btn btn-danger-solid" data-sb-action="revoke-run"' + (gate.unlocked ? '' : ' disabled') + '>' +
           icon('trash', 14) + ' Permanently revoke this contributor' +
         '</button>' +
         (gate.reason ? '<span class="sb-revoke-gate-reason">' + escapeHtml(gate.reason) + '</span>' : '') +

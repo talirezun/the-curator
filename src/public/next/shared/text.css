@@ -1,6 +1,31 @@
 /* ── The text system ──────────────────────────────────────────────────────
    Stylesheet for src/public/next/shared/text.js — the five text roles:
-   readout, description, status, badge, explainer.
+   readout, description, status, badge, explainer — plus the view header
+   (`tx-vh`) and the one-line note (`tx-note`).
+
+   ── THE ONE-LINE NOTE, `.tx-note` ───────────────────────────────────────
+   The sanctioned way to put a single clarifying line UNDER an element: one
+   line, muted, icon-led, `margin-top: var(--space-4)`. It exists because the
+   alternative every view reached for was a bare `<div>` or `<span>` with an
+   ad-hoc font-size, which is the untracked-treatment shape `.tx-desc`
+   already replaced for paragraphs. Use `.tx-desc` for a real paragraph that
+   explains a screen; use `.tx-note` for the sentence that qualifies the
+   control immediately above it ("Takes a few seconds on a large wiki").
+   Its icon is optional and is an `<svg>` child, which the rule below sizes
+   and colours; the text stays --text-2, above the 4.5 floor on every
+   surface this app puts it on. Any view may use it — it is declared here
+   because THIS FILE IS THE ONLY ONE ALLOWED TO DECLARE A `tx-` RULE
+   (scripts/test-next-text-system.js).
+
+   ── THE HELP AFFORDANCE IS ACCENT-COLOURED, EVERYWHERE ──────────────────
+   Asked for directly: a user must be able to RECOGNISE the help system on
+   sight, on any screen. The ⓘ mark was --text-2 at rest — the same colour as
+   the sentence beside it — so on eleven surfaces it read as punctuation. It
+   now sits at --accent-text at rest with an --accent-tint hover/focus ring,
+   and the panel it opens carries a 2px --accent left rule over a faint
+   --accent-tint wash. One colour, one shape, one meaning: violet means
+   "there is an explanation here". Measured figures are on the rules
+   themselves and ratcheted in scripts/test-next-contrast-ratchet.js §11.
 
    PREFIX: every selector here is `tx-`, a prefix that appears in no other
    /next stylesheet (verified 0 collisions), following the house convention
@@ -110,6 +135,41 @@
   max-width: 68ch;
   overflow-wrap: anywhere;
 }
+
+/* ── 2b. Note — ONE line, attached to the control above it ───────────────
+   `.tx-desc` is a paragraph that explains a SCREEN. This is the sentence
+   that qualifies the CONTROL immediately above it, and the difference is
+   worth a second class rather than a second use of the first: a note is
+   attached (it takes a small top margin and no bottom one), it is one line
+   (`--text-xs`, not the body ramp), and it may lead with an icon.
+
+   The shape it replaces is a bare <div> or <span> carrying an ad-hoc
+   font-size — the untracked-treatment shape `.tx-desc` already removed for
+   paragraphs, and the one that produced the frozen-at-1x px literals this
+   file's header warns about. Any view may use it; only this file may
+   declare it.
+
+   COLOUR: --text-2, measured 10.54 dark / 9.33 light on --surface and
+   8.96 / 8.25 on a tinted raised panel — above the 4.5 TEXT floor on every
+   surface this app puts a note on, which is why it is not --text-3 even
+   though "muted" is its whole job. The icon inherits, so it is the same
+   colour as the sentence rather than a second decision.
+
+   `align-items: center` and not `flex-start`: a note is ONE line by
+   contract, so centring is exact; a note that wraps is a `.tx-desc` that
+   has not admitted it yet. */
+.tx-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  letter-spacing: var(--track-body);
+  color: var(--text-2);
+  max-width: var(--prose-max);
+}
+.tx-note > svg { flex: none; }
 
 /* ── 3. Status — state without a sentence ────────────────────────────────
    Adopted from .build-current (settings.css:1241): raised, bordered, with a
@@ -357,7 +417,27 @@
   border: 1px solid transparent;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--text-2);
+  /* ── ACCENT AT REST, AND IT IS NOT DECORATION ─────────────────────────
+     Was --text-2, i.e. the colour of the sentence next to it, on a 24px
+     glyph with no fill and no border. MEASURED IN A REAL BROWSER, both
+     themes, on the three surfaces this mark actually sits on — headless
+     Chrome on an isolated server, getComputedStyle on the live element with
+     its backdrop composited up the ancestor chain:
+       view header, on --canvas .......... 9.55 dark / 8.84 light
+       Settings block, on --surface ...... 9.31 / 9.13
+       sidebar, on --mat-sidebar ......... 8.74 / 8.51
+     The first two are reproduced EXACTLY by the token arithmetic in
+     scripts/test-next-contrast-ratchet.js §11, to the second decimal, which
+     is what makes that ratchet trustworthy. The third cannot be: --mat-
+     sidebar is a blurred material and no arithmetic composites a backdrop
+     filter, so the sidebar figure is browser-only and is recorded as such.
+
+     The floor that binds a glyph is WCAG 1.4.11's 3:1 for a non-text UI
+     component, and it clears the 4.5 TEXT floor too — which matters because
+     ⓘ is a character, and a screen reader is not the only thing that reads
+     it as one. It is not colour ALONE: the mark keeps its shape, its
+     aria-expanded state and the panel that appears. */
+  color: var(--accent-text);
   /* Arrow, not hand — an info mark opens a popover in place; it is not a
      link, and this mark appears on eleven surfaces. */
   cursor: default;
@@ -373,9 +453,23 @@
   border-radius: inherit;
 }
 
-.tx-vh-info:hover {
-  color: var(--text);
-  background: var(--surface-hover);
+/* ── THE HOVER/FOCUS RING IS THE TINT PLUS THE BORDER THIS ELEMENT ALREADY
+   HAS ───────────────────────────────────────────────────────────────────
+   `.tx-vh-info` declares `border: 1px solid transparent` at rest, so a ring
+   costs a border-COLOUR and moves no geometry — the same device
+   `[aria-expanded="true"]` below already used with --border. Using
+   --accent-border instead makes hover, focus and open one family.
+   Hover glyph, measured in the browser on the view header: 8.54 dark /
+   7.82 light (over --canvas + --accent-tint, composited). On a Settings
+   block's --surface the same pair reads 8.23 / 8.08.
+   `:focus-visible` is named alongside `:hover` so a keyboard user reaches
+   the SAME affordance; tokens/base.css's focus ring is additive and still
+   paints on top — this is the fill under it, not a replacement for it. */
+.tx-vh-info:hover,
+.tx-vh-info:focus-visible {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
 }
 
 /* Press — 24x24, so the ICON amplitude. Declared before the
@@ -384,14 +478,19 @@
    unqualified press background declared after it would repaint the open mark
    as merely hovered for the length of the hold). The transform is
    uncontested either way. */
-.tx-vh-info:active { transform: scale(var(--press-scale-icon)); background: var(--surface-active); }
+.tx-vh-info:active { transform: scale(var(--press-scale-icon)); background: var(--accent-tint-strong); }
 
 /* Open state is carried by the glyph colour AND by the panel appearing, and
-   is announced by aria-expanded — never by colour alone. */
+   is announced by aria-expanded — never by colour alone.
+   One step further than hover, in the same family: --accent-tint-strong.
+   Measured in the browser on the view header: 7.58 dark / 7.12 light (over
+   --canvas + --accent-tint-strong). On --surface: 7.28 / 7.34. Every state
+   of this mark therefore stays above 7:1 in both themes — the tint moves
+   the face, not the reading. */
 .tx-vh-info[aria-expanded="true"] {
-  color: var(--text);
-  background: var(--surface-hover);
-  border-color: var(--border);
+  color: var(--accent-text);
+  background: var(--accent-tint-strong);
+  border-color: var(--accent-border);
 }
 
 /* Belt and braces: `hidden` is a display:none in the UA sheet, and any later
@@ -400,12 +499,45 @@
    accident — which is the whole defect this component removes. */
 .tx-vh-panel[hidden] { display: none; }
 
+/* ── THE PANEL WEARS THE SAME COLOUR AS THE MARK THAT OPENED IT ───────────
+   A 2px --accent rule on the leading edge plus a faint --accent-tint wash,
+   so the thing that appears is visibly the thing the violet ⓘ promised. The
+   rule replaces the left hairline rather than joining it (`border-left`
+   after the `border` shorthand), so the box grows by exactly 1px on one
+   side and the other three edges keep --border.
+
+   The wash is a background-IMAGE over the background-COLOUR rather than a
+   fourth token: --accent-tint is rgba, so one flat gradient composites it
+   over --surface-raised and the two stay independent — a theme that moves
+   the raised surface does not need the tint restated.
+
+   MEASURED, tint composited over the raised surface, both themes:
+     panel text  --text-2  on --surface-raised + --accent-tint  8.96 / 8.25   (floor 4.5)
+     left rule   --accent  on --surface-raised + --accent-tint  3.66 / 5.81   (floor 3.0)
+   The dark figure for the rule is the binding one and clears 1.4.11 with
+   0.66 to spare; it is ratcheted in scripts/test-next-contrast-ratchet.js.
+
+   THOSE TWO FIGURES ARE THE ARITHMETIC, AND THE BROWSER READS HIGHER — 4.17
+   / 6.57 for the rule and 10.23 / 9.33 for the text. The difference is the
+   wash and it is not a disagreement: `getComputedStyle(...).backgroundColor`
+   reports the background-COLOR layer only, so a probe walking ancestors sees
+   --surface-raised and never the background-IMAGE laid over it. The
+   arithmetic composites the tint, so it is the CONSERVATIVE reading and the
+   one the floors are held to. Recorded because the next person to measure
+   this in a browser will get the higher number and should not "correct" the
+   lower one.
+
+   NOT `border-inline-start`: this app is LTR-only and every other rule in
+   the tree uses the physical property, so one logical property here would
+   be the odd one out without buying a language the app does not ship. */
 .tx-vh-panel {
   margin-top: 12px;
   padding: 12px 14px;
   border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
   border-radius: var(--radius-md);
-  background: var(--surface-raised);
+  background-color: var(--surface-raised);
+  background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
   font: var(--type-body-sm);
   letter-spacing: var(--track-body);
   color: var(--text-2);

@@ -125,48 +125,27 @@
   color: var(--text-3);
   margin-right: auto;
 }
-.chat-bulk-link {
-  flex: none;
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  font-size: var(--text-2xs);
-  color: var(--text-3);
-}
-.chat-bulk-link:hover { color: var(--text-2); }
-.chat-bulk-delete {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  font-size: var(--text-2xs);
-  color: var(--danger-text);
-  transition: background var(--t-state), border-color var(--t-state), transform var(--t-press);
-}
-.chat-bulk-delete:hover { background: var(--danger-tint); border-color: var(--danger); }
-/* Transform only, no background step — the danger family has no stronger
-   tint and this deletes N conversations at once. Same refusal as
-   `.btn-danger`, `.chat-conv-delete` and `.ing-queue-file-remove`. */
-.chat-bulk-delete:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
-/* Same technique, same reason: a 20px strip control that deletes N
-   conversations at once had a 20px target. The visible chip is unchanged. */
-.chat-bulk-delete { position: relative; }
-.chat-bulk-delete::before {
-  content: '';
-  position: absolute;
-  inset: calc((var(--hit-min) - 20px) / -2);
-}
+/* ── `.chat-bulk-link` AND `.chat-bulk-delete` ARE GONE ───────────────────
+   Both were hand-built copies of a shell variant, and shell.css said so:
+   the note beside `.btn-danger` reads "`.chat-bulk-delete` in views/chat.css
+   already implements exactly this by hand, so this makes the two agree
+   rather than inventing a third look." They now ARE the shell variant —
+   Clear is `btn btn-ghost btn-xs` (a quiet, reversible control, tier 3) and
+   Delete is `btn btn-danger btn-xs` (tier 4, tinted outline, never filled;
+   the filled red belongs only to a confirm dialog's own primary).
+
+   THREE THINGS THIS DELETION ALSO FIXES, none of them cosmetic:
+    · The 20px `::before` hit box is no longer needed. `.btn-xs` is
+      --control-sm = 28px = --hit-min, so the REAL box is now the target and
+      the transparent-overlay trick can go. scripts/test-next-views-kit.js
+      §10 listed `.chat-bulk-delete` among its three DERIVED hit boxes; that
+      entry is removed there rather than left pinning a rule that no longer
+      exists.
+    · `.chat-bulk-link` painted --text-3 on the sidebar material at
+      --text-2xs. `.btn-ghost` paints --text-2 and steps to --text on hover.
+    · Neither carried `:focus-visible` chrome of its own; `.btn` does.
+
+   The two remaining `.chat-bulk-*` classes below are LAYOUT, and stay. */
 
 .chat-bulk-notice {
   font-size: var(--text-2xs);
@@ -1657,47 +1636,46 @@
 
 /* ── Compile to Wiki button (scope bar) ───────────────────────────────── */
 
-.chat-compile-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--hit-min);
-  padding: 0 11px;
+/* ── `.chat-compile-btn` IS GONE; WHAT IS LEFT HERE IS SHAPE ─────────────
+   It was the app's fifth hand-built "this spends money" button: --accent-
+   tint fill, --accent-border edge, --accent-text label — i.e. `.btn-ai`,
+   re-typed. The button is now `btn btn-ai btn-xs chat-compile-pill`, and
+   `.chat-compile-pill` sets LAYOUT ONLY. No colour, no border colour, no
+   background: those are the shell's, so a change to the consequence tier
+   reaches this control instead of stopping one file short.
+
+   WHY A MODIFIER SURVIVES AT ALL. The scope bar is a row of PILLS
+   (`.chat-scope-pill`, --radius-full), and a 7px-radius rectangle in that
+   row would be the only square thing in it. Radius, the horizontal padding
+   that a full radius needs, and `flex: none` are shape; nothing else is.
+
+   SIZE IS UNCHANGED, and that is the container rule working rather than a
+   coincidence: the old rule set `height: var(--hit-min)` (28px) by hand and
+   `.btn-xs` is `--control-sm`, which is the same 28px. The scope bar is a
+   strip, so the strip's size is what it takes.
+
+   THE PRESS. The old rule's own note called this "THE ONE CONTROL IN THIS
+   PASS WHERE THE PRESS IS NOT COSMETIC: it is the only control on this view
+   that spends money, so 'did my click register' is a question the user
+   actually has here." `.btn-ai:active` in shell.css now carries exactly
+   that — a fill step to --accent-tint-strong plus --gloss-pressed and the
+   shared translate/scale — so the signal survives the deletion; what goes
+   is the extra border tightening to full --accent, which was this file's
+   own invention and is not in the system's press spec.
+
+   THE CONFIRM GATE, kept from the deleted note because it is the thing a
+   future reader is most likely to get wrong: this button does NOT spend
+   silently and has not since v3.27.0. Its click handler calls
+   `startCompile`, which fetches `/api/compile/estimate` and puts the answer
+   through `confirmThen` before `runCompile` is reachable at all; `runCompile`
+   is wired to no click handler anywhere, and
+   scripts/test-next-compile-estimate.js pins both halves. Do not "add" a
+   confirm that is already there. */
+.chat-compile-pill {
   border-radius: var(--radius-full);
-  border: 1px solid var(--accent-border);
-  background: var(--accent-tint);
-  color: var(--accent-text);
-  font: var(--type-body-sm);
-  white-space: nowrap;
+  padding: 0 var(--space-6);
   flex: none;
-  transition: background var(--t-state), opacity var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
-.chat-compile-btn:hover { background: var(--accent-tint-strong); }
-/* Compile to Wiki. THE ONE CONTROL IN THIS PASS WHERE THE PRESS IS NOT
-   COSMETIC: it is the only control on this view that spends money, so "did my
-   click register" is a question the user actually has here, and the answer
-   being nothing at all is the worst version of it. The border tightening to
-   full `--accent` on top of the fill step is the extra half-signal a spend
-   control earns.
-
-   CORRECTED (v3.49.0): this note used to say the button "spends real money
-   with no estimate and no confirm (still open in CLAUDE.md's audit queue)"
-   and called the press "NOT a substitute for the missing cost estimate". That
-   has been false since v3.27.0 — "Compile stops spending silently". The click
-   handler calls `startCompile`, which fetches `/api/compile/estimate` and puts
-   the answer through `confirmThen` before `runCompile` is reachable at all;
-   `runCompile` is wired to no click handler anywhere, and
-   scripts/test-next-compile-estimate.js pins both halves. A stale comment
-   describing a missing safety gate is worse than no comment: it invites the
-   next reader to "add" a confirm that is already there, or to trust that this
-   button is unguarded when it is not.
-
-   The press remains what it always was — an acknowledgement that the click
-   landed. `:not([disabled])` keeps it silent while a compile is already in
-   flight. What the compile will COST is the dialog's sentence, and what it
-   DOES is now `.chat-compile-caption`'s. */
-.chat-compile-btn:active:not([disabled]) { background: var(--accent-tint-strong); border-color: var(--accent); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
-.chat-compile-btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* ── Compile outcome card ─────────────────────────────────────────────────
    Pushed into state.thread and rendered as a normal `.chat-msg`-adjacent
@@ -2174,12 +2152,15 @@
   .chat-scope-pill:active,
   .chat-conv-row:active,
   .chat-conv-delete:active,
-  .chat-compile-btn:active:not([disabled]),
+  /* `.chat-compile-btn` and `.chat-bulk-delete` were here and are GONE. All
+     three of their replacements are `.btn` variants, and shell.css's own
+     reduced-motion block already lists `.btn:active` — so the escape follows
+     the control instead of having to be re-listed here. Verified by reading
+     that block rather than assumed: it is the last rule in shell.css. */
   .chat-reask-btn:active,
   .chat-browse-chip:active,
   .chat-browse-clear:active,
   .chat-browse-close:active,
-  .chat-bulk-delete:active,
   .chat-filter-ask:active,
   .chat-cite-chip:active { transform: none; }
   .chat-conv-row::before { transition: none; }

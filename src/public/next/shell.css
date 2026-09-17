@@ -310,6 +310,14 @@ body {
    (`.ing-change-toggle` and `.sync-disconnect-link` already do; both happen
    to set their own font-size) and forgets a font rule, that label silently
    stops responding to the text-size setting and nothing says so.
+   [CORRECTION, button-family pass: of the six controls named below,
+   `.chat-bulk-link`, `.chat-bulk-delete`, `.sb-leave-link` and
+   `.sync-disconnect-link` no longer exist — all four are `.btn` variants
+   now, which carry `font: … var(--font-sans)` on their own class. The
+   measurements are kept verbatim because they are the RECORD of what this
+   rule was measured against; the argument is unchanged and `.sbw-input` and
+   `.ing-change-toggle` still stand, as does the preventative half for the
+   next label written directly into a button.]
 
    Both halves come from ONE UA declaration, which is why they are fixed in
    one rule rather than split. The six already-sized-but-Arial controls
@@ -970,8 +978,31 @@ textarea {
   position: relative;
 }
 
+/* ── THE APP-WIDE CONTENT CAP — 900 -> 1200, AND WHY IT IS NOT A PROSE CAP ──
+   REPORTED, with screenshots on a 2000px window: Ingest, Shared Brain, Agent
+   memory and Settings "sit in a narrow strip and look squeezed" while Chat
+   fills the window. Chat was not a counter-example — views/chat.css CANCELS
+   this rule outright (`.chat-view` restates max-width/margin) precisely so its
+   scope bar and composer reach the window edges. So one view had already
+   opted out of the cap and five had not, which is what made the difference
+   read as an inconsistency rather than as a decision.
+
+   900px is a PROSE measure wearing a layout measure's clothes. At 28px of
+   side padding the content box was 844px, and a 15px/1.55 paragraph across
+   844px is ~95 characters — already past the 60-75 the type scale is set for,
+   so the cap was not even doing the one job that number is usually chosen
+   for. What it WAS doing was forbidding a second column: Ingest's 480px field
+   stack, Shared Brain's 560px cards and Domains' 420px tiles all had room for
+   a neighbour and no room to put one.
+
+   1200px -> a 1144px content box. The house rule this pass adopts is CAP THE
+   PROSE, NEVER THE CARDS: paragraph roles carry their own ch measure (see
+   --prose-max and the 60-68ch caps in the view sheets) and the container
+   stops being the thing that keeps a sentence readable. Every view was
+   rendered at 1400 and 2000 after the change; what moved is recorded in each
+   view's own sheet beside the rule that moved it. */
 .main-inner {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: var(--space-16) 28px var(--space-32);   /* was 30px 28px 64px */
 }
@@ -1352,11 +1383,30 @@ body.guide-docked .main {
    Same reasoning shell.css already records for .sidebar-hint and
    .empty-card .empty-body, and NOT the reasoning that retired the
    .cur-eyebrow override. */
+/* ── AND IT IS CAPPED, BECAUSE THE CONTAINER NO LONGER CAPS IT ───────────
+   The app-wide content cap moved 900 -> 1200px in this pass, and the house
+   rule that came with it is CAP THE PROSE, NEVER THE CARDS. This span is the
+   one place in the kit where a full sentence is laid out at the row's own
+   width, so it is the one place that needed the rule applied.
+
+   MEASURED in a browser at a 2000px viewport, before: 1118px, ~159 columns —
+   roughly twice the 60-75 the type scale is set for, and the widest run of
+   prose anywhere in the app after the cap moved. --prose-max is 68ch, which
+   is the token that exists for exactly this and is already what
+   views/memory.css reaches for. The ROW still takes the full width; only the
+   sentence inside it stops.
+
+   `max-width` on a flex ITEM's child, not on `.cur-group-label` itself: the
+   label column is `flex: 1` and its job is to push the control to the
+   trailing edge. Capping the column would let the control drift inward on a
+   wide window, which is a layout change nobody asked for; capping the
+   sentence is the change that was. */
 .cur-group-label > span {
   display: block;
   margin-top: var(--space-1);
   font: var(--type-body-sm);
   color: var(--text-2);
+  max-width: var(--prose-max);
 }
 .cur-group-control {
   flex: none;
@@ -1891,10 +1941,20 @@ body.guide-docked .main {
    neutral border, tinting to --danger-tint with a --danger border on hover.
    `.chat-bulk-delete` in views/chat.css already implements exactly this by
    hand, so this makes the two agree rather than inventing a third look.
+   [UPDATED, button-family pass: `.chat-bulk-delete` no longer exists — the
+   bulk-delete control IS `btn btn-danger btn-xs` now, so the two do not
+   merely agree, they are the same rule.]
 
    `views/shared.css` keeps a deliberately STRONGER, filled treatment scoped
    to `.sb-revoke-go .btn-danger` (0,2,0 beats this rule's 0,1,0) for the
-   GDPR revoke — that override stays and still wins. */
+   GDPR revoke — that override stays and still wins.
+   [UPDATED, button-family pass: that override is GONE and shared.css now
+   declares no `.btn-danger` rule at all. The JUDGEMENT it encoded was right
+   and survives as `.btn-danger-solid`, which the revoke button now carries;
+   what went is the mechanism, a scoped repaint of another variant. It also
+   filled with `--danger` (white on it = 3.40:1, an AA failure) where
+   `.btn-danger-solid` fills with `--danger-fill` at 4.51:1. See
+   views/shared.css for the full record.] */
 /* NO GLOSS, DELIBERATELY. The design system's danger variant is a TINTED
    OUTLINE, and a tinted outline is not a raised object. Gloss asserts
    "this is a raised object"; putting it on anything that is not one is

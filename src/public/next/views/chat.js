@@ -1078,6 +1078,11 @@ async function deleteConversationRow(id, title, mountToken) {
     confirmLabel: 'Delete',
     cancelLabel: 'Cancel',
     tone: 'danger',
+    // The filled red, and the one place shell.css sanctions it: this dialog's
+    // primary action IS the deletion. See shared/confirm.js on why `danger`
+    // alone does not imply it — three of the six danger dialogs in the app
+    // destroy nothing.
+    destructive: true,
     onConfirm: async () => {
       try {
         await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1177,6 +1182,7 @@ async function deleteSelectedConversations(mountToken) {
     confirmLabel: 'Delete ' + n,
     cancelLabel: 'Cancel',
     tone: 'danger',
+    destructive: true,
     onConfirm: async () => {
       const failed = [];
       let deleted = 0;
@@ -2485,8 +2491,8 @@ function bulkBarHtml() {
         '<span class="chat-num">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
       '</label>' +
       (n > 0
-        ? '<button type="button" class="chat-bulk-link" id="chat-bulk-clear">Clear</button>' +
-          '<button type="button" class="chat-bulk-delete" id="chat-bulk-delete" aria-label="Delete ' + n + ' selected conversation' + (n === 1 ? '' : 's') + '">' +
+        ? '<button type="button" class="btn btn-ghost btn-xs" id="chat-bulk-clear">Clear</button>' +
+          '<button type="button" class="btn btn-danger btn-xs" id="chat-bulk-delete" aria-label="Delete ' + n + ' selected conversation' + (n === 1 ? '' : 's') + '">' +
             icon('trash', 12) + ' Delete' +
           '</button>'
         : '') +
@@ -2864,7 +2870,7 @@ function renderCompileButtonHtml() {
     ? ('Compiling… ' + Math.round(state.compilePct || 0) + '%')
     : 'Compile to Wiki';
   return (
-    '<button class="chat-compile-btn" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : '') +
+    '<button type="button" class="btn btn-ai btn-xs chat-compile-pill" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : '') +
       ' title="Save this conversation as wiki pages">' +
       icon('sparkles', 13) + ' <span id="chat-compile-btn-label">' + escapeHtml(label) + '</span>' +
     '</button>'
@@ -3050,7 +3056,7 @@ function renderComposerHtml(active) {
         '<span><code>' + escapeHtml(state.buildModelId) + '</code> is no longer offered by its ' +
         'provider. Chat falls back rather than failing, and every answer names the model that ' +
         'actually ran.</span>' +
-        '<button type="button" class="btn btn-ghost btn-xs" id="chat-model-gone-settings">' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="chat-model-gone-settings">' +
         'Open Settings</button>' +
       '</div>'
     : '';

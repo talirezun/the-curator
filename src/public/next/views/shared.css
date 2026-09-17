@@ -304,21 +304,21 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
   border: 1px solid var(--border);
 }
-.sb-leave-link {
-  margin-left: auto;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-2);
-  font-size: var(--text-xs);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  text-decoration: underline;
-  text-decoration-color: var(--border-strong);
-}
-.sb-leave-link:hover { color: var(--danger-text); }
-.sb-leave-link[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+/* ── `.sb-leave-link` IS GONE ────────────────────────────────────────────
+   An underlined text link that left the collective — a real, consequential
+   action wearing the one treatment this app reserves for links that leave
+   the app. It is `btn btn-ghost btn-xs` now: tier 3, because it OPENS a
+   confirm rather than performing anything, and --control-sm because it sits
+   in a card footer row.
+
+   `margin-left: auto` was the only layout it carried; it moves to the
+   footer's own rule below, where a sibling's position belongs, rather than
+   surviving as a one-declaration class. */
+/* The Leave control is the last item and is pushed to the trailing edge from
+   HERE rather than from a class of its own — `:last-child` names the
+   POSITION, which is what the rule is about. The inline confirm that
+   replaces it takes the whole row, so it cancels the push. */
+.sb-card-footer > .btn:last-child { margin-left: auto; }
 .sb-card-footer .sb-confirm-inline { flex: 1 1 100%; margin-left: 0; }
 
 /* ── Admin controls: admin token + contributor revocation ─────────────
@@ -537,39 +537,42 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-revoke-go { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .sb-revoke-gate-reason { font-size: var(--text-xs); color: var(--text-2); }
 
-/* A GENERIC `.btn-danger` NOW EXISTS IN shell.css, and this scoped rule is
-   deliberately KEPT rather than deleted.
+/* ── THE SCOPED `.btn-danger` OVERRIDE IS GONE, AND THE OVERRIDE ITSELF WAS
+   THE DEFECT ────────────────────────────────────────────────────────────
+   What stood here was `.sb-revoke-go .btn-danger { background: var(--danger);
+   border: …; color: var(--text-on-accent) }` — a (0,2,0) rule repainting the
+   shell's tinted danger variant as a FILLED red, kept deliberately because
+   the GDPR Article 17 revoke "earns a heavier weight than an ordinary
+   confirm". That JUDGEMENT is correct and survives; the MECHANISM was wrong
+   twice over:
 
-   History worth carrying: an earlier audit noted that .btn-danger "genuinely
-   belongs alongside those siblings in shell.css" and left it here because
-   that file was outside its scope. What that note could not see is that the
-   omission was not cosmetic — `shared/confirm.js` uses `btn-danger`
-   UNSCOPED, so every destructive confirm in the app was rendering as a raw
-   native OS button (grey face, black text, 2px outset bevel). shell.css now
-   carries the generic rule; see the comment there for the measurement.
+    · shell.css now ships `.btn-danger-solid` — the filled red, for exactly
+      this case: a confirm whose primary action IS the destruction. So the
+      heavier weight is a VARIANT to reach for, not a scoped repaint to
+      invent. Two hand-built filled reds existed in the app (this one and
+      views/domains.css's `.dm-lc-danger-btn`); both are now the variant.
+    · The fill was `--danger`, and `--text-on-accent` on `--danger` measures
+      3.40:1 — an AA FAILURE on the one button in this app that erases
+      another person's data. `.btn-danger-solid` uses `--danger-fill`
+      (#D83B50) at 4.51:1. tokens/material.css records that this is exactly
+      why the token was minted.
+    · An override on a selector containing `.btn-danger` is also the shape
+      scripts/test-next-button-family.js now forbids tree-wide: the shell's
+      variants carry gloss and press states keyed on their own class names,
+      so a view that repaints one of them gets a control that is half one
+      variant and half another. This file no longer declares `.btn-danger`
+      at ALL, and that suite asserts it.
 
-   THE TWO TREATMENTS DIFFER ON PURPOSE:
-     shell.css   .btn-danger  — the design system's `danger` variant:
-                                transparent, --danger-text, neutral border.
-                                Right for a confirm dialog's affirmative
-                                action, which sits beside a ghost Cancel.
-     here        .btn-danger  — FILLED --danger with white text. The GDPR
-                                Article 17 revoke is irreversible and erases
-                                another person's contributions; it earns a
-                                heavier weight than an ordinary confirm.
+   scripts/test-next-sharedbrain-admin.js pinned this rule BY NAME and has
+   been re-pointed deliberately: it now asserts the button uses
+   `btn-danger-solid` and that this stylesheet defines no `.btn-danger` rule.
+   scripts/test-next-button-chrome.js, which asserted the filled treatment
+   survived the specificity contest, asserts the variant instead.
 
-   Specificity does the work with no !important and no rename: `.sb-revoke-go
-   .btn-danger` is (0,2,0) against the shell's (0,1,0), and it sets
-   background, border and color — all three properties the generic rule
-   touches — so nothing leaks through. */
-.sb-revoke-go .btn-danger {
-  background: var(--danger);
-  border: 1px solid var(--danger);
-  color: var(--text-on-accent);
-}
-.sb-revoke-go .btn-danger:hover:not([disabled]) { background: var(--danger-text); border-color: var(--danger-text); }
-.sb-revoke-go .btn-danger[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
-.sb-revoke-go .btn-danger svg { margin-right: 5px; vertical-align: -2px; }
+   The icon spacing rule is gone too: `.btn` is an inline-flex box with
+   `gap: var(--space-3)`, so the SVG is spaced by the button, not by a
+   margin — and `vertical-align` did nothing to a flex item in the first
+   place. */
 
 /* ── Revoke outcome ───────────────────────────────────────────────────
    Three tones, because "the contributor's data is gone" and "the collective
