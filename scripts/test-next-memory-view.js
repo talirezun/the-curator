@@ -750,6 +750,11 @@ function makeRenderers(stateObj) {
     })() + '\n' +
     extractFunction(ageSrc, 'freshnessTier', 'shared/age.js') + '\n' +
     extractFunction(viewSrc, 'newerOnAnotherMachine', 'memory.js') + '\n' +
+    // The table's ROW ORDER is a function, and it is lifted rather than
+    // inlined for the same reason the tier ladder is: the order and the age
+    // words must be one reading, and a copy here could agree with the words
+    // while the shipped one disagreed.
+    extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderWorkStreams', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'workStreamCounts', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderHandoff', 'memory.js') + '\n' +
@@ -796,7 +801,7 @@ function makeRenderers(stateObj) {
     // battery below lost nothing: every string the pickers interpolated — a
     // scope name, a machine id, a harness — is now interpolated by
     // `renderWorkStreams`, which IS lifted.
-    'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, ' +
+    'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'renderHandoff, renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, renderSaveStatus, freshnessStep, freshnessTier, ' +
@@ -1026,11 +1031,14 @@ ok('read-side sanitisation is stated, not hidden',
   // Four pairs, THREE scopes, one of them duplicated across machines, with
   // four distinct ages including one that is unknown.
   //
-  // THE FIXTURE'S ORDER IS DELIBERATELY NOT ALPHABETICAL. A first draft listed
-  // the rows in the order a sort would produce, so the mutation that RE-SORTED
-  // the table stayed GREEN — the assertion below could not tell "the store's
-  // order" from "any order". `side-quest` leads because it is newest, which is
-  // exactly what the store returns and exactly what a sort would move.
+  // THE FIXTURE'S ORDER IS DELIBERATELY NOT ALPHABETICAL, so the order
+  // assertion below can tell a real ordering from "any order".
+  //
+  // Here the two clocks AGREE — every row's `writtenAt` ranks it exactly as its
+  // arrival would — so the store's order and the table's are the same list, and
+  // this fixture says nothing about which of them is being followed. §6c is the
+  // fixture that separates them, and it is the one that fails when the table
+  // ranks by the file clock while its cells read the agent's.
   const rows = [
     { scope: 'side-quest', machine: 'boxa', headline: '<img src=x onerror=alert(1)>',
       harness: 'opencode', writtenAgeSeconds: 30, writtenAt: at(30) },
@@ -1045,13 +1053,13 @@ ok('read-side sanitisation is stated, not hidden',
   const trs = out.match(/<tr class="mem-ws-row/g) || [];
   eq('every (scope, machine) pair is a row — a duplicated scope is TWO rows', trs.length, 4);
 
-  // ORDER: the store returns newest first and the table must not re-sort.
+  // ORDER: newest first, and the row with no clock at all is last.
   const order = [...out.matchAll(/data-mem-scope="([^"]*)" data-mem-machine="([^"]*)"/g)]
     .map((m) => m[1] + '/' + m[2]);
-  eq('the store\'s newest-first order is preserved exactly',
+  eq('the rows are newest first, with the unknown age last',
     order.join(','), 'side-quest/boxa,main/boxa,main/boxb,archive/boxa');
-  ok('CONTROL: that order is NOT what a sort would produce, so the assertion '
-    + 'above can tell the store\'s order from any order',
+  ok('CONTROL: that order is NOT alphabetical, so the assertion above can tell '
+    + 'a real ordering from an incidental one',
     order.join(',') !== order.slice().sort().join(','), order.join(','));
 
   // THE DOT'S TIER IS RE-DERIVED INDEPENDENTLY, not read back off the markup.
@@ -1096,6 +1104,167 @@ ok('read-side sanitisation is stated, not hidden',
     counts.includes('4 work-streams') && counts.includes('9 saved copies'), counts);
   ok('...and says so when the list was capped', counts.includes('showing the 3 most recently saved'), counts);
   ok('an empty list renders no table at all', T.renderWorkStreams([], null) === '');
+}
+
+// ── §6c — THE ORDER IS THE CLOCK THE ROW SHOWS ──────────────────────
+//
+// THE DEFECT. The table said "newest first" and rendered `projectRead.scopes`
+// in the STORE's order, which `listWorkingScopes` sorts by `mtimeMs` — the
+// FILE clock. Every cell of that same row displays `effectiveSave(s)`, which
+// prefers the AGENT's clock (`writtenAt`). The two clocks agree only on a
+// machine that has never synced and never copied a folder: a checkout rewrites
+// mtime, so on a real two-machine setup a handoff saved four hours ago sat
+// UNDER rows a fortnight old, each correctly labelled with its own age. v3.55.0
+// kept the freshness dot and the age words in lockstep on `effectiveSave`; the
+// ORDER was left on the other clock, so one row could be marked fresh, worded
+// fresh, and ranked stale at the same time.
+//
+// THE FIXTURE MAKES THE TWO CLOCKS DISAGREE ON PURPOSE, and it is the reverse
+// case rather than a merely different one: the four rows carrying both clocks
+// rank EXACTLY BACKWARDS by mtime against `writtenAt`, so an implementation
+// reading either clock produces a defensible-looking list and only one of them
+// matches the ages printed in the cells. The fixture is handed over in the
+// STORE's order — mtime, newest first — because that is what the route returns.
+{
+  const day = 86400;
+  // `writtenAgeSeconds` is the agent's clock; `lastWriteAt` is the file's, and
+  // `effectiveSave` reads it only when no agent time exists at all.
+  const fileAgo = (secs) => new Date(Date.now() - secs * 1000).toISOString();
+  const rows = [
+    // Given in mtime order, newest arrival first — the order the store returns.
+    { scope: 'e-file-only', machine: 'boxa', headline: 'no journal time at all',
+      lastWriteAt: fileAgo(2 * 3600) },
+    { scope: 'd-agent-oldest', machine: 'boxa', headline: 'arrived last night',
+      writtenAgeSeconds: 10 * day, lastWriteAt: fileAgo(1 * day) },
+    { scope: 'c-agent-third', machine: 'boxa', headline: 'pulled five days ago',
+      writtenAgeSeconds: 3 * day, lastWriteAt: fileAgo(5 * day) },
+    { scope: 'b-agent-second', machine: 'boxa', headline: 'pulled ten days ago',
+      writtenAgeSeconds: 3600, lastWriteAt: fileAgo(10 * day) },
+    { scope: 'a-agent-newest', machine: 'boxa', headline: 'saved a minute ago',
+      writtenAgeSeconds: 60, lastWriteAt: fileAgo(14 * day) },
+    { scope: 'f-no-clock', machine: 'boxa', headline: 'neither clock resolves' },
+  ];
+  // Captured BEFORE anything renders: if the sort were done in place, a
+  // snapshot taken afterwards would already be the sorted list and the
+  // non-mutation assertion at the end would be vacuous.
+  const given = rows.map((r) => r.scope);
+  const T = makeRenderers(hostileState);
+  // The OPEN pair is `d-agent-oldest`, which the fix moves from the second row
+  // to the second-to-last: the mark has to travel with the row.
+  const out = T.renderWorkStreams(rows, { scope: 'd-agent-oldest', machine: 'boxa' });
+  const order = [...out.matchAll(/data-mem-scope="([^"]*)" data-mem-machine="([^"]*)"/g)]
+    .map((m) => m[1]);
+
+  eq('the rows follow the AGENT\'s clock — the one each cell displays — youngest first',
+    order.join(','),
+    'a-agent-newest,b-agent-second,e-file-only,c-agent-third,d-agent-oldest,f-no-clock');
+
+  // THE THREE THINGS THAT ORDER IS NOT, each spelled out so a mutation cannot
+  // satisfy the assertion above by accident.
+  ok('CONTROL: that is NOT the order the store handed over (mtime, newest first)',
+    order.join(',') !== given.join(','), order.join(','));
+  ok('CONTROL: nor is it the reverse of the store\'s order, which the reversed '
+    + 'fixture would otherwise make indistinguishable',
+    order.join(',') !== given.slice().reverse().join(','), order.join(','));
+  ok('CONTROL: nor is it alphabetical — `e-file-only` sorts third by its clock, '
+    + 'not fifth by its name',
+    order.join(',') !== order.slice().sort().join(','), order.join(','));
+  ok('CONTROL: the four rows carrying BOTH clocks rank exactly backwards by '
+    + 'mtime against writtenAt, so reading either clock gives a plausible list',
+    (() => {
+      const both = rows.filter((r) => r.writtenAgeSeconds !== undefined && r.lastWriteAt);
+      const byAgent = both.slice().sort((a, b) => a.writtenAgeSeconds - b.writtenAgeSeconds)
+        .map((r) => r.scope);
+      const byFile = both.slice().sort((a, b) => Date.parse(b.lastWriteAt) - Date.parse(a.lastWriteAt))
+        .map((r) => r.scope);
+      return byAgent.join(',') === byFile.slice().reverse().join(',') && both.length === 4;
+    })());
+
+  // A ROW THAT FELL BACK TO THE FILE CLOCK IS RANKED BY WHAT IT SHOWS. It has
+  // no agent time, so its arrival IS its reading, and it takes its place among
+  // the others rather than being pushed to either end.
+  eq('the file-clock-only row is ranked by the reading it displays', order[2], 'e-file-only');
+  ok('...and it says so in its own provenance text, as the two-clock rule requires',
+    /e-file-only[\s\S]*?file time/.test(out));
+
+  // NO READING IS NOT A READING OF ZERO. `effectiveSave` returns null when it
+  // can resolve neither clock — an ABSENCE, not an age — so the row goes last,
+  // never to the head of a list whose promise is "newest first".
+  eq('the row with no resolvable clock sorts LAST', order[order.length - 1], 'f-no-clock');
+  ok('...and it is still SHOWN, reading "unknown" rather than being dropped',
+    out.includes('>unknown<') && (out.match(/<tr class="mem-ws-row/g) || []).length === 6);
+
+  // THE OPEN PAIR TRAVELS WITH ITS ROW.
+  eq('exactly one row is marked open', (out.match(/mem-ws-row-open/g) || []).length, 1);
+  ok('...and it is the open pair wherever the order put it, not the row at its '
+    + 'old index',
+    /<tr class="mem-ws-row mem-ws-row-open"[^>]*>[\s\S]*?data-mem-scope="d-agent-oldest"/.test(out));
+  eq('the open row still carries the focus id', (out.match(/id="mem-ws-active"/g) || []).length, 1);
+
+  // THE ORDER IS TOTAL AND THE INPUT IS UNTOUCHED.
+  const tied = [
+    { scope: 'zulu', machine: 'boxb', writtenAgeSeconds: 300 },
+    { scope: 'alpha', machine: 'boxb', writtenAgeSeconds: 300 },
+    { scope: 'alpha', machine: 'boxa', writtenAgeSeconds: 300 },
+    { scope: 'nope', machine: 'boxa' },
+    { scope: 'also-nope', machine: 'boxb' },
+  ];
+  eq('rows at the SAME age break on scope then machine, so the order is total',
+    T.workStreamOrder(tied).map((r) => r.scope + '/' + r.machine).join(','),
+    'alpha/boxa,alpha/boxb,zulu/boxb,also-nope/boxb,nope/boxa');
+  ok('...and two calls agree, so a poll cannot shuffle rows under the pointer',
+    T.workStreamOrder(tied).map((r) => r.scope).join(',')
+    === T.workStreamOrder(tied).map((r) => r.scope).join(','));
+  eq('the response array is NOT sorted in place — `scopes[0]` still resolves to '
+    + 'the pair the route\'s own scope=latest would',
+    rows.map((r) => r.scope).join(','), given.join(','));
+  ok('an empty list still renders no table at all', T.renderWorkStreams([], null) === '');
+}
+
+// ── §6d — A RE-ORDER IS A REPAINT, AND ONLY THEN ─────────────────────
+//
+// The other half of the same defect. `screenSignature` is the no-op guard: the
+// pane repaints iff the mark moves, so a mark taken over the RESPONSE while the
+// table paints a SORTED copy describes an arrangement that is not on screen.
+// Two saves in the same age band crossing each other move every row and no cell
+// — which is exactly the case a projection off `pr.scopes` cannot see.
+{
+  const sigOf = (st) => new Function('state',
+    ['formatAge', 'effectiveSave', 'workStreamOrder', 'newestPair', 'projectMetaLine',
+      'screenSignature'].map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
+    + '\nreturn screenSignature();')(st);
+
+  // A third row is strictly the newest in both states, so `newestPair` — which
+  // reads the raw response and is folded in separately — CANNOT be what moves
+  // the mark. Without it this assertion would pass on the strip's reading alone
+  // and prove nothing about the table.
+  const pinned = { scope: 'aaa-pinned', machine: 'boxa', headline: 'newest either way',
+    harness: 'claude-code', writtenAgeSeconds: 60, lastWriteAt: '2026-09-01T00:00:00.000Z' };
+  // 7200 s and 7800 s both render "2 hr ago", so swapping them changes no cell
+  // in either row — only which of the two comes first.
+  const st = (xAge, yAge) => ({
+    activeProject: 'proj', staleWrite: false, indexError: null,
+    scope: 'x', machine: 'boxa', projects: [],
+    projectRead: { scopes: [
+      pinned,
+      { scope: 'x', machine: 'boxa', headline: 'same words either way', harness: 'opencode',
+        writtenAgeSeconds: xAge, lastWriteAt: '2026-09-02T00:00:00.000Z' },
+      { scope: 'y', machine: 'boxa', headline: 'same words either way', harness: 'opencode',
+        writtenAgeSeconds: yAge, lastWriteAt: '2026-09-03T00:00:00.000Z' },
+    ] },
+    detail: null,
+  });
+
+  ok('SETUP: the two rows that swap read the SAME age words in both states, so '
+    + 'no cell\'s content can be what moves the mark',
+    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js')
+      + '\nreturn formatAge(7200) === formatAge(7800) && formatAge(7200) === "2 hr ago";')());
+  ok('two rows swapping their AGENT clocks repaints, with every mtime and every '
+    + 'rendered cell unchanged — the re-order IS the change on screen',
+    sigOf(st(7200, 7800)) !== sigOf(st(7800, 7200)));
+  ok('CONTROL: an identical state still produces an identical mark, so this is '
+    + 'not a signature that simply always differs',
+    sigOf(st(7200, 7800)) === sigOf(st(7200, 7800)));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1621,6 +1790,10 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     // project — or the reading simply ageing into the next band — repaints.
     extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'newestPair', 'memory.js') + '\n' +
+    // The work-stream mark is taken over the ORDER the table paints, not
+    // over the response, so the function that decides that order travels
+    // with screenSignature everywhere it is executed.
+    extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
@@ -3977,6 +4150,9 @@ const EXECUTED = new Set([
   'firstNote', 'saveLine',
   // v3.55.0: the two pickers became a table, and the page became five blocks.
   'renderWorkStreams', 'workStreamCounts', 'newerOnAnotherMachine',
+  // v3.55.x: the table's row order, driven directly in §6c and folded into
+  // screenSignature, which §11/§6c both execute.
+  'workStreamOrder',
   'briefStats', 'briefDismissDecision',
   'renderHandoff', 'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',

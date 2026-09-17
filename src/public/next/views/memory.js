@@ -786,9 +786,20 @@ function screenSignature() {
   // the render would be skipped as a no-op and the fresh data would sit in
   // state, unpainted. A no-op guard that cannot see a pane is not a guard for
   // that pane.
+  //
+  // THE ORDER IS PART OF THE PAINT, so it is taken through the same
+  // `workStreamOrder` the table renders through rather than off the response.
+  // Two rows swapping places is a change on screen with no cell of its own,
+  // and it is reachable without any cell moving at all: two saves in the same
+  // band ("2 hr ago" both) that cross each other in the agent's clock repaint
+  // the table and would otherwise move nothing here — the pane would keep the
+  // stale ORDER while every word in it stayed correct. Reading the projection
+  // off `pr.scopes` directly would also mean the signature described a
+  // different arrangement than the one on screen, which is the shape of bug
+  // this whole function exists to avoid.
   const pr = state.projectRead;
   const tableRows = pr && Array.isArray(pr.scopes)
-    ? pr.scopes.map((s) => [
+    ? workStreamOrder(pr.scopes).map((s) => [
       s && s.scope, (s && s.machine) || null, (s && s.headline) || null,
       formatAge(effectiveSave(s).seconds),
       (s && s.harness) || null, (s && s.model) || null,
@@ -2591,6 +2602,63 @@ function renderEmptyProject(unlistedEntries) {
 }
 
 /**
+ * The table's row order: the SAME clock the row shows, youngest first.
+ *
+ * ── THE MARK, THE WORD AND THE ORDER ARE ONE READING ─────────────────────
+ * The store's `listWorkingScopes` sorts by `mtimeMs` — the FILE clock — and
+ * that is correct for what it serves: the tray and the index consume that
+ * order and it is NOT changed here. But every cell this table paints reads
+ * through `effectiveSave`, which prefers the AGENT'S clock (`writtenAt`) and
+ * falls back to the file's only when there is no journal time at all. On any
+ * machine where the two disagree — every synced one, because a checkout
+ * rewrites mtime, and any folder that was copied — the table was claiming
+ * "newest first" while a handoff saved four hours ago sat beneath rows a
+ * fortnight old. v3.55.0 put the freshness DOT and the age WORDS in lockstep
+ * on `effectiveSave`; the ORDER was left on the other clock, so a row could
+ * be marked fresh, worded fresh, and ranked stale, all at once.
+ *
+ * ── WHY IT TAKES A COPY ──────────────────────────────────────────────────
+ * `state.projectRead.scopes` is the fetched response, read by `newestPair`,
+ * by `newerOnAnotherMachine`, by `workStreamCounts`, and — critically — by
+ * the `scopes[0]` pick in `selectProject`/`reloadActive`, which stands in for
+ * the route's own `scope=latest` and must keep resolving to the same pair the
+ * SERVER would. Sorting in place would silently move that pick to a different
+ * definition of "latest" than the route's. This returns a new array and the
+ * response is left exactly as it arrived.
+ *
+ * NO AGE SORTS LAST, never first. `effectiveSave` returns `null` when it can
+ * resolve neither clock, and `null` is an ABSENCE of a reading, not an age of
+ * zero — the fact-and-absence collapse this view exists to refuse. Such a row
+ * shows "unknown" and belongs at the end, not at the head of a list whose
+ * promise is "newest first".
+ *
+ * Ties break on `scope` then `machine` so the order is TOTAL: two copies at
+ * the same age must not swap places between two paints, which would repaint
+ * the pane on every poll (screenSignature folds this order in) and move a row
+ * under the pointer for no reason.
+ */
+function workStreamOrder(scopes, now = Date.now()) {
+  const rows = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+  // Decorate once. `effectiveSave` reads the clock per call, so computing the
+  // key inside the comparator would let `now` advance mid-sort — a comparator
+  // that is not self-consistent is undefined behaviour, not a slow one.
+  const byName = (a, b) => (
+    String(a.scope || '') < String(b.scope || '') ? -1
+      : String(a.scope || '') > String(b.scope || '') ? 1
+        : String(a.machine || '') < String(b.machine || '') ? -1
+          : String(a.machine || '') > String(b.machine || '') ? 1 : 0);
+  return rows
+    .map((s, i) => ({ s, i, age: effectiveSave(s, now).seconds }))
+    .sort((a, b) => {
+      if (a.age === null && b.age !== null) return 1;
+      if (b.age === null && a.age !== null) return -1;
+      if (a.age !== b.age) return a.age - b.age;
+      return byName(a.s, b.s) || a.i - b.i;
+    })
+    .map((x) => x.s);
+}
+
+/**
  * THE WORK-STREAMS TABLE — the widget's grouped rows, brought into the app.
  *
  * ── WHAT IT REPLACES, AND WHY A TABLE IS NOT A BIGGER DROPDOWN ───────────
@@ -2607,10 +2675,10 @@ function renderEmptyProject(unlistedEntries) {
  * the first time a Windows or Linux user can see them.
  *
  * ── ONE ROW PER (SCOPE, MACHINE) PAIR, NEWEST FIRST ──────────────────────
- * The store returns pairs, newest first, and they are NOT collapsed by scope
- * here. `main` on the laptop and `main` on the desktop are two handoffs, two
- * ages and two different pieces of work in flight; merging them would hide the
- * exact case the per-machine layout exists for. The count line below the table
+ * Newest by `workStreamOrder` — the clock each row DISPLAYS — and they are
+ * NOT collapsed by scope here. `main` on the laptop and `main` on the desktop
+ * are two handoffs, two ages and two different pieces of work in flight;
+ * merging them would hide the exact case the per-machine layout exists for. The count line below the table
  * says both numbers — work-streams and saved copies — so the distinction is
  * stated rather than left to be inferred from row arithmetic.
  *
@@ -2631,7 +2699,7 @@ function renderEmptyProject(unlistedEntries) {
  * <summary> hazard in this file's header is unaffected.
  */
 function renderWorkStreams(scopes, open) {
-  const rows = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+  const rows = workStreamOrder(scopes);
   if (!rows.length) return '';
   const openScope = (open && open.scope) || null;
   const openMachine = (open && open.machine) || null;

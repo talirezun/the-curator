@@ -786,7 +786,13 @@ section('§8b — The strip TICKS: screenSignature can see the pane it paints');
 // mode is the other side of it: a pane the signature cannot see is a pane that
 // silently stops updating. The strip is a CLOCK, so this is not cosmetic.
 {
-  const SIG = ['formatAge', 'effectiveSave', 'newestPair', 'projectMetaLine', 'screenSignature'];
+  // `workStreamOrder` joins the list because screenSignature's work-stream
+  // mark is taken over the ORDER THE TABLE PAINTS rather than over the
+  // response — the two clocks disagree on every synced machine, and a mark
+  // describing an arrangement that is not on screen is the exact shape of
+  // bug this section exists to catch.
+  const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'newestPair',
+    'projectMetaLine', 'screenSignature'];
   const sigOf = (st) => new Function('state',
     SIG.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
     + '\nreturn screenSignature();')(st);
@@ -846,6 +852,23 @@ section('§8b — The strip TICKS: screenSignature can see the pane it paints');
     sigOf(st({ projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 },
       { scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
     brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } })) !== base);
+  // TWO ROWS CROSSING EACH OTHER IS A CHANGE ON SCREEN WITH NO CELL OF ITS OWN.
+  // 7200 s and 7800 s both read "2 hr ago", so this swap moves no word, no dot
+  // and no mtime — only which row is drawn first. A mark projected off
+  // `pr.scopes` instead of off the painted order cannot see it, and the table
+  // would keep a stale arrangement while every figure in it stayed correct.
+  // `main/boxa` stays strictly newest in both states so `newestPair`, which is
+  // folded in separately and reads the raw response, cannot be what moves.
+  {
+    const crossing = (x, y) => st({ projectRead: { scopes: [
+      { scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 },
+      { scope: 'x', machine: 'boxa', writtenAgeSeconds: x },
+      { scope: 'y', machine: 'boxa', writtenAgeSeconds: y },
+    ], brief: { present: true, updatedAt: new Date(Date.now() - 6 * 86400_000).toISOString() } } });
+    ok('two rows swapping AGENT clocks inside one age band repaints — the pane\'s '
+      + 'ORDER is part of what it paints',
+      sigOf(crossing(7200, 7800)) !== sigOf(crossing(7800, 7200)));
+  }
   ok('CONTROL: an age moving WITHIN one band does not repaint (300s -> 320s both read "5 min ago")',
     sigOf(st({ detail: { scope: 'main', machine: 'boxa',
       current: { present: true, writtenAgeSeconds: 300, lastSaveKind: 'complete' } } }))
