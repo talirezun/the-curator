@@ -1092,8 +1092,9 @@ async function reloadActive(token) {
   //
   // THIS USED TO READ `state.detail ? state.detail.machine : state.machine`,
   // and that one expression is the reported bug. On arrival selectProject
-  // calls loadScope(scope, null), so the STORE resolves the most recently
-  // written machine into `state.detail.machine`; reading it back here turned
+  // opens a pair it chose rather than one the user did — it passes
+  // `{deliberate: false}`, so `state.machine` stays null and the machine that
+  // came back sits only in `state.detail.machine`; reading it back here turned
   // that resolution into a pin the user never asked for, permanently, from
   // the first successful load. When a later save landed in a DIFFERENT
   // machine folder — which a hostname flap produces, see working-state.js
@@ -1137,9 +1138,16 @@ async function reloadActive(token) {
     return;
   }
   // Keep the user's scope if it still exists; otherwise fall back to the
-  // freshest, which is what selectProject would have chosen anyway.
-  const keep = scopes.some((s) => s.scope === wantScope) ? wantScope : scopes[0].scope;
-  await loadScope(keep, keep === wantScope ? wantMachine : null, token);
+  // freshest, which is what selectProject would have chosen anyway — and
+  // "freshest" means the same thing in both places or the claim is empty, so
+  // this takes the head of `workStreamOrder` rather than `scopes[0]`, for the
+  // reasons written out at that call site.
+  if (scopes.some((s) => s.scope === wantScope)) {
+    await loadScope(wantScope, wantMachine, token);
+    return;
+  }
+  const pick = workStreamOrder(scopes)[0];
+  await loadScope(pick.scope, pick.machine || null, token, { deliberate: false });
 }
 
 /**
@@ -1334,19 +1342,58 @@ async function selectProject(domain, project, token, opts = {}) {
     render(token);
     return;
   }
-  // Newest-first from the store, so [0] is the freshest handoff — which is
-  // exactly what the route resolves `scope=latest` to. The name is taken
-  // from the list we already have rather than costing a second request for
-  // the server to tell us the same thing.
-  await loadScope(scopes[0].scope, null, token);
+  // THE PAIR THIS OPENS IS THE ONE THE TABLE PUTS FIRST, and that is not what
+  // the store hands back.
+  //
+  // ── THE DEFECT ─────────────────────────────────────────────────────────
+  // This read `scopes[0]` — the store's own order, which is mtime — on the
+  // stated grounds that it resolves to the same pair the route's
+  // `scope=latest` would. Both are true and both are the wrong clock. **git
+  // sets mtime to the moment it wrote the file locally**, so on every synced
+  // machine (and on any copied store) mtime says "when this checkout landed"
+  // while the table, the dot and the words all read the AGENT'S clock through
+  // `effectiveSave`. Measured on a copied 16-pair store: the mtime-first pair
+  // was the agent-OLDEST, so the page opened on a two-week-old handoff under a
+  // first row reading "5 hr ago", the window STRETCHED to keep that open row
+  // visible (all sixteen rows, no "Show more" footer), and the Status block —
+  // which the route now computes on the agent clock — named a different,
+  // fresher work-stream two blocks above. One screen, two clocks, three
+  // disagreements.
+  //
+  // `workStreamOrder` is the order the table PAINTS, so its head is the row the
+  // user sees first and the one `wsShownCount` needs no stretch to reach.
+  //
+  // THE MACHINE IS PASSED TOO, and it has to be: the table marks its open row
+  // off `state.detail` — the pair the STORE resolved — so naming only the scope
+  // would let the store pick a different copy of it by mtime and put the
+  // highlight back on a row far down the list, stretching the window again for
+  // the same reason in a smaller place.
+  //
+  // The route's `scope=latest` is left exactly as it is. It serves callers with
+  // no list in hand; this view has the list, and picks from it.
+  const pick = workStreamOrder(scopes)[0];
+  // `{deliberate: false}` because the user chose nothing here — see loadScope.
+  await loadScope(pick.scope, pick.machine || null, token, { deliberate: false });
 }
 
-async function loadScope(scope, machine, token) {
+/**
+ * Read one (scope, machine) pair and put it on screen.
+ *
+ * `opts.deliberate === false` REQUESTS the machine without RECORDING it as a
+ * choice. The distinction is the whole of the v3.34.0 defect: `state.machine`
+ * means "a machine the user picked", and `reloadActive` re-resolves to the
+ * newest copy precisely when it is null. The default open (selectProject, and
+ * reloadActive's own fallback) names a machine so the pair it opens is the pair
+ * it ranked — but nobody chose it, so a later save into a DIFFERENT machine
+ * folder must still be what Reload finds. A row press and the machine picker
+ * pass no opts and are recorded, because there the pair IS the user's.
+ */
+async function loadScope(scope, machine, token, opts = {}) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   const key = keyOf(domain, project);
   state.scope = scope;
-  state.machine = machine;
+  state.machine = opts.deliberate === false ? null : machine;
   // Drop the previous scope's read before painting: keeping it would render
   // the OLD machine list and the OLD handoff under the NEW scope's label for
   // the duration of the fetch, which is a wrong answer stated confidently.
@@ -2689,13 +2736,17 @@ function renderEmptyProject(unlistedEntries) {
  * be marked fresh, worded fresh, and ranked stale, all at once.
  *
  * ── WHY IT TAKES A COPY ──────────────────────────────────────────────────
- * `state.projectRead.scopes` is the fetched response, read by `newestPair`,
- * by `newerOnAnotherMachine`, by `workStreamCounts`, and — critically — by
- * the `scopes[0]` pick in `selectProject`/`reloadActive`, which stands in for
- * the route's own `scope=latest` and must keep resolving to the same pair the
- * SERVER would. Sorting in place would silently move that pick to a different
- * definition of "latest" than the route's. This returns a new array and the
- * response is left exactly as it arrived.
+ * `state.projectRead.scopes` is the fetched response, read by `newestPair`, by
+ * `newerOnAnotherMachine` and by `workStreamCounts`, each of which asks its own
+ * question of it. Sorting in place would answer all of them with this one.
+ * This returns a new array and the response is left exactly as it arrived.
+ *
+ * SINCE v3.56.1 THIS IS ALSO THE DEFAULT-OPEN PICK. `selectProject` and
+ * `reloadActive`'s fallback used to take `scopes[0]` — the response's own mtime
+ * order, chosen to match what the route resolves `scope=latest` to. On a synced
+ * or copied store those are two different pairs, and the view was opening one
+ * while painting the other as first; the head of this order is now what opens,
+ * and the route is untouched.
  *
  * NO AGE SORTS LAST, never first. `effectiveSave` returns `null` when it can
  * resolve neither clock, and `null` is an ABSENCE of a reading, not an age of
