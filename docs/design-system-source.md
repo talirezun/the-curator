@@ -265,6 +265,272 @@ of N peer modes. The bundle models the second and the third; this is the first.
 Appearance (Light / Dark) stays segmented, because it is a mode pair and System
 Settings itself draws it that way.
 
+## The unification pass (v3.54.0) — five patterns the bundle does not model
+
+The bundle defines **tokens and component specs**. It does not say *which*
+component a given job takes, how wide a column may be, or what a status row
+contains — and until v3.54.0 the app answered those questions once per view.
+Twenty-one button call sites disagreed about the variants, Settings had four
+different block rhythms, and two sidebars listed the same domains in two
+vocabularies.
+
+The five rules below are now declared **once each, in one file each**, and each
+one names the file that owns it. None of them is a token change: every value
+below resolves to a bundle token or to an app-side token already recorded above.
+
+| Pattern | Owner (the authoritative file) | Guard |
+|---|---|---|
+| The button taxonomy | the comment block above `.btn` in `src/public/next/shell.css` | `scripts/test-next-button-family.js` |
+| The Settings block | `settingsBlock()` in `src/public/next/views/settings.js` + `.settings-job-block` in `views/settings.css` (built for one section in v3.53.0, generalised here) | `scripts/test-next-settings-sections.js` |
+| The help affordance | `src/public/next/shared/text.css` (`.tx-vh-info`, `.tx-vh-panel`, `.tx-note`) + `shared/docs-links.js` | `scripts/test-next-text-system.js`, `scripts/test-docs-links.js`, contrast ratchet §11 |
+| The content cap | `.main-inner` in `shell.css`, `--prose-max` in `tokens/space.css` | — (measured in the browser; see below) |
+| The status row | `src/public/next/shared/age.js` | `scripts/test-sidebar-status-rows.js` |
+
+### 1. The button taxonomy, and who decides the size
+
+Four tiers in descending weight. **The tier is the button's job, never its
+prominence**, and the size is a property of where the button *is*.
+
+| Variant | Face | Means | Rule |
+|---|---|---|---|
+| `.btn-primary` | filled violet, all three gloss devices | **commit** — the one action that completes the step in front of the user | **At most one per card, row or panel.** A panel with two has not decided what it is asking for |
+| `.btn-secondary` | `--surface-raised` on a `--control-edge` border | **act** — fetch, test, disclose, navigate, go back | **The default.** Reaching for primary instead is how a panel ends up with three |
+| `.btn-ghost` | transparent, `--text-2` | **quiet** — Cancel, Dismiss, Close, Copy, Skip, Set active, Disconnect | Reversible, dismissive, or one of many on a row |
+| `.btn-ai` | `--accent-tint` on `--accent-border` | **spends money** | Tinted, never filled, never glossed |
+| `.btn-danger` | transparent, `--danger-text` on `--border`; tints to `--danger-tint` on hover | **destroys data** | Tinted, never filled, never glossed |
+| `.btn-danger-solid` | filled `--danger-fill` | the one exception | **Only** inside a confirm dialog whose primary action *is* the deletion — the tier-1 slot used honestly |
+
+**Neither consequence variant is glossed, and that is structural.** Gloss
+asserts "this is a raised object". The two controls in the app that cost you
+something must never also be the most inviting thing on screen, so the tint
+**replaces** tier 1 rather than decorating it. `.btn-ai`'s seven consumers are
+the seven paid actions: **Ingest**, **Start batch** (`views/ingest.js`),
+**Compile to wiki** (`views/chat.js`), **Push contributions** and **Run
+synthesis** (`views/shared.js`), **AI maintenance** (`views/domains.js`) and
+**Verify AI connection · $0.0001** (`views/settings.js`). The price stays on the
+label, never in a fold.
+
+**Size is set by the container, not the author.**
+
+| Where the button stands | Height | Class |
+|---|---|---|
+| Directly in a section body | `--control-md` (32px) | `.btn` default |
+| Inside a card, a row, a notice, a table or a confirm strip | `--control-sm` (28px) | `.btn-xs` |
+
+That is a fact about the button's position, so it is never a judgement call at
+the call site. `views/settings.js` encodes the tier-1 test in one expression —
+`hasKeyField ? 'secondary' : 'primary'` on the key Save button: pasting your
+*first* key is the step; replacing a key you already have is not.
+
+> Two rules that were previously enforced by a scoped repaint of another
+> variant are now the variant itself: `views/chat.css`'s hand-built
+> `.chat-bulk-delete` and `views/shared.css`'s `.sb-revoke-go .btn-danger`
+> override are both **gone**, replaced by `btn btn-danger btn-xs` and
+> `btn btn-danger-solid`. The *judgements* survive; the mechanisms do not.
+
+### 2. The Settings block, and its measured rhythm
+
+Every section of Settings is now a stack of `settingsBlock(num, id, title,
+lede, body, info, notice?, infoOpts?)` calls. One block is:
+
+```
+  [ notice — never folded, above the heading ]
+  ①  Bold title
+      Lede, ≤ 20 visible words, with the ⓘ mark at its end
+      [ ⓘ panel — sibling of the lede, hidden on first paint ]
+      Body — the controls
+  ────────────────── 1px --border ──────────────────
+```
+
+**The rhythm is 24 | hairline | 24**, and it is one rule rather than four
+declarations:
+
+```css
+.settings-job-block            { padding-top: var(--space-12); border-top: 1px solid var(--border); }
+.settings-job-block + .settings-job-block { margin-top: var(--space-12); }
+```
+
+`--space-12` is **24px**, one step above the **16px** `.cur-group + .cur-group`
+gives two groups *inside* one block, so a block break reads as larger than a
+group break rather than the same size. The margin is on the adjacent sibling
+only, so the first block keeps its own top padding and the page does not open
+with a gap. This is the same two-sided rhythm `.dm-section + .dm-section` gives
+Domains (v3.50.0).
+
+**What it replaced, measured on the page before v3.53.0:** 16px of padding plus
+a 1px rule = **17px** between blocks, against **14px** of gap *inside* a block —
+so a block break read as very slightly larger than a paragraph break. The
+maintainer's verdict on that page was "a sea of information".
+
+**Two releases, and the split matters when reading the history.** v3.53.0 built
+`settingsBlock` and this rhythm for **Providers & keys alone**: five call sites,
+all numbered ①–④, and no `null` arm. What v3.54.0 adds is the *generalisation* —
+the `num == null` branch with `.settings-block-unnumbered`, the `infoOpts`
+parameter, and eight further call sites covering General (4), MCP bridge (2),
+Health & scan limits (1) and Knowledge base (1). Before it, four of the five
+sections had no block structure at all and spaced themselves by hand, including
+one `style="margin-top:22px"` on MCP bridge that this change deletes rather than
+converts to a token.
+
+**A numeral is an argument, not decoration.** `settingsBlock(null, …)` renders
+no `.settings-block-num` **and** adds `.settings-block-unnumbered`, which zeroes
+the 32px indent that exists only to clear a numeral.
+
+| Section | Blocks | Numbered? |
+|---|---|---|
+| **General** | Software update · Appearance · System check · Setup guide | No — none of them is step 1 of anything |
+| **Providers & keys** | ① Connect a provider · ② What builds your wiki · ③ Chat · ④ All models | **Yes** — the page reads top to bottom as a sequence |
+| **Knowledge base** | Vault folder | No |
+| **MCP bridge** | ① Connect a client · ② Default domain for MCP writes | **Yes** — ② is the answer to a question ① has to raise first |
+| **Health & scan limits** | Semantic-duplicate scan limits | No |
+
+The 32px indent is **derived, not chosen**: 20px numeral + the 12px
+`.settings-block-hd` gap. A hand-picked indent drifts the moment the numeral
+changes size.
+
+### 3. The help system: lede, ⓘ, "Read more in the guide"
+
+Three parts, and the third is the one that can rot.
+
+**The affordance is accent-coloured everywhere.** `.tx-vh-info` was `--text-2`
+at rest — the same colour as the sentence beside it — so on eleven surfaces it
+read as punctuation. It now sits at `--accent-text` at rest, takes an
+`--accent-tint` fill plus an `--accent-border` ring on hover and focus, and
+`--accent-tint-strong` while open; the panel it opens carries a **2px
+`--accent` left rule** over a faint `--accent-tint` wash. One colour, one shape,
+one meaning: *violet means there is an explanation here*.
+
+Measured in a real browser, both themes, on the three surfaces the mark sits on:
+
+| Surface | Rest |
+|---|---|
+| View header, on `--canvas` | 9.55 dark / 8.84 light |
+| Settings block, on `--surface` | 9.31 / 9.13 |
+| Sidebar, on `--mat-sidebar` | 8.74 / 8.51 |
+
+Every state stays above **7:1** in both themes — the tint moves the face, not
+the reading. The first two figures are reproduced exactly by the token
+arithmetic in `scripts/test-next-contrast-ratchet.js` §11; the third cannot be,
+because `--mat-sidebar` is a blurred material and no arithmetic composites a
+backdrop filter.
+
+**Three text roles, and choosing between them:**
+
+| Role | Use for | Rule |
+|---|---|---|
+| **The lede** | the one fact that says what the block is for | **≤ 20 visible words**, capped at `66ch` |
+| **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — capped at `68ch`, ships closed |
+| **`.tx-note`** | the single line that qualifies the control directly above it | **one line by contract** (`align-items: center`); a note that wraps is a `.tx-desc` that has not admitted it yet |
+
+**What may never be folded**, because a warning behind a click is not a warning
+(v3.16.1): warnings and banners, costs, refusals, validation errors, and the
+outcome of something the user just pressed. The worked example is the menu-bar
+control in `views/settings.js`: its 58-word explanation moved under the
+Appearance block's ⓘ, and its `.settings-fail-note` — the three ways a new menu
+bar icon can silently fail to appear — **stays visible** whenever the icon is
+on.
+
+**A control may never go inside a fold.** `shared/text.js` toggles the panel
+from a delegated listener on the button, so a control inside the panel would be
+reachable only after that toggle. The licence is for a link, a `<strong>` or a
+`<code>`.
+
+**Every fold ends with a link into `docs/`, and none of those links is a
+string.** `src/public/next/shared/docs-links.js` holds one frozen table of
+`key → { file, anchor }`; `docsUrl(key)` **throws** on an unknown key, so a typo
+is a blank screen in development rather than a dead link in production.
+`scripts/test-docs-links.js` reads the real markdown in `docs/` and fails if a
+file is missing or an anchor no longer matches a heading in it — **so renaming a
+heading that a key points at is a red suite, on the commit that renames it.**
+Fourteen keys are live today, across Settings and Agent memory.
+
+### 4. The content cap: 1200px, and cap the prose, never the cards
+
+`.main-inner` moved **900px → 1200px** (a 1144px content box at 28px of side
+padding). Reported with screenshots on a 2000px window: Ingest, Shared Brain,
+Agent memory and Settings "sit in a narrow strip and look squeezed" while Chat
+fills the window — because `views/chat.css` had already cancelled the cap
+outright so its scope bar and composer could reach the window edges. One view
+had opted out and five had not, which is what made it read as an inconsistency
+rather than a decision.
+
+**900px was a prose measure wearing a layout measure's clothes.** At 844px of
+content box, a 15px/1.55 paragraph is ~95 characters — already past the 60–75
+the type scale is set for. What the cap *was* doing was forbidding a second
+column: Ingest's 480px field stack, Shared Brain's 560px cards and Domains'
+420px tiles all had room for a neighbour and nowhere to put one.
+
+**The house rule that replaces it: the container stops being the thing that
+keeps a sentence readable.** Paragraph roles carry their own `ch` measure.
+
+| Run | Cap | Where |
+|---|---|---|
+| A Settings block lede | `66ch` | `.settings-job-lede` — uncapped it ran ~163 columns at 1200px |
+| An ⓘ panel | `68ch` | `.tx-vh-panel` |
+| A `.tx-note` | `--prose-max` (`68ch`) | `shared/text.css` |
+| A kit group-row sentence | `--prose-max` | `.cur-group-label > span` — measured **1118px, ~159 columns** at a 2000px viewport before the cap |
+
+Cards, tables, rows and tiles are **not** capped: they take the full 1144px.
+Capping `.cur-group-label` itself was refused — that column is `flex: 1` and its
+job is to push the control to the trailing edge, so capping it would let the
+control drift inward on a wide window. The cap is on the *sentence*.
+
+### 5. The status row, and the day-age bands
+
+Two sidebars list the same domains — Ingest's **DESTINATION** rows and Domains'
+**KNOWLEDGE** rows — and they now carry one anatomy:
+
+```
+  name
+  <key figure> · ●  🕐 <relative age>        ← line one
+  Ingested · <source title>                   ← line two, omitted when there is none
+```
+
+| Part | Value | When it is unknown |
+|---|---|---|
+| Key figure | `3,445 pages`, locale-grouped | `page count unknown` (Ingest) / `— pages` (Domains) |
+| Freshness mark | a dot, four steps, `aria-hidden` | a **dashed ring** |
+| Age | `today` / `yesterday` / `3 days ago` / `2 weeks ago` / `5 months ago` | `nothing written yet` |
+| Last event | `Ingested · <title>`, `Compiled · <title>`, or the neutral `Last write` | the line is omitted entirely |
+
+**The verb comes from the log, not from the view's name.** `lastIngestKind` is
+`'ingest' | 'compile' | null` on the wire; `appendLog` is called by conversation
+**compile** as well as by ingest, so a hardcoded "Ingested" would be false on a
+domain that is only ever compiled into. A `null` kind renders the neutral
+**"Last write"** — never a guessed verb.
+
+**The vocabulary lives in `src/public/next/shared/age.js`, and there are two
+clocks on purpose.**
+
+| Function | Resolution | Why it is separate |
+|---|---|---|
+| `formatAge(seconds)` | second | The ladder Agent memory and the menubar tray already speak. **Byte-identical** to the bodies in `views/memory.js` and `desktop/lib/tray-model.js`; the three are extracted from source and compared byte for byte by `scripts/test-sidebar-status-rows.js` |
+| `formatDayAge(dateStr)` | calendar day, local time | `lastIngestDate` is a `YYYY-MM-DD` heading with **no time of day**, and `log.md`'s mtime is rewritten by Personal Sync on every pull. Feeding a fabricated midnight into `formatAge` would print "7 hr ago" for a write that happened at any hour of today |
+
+**The mark and the word are cut on the same bands.** `dayFreshnessStep` reads
+its boundaries off `formatDayAge`'s own ladder, so a dot can never say *today*
+while the words beside it say *1 week ago*:
+
+| Step | Age | Ladder arm |
+|---|---|---|
+| 3 | `today` | `days < 1` |
+| 2 | `yesterday`, `N days ago` | `days < 7` |
+| 1 | `N weeks ago` | `days < 35` |
+| 0 | a month or more, **and a date in the future** | everything past it |
+| `null` | unknown | — |
+
+Three rules carried over from v3.34.0 and applied here: **one age source**,
+**never rounded younger** (a future date reads `dated ahead` and takes step 0,
+never "today"), and **unknown rendered as unknown**. The absolute date is not
+discarded — it travels in the row's accessible name through
+`.visually-hidden`, never a `title=`, which is hover-only and therefore
+invisible to keyboard and touch.
+
+`freshnessStep(seconds)` in `views/memory.js` is a **five**-step ladder cut on
+`formatAge`'s unit bands (just now / minutes / hours / days / weeks), because
+that surface measures a save that can be seconds old. It is a different
+question, not a second tuning of the same one.
+
 ## Things the app deliberately does not take from the bundle
 
 Recorded so a future conformance audit does not flag them as drift:

@@ -434,7 +434,7 @@ for your project, to paste into `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cu
 ([the measurement and its limits](docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 
 <p align="center">
-  <img src="docs/images/curator-agent-memory.png" alt="The Curator's Agent memory view: a Projects list showing projects with 3 scopes, lumina with 7 scopes and curator with 10 scopes, each last saved 3 days ago, beside a note that agents write the handoffs through MCP while you write the standing brief; on the right a card headed Last saved 3 days ago, naming the work-stream and the agent that wrote it, carrying a &quot;summary shortened&quot; badge explaining that only the one-line label was trimmed and not the handoff, plus a Work-stream dropdown and the machine the save came from" width="800"><br>
+  <img src="docs/images/curator-agent-memory.png" alt="The Curator's Agent memory view: a Projects list showing field-notes with 1 scope saved 22 hr ago, projects with 1 scope saved 2 weeks ago, lumina with 22 scopes saved 5 days ago and curator with 13 scopes saved 2 weeks ago; on the right a card headed Last saved 2 weeks ago, naming the work-stream curator-v3-17-1-acceptance and the agent that wrote it, then a line saying the file arrived on this computer 40 minutes ago and that the reading above is the agent’s own clock, a warning that newer state exists in another work-stream of the same project, and the standing brief’s age; below it a work-stream picker, a machine name, and a CURRENT HANDOFF panel with an accent edge whose heading repeats the save time and adds “updates live”"><br>
   <em>Layer 3, on disk: which project, which work-stream, which machine, and how long ago an agent last wrote it down.</em>
 </p>
 
