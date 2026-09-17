@@ -455,7 +455,7 @@ section('§10  ONE LABEL, ONE TIER — Cancel');
      still btn-secondary. Listed rather than silently skipped so the finding is
      visible, and as a SUBSET check so closing it does not red this suite for
      whoever closes it. DELETE THIS ENTRY once it is closed. */
-  const EXCEPTIONS = ['views/memory.js:mem-brief-cancel'];
+  const EXCEPTIONS = []; // the brief-editor Cancel became btn-ghost in the same release; nothing is exempt now
   const wrong = cancels
     .filter((b) => !hasClass(b.classes, 'btn-ghost'))
     .map((b) => ({ b, id: `${b.file}:` + ((/id="([^"]*)"/.exec(b.slice) || [])[1] || `line ${b.line}`) }));

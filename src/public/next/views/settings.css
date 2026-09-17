@@ -1876,6 +1876,7 @@
 }
 .settings-job-lede {
   margin: 0;
+  max-width: 66ch;   /* the prose cap, not the card's — at 1200px an uncapped lede ran ~163 columns (v3.54.0) */
   font-size: var(--text-md);
   line-height: 1.55;
   color: var(--text-2);

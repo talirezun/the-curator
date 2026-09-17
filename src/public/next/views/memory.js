@@ -2593,7 +2593,7 @@ function renderBriefEditor(read, readonly) {
       '<div class="mem-brief-buttons">' +
         '<button type="button" class="btn btn-primary" id="mem-brief-save"' +
           (e.busy ? ' disabled' : '') + '>' + (e.busy ? 'Saving…' : 'Save brief') + '</button>' +
-        '<button type="button" class="btn btn-secondary" id="mem-brief-cancel"' +
+        '<button type="button" class="btn btn-ghost" id="mem-brief-cancel"' +
           (e.busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
     '</div>'
