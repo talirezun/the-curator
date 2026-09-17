@@ -392,13 +392,22 @@
 }
 .settings-mcp-stale-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
+/* ON THE KIT'S CHROME (v3.54.0). `border-radius: 9px` was a hand-picked value
+   one pixel off --radius-lg and matching nothing else in the app, and the
+   `--border` edge was a full-strength control border on something that is not
+   a control. --hairline is the colour the kit's own `.cur-group` card uses.
+   `1px`, NOT `var(--hairline-w)`: material.css states the difference in words
+   — the variable means "the OS's DIVIDER" and halves on a 2x display, a plain
+   1px means "a real border the user is meant to read as an EDGE". This is an
+   edge. No --elev-1, though: a note is a quiet aside, and lifting it off the
+   page would make it compete with the card above it. */
 .settings-note-row {
   display: flex;
   align-items: center;
   gap: var(--space-6);
   padding: 12px var(--space-8);
-  border-radius: 9px;
-  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--text-2);
   font-size: var(--text-sm);   /* was 12.5px — on the ramp so it scales */
@@ -431,28 +440,14 @@
    all sat at identical specificity in one document and this file, linked
    last, was the only copy that rendered. */
 
-/* The one "spends tokens" action in this view (mirrors the sparkles
-   convention from the Health panel spec — accent-tinted, never plain). */
-.btn-ai-cost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--control-md);
-  padding: 0 12px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--accent-border);
-  background: var(--accent-tint);
-  color: var(--accent-text);
-  font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
-  /* No gloss, deliberately, and the same refusal shell.css records for
-     .btn-ai: the sparkle and the tint already say "this spends money", and a
-     lit, raised surface would make the one control in Settings that costs
-     real money the most inviting thing on the screen. */
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.btn-ai-cost:hover { background: var(--accent-tint-strong); }
+/* `.btn-ai-cost` — DELETED (v3.54.0). It was a hand-rolled, view-local copy of
+   `.btn-ai`: the same accent border, the same tint, the same deliberate
+   refusal of gloss, for the same reason — and it had ONE consumer, the Verify
+   AI connection button in General. Two declarations of "this control spends
+   money" is how the two drift, and this one had already drifted (it set
+   `cursor: default`, so the app's only paid button in Settings did not report
+   itself as clickable). The consumer now uses `.btn-ai` from shell.css, which
+   is the button family's own member for exactly this case. */
 
 /* ── General: appearance segmented control ────────────────────────────
    `.theme-segmented` / `.theme-seg-btn` — the base control, its .active chip
@@ -934,15 +929,27 @@
 
 /* ── MCP bridge ──────────────────────────────────────────────────────── */
 
+/* ON THE KIT'S CHROME, NOT ITS OWN (v3.54.0).
+   It was `border-radius: 10px` + `1px solid var(--border)` and no shadow: a
+   hand-picked radius that matched nothing else on the screen, and a flat card
+   sitting directly above the kit-chromed groups the same section now renders.
+   --radius-lg + 1px --hairline + --elev-1 is `.cur-group`'s recipe verbatim
+   (shell.css), so the status card and every card below it are one family —
+   measured identical in the browser, not assumed. `1px` rather than
+   `var(--hairline-w)` is deliberate and is material.css's own distinction: the
+   variable means "the OS's DIVIDER" and halves on a 2x display, a plain 1px
+   means "an EDGE". The margin-bottom drops to the block's own flex `gap`:
+   `.settings-block-body` is a flex column here, so a margin would ADD to that
+   gap rather than replace it. */
 .settings-status-card {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: var(--space-6) var(--space-8);
-  border-radius: 10px;
-  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--hairline);
   background: var(--surface);
-  margin-bottom: var(--space-8);
+  box-shadow: var(--elev-1);
   flex-wrap: wrap;
 }
 .status-pill {
@@ -1017,6 +1024,16 @@
 
 /* ── Health & scan limits ────────────────────────────────────────────── */
 
+/* ── A FIELD IS THE INVERSION OF A BUTTON (v3.54.0) ───────────────────────
+   This is the same recipe `.provider-replace-input` records at length, applied
+   to the one other typable control in this view. It was `--border` at rest and
+   no inset shadow at all, so a number field and a button were two boxes of the
+   same height with the same edge — the difference between "you can type here"
+   and "you can press this" had nothing carrying it.
+   --control-edge + --gloss-well is the sunken well: it survives both themes
+   and a colour-blind reading, which no border colour does. `--radius-control`
+   replaces the hand-picked 6px, so it matches the buttons it sits beside
+   instead of being 2px off them. */
 .settings-input-suffix {
   display: flex;
   align-items: center;
@@ -1024,9 +1041,22 @@
   height: var(--control-md);
   max-width: 300px;
   padding: 0 var(--space-6);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--surface-inset);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-edge);
+  box-shadow: var(--gloss-well);
+  transition: border-color var(--t-state), box-shadow var(--t-state), background var(--t-state);
+}
+.settings-input-suffix:hover { border-color: var(--text-faint); }
+/* Focus lands on the <input> INSIDE the well, so the well has to answer for it
+   — `:focus-within`, not `:focus`. Same two moves as the replace field: the
+   border takes the accent AND the ring appears, so focus is never carried by
+   colour alone. The input's own outline stays suppressed (see
+   `.settings-number-input`) — two rings around one control is one too many. */
+.settings-input-suffix:focus-within {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--gloss-well-quiet), var(--ring-focus);
 }
 .settings-number-input {
   flex: 1;
@@ -2652,3 +2682,65 @@
 .build-current.build-current-none.build-current-warn {
   border-left: 3px solid var(--attention-text);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ── MCP · Health · Knowledge base blocks (v3.54.0) ──
+   ══════════════════════════════════════════════════════════════════════════
+
+   These three sections now render as `settingsBlock(...)` calls, which supplies
+   the page rhythm (24 | hairline | 24 BETWEEN blocks, pinned by
+   scripts/test-next-model-gone-ui.js). What it does not supply is the rhythm
+   INSIDE a block body, because `.settings-block-body` is an ordinary block
+   container: its children stack on their own margins.
+
+   That is what these rules fix, and why they are SCOPED to the three block ids
+   rather than applied to `.settings-block-body` globally — Providers & keys
+   renders four blocks through the same helper, each with its own hand-tuned
+   internal spacing, and giving every body a flex gap would move all of them.
+
+   ── WHAT WAS MEASURED ──────────────────────────────────────────────────────
+   On Health, the Save button was the next sibling of the second field, in the
+   block's own flex column plus `.settings-btn-row`'s `margin-top: 4px`. The
+   button read as belonging to the field above it rather than to both. With the
+   fields now inside a `.cur-group` card and this gap, the button sits a full
+   --space-6 clear of the card's edge, which is the same step the card uses
+   between its own rows — so the button is outside the form, visibly.
+   ═════════════════════════════════════════════════════════════════════════ */
+.settings-block-mcp-connect > .settings-block-body,
+.settings-block-mcp-domain > .settings-block-body,
+.settings-block-health-limits > .settings-block-body,
+.settings-block-storage-folder > .settings-block-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  /* A flex column's children would otherwise collapse to their intrinsic
+     width in some engines; the bodies here hold full-width cards and rows. */
+  align-items: stretch;
+}
+/* The gap above replaces every ad-hoc margin these children carry, rather than
+   adding to it: a margin on a flex ITEM stacks ON TOP of the container's gap,
+   which is how a 12px design becomes a 36px one without anybody choosing it.
+   Zeroed here, scoped, so the global rules stay correct for their other
+   consumers (`.settings-note-row` is also rendered by Providers' block 1). */
+.settings-block-mcp-connect > .settings-block-body > .settings-btn-row,
+.settings-block-health-limits > .settings-block-body > .settings-btn-row,
+.settings-block-mcp-connect > .settings-block-body > .settings-mcp-stale-note,
+.settings-block-storage-folder > .settings-block-body > .storage-path-row,
+.settings-block-storage-folder > .settings-block-body > .settings-note-row {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* The path row's own controls. `flex-wrap` is already on the rule; this only
+   stops the two buttons stretching to the code block's height when the path
+   wraps to two lines, which it does at ~240px. */
+.settings-block-storage-folder .storage-path-row > .btn { flex: none; }
+
+/* ── THE SCAN-LIMIT FIELDS, AS ROWS OF THE KIT CARD ───────────────────────
+   `.cur-group-fields` already lays a row out label-left / control-right when
+   the row supplies a `.cur-group-label` column (see the `:has()` rule above,
+   and the note there on why the axis is chosen by markup rather than by a
+   modifier class). These two rows do supply one, so they inherit that axis for
+   free. All that is left is to stop the well stretching to the label column's
+   height — it is sized by its own content, exactly like the segmented control
+   General's rows put in the same slot. */
+.cur-group-fields > .settings-field-block > .settings-input-suffix { flex: none; }

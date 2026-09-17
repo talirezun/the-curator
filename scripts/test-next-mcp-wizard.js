@@ -40,7 +40,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { docsUrl } from '../src/public/next/shared/docs-links.js';
+import { docsUrl, docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1087,10 +1087,23 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
   }
 
   // (b) SETTINGS' MCP SECTION — EXECUTED too, against the real renderMcp.
-  const mcpSrc = /function renderMcp\(\)\s*\{[\s\S]*?\n\}/.exec(settingsCode);
+  //
+  // BRACE-MATCHED, not lazily regexed. This used to be
+  // `/function renderMcp\(\)\s*\{[\s\S]*?\n\}/`, which stops at the FIRST
+  // newline-plus-closing-brace at column 0 — so a `}` at column 0 anywhere
+  // inside the function silently truncated the extraction and this section
+  // crashed on a syntax error that named nothing. `extractFunction` above
+  // matches braces and throws with the function's name if it desyncs.
+  const mcpSrc = extractFunction(settingsCode, 'renderMcp');
   ok(!!mcpSrc, 'renderMcp() is found in settings.js');
   let mcpHtml = null;
   if (mcpSrc && GUIDE_URL) {
+    // settingsBlock + infoMark are lifted REAL rather than stubbed, because
+    // the class assertion below is about the face the lede is painted in and
+    // a stub would be asserting the stub. They pull in `escapeHtml` and
+    // `TX_INFO_GLYPH`, which are injected alongside.
+    const blockSrc = extractFunction(settingsCode, 'settingsBlock');
+    const infoSrc = extractFunction(settingsCode, 'infoMark');
     const deps = {
       state: { mcpError: null, mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d' },
                selfTest: null, configSnippetOpen: false, configSnippet: null,
@@ -1099,11 +1112,15 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       deriveMcpStatus: () => ({ pillClass: 'status-pill', pillLabel: 'Connected', wizardLabel: 'Reconnect' }),
       renderSelfTestResult: () => '', shouldShowMcpStaleNote: () => false,
       escapeHtml: (x) => String(x), icon: () => '',
+      TX_INFO_GLYPH: '<svg/>',
+      docsLinkHtml,
       renderListboxHtml: () => '<LISTBOX/>', pendingListboxes: [],
       MCP_GUIDE_URL: GUIDE_URL, myMountToken: 1, onSaveDefaultDomain: () => {},
     };
     const names = Object.keys(deps);
-    mcpHtml = new Function(...names, mcpSrc[0] + '\nreturn renderMcp;')(...names.map((n) => deps[n]))();
+    mcpHtml = new Function(...names,
+      [blockSrc, infoSrc, mcpSrc, 'return renderMcp;'].join('\n')
+    )(...names.map((n) => deps[n]))();
   }
   ok(!!mcpHtml && mcpHtml.includes('status-pill'), 'CONTROL: renderMcp() really rendered its status card');
   if (mcpHtml) {
@@ -1112,8 +1129,18 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     for (const c of CLIENTS) ok(mcpHtml.includes(c), `…and names ${c} there too`);
     ok(/ChatGPT[^.]*cannot run a local server/.test(mcpHtml), '…and the same honest exclusion');
     ok(mcpHtml.includes('href="' + GUIDE_URL + '"'), '…linking to the same guide as the wizard');
-    ok(/class="settings-hint-text"/.test(mcpHtml.slice(mcpHtml.indexOf('Works with any MCP client') - 200)),
-      'it renders in the kit\'s SECONDARY text face, not as a status or a warning — it is orientation, not an alert');
+    // RE-POINTED (v3.54.0). The sentence used to be a `.settings-hint-text`
+    // paragraph rendered loose in the section body; it is now the block's own
+    // LEDE, which is `.settings-job-lede .settings-block-lede` — the same
+    // secondary face, one rung larger, and the element the design pass made
+    // the carrier of every block's opening sentence. The assertion still says
+    // the same thing: this is orientation, not a status and not an alert.
+    ok(/class="settings-job-lede settings-block-lede"/.test(mcpHtml.slice(Math.max(0, mcpHtml.indexOf('Works with any MCP client') - 200))),
+      'it renders as the block\'s LEDE, in the kit\'s secondary text face — not as a status or a warning');
+    // …and the honest exclusion may sit behind the ⓘ, but the ⓘ must be a
+    // FOLD, not a deletion: the panel is in the markup and starts hidden.
+    ok(/class="tx-vh-panel"[^>]*hidden/.test(mcpHtml),
+      'the long version is a closed fold in the shipped markup, reachable without another request');
   }
 
   // (c) ONE URL, TWO SURFACES. Two hand-typed links is how one of them rots.
