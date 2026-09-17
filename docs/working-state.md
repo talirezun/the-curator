@@ -1041,37 +1041,34 @@ domain with its latest work-stream first. The **Domains** view carries the other
 typed confirmation, given a standing brief, and where **Copy marker line** hands you the
 `.curator-project` line for a repository, with **Copy agent instructions** beside it.
 
-![The Curator's Agent memory screen with a project open. The sidebar lists projects grouped by domain — under PROJECTS: "field-notes, 1 scope · 22 hr ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago" and "curator, 13 scopes · 2 weeks ago", the last of which is selected — under a heading "Agent memory" carrying an ⓘ mark and a PROJECTS eyebrow with a Refresh link. The main pane is headed YOUR AGENTS’ BRAIN / Agent memory, with an ⓘ beside the title, a "Copy agent instructions" button to its right, and a "projects / curator" breadcrumb. A card reads "Last saved 2 weeks ago" over the work-stream name curator-v3-17-1-acceptance and the harness that wrote it, claude-code; below that, "This file arrived on this computer 40 min ago — the reading above is the agent’s own clock, not the file’s", then "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 41 min ago", and, under a hairline, "Standing brief — 40 min ago". Underneath sit a Work-stream dropdown, a Machine name with a matching "from talis-macbook-pro-17d23c" chip, and the caption "synced here — local paths and processes may differ". Last, a panel with a violet bar down its left edge: a downward chevron, the label CURRENT HANDOFF and a small square freshness mark on the left, and on the right "Saved 2 weeks ago" over "claude-code · opus · updates live". Its body opens with the headline "v3.17.1 fixes are complete and green in the working tree, uncommitted; the connector acceptance pass is the last step.", followed by WHERE THINGS STAND and FIRM DECISIONS — DO NOT RE-LITIGATE.](images/curator-agent-memory.png)
+![The Curator's Agent memory screen with the "curator" project open, dark theme. The sidebar lists projects grouped by domain, each row carrying the project name, its newest headline and a freshness dot — under PROJECTS: "field-notes, 1 scope · 1 day ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago" and "curator, 13 scopes · 2 weeks ago", the last of which is selected — under a heading "Agent memory" carrying an ⓘ mark and a PROJECTS row with a Refresh link. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The first block is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ. Its card holds, on one line, an amber square pip, the small label WORKING ON, the sentence "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0" and, at the right edge, "3 hr ago". Under it a hollow square pip beside "Last saved" over "2 weeks ago" in large monospace, with "curator-v3-17-1-acceptance · claude-code" beneath. Then three qualifying lines: "This file arrived on this computer 3 hr ago — the reading above is the agent’s own clock, not the file’s."; "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 3 hr ago."; and "Written on talis-macbook-pro-17d23c and synced here — local paths and processes may differ from what the handoff describes." Below a hairline inside the same card, "Standing brief — 3 hr ago". A second block headed Work-streams holds a table with the columns WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS, ordered newest first: session-2026-09-17-settings-design-unification at 3 hr ago and session-2026-09-13-readme-video-screenshots at 5 hr ago carry filled amber dots, session-2026-09-14-website-seo-perf at 3 days ago a filled grey one, and the three rows below it — 1 week ago and two at 2 weeks ago — hollow grey ones, each with that save’s own headline, its machine and its harness and model. More of the project’s thirteen saved copies continue below the bottom edge.](images/curator-agent-memory.png)
 
-**What the view puts in front of you (reorganised in v3.54.0).** It is one column
-of panels, and they are ranked rather than equal:
+**What the view puts in front of you (rebuilt in v3.55.0).** It was three
+collapsible panels under a row of dropdowns. It is now a dashboard of **five
+unnumbered blocks**, each a heading, a one-line lede and an ⓘ:
 
-| Panel | Open on arrival | Why |
-|---|---|---|
-| **CURRENT HANDOFF** | Yes, unless you closed it | It is the answer the screen exists to give. The only one carrying an accent edge — marking all three would mark none |
-| **Standing brief** | No | It rarely changes. It opens on its own in exactly one case: when there is no handoff yet, because then it is the only content there is |
-| **Session journal** | No | History, not state |
+| Block | The reading it gives |
+|---|---|
+| **Status** | *Working on* — the newest save's headline, with a freshness pip and an age that ticks while you watch; *Last saved*, with the work-stream and harness that wrote it; which of the two clocks the figure came from; every qualifying line (trimmed content, a file that arrived by sync, newer state in another work-stream, **another machine that saved after this one**, two tools sharing one handoff file); and the standing brief's age |
+| **Work-streams** | One row per **(work-stream, machine)** pair, newest first: freshness dot and slug, that save's own headline, its age, the machine (tagged **this machine** only on positive evidence) and the harness · model. Clicking a row opens it — which is what replaced the Work-stream and Machine dropdowns. Under the table, *"N work-streams · M saved copies"*, both taken from the store's uncapped counts |
+| **Current handoff** | The open work-stream's handoff, at the column's full width |
+| **Standing brief** | The document, with a **pencil** in its own toolbar. ⌘S / ⌘↵ save, Esc closes (raising an inline Discard / Keep editing bar when the draft changed), and a live *modified · words · bytes of 32768* line disables Save before the 32 KB ceiling is hit rather than after |
+| **Session journal** | One line per save, newest first — unchanged |
+
+**Status is first, above everything that could qualify it**, because it is what
+someone with almost no context left actually arrives for; the stale-write notice
+and the "not everything could be listed" note render inside it, and nothing in it
+is ever folded. A block with nothing to report does not render at all.
 
 Two readings the [menu bar widget](#a-second-read-surface-the-menu-bar-widget-mac-app-off-by-default)
-already carried are now on the web surface too, so they are not Mac-only:
-
-- a **freshness mark** on the handoff's own heading, cut on the same five bands
-  as the save-status card above it and computed from the same `effectiveSave`
-  reading, so the mark and the words can never name two different times;
-- an **age that counts up while the screen is open** — *"22 hr ago · updates
-  live"*. The phrase is appended only when the interval really exists, and it is
-  withheld when the reading is a raw timestamp rather than an age, because that
-  string does not tick.
-
-Three smaller corrections went with it: the handoff can now be **collapsed** (it
-was the one panel on the page that could not be), the standing brief **no longer
-opens itself on every visit**, and the explanation of the three tiers moved from
-a card at the foot of the page into the header's **ⓘ** — read once per user,
-then never again, which is what that mark is for. The sidebar's floating
-"agents write the handoffs here" card moved into the sidebar's own **ⓘ** at the
-same time, where it reads *"Agents save handoffs here over MCP; you write the
-standing brief."* — the same division of labour, said in one place instead of
-two.
+already carried are on the web surface too, so they are not Mac-only: the
+**freshness mark**, and an **age that counts up while the screen is open**
+(*"3 hr ago · updates live"* — the phrase appended only when the interval really
+exists). Since v3.55.0 that mark is the app-wide freshness scale rather than this
+view's private one, so a project row in the sidebar, its own newest work-stream
+in the table, and the domain rows in Ingest and Domains cannot disagree about how
+fresh something is. The brief still gets **no** freshness mark: it changes on the
+order of weeks, and an old brief is not a stale one.
 
 **One project on that list can be neither renamed nor deleted: the domain's own.** Its folder
 *is* the domain's state root, so renaming it would sweep every other project in the domain into

@@ -1250,6 +1250,13 @@ punctuation.
 
 If a fold is open when the screen refreshes underneath you, it stays open.
 
+**The block shape is no longer Settings-only.** A heading, a short lede with its ⓘ at the end, a
+body, and a hairline before the next block — that is now a shared piece any screen can be built
+from, and [Agent memory](#agent-memory--what-the-screen-shows) is the first outside Settings to
+use it (*v3.55.0*). On that one screen the ⓘ panel runs the **full width of the column** rather
+than stopping at a paragraph measure, because the page is a dashboard and a help panel ending at
+half the width of the table under it looked like a mistake.
+
 ### Buttons — what the look tells you
 
 Buttons are a system, not a palette. **The look is the button's job, not its
@@ -1301,83 +1308,165 @@ The one-time "The Curator has a new look." notice and its **Use the previous int
 
 The **Agent memory** rail item opens a browser for the working state your agents leave for
 each other. Almost all of it is **read-only** — agents write this over MCP and the app shows it —
-with exactly one exception, the **standing brief**, which is your document and has an Edit button.
+with exactly one exception, the **standing brief**, which is your document and has a pencil.
 
-![The Agent memory view with a project open. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS eyebrow with a Refresh link, and under a second PROJECTS heading — the domain’s name — four rows: "field-notes, 1 scope · 22 hr ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago", and "curator, 13 scopes · 2 weeks ago", which is selected. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator". Below that the save-status card: a small square mark beside "Last saved" over "2 weeks ago" in large monospace, then "curator-v3-17-1-acceptance · claude-code"; under it "This file arrived on this computer 40 min ago — the reading above is the agent’s own clock, not the file’s."; then "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 41 min ago."; and at the foot of the card, below a hairline, "Standing brief — 40 min ago". A row under the card holds a "Work-stream" dropdown set to curator-v3-17-1-acceptance, "Machine talis-macbook-pro-17d23c", an amber chip reading "from talis-macbook-pro-17d23c", and the note "synced here — local paths and processes may differ". Last, a panel with a violet bar down its left edge: a downward chevron, the label "CURRENT HANDOFF" and a small square freshness mark on the left, and on the right "Saved" over "2 weeks ago" with "claude-code · opus · updates live" beneath it. Its body opens with the headline "v3.17.1 fixes are complete and green in the working tree, uncommitted; the connector acceptance pass is the last step.", then a WHERE THINGS STAND paragraph, then a FIRM DECISIONS — DO NOT RE-LITIGATE list of five bullets, with a TRAPS AND DEAD ENDS heading just visible at the bottom edge.](images/curator-agent-memory.png)
+![The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, then a PROJECTS row with a Refresh link, then a second PROJECTS heading — the domain’s name — over four rows. Each row has a small square marker, the project name, a one-line headline under it, and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago", "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago", "lumina / D370 PR #452 READY TO MERGE: head b… / 22 scopes · 5 days ago", and "curator / v3.17.1 fixes are complete and green in th… / 13 scopes · 2 weeks ago", which is selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The first block is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ. Its card holds, on one line, an amber square pip, the small label WORKING ON, the sentence "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0" and, at the right edge, "3 hr ago". Under it a hollow square pip beside "Last saved" over "2 weeks ago" in large monospace, with "curator-v3-17-1-acceptance · claude-code" beneath. Then three qualifying lines: "This file arrived on this computer 3 hr ago — the reading above is the agent’s own clock, not the file’s."; "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 3 hr ago."; and "Written on talis-macbook-pro-17d23c and synced here — local paths and processes may differ from what the handoff describes." Below a hairline inside the same card, "Standing brief — 3 hr ago". A second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. Six rows are visible, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-17-settings-design-unification" with a filled amber dot and "3 hr ago"; "session-2026-09-13-readme-video-screenshots", amber, "5 hr ago"; "session-2026-09-14-website-seo-perf", filled grey, "3 days ago"; then three hollow grey rows — "session-2026-09-04-ingest-ux-and-chrome" at "1 week ago", "session-2026-09-02-audit-and-plan" and "session-2026-09-01-menubar-widget-design" at "2 weeks ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 for the first five, talis-macbook-pro-17d23c for the last — and a harness line such as "Claude Code · claude-fable-5-1" or "claude-code · opus". More of the project’s thirteen saved copies continue below the bottom edge.](images/curator-agent-memory.png)
 
-*One project's state, open. The card across the middle is the [save-status strip](#the-save-status-strip)
-described below — this one is showing two of its qualifying lines at once, including the
-**Newer state in this project** warning that another work-stream has been saved to more recently.
-The panel at the bottom is the **current handoff**, which opens by default and is the only one of
-the three panels marked with a violet edge. Its own heading repeats the reading from the card
-above — and the age in it **ticks while you watch**, which is what "updates live" is telling you.*
+*One project's state, open, and the top two of its [five blocks](#the-five-blocks). **Status**
+answers "am I saved?" in one glance — the **Working on** headline, a live age, the Last-saved
+reading, and here three of its qualifying lines at once. **Work-streams** is the table that
+replaced the old Work-stream and Machine dropdowns: one row per saved copy, newest first, click
+a row to open it. Its dots are the app-wide [freshness scale](#the-freshness-dot-one-scale-everywhere),
+and because the table is ordered by the same clock the dots are cut on, they cool straight down the
+column: amber for the two saved today, filled grey at three days, hollow grey from a week out.*
+
+> **The sidebar row and the Status block name different work-streams in this photograph**, and the
+> Status block is the one to trust: it re-derives the project's newest save from the agent's own
+> clock, while the row beside it is still reading the store's index. It is
+> [reported](https://github.com/talirezun/the-curator/issues) and not yet fixed.
 
 - **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
-  nested under their domain, each project with its work-stream count and how long ago it was last
-  written to (*"2 scopes · 5 hr ago"*). A project that has a standing brief but has never been
-  saved to is listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that
-  is a real answer, not a broken row. A domain with **neither** a brief nor a save is not listed
-  at all: there is nothing there yet to describe. If nothing at all is listed, the screen says
-  which of the two situations you are in — *no domains*, or domains with no agent memory yet — and
-  never sends you off to create a domain you already have. The screen **opens** on whichever
-  project was written to most recently, which is nearly always the one you just came from, and it
-  remembers the last project you looked at in each domain; the lists themselves do not reorder
-  between visits.
-- **The header carries `Copy agent instructions`**, beside the breadcrumb naming the domain and
-  project you are looking at. It is the same block as the button of that name in
-  [§10 → Projects](#projects-inside-a-domain), already filled in for this project — the thing to
-  paste into the file your coding tool loads every session, so the agent knows to read this screen's
-  state when it starts and to save it as it goes ([§13b](#making-sure-your-agent-actually-does-it)).
+  nested under their domain. Each row now carries three things: the project name, the **Working
+  on** headline from its newest save (omitted, not filled with a dash, when there is none), and a
+  status line of a **freshness dot** plus the work-stream count and age (*"13 scopes · 2 weeks
+  ago"*). A project that has a standing brief but has never been saved to is listed — dimmed, with
+  a hollow marker, reading *"no state saved yet"* — because that is a real answer, not a broken
+  row. A domain with **neither** a brief nor a save is not listed at all. If nothing at all is
+  listed, the screen says which of the two situations you are in — *no domains*, or domains with
+  no agent memory yet — and never sends you off to create a domain you already have. The screen
+  **opens** on whichever project was written to most recently, and it remembers the last project
+  you looked at in each domain; the lists themselves do not reorder between visits.
+- **The header carries `Copy agent instructions`**, beside the title. It is the same block as the
+  button of that name in [§10 → Projects](#projects-inside-a-domain), already filled in for this
+  project — the thing to paste into the file your coding tool loads every session, so the agent
+  knows to read this screen's state when it starts and to save it as it goes
+  ([§13b](#making-sure-your-agent-actually-does-it)). **Refresh** sits at the top of the sidebar's
+  PROJECTS list; the screen re-checks by itself when you come back to it, so it is rarely needed.
 - **A domain that had memory before v3.48.0 shows one project named after the domain.** Nothing
   was moved to produce that — see [§13b](#one-domain-one-project-or-one-more-work-stream) for
   the model and [§10](#projects-inside-a-domain) for how to add a second project.
-- **A Scope and a Machine picker** appear when there is more than one of either. Ask for a
-  work-stream without picking a machine and you get the most recently written one; if that was a
-  different computer, a small **from &lt;machine&gt;** badge says so, because the next steps below it
-  were observed somewhere else and local paths may not match.
+- **"How this works" is the ⓘ beside the title.** It explains the three tiers, the per-machine
+  layout and the read-only rule — read once, then never again, which is exactly what the ⓘ is for.
+  As of v3.55.0 that panel runs the full width of the column like everything under it, because
+  this page is a dashboard rather than a page of prose. The sidebar has its own ⓘ carrying the
+  short version.
 
-**Below the pickers the screen is three panels, and they are ranked** (*reorganised in v3.54.0*):
+#### The five blocks
 
-| Panel | Open when you arrive? | What it holds |
+The project page is **five blocks**, in this order, each one a heading, a one-line lede and an ⓘ
+holding the argument behind it (*rebuilt in v3.55.0 — it was three collapsible panels and a row of
+dropdowns*). They are deliberately **not numbered**: they are sections, not steps.
+
+| Block | The question it answers | What is in it |
 |---|---|---|
-| **CURRENT HANDOFF** | **Yes** — it is the answer you came for | Where things stand right now for one work-stream: the headline, then where things stand, what is next, what is settled, what to avoid, what is still open |
-| **Standing brief** | No | The part that rarely changes — the goal, the firm decisions, the working model. Carries an **Edit** button |
-| **Session journal** | No | One line per save: when, which harness, which model, and the headline. History, not state |
+| **Status** | *Am I saved, and is it any good?* | The **Working on** headline with a freshness pip and an age that ticks while you watch; the **Last saved** reading with the work-stream and harness that wrote it; which clock the reading came from; every qualifying line — see [the save-status strip](#the-save-status-strip) below; and the standing brief's age |
+| **Work-streams** | *What else is going on in this project, and where?* | One row per saved copy — see the table below. Click a row to open its handoff |
+| **Current handoff** | *What did the last session leave for the next one?* | The handoff for the open work-stream, as a fold with its own freshness pip and live clock. Full width since v3.55.0 |
+| **Standing brief** | *What standing instructions does every agent read?* | Your document, with a **pencil** to edit it — see [Editing the standing brief](#editing-the-standing-brief) |
+| **Session journal** | *What has happened here over time?* | One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. History, not the present |
 
-Only the handoff carries a **violet edge**; the other two are plain. That is the
-point of it — one panel marked out of three tells you where to look, and marking
-all three would tell you nothing.
+**Status is first, above everything that could qualify it.** It is the block someone with almost
+no context left actually arrives for, so it must not sit under two conditional notes and a table
+on the days those appear. The stale-write notice and the "not everything could be listed" note
+render **inside** it, under the reading they qualify, and nothing in Status is ever folded.
 
-- **The handoff is collapsible now, and it remembers.** It used to be the one thing on this screen
-  you could not close, so a long handoff was something you scrolled past to reach the brief and
-  the journal. Close it and it stays closed; the app only ever opens it for you the first time.
-- **The standing brief no longer opens itself on every visit** (*fixed in v3.54.0*). It opens on
-  its own in exactly one case — when there is no handoff yet, because then it is the only content
-  on the page — and otherwise it opens when you open it and stays however you left it.
-- **The handoff's own heading carries two readings from the [menu bar widget](#6b-the-menu-bar-icon-mac-app)**,
-  so you get them without a Mac: a **freshness mark** (the same five steps as the card above) and
-  an age that **counts up while the screen is open** — *"22 hr ago · updates live"*. The phrase
-  *updates live* is only shown when the clock really is running; a reading that cannot tick does
-  not claim to.
-- **The brief carries the Edit button** because it is the project's one human-written tier, and it
-  is the one thing on this screen the app will write.
-- **"How this works" is the ⓘ beside the title**, not a card at the bottom of the page. It explains
-  the three tiers, the per-machine layout and the read-only rule — read once, then never again,
-  which is exactly what the ⓘ is for. The sidebar has its own ⓘ carrying the short version:
-  agents save handoffs here over MCP, you write the standing brief, and the screen re-checks by
-  itself when you come back to it.
+**A block with nothing to say does not render.** A project with no saves shows Status (if there is
+anything to report), no Work-streams table, and a Current handoff block whose body explains that
+no agent has written one yet.
+
+#### The work-stream table
+
+The **Work-stream** and **Machine** dropdowns are gone. One table replaces them, one row per
+**(work-stream, machine)** pair, newest first — **ordered by the same clock the rows display**,
+which is the agent's own save time wherever there is one. So the ages run straight down the
+column and the dots cool with them, and the order can never contradict the reading beside it.
+
+| Column | What it holds |
+|---|---|
+| **Work-stream** | A freshness dot and the work-stream slug. The row you have open carries an accent bar down its left edge |
+| **Working on** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago. An em dash when the save carried none |
+| **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
+| **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
+| **Harness** | The agent tool and the model that wrote the save, e.g. *"claude-code · opus"* |
+
+**Click a row to open it.** That replaces the whole picker: pick the work-stream and the machine
+in one gesture, from a list that already tells you which is worth opening.
+
+Under the table sits a line like *"13 work-streams · 15 saved copies"*. **Those are two different
+numbers and both are real:** each machine writes into its own folder inside a work-stream, so one
+work-stream can appear as several rows. If the store could only return the most recently saved
+copies, the line says so and gives the true total — it never reports a cap as a measurement.
+
+#### Editing the standing brief
+
+The **pencil** sits in the Standing brief block's own toolbar, beside the brief's age — not under
+the document, where the old **Edit brief** button was buried at the bottom of a long brief. A
+read-only Shared Brain mirror gets no pencil at all, because the write would only be refused.
+
+| Key | What it does |
+|---|---|
+| **⌘S / Ctrl+S** | Save |
+| **⌘↵ / Ctrl+Enter** | Save — the same thing, because ⌘S is a text editor's reflex and ⌘↵ is a composer's |
+| **Esc** | Close. If the draft has changed, an inline **Discard / Keep editing** bar appears instead, in flow and with your text still on screen. During a save in flight Esc does nothing and the editor says why |
+
+The editor is the **full width of the column** and opens at 320px tall — the four template headings
+alone are close to twenty lines, so a shorter field meant dragging it before you could start. A
+live line under it reads **modified · N words · N bytes of 32768** and updates as you type; over
+the cap, **Save is disabled** and the reason is printed beside the figure rather than waiting for
+a refusal you could have seen coming. **Preview** swaps the field for the rendered markdown and
+back, never side by side, and your draft is kept byte for byte across the toggle.
+
+> **Saving replaces the whole document.** The brief is not merged with what was there, so send the
+> complete brief rather than an addition — the same rule a handoff save follows, and for the same
+> reason. A brief saved here is stamped as written by a **human**, which is what tells a later
+> agent that the directives in it are yours rather than an earlier session's notes. Editing
+> `state/<project>/project.md` in Obsidian or any text editor still works; it is the same file.
+
+#### The freshness dot, one scale everywhere
+
+Every "how recently" mark in the app is now cut from **one scale** — five age tiers plus an
+explicit *unknown* (*new in v3.55.0 — there were three ladders, all painted in the brand violet,
+and none of them agreed with the menu bar*). The Agent-memory pips, the Ingest **DESTINATION** rows and the Domains **KNOWLEDGE** rows
+all use it, and its colours are the ones the [menu bar icon](#6b-the-menu-bar-icon-mac-app)
+already spoke.
+
+| Tier | Age | Looks like | Where you see it |
+|---|---|---|---|
+| **live** | under a minute | filled teal with a halo | Agent memory only |
+| **recent** | under an hour | filled teal | Agent memory only |
+| **today** | under 24 hours | filled amber | everywhere |
+| **week** | under 7 days | filled grey | everywhere |
+| **dormant** | a week or more | **hollow** grey | everywhere |
+| **unknown** | nothing has been written | **dashed** ring | everywhere |
+
+Three things follow from that table and are worth knowing:
+
+- **The cut that matters is at one hour**, which is why *live* and *recent* share a colour while
+  *today* takes a different one: "5 minutes ago" and "4 hours ago" have to look different before
+  you read them. Inside the hour the only question left is *is an agent writing right now*, and
+  the halo answers it.
+- **The two sidebars can never show teal.** They read a `YYYY-MM-DD` date out of the domain's
+  log, which has no time of day, so they enter the scale at **today** — the app does not
+  manufacture a precision the data does not have.
+- **Dormant is not a failure state.** A finished work-stream and a finished domain are *supposed*
+  to look like this. And an **unknown** age is not age zero: it differs in kind — a dashed ring —
+  rather than being painted as the oldest thing on the list.
+
+The mark is never the only signal: the age in words sits immediately beside it, every mark is
+hidden from screen readers, and the words are what a screen reader announces.
 
 #### The save-status strip
 
-Across the top of the handoff sits a short strip that answers the question people actually arrive
+The body of the **Status** block is a short strip that answers the question people actually arrive
 with: *"is this saved, and is it any good?"* It is one line on a healthy day.
 
 ```
-● Last saved  4 min ago · main · claude-code
+■ Working on   shipping the v3.55 docs pass          4 min ago
+□ Last saved   4 min ago · main · claude-code
 ```
 
-The dot is the pre-attentive half and the words are the exact half. Underneath it, **only when
-each has something to say**, up to five qualifying lines:
+The pip is the pre-attentive half and the words are the exact half. Underneath, **only when each
+has something to say**, the qualifying lines:
 
 | Line | When it appears | What to do |
 |---|---|---|
@@ -1386,18 +1475,26 @@ each has something to say**, up to five qualifying lines:
 | *"deliberately replaced a larger handoff"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
 | *"the reading above is the file's own timestamp"* | No journal entry carried a save time, so the age is the file's, not the agent's | On a computer that syncs, that is when the file **arrived**, not when it was written |
 | *"This file arrived on this computer N ago"* | Both clocks are known and disagree by more than two minutes | Nothing — it is telling you the handoff was written elsewhere and pulled in later |
-| *"Newer state in this project: `<work-stream>`"* | Some **other** work-stream in this project holds something more recent than the one on screen | Check it. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching, and this screen would otherwise look calm |
+| *"Written on `<machine>` and synced here"* | The open handoff was written on another installation | Read the next steps with that in mind — local paths, running processes and checkouts may not match what it describes |
+| *"Newer state in this project: `<work-stream>`"* | Some **other** work-stream in this project holds something more recent than the one on screen | Check it — the Work-streams table above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
+| *"`<machine>` saved after this computer"* | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue**, or that work will be waiting on the other machine. This is a different question from the line above it |
 | *"Two tools are writing `<work-stream>`"* | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own work-stream name — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer) |
-| **Standing brief — `<age>`** | Always | Nothing, usually. The brief is on a much slower clock than a handoff and an old brief is not a stale one, which is why it deliberately gets no freshness dot |
+| **Standing brief — `<age>`** | Always | Nothing, usually. The brief is on a much slower clock than a handoff and an old brief is not a stale one, which is why it deliberately gets no freshness mark |
 
 > **It says "Last saved", never "you are saved".** It knows when the last save happened; it cannot
 > know whether anything has changed since. That inference is left where it belongs — with you.
 
-> ⚠️ **Most of this strip has still never been looked at on a screen.** Three of its lines have
-> now been photographed rendering: *"This file arrived on this computer N ago"* and
-> *"Newer state in this project"*, both visible in the screenshot above, and the
-> **`summary shortened`** badge, which was in the v3.52.0 screenshot this one replaced. The rest
-> is covered by the automated tests and by nothing else. If a line reads wrongly, that is worth
+> **There are two clocks behind every age on this page**, and the screen says which one it used.
+> The **agent's clock** is the time the agent recorded when it saved. The **file's clock** is when
+> the file last changed on this disk — which, on a computer that syncs, is when the file *arrived*
+> here. The agent's clock is used wherever there is one, and a reading that had to fall back says
+> **file time** in its own provenance line, in words, rather than in a tooltip.
+
+> ⚠️ **Several lines of this strip have still never been looked at on a screen.** Four have now
+> been photographed rendering — *"This file arrived on this computer N ago"*, *"Newer state in this
+> project"* and *"Written on `<machine>` and synced here"*, all three visible in the screenshot
+> above, and the **`summary shortened`** badge in an earlier one. The rest is covered by the
+> automated tests and by nothing else. If a line reads wrongly, that is worth
 > [reporting](https://github.com/talirezun/the-curator/issues).
 
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
@@ -1407,10 +1504,7 @@ it travels with GitHub sync like the rest of your wiki.
 
 **What the screen does not do:** there are no rollups. Nothing composes a Done/Decided/Blocked
 view across work-streams or across projects, and the only thing it writes is the **standing
-brief** — the handoff and the journal are written by an agent and by nothing else. Editing the
-brief in Obsidian instead still works; it is the same file, `state/<project>/project.md`. A brief
-saved here is stamped as written by a **human**, which is what tells a later agent that the
-directives in it are yours rather than an earlier session's notes.
+brief** — the handoff and the journal are written by an agent and by nothing else.
 
 > 💡 **The write half has to be asked for, and installing the skill is not always enough.** Nothing
 > forces an agent to save, so an agent that has never been told the discipline simply never writes
@@ -1480,9 +1574,9 @@ flowchart TD
 
 ### How to ingest
 
-![The Ingest view with a four-file batch assembled. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a filled "+ Choose files" button, and a DESTINATION list of two domains. The first reads "Demo" over "2 pages ·" a dashed ring, a small clock and "nothing written yet". The second, ticked as the current destination, reads "Projects" over "0 pages ·" a filled dot, a clock and "1 week ago", with a second line underneath: "Ingested · Lumina Project Overview and …". The main column opens with the eyebrow "THE WAY MATERIAL GETS IN" over the title "Ingest", then a "Domain" dropdown set to Projects, then a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started". Under it, a heading "Batch ingest — 4 files" over "295.8 KB total · gemini · gemini-2.5-flash-lite", then "WILL BE INGESTED (LARGEST FIRST)" listing four Markdown files with their sizes — the-energy-and-water-footprint-of-generative-ai.md 26.3 KB, two-worlds-of-code.md 13.8 KB, lumina-project-overview.md 180.0 KB and compiled-knowledge-vs-retrieval.md 75.8 KB — each with an × to remove it. Below that a boxed estimate: "Estimated cost $0.09 — $0.15", followed by a long monospaced explanation saying the figure is computed for Gemini "gemini-2.5-flash-lite" against the "projects" domain at its current 0 entities, 0 concepts and 108 KB index, that cost depends heavily on how large the wiki already is because every AI call re-sends the existing page list so the model can link to rather than duplicate what is there, that for this batch the existing content works out to about 1.1x the input tokens the same files would cost against an empty domain, that the figure is computed for these specific files rather than being a rule of thumb, that the estimate is size-based rather than a real text extraction, and that usdLow assumes prompt caching applies while usdHigh assumes it does not — ending "Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did." Then "Estimated tokens 1,156,234 in / 85,017 out", a "Budget cap (optional)" field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and three controls: a violet-tinted "✦ Start batch", an outlined "Add more files", and a plain "Clear all".](images/curator-ingest.png)
+![The Ingest view with a two-file batch staged, dark theme. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a filled "+ Choose files" button, and a DESTINATION list of two domains. The first, ticked as the current destination, reads "Demo" over "2 pages ·" a dashed ring, a small clock and "nothing written yet". The second reads "Projects" over "0 pages ·" a filled dot, a clock and "1 week ago", with a second line underneath: "Ingested · Lumina Project Overview and Multi-…". The main column opens with the eyebrow "THE WAY MATERIAL GETS IN" over the title "Ingest", then the heading "Batch ingest — 2 files" over "1.3 KB total · gemini · gemini-2.5-flash-lite". Below that the screen is two columns. The left column holds a "Domain" label over a dropdown set to Demo, then a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started", then the heading "WILL BE INGESTED (LARGEST FIRST)" over two rows — "retrieval-vs-compilation.md 674 B" and "wikilinks-as-a-relevance-signal.md 621 B" — each with an × to remove it. The right column opens with a card: the label "Estimated cost" over "$0.0016" in large monospace, then two monospaced lines of provenance — "Sized against this wiki's real page list, not a flat rate. Actual spend can land above the range." — then "Estimated tokens" over "2,869 in / 3,334 out", and at the foot of the card the link-like line "How this range was worked out" with an ⓘ beside it. Under the card, "Budget cap (optional)" over an empty field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and a row of three controls: a violet-tinted "✦ Start batch", an outlined "Add more files" and a plain "Clear all".](images/curator-ingest.png)
 
-*The Ingest view with four files queued. The top half — destination list, domain picker, drop zone — is the single-file flow described below; everything from "Batch ingest — 4 files" down is the confirm screen covered in [Batch ingest](#batch-ingest--queue-many-files-at-once). Note the drop zone's wording: it reads "Drop a source here" with "2 or more files at once starts a batch" underneath when nothing is queued yet, and changes to the wording above once a batch is being built. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
+*The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
 
 1. Click **Ingest** in the rail
 2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
@@ -1492,6 +1586,51 @@ flowchart TD
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
 
 > The chat sidebar also shows a drop zone. It is **not connected** — it says so on itself, and clicking **Ingest** on it brings you here. Ingesting from chat isn't wired up yet.
+
+#### The Ingest screen has two shapes, and the cause is always on screen
+
+Whether you are ingesting one file or a batch, the screen lays itself out the same way (*rewritten
+in v3.55.0*): **the left column is what you are about to spend on, the right column is the
+decision.** The difference is when a right column exists at all.
+
+| State | What you see |
+|---|---|
+| **Nothing beside it yet** — no batch staged, no result, nothing running | **One column, at the full width of the page.** The domain picker and the drop zone are the things you came to use, so they take the whole width rather than sitting in a narrow strip with an empty half beside them |
+| **Something to show** — a batch staged, a run in progress, a duplicate question, a failure, or a finished report | **Two columns.** The form narrows and the output opens beside it, rather than pushing the drop zone off the top of the screen |
+
+Two columns appear only when the main column can actually hold two — which depends on your window
+width, not on a guessed breakpoint. Below that the screen falls back to one column and stacks.
+
+> **The form does narrow when a result arrives, and that is the trade.** A permanent empty
+> half-width gap on the screen you meet first cost more than one reflow with a visible cause — a
+> panel appearing where there was none.
+
+**Notices keep their own measure.** Warnings, the duplicate question and the progress block stay at
+a fixed width in both shapes, because a line of prose running the full 1144px is harder to read,
+not easier. Controls take their container; sentences do not. That is the app's
+[cap the sentence, never the card](#the-layout) rule, applied inside one view.
+
+#### What the cost figure says about itself
+
+The batch confirm gate's **Estimated cost** card carries one short line of provenance under the
+figure — at most twenty words, e.g. *"Sized against this wiki's real page list — about 3.1x an
+empty domain. Actual spend can land above the range."* — and the full account, 140–226 words of
+it, sits behind the **ⓘ** beside *"How this range was worked out"*.
+
+**The caveat is in the visible line, never behind the mark.** Costs, spend figures and
+irreversible actions are one of the classes this app
+[never folds](#how-help-works-in-the-app): the sentence that actual spend can land above the range
+is always on screen, and so are the estimator's own warnings, which render above the **Start
+batch** button and are not foldable at all. What is behind the ⓘ is the *arithmetic* — which model
+and provider, the domain's current entity, concept and index sizes, why a mature wiki costs more
+per file than an empty one, and the fact that the low end assumes prompt caching applies while the
+high end assumes it does not.
+
+**The multiple is computed for the batch in front of you**, not quoted from a table — and when the
+domain is small enough that it would be noise (under 1.05×), both the short line and the full
+account drop it rather than printing "about 1.0x". Developers: the two strings are `basisLede` and
+`basis` on the estimate response, documented in
+[api-reference.md](api-reference.md#post-apiingest-queueestimate).
 
 **The panel beside the rail is a destination list.** Every other view's side panel is a list of the things that view acts on, and Ingest's is the place your file is about to land: one row per domain, each showing how many pages it holds, how long ago it was last written to, and what that last write was. While something is being written, the rows are **disabled rather than hidden**, so the list doesn't rearrange itself under your cursor mid-run — and a domain being ingested into somewhere else in the app is marked **Ingesting** on its own row, whichever row you have selected.
 
@@ -1511,7 +1650,7 @@ Ingested · The Energy and Water Footprint of Generative AI
 | Part | What it says |
 |---|---|
 | **The page count** | How many wiki pages the domain holds. A count that could not be read says `page count unknown` rather than `0` |
-| **The freshness dot** | Four steps — **today**, **this week**, **this month**, **older**. A domain nothing has ever been written to gets a **dashed ring** instead |
+| **The freshness dot** | The app-wide [freshness scale](#the-freshness-dot-one-scale-everywhere): **amber** for today, **filled grey** for this week, **hollow grey** for a week or more. A domain nothing has ever been written to gets a **dashed ring** instead. These rows read a date with no time of day, so they enter the scale at *today* and never show its two teal tiers |
 | **The age** | `today` · `yesterday` · `3 days ago` · `2 weeks ago` · `5 months ago`. A domain with no writes reads **nothing written yet** — never a made-up date |
 | **The last event** | What the most recent write actually was: `Ingested · <source title>` or `Compiled · <conversation title>`. When the log did not name which, it reads the neutral **Last write** rather than guessing. A domain that has never been written to has no second line at all |
 
@@ -2245,7 +2384,9 @@ Then **four sections**, each in its own card under its own heading, in this orde
 > **This photograph predates v3.54.0's status line.** The KNOWLEDGE rows in it
 > show the name and the page count only; on the version you are running each row
 > also carries the freshness dot, the relative age and the last-write line
-> described [above](#reading-a-destination-row). Nothing else on the screen moved.
+> described [above](#reading-a-destination-row) — and since v3.55.0 that dot is
+> painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere),
+> amber through grey, rather than in the accent colour. Nothing else on the screen moved.
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -3164,9 +3305,9 @@ Turning it on connects you to nothing. It only unlocks the view; nothing leaves 
 | **I have an invite token → Join** | You received an invite token (`sbi_...`) from your cohort admin |
 | **I'm starting a new Shared Brain → Set up** | You're starting one for your cohort, team, or research group |
 
-![The Shared Brain view, enabled but with nothing connected. Down the left, the icon rail with Shared highlighted, fourth from the top. Beside it a panel headed "Shared Brain" with a small "beta" pill, holding a single note: "No Shared Brains connected yet." The main column reads "YOUR TEAM'S BRAIN" over the title "Shared Brain" with an ⓘ mark, and offers two cards, each with a glyph, a heading, a line of explanation and one button. The first: "I have an invite token — From my cohort, team, or research group." with a primary "Join →" button. The second: "I'm starting a new Shared Brain — Set one up for my cohort or team." with a "Set up →" button. Nothing else is on the screen.](images/curator-shared-brain.png)
+![The Shared Brain view, enabled but with nothing connected, dark theme. Down the left, the icon rail with Shared highlighted, fourth from the top. Beside it a panel headed "Shared Brain" with a small "beta" pill, holding a single note: "No Shared Brains connected yet." The main column reads "YOUR TEAM'S BRAIN" over the title "Shared Brain" with an ⓘ mark, and offers two cards side by side, each on the same card chrome, each with a glyph, a heading, a line of explanation and one button at its right end. The left card: a people glyph, "I have an invite token" over "From my cohort, team, or research group.", with a filled violet "Join →" button. The right card: a sparkle glyph, "I'm starting a new Shared Brain" over "Set one up for my cohort or team.", with an outlined "Set up →" button. Nothing else is on the screen.](images/curator-shared-brain.png)
 
-*The choice, and nothing else. This is what the view looks like once Shared Brain is enabled and before you have joined or created anything — enabling it connects you to nothing, and the screen shows that by having nothing on it.*
+*The choice, and nothing else. This is what the view looks like once Shared Brain is enabled and before you have joined or created anything — enabling it connects you to nothing, and the screen shows that by having nothing on it. The two cards sit **side by side** on a wide column and stack on a narrow one (v3.55.0). **Join is the filled button and Set up is outlined**, and that is an argument rather than a ranking: neither commits anything, but a reader holding an invite token is here to paste it, while starting a cohort of your own is a branch you take deliberately. One filled button per card or panel is the app's [button rule](#buttons--what-the-look-tells-you).*
 
 > **v3.6.1 — invite tokens are GitHub-only, and a non-GitHub one is now refused at step 1.** Joining a Shared Brain works by accepting an invitation to a GitHub repository and creating a Personal Access Token, so only a GitHub-backed brain can issue an invite. A token describing any other storage backend is rejected on paste, with an explanation — previously it was accepted and you were walked all the way to the final step, **creating a real PAT on github.com along the way**, before saving failed with an internal message that read like the app was broken. (The non-GitHub backends still exist for cohort simulation; they are configured directly, not via an invite.)
 

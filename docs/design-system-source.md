@@ -265,7 +265,7 @@ of N peer modes. The bundle models the second and the third; this is the first.
 Appearance (Light / Dark) stays segmented, because it is a mode pair and System
 Settings itself draws it that way.
 
-## The unification pass (v3.54.0) — five patterns the bundle does not model
+## The unification pass (v3.54.0–v3.55.0) — the patterns the bundle does not model
 
 The bundle defines **tokens and component specs**. It does not say *which*
 component a given job takes, how wide a column may be, or what a status row
@@ -274,17 +274,21 @@ Twenty-one button call sites disagreed about the variants, Settings had four
 different block rhythms, and two sidebars listed the same domains in two
 vocabularies.
 
-The five rules below are now declared **once each, in one file each**, and each
-one names the file that owns it. None of them is a token change: every value
-below resolves to a bundle token or to an app-side token already recorded above.
+The rules below are now declared **once each, in one file each**, and each
+one names the file that owns it. Five of them landed in v3.54.0; **§6–§8 are
+v3.55.0**, which finished two of the five — the block left `views/settings.js`,
+and the status row's three private freshness ladders became one named scale.
+None of them is a token change: every value below resolves to a bundle token or
+to an app-side token already recorded above.
 
 | Pattern | Owner (the authoritative file) | Guard |
 |---|---|---|
 | The button taxonomy | the comment block above `.btn` in `src/public/next/shell.css` | `scripts/test-next-button-family.js` |
-| The Settings block | `settingsBlock()` in `src/public/next/views/settings.js` + `.settings-job-block` in `views/settings.css` (built for one section in v3.53.0, generalised here) | `scripts/test-next-settings-sections.js` |
+| The Settings block | `settingsBlock()` in `src/public/next/views/settings.js` + `.settings-job-block` in `views/settings.css` (built for one section in v3.53.0, generalised here; **lifted out to `shared/block.js` and `shell.css` in v3.55.0** — see §6 below) | `scripts/test-next-settings-sections.js`, `scripts/test-shared-block.js` |
 | The help affordance | `src/public/next/shared/text.css` (`.tx-vh-info`, `.tx-vh-panel`, `.tx-note`) + `shared/docs-links.js` | `scripts/test-next-text-system.js`, `scripts/test-docs-links.js`, contrast ratchet §11 |
 | The content cap | `.main-inner` in `shell.css`, `--prose-max` in `tokens/space.css` | — (measured in the browser; see below) |
 | The status row | `src/public/next/shared/age.js` | `scripts/test-sidebar-status-rows.js` |
+| The freshness scale (v3.55.0) | `src/public/next/shared/freshness.css` + the `--fresh-*` family in `tokens/color.css` | `scripts/test-freshness-scale.js` |
 
 ### 1. The button taxonomy, and who decides the size
 
@@ -489,7 +493,7 @@ Two sidebars list the same domains — Ingest's **DESTINATION** rows and Domains
 | Part | Value | When it is unknown |
 |---|---|---|
 | Key figure | `3,445 pages`, locale-grouped | `page count unknown` (Ingest) / `— pages` (Domains) |
-| Freshness mark | a dot, four steps, `aria-hidden` | a **dashed ring** |
+| Freshness mark | a dot, `aria-hidden`, painted on the app-wide scale in §6 below (v3.54.0 shipped it as four view-local steps) | a **dashed ring** |
 | Age | `today` / `yesterday` / `3 days ago` / `2 weeks ago` / `5 months ago` | `nothing written yet` |
 | Last event | `Ingested · <title>`, `Compiled · <title>`, or the neutral `Last write` | the line is omitted entirely |
 
@@ -526,10 +530,226 @@ discarded — it travels in the row's accessible name through
 `.visually-hidden`, never a `title=`, which is hover-only and therefore
 invisible to keyboard and touch.
 
-`freshnessStep(seconds)` in `views/memory.js` is a **five**-step ladder cut on
-`formatAge`'s unit bands (just now / minutes / hours / days / weeks), because
-that surface measures a save that can be seconds old. It is a different
-question, not a second tuning of the same one.
+`freshnessStep(seconds)` is a **five**-step ladder cut on `formatAge`'s unit
+bands (just now / minutes / hours / days / weeks), because Agent memory measures
+a save that can be seconds old. It is a different *resolution*, not a second
+tuning of the same scale — and as of v3.55.0 it lives in `shared/age.js` beside
+`formatAge`, with both halves relabelled onto one named scale (§6 below).
+
+### 6. The freshness scale (v3.55.0) — one ladder, six named tiers
+
+v3.54.0 gave the two sidebars one *anatomy* (§5) and left them with two
+byte-identical-modulo-prefix *ladders*, and a third in Agent memory. All three
+painted the **brand violet**, which in this app means identity and primary
+action — so "saved a week ago" was drawn in the same ink as the Ingest button —
+and none of them agreed with the menu bar tray a user sees in the same glance.
+
+What replaced them is one scale, owned outright by
+**`src/public/next/shared/freshness.css`**. That file owns the `fresh-` prefix
+the way `shared/text.css` owns `tx-`: `scripts/test-freshness-scale.js` fails any
+other stylesheet that declares a `.fresh-` rule.
+
+| Tier | Band | Ink | The word beside it | Face |
+|---|---|---|---|---|
+| `.fresh-live` | < 1 min | `--fresh-hot` | `just now` | filled, plus a `--fresh-hot-halo` ring |
+| `.fresh-recent` | < 1 hr | `--fresh-hot` | `N min ago` | filled |
+| `.fresh-today` | < 24 hr | `--fresh-mid` | `N hr ago` / `today` | filled |
+| `.fresh-week` | < 7 days | `--fresh-cold` | `N days ago` | filled |
+| `.fresh-dormant` | ≥ 7 days | `--fresh-cold` | `N weeks ago` and older | **hollow** (`inset` ring) |
+| `.fresh-unknown` | no age at all | `--text-faint` | `nothing written yet` | **dashed** ring |
+
+The tokens resolve to `--teal-500/600`, `--summary-500/600` and
+`--ink-200/400` — the tray's own teal / amber / neutral semantics
+(`desktop/lib/menu-dots.js`), reached without either side importing the other.
+
+**They are a separate family from `--success` / `--attention`, deliberately.**
+`--attention` means *a human has to act*; "saved today" is not a call to action
+and a dormant domain is a finished one, not a failed one. Painting either with
+the status ramp would make every quiet row read as a task.
+
+**Measured contrast** — WCAG arithmetic over the token values, the method in
+`scripts/test-next-contrast-ratchet.js` (helper validated by controls: 1.00 on an
+identical pair, 21.00 black on white), and a browser pass over a static harness
+agreeing to the hundredth:
+
+| Token | on `--surface` dark / light | on `--surface-raised` dark / light |
+|---|---|---|
+| `--fresh-hot` | 7.74 / 4.05 | 7.51 / 4.05 |
+| `--fresh-mid` | 8.78 / 3.58 | 8.52 / 3.58 |
+| `--fresh-cold` | 8.34 / 5.84 | 8.09 / 5.84 |
+| `--text-faint` (the unknown ring) | 3.47 / 3.61 | 3.37 / 3.61 |
+
+**The floor is 3:1, and that is the correct floor**: every one of these paints a
+graphic — an 8px dot, a 12px pip — under WCAG 1.4.11, never a word. The age in
+words beside the mark stays on a text token, and the test fails any `color:`
+declaration naming a `--fresh-*`. Every mark is `aria-hidden`; colour is never
+the only carrier.
+
+> **Reported rather than fixed:** on a *selected* sidebar row, which paints
+> `rgba(255,255,255,0.10)` over `--surface`, the dashed `unknown` ring measures
+> **2.74** in the dark theme — under the floor. `--text-faint` is the ring all
+> three retired ladders already used, `tokens/color.css` names it as the rung
+> that deliberately sits below the text floor, and the mark is redundant with
+> the words *"nothing written yet"* printed beside it. Moving it to `--text-3`
+> (4.85 on that backdrop) is a one-token change and is the maintainer's call.
+> The guard grades `--surface` and `--surface-raised` only, and says so.
+
+**Three rules the scale is built on, each one load-bearing:**
+
+- **Cut on `formatAge`'s own bands, never a second threshold table.**
+  `freshnessTier` / `dayFreshnessTier` in `shared/age.js` read their boundaries
+  off the word ladders, so the mark and the phrase beside it change at the same
+  instant and can never contradict each other.
+- **An unknown age is not age zero.** It is the one state that differs in
+  **kind** — a dashed border — rather than further along the ramp.
+- **The pre-attentive cut is at one hour**, which is why `live` and `recent`
+  share an ink while `today` takes a different hue: *5 minutes ago* and *4 hours
+  ago* have to differ before you read them.
+
+**Two tiers currently have no `.fresh-dot` consumer**, and that is stated in the
+file rather than hidden. Both sidebars read a `YYYY-MM-DD` heading with no time
+of day, so `dayFreshnessTier` enters the scale at `today`. The rules exist
+because `freshnessTier` — the second-resolution half, which the Agent-memory pip
+is cut on — *can* return them, and a tier the scale names with no rule behind it
+is an invisible mark on the first second-resolution consumer. The guard asserts
+the set of rules in the stylesheet **equals** the set of tiers those two
+functions can return, in both directions.
+
+**The shape is not shared, only the scale.** A domain's row wears a round 8px
+`.fresh-dot`; an Agent-memory work-stream wears a 12px square pip with a 2px
+radius, whose geometry stays in `views/memory.css`. The tier modifiers set ink
+and fill and touch no geometry, so any future mark can wear them.
+
+**No transition, no animation.** Every `/next` view re-renders by replacing
+`innerHTML`, so a class-keyed transition on a mark could never run — it would be
+a declaration that reads as behaviour and is dead on arrival (the shape v3.27.0
+found in `progress-ring.js`). The `live` halo is a static `box-shadow` for the
+same reason: a pulse would be the one thing on the screen that moves, and it
+would move forever.
+
+### 7. The block, lifted out of Settings (v3.55.0)
+
+§2's block is now `renderBlock(o)` in
+**`src/public/next/shared/block.js`**, and its CSS moved from `views/settings.css`
+to **`shell.css`**, beside `.cur-group`. The values are unchanged; what changed
+is who can use it.
+
+**Why it had to move.** It was a `function settingsBlock(...)` inside a view
+module with **zero exports**, so any other view wanting the same rhythm had
+exactly one route: copy it. `views/domains.js` had already taken that route for
+the ⓘ half, and the Agent-memory rebuild would have made a third. The CSS had to
+move for a second reason: `index.html` links `views/settings.css` **last** of the
+view sheets, so a rule another view depended on would sit at a different point in
+the cascade than its own.
+
+The ⓘ half is now `renderInfoMark(id, label, info, opts)` in `shared/text.js`,
+returning the mark and the panel as **two fragments** rather than one string —
+the mark is inline and the panel is a block, so the caller places each where its
+own layout wants it. `shared/text.js` already owned the *mechanism*
+(`data-tx-info`, the one delegated listener); what it lacked was a way to ask for
+the affordance outside a view header.
+
+Two things are deliberately **not** done in this pass, and both are recorded at
+the code:
+
+- **The class names still say `settings-`.** `settings-job-block`,
+  `settings-block-hd`, `settings-block-num`, `settings-job-title`,
+  `settings-job-lede`, `settings-block-info`, `settings-block-body`,
+  `settings-block-unnumbered`. They are pinned **by name** in four shipped
+  suites. Renaming is a later pass, on its own, with the pins moved in the same
+  commit.
+- **`views/settings.js` keeps its own copy** of `settingsBlock` and `infoMark`,
+  because four shipped suites lift them out of that file by brace-matching and
+  **execute** them. `scripts/test-shared-block.js` proves the two
+  implementations emit the same **bytes** over a fixture matrix, which is the
+  property that matters while both are live.
+
+`renderBlock` **throws** on a missing `id` or `title` rather than rendering
+something nearly right: `id` is the block's own class *and* the stem of the ⓘ
+panel's DOM id, so without it every block on the screen shares a class and the
+second folded block silently steals the first one's panel. The `num` test is
+`!= null`, never falsy — a numbering scheme that quietly loses its `0` is the
+kind of thing nobody finds twice.
+
+**`panelWide` — one opt-in, for a page that is not prose.** `renderViewHeader`
+caps its ⓘ panel at `68ch` because it is normally a paragraph or two and `68ch`
+is where a *line of text* is comfortable. Agent memory is a dashboard: v3.55.0
+puts every one of its sections at the column's own width, and a help panel
+stopping at 47% of the column while the table under it ran the full width was
+the most visible remnant of the four-widths page v3.54.0 started removing.
+`panelWide: true` appends `.tx-vh-panel-wide`, which `shared/text.css` defines as
+`max-width: none`, declared **after** `.tx-vh-panel` at the same specificity so
+the cascade decides. Nothing else about the panel moves — same rule, wash, type
+and entrance. It is an opt-in and the test is `=== true`, because the cap is
+right for every view whose header panel really is prose.
+
+### 8. The Ingest column: controls take the container, notices keep a measure (v3.55.0)
+
+§4's house rule — *cap the prose, never the cards* — needed one more turn inside
+Ingest, where **five** separate rules carried `max-width: 480px`. They are one
+token now, `--ing-col: 560px`, and the number is derived rather than chosen:
+`(1144 − 32 gap) / 2 = 556`, rounded up, so a notice sitting **outside** the grid
+lines up with one sitting **inside** it.
+
+**What the token binds changed, and that is the point.** It binds **notices**
+only — `.ing-status-block`, `.ing-duplicate`, `.ing-progress`,
+`.ing-queue-overwrite-row`: blocks whose content is words, which a 1144px line
+does not help anyone read. **Controls take their container**: the domain listbox,
+the drop zone and the action row are the thing you came to use.
+
+```
+.ing-confirm-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--space-8);
+  align-items: start;
+}
+```
+
+`auto-fit` + `minmax`, **not a viewport media query**: the thing that has to fit
+is the main column — the viewport minus a 72px rail, a 272px sidebar, 56px of
+padding and a scrollbar — so a viewport breakpoint would be a guess at a number
+the grid can measure exactly. Two tracks appear when the column can hold
+`2 × 420 + 32`; below that it is one, and `min(420px, 100%)` makes a narrow
+column shrink instead of overflow. `align-items: start` so the shorter column
+does not stretch its card to the height of the file list. The columns come out
+equal, where the brief asked for 420/360 — equal is what `auto-fit` gives, and
+the column carrying the money earns the width.
+
+**The split is by ROLE.** Left is what you are about to spend on (destination,
+drop zone, file lists); right is the decision (cost, notes, budget cap, overwrite
+switch, actions). One `renderConfirmGrid(leftHtml, rightHtml)` serves the batch
+gate **and** the single-file form, so the two cannot drift into two layouts.
+
+**An empty second cell is a hole, not a held track.** The previous note in the
+stylesheet defended the empty `<div>` on the grounds that it stops `auto-fit`
+collapsing the track, so the form "does not change width when a result arrives".
+Measured on the shipped build in the **common** state — no file chosen, no result
+— the form was **477px** wide at a 1370px window and **564px** at 2000px, with
+477 and 564px of *nothing* beside it, on the screen a user meets first. That
+trade is refused: a blank right side now emits **one** cell and `auto-fit` hands
+it the whole column (measured **970px** at 1370, **1144px** at 2000). The form
+does narrow when a ring or a result opens the second column — accepted and
+stated, because that is a state change with the most legible cause an app has.
+
+The test is `.trim()`, not truthiness: every caller builds the right side by
+concatenating self-suppressing renderers, and a stray newline between two empty
+strings is still nothing to show. `.ing-confirm-grid-single` carries **no rule of
+its own** — `auto-fit` already does the work — and exists so the state is
+nameable in the DOM for a guard and for any future rule that is not
+`:only-child`.
+
+**The cost card is the help pattern's exact case.** `basis` is 140–226 words
+rendered as the readout's provenance line — `--text-2xs` monospace, about sixteen
+lines of it, directly under the one figure on the screen a user is deciding on.
+So the server now sends a second string, `basisLede`, at most 20 visible words,
+and the gate renders **`basisLede` as the visible provenance** with `basis`
+behind an ⓘ. **What does not fold is the caveat**: v3.16.1's rule puts costs,
+spend figures and irreversibility outside every panel, so `basisLede` always
+carries *"Actual spend can land above the range"*, and the estimator's own
+warnings stay where they were — `renderStatus`, unfolded, above the Start button.
+With no lede on the wire the **full** basis goes back into the provenance line:
+a long sentence is worse than a short one, and both beat a spending screen that
+says nothing about its own accuracy.
 
 ## Things the app deliberately does not take from the bundle
 
