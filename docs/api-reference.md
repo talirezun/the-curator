@@ -2718,6 +2718,7 @@ then the app and the agent would describe the same file differently.
 | `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the work-stream index instead of a handoff. **`latest`** (case-insensitive) resolves to the newest-written work-stream, so a client can open the freshest handoff without first fetching the index to learn its name; on a project with nothing saved it degrades to the scope-less read rather than erroring about a scope the caller never named. The keyword is passed to the **store**, which owns it — a work-stream *actually named* `latest` wins over the keyword, because opening a different work-stream than the one named is a correctness bug wearing a helpfulness costume. The response reports `scopeResolvedBy` (`exact` \| `latest`) so a caller can tell which happened |
 | `machine` | Optional. With `scope` set and no `machine`, the **most recently written** machine wins — that is what makes cross-machine handoff work — and the response names the machine it chose |
 | `journalLimit` | Optional. Passed to the store **un-clamped on purpose**: the store clamps to `[1, MAX_JOURNAL_ENTRIES]` (50, default 10) itself, and clamping a second time here is the two-copies-of-a-bound shape. A non-numeric value is not passed at all, so the store's default applies |
+| `open` | Optional, **`newest` is the only value**, and it is **ignored when `scope` is set**. Adds an `open` object carrying one work-stream's full handoff *alongside* the work-stream index, so a client can paint a whole project from one request instead of two serial ones. See below |
 
 > The MCP's `get_working_state` clamps the journal harder — 8 by default, 20 at most. That
 > asymmetry is deliberate, not drift: every byte an MCP response returns is charged against a
@@ -2765,6 +2766,57 @@ alias — the fields below replace them.
 
 `unlistedEntries`/`unlistedReason` carry the same meaning as on the index route above:
 directory entries the store will not address, counted rather than silently skipped.
+
+#### `?open=newest` — the index and one handoff in a single answer
+
+A client that wants to *show a project* needs both halves: the work-stream index, which only the
+scope-less form produces, and one pair's `current.md`, which only the scope-targeted form
+produces. Until v3.57.0 that meant two requests **in series**, because the second URL is not
+knowable until the first has answered. Measured in a browser on a real store, one project switch
+in the Agent-memory view cost three requests, three whole-column repaints and a column that
+collapsed from 5,062 px to 215 px for a frame in between.
+
+`?open=newest` adds an `open` object to the scope-less response:
+
+```json
+{
+  "ok": true,
+  "scope": null,
+  "scopes": [ "…the work-stream index, unchanged…" ],
+  "open": {
+    "ok": true,
+    "scope": "auth-refactor",
+    "machine": "alices-macbook-pro-9f3c1a20",
+    "current": { "present": true, "…": "…" },
+    "journal": { "…": "…" }
+  }
+}
+```
+
+**`open` is byte-for-byte what the equivalent `?scope=&machine=` request answers** — the same
+store call through the same envelope, not a projection of it — so a client uses one code path for
+both and no disclosure field can be dropped on the way. `journalLimit`, if given, applies to it.
+
+**Which pair it opens.** The one a client sorting by the **agent's clock** would put first:
+`writtenAt`/`writtenAgeSeconds` when the journal recorded a time, the file clock only as a
+fallback, and an exact tie broken by scope name, then machine name, then the store's own order.
+That is deliberately *not* the store's order, which is `mtime` — on any machine that syncs, git
+stamps `mtime` with the moment the checkout landed, so the two disagree routinely and ties on a
+freshly-cloned store are the normal case rather than the corner one.
+
+**It is ignored when `scope` is set** (the caller has already decided what to open), and an
+unrecognised value is ignored rather than refused, so a newer client cannot turn this read into an
+error on an older server. With either of those, the response is byte-for-byte the one you would
+get without the parameter.
+
+**`"open": null` is an answer**, not an omission: it means the project has no work-streams to
+open, or the inner read failed (the index half is still correct and is still returned, with `200`).
+A server that predates this option omits the key entirely, which is how a client tells "nothing to
+open" from "this server does not know the option".
+
+**What it does not change.** `scope=latest` is untouched — it serves callers that have no index in
+hand, and it resolves on the store's own rule. Neither the MCP tools nor the menubar widget use
+this route.
 
 **Success response — with `scope`** `200 OK` (the brief plus that scope's handoff and journal)
 

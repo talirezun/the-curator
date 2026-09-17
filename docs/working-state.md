@@ -1068,6 +1068,30 @@ computed by the same function, so the two can never disagree about one save — 
 read-sanitisation notes unfolded, and the rendered markdown. Esc, the scrim and
 the ✕ close it and return focus to the row that opened it.
 
+**One request paints a project, and a project you have already looked at paints
+with none** (v3.57.0). Painting the page needs both halves of the store — the
+work-stream index and one pair's handoff — and they used to be two requests, in
+series, because the second URL is not knowable until the first has answered. The
+read now asks for both at once (`?open=newest`; see
+[api-reference.md](api-reference.md#get-apimemorydomainproject)) and the view
+keeps what it has read for the life of the page, so coming back to a project
+paints it in the same turn as the click and re-asks the server behind you. Three
+properties are deliberate and are worth knowing about:
+
+* **The screen is never invented.** A cached paint is followed by the same read
+  it was cached from, and what is on screen is replaced only if the answer
+  differs. It also keeps the **original read's timestamp**, so a save that
+  landed while you were elsewhere still raises the *"an agent has saved since
+  you opened this"* notice rather than hiding behind a fresh-looking figure.
+* **Reload really reloads.** Pressing *Reload* (or the sidebar's *Refresh*)
+  drops every cached copy of that project before it asks, because the whole
+  meaning of the control is "my copy is stale". Saving the standing brief drops
+  them too.
+* **Nothing about tiers 2 and 3 moved.** The app is still read-only over them,
+  the extra query is a read, and the pair the server offers is *checked* against
+  the one the table would put first rather than trusted — if they ever disagree,
+  the view reads the pair it chose, exactly as it did before.
+
 **Status is first, above everything that could qualify it**, because it is what
 someone with almost no context left actually arrives for; the stale-write notice
 and the "not everything could be listed" note render inside it, and nothing in it

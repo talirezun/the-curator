@@ -332,6 +332,80 @@ function agentNewestPair(scopes) {
 }
 
 /**
+ * THE PAIR THE WORK-STREAMS TABLE PUTS FIRST — the one `?open=newest` opens.
+ *
+ * ── WHY THIS IS NOT `agentNewestPair` ────────────────────────────────────
+ * The two answer the same question on the same clock and differ in exactly
+ * one place: TIE-BREAKING. `agentNewestPair` keeps the first pair it meets on
+ * an exact tie (the store's own mtime order), which is right for a row that
+ * merely has to SPEAK for a project. This one is asked which row the TABLE
+ * shows at the top, and the table's order is `workStreamOrder` in
+ * `src/public/next/views/memory.js`: equal ages fall to the scope name, then
+ * the machine name, then the position in the response.
+ *
+ * TIES ARE NOT A CORNER CASE HERE. Every age on a scope row is a whole number
+ * of seconds, and on a store that arrived over sync — or was simply copied —
+ * git stamps every `current.md` with the same mtime, so a project whose pairs
+ * carry no journal time at all ties on EVERY row at once (measured: 17 pairs,
+ * `ageSeconds: 196` on all of them). A pick that broke those ties differently
+ * from the table would open a handoff under a highlight sitting on some other
+ * row, which is the v3.56.0 defect in a smaller place.
+ *
+ * So the rule is stated once here and pinned against the view's own function
+ * by `scripts/test-next-memory-view.js`; `agentNewestPair` is deliberately
+ * left exactly as it is, because its consumers pin its own behaviour.
+ *
+ * Pure, and over the array the unscoped read already produced — no extra
+ * store call.
+ *
+ * EXPORTED for the guard, and only for it. Two of its rules — a row with NO
+ * readable time never displacing one that has a reading, and an all-absent
+ * list still answering rather than returning nothing — are unreachable through
+ * the HTTP surface, because `listWorkingScopes` gives every real row an
+ * `ageSeconds` from its own file. They are kept because they are what still
+ * holds if that ever stops being true, and they are driven directly rather
+ * than left as an untested branch with a comment claiming it works.
+ *
+ * @returns {object|null} the winning pair, or null when there are none.
+ */
+export function tableFirstPair(scopes) {
+  const secs = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const fromStamp = (s) => {
+    if (typeof s !== 'string' || !s) return null;
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 1000)) : null;
+  };
+  // `effectiveSave`'s ladder, in its order: the agent's clock whenever there
+  // is one at all, the file's only as a fallback. `savedAt` / `arrivedAt` are
+  // in that function because `current` carries them; a scope INDEX row never
+  // does, so naming them here would be dead text pretending to be a rule.
+  const ageOf = (p) => {
+    if (!p || typeof p !== 'object') return null;
+    const w = secs(p.writtenAgeSeconds) ?? fromStamp(p.writtenAt);
+    if (w !== null) return w;
+    return secs(p.ageSeconds) ?? fromStamp(p.lastWriteAt);
+  };
+  const rows = (Array.isArray(scopes) ? scopes : []).filter(Boolean);
+  if (!rows.length) return null;
+  // Decorated once, for the reason `workStreamOrder` records: `ageOf` reads
+  // the clock, so computing the key inside the comparator would let `now`
+  // advance mid-sort and make the comparator self-inconsistent.
+  const keyed = rows.map((s, i) => ({ s, i, age: ageOf(s) }));
+  const byName = (a, b) => (
+    String(a.scope || '') < String(b.scope || '') ? -1
+      : String(a.scope || '') > String(b.scope || '') ? 1
+        : String(a.machine || '') < String(b.machine || '') ? -1
+          : String(a.machine || '') > String(b.machine || '') ? 1 : 0);
+  keyed.sort((a, b) => {
+    if (a.age === null && b.age !== null) return 1;
+    if (b.age === null && a.age !== null) return -1;
+    if (a.age !== b.age) return a.age - b.age;
+    return byName(a.s, b.s) || a.i - b.i;
+  });
+  return keyed[0].s;
+}
+
+/**
  * Fold the per-work-stream facts into a row the store answers cheaply.
  *
  * ── WHAT IS MISSING FROM A STORE ROW, AND WHY IT IS MISSING ──────────────
@@ -877,6 +951,29 @@ async function handleDetail(req, res, domain, project, deprecated) {
       if (Number.isFinite(n)) opts.journalLimit = n;
     }
 
+    // ── `?open=newest` — THE INDEX AND THE FIRST HANDOFF IN ONE ANSWER ───
+    //
+    // The Agent-memory view needs BOTH halves to paint a project: the
+    // work-stream index (which only a scope-LESS read produces) and one
+    // pair's `current.md` + journal (which only a SCOPED read produces).
+    // Until now it asked twice, in series, because the second request's URL
+    // is not knowable until the first has answered — so the detail column
+    // sat empty for the whole of the second trip and repainted twice. The
+    // maintainer's report was that switching project "loads with some
+    // delay"; measured on a real store, a switch cost 3 requests and
+    // collapsed the column from 3,821px to 215px for a frame in between.
+    //
+    // OPT-IN, AND ONLY WITHOUT `scope`. A caller that names a scope has
+    // already decided what to open, so there is nothing for this to pick,
+    // and `?scope=` keeps its exact shipped behaviour — byte-identical
+    // against a recorded fixture in scripts/test-next-memory-view.js.
+    //
+    // THE VALUE IS A WORD, NOT A FLAG. `open=newest` says which pair, so a
+    // later `open=<something else>` is an addition rather than a redefinition
+    // of a boolean; anything this route does not recognise is ignored and the
+    // read behaves exactly as it does today.
+    const wantOpen = req.query.open === 'newest' && !opts.scope;
+
     const state = await readState(store, domain, project, opts);
     if (!state.ok) {
       const body = withErrorProse(state);
@@ -914,11 +1011,50 @@ async function handleDetail(req, res, domain, project, deprecated) {
     const withCounts = (typeof state.scopeCount === 'number')
       ? { ...state, savedCopies: state.scopeCount }
       : state;
+
+    // ── THE OPENED PAIR RIDES ALONG, IN THE SHAPE IT WOULD HAVE HAD ──────
+    //
+    // `open` is byte-for-byte what `GET …?scope=<s>&machine=<m>` answers,
+    // built by the same `readState` through the same envelope — not a
+    // hand-picked projection of it. A client can therefore use one code path
+    // for both, and the guard that pins the equality is a deep comparison
+    // against the real second request rather than a field list that would
+    // have to be maintained alongside the store's.
+    //
+    // `null` RATHER THAN AN OMITTED KEY when a project has no pairs at all:
+    // the caller asked a question and "there is nothing to open" is the
+    // answer, which a missing key cannot say apart from "this server does not
+    // know about `open`". An OLDER server answers with no key, and the view
+    // falls back to its second request — which is why the distinction has to
+    // be visible.
+    //
+    // A FAILED inner read is reported as `null` too, and the outer read still
+    // returns 200: the index half is correct and useful, and the client's
+    // fallback path re-asks for the detail and surfaces the real error there.
+    let open;
+    if (wantOpen) {
+      const pick = Array.isArray(state.scopes) ? tableFirstPair(state.scopes) : null;
+      open = null;
+      if (pick && pick.scope) {
+        const inner = { scope: pick.scope };
+        if (pick.machine) inner.machine = pick.machine;
+        if (opts.journalLimit !== undefined) inner.journalLimit = opts.journalLimit;
+        const sub = await readState(store, domain, project, inner);
+        if (sub && sub.ok) {
+          open = {
+            ...((typeof sub.scopeCount === 'number') ? { ...sub, savedCopies: sub.scopeCount } : sub),
+            domain, project, readonly,
+          };
+        }
+      }
+    }
+
     res.json({
       ...withCounts,
       domain,
       project,
       readonly,
+      ...(wantOpen ? { open } : {}),
       ...(deprecated ? deprecationNote(domain, project) : {}),
     });
   } catch (err) {

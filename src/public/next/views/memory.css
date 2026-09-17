@@ -1501,3 +1501,35 @@
    document's own first and last margins do not fight the panel's padding. */
 .mem-reader-doc > *:first-child { margin-top: 0; }
 .mem-reader-doc > *:last-child { margin-bottom: 0; }
+
+/* ── THE FIRST FRAME OF A PROJECT NOBODY HAS READ YET ──────────────────────
+
+   These three rules hold the SIZE of the work-streams table and the standing
+   brief while the one request behind them is in flight. See
+   views/memory.js's `renderProjectSkeleton` for the measurement that made
+   them necessary: the shipped screen dropped the main column from 3,821px to
+   215px for a frame on every project switch, and a column that empties and
+   refills is what "loaded with some delay" describes at a delay of 30ms.
+
+   ── FLAT, NOT SHIMMERING, AND THE REASON IS A NUMBER ────────────────────
+   There is no animation here at all, and that is deliberate rather than
+   unfinished. This frame lives for 15-40ms; a pulse is motion that says
+   "wait" for less time than it takes to read the word, and it would also be
+   the only `animation:` declaration in this file, which has carried a header
+   promising there are none since v3.9.2. Nothing to neutralise under
+   prefers-reduced-motion because nothing moves.
+
+   ── THE HEIGHTS ARE MEASURED, NOT GUESSED ───────────────────────────────
+   `--mem-ghost-row` is the rendered height of a real `.mem-ws-row` (44px:
+   --hit-min for the row button plus its cell padding), and the paragraph
+   block is three lines of `.mem-doc` body text. Both are measured in the
+   browser rather than eyeballed, because the whole point of the element is
+   that what replaces it is the same size. */
+.mem-ghost-wrap { display: flex; flex-direction: column; gap: var(--space-2); }
+.mem-ghost {
+  background: var(--mat-row-hover);
+  border-radius: var(--radius-sm);
+}
+.mem-ghost-row { height: 44px; }
+.mem-ghost-line { height: 20px; width: 60%; }
+.mem-ghost-para { height: 72px; }
