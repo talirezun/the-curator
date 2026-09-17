@@ -2970,6 +2970,12 @@ function makeReloader(stateObj, responder) {
     extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
+    // The fallback pair reloadActive picks when the user's scope is gone is the
+    // head of the order the TABLE paints, so both travel with it. Lifted, not
+    // stubbed, for the reason the identity helpers are: a stub here would let
+    // this suite agree with itself about which pair is freshest.
+    extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'reloadActive', 'memory.js') + '\n' +
     'return { reloadActive, loadScope };';
@@ -3067,14 +3073,29 @@ function makeReloader(stateObj, responder) {
 {
   // The scope genuinely disappeared: fall back to the freshest, which is what
   // selectProject would have chosen anyway. Documented behaviour.
+  //
+  // THE FIXTURE CARRIES AGES NOW, and the store's order CONTRADICTS them: the
+  // list arrives `main` first (mtime, which a checkout rewrites) while the
+  // agent's clock puts `newest-scope` five hours ahead of it. Before v3.56.1
+  // both were ageless, so "falls back to the freshest" was a claim no response
+  // in the fixture could contradict — it would have passed against `scopes[0]`
+  // whatever that was.
   const s = liveState({ scope: 'gone-scope', detail: { scope: 'gone-scope', machine: 'm1', machines: [], current: { present: true, text: 'x' } } });
   const r = makeReloader(s, (url) => url.includes('?')
     ? { ok: true, json: async () => ({ ok: true, current: { present: true, text: 'y' }, machines: [] }) }
-    : { ok: true, json: async () => ({ ok: true, scopes: [{ scope: 'newest-scope' }, { scope: 'main' }] }) });
+    : { ok: true, json: async () => ({ ok: true, scopes: [
+      { scope: 'main', machine: 'm1', writtenAgeSeconds: 18_000 },
+      { scope: 'newest-scope', machine: 'm2', writtenAgeSeconds: 60 }] }) });
   await r.reloadActive(1);
-  eq('a scope removed out of band falls back to the freshest', s.scope, 'newest-scope');
+  eq('a scope removed out of band falls back to the freshest BY THE AGENT\'S '
+    + 'CLOCK, not to whatever the store listed first', s.scope, 'newest-scope');
+  ok('...and names that pair\'s machine, so the row the table highlights is the '
+    + 'row it ranked first', r.calls.urls.some((u) => /machine=m2/.test(u)),
+  JSON.stringify(r.calls.urls));
   ok('...and does NOT carry the old machine across to a different scope',
     !r.calls.urls.some((u) => /machine=m1/.test(u)), JSON.stringify(r.calls.urls));
+  eq('...while recording NO choice, so the next Reload re-resolves to the newest '
+    + 'copy rather than pinning one nobody picked (v3.34.0)', s.machine, null);
 }
 {
   // A project whose state vanished entirely: say so, do not paint a scope
@@ -4489,7 +4510,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     const api = new Function('state', 'isCurrentMount', 'render', 'keyOf', 'activeKey',
       'rememberProject', 'fetchState', 'refreshIndex', 'loadScope', 'reportAsyncMountFailure',
       'JOURNAL_PAGE', 'WS_WINDOW',
-      extractFunction(viewSrc, 'selectProject', 'memory.js')
+      extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'selectProject', 'memory.js')
       + '\nreturn { selectProject };')(
       st, () => true, () => {}, (d, q) => d + '/' + q,
       () => st.activeDomain + '/' + st.activeProject,
@@ -4586,6 +4609,205 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     ok('CONTROL: the STANDING BRIEF is still a document on the page, so this is '
       + 'about the handoff rather than about documents having been removed',
     page.includes('class="mem-doc"') && page.includes('Ship it'));
+  }
+}
+
+// ── §17d — WHICH PAIR OPENS BY ITSELF, AND WHOSE CLOCK DECIDES ──────────
+//
+// ── THE DEFECT ───────────────────────────────────────────────────────────
+// Seen on a copied store, which is the shape EVERY synced machine has: a
+// checkout rewrites mtime, so the store's own order says "when this machine
+// wrote the file" while every cell of the table reads the AGENT'S clock
+// through `effectiveSave`. `selectProject` and `reloadActive`'s fallback took
+// `scopes[0]` — the mtime head — so on the maintainer's 'curator' project the
+// page opened on the pair the table ranks LAST: a two-week-old handoff under a
+// first row reading "5 hr ago". `wsShownCount` then did exactly what it is
+// designed to do and STRETCHED the window to keep that open row visible, so
+// all sixteen rows painted and the "Show more" footer — the one thing on
+// screen that would have said the list was ever windowed — never appeared.
+// Two blocks above, the Status block's "Working on:" named a different,
+// fresher work-stream, because the route computes THAT on the agent's clock.
+//
+// ── WHAT IS PINNED HERE ─────────────────────────────────────────────────
+// The fixture is built so the two clocks DISAGREE — the store lists the
+// agent-oldest pair first and the agent-newest last — because with one clock
+// the assertions below pass against either implementation. Each behaviour is
+// driven through shipped source: the pick through `selectProject`, the paint
+// through `renderWorkStreams`, the press through the handler
+// `bindWorkStreamRows` binds, and the poll through `refreshIndex`. The route's
+// own `scope=latest` is NOT touched by any of this and is asserted elsewhere;
+// this is the view choosing from a list it already holds.
+{
+  const nowMs = Date.now();
+  const isoAt = (secs) => new Date(nowMs - secs * 1000).toISOString();
+  const AGES = [14 * 86400, 7 * 86400, 3 * 86400, 2 * 86400, 86400, 3 * 3600, 1800, 300];
+  const STORE = AGES.map((age, i) => ({
+    scope: 'ws-' + i, machine: 'box-' + i, headline: 'stream ' + i,
+    harness: 'claude-code', model: 'opus-5',
+    writtenAgeSeconds: age, writtenAt: isoAt(age),
+    // The filesystem clock the checkout rewrote, ascending down the array —
+    // i.e. exactly the order the store returns, and the order `scopes[0]`
+    // used to take the head of.
+    ageSeconds: 30 + i, savedAt: isoAt(30 + i),
+  }));
+  const AGENT_NEWEST = STORE[STORE.length - 1];  // ws-7 / box-7 — 5 minutes old
+  const STORE_FIRST = STORE[0];                  // ws-0 / box-0 — a fortnight old
+  const effOf = makeRenderers({}).effectiveSave;
+  ok('FIXTURE: the store lists the agent-OLDEST pair first and the agent-newest '
+    + 'last — so the two clocks cannot both be right',
+  effOf(STORE_FIRST).seconds > effOf(AGENT_NEWEST).seconds
+    && effOf(STORE_FIRST).source === 'agent',
+  JSON.stringify([effOf(STORE_FIRST).seconds, effOf(AGENT_NEWEST).seconds]));
+
+  // ── 1 · THE PICK, through the shipped selectProject ─────────────────────
+  {
+    const loaded = [];
+    const st = { activeDomain: 'acme', activeProject: 'lumina', wsWindow: 40,
+      journalLimit: 50, briefEdit: null, copied: null, projectRead: null, detail: null };
+    const api = new Function('state', 'isCurrentMount', 'render', 'keyOf', 'activeKey',
+      'rememberProject', 'fetchState', 'refreshIndex', 'loadScope', 'reportAsyncMountFailure',
+      'JOURNAL_PAGE', 'WS_WINDOW',
+      extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'selectProject', 'memory.js')
+      + '\nreturn { selectProject };')(
+      st, () => true, () => {}, (d, q) => d + '/' + q,
+      () => st.activeDomain + '/' + st.activeProject,
+      () => {},
+      async () => ({ data: { scopes: STORE, brief: { present: false } }, error: null }),
+      async () => {},
+      async (scope, machine, token, opts) => { loaded.push({ scope, machine, opts }); },
+      () => {}, 10, WS_WINDOW_SRC);
+
+    await api.selectProject('acme', 'lumina', 1);
+    eq('arriving on a project opens exactly one pair', loaded.length, 1);
+    eq('THE PAIR IT OPENS IS THE AGENT-NEWEST ONE — scope AND machine, named',
+      loaded[0].scope + '/' + loaded[0].machine,
+      AGENT_NEWEST.scope + '/' + AGENT_NEWEST.machine);
+    ok('...asked for BY NAME, never handed to the route as `latest` to resolve on '
+      + 'the other clock', loaded[0].scope !== 'latest', JSON.stringify(loaded[0]));
+    ok('...and NOT the store\'s first pair, which is what it used to take and is a '
+      + 'fortnight older', loaded[0].scope !== STORE_FIRST.scope, loaded[0].scope);
+    ok('the machine is REQUESTED without being recorded as a choice — nobody picked '
+      + 'it, so Reload must still re-resolve to the newest copy (v3.34.0)',
+    loaded[0].opts && loaded[0].opts.deliberate === false, JSON.stringify(loaded[0].opts));
+  }
+
+  // ── 1b · ...and "no choice recorded" is a measurement, not a parameter ──
+  //
+  // Driven through the REAL loadScope: the URL must carry the machine while
+  // `state.machine` stays null, because that null is the whole of what makes
+  // reloadActive re-resolve to the newest copy.
+  {
+    const st = liveState({ activeDomain: 'acme', activeProject: 'lumina',
+      scope: null, machine: null, detail: null });
+    const r = makeReloader(st, () => ({ ok: true, json: async () => ({ ok: true,
+      scope: AGENT_NEWEST.scope, machine: AGENT_NEWEST.machine,
+      current: { present: true, text: 'x' }, machines: [] }) }));
+    await r.loadScope(AGENT_NEWEST.scope, AGENT_NEWEST.machine, 1, { deliberate: false });
+    ok('the default open REQUESTS the machine it ranked',
+      r.calls.urls.some((u) => /machine=box-7/.test(u)), JSON.stringify(r.calls.urls));
+    eq('...and records NO machine choice', st.machine, null);
+    await r.loadScope(AGENT_NEWEST.scope, AGENT_NEWEST.machine, 1);
+    eq('CONTROL: the same call WITHOUT the flag records one, which is what a row '
+      + 'press and the machine picker mean', st.machine, AGENT_NEWEST.machine);
+  }
+
+  // ── 2 · THE PAINT, and the defect measured beside it ────────────────────
+  {
+    const paint = (open) => makeRenderers({ detail: open,
+      projectRead: { scopes: STORE }, wsWindow: WS_WINDOW_SRC })
+      .renderWorkStreams(STORE, open, WS_WINDOW_SRC);
+
+    const html = paint({ scope: AGENT_NEWEST.scope, machine: AGENT_NEWEST.machine });
+    const rows = [...html.matchAll(/data-mem-scope="([^"]*)"/g)].map((m) => m[1]);
+    eq('with the agent-newest pair open the table paints the WINDOW, five rows',
+      rows.length, WS_WINDOW_SRC);
+    eq('...in the order the agent\'s clock gives', rows.join(','), 'ws-7,ws-6,ws-5,ws-4,ws-3');
+    eq('THE OPEN ROW IS THE FIRST ONE, so nothing had to be stretched to reach it',
+      rows[0], AGENT_NEWEST.scope);
+    eq('...and it is the only row marked open',
+      (html.match(/mem-ws-row-open/g) || []).length, 1);
+    ok('...and the way past the window is offered, three rows behind a footer',
+      /Show 3 more/.test(html), html.slice(-260));
+
+    // THE DEFECT ITSELF. Same table, same window, same eight pairs — the open
+    // pair is the only thing that moves, and the footer disappears with it.
+    const old = paint({ scope: STORE_FIRST.scope, machine: STORE_FIRST.machine });
+    eq('CONTROL: opening the store\'s first pair instead stretches the window to '
+      + 'every row', [...old.matchAll(/data-mem-scope="/g)].length, STORE.length);
+    ok('...and takes the footer with it, so nothing on screen says the list was '
+      + 'ever windowed — the reported symptom, reproduced',
+    !/Show \d+ more/.test(old));
+  }
+
+  // ── 3 · A PRESS WINS, AND SURVIVES A POLL ──────────────────────────────
+  //
+  // Row SIX of the agent order: past the window, so it is a pair the default
+  // open could never have chosen and a snap-back would be unmistakable.
+  {
+    const PRESSED = STORE[2];   // ws-2 / box-2 — ordered[5], the sixth row
+    const st = liveState({ activeDomain: 'acme', activeProject: 'lumina',
+      projectRead: { scopes: STORE, savedCopies: 8 }, detail: null,
+      scope: null, machine: null, wsWindow: WS_WINDOW_SRC });
+
+    const urls = [];
+    const btn = { dataset: { memScope: PRESSED.scope, memMachine: PRESSED.machine },
+      _click: null, addEventListener(t, fn) { if (t === 'click') this._click = fn; } };
+    const root = { querySelectorAll: (sel) => (sel.includes('mem-ws-open') ? [btn] : []) };
+    const press = new Function('state', 'render', 'isCurrentMount', 'fetch',
+      'URLSearchParams', 'encodeURIComponent', 'JOURNAL_PAGE',
+      'openReader', 'isCurrentReader', 'handoffReaderContent', 'reportAsyncMountFailure',
+      'let pendingFocusId = null;\n'
+      + extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'openWorkStream', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'bindWorkStreamRows', 'memory.js') + '\n'
+      + 'return { bindWorkStreamRows };')(
+      st, () => {}, () => true,
+      async (url) => { urls.push(String(url)); return { ok: true, json: async () => ({
+        ok: true, scope: PRESSED.scope, machine: PRESSED.machine,
+        current: { present: true, text: '# pressed\n' }, machines: [],
+        journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } }) }; },
+      URLSearchParams, encodeURIComponent, 10,
+      () => 1, () => true, () => null, () => {});
+
+    press.bindWorkStreamRows(root, 1);
+    ok('SETUP: the row\'s handler was bound', typeof btn._click === 'function');
+    btn._click();
+    await new Promise((res) => setImmediate(res));
+
+    eq('A PRESS IS A CHOICE: the pressed work-stream becomes the selection',
+      st.scope, PRESSED.scope);
+    eq('...and its machine with it, because the pair is what was pressed',
+      st.machine, PRESSED.machine);
+    ok('...and the pair was read from the store by name',
+      urls.some((u) => /scope=ws-2&machine=box-2/.test(u)), JSON.stringify(urls));
+
+    // NOW POLL. The adaptive revalidation runs against the SAME state object,
+    // with the index reporting a write since the list was read — the one case
+    // that re-reads the scope list at all.
+    const detailBefore = st.detail;
+    st.detailFetchedAt = 1_000_000;
+    st.scopesFetchedAt = 1_000_000;
+    const r = makeRevalidator(st, (url) => (url === '/api/memory'
+      ? { ok: true, json: async () => ({ ok: true, projects: [{ domain: 'acme',
+        project: 'lumina', hasBrief: false, scopeCount: 8, savedCopies: 8,
+        lastWriteAt: new Date(1_005_000).toISOString(), ageSeconds: 1,
+        headline: 'a newer save landed' }] }) }
+      : { ok: true, json: async () => ({ ok: true, project: 'lumina',
+        savedCopies: 8, scopes: STORE }) }));
+    await r.refreshIndex(1);
+
+    eq('CONTROL: the poll really ran and re-read the list', r.calls.project, 1);
+    ok('...and adopted it', st.projectRead.scopes.length === 8);
+    eq('A POLL DOES NOT SNAP BACK TO THE DEFAULT PAIR — the scope stays where the '
+      + 'press put it', st.scope, PRESSED.scope);
+    eq('...and so does the machine', st.machine, PRESSED.machine);
+    ok('...and the document is not swapped under the reader (v3.17.3)',
+      st.detail === detailBefore);
   }
 }
 
