@@ -1169,26 +1169,59 @@ for (const [code, sentence] of [
     'exactly the F-01 shape, and the no-request assertion above is what reds on it');
 }
 
-// CSS seams (C4/C5: no new stylesheet, no new custom property).
-for (const cls of ['.sb-card-admin', '.sb-token-box', '.sb-revoke-panel', '.btn-danger',
+/* CSS seams (C4/C5: no new stylesheet, no new custom property).
+   `.btn-danger` HAS BEEN REMOVED FROM THIS LIST, and the way it failed is
+   the lesson. The loop below searches the RAW stylesheet, so when the scoped
+   override was deleted and replaced by a comment EXPLAINING the deletion,
+   this assertion went on passing — a comment satisfying a scan, the shape
+   this file's own `stripComments` helper exists to prevent, sitting 30 lines
+   above the helper. What caught it was the sanity check on that helper
+   blowing up, not the assertion. Every `.btn-danger` check below now runs
+   against the COMMENT-STRIPPED source. */
+for (const cls of ['.sb-card-admin', '.sb-token-box', '.sb-revoke-panel',
   '.sb-outcome-ok', '.sb-outcome-warn', '.sb-outcome-danger', '.sb-member-row']) {
   ok(sharedCss.includes(cls + ' ') || sharedCss.includes(cls + ' {') || sharedCss.includes(cls + ','),
     `CSS: ${cls} is defined in shared.css (no new stylesheet was created)`);
 }
-// NIT (audit): .btn-danger must not be a BARE global selector in a
-// per-view stylesheet — shell.css owns .btn/.btn-primary/.btn-secondary/
-// .btn-ghost, the real cross-view button variants, and a bare `.btn-danger`
-// here would leak into every other view sharing the class name.
-ok(!/(?:^|\n)\.btn-danger\s*\{/.test(sharedCss),
-  'CSS: .btn-danger is never defined as a bare top-level selector in shared.css');
-ok(/\.sb-revoke-go \.btn-danger\s*\{/.test(sharedCss),
-  'CSS: .btn-danger is scoped to .sb-revoke-go, its only user');
 // Comment-stripped, for the same reason the JS guards are: shared.css's own
 // comments deliberately QUOTE `var(--scrim, ...)` to explain why the token is
 // NOT used here, so a raw-text absence check would be reading the explanation
 // instead of the code — the "check stopped reaching what it protects" shape.
 const sharedCssCode = assertStrippedSane(
-  sharedCss.replace(/\/\*[\s\S]*?\*\//g, ''), 'shared.css', ['.sbw-scrim {', '.btn-danger {']);
+  sharedCss.replace(/\/\*[\s\S]*?\*\//g, ''), 'shared.css', ['.sbw-scrim {']);
+
+/* ── THE REVOKE'S HEAVIER TREATMENT: INVERTED, NOT DROPPED ───────────────
+   WAS: `.btn-danger` must not be a BARE top-level selector here, and must be
+   SCOPED to `.sb-revoke-go`, "its only user". The reasoning behind the first
+   half — shell.css owns the button variants and a bare one here would leak
+   across every view — is exactly why the SCOPED form was wrong too: a
+   `.sb-revoke-go .btn-danger` at (0,2,0) repainted the shell's tinted danger
+   variant as a filled red, so the element got that variant's gloss and press
+   rules (which key on the class NAME) under a fill from somewhere else. It
+   also filled with `--danger`, and `--text-on-accent` on `--danger` measures
+   3.40:1 — an AA failure on the one control in this app that erases another
+   person's data.
+
+   The JUDGEMENT survives: the GDPR Article 17 revoke earns more weight than
+   an ordinary confirm. shell.css now ships `.btn-danger-solid` for precisely
+   that case, filled with `--danger-fill` at 4.51:1, and the button takes it
+   by name. So this stylesheet must now declare NO `.btn-danger` rule in ANY
+   form, and the markup must name the variant. Both halves, and both against
+   stripped source. */
+ok(!/\.btn-danger(?![-\w])/.test(sharedCssCode),
+  'CSS: shared.css declares no `.btn-danger` rule at all — bare OR scoped. The scoped override was the defect, ' +
+  'not a safe version of the bare one');
+ok(/\.btn-danger(?![-\w])/.test('.sb-revoke-go .btn-danger { background: var(--danger); }'),
+  'CONTROL: that absence check fires on the exact scoped rule it replaced');
+ok(/\.btn-danger(?![-\w])/.test(sharedCss),
+  'and the remaining `.btn-danger` mentions in shared.css are COMMENTS only — proving the strip is load-bearing here ' +
+  'too, which is how the old version of this assertion stayed green over a deleted rule');
+{
+  const btn = /class="([^"]*)"[^>]*data-sb-action="revoke-run"/.exec(shared);
+  ok(!!btn && /\bbtn-danger-solid\b/.test(btn[1]) && !/\bbtn-danger\b(?!-)/.test(btn[1]),
+    'MARKUP: the revoke button carries btn-danger-solid — the one sanctioned filled red, a confirm whose primary ' +
+    `action IS the destruction — and not both variants at once (class list: ${btn ? btn[1] : 'NOT FOUND'})`);
+}
 ok(!/var\(--scrim/.test(sharedCssCode),
   'CSS: shared.css adds no second --scrim reference (it is baselined at exactly one, in shell.css)');
 ok(/var\(--scrim/.test(sharedCss),

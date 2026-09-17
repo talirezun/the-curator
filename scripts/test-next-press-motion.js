@@ -174,6 +174,23 @@ function declares(body, prop) {
   const esc = prop.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
   return new RegExp(`(?:^|[;{])\\s*${esc}\\s*:`).test(body);
 }
+/**
+ * A FILL IS DECLARED TWO WAYS IN THIS TREE AND ONLY ONE WAS BEING COUNTED.
+ * `declares(body, 'background')` matches the SHORTHAND only, and shell.css's
+ * press steps use the LONGHAND on purpose — `.btn-primary:active`,
+ * `.btn-secondary:active`, `.btn-ai:active` and `.btn-ghost:active` all say
+ * `background-color`, because the gloss face is a `::before` and a shorthand
+ * would be the wrong property to reach for beside it (the note on
+ * `.btn-danger` records the one place the shorthand IS deliberate).
+ *
+ * So every check below that asked "does this press change the fill" answered
+ * NO for the entire shared button family. It never showed because no `.btn-*`
+ * variant was in NAMED_FAMILIES until the consequence tier was pinned. This
+ * helper asks the question the checks meant to ask.
+ */
+function declaresFill(body) {
+  return declares(body, 'background') || declares(body, 'background-color');
+}
 function declValue(body, prop) {
   const esc = prop.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
   const m = body.match(new RegExp(`(?:^|[;{])\\s*${esc}\\s*:([^;}]*)`));
@@ -433,7 +450,21 @@ const NAMED_FAMILIES = [
   ['ing-dest-row', 'ingest destination rows', true],
   ['chat-scope-pill', 'chat scope pills', true],
   ['chat-conv-row', 'conversation rows', true],
-  ['chat-compile-btn', 'Compile to Wiki — the one control here that spends money', true],
+  // WAS `chat-compile-btn`, the hand-built compile pill. That class is gone:
+  // Compile to Wiki is `btn btn-ai btn-xs chat-compile-pill` now, so the pin
+  // moves UP to the variant and gets stronger — it covers every control in
+  // the app that spends money (compile, single ingest, batch start, the three
+  // quick-maintenance AI actions, Shared Brain push and synthesize) instead
+  // of one button on one view.
+  //
+  // `moves: false` for the same reason `.lb-btn` carries it — stated, not
+  // skipped. `.btn-ai:active` declares the BACKGROUND step (one further than
+  // its hover) and the inset well; the TRANSFORM lives on `.btn:active`, one
+  // line below in the same file, because it is identical for every variant
+  // and shell.css says so explicitly. `btn` is pinned with `moves: true`
+  // directly below, so the movement is still asserted — just once, where it
+  // is declared.
+  ['btn-ai', 'the consequence tier — every control that spends money, Compile to Wiki included', false],
   ['btn', 'the shared button', true],
   // DELIBERATELY false: a transform on the listbox trigger changes the rect
   // its own rAF positioner watches, so the open menu twitches. Listed with
@@ -460,7 +491,7 @@ const NAMED_FAMILIES = [
 for (const [cls, label, moves] of NAMED_FAMILIES) {
   const rules = ACTIVE_RULES.filter(r => classRe(cls).test(r.selector));
   ok(rules.length > 0, `${label} (.${cls}) has a press rule`);
-  const doesSomething = rules.some(r => declares(r.body, 'transform') || declares(r.body, 'background'));
+  const doesSomething = rules.some(r => declares(r.body, 'transform') || declaresFill(r.body));
   ok(doesSomething, `…and it actually CHANGES something (transform or background), not merely exists`);
   if (moves) {
     const movesNow = rules.some(r => {
@@ -667,16 +698,39 @@ section('6. Cascade — a press background that ties with its hover must come la
  * Specificity here is COUNTED, not computed (see NOT ENFORCED). It only has
  * to distinguish `.x:active` from `.x:hover:not(:disabled)`.
  */
-function crudeSpecificity(sel) {
+function crudeSpecificityOne(sel) {
   const classes = (sel.match(/\.[a-zA-Z][\w-]*/g) || []).length;
   const pseudos = (sel.match(/:(?!:)[a-zA-Z-]+/g) || []).length;
   const attrs = (sel.match(/\[[^\]]*\]/g) || []).length;
   return classes + pseudos + attrs;
 }
+/**
+ * A SELECTOR LIST HAS NO SINGLE SPECIFICITY, and counting the comma-joined
+ * STRING gave it one — the sum of every part. The first rule in this tree to
+ * hit it was `.tx-vh-info:hover, .tx-vh-info:focus-visible` in
+ * shared/text.css, which scored 4 against `.tx-vh-info:active`'s 2 and was
+ * reported as making the press unpaintable. It does not: for any element, the
+ * two rules tie at 0,2,0 and the later one wins, which is exactly what the
+ * order half of this check is for.
+ *
+ * Per CSS, each part of a list is weighed independently, so the honest
+ * reduction to one number is the MAX over the parts — conservative in the
+ * direction that matters (it can still report a real outranking, it can no
+ * longer invent one out of a rule having two selectors). Splitting the CSS
+ * into two identical blocks to satisfy the old counter was the alternative,
+ * and it would have made the stylesheet worse to keep a test simple.
+ *
+ * Commas inside `:not(...)` / `:is(...)` do not separate list items, so they
+ * are protected before the split.
+ */
+function crudeSpecificity(sel) {
+  const masked = sel.replace(/\([^()]*\)/g, (m) => m.replace(/,/g, '\u0001'));
+  return Math.max(...masked.split(',').map((part) => crudeSpecificityOne(part.replace(/\u0001/g, ','))));
+}
 
 const cascadeProblems = [];
 for (const r of ACTIVE_RULES) {
-  if (!declares(r.body, 'background')) continue;
+  if (!declaresFill(r.body)) continue;
   const spec = crudeSpecificity(r.selector);
   for (const cls of classesIn(r.selector)) {
     const re = classRe(cls);
@@ -684,7 +738,7 @@ for (const r of ACTIVE_RULES) {
       if (h.file !== r.file) continue;              // same-file order only
       if (!/:hover/.test(h.selector)) continue;
       if (!re.test(h.selector)) continue;
-      if (!declares(h.body, 'background')) continue;
+      if (!declaresFill(h.body)) continue;
       if (crudeSpecificity(h.selector) > spec) {
         cascadeProblems.push(`${r.file}: "${r.selector}" (${spec}) is OUTRANKED by "${h.selector}" (${crudeSpecificity(h.selector)}) — the press background can never paint`);
       } else if (crudeSpecificity(h.selector) === spec && h.offset > r.offset) {
@@ -740,6 +794,20 @@ ok(!/:active/.test(stripCssComments(commentTrap)),
 const unstripped = collectRules(commentTrap);
 ok(unstripped.some(r => /:active/.test(r.selector) || /translateY\(0\.5px\)/.test(r.body)) || unstripped.length !== 1,
   'CONTROL (positive): WITHOUT the strip the same input parses differently — so the strip is doing real work, not decoration');
+
+// 7a2. The two helpers corrected in the button-family pass, both directions.
+ok(crudeSpecificity('.x:hover, .x:focus-visible') === crudeSpecificity('.x:active'),
+  'CONTROL: a two-part selector LIST no longer scores double — `.x:hover, .x:focus-visible` ties with `.x:active`, ' +
+  'so §6 falls through to the ORDER check instead of inventing an outranking');
+ok(crudeSpecificity('.x:hover:not(:disabled)') > crudeSpecificity('.x:active'),
+  'CONTROL (positive): …and a genuinely heavier hover still outranks, so §6 can still fire');
+ok(crudeSpecificity('.x:is(.a, .b):hover') === crudeSpecificity('.x:is(.a,.b):hover'),
+  'CONTROL: a comma INSIDE :is()/:not() does not split the selector into list parts');
+ok(declaresFill('background-color: var(--accent-active);') && declaresFill('background: transparent;'),
+  'CONTROL: a press step is counted whether it uses the fill SHORTHAND or the longhand — shell.css uses the longhand ' +
+  'on every .btn variant, and counting only the shorthand answered "this press changes nothing" for the whole family');
+ok(!declaresFill('background-clip: padding-box; color: red;'),
+  'CONTROL (negative): …and a different background-* property is NOT counted as a fill');
 
 // 7b. The amplitude detector fires on a planted literal.
 const plantedLiteral = collectRules(stripCssComments('.x:active { transform: translateY(0.5px) scale(0.97); }'));

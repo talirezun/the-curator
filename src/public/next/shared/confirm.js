@@ -86,7 +86,36 @@ export function isConfirmOpen() { return root !== null; }
  *   confirmLabel optional, default 'Confirm'
  *   cancelLabel  optional, default 'Cancel'
  *   tone         'danger' (default) | 'default'
+ *   destructive  optional boolean — see below. Only read when tone is danger.
  *   onConfirm    optional function; may be async
+ *
+ * ── `tone: 'danger'` IS NOT THE SAME QUESTION AS "THIS DELETES SOMETHING" ─
+ * The confirm button's variant used to be a two-way switch on `tone`:
+ * `btn-primary` for default, `btn-danger` for everything else. Reading the
+ * six live call sites shows `danger` carrying two different meanings:
+ *
+ *   DELETION      chat.js  "Delete this conversation?"  ·  "Delete N
+ *                 conversations?"        — data goes away, unrecoverably.
+ *   IRREVERSIBLE  settings.js "Install this update?" · "Download and install
+ *                 this update?" · "Restart The Curator?" — interruptive and
+ *                 not undoable, but nothing is destroyed; all three say so in
+ *                 their own detail line ("Your knowledge base, API keys and
+ *                 sync settings are untouched").
+ *
+ * shell.css's taxonomy gives the filled red exactly one sanctioned use: "a
+ * confirm dialog whose primary action IS the deletion, where the filled
+ * danger face is the tier-1 slot being used honestly". Painting a filled red
+ * "Install and restart" would say *this destroys your data* about a dialog
+ * that promises the opposite, so the upgrade is OPT-IN rather than derived
+ * from `tone`:
+ *
+ *   tone 'default'                 -> btn-primary
+ *   tone 'danger'                  -> btn-danger        (tinted outline)
+ *   tone 'danger' + destructive    -> btn-danger-solid   (filled)
+ *
+ * The default is the QUIETER of the two, so a caller that forgets the flag
+ * under-states rather than over-states — the same fail-safe direction the
+ * focus rule below takes.
  *
  * ALL interpolated strings are written with textContent, never innerHTML —
  * a conversation title is user content and reaches this module verbatim.
@@ -133,7 +162,13 @@ export function confirmThen(opts) {
   else detailEl.remove();
   cancelBtn.textContent = String(o.cancelLabel || 'Cancel');
   confirmBtn.textContent = String(o.confirmLabel || 'Confirm');
-  confirmBtn.classList.add(o.tone === 'default' ? 'btn-primary' : 'btn-danger');
+  // `=== true`, not a truthiness test: this flag decides whether a FILLED red
+  // appears, so a caller passing a string, a count or an object must not
+  // reach the strongest variant by accident. Same discipline as the `!= null`
+  // numbering check in settings.js's settingsBlock.
+  confirmBtn.classList.add(
+    o.tone === 'default' ? 'btn-primary'
+      : (o.destructive === true ? 'btn-danger-solid' : 'btn-danger'));
 
   document.addEventListener('keydown', onKeydown, true);
   scrimEl.addEventListener('mousedown', onScrimDown);

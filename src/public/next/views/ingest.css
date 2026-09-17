@@ -17,10 +17,16 @@
    The batch-queue row/status styling (Phase 2, 2+ files) will be added
    here once views/ingest.js actually wires the queue.
 
-   `.btn-xs` is duplicated here rather than pulled from shell.css — matching
-   the existing pattern in this codebase (settings.css and sync.css each carry
-   their own identical copy too; see views/README.md item 3 — a rule only moves
-   to shell.css when it's asked for).
+   `.btn-xs` WAS duplicated here, and this paragraph used to defend it:
+   "matching the existing pattern in this codebase (settings.css and sync.css
+   each carry their own identical copy too; see views/README.md item 3 — a
+   rule only moves to shell.css when it's asked for)." The defence was wrong
+   on the facts. index.html links every view stylesheet into ONE document, so
+   all five copies sat at identical specificity and settings.css, linked last,
+   was the only one that ever rendered — including for this view's buttons.
+   Four files were editing text nobody could see. The rule now lives once, in
+   shell.css, beside the button taxonomy; scripts/test-next-button-family.js
+   counts the declarations so a sixth copy cannot be written.
 
    `.settings-inline-error` IS GONE from this file. It was the THIRD
    hand-maintained copy of one rule (settings.css and sync.css hold the other

@@ -1736,8 +1736,17 @@ function renderIngestForm() {
     // gate calls POST /api/ingest-queue/estimate), so the mark is present
     // here without one — a known, deliberate gap, not an oversight, while
     // whether to add a single-file estimate is decided separately.
+    //
+    // `btn-ai`, NOT `btn-primary`. This was an accent-FILLED button carrying
+    // a sparkle, i.e. the one control on the screen that spends real money
+    // was also the most inviting thing on it. shell.css's taxonomy puts that
+    // the other way round: the consequence tier's TINT replaces tier 1
+    // rather than decorating it. The button is still the only action in this
+    // panel and still sits where the eye ends up — it just stops advertising.
+    // The size stays --control-md: it stands directly in the section body,
+    // not in a card or a row, and the container is what picks the size.
     crossBusyNote +
-    '<button type="button" class="btn btn-primary" id="ing-submit-btn"' +
+    '<button type="button" class="btn btn-ai" id="ing-submit-btn"' +
       (btnDisabled ? ' disabled' : '') + '>' +
       icon('sparkles', 14) + ' ' + (state.submitting ? 'Ingesting…' : 'Ingest') +
     '</button>' +
@@ -1782,7 +1791,7 @@ function renderIngestFailure(message, code) {
           'until a different model is chosen. Ingest, Wiki Health and Compile all run on that one ' +
           'model, so this is the same fix for all three.</p>' +
         '<div class="ing-model-gone-actions">' +
-          '<button type="button" class="btn btn-primary btn-xs" id="ing-model-gone-settings">' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="ing-model-gone-settings">' +
             'Open Settings → Providers &amp; keys</button>' +
         '</div>' +
       '</div>'
@@ -3760,7 +3769,11 @@ function renderQueueEstimate(est) {
       // sparkles marks a token-spending action (design rule), paired here
       // with the real "Estimated cost" row already rendered above — the
       // pairing the design asks for, unlike the single-file Ingest button.
-      '<button type="button" class="btn btn-primary" id="ing-queue-start-btn"' + (state.queueSubmitting ? ' disabled' : '') + '>' +
+      // `btn-ai` for the same reason the single-file button takes it, and
+      // with more force: this one has a priced estimate beside it, so the
+      // tint and the figure say the same thing. Its two neighbours stay
+      // --control-md so the row reads as one strip of controls.
+      '<button type="button" class="btn btn-ai" id="ing-queue-start-btn"' + (state.queueSubmitting ? ' disabled' : '') + '>' +
         icon('sparkles', 14) + ' ' + (state.queueSubmitting ? 'Uploading…' : 'Start batch') +
       '</button>' +
       '<button type="button" class="btn btn-secondary" id="ing-queue-addmore-btn">Add more files</button>' +
@@ -4120,7 +4133,7 @@ function renderQueuePanel(job) {
     : controlsHtml;
 
   const dismissHtml = isTerminal
-    ? '<div class="ing-queue-terminal-actions"><button type="button" class="btn btn-secondary" id="ing-queue-dismiss-btn">Dismiss</button></div>'
+    ? '<div class="ing-queue-terminal-actions"><button type="button" class="btn btn-ghost" id="ing-queue-dismiss-btn">Dismiss</button></div>'
     : '';
 
   const listHtml = '<ul class="ing-queue-item-list">' + items.map((item) => renderQueueItemRow(item, { jobTerminal: isTerminal })).join('') + '</ul>';

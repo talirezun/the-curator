@@ -734,9 +734,15 @@ section('10. Nothing interactive in a view is under --hit-min');
 
   // The three ::before hit boxes are real and DERIVED from --hit-min and the
   // glyph size, not written as a magic number.
+  /* `.chat-bulk-delete` WAS HERE AT 20px AND IS GONE — deliberately, and the
+     removal is the fix rather than a concession. The bulk-delete control is
+     `btn btn-danger btn-xs` now; `.btn-xs` is `--control-sm`, which IS
+     `--hit-min` (28px), so its REAL box is the target and the transparent
+     ::before has nothing left to do. Asserted below rather than merely
+     dropped, so "the entry went away" cannot mean "the control shrank and
+     nobody noticed". */
   const DERIVED = [
     ['views/chat.css', '.chat-conv-delete', 24],
-    ['views/chat.css', '.chat-bulk-delete', 20],
     ['views/ingest.css', '.ing-queue-file-remove', 20],
   ];
   for (const [file, sel, px] of DERIVED) {
@@ -746,6 +752,25 @@ section('10. Nothing interactive in a view is under --hit-min');
     ok(new RegExp(sel.replace('.', '\\.') + '\\s*\\{[^}]*position:\\s*relative').test(css),
       `…and is positioned, without which that ::before would anchor to an ancestor and grow the wrong box`);
   }
+  // The retired hit box: the control it belonged to must now reach --hit-min
+  // by its BOX, through the shell, and this file must no longer declare it.
+  {
+    const chat = stripComments(read('views/chat.css'));
+    const shell = stripComments(readFileSync(path.join(NEXT, 'shell.css'), 'utf8'));
+    ok(!/\.chat-bulk-delete\s*(\{|,|:|::)/.test(chat),
+      '.chat-bulk-delete is no longer declared in views/chat.css at all — the bulk-delete control is a shell variant');
+    ok(/\.btn-xs\s*\{[^}]*height:\s*var\(--control-sm\)/.test(shell),
+      '…and the variant it took, .btn-xs, sets its height from --control-sm');
+    const space = stripComments(readFileSync(path.join(NEXT, 'tokens/space.css'), 'utf8'));
+    const material = stripComments(readFileSync(path.join(NEXT, 'tokens/material.css'), 'utf8'));
+    const sm = /--control-sm:\s*(\d+)px/.exec(space);
+    const hit = /--hit-min:\s*(\d+)px/.exec(material);
+    ok(!!sm && !!hit && sm[1] === hit[1],
+      `…and --control-sm (${sm ? sm[1] : '?'}px) IS --hit-min (${hit ? hit[1] : '?'}px), which is WHY the ::before ` +
+      'could be deleted rather than moved — asserted as the arithmetic, so a future edit that shrinks either token ' +
+      'goes red here instead of silently re-opening a 20px target on a control that deletes N conversations');
+  }
+
   // The checkbox labels — the ONE case the ::before technique cannot reach.
   ok(/\.chat-conv-check-hit\s*\{[^}]*height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat.css'))),
     'the conversation checkbox is wrapped in a <label> at --hit-min — an <input> renders no ::before, so the label is its only possible target');

@@ -2741,10 +2741,10 @@ function renderProjectLifecycleCard() {
           escapeHtml(f.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
         messages +
         '<div class="dm-lc-actions">' +
-          '<button class="btn btn-primary dm-lc-danger-btn" id="dm-proj-submit"' +
+          '<button class="btn btn-danger-solid" id="dm-proj-submit"' +
             (busy || f.confirmText !== f.project ? ' disabled' : '') + '>' +
             (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
-          '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+          '<button class="btn btn-ghost" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -2764,7 +2764,7 @@ function renderProjectLifecycleCard() {
         '<div class="dm-lc-actions">' +
           '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
             (busy ? 'Renaming…' : 'Rename') + '</button>' +
-          '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+          '<button class="btn btn-ghost" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -2788,7 +2788,7 @@ function renderProjectLifecycleCard() {
       '<div class="dm-lc-actions">' +
         '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
           (busy ? 'Creating…' : 'Create project') + '</button>' +
-        '<button class="btn btn-secondary" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '<button class="btn btn-ghost" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
     '</div>'
   );
@@ -3384,9 +3384,9 @@ function renderLifecycleCard() {
         '</div>' +
         messages +
         '<div class="dm-lc-actions">' +
-          '<button class="btn btn-primary dm-lc-danger-btn" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' +
+          '<button class="btn btn-danger-solid" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' +
             (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
-          '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+          '<button class="btn btn-ghost" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -3407,7 +3407,7 @@ function renderLifecycleCard() {
           '<div class="dm-lc-body">' + escapeHtml(f.displayName || f.slug) + ' is a Shared Brain mirror. Its folder name ' +
             '(<span class="mono">' + escapeHtml(f.slug) + '</span>) is what marks it as a mirror — renaming it would make the ' +
             'next Pull create a second copy alongside it. Rename the brain from the Shared Brain view instead.</div>' +
-          '<div class="dm-lc-actions"><button class="btn btn-secondary" id="dm-lc-cancel">Close</button></div>' +
+          '<div class="dm-lc-actions"><button class="btn btn-ghost" id="dm-lc-cancel">Close</button></div>' +
         '</div>'
       );
     }
@@ -3421,7 +3421,7 @@ function renderLifecycleCard() {
         messages +
         '<div class="dm-lc-actions">' +
           '<button class="btn btn-primary" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Renaming…' : 'Rename') + '</button>' +
-          '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+          '<button class="btn btn-ghost" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -3448,7 +3448,7 @@ function renderLifecycleCard() {
       messages +
       '<div class="dm-lc-actions">' +
         '<button class="btn btn-primary" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Creating…' : 'Create domain') + '</button>' +
-        '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '<button class="btn btn-ghost" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
     '</div>'
   );
@@ -4178,7 +4178,7 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   const safeTotal = countSafeFixable(report);
   if (safeTotal > 0) {
     items.push(
-      '<button class="dm-quick-btn" data-action="fixSafe"' + (disableAll ? ' disabled' : '') + '>' +
+      '<button class="btn btn-secondary btn-xs dm-quick-btn" data-action="fixSafe"' + (disableAll ? ' disabled' : '') + '>' +
         (busy === 'fixSafe' ? buttonRingHtml() : '') +
         '<span class="dm-quick-label">' + (busy === 'fixSafe' ? 'Fixing…' : 'Fix ' + pluralize(safeTotal, 'safe issue')) + '</span>' +
       '</button>'
@@ -4269,7 +4269,7 @@ function quickAiButton(key, label, busy, crossMountBusy) {
   const running = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate');
   const label2 = running ? label + '…' : label;
   return (
-    '<button class="dm-quick-btn dm-quick-btn-ai" data-action="' + key + '"' + (disabled ? ' disabled' : '') + '>' +
+    '<button class="btn btn-ai btn-xs dm-quick-btn" data-action="' + key + '"' + (disabled ? ' disabled' : '') + '>' +
       // The sparkles mark (token spend) gives way to the ring only while
       // THIS action is the one running — the spend has already happened by
       // then, and liveness is the useful signal. Every other button keeps
@@ -4289,7 +4289,7 @@ function renderConfirmCard() {
       '<div class="dm-confirm-body">' + escapeHtml(c.body) + '</div>' +
       '<div class="dm-confirm-actions">' +
         '<button class="btn btn-primary" id="dm-confirm-yes">' + escapeHtml(c.confirmLabel || 'Confirm') + '</button>' +
-        '<button class="btn btn-secondary" id="dm-confirm-no">Cancel</button>' +
+        '<button class="btn btn-ghost" id="dm-confirm-no">Cancel</button>' +
       '</div>' +
     '</div>'
   );
@@ -4316,7 +4316,7 @@ function renderPendingPlan(crossMountBusy) {
       '<div class="dm-plan-detail">' + escapeHtml(body) + '</div>' +
       '<div class="dm-plan-actions">' +
         '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (busy ? ' disabled' : '') + '>' + (busy === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
-        '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
+        '<button class="btn btn-ghost" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
       '</div>' +
       (crossMountBusy ? '<div class="dm-plan-detail dm-quick-note-busy">An earlier operation on this domain is still running.</div>' : '') +
     '</div>'

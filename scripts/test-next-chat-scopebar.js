@@ -273,7 +273,17 @@ section('§2 — THE DOM PATH: the readout and the caption cannot be read togeth
   const { html, tree } = render();
   const count = findByClass(tree, 'chat-scope-count');
   const caption = findByClass(tree, 'chat-compile-caption');
-  const button = findByClass(tree, 'chat-compile-btn');
+  /* `chat-compile-pill`, not `chat-compile-btn`. The button is
+     `btn btn-ai btn-xs chat-compile-pill` now — the money tier from
+     shell.css plus a layout-only modifier for the pill radius the scope bar
+     needs. What is left of the old name is the element ID, which is
+     unchanged and is what the click handler and the busy-state patch use.
+     THE ID IS WHY THIS HAD TO MOVE RATHER THAN BE LEFT ALONE: an
+     `html.indexOf('chat-compile-btn')` still matched — against
+     `id="chat-compile-btn"` — so three of the ordering assertions below
+     would have stayed green while the class they name had ceased to exist.
+     Every structural assertion here now names the CLASS explicitly. */
+  const button = findByClass(tree, 'chat-compile-pill');
   ok(!!count && !!caption && !!button, 'all three nodes are present (precondition for everything below)');
 
   // The path, stated as a path rather than as a substring.
@@ -295,7 +305,7 @@ section('§2 — THE DOM PATH: the readout and the caption cannot be read togeth
     'and the same is true of the readout and the Compile BUTTON');
 
   // Adjacency, the thing that was actually read as one phrase.
-  ok(!siblingClasses(count).includes('chat-compile-btn'),
+  ok(!siblingClasses(count).includes('chat-compile-pill'),
     'the readout is not a sibling of the Compile button');
   ok(!siblingClasses(count).includes('chat-compile-group'),
     '…nor of the compile group');
@@ -306,12 +316,12 @@ section('§2 — THE DOM PATH: the readout and the caption cannot be read togeth
   // the compile control is last. A reader scanning left to right meets
   // "1,406 pages in scope" beside the pills and "Compile to Wiki / Saves this
   // conversation…" beside each other.
-  ok(html.indexOf('chat-scope-count') < html.indexOf('chat-compile-btn'),
+  ok(html.indexOf('chat-scope-count') < html.indexOf('chat-compile-pill'),
     'the readout is rendered BEFORE the Compile button, not after it');
-  ok(html.indexOf('chat-compile-btn') < html.indexOf('chat-compile-caption'),
+  ok(html.indexOf('chat-compile-pill') < html.indexOf('chat-compile-caption'),
     'and the caption follows its own button');
   ok(html.indexOf('chat-scope-spacer') > html.indexOf('chat-scope-count') &&
-     html.indexOf('chat-scope-spacer') < html.indexOf('chat-compile-btn'),
+     html.indexOf('chat-scope-spacer') < html.indexOf('chat-compile-pill'),
     'the spacer lies between them, so the two never render shoulder to shoulder');
 }
 
@@ -482,8 +492,17 @@ section('§6 — SOURCE GUARD: the caption is SECONDARY text, on the kit’s run
      reader adding a confirm that already exists. */
   ok(/startCompile/.test(chatCss) && /compile\/estimate/.test(chatCss),
     'the .chat-compile-btn note names startCompile and /api/compile/estimate — the gate that has existed since v3.27.0');
-  ok(/CORRECTED \(v3\.49\.0\)/.test(chatCss),
-    '…and marks itself as a correction, so the quoted old wording cannot be read as current');
+  /* WAS: `/CORRECTED \(v3\.49\.0\)/` — the marker on a note that quoted its
+     own superseded wording verbatim, so an absence check could not be used.
+     That quoted wording is gone with the rule it described: `.chat-compile-btn`
+     no longer exists and its note was rewritten around the variant that
+     replaced it. The correction DISCIPLINE is what this line guards, so it
+     now asserts the surviving form of it — the note says the class was
+     retired and what took its place, which is what a reader grepping
+     chat.css for `.chat-compile-btn` needs to find instead of silence. */
+  ok(/`?\.chat-compile-btn`? IS GONE/.test(chatCss) && /btn-ai/.test(chatCss),
+    '…and the note records that .chat-compile-btn was RETIRED and names the variant that replaced it, ' +
+    'so the class disappearing from this file is an answer rather than a gap');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

@@ -989,14 +989,14 @@ function panelAdminStep2() {
       '<p class="sbw-hint">Send the token below to each contributor by email or chat. They paste it in their own Curator wizard — it’s metadata only and contains no credentials.</p>' +
       '<div class="sbw-token-box">' +
         '<code id="sbw-admin-invite-token" class="sbw-token-display mono">sbi_…</code>' +
-        '<button type="button" id="sbw-admin-copy-invite" class="btn btn-secondary btn-xs sbw-copy-btn">' + icon('copy', 13) + ' <span>Copy</span></button>' +
+        '<button type="button" id="sbw-admin-copy-invite" class="btn btn-ghost btn-xs sbw-copy-btn">' + icon('copy', 13) + ' <span>Copy</span></button>' +
       '</div>' +
       '<div class="sbw-admin-token-block">' +
         '<h4>' + icon('lockAlt', 14) + ' Your admin token — keep it secret, store it now</h4>' +
         '<p class="sbw-hint">This token authorises <strong>contributor revocation</strong> (GDPR erasure). It is shown <strong>only here, only once</strong> — save it in your password manager. Do NOT share it with contributors; it is not the invite token above.</p>' +
         '<div class="sbw-token-box">' +
           '<code id="sbw-admin-admin-token" class="sbw-token-display mono">sbat_…</code>' +
-          '<button type="button" id="sbw-admin-copy-admin-token" class="btn btn-secondary btn-xs sbw-copy-btn">' + icon('copy', 13) + ' <span>Copy</span></button>' +
+          '<button type="button" id="sbw-admin-copy-admin-token" class="btn btn-ghost btn-xs sbw-copy-btn">' + icon('copy', 13) + ' <span>Copy</span></button>' +
         '</div>' +
       '</div>' +
       '<div class="sbw-checklist">' +

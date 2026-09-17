@@ -713,31 +713,36 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-.dm-quick-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 11px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--accent-border);
-  background: var(--surface);
-  color: var(--text);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), transform var(--t-press);
-}
-.dm-quick-btn:hover:not(:disabled) { background: var(--surface-hover); }
-/* `:not(:disabled)` is REQUIRED here, not defensive: the hover above is
-   0,3,0, so a bare `.dm-quick-btn:active` at 0,2,0 would lose the background
-   to it for the whole press and paint nothing. Matching the hover's
-   specificity and declaring later is what makes the press visible — and it
-   also stops a disabled button acknowledging a click it is refusing. */
-.dm-quick-btn:active:not(:disabled) { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
-.dm-quick-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
-.dm-quick-btn-ai { color: var(--accent-text); }
-.dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* ── `.dm-quick-btn` IS LAYOUT NOW, AND `.dm-quick-btn-ai` IS GONE ────────
+   These were the app's THIRD "this spends money" treatment: a 30px box with
+   an --accent-border edge, a neutral --surface fill, and a separate
+   `.dm-quick-btn-ai` class whose whole body was `color: var(--accent-text)`.
+   So a control that spends real tokens read as a slightly-violet OUTLINE
+   button, while the shell's own consequence tier (--accent-tint fill,
+   --accent-border edge, --accent-text label) sat unused one file away.
+
+   Now: the three AI actions are `btn btn-ai btn-xs dm-quick-btn` and the
+   free `Fix N safe issues` is `btn btn-secondary btn-xs dm-quick-btn`. That
+   split is the point — a bar where every button looked the same could not
+   say which one costs money, and the accent border was on ALL of them.
+
+   WHAT IS LEFT HERE IS THE BAR'S GEOMETRY. `.dm-quick-btn` no longer sets a
+   background, a border colour, a text colour, a height or a press: those are
+   the shell's. It sets the gap between the ring/sparkle, the label and the
+   cost readout, and nothing else. 30px -> 28px (--control-sm) because the
+   bar is inside a card and the container picks the size.
+
+   `.dm-quick-label`'s own font-size is DELETED, not kept: `.btn-xs` sets
+   --text-xs on the button and a child restating --text-sm would put 13px
+   type in a 28px control — the one thing a size token cannot fix from
+   outside. The weight stays, which is what the span was really for. */
+.dm-quick-btn { gap: 6px; }
+.dm-quick-label { font-weight: var(--weight-medium); }
+/* The cost readout stays one step quieter than the label it follows.
+   MEASURED on the tinted face it now sits on: --text-2 over --accent-tint
+   composited on --surface is 9.32 dark / 8.25 light, and on --surface-raised
+   8.96 / 8.25 — above the 4.5 text floor in both themes on both backdrops
+   the quick bar can render against. */
 .dm-quick-cost { font-size: var(--text-2xs); color: var(--text-2); }
 /* `.dm-quick-note` (the base rule) is GONE — zero users. It carried the
    cost-and-recovery promise, which is now the description role; its 10px top margin
@@ -1201,11 +1206,23 @@
   gap: 8px;
   margin-top: 16px;
 }
-.dm-lc-danger-btn {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: var(--text-on-accent);
-}
+/* ── `.dm-lc-danger-btn` IS GONE, AND IT WAS AN AA FAILURE ───────────────
+   It was applied ON TOP of `btn btn-primary` at two sites — the "Delete
+   permanently" button on the delete-domain card and on the delete-project
+   card — to repaint an accent-filled primary red. Two problems, one of them
+   measurable:
+     · `--text-on-accent` on `--danger` measures 3.40:1 and FAILS AA. That
+       exact figure is why tokens/material.css minted `--danger-fill`
+       (#D83B50, 4.51:1) and why `.btn-danger-solid` uses it. This rule was
+       the last consumer of the failing pairing.
+     · It overrode `background` and `border-color` on a selector carrying
+       `.btn-primary`, which is the pattern that hides the canonical classes
+       — a gloss `::before`/`::after` keyed on `.btn-primary` still painted
+       an ACCENT face under a red fill. scripts/test-next-button-family.js
+       now forbids that shape tree-wide.
+   Both sites are `btn btn-danger-solid`, which is the ONE sanctioned use of
+   a filled red: a confirm card whose primary action IS the deletion (both
+   are gated behind typing the exact name). */
 
 /* A refusal is visually distinct from an error on purpose: "the server said
    no, nothing happened, try again in a moment" is a different thing to tell
@@ -1736,7 +1753,10 @@
    instant channel. */
 @media (prefers-reduced-motion: reduce) {
   .dm-row:active,
-  .dm-quick-btn:active:not(:disabled),
+  /* `.dm-quick-btn:active:not(:disabled)` was here and is GONE with the
+     press it cancelled: the quick bar's buttons are `.btn` variants now, and
+     shell.css's own reduced-motion block lists `.btn:active` — so the escape
+     travels with the control instead of being restated per view. */
   .dm-browse-row:active,
   .dm-browse-more:active,
   .reader-source-reveal:active:not(:disabled) { transform: none; }
