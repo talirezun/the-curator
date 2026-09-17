@@ -119,6 +119,87 @@ an in-file refusal block explaining why there is no `--t-select` — a proposed
 token that turned out byte-identical to the existing `--t-state`. Leave the
 refusal in place; it is the record of a decision, not dead prose.
 
+### Motion in the shell — the three sequences (v3.57.0)
+
+`motion.css` names durations and curves. It does **not** name distances: every
+amplitude in the shell is a px literal at the rule that uses it, with its
+reason beside it. That is deliberate — 8px on a 1,100px column and 28px on a
+620px drawer are the same *gesture* at different sizes, and one shared token
+would be wrong for both.
+
+**1. The view change: exit → mount → enter.** `navigate()` adds `.view-exit` to
+`#view-root` and `#sidebar`, waits `--dur-instant` (80ms), and only then tears
+down the outgoing view, mounts the new one and fires `.view-enter`
+(`--dur-mid` / `--dur-fast`). Measured end to end at 1280×860: the outgoing
+column is still on screen and still carrying its own content at 65.6ms
+(opacity 0.015, translateX −5.9px); the content swaps at 83.4ms; the arrival
+finishes at 265ms.
+
+Before this, a view change had **no leaving phase at all** — the first painted
+frame after a rail click was already the new view at opacity 0, because the
+teardown and the mount happened in the same task as the click. What a user saw
+was an arrival with nothing to arrive *from*.
+
+Three consequences worth knowing before touching it:
+
+- The exit fills `forwards`, because its job is to **hold** opacity 0 until the
+  content is swapped. Every path that mounts therefore clears the class first,
+  and the sequence is skipped outright in a hidden document, where the timer
+  that clears it can be clamped to a second.
+- **The mount is no longer synchronous with `navigate()`.** Code that touches
+  the new view's DOM immediately after navigating must go through
+  `afterViewMount(cb)`, which runs immediately when nothing is pending.
+- Reduced motion is read as **the resolved value of a `--dur-*` token**, not as
+  a `matchMedia` query — `motion.css` expresses reduced motion by zeroing those
+  properties, so reading them is the one answer that cannot disagree with the
+  stylesheet.
+
+**2. The reader: an element inserted already carrying its end-state class never
+transitions.** `shell.css` had written a slide-and-fade for `.reader-scrim` /
+`.reader-panel` since the overlay shipped, gated on `.open` — and it had never
+played once, because `renderReader()` put `.open` into the markup string. A CSS
+transition interpolates between a computed before-state and a computed
+after-state; an element that entered the DOM in its final state has no
+before-state, so there is nothing to interpolate and the rule is simply its
+static style.
+
+Measured at the first animation frame after clicking a wiki row:
+
+| | before | after |
+|---|---|---|
+| `.reader-scrim` opacity | **1** | **0**, then 0.128 at frame 2, 1 at +200ms |
+| `.reader-panel` transform | **none** | **translateX(28px)**, then 24.4px, then 0 |
+
+The rule is: **insert without the end-state class, read a computed value to
+force a style flush, then add the class** — and on every *later* render while
+the overlay is open, patch in place rather than replacing the node, because the
+loading→content swap lands inside the 180ms the panel is sliding and a
+replacement rebuilds it at its end state.
+
+The panel's amplitude was re-decided once the transition actually ran:
+`translateX(16px) translateY(6px)` → `translateX(28px)`. The drawer is flush to
+three edges of the main column and bordered on the fourth; it moves on the one
+axis it is attached to, and 16px on a 620px panel read as a fade with a wobble
+rather than as something arriving.
+
+Dismissing (Esc, the scrim, the ✕) now animates out over the same `--t-enter`;
+`closeReader()` — what `navigate()` calls — stays instant, because an overlay
+outliving the column underneath it is the thing that read as buggy.
+
+**3. `.content-reveal` — the one primitive for late content.** A view emits it
+on a block's **first fill only**, for content that arrives after the enter
+animation has ended. Re-emitting it on every render turns a refresh into a
+flash, which is the defect rather than the fix.
+
+It reuses `@keyframes curator-panel-in` rather than declaring a near-identical
+twin — motion.css retired two keyframes to close exactly that drift, and
+`test-next-press-motion.js` §5 refuses duplicate bodies. It carries **no
+fill-mode**, following the measured decision already recorded at `.view-enter`:
+`backwards`/`both` are not needed to prevent a flash of the finished state
+(t=0 *is* the from-state without one), and they add a second way for a block to
+be pinned invisible by a frozen document timeline — the worse failure for
+something the user is meant to read.
+
 ### `material.css` — the material vocabulary (this release)
 
 A **new file with no bundle counterpart**, linked after `color.css`,

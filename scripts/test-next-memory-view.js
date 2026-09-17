@@ -4547,12 +4547,19 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     const row = { id: 'mem-ws-active', focus(o) { focused.push(o); } };
     const mkShell = (reader) => {
       const closed = [];
-      const api = new Function('state', 'closeReader', 'document',
+      // v3.57.0 gave the USER dismiss paths an animated close, so
+      // dismissReader now asks liveReaderScrim() whether there is an overlay
+      // to fade. `null` is the honest answer for this harness — there is no
+      // rendered overlay here — and it drives the instant arm, which is the
+      // arm this block is about: focus. The animated arm has its own suite
+      // (scripts/test-next-reader-motion.js).
+      const api = new Function('state', 'closeReader', 'document', 'liveReaderScrim',
         extractFunction(appSrc, 'dismissReader', 'app.js')
         + '\nreturn { dismissReader };')(
         { reader },
         () => { closed.push(1); },
-        { getElementById: (id) => (id === 'mem-ws-active' ? row : null) });
+        { getElementById: (id) => (id === 'mem-ws-active' ? row : null) },
+        () => null);
       return { api, closed };
     };
 
@@ -4580,7 +4587,10 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     // distinction at length and a raw scan would fire on the explanation.
     const appCode = stripComments(appSrc);
     ok('Escape dismisses through it', /state\.reader\)\s*\{\s*dismissReader\(\);/.test(appCode), 'escape');
-    ok('the scrim dismisses through it', /reader-scrim'\)\s*dismissReader\(\);/.test(appCode), 'scrim');
+    // The scrim handler compares NODE IDENTITY rather than the id string as
+    // of v3.57.0 — a dismissed scrim loses its id while it fades, so the id
+    // is no longer what identifies it.
+    ok('the scrim dismisses through it', /e\.target === scrim\)\s*dismissReader\(\);/.test(appCode), 'scrim');
     ok('the ✕ dismisses through it',
       /reader-close-btn'\)\.addEventListener\('click', dismissReader\)/.test(appCode), 'close button');
     ok('...and navigate() still calls the PLAIN close, so leaving the view does '

@@ -2253,11 +2253,16 @@ try {
     // ── Wiring: the cost decision, pinned ──
     // The remote check must NOT be on navigate()'s hot path. If someone
     // later wires it there, every rail click becomes a GitHub round-trip.
+    // v3.57.0 moved the mount (and with it the badge refresh) out of
+    // navigate() and into mountView(), which may run one exit-animation tick
+    // later. The cost decision is unchanged and is asserted over BOTH halves,
+    // so wiring the remote check into either one still reds.
     const navFn = extractFn(appSrc, 'navigate', 'next/app.js');
-    assertTrue(!/refreshSyncRemoteBadge/.test(navFn),
-      'navigate() does NOT trigger a network fetch — the remote check stays off the hot path');
-    assertTrue(/refreshSyncBadge\(\)/.test(navFn),
-      'navigate() still refreshes the free, local-only badge half');
+    const mountFn = extractFn(appSrc, 'mountView', 'next/app.js');
+    assertTrue(!/refreshSyncRemoteBadge/.test(navFn) && !/refreshSyncRemoteBadge/.test(mountFn),
+      'the view change does NOT trigger a network fetch — the remote check stays off the hot path');
+    assertTrue(/refreshSyncBadge\(\)/.test(mountFn),
+      'a view change still refreshes the free, local-only badge half (now from mountView())');
     const bootFn = extractFn(appSrc, 'boot', 'next/app.js');
     // v3.30.0+: boot() arms the hidden-aware WRAPPER, not the raw refresher
     // directly — the app now ships as a window a user may leave running all
