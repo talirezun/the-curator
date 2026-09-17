@@ -1974,42 +1974,158 @@ export function extractDomainDisplayName(content, slug) {
 const LOG_DATE_CACHE_MAX = 512;
 const logDateCache = new Map();
 
+// The newest `## [YYYY-MM-DD]` heading in a log, or null.
+//
+// ONE PARSER, NOT TWO. This used to carry its own matchAll-and-take-the-max
+// loop, and readLogLatest below now carries the identical rule over a wider
+// capture. Two hand-maintained copies of one selection rule is this repo's
+// named drift shape (v3.2.0's CRITICAL came from exactly that), and the rule
+// here is the one v3.0.1-beta.10 exists to protect — so it lives in one place
+// and this is the narrow view of it. The RETURN TYPE is unchanged: a
+// `YYYY-MM-DD` string or null, which is what every caller and every suite
+// that pins this has always received.
 function readLogDate(content) {
-  const matches = [...content.matchAll(/^## \[(\d{4}-\d{2}-\d{2})\]/gm)];
-  if (matches.length === 0) return null;
-  let max = matches[0][1];
-  for (const m of matches) if (m[1] > max) max = m[1];
-  return max;
+  const latest = readLogLatest(content);
+  return latest ? latest.date : null;
 }
 
-async function lastIngestDate(logPath) {
+// How long a log title may be once it reaches the wire. The heading is
+// written from `result.title`, which an LLM produced, so nothing upstream
+// bounds it; it lands in a fixed-width sidebar row. Same number, same
+// reason, as MAX_DISPLAY_NAME_LENGTH above.
+const MAX_LOG_TITLE_LENGTH = 120;
+
+/**
+ * THE NEWEST LOG ENTRY — its date, what KIND of write it was, and its title.
+ *
+ * ── WHY THIS IS A SECOND PARSER AND NOT A CHANGE TO readLogDate ──────────
+ * `readLogDate` has a pinned return type (a `YYYY-MM-DD` string or null) and
+ * suites that pin it — scripts/test-beta10-fixes.js and
+ * scripts/test-domain-stats.js both read `stats.lastIngestDate` as a string.
+ * Widening it would be a silent contract change on a published field, so the
+ * richer answer gets its own function and `lastIngestDate` is left returning
+ * exactly what it always returned.
+ *
+ * ── THE SAME beta.10 GUARANTEE, NOT A CHEAPER ONE ────────────────────────
+ * The selection rule is IDENTICAL to readLogDate's: scan EVERY
+ * `## [YYYY-MM-DD]` heading, take the maximum date. Reading only the last
+ * heading would be cheaper and would hand back the exact defect v3.0.1-beta.10
+ * fixed — a hand-reordered log reporting the wrong entry as the newest.
+ * TIES GO TO THE LATER OCCURRENCE IN THE FILE, because appendLog only ever
+ * appends: two entries on one day means the second one happened second.
+ *
+ * ── THE HEADING GRAMMAR, AND WHAT IS DELIBERATELY NOT MATCHED ────────────
+ * `## [YYYY-MM-DD] <kind> | <title>` is written by exactly two call sites:
+ * src/brain/ingest.js (`ingest`) and src/brain/compile.js (`compile`). A
+ * Shared Brain pull ALSO calls appendLog, but writes `[YYYY-MM-DD] Shared
+ * Brain pull from …` with NO `##` — so it never matched readLogDate either,
+ * and this function inherits that unchanged rather than widening the grammar
+ * in a release that is about rendering, not about counting.
+ *
+ * Anything that is not the literal word `ingest` or `compile` yields
+ * `kind: null` rather than being passed through: the consumer turns the kind
+ * into a user-facing verb ("Ingested" / "Compiled"), and inventing a verb for
+ * a word we do not recognise is the fabrication this repo keeps banning.
+ * A heading with no `| title` part yields `title: null` — an absent title is
+ * rendered as absent, never as an empty string that reads as a blank name.
+ *
+ * Returns `{ date, kind, title }` or null when the log carries no entry.
+ */
+function readLogLatest(content) {
+  const matches = [...content.matchAll(
+    /^## \[(\d{4}-\d{2}-\d{2})\][ \t]*([^|\n]*?)[ \t]*(?:\|[ \t]*([^\n]*))?$/gm
+  )];
+  if (matches.length === 0) return null;
+  let best = matches[0];
+  // `>=` — a tie takes the LATER occurrence, which is the later write.
+  for (const m of matches) if (m[1] >= best[1]) best = m;
+  const rawKind = (best[2] || '').trim().toLowerCase();
+  const kind = (rawKind === 'ingest' || rawKind === 'compile') ? rawKind : null;
+  return { date: best[1], kind, title: sanitiseLogTitle(best[3]) };
+}
+
+/**
+ * A log title, made safe to put on the wire.
+ *
+ * The string comes out of a file an LLM helped write, and this field is
+ * additive on a POLLED endpoint that several surfaces render. So it is
+ * narrowed HERE, at the producer, rather than at each renderer: control
+ * characters (including the newline that would let one title impersonate two
+ * rows) collapse to a space, `|` goes because it is the heading's own field
+ * separator and a title carrying one would have already confused the parse,
+ * `<` and `>` go because a title is rendered as text and never as markup —
+ * every consumer escapes, and this is the second layer, not the first.
+ * Length is capped, with an ellipsis so a truncation is visible rather than
+ * silent. An empty result is null: absent renders as absent.
+ */
+function sanitiseLogTitle(raw) {
+  if (typeof raw !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  let t = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/[|<>]/g, ' ');
+  t = t.replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  if (t.length > MAX_LOG_TITLE_LENGTH) t = t.slice(0, MAX_LOG_TITLE_LENGTH - 1).trimEnd() + '\u2026';
+  return t || null;
+}
+
+/**
+ * The newest log entry, behind the SAME mtime+size cache as lastIngestDate.
+ *
+ * ── ONE CACHE, ONE READ, TWO ANSWERS ─────────────────────────────────────
+ * `getDomainStats` needs the date AND the kind AND the title of the newest
+ * entry. Computing them through two functions with two caches would be two
+ * reads of one file per poll — and, worse, two reads of one file CAN
+ * DISAGREE if an ingest appends between them, which is exactly the argument
+ * the CLAUDE.md read one function down already records for reading it once.
+ * So the cache VALUE grew from `{ sig, date }` to `{ sig, date, entry }`,
+ * both getters share it, and the hot path is unchanged: one stat, and a read
+ * only when the log actually moved.
+ *
+ * `lastIngestDate` still returns a `YYYY-MM-DD` string or null — that return
+ * type is pinned by scripts/test-beta10-fixes.js and scripts/test-domain-
+ * stats.js, and a published field does not change shape for a rendering
+ * release.
+ */
+async function readLogEntry(logPath) {
   let sig = null;
   try {
     const st = await stat(logPath, { bigint: true });
     sig = `${st.mtimeNs}:${st.size}`;
     const hit = logDateCache.get(logPath);
-    if (hit && hit.sig === sig) return hit.date;
+    if (hit && hit.sig === sig) return hit;
   } catch {
     // No log.md (or an unreadable one). Same answer the pre-cache version
     // gave, and deliberately not remembered.
     logDateCache.delete(logPath);
     return null;
   }
-  let date;
+  let entry;
   try {
-    date = readLogDate(await readFile(logPath, 'utf8'));
+    entry = readLogLatest(await readFile(logPath, 'utf8'));
   } catch {
     logDateCache.delete(logPath);
     return null;
   }
+  const date = entry ? entry.date : null;
   // Bounded so a long-lived process that has seen many domains (renames,
   // creates, deletes) cannot grow this without limit. A wholesale clear
   // rather than an LRU eviction: the map is a pure cache, the next poll
   // refills exactly the entries still in use, and an eviction ORDER is one
   // more thing that can be subtly wrong for no benefit at this size.
   if (logDateCache.size >= LOG_DATE_CACHE_MAX) logDateCache.clear();
-  logDateCache.set(logPath, { sig, date });
-  return date;
+  const record = { sig, date, entry };
+  logDateCache.set(logPath, record);
+  return record;
+}
+
+async function lastIngestDate(logPath) {
+  const rec = await readLogEntry(logPath);
+  return rec ? rec.date : null;
+}
+
+async function lastIngestEntry(logPath) {
+  const rec = await readLogEntry(logPath);
+  return rec ? rec.entry : null;
 }
 
 // Test-only. The cache is keyed on the file's own mtime+size, so it is
@@ -2019,6 +2135,15 @@ async function lastIngestDate(logPath) {
 export function __clearLastIngestDateCache() {
   logDateCache.clear();
 }
+
+// Test-only exports for scripts/test-sidebar-status-rows.js. The parser is
+// driven over fixture logs directly, and the CACHED getter is driven under a
+// patched fs so "one read serves both getters, and a changed file is re-read"
+// is measured rather than asserted from source. Neither is used by the app —
+// getDomainStats reaches the same answers through getDomainStats itself.
+export { readLogLatest as __readLogLatest };
+export { lastIngestEntry as __lastIngestEntry };
+export { lastIngestDate as __lastIngestDate };
 
 export async function getDomainStats(slug) {
   // Defense in depth (v3.2.0 audit finding L1). Every HTTP caller now gates
@@ -2034,7 +2159,7 @@ export async function getDomainStats(slug) {
 
   const base = domainPath(slug);
 
-  const [schema, pageCounts, conversationCount, ingestDate] = await Promise.all([
+  const [schema, pageCounts, conversationCount, ingestEntry] = await Promise.all([
     // ONE read of CLAUDE.md, TWO answers out of it: the display name (see
     // extractDomainDisplayName() above) and the readonly flag.
     //
@@ -2091,7 +2216,13 @@ export async function getDomainStats(slug) {
     // rather than CHEAPER. The parse itself is unchanged: a cache miss still
     // reads the whole file and still takes the max over every heading, so
     // the beta.10 guarantee holds byte for byte.
-    lastIngestDate(path.join(base, 'wiki', 'log.md')),
+    // ── ONE READ, THREE ANSWERS ────────────────────────────────────────
+    // Not `lastIngestDate` any more but `lastIngestEntry`, which returns
+    // `{ date, kind, title }` from the same cached parse. The date is taken
+    // off that record below, so the file is still read at most once per
+    // change and the two facts beside the date cannot disagree with it —
+    // the same single-read argument the CLAUDE.md block above records.
+    lastIngestEntry(path.join(base, 'wiki', 'log.md')),
   ]);
   const { displayName, readonly } = schema;
 
@@ -2129,7 +2260,25 @@ export async function getDomainStats(slug) {
     displayName,
     pageCount,
     conversationCount,
-    lastIngestDate: ingestDate,
+    lastIngestDate: ingestEntry ? ingestEntry.date : null,
+    // Additive: WHAT the newest log entry was, beside WHEN it was.
+    //
+    // A date alone answers half the question the sidebar rows are there to
+    // answer — "3,445 pages, last write 2026-09-16" tells you a write
+    // happened and not what it was, and on a domain that is both ingested
+    // into and compiled into those are different events with different
+    // verbs. `lastIngestKind` is 'ingest' | 'compile' | null; NEVER a word
+    // we did not recognise, because the renderer turns it into a verb and
+    // inventing one is a fabrication. `lastIngestTitle` is the entry's own
+    // title, sanitised at this boundary (see sanitiseLogTitle) because it
+    // originates in a file an LLM helped write, or null when the heading
+    // carried none.
+    //
+    // Both are null whenever `lastIngestDate` is null, and a consumer must
+    // treat a null as "not known" and render it as such — never as an empty
+    // string, and never by guessing a verb from the date's existence.
+    lastIngestKind: ingestEntry ? ingestEntry.kind : null,
+    lastIngestTitle: ingestEntry ? ingestEntry.title : null,
     // Additive (v3.1.x): per-type breakdown for the redesigned Domains view.
     // `other` is additive in v3.2.0 — see the invariant above.
     pageCounts,

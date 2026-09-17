@@ -1,0 +1,752 @@
+/**
+ * test-sidebar-status-rows.js — OFFLINE guards for the ONE status-row anatomy
+ * the two domain-listing sidebars now share:
+ *
+ *     name · key figure · freshness mark + relative age · last event
+ *
+ * Ingest's DESTINATION rows and Domains' KNOWLEDGE rows. Before this release
+ * they read "3445 pages · last write 2026-09-16" and "Articles · 3,421 pages"
+ * — one made the reader subtract a date from today, the other said nothing at
+ * all about when the number last moved. The Curator is meant to be MISSION
+ * CONTROL, including for the people with no menubar widget.
+ *
+ * ── WHAT THIS SUITE IS FOR ──────────────────────────────────────────────
+ * Four things can regress silently here, and each has a section:
+ *
+ *   §1  THE PARSER. `readLogLatest` reads the newest `## [date] kind | title`
+ *       heading out of wiki/log.md. Its selection rule is the one
+ *       v3.0.1-beta.10 exists to protect (scan every heading, take the max —
+ *       never "read the tail"), and its output now reaches a screen, so a
+ *       title carrying `|` or `<b>` is untrusted input on a wire.
+ *
+ *   §2  THE CACHE. The date and the entry come from ONE mtime+size-keyed
+ *       read. Two getters over two caches would be two reads per poll of a
+ *       POLLED endpoint, and — worse — two reads of one file can DISAGREE.
+ *       Measured under a patched `fs`, in a child process, because an ESM
+ *       named import is bound at link time and an in-process patch counts
+ *       nothing (the same trap scripts/test-domain-stats.js records).
+ *
+ *   §3  THE LADDERS. `formatDayAge` (words) and `dayFreshnessStep` (the dot)
+ *       must be cut on the SAME bands, or a dot says "today" beside words
+ *       that say "1 week ago" — the v3.34.0 class. And `formatAge` in
+ *       shared/age.js must not drift from the copy in views/memory.js.
+ *
+ *   §4/§5  THE ROWS THEMSELVES, rendered. The real renderers are executed
+ *       against stubs and the emitted HTML is read: the dot class must match
+ *       what `dayFreshnessStep` independently says, the age must be the
+ *       words `formatDayAge` independently says, a title carrying markup
+ *       must arrive escaped, and no row may carry a hover-only `title=`.
+ *
+ *   §6  THE TWO CSS LADDERS are byte-identical modulo their prefix. They are
+ *       declared twice — once per view — because shell.css belongs to another
+ *       change; a follow-up promotes them and deletes one copy. Until then
+ *       nothing but this assertion stops them drifting.
+ *
+ * ── NOT ENFORCED, stated rather than implied away ───────────────────────
+ *  - Nothing here renders in a browser. Dot colours, contrast and the
+ *    two-line meta's clipping were measured in a real browser in both themes
+ *    and are not re-derived offline; a hand-rolled cascade resolver is the
+ *    decorative-guard shape this repo keeps hitting.
+ *  - §6 compares RULE TEXT. A rule moved to another stylesheet, or a value
+ *    reached through a differently-named token, is invisible to it. It fails
+ *    in the safe direction (a false red), never by silently permitting.
+ *  - The parser's grammar covers the two headings ingest.js and compile.js
+ *    write. A Shared Brain pull's log line has no `##` and is deliberately
+ *    not matched — it never was.
+ */
+
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(HERE, '..');
+
+let passed = 0;
+let failed = 0;
+function ok(cond, label, extra) {
+  if (cond) { passed++; console.log('  ✓ ' + label); }
+  else { failed++; console.log('  ✗ ' + label + (extra ? '\n      ' + extra : '')); }
+}
+function eq(actual, expected, label) {
+  ok(JSON.stringify(actual) === JSON.stringify(expected), label,
+    `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+function section(t) { console.log('\n' + t); }
+
+const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
+
+/** Extract `function NAME(` by brace-matching, skipping strings, template
+ *  literals, regexes and comments. Returns null when not found — every caller
+ *  turns that into a LOUD failure rather than a quiet `undefined`. */
+function extractFunction(src, name) {
+  const re = new RegExp('^(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'm');
+  const m = re.exec(src);
+  if (!m) return null;
+  const start = m.index;
+  let i = src.indexOf('{', start);
+  if (i < 0) return null;
+  let depth = 0, inStr = null, inTpl = false, inLine = false, inBlock = false;
+  for (; i < src.length; i++) {
+    const c = src[i], n = src[i + 1];
+    if (inLine) { if (c === '\n') inLine = false; continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; i++; } continue; }
+    if (inStr) { if (c === '\\') { i++; continue; } if (c === inStr) inStr = null; continue; }
+    if (inTpl) { if (c === '\\') { i++; continue; } if (c === '`') inTpl = false; continue; }
+    if (c === '/' && n === '/') { inLine = true; i++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; i++; continue; }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === '`') { inTpl = true; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+  }
+  return null;
+}
+
+const filesUrl = pathToFileURL(path.join(ROOT, 'src/brain/files.js')).href;
+const ageUrl = pathToFileURL(path.join(ROOT, 'src/public/next/shared/age.js')).href;
+
+const brain = await import(filesUrl);
+const ageMod = await import(ageUrl);
+const { __readLogLatest: readLogLatest } = brain;
+const { formatAge, formatDayAge, dayFreshnessStep, freshnessDotHtml, clockGlyph } = ageMod;
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§0  Positive control — everything this suite needs really loaded');
+ok(typeof readLogLatest === 'function', 'files.js exports the log parser under its test name');
+ok(typeof formatDayAge === 'function' && typeof dayFreshnessStep === 'function' &&
+   typeof freshnessDotHtml === 'function' && typeof clockGlyph === 'function',
+  'shared/age.js exports the day ladder, the step, the dot and the glyph');
+ok(extractFunction('function nope(){}', 'notThere') === null,
+  'CONTROL — the extractor returns null for a function that does not exist');
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§1  The log parser — the newest entry, its kind and its title');
+{
+  const log = [
+    '# Log',
+    '',
+    '## [2026-01-04] ingest | The oldest source',
+    'Pages created or updated:',
+    '  - entities/a.md',
+    '',
+    '## [2026-09-14] ingest | The Curator — Product Overview',
+    'Pages created or updated:',
+    '  - entities/b.md',
+    '',
+    '## [2026-05-02] compile | A middle thread',
+    '',
+  ].join('\n');
+
+  eq(readLogLatest(log),
+    { date: '2026-09-14', kind: 'ingest', title: 'The Curator — Product Overview' },
+    'the NEWEST entry wins, even when it is not the last one in the file — ' +
+    'the v3.0.1-beta.10 guarantee, carried into the richer parse');
+
+  // The beta.10 defect, restated as a live check: a first-match parser would
+  // answer the January entry here.
+  ok(readLogLatest(log).date !== '2026-01-04',
+    '…and specifically NOT the first heading, which is what a `match` without `g` returned');
+
+  eq(readLogLatest('## [2026-03-01] compile | Pricing thread\n'),
+    { date: '2026-03-01', kind: 'compile', title: 'Pricing thread' },
+    'a COMPILE entry reports kind "compile" — src/brain/compile.js writes that word, ' +
+    'and a domain that is only ever compiled into must not be described as ingested');
+
+  eq(readLogLatest('## [2026-03-01] ingest\n'),
+    { date: '2026-03-01', kind: 'ingest', title: null },
+    'a heading with no `| title` yields title null — absent, never an empty string');
+
+  eq(readLogLatest('## [2026-03-01]\n'),
+    { date: '2026-03-01', kind: null, title: null },
+    'a bare date heading yields BOTH null — the renderer then uses a neutral verb');
+
+  eq(readLogLatest('## [2026-03-01] synthesize | x\n'),
+    { date: '2026-03-01', kind: null, title: 'x' },
+    'an UNRECOGNISED kind word is refused, not passed through — the consumer turns ' +
+    'a kind into a user-facing verb and inventing one is a fabrication');
+
+  // TIES. appendLog only ever appends, so two entries on one day means the
+  // second one happened second.
+  eq(readLogLatest('## [2026-03-01] ingest | first\n## [2026-03-01] compile | second\n'),
+    { date: '2026-03-01', kind: 'compile', title: 'second' },
+    'a same-date tie takes the LATER occurrence in the file — appendLog appends');
+
+  eq(readLogLatest('no headings at all\n'), null, 'a log with no entry is null');
+  eq(readLogLatest(''), null, 'an empty log is null');
+
+  // A Shared Brain pull writes `[date] Shared Brain pull from …` with NO
+  // `##`. It never matched the old parser and must not start matching now.
+  eq(readLogLatest('[2026-04-04] Shared Brain pull from "cohort": 3 new.\n'), null,
+    'a Shared Brain pull line is NOT an entry — it carries no `##`, and widening ' +
+    'the grammar in a rendering release would change what the date MEANS');
+
+  // ── SANITISATION. The title comes out of a file an LLM helped write. ──
+  const dirty = readLogLatest('## [2026-03-01] ingest | A <b>bold</b> | claim\twith\ttabs\n');
+  ok(!/[<>|]/.test(dirty.title),
+    'a title carrying `<`, `>` or `|` arrives with none of them — `|` is the heading\'s ' +
+    'own separator and `<>` is markup on a surface that renders text');
+  ok(!/\t/.test(dirty.title) && !/\s\s/.test(dirty.title),
+    '…and control characters and runs of whitespace collapse to single spaces');
+  ok(dirty.title.includes('bold') && dirty.title.includes('claim'),
+    '…while the WORDS survive: this is a narrowing, not a deletion');
+
+  const long = readLogLatest('## [2026-03-01] ingest | ' + 'x'.repeat(400) + '\n');
+  ok(long.title.length <= 120,
+    `a 400-character title is capped (got ${long.title.length}) — nothing upstream bounds it ` +
+    'and it lands in a fixed-width row');
+  ok(long.title.endsWith('…'),
+    '…and the cut is VISIBLE (an ellipsis), not silent');
+
+  eq(readLogLatest('## [2026-03-01] ingest |    \n').title, null,
+    'a title that is only whitespace is null — absent renders as absent');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§2  ONE cached read serves BOTH getters, and a changed log is re-read');
+{
+  // WHY A CHILD PROCESS. files.js does `import { stat, readFile } from
+  // 'fs/promises'`; an ESM named export is bound at LINK time, so patching
+  // fs.promises from here — after files.js is loaded — counts nothing and
+  // every assertion would read 0. scripts/test-domain-stats.js records
+  // measuring exactly that vacuous pass. The patch has to be installed
+  // before the first import of fs/promises, which needs a fresh process.
+  const tmp = mkdtempSync(path.join(tmpdir(), 'curator-statusrow-'));
+  try {
+    const logPath = path.join(tmp, 'log.md');
+    writeFileSync(logPath, '## [2026-02-02] ingest | First\n', 'utf8');
+    const probePath = path.join(tmp, 'probe.mjs');
+    writeFileSync(probePath, `
+import fs from 'node:fs';
+const realRead = fs.promises.readFile;
+let reads = 0;
+fs.promises.readFile = async function (p, ...rest) {
+  if (String(p).endsWith('log.md')) reads++;
+  return realRead.call(this, p, ...rest);
+};
+const m = await import(${JSON.stringify(filesUrl)});
+const LOG = ${JSON.stringify(logPath)};
+const out = {};
+out.firstEntry = await m.__lastIngestEntry(LOG);
+out.readsAfterFirst = reads;
+// The SECOND call is a different getter over the same path. One cache, so
+// this must cost nothing.
+out.secondDate = await m.__lastIngestDate(LOG);
+out.readsAfterSecond = reads;
+out.thirdEntry = await m.__lastIngestEntry(LOG);
+out.readsAfterThird = reads;
+// Now change the file. Different length AND a later mtime.
+fs.writeFileSync(LOG, '## [2026-02-02] ingest | First\\n## [2026-06-06] compile | Second thread\\n', 'utf8');
+out.afterRewrite = await m.__lastIngestEntry(LOG);
+out.readsAfterRewrite = reads;
+// A missing log is null and is NEVER remembered as null — the file appears
+// after the first ingest.
+out.missing = await m.__lastIngestEntry(${JSON.stringify(path.join(tmp, 'nope.md'))});
+// An explicit clear must force a fresh read of an unchanged file.
+m.__clearLastIngestDateCache();
+out.afterClear = await m.__lastIngestEntry(LOG);
+out.readsAfterClear = reads;
+console.log(JSON.stringify(out));
+`, 'utf8');
+    const probe = spawnSync(process.execPath, [probePath], { encoding: 'utf8' });
+    let r = null;
+    try { r = JSON.parse((probe.stdout || '').trim().split('\n').pop()); } catch { /* reported */ }
+    ok(r && r.firstEntry, 'CONTROL — the probe ran and produced counts (a probe that fails must not pass silently)',
+      `stdout=${JSON.stringify((probe.stdout || '').slice(0, 300))} stderr=${JSON.stringify((probe.stderr || '').slice(0, 400))}`);
+    if (r && r.firstEntry) {
+      eq(r.firstEntry, { date: '2026-02-02', kind: 'ingest', title: 'First' },
+        'the cached getter returns the parsed entry');
+      eq(r.readsAfterFirst, 1, 'a cold call reads the log exactly once');
+      eq(r.secondDate, '2026-02-02',
+        'the DATE getter still returns a plain YYYY-MM-DD string — a published field ' +
+        'whose shape scripts/test-beta10-fixes.js and test-domain-stats.js both pin');
+      eq(r.readsAfterSecond, 1,
+        'and it costs ZERO further reads — ONE cache, two getters. Two caches would be two ' +
+        'reads per poll of a polled endpoint, and two reads of one file can DISAGREE');
+      eq(r.readsAfterThird, 1, 'a repeat call on an unchanged file also reads nothing');
+      eq(r.afterRewrite, { date: '2026-06-06', kind: 'compile', title: 'Second thread' },
+        'a CHANGED log is re-read and the newer entry surfaces — a cache that never ' +
+        'refreshes turns a polled endpoint into one that lies');
+      eq(r.readsAfterRewrite, 2, '…at the cost of exactly one more read');
+      eq(r.missing, null, 'a missing log.md is null, not a throw');
+      eq(r.afterClear, { date: '2026-06-06', kind: 'compile', title: 'Second thread' },
+        '__clearLastIngestDateCache still clears EVERYTHING — the entry as well as the date');
+      eq(r.readsAfterClear, 3, '…proven by the fresh read it forces on an unchanged file');
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§3  getDomainStats puts the kind and the title on the wire, sanitised');
+{
+  const tmp = mkdtempSync(path.join(tmpdir(), 'curator-statusrow-dom-'));
+  try {
+    const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+    __setDomainsDirOverride(tmp);
+    const mk = (slug, logText) => {
+      mkdirSync(path.join(tmp, slug, 'wiki'), { recursive: true });
+      mkdirSync(path.join(tmp, slug, 'conversations'), { recursive: true });
+      writeFileSync(path.join(tmp, slug, 'CLAUDE.md'), '# Domain: ' + slug + '\n', 'utf8');
+      if (logText !== null) writeFileSync(path.join(tmp, slug, 'wiki', 'log.md'), logText, 'utf8');
+    };
+    mk('withingest', '# Log\n\n## [2026-01-01] ingest | Older\n\n## [2026-08-27] ingest | A Real Source\n');
+    mk('withcompile', '# Log\n\n## [2026-08-28] compile | Pricing thread\n');
+    mk('dirty', '# Log\n\n## [2026-08-29] ingest | <img src=x onerror=alert(1)> and | a pipe\n');
+    mk('nolog', null);
+
+    brain.__clearLastIngestDateCache();
+    const a = await brain.getDomainStats('withingest');
+    eq(a.lastIngestDate, '2026-08-27', 'the existing field is unchanged');
+    eq(a.lastIngestKind, 'ingest', 'lastIngestKind is additive and names the kind');
+    eq(a.lastIngestTitle, 'A Real Source', 'lastIngestTitle is additive and carries the heading title');
+
+    const b = await brain.getDomainStats('withcompile');
+    eq(b.lastIngestKind, 'compile',
+      'a compile-only domain reports "compile" — the fact the old date-only payload could not carry');
+
+    const c = await brain.getDomainStats('dirty');
+    ok(!/[<>|]/.test(c.lastIngestTitle),
+      'the title is sanitised AT THE PRODUCER, before it reaches any renderer: ' +
+      `got ${JSON.stringify(c.lastIngestTitle)}`);
+    ok(c.lastIngestTitle.includes('and') && c.lastIngestTitle.includes('a pipe'),
+      '…and the ordinary words are still there');
+
+    const d = await brain.getDomainStats('nolog');
+    eq([d.lastIngestDate, d.lastIngestKind, d.lastIngestTitle], [null, null, null],
+      'a domain with no log reports all three as null — a consumer must render "not known", ' +
+      'and never a verb guessed from the date existing');
+
+    // Everything the old payload carried is still there. This is the field
+    // that a "just add two keys" edit is most likely to drop by accident.
+    for (const f of ['slug', 'displayName', 'pageCount', 'conversationCount', 'pageCounts', 'readonly']) {
+      ok(f in a, `existing field "${f}" survives the addition`);
+    }
+    __setDomainsDirOverride(null);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§4  The two age ladders — the dot and the words cannot disagree');
+{
+  // A fixed clock at NOON local, so nothing here sits on a day boundary.
+  const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
+  const dayBefore = (n) => {
+    const d = new Date(2026, 8, 17);
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+
+  // The matrix crosses EVERY boundary in the ladder, from both sides.
+  const MATRIX = [
+    [0, 'today', 3],
+    [1, 'yesterday', 2],
+    [2, '2 days ago', 2],
+    [6, '6 days ago', 2],
+    [7, '1 week ago', 1],
+    [13, '1 week ago', 1],
+    [14, '2 weeks ago', 1],
+    [34, '4 weeks ago', 1],
+    [35, '1 month ago', 0],
+    [60, '2 months ago', 0],
+    [364, '12 months ago', 0],
+    [365, '1 year ago', 0],
+    [800, '2 years ago', 0],
+  ];
+  for (const [days, words, step] of MATRIX) {
+    const ds = dayBefore(days);
+    eq(formatDayAge(ds, NOW), words, `${days} days ago reads "${words}"`);
+    eq(dayFreshnessStep(ds, NOW), step, `…and sits on freshness step ${step}`);
+  }
+
+  // THE INVARIANT THIS SECTION EXISTS FOR (v3.34.0): the mark and the word
+  // are cut on ONE set of bands. Asserted as a RELATION over the whole year
+  // rather than only at the boundaries above, so a threshold nudged by one
+  // day inside a band is still caught.
+  let disagreements = [];
+  for (let n = 0; n <= 400; n++) {
+    const ds = dayBefore(n);
+    const w = formatDayAge(ds, NOW);
+    const s = dayFreshnessStep(ds, NOW);
+    const expected = w === 'today' ? 3
+      : (w === 'yesterday' || / days ago$/.test(w)) ? 2
+      : / weeks? ago$/.test(w) ? 1 : 0;
+    if (s !== expected) disagreements.push([n, w, s, expected]);
+  }
+  eq(disagreements, [],
+    'over 401 consecutive days the dot and the words never disagree — a mark cut on its ' +
+    'own threshold table is how "today" ends up beside "1 week ago"');
+
+  // ABSENT IS NOT OLD, AND IT IS NOT FRESH.
+  for (const bad of [null, undefined, '', 'not-a-date', '2026-13-01', '2026-02-31', 42, {}]) {
+    eq(formatDayAge(bad, NOW), null, `formatDayAge(${JSON.stringify(bad)}) is null, never a guess`);
+    eq(dayFreshnessStep(bad, NOW), null, `…and its step is null, which renders as a DASHED ring`);
+  }
+  ok(dayFreshnessStep(null, NOW) !== 0,
+    'an UNKNOWN age is not step 0 — "we do not know" and "a month old" are different statements');
+
+  // NEVER ROUNDED YOUNGER. A date ahead of the clock is the one case where a
+  // naive implementation reports "today".
+  const ahead = (() => { const d = new Date(2026, 8, 18); return '2026-09-18'; })();
+  ok(formatDayAge(ahead, NOW) !== 'today',
+    `a date AHEAD of the clock is not reported as today (got ${JSON.stringify(formatDayAge(ahead, NOW))}) ` +
+    '— v3.34.0: an age may never be rounded younger');
+  eq(dayFreshnessStep(ahead, NOW), 0, '…and it takes the quietest mark, not the brightest');
+
+  // A zero-valued phrase would mean a gap between two bands.
+  let zeroPhrases = [];
+  for (let n = 0; n <= 800; n++) {
+    const w = formatDayAge(dayBefore(n), NOW);
+    if (/^0 /.test(w)) zeroPhrases.push([n, w]);
+  }
+  eq(zeroPhrases, [],
+    'no input anywhere produces "0 weeks/months/years ago" — every band is continuous ' +
+    'with the next, so nothing falls between two of them');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5  formatAge — one vocabulary in three files, pinned');
+{
+  // BYTE-IDENTICAL, extracted from the real sources. shared/age.js copies
+  // views/memory.js because memory.js registers a view and touches the DOM at
+  // import time, so a DOM-free module cannot import it.
+  const bodyOf = (rel, marker) => {
+    const s = read(rel);
+    const i = s.indexOf(marker);
+    if (i < 0) return null;
+    const rest = s.slice(i);
+    const e = rest.search(/\n\}\n/);
+    return e < 0 ? null : rest.slice(0, e + 2).replace(/^export\s+/, '');
+  };
+  const ageBody = bodyOf('src/public/next/shared/age.js', 'export function formatAge(');
+  const memBody = bodyOf('src/public/next/views/memory.js', 'export function formatAge(');
+  ok(!!ageBody && !!memBody, 'CONTROL — both bodies extracted (a null here would compare nothing)');
+  ok(ageBody === memBody,
+    'shared/age.js\'s formatAge is BYTE-IDENTICAL to views/memory.js\'s — the copy is only ' +
+    'safe because it is pinned');
+
+  // THE BRIEF FOR THIS WORK SAID THE TRAY'S COPY WAS BYTE-IDENTICAL TOO. IT
+  // IS NOT: desktop/lib/tray-model.js's took a second `precision` parameter,
+  // so a byte comparison there would be a permanent false red. What is still
+  // true — and what scripts/test-tray-shell.js itself asserts — is that the
+  // two AGREE over a matrix when the extra argument is not supplied. That is
+  // the property worth having, so it is the one asserted.
+  const trayMod = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/tray-model.js')).href);
+  const MATRIX = [
+    -1, 0, 1, 59, 60, 61, 119, 3599, 3600, 86399, 86400,
+    2 * 86400, 6 * 86400, 7 * 86400, 34 * 86400, 35 * 86400,
+    364 * 86400, 365 * 86400, 800 * 86400,
+    null, undefined, NaN, Infinity, '60', {},
+  ];
+  const mismatches = MATRIX.filter((v) => formatAge(v) !== trayMod.formatAge(v));
+  eq(mismatches.map(String), [],
+    `shared/age.js and desktop/lib/tray-model.js agree on all ${MATRIX.length} inputs — ` +
+    'the tray copy carries an extra `precision` argument, so this is asserted ' +
+    'behaviourally rather than by bytes');
+  ok(formatAge(60) === '1 min ago' && formatAge(30) === 'just now',
+    'CONTROL — the function returns real answers, so agreement means something');
+  ok(formatAge(-1) === null && formatAge('x') === null,
+    'CONTROL — …and it can still say "unknown", so the matrix is not all-null');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§6  The freshness dot — one decision, two prefixed ladders');
+{
+  const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
+  ok(/class="ing-fresh ing-fresh-s3"/.test(freshnessDotHtml('ing', '2026-09-17', NOW)),
+    'the dot\'s class carries the step the ladder decided');
+  ok(/class="dm-fresh dm-fresh-unknown"/.test(freshnessDotHtml('dm', null, NOW)),
+    'an unknown age gets the `-unknown` modifier, NOT `-s0` — a different kind of state, ' +
+    'not a further rung on the ramp');
+  ok(/aria-hidden="true"/.test(freshnessDotHtml('ing', '2026-09-17', NOW)),
+    'the dot is aria-hidden — it is a redundant encoding of the age phrase beside it');
+
+  // THE TWO CSS LADDERS. Declared twice because shell.css belongs to another
+  // change; a follow-up promotes them and deletes one copy. Until then this
+  // assertion is the only thing stopping them drifting.
+  const ladder = (css, prefix) => {
+    const rules = [];
+    const re = new RegExp('^\\.' + prefix + '-fresh(?:-[a-z0-9]+)?\\s*\\{([^}]*)\\}', 'gm');
+    let m;
+    while ((m = re.exec(css))) {
+      rules.push([m[0].slice(0, m[0].indexOf('{')).trim().replace('.' + prefix + '-', '.'),
+        m[1].replace(/\s+/g, ' ').trim()]);
+    }
+    return rules;
+  };
+  const ing = ladder(read('src/public/next/views/ingest.css'), 'ing');
+  const dm = ladder(read('src/public/next/views/domains.css'), 'dm');
+  ok(ing.length === 6,
+    `ingest.css declares the whole ladder (base + s0..s3 + unknown) — found ${ing.length}`);
+  eq(dm, ing,
+    'the `.dm-fresh-*` ladder is byte-identical to `.ing-fresh-*` modulo the prefix — ' +
+    'two hand-maintained copies of one visual ladder is this repo\'s named drift shape, ' +
+    'and the promotion into shell.css is a follow-up, not this change');
+  ok(ing.some(([sel]) => sel === '.fresh-unknown') && ing.some(([sel]) => sel === '.fresh-s3'),
+    'CONTROL — the scan really found the two ends of the ladder, so the comparison is not over an empty list');
+  ok(!/#[0-9a-fA-F]{3,8}\b/.test(ing.map(([, body]) => body).join(' ')),
+    'no colour LITERAL anywhere in the ladder — every value is a token');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§7  The Ingest DESTINATION row, rendered');
+{
+  const src = read('src/public/next/views/ingest.js');
+  const NEED = ['renderSidebar', 'formatDestinationMeta', 'destinationFigureText',
+    'destinationAgeText', 'formatDestinationEvent'];
+  const bodies = {};
+  let fatal = false;
+  for (const n of NEED) {
+    bodies[n] = extractFunction(src, n);
+    if (!bodies[n]) { fatal = true; }
+    ok(!!bodies[n], `CONTROL — extracted ${n}() from the real source`);
+  }
+  if (fatal) {
+    console.log('\n❌ FATAL: could not lift the Ingest row renderer. Failing loudly rather ' +
+      'than reporting a green run over zero comparisons.');
+    process.exit(1);
+  }
+
+  const PREAMBLE = `
+let captured = '';
+let state = null;
+function setSidebar(html) { captured = html; }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+function icon() { return '<svg data-kit-icon></svg>'; }
+function renderViewHeader() { return '<header></header>'; }
+function isFilePickerAvailable() { return true; }
+function isRemoteIngestRunning() { return false; }
+function isDomainWriteBusy() { return false; }
+function getDomainWriteLabel() { return null; }
+function unackedSettledRecords() { return []; }
+// TRUE, not false: renderSidebar guards its BINDERS on this in ingest.js and
+// guards its whole body on it in domains.js. A false stub would make the
+// Domains renderer return before it built anything — a green run over an
+// empty string, which is the vacuous-pass shape this repo keeps recording.
+function isCurrentMount() { return true; }
+function selectDomain() {}
+function refreshDomainStats() { return Promise.resolve(); }
+let queueJobId = null;
+const myMountToken = 1;
+const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
+`;
+  const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+    PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
+    '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
+  const api = make(formatDayAge, freshnessDotHtml, clockGlyph);
+
+  const NOW_DAY = (() => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  })();
+  const daysAgo = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+
+  const html = api.run({
+    domains: [
+      { slug: 'today', displayName: 'Today Domain', pageCount: 3445, lastIngestDate: NOW_DAY,
+        lastIngestKind: 'ingest', lastIngestTitle: 'The Curator — Product Overview' },
+      { slug: 'three', displayName: 'Three Days', pageCount: 96, lastIngestDate: daysAgo(3),
+        lastIngestKind: 'compile', lastIngestTitle: 'A <b>bold</b> thread' },
+      { slug: 'six', displayName: 'Six Weeks', pageCount: 12, lastIngestDate: daysAgo(42),
+        lastIngestKind: 'ingest', lastIngestTitle: 'Old source' },
+      { slug: 'never', displayName: 'Never Written', pageCount: 0, lastIngestDate: null,
+        lastIngestKind: null, lastIngestTitle: null },
+    ],
+    domain: 'today', submitting: false, queueJob: null, queueModeActive: false,
+    runningDomains: [], remote: {},
+  });
+  ok(html.length > 0, 'CONTROL — renderSidebar produced markup');
+
+  const rowOf = (slug) => {
+    const i = html.indexOf('data-dest-slug="' + slug + '"');
+    if (i < 0) return '';
+    const start = html.lastIndexOf('<button', i);
+    const end = html.indexOf('</button>', i);
+    return html.slice(start, end + 9);
+  };
+
+  // The dot class must be the one dayFreshnessStep independently says — an
+  // INDEPENDENT recomputation, not a re-read of what the row emitted.
+  for (const [slug, date] of [['today', NOW_DAY], ['three', daysAgo(3)], ['six', daysAgo(42)]]) {
+    const step = dayFreshnessStep(date, Date.now());
+    ok(rowOf(slug).includes('ing-fresh-s' + step),
+      `the "${slug}" row carries ing-fresh-s${step}, matching what the ladder independently decides`);
+    ok(rowOf(slug).includes(formatDayAge(date, Date.now())),
+      `…and the relative age "${formatDayAge(date, Date.now())}" in visible text`);
+  }
+  ok(rowOf('never').includes('ing-fresh-unknown') && rowOf('never').includes('nothing written yet'),
+    'a domain with no log reads "nothing written yet" with the DASHED ring — never a guessed date');
+  ok(!rowOf('never').includes('ing-dest-event'),
+    '…and carries NO event line, so its row is one line of meta rather than one plus a blank');
+
+  ok(rowOf('today').includes('3,445 pages'),
+    'the key figure is locale-grouped — 3445 reads as an id');
+  ok(rowOf('today').includes('Ingested · The Curator — Product Overview'),
+    'the last EVENT names the verb and the source');
+  ok(rowOf('three').includes('Compiled ·'),
+    'a COMPILE row says Compiled, not Ingested — the whole reason the kind is carried');
+  ok(rowOf('three').includes('&lt;b&gt;') && !rowOf('three').includes('<b>bold</b>'),
+    'a title carrying markup arrives ESCAPED — the server narrows it too, and this is the second layer');
+  ok(rowOf('today').includes('<svg') && rowOf('today').includes('viewBox="0 0 24 24"'),
+    'the clock glyph is emitted beside the age');
+  ok(rowOf('today').includes('(' + NOW_DAY + ')'),
+    'the ABSOLUTE date is still on the row — it moved into the accessible name, it was not dropped');
+  ok(rowOf('today').includes('visually-hidden'),
+    '…carried by the shell\'s clip-rect utility, so it reaches a screen reader without being drawn');
+  ok(!/\stitle="/.test(html),
+    'NO row carries a `title=`: a tooltip is hover-only, so keyboard and touch users would lose ' +
+    'the date entirely — this view\'s ceiling in test-next-title-affordances.js is ZERO');
+
+  // The live/settled markers must survive: they are separate facts.
+  const liveHtml = api.run({
+    domains: [{ slug: 'today', displayName: 'Today Domain', pageCount: 5, lastIngestDate: NOW_DAY,
+      lastIngestKind: 'ingest', lastIngestTitle: 'x' }],
+    domain: 'today', submitting: false, queueJob: null, queueModeActive: false,
+    runningDomains: ['today'], remote: {},
+  });
+  ok(liveHtml.includes('Ingesting'),
+    'the live marker survives the new anatomy — it is a THIRD fact, not a restatement of the age');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8  The Domains KNOWLEDGE row, rendered');
+{
+  const src = read('src/public/next/views/domains.js');
+  const NEED = ['renderSidebar', 'domainLastEventText', 'domainDotClass'];
+  const bodies = {};
+  let fatal = false;
+  for (const n of NEED) {
+    bodies[n] = extractFunction(src, n);
+    if (!bodies[n]) fatal = true;
+    ok(!!bodies[n], `CONTROL — extracted ${n}() from the real source`);
+  }
+  if (fatal) {
+    console.log('\n❌ FATAL: could not lift the Domains row renderer.');
+    process.exit(1);
+  }
+
+  const PREAMBLE = `
+let captured = '';
+let state = null;
+function setSidebar(html) { captured = html; }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+function icon() { return '<svg data-kit-icon></svg>'; }
+function gatedLoader() { return '<loader/>'; }
+function renderStatus(o) { return '<div>' + escapeHtml(o && o.title || '') + '</div>'; }
+function bindSidebarButtons() {}
+function openLifecycle() {}
+function selectDomain() {}
+function onChooseKnowledgeFolder() { return Promise.resolve(); }
+function reportAsyncActionFailure() {}
+function knowledgeFolderBtn() { return '<button id="dm-kb-choose-btn">Folder</button>'; }
+// The real constant, not a stand-in: scripts/test-next-domain-dots.js already
+// enumerates the slots from it, and a different number here would silently
+// change which identity dot a row is asserted to carry.
+const DOMAIN_DOT_SLOTS = 6;
+// See the note on the same stub in §7: FALSE makes this renderer return
+// before it builds a single row.
+function isCurrentMount() { return true; }
+let loadGate = {};
+const myMountToken = 1;
+const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
+`;
+  const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+    PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
+    '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
+  const api = make(formatDayAge, freshnessDotHtml, clockGlyph);
+
+  const today = (() => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  })();
+  const daysAgo = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+
+  const html = api.run({
+    loaded: true, loadError: null, activeSlug: 'articles',
+    readonlySet: new Set(), healthSummary: { articles: 4 },
+    domains: [
+      { slug: 'articles', displayName: 'Articles', pageCount: 3421, lastIngestDate: today,
+        lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source' },
+      { slug: 'business', displayName: 'Business', pageCount: 96, lastIngestDate: daysAgo(42),
+        lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread' },
+      { slug: 'fresh', displayName: 'Brand New', pageCount: 0, lastIngestDate: null,
+        lastIngestKind: null, lastIngestTitle: null },
+    ],
+  });
+  ok(html.length > 0, 'CONTROL — renderSidebar produced markup');
+
+  const rowOf = (slug) => {
+    const i = html.indexOf('data-domain-slug="' + slug + '"');
+    if (i < 0) return '';
+    const start = html.lastIndexOf('<button', i);
+    const end = html.indexOf('</button>', i);
+    return html.slice(start, end + 9);
+  };
+
+  for (const [slug, date] of [['articles', today], ['business', daysAgo(42)]]) {
+    const step = dayFreshnessStep(date, Date.now());
+    ok(rowOf(slug).includes('dm-fresh-s' + step),
+      `the "${slug}" row carries dm-fresh-s${step}, matching what the ladder independently decides`);
+    ok(rowOf(slug).includes(formatDayAge(date, Date.now())),
+      `…and the relative age "${formatDayAge(date, Date.now())}" in visible text`);
+  }
+  ok(rowOf('articles').includes('3,421 pages'), 'the key figure is unchanged and still locale-grouped');
+  ok(rowOf('articles').includes('Ingested ·'), 'the event line names the verb');
+  ok(rowOf('business').includes('Compiled · Pricing thread'),
+    'a compile-only domain says Compiled — the fact the old row could not carry at all');
+  ok(rowOf('articles').includes('&lt;b&gt;') && !rowOf('articles').includes('<b>fresh</b>'),
+    'a title carrying markup arrives escaped');
+  ok(rowOf('fresh').includes('dm-fresh-unknown') && rowOf('fresh').includes('nothing written yet'),
+    'a brand-new domain reads "nothing written yet" with the dashed ring');
+  ok(!rowOf('fresh').includes('dm-row-event'), '…and carries no event line');
+  ok(rowOf('articles').includes('(' + today + ')') && rowOf('articles').includes('visually-hidden'),
+    'the absolute date is kept, in the accessible name');
+  ok(!/\stitle="/.test(html),
+    'no row carries a hover-only `title=` — this file\'s ceiling is ONE (the Flip button) and ' +
+    'the sidebar must not spend it');
+
+  // THE THREE MARKS ARE THREE FACTS. The identity dot and the health dot are
+  // separate readings and folding any of them together would make one dot
+  // answer questions it cannot.
+  ok(rowOf('articles').includes('dm-row-dot dm-row-dot-1'),
+    'the domain IDENTITY dot survives, unchanged');
+  ok(rowOf('articles').includes('dm-row-attn'),
+    'and so does the ATTENTION dot — open health issues is a different question from freshness');
+  ok(rowOf('articles').includes('4 open health issue'),
+    '…with its count still in the row\'s accessible name');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n' + '─'.repeat(60));
+console.log(`Passed: ${passed}   Failed: ${failed}`);
+if (failed) {
+  console.log('❌ FAILURES');
+  process.exit(1);
+}
+console.log('✅ All sidebar status-row assertions green');

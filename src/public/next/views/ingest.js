@@ -154,6 +154,11 @@ import {
   progressRingHtml, INGEST_STAGES, mapIngestPctToStage, ringAria,
 } from '../shared/progress-ring.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// The ONE age vocabulary — see shared/age.js for why the day-resolution
+// ladder is a separate function from the second-resolution one the memory
+// rows and the tray speak, and why the dot and the words are cut on one set
+// of bands.
+import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -1067,6 +1072,13 @@ async function fetchDomainStats() {
           displayName: d.displayName || d.slug,
           pageCount: Number.isFinite(d.pageCount) ? d.pageCount : null,
           lastIngestDate: typeof d.lastIngestDate === 'string' && d.lastIngestDate ? d.lastIngestDate : null,
+          // WHAT the last write was, beside WHEN. Both are additive fields on
+          // the same response (getDomainStats in src/brain/files.js), and both
+          // are narrowed here the same way the two above are: an unrecognised
+          // kind becomes null rather than reaching a renderer that would turn
+          // it into a verb, and an empty title is null, not ''.
+          lastIngestKind: (d.lastIngestKind === 'ingest' || d.lastIngestKind === 'compile') ? d.lastIngestKind : null,
+          lastIngestTitle: typeof d.lastIngestTitle === 'string' && d.lastIngestTitle ? d.lastIngestTitle : null,
         })),
     };
   } catch (err) {
@@ -1100,7 +1112,15 @@ async function fetchDomainStats() {
  */
 function destinationsSignature() {
   return JSON.stringify(
-    (state.domains || []).map((d) => [d.slug, d.displayName, formatDestinationMeta(d)])
+    // BOTH rendered lines, not just the first. The row grew a second line (the
+    // last EVENT — its verb and its title), and a signature that saw only the
+    // first would let a compile land on a domain the same day as an ingest and
+    // repaint nothing: same page count, same relative age, different event.
+    // That is precisely the "a guard that cannot see a pane is not a guard for
+    // that pane" finding this function's own docblock records, one line along.
+    (state.domains || []).map((d) => [
+      d.slug, d.displayName, formatDestinationMeta(d), formatDestinationEvent(d),
+    ])
   );
 }
 
@@ -1278,21 +1298,75 @@ function isFilePickerAvailable() {
   return true;
 }
 
-// A destination row's second line. Both numbers are the ones GET
-// /api/domains/stats already returns; neither is invented when absent.
+// ── THE STATUS-ROW ANATOMY, line one ─────────────────────────────────────
 //
-// "last write", NOT "last ingest": lastIngestDate is the most recent
+// `name · key figure · freshness mark + relative age · last event` is one
+// anatomy carried by both sidebars that list domains (this view's
+// DESTINATION rows and views/domains.js's KNOWLEDGE rows). This function
+// renders the middle of it as PLAIN TEXT; the row builder below wraps the
+// same values in the markup that adds the dot and the clock glyph.
+//
+// WHY A RELATIVE AGE REPLACED THE ABSOLUTE DATE. `last write 2026-09-16` is
+// a date the reader has to subtract from today before it means anything, and
+// this is a glance surface — the whole point of the row is to answer "is this
+// domain current?" without arithmetic. The absolute date is NOT discarded: it
+// travels in the row's accessible name (see renderSidebar), because a reader
+// who wants the exact day should not have to hover for it — and a `title=`
+// would put it out of reach of keyboard and touch entirely, which is the
+// class scripts/test-next-title-affordances.js exists for and the reason this
+// view's ceiling there is ZERO.
+//
+// Neither figure is invented when absent. An unknown page count says so; an
+// absent date reads "nothing written yet", never a fabricated day.
+//
+// "write", NOT "ingest": lastIngestDate is the most recent
 // `## [YYYY-MM-DD]` heading in the domain's wiki/log.md, and appendLog is
 // called by conversation COMPILE as well as by ingest (see
-// src/brain/compile.js). Labelling a compile-only domain's date "last
-// ingest" would be a small false statement on a screen whose whole job is
-// telling you where material goes.
-function formatDestinationMeta(d) {
-  const pages = Number.isFinite(d.pageCount)
-    ? (d.pageCount + ' page' + (d.pageCount === 1 ? '' : 's'))
+// src/brain/compile.js). Which of the two it was is now SAID OUTRIGHT on the
+// event line below rather than left to a label that would be wrong half the
+// time.
+function formatDestinationMeta(d, now) {
+  return destinationFigureText(d) + ' · ' + destinationAgeText(d, now);
+}
+
+// The two halves of that line, named, because the ROW needs them separately —
+// the figure and the age are wrapped in different elements so the freshness
+// dot and the clock glyph can sit between them. Splitting a formatted string
+// back apart at its separator would be a second, silent parser of this
+// function's own output; these are the same words either way, by
+// construction.
+//
+// Locale-grouped, matching views/domains.js's rows: four digits of pages is
+// the common case on a mature domain and `3445` reads as an id.
+function destinationFigureText(d) {
+  return Number.isFinite(d.pageCount)
+    ? (d.pageCount.toLocaleString() + ' page' + (d.pageCount === 1 ? '' : 's'))
     : 'page count unknown';
-  const when = d.lastIngestDate ? ('last write ' + d.lastIngestDate) : 'nothing written yet';
-  return pages + ' · ' + when;
+}
+
+function destinationAgeText(d, now) {
+  return formatDayAge(d.lastIngestDate, now) || 'nothing written yet';
+}
+
+// ── THE STATUS-ROW ANATOMY, line two: WHAT the last write was ────────────
+//
+// Returns null when there is nothing to say, so a never-written domain gets
+// ONE line and no empty second one.
+//
+// THE VERB COMES FROM THE LOG, NOT FROM THIS VIEW'S NAME. A domain that is
+// only ever compiled into would have read "Ingested" if the verb were
+// hardcoded here — the same small false statement the old "last ingest"
+// label made, moved one line down. `lastIngestKind` is 'ingest' | 'compile'
+// | null and the server never puts anything else on the wire (it refuses to
+// pass through a word it does not recognise, rather than inventing a verb
+// for it). A null kind therefore means the heading did not name one, and the
+// honest rendering of that is the neutral "Last write" — not a guess.
+function formatDestinationEvent(d) {
+  if (!d.lastIngestDate) return null;
+  const verb = d.lastIngestKind === 'compile' ? 'Compiled'
+    : d.lastIngestKind === 'ingest' ? 'Ingested'
+    : 'Last write';
+  return d.lastIngestTitle ? (verb + ' · ' + d.lastIngestTitle) : verb;
 }
 
 function renderSidebar(token) {
@@ -1358,7 +1432,8 @@ function renderSidebar(token) {
   // truth about where material goes.
   //
   // It is TEXT, not a colour or a dot: the row is a <button>, so the word ends
-  // up in its accessible name ("Business, 96 pages · last write …, Ingesting")
+  // up in its accessible name ("Business, 96 pages · 3 days ago (2026-09-14),
+  // Ingested · The Curator — Product Overview, Ingesting")
   // and reaches a screen reader for free. v3.23.0's own finding — a health
   // count that lived on an empty span was unreachable by hover, keyboard AND
   // screen reader — is the reason that is not left to styling.
@@ -1403,6 +1478,11 @@ function renderSidebar(token) {
     // overwrite it.
     if (!settledByDomain.has(rec.domain)) settledByDomain.set(rec.domain, rec);
   }
+  // ONE clock for the whole list. Reading Date.now() per row would let two
+  // rows rendered in the same paint land on different sides of midnight and
+  // disagree about what "today" is — the v3.34.0 rule that an age has ONE
+  // source, applied to the render rather than to the store.
+  const now = Date.now();
   const rows = state.domains.map((d) => {
     const isActive = d.slug === state.domain;
     const isRunning = running.has(d.slug);
@@ -1410,6 +1490,9 @@ function renderSidebar(token) {
     // The live state is the more urgent truth and the newer one, and showing
     // both words on one row would make it say two things at once.
     const settledRec = isRunning ? null : settledByDomain.get(d.slug) || null;
+    // The last EVENT, on its own line — null when the domain has never been
+    // written to, so that row is one line and not one line plus a blank.
+    const event = formatDestinationEvent(d);
     return (
       '<button type="button" class="ing-dest-row' + (isActive ? ' active' : '') + '"' +
         ' data-dest-slug="' + escapeHtml(d.slug) + '"' +
@@ -1417,7 +1500,28 @@ function renderSidebar(token) {
         (isActive ? ' aria-current="true"' : '') + '>' +
         '<span class="ing-dest-main">' +
           '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
-          '<span class="ing-dest-meta">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
+          // Line one: the key figure, then the freshness mark, the clock glyph
+          // and the relative age. The dot and the glyph are aria-hidden — both
+          // are redundant encodings of the words beside them, and a screen
+          // reader that announced them would read the age twice.
+          '<span class="ing-dest-meta">' +
+            '<span class="ing-dest-figure">' + escapeHtml(destinationFigureText(d)) + '</span>' +
+            '<span class="ing-dest-sep" aria-hidden="true">·</span>' +
+            freshnessDotHtml('ing', d.lastIngestDate, now) +
+            clockGlyph(12) +
+            '<span class="ing-dest-age">' + escapeHtml(destinationAgeText(d, now)) + '</span>' +
+            // THE ABSOLUTE DATE, kept and REACHABLE. Visually hidden rather
+            // than a `title=`: a tooltip is hover-only, so a keyboard or touch
+            // user would lose the exact day altogether — this view's hover-only
+            // ceiling in scripts/test-next-title-affordances.js is zero and
+            // stays zero. `.visually-hidden` is shell.css's existing clip-rect
+            // utility; no stylesheet change, and the row IS focusable, so the
+            // text lands in a name a screen-reader user actually reaches.
+            (d.lastIngestDate
+              ? '<span class="visually-hidden"> (' + escapeHtml(d.lastIngestDate) + ')</span>'
+              : '') +
+          '</span>' +
+          (event ? '<span class="ing-dest-event">' + escapeHtml(event) + '</span>' : '') +
         '</span>' +
         (isRunning ? '<span class="ing-dest-live">Ingesting</span>' : '') +
         (settledRec

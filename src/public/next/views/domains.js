@@ -121,6 +121,11 @@ import { loadUiState, durableStorage } from '../shared/ui-state.js';
 import {
   renderReadoutGroup, renderDescription, renderStatus, renderViewHeader, renderBadge,
 } from '../shared/text.js';
+// The ONE age vocabulary, shared with the Ingest sidebar's destination rows —
+// see shared/age.js. The KNOWLEDGE rows and the DESTINATION rows list the same
+// domains and answer the same question about them, so they say it in the same
+// words rather than in two.
+import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -149,6 +154,29 @@ import {
 const DOMAIN_DOT_SLOTS = 6;
 function domainDotClass(index) {
   return 'dm-row-dot-' + ((index % DOMAIN_DOT_SLOTS) + 1);
+}
+
+// ── The KNOWLEDGE row's second line: WHAT the last write was ─────────────
+//
+// Returns null when the domain has never been written to, so a fresh domain
+// gets ONE line of meta rather than one plus a blank.
+//
+// THE VERB COMES FROM THE LOG. `lastIngestKind` is 'ingest' | 'compile' |
+// null on the wire (getDomainStats refuses to pass through a word it does
+// not recognise rather than inventing a verb for it), and it is re-narrowed
+// HERE as well, because this view renders the stats rows RAW — it keeps
+// whatever `GET /api/domains/stats` returned, unlike views/ingest.js which
+// re-maps every field through `fetchDomainStats`. A neutral "Last write" is
+// the honest rendering of a kind we do not have; guessing "Ingested" on a
+// domain that is only ever compiled into is the small false statement this
+// whole anatomy exists to stop making.
+function domainLastEventText(d) {
+  if (!d || !d.lastIngestDate) return null;
+  const kind = (d.lastIngestKind === 'ingest' || d.lastIngestKind === 'compile')
+    ? d.lastIngestKind : null;
+  const verb = kind === 'compile' ? 'Compiled' : kind === 'ingest' ? 'Ingested' : 'Last write';
+  const title = (typeof d.lastIngestTitle === 'string' && d.lastIngestTitle) ? d.lastIngestTitle : null;
+  return title ? (verb + ' · ' + title) : verb;
 }
 
 // ── Health category definitions ───────────────────────────────────────────
@@ -1946,6 +1974,10 @@ function renderSidebar(token) {
     return;
   }
 
+  // ONE clock for the whole list — see the identical line in views/ingest.js.
+  // Reading Date.now() per row lets two rows painted together land on
+  // different sides of midnight and disagree about what "today" is.
+  const now = Date.now();
   const rows = state.domains.map((d, i) => {
     const readonly = state.readonlySet.has(d.slug);
     const active = d.slug === state.activeSlug;
@@ -1957,12 +1989,40 @@ function renderSidebar(token) {
     const pagesText = typeof d.pageCount === 'number'
       ? d.pageCount.toLocaleString() + ' page' + (d.pageCount === 1 ? '' : 's')
       : '— pages';
+    // ── THE STATUS-ROW ANATOMY ───────────────────────────────────────
+    // name · key figure · freshness mark + relative age · last event, the
+    // same shape the Ingest sidebar's DESTINATION rows carry. Before this,
+    // a KNOWLEDGE row said "Articles · 3,421 pages" and nothing about when
+    // that number last moved — the one reading a mission-control surface
+    // owes you, and the one the menubar widget already gives Mac users.
+    //
+    // The IDENTITY dot (`.dm-row-dot`, six palette colours) and the
+    // ATTENTION dot (`.dm-row-attn`, open health issues) are untouched:
+    // three marks, three separate facts, and folding any of them into the
+    // others would make one dot answer questions it cannot.
+    const age = formatDayAge(d.lastIngestDate, now);
+    const lastEvent = domainLastEventText(d);
     return (
       '<button class="dm-row' + (active ? ' active' : '') + '" data-domain-slug="' + escapeHtml(d.slug) + '">' +
         '<span class="dm-row-dot ' + domainDotClass(i) + '"></span>' +
         '<span class="dm-row-main">' +
           '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
-          '<span class="dm-row-meta">' + pagesText + '</span>' +
+          '<span class="dm-row-meta">' +
+            '<span class="dm-row-figure">' + pagesText + '</span>' +
+            '<span class="dm-row-sep" aria-hidden="true">·</span>' +
+            freshnessDotHtml('dm', d.lastIngestDate, now) +
+            clockGlyph(12) +
+            '<span class="dm-row-age">' + escapeHtml(age || 'nothing written yet') + '</span>' +
+            // The absolute date, kept and REACHABLE — visually hidden rather
+            // than a `title=`, which is hover-only and therefore invisible to
+            // keyboard and touch. This file's hover-only ceiling in
+            // scripts/test-next-title-affordances.js is ONE (the Flip button),
+            // and this must not raise it.
+            (d.lastIngestDate
+              ? '<span class="visually-hidden"> (' + escapeHtml(d.lastIngestDate) + ')</span>'
+              : '') +
+          '</span>' +
+          (lastEvent ? '<span class="dm-row-event">' + escapeHtml(lastEvent) + '</span>' : '') +
         '</span>' +
         // ── TWO BADGES WHOSE MEANING WAS HOVER-ONLY ───────────────────
         // `RO` was a <span title="Read-only Shared Brain mirror">, and the

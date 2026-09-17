@@ -247,10 +247,98 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* ── THE STATUS-ROW ANATOMY ───────────────────────────────────────────
+   name · key figure · freshness mark + relative age · last event.
+   The same anatomy views/ingest.css carries for its DESTINATION rows; the
+   two are declared once each, with identical values, because shell.css
+   belongs to another change in this release. The freshness ladder below is
+   asserted byte-identical to `.ing-fresh-*` modulo the prefix, so the two
+   cannot drift while they wait to be promoted.
+
+   The meta line is a FLEX ROW, not a sentence: the dot and the clock glyph
+   sit between the figure and the age, so they cannot be produced by
+   splitting a formatted string. `align-items: center` keeps an 8px dot and
+   a 12px glyph on the same optical baseline as 11px text. */
 .dm-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--text-2xs);
   color: var(--text-2);
+  min-width: 0;
 }
+/* The figure ticks as pages are written, so it takes tabular figures — the
+   same property the shared numerics rule below already gives `.dm-row-meta`,
+   restated on the figure itself so the two views' rules read alike. */
+.dm-row-figure { flex: none; font-variant-numeric: var(--numeric-tabular); }
+.dm-row-sep { flex: none; color: var(--text-2); }
+/* The age is the one part of the line allowed to give way: a long phrase
+   ("12 months ago") must never push the dot or the figure out of the row. */
+.dm-row-age { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The clock glyph, styled by ELEMENT: shared/age.js emits it without a class
+   because `tx-` belongs to shared/text.css and nothing else may define one
+   (scripts/test-next-text-system.js).
+
+   --text-2, not the --text-3 a graphic would be allowed: ingest.css keeps
+   EXACTLY ONE --text-3 exemption (`.ing-queue-file-remove`, asserted present
+   AND alone by scripts/test-next-memory-ingest-text.js), and a second one
+   here would have widened a floor rule to buy nothing — the glyph reads the
+   same at --text-2 and the two views then declare the identical value. */
+.dm-row-meta svg { flex: none; color: var(--text-2); }
+
+/* Line two — WHAT the last write was. ONE line, always: a source title is
+   arbitrary length and a row that grew to four lines would push the rest of
+   the list off the fold. --text-2, NOT the --text-3 a third-rank fact would
+   suggest: --text-3 is retired as a TEXT colour in this file (a SCOPE rule —
+   no adopted text role reads it, so words in it mean a hand-rolled role). The
+   hierarchy is carried by POSITION instead: this line sits under the one with
+   the figure and the mark. */
+.dm-row-event {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── The freshness mark ───────────────────────────────────────────────
+   Cut on formatDayAge's own bands (shared/age.js): s3 today, s2 this week,
+   s1 this month, s0 older, and a DASHED ring for "we do not know".
+
+   The ladder mirrors views/memory.css's `.mem-save-pip-s*` — filled accent,
+   accent ring, neutral ring, faint ring — because that is the same reading
+   (how fresh is this?) on a different surface, and two ladders saying one
+   thing in two visual languages is how a user learns neither. Colour comes
+   from TOKENS only; this file's hex baseline is a number that may only
+   SHRINK and this block does not touch it.
+
+   IT IS NEVER THE ONLY CARRIER. The age phrase sits immediately beside it
+   and says the same thing in words, so the dot is redundant by design —
+   which is also why it is aria-hidden. It is also deliberately NOT the same
+   shape as `.dm-row-dot` at the row's head: that one is the domain's
+   IDENTITY colour and carries no state, and two dots that looked alike
+   would read as one scale. */
+.dm-fresh {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: transparent;
+}
+/* today */
+.dm-fresh-s3 { background: var(--accent); }
+/* this week */
+.dm-fresh-s2 { box-shadow: inset 0 0 0 2px var(--accent); }
+/* this month */
+.dm-fresh-s1 { box-shadow: inset 0 0 0 2px var(--text-3); }
+/* a month or more — dormant, NOT a failure: a finished domain is supposed to
+   look like this, so it gets the quietest ring and no colour. */
+.dm-fresh-s0 { box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+/* AGE UNKNOWN IS NOT AGE ZERO and it is not "old" either — a dashed ring, so
+   the one state we cannot measure looks different in KIND rather than merely
+   further along the ramp. */
+.dm-fresh-unknown { border: 1.5px dashed var(--text-faint); }
 
 .dm-row-mirror {
   flex: none;

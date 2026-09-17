@@ -47,11 +47,26 @@ curl http://localhost:3333/api/domains/ai-tech/stats
   "displayName": "AI / Tech",
   "pageCount": 317,
   "conversationCount": 3,
-  "lastIngestDate": "2026-04-08"
+  "lastIngestDate": "2026-04-08",
+  "lastIngestKind": "ingest",
+  "lastIngestTitle": "The Energy and Water Footprint of Generative AI"
 }
 ```
 
-`lastIngestDate` is `null` if no sources have been ingested yet.
+The three `lastIngest*` fields all describe the **same** entry — the newest
+`## [YYYY-MM-DD] <kind> | <title>` heading in that domain's `wiki/log.md` — and
+they are read once, together, from one cached parse, so they cannot disagree
+with each other.
+
+| Field | Meaning |
+|---|---|
+| `lastIngestDate` | `YYYY-MM-DD`, or `null` if nothing has been written yet. DAY resolution only: the heading carries no time of day, and `log.md`'s mtime is rewritten by Personal Sync, so there is no truthful clock finer than this. |
+| `lastIngestKind` | `"ingest"`, `"compile"` or `null`. `appendLog` is called by conversation **compile** as well as by ingest, so "the last write" is not always an ingest. A kind the server does not recognise is reported as `null` rather than passed through — a client turns this into a user-facing verb, and inventing one for an unknown word would be a fabrication. |
+| `lastIngestTitle` | The entry's title, or `null` when the heading carried none. Sanitised before it reaches the wire: control characters, `\|`, `<` and `>` are stripped and the string is capped at 120 characters with a trailing `…`. It originates in a file an LLM helped write, so treat it as text and escape it again at render. |
+
+All three are `null` together when the domain has no log entry. A `null` means
+**not known** — render it as such, never as an empty string, and never guess a
+verb from the date merely existing.
 
 **Error responses**
 

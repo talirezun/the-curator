@@ -148,7 +148,13 @@ const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain'
   // The single-file remove control (§16): the renderer that emits (or
   // withholds) the × beside the file name, and the state writer its click
   // calls.
-  'renderSelectedFileHtml', 'clearSelectedFile'];
+  'renderSelectedFileHtml', 'clearSelectedFile',
+  // The STATUS-ROW ANATOMY (the release that gave both sidebars one shape).
+  // formatDestinationMeta now composes these two rather than building the
+  // string itself, because the ROW needs the halves separately — the
+  // freshness dot and the clock glyph sit between them.
+  'destinationFigureText', 'destinationAgeText', 'formatDestinationEvent',
+  'destinationsSignature'];
 const bodies = {};
 for (const name of NEEDED) {
   const body = extractFunction(js, name);
@@ -175,25 +181,65 @@ ok(extractFunction(js, 'thisFunctionDoesNotExistAnywhere') === null,
 // ── §1 — the destination meta line: real data, never fabricated ──────────
 console.log('\n§ 1  Destination meta — renders the data it has, invents nothing');
 
+// `formatDayAge` is a REAL import of the shared module, not a stub: the point
+// of this section is the string the row shows, and a stubbed age would let the
+// wording drift in shared/age.js without anything here noticing.
+const { formatDayAge } = await import('../src/public/next/shared/age.js');
 const sandbox = new Function(
-  'return (() => { ' + bodies.formatDestinationMeta + ' return { formatDestinationMeta }; })()'
-)();
+  'formatDayAge',
+  'return (() => { ' + bodies.formatDestinationMeta + bodies.destinationFigureText +
+    bodies.destinationAgeText + bodies.formatDestinationEvent +
+    ' return { formatDestinationMeta, formatDestinationEvent }; })()'
+)(formatDayAge);
 const meta = sandbox.formatDestinationMeta;
+const event = sandbox.formatDestinationEvent;
 
-ok(meta({ pageCount: 12, lastIngestDate: '2026-08-27' }) === '12 pages · last write 2026-08-27',
-  'full data renders both facts');
-ok(meta({ pageCount: 1, lastIngestDate: '2026-01-02' }) === '1 page · last write 2026-01-02',
+// A fixed clock, so these assertions do not rot overnight. NOON local, so the
+// day arithmetic is nowhere near a boundary.
+const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
+const dayBefore = (n) => {
+  const d = new Date(2026, 8, 17);
+  d.setDate(d.getDate() - n);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+    '-' + String(d.getDate()).padStart(2, '0');
+};
+
+// ── THE DATE BECAME A RELATIVE AGE, DELIBERATELY ────────────────────────
+// WAS: `12 pages · last write 2026-08-27` — a date the reader has to subtract
+// from today before it means anything, on a surface whose whole job is a
+// glance. The absolute date is NOT dropped; it moved into the row's
+// accessible name (asserted in §10), because putting it in a `title=` would
+// have made it hover-only and this view's ceiling for that is ZERO.
+ok(meta({ pageCount: 12, lastIngestDate: dayBefore(0) }, NOW) === '12 pages · today',
+  'full data renders both facts, the second as a RELATIVE age');
+ok(meta({ pageCount: 3445, lastIngestDate: dayBefore(3) }, NOW) === '3,445 pages · 3 days ago',
+  'the figure is locale-grouped (matching the Domains rows) — 3445 reads as an id');
+ok(meta({ pageCount: 1, lastIngestDate: dayBefore(1) }, NOW) === '1 page · yesterday',
   'singular "1 page", not "1 pages"');
-ok(meta({ pageCount: 0, lastIngestDate: null }) === '0 pages · nothing written yet',
+ok(meta({ pageCount: 0, lastIngestDate: null }, NOW) === '0 pages · nothing written yet',
   'a genuine zero renders as zero (0 is a MEASUREMENT here, not an absence)');
-ok(meta({ pageCount: null, lastIngestDate: null }) === 'page count unknown · nothing written yet',
+ok(meta({ pageCount: null, lastIngestDate: null }, NOW) === 'page count unknown · nothing written yet',
   'an ABSENT page count says so — it is never collapsed into "0 pages"');
-ok(meta({ pageCount: 4, lastIngestDate: null }) === '4 pages · nothing written yet',
+ok(meta({ pageCount: 4, lastIngestDate: null }, NOW) === '4 pages · nothing written yet',
   'an absent date says so — no date is ever fabricated');
-ok(!/last ingest/i.test(meta({ pageCount: 4, lastIngestDate: '2026-05-01' })),
-  'says "last write", NOT "last ingest": appendLog is called by conversation ' +
-  'COMPILE as well as by ingest, so lastIngestDate is the last LOG entry and ' +
-  '"last ingest" would be a false statement on a compile-only domain');
+ok(meta({ pageCount: 4, lastIngestDate: 'not-a-date' }, NOW) === '4 pages · nothing written yet',
+  'a malformed date is ABSENT, not guessed at');
+ok(!/last ingest/i.test(meta({ pageCount: 4, lastIngestDate: dayBefore(40) }, NOW)),
+  'never says "last ingest": appendLog is called by conversation COMPILE as ' +
+  'well as by ingest, so the log date is the last WRITE — which of the two it ' +
+  'was is now stated outright on the event line instead of guessed at in a label');
+
+// ── The event line — the verb comes from the LOG, never from this view ──
+ok(event({ lastIngestDate: '2026-09-14', lastIngestKind: 'ingest', lastIngestTitle: 'The Curator — Product Overview' })
+  === 'Ingested · The Curator — Product Overview', 'an ingest reads "Ingested · <title>"');
+ok(event({ lastIngestDate: '2026-09-14', lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread' })
+  === 'Compiled · Pricing thread', 'a COMPILE reads "Compiled", not "Ingested" — the whole point of carrying the kind');
+ok(event({ lastIngestDate: '2026-09-14', lastIngestKind: null, lastIngestTitle: 'x' })
+  === 'Last write · x', 'an unknown kind gets the neutral verb — a verb is never invented for a word we did not recognise');
+ok(event({ lastIngestDate: '2026-09-14', lastIngestKind: 'ingest', lastIngestTitle: null })
+  === 'Ingested', 'no title means no title — never an empty tail after the separator');
+ok(event({ lastIngestDate: null, lastIngestKind: null, lastIngestTitle: null }) === null,
+  'a never-written domain has NO event line, so its row is one line of meta and not one plus a blank');
 
 // ── §2 — state.domain has exactly ONE writer ────────────────────────────
 console.log('\n§ 2  Two destination controls, ONE writer (the anti-drift invariant)');
@@ -451,13 +497,30 @@ for (const caller of ['loadDomains', 'refreshDomainStats']) {
 // ── §8 — the stats fields reach a consumer (the dead-data guard) ────────
 console.log('\n§ 8  pageCount / lastIngestDate are parsed AND consumed');
 
-ok(/pageCount:/.test(bodies.fetchDomainStats) && /lastIngestDate:/.test(bodies.fetchDomainStats),
-  '§8 fetchDomainStats keeps pageCount and lastIngestDate off the wire (moved here with the fetch — see §7)');
-ok(/formatDestinationMeta\(/.test(bodies.renderSidebar),
-  'renderSidebar CONSUMES them — this repo\'s recurring defect is a producer ' +
-  'doing honest work and the layer above throwing the answer away');
-ok(/d\.pageCount/.test(bodies.formatDestinationMeta) && /d\.lastIngestDate/.test(bodies.formatDestinationMeta),
-  'formatDestinationMeta reads both fields by name');
+for (const f of ['pageCount:', 'lastIngestDate:', 'lastIngestKind:', 'lastIngestTitle:']) {
+  ok(bodies.fetchDomainStats.includes(f),
+    '§8 fetchDomainStats keeps ' + f.slice(0, -1) + ' off the wire (moved here with the fetch — see §7)');
+}
+// FOUR fields now, not two. `lastIngestKind` and `lastIngestTitle` are the
+// additive half of the status-row anatomy — WHAT the last write was, beside
+// WHEN — and they are exactly the shape this repo keeps losing: a producer
+// doing honest work and the layer above throwing the answer away.
+ok(/destinationFigureText\(/.test(bodies.renderSidebar) &&
+   /destinationAgeText\(/.test(bodies.renderSidebar) &&
+   /formatDestinationEvent\(/.test(bodies.renderSidebar),
+  'renderSidebar CONSUMES all three parts — the figure, the age and the event ' +
+  'line. It calls the HALVES rather than formatDestinationMeta, because the dot ' +
+  'and the clock sit between them; formatDestinationMeta composes the same two ' +
+  'for the revalidation signature, so the words cannot differ between them');
+ok(/d\.pageCount/.test(bodies.destinationFigureText) && /d\.lastIngestDate/.test(bodies.destinationAgeText),
+  'the figure and the age each read their own field by name');
+ok(/d\.lastIngestKind/.test(bodies.formatDestinationEvent) && /d\.lastIngestTitle/.test(bodies.formatDestinationEvent),
+  'formatDestinationEvent reads the KIND and the TITLE by name — a dead field here would mean the row silently lost the "what"');
+ok(/freshnessDotHtml\(/.test(bodies.renderSidebar) && /clockGlyph\(/.test(bodies.renderSidebar),
+  'the row emits the freshness dot and the clock glyph from shared/age.js — one decision, one glyph, both views');
+ok(/lastIngestDate/.test(bodies.destinationsSignature) === false &&
+   /formatDestinationEvent\(/.test(bodies.destinationsSignature),
+  'the revalidation signature covers the EVENT line too — same-day compile after an ingest moves no figure and no age, so a signature blind to it would repaint nothing');
 
 // ── §9 — the domain picker is the shared listbox ────────────────────────
 console.log('\n§ 9  The domain picker is the shared listbox, not a native <select>');

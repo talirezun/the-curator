@@ -54,6 +54,11 @@
  */
 
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+// renderSidebar's KNOWLEDGE rows carry the shared status-row anatomy, so the
+// REAL shared/age.js helpers are injected into the sandbox rather than stubbed.
+// A stub would let the row's wording drift from the module that owns it, and
+// this suite executes renderSidebar for real precisely to avoid that class.
+import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/shared/age.js';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -211,6 +216,9 @@ const FNS = [
   'bindSidebarButtons',
   'bindKnowledgeListeners',
   'renderSidebar',
+  // The KNOWLEDGE row's event line. Extracted, not stubbed, for the reason
+  // above: renderSidebar calls it and a stub would hide a real change to it.
+  'domainLastEventText',
 ];
 
 const PREAMBLE = `
@@ -290,6 +298,7 @@ function makeNode(id) {
 let sandbox;
 try {
   sandbox = new Function(
+    'formatDayAge', 'freshnessDotHtml', 'clockGlyph',
     PREAMBLE +
     FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')},
@@ -307,7 +316,7 @@ try {
       __setReload: (domains, err) => { domainsAfterReload = domains; loadErrorAfterReload = err || null; },
       __node: makeNode,
       __nodes: () => domNodes };`
-  )();
+  )(formatDayAge, freshnessDotHtml, clockGlyph);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
   process.exit(1);

@@ -367,6 +367,10 @@ const text = await import('../src/public/next/shared/text.js');
 const usd = await import('../src/public/next/shared/format-usd.js');
 const ring = await import('../src/public/next/shared/progress-ring.js');
 const gate = await import('../src/public/next/shared/loading-gate.js');
+// The destination rows' age vocabulary. REAL, like every other shared module
+// spread in below: the sidebar renders for real in this suite, and a stubbed
+// age would let the row's wording drift from the module that owns it.
+const age = await import('../src/public/next/shared/age.js');
 
 let strippedControlDone = false;
 function loadView(dom) {
@@ -412,7 +416,7 @@ function loadView(dom) {
 
   const provided = {
     ...appStubs, ...listboxStubs,
-    ...logic, ...text, ...usd, ...ring, ...gate,
+    ...logic, ...text, ...usd, ...ring, ...gate, ...age,
     document: dom.document,
     window: dom.window,
     localStorage: null,
