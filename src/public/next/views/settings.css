@@ -34,6 +34,23 @@
    --danger-text is deliberately NOT swept up: it measures over the floor.
    ────────────────────────────────────────────────────────────────────────── */
 
+/* ── The section body ────────────────────────────────────────────────────
+   One element wrapping whichever section is drawn, so a section CHANGE has
+   something of this view's own to animate (renderMain adds `content-reveal`
+   to it, once, on the paint that follows a sidebar click; the class itself is
+   the shell's, in tokens/motion.css).
+
+   DELIBERATELY A BARE BLOCK, AND IT MUST STAY ONE. The blocks inside carry the
+   page's whole rhythm through `.settings-job-block + .settings-job-block`
+   (shell.css) and the header above carries its own bottom margin, so any
+   padding, margin, display or overflow here would be a SECOND spacing
+   decision competing with those — and an `overflow` other than `visible`
+   would additionally make this a scroll container, which is not what the
+   column's `#main` is. Measured before and after the wrapper landed: the five
+   sections' geometry is unchanged.                                        */
+
+.settings-view-body { display: block; }
+
 /* ── Sidebar sub-navigation ─────────────────────────────────────────── */
 
 .settings-sidebar-shell {

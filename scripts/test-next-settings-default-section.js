@@ -199,10 +199,16 @@ ok(renderSidebarSrc !== null, 'renderSidebar() is found in views/settings.js');
 let renderedIds = null;
 if (renderSidebarSrc) {
   let captured = '';
+  // `lastSidebarHtml` is the module-level string renderSidebar compares
+  // against so an unchanged sidebar is not re-written (see render()'s "ONE
+  // PAINT, OR NONE"). Injected as a binding it can assign to, seeded null so
+  // this call is always the FIRST one and therefore always paints — an
+  // undefined binding would be a ReferenceError crash here rather than a
+  // failing assertion, which is the FN_NAMES shape this repo names.
   const fn = new Function(
-    'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar',
+    'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
     renderSidebarSrc + '\nreturn renderSidebar;'
-  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; });
+  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null);
   fn(1);
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
