@@ -523,6 +523,115 @@ let wakeHandler = null;
 // all — see screenSignature.
 let renderedSignature = null;
 
+// ═════════════════════════════════════════════════════════════════════════
+// THE PROJECT CACHE — why a screen that revalidates also remembers
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Reported from production: *"when you go from project to project, the main
+// content of the project is loaded on the right side with some delay — not
+// good UX."* Measured in a browser against a real store (four projects, up to
+// 22 work-streams), on the shipped code: ONE switch cost THREE requests, THREE
+// whole-column repaints, and the column collapsed from 5,062px to **215px**
+// for a frame in between. Going BACK to a project cost exactly the same as
+// arriving at it the first time, although nothing about it had changed.
+//
+// So this holds what has already been read, for the life of the page:
+//
+//   'p:<domain>/<project>'                    -> the index read (+ its `open`)
+//   's:<domain>/<project>/<scope>/<machine>'  -> one scoped read
+//
+// ── WHY IT IS SAFE TO CACHE AT ALL ──────────────────────────────────────
+// This is READ-ONLY data and the screen already has the machinery to keep it
+// honest: every cached paint is followed by a revalidation of the same read,
+// and the index poll keeps `staleWrite` truthful independently. A cache hit is
+// therefore not "show something old and hope" — it is "show what you had a
+// moment ago while asking again", which is the only way to make a return trip
+// cost nothing visible.
+//
+// ── WHAT IS STAMPED, AND WHY THE STAMP IS THE WHOLE POINT ───────────────
+// Each entry carries `at`, the ms at which the READ WAS ISSUED, and a cached
+// paint adopts it as `state.detailFetchedAt` rather than resetting the mark to
+// now. That is the fail-safe direction: a save that landed while the entry was
+// sitting in this Map is then reported as stale (the Reload offer appears)
+// rather than hidden behind a fresh-looking timestamp. Resetting the mark on a
+// cache hit would make the screen quietly claim a five-minute-old document was
+// read just now — the exact fact-and-absence collapse this view refuses
+// everywhere else.
+//
+// ── IT SURVIVES freshState(), AND ONLY IT DOES ──────────────────────────
+// `onEnter` reassigns `state = freshState()`, which is right: the selection,
+// the folds, the editor and every loading flag belong to one visit. The cache
+// is not UI state — it is a copy of what the server said — so it lives out
+// here and a re-entry into the view repaints instantly instead of re-fetching
+// the whole install. It is cleared by a reload of the page, and by nothing
+// else; on a write it is INVALIDATED for that project (see `forgetProject`),
+// because a brief save is the one moment this view knows its own copy is out
+// of date before the server says so.
+//
+// BOUNDED. `MAX_CACHE` entries, oldest-inserted evicted first (a Map iterates
+// in insertion order, and re-reading a project REPLACES its entry, so the
+// order is genuinely "least recently fetched"). A number rather than no
+// number: a user who clicks through two hundred projects should not be
+// carrying two hundred handoff documents in memory for the life of the tab.
+const readCache = new Map();
+const MAX_CACHE = 24;
+
+// Written across three lines rather than one because `extractFunction` in
+// scripts/test-next-memory-view.js lifts a function by brace-matching and
+// requires its closing brace to start a line — a one-liner reads as a desync.
+function cacheKeyProject(domain, project) {
+  return 'p:' + keyOf(domain, project);
+}
+function cacheKeyScope(domain, project, scope, machine) {
+  // The machine the caller ASKED for, not the one the server resolved: with no
+  // machine named the store picks the newest, and which one that is can change
+  // between reads. Keying on the resolved name would hand a later "let the
+  // server choose" request an answer that was pinned to one folder.
+  return 's:' + keyOf(domain, project) + '/' + String(scope) + '/' + (machine || '');
+}
+
+function cacheGet(key) {
+  return readCache.get(key) || null;
+}
+
+function cachePut(key, data, at) {
+  if (!data) return;
+  if (readCache.has(key)) readCache.delete(key);
+  readCache.set(key, { data, at });
+  while (readCache.size > MAX_CACHE) {
+    const oldest = readCache.keys().next();
+    if (oldest.done) break;
+    readCache.delete(oldest.value);
+  }
+}
+
+/** Drop every entry for one project. Called wherever this view learns its copy is wrong. */
+function forgetProject(domain, project) {
+  const exact = cacheKeyProject(domain, project);
+  const prefix = 's:' + keyOf(domain, project) + '/';
+  for (const k of [...readCache.keys()]) {
+    if (k === exact || k.indexOf(prefix) === 0) readCache.delete(k);
+  }
+}
+
+/**
+ * Is this payload the same one we are already painting?
+ *
+ * Compared as JSON rather than field by field, and over the WHOLE payload
+ * rather than over a chosen projection: a revalidation exists to notice a
+ * change, and a comparator that knows which fields matter is a second copy of
+ * `screenSignature` free to disagree with it. The one thing excluded is the
+ * family of age figures, which the server recomputes against its own `now` on
+ * every read — leave them in and no two responses are ever equal, so every
+ * revalidation would repaint and the cache would buy nothing. The STAMPS they
+ * are derived from (`writtenAt`, `lastWriteAt`, `savedAt`) stay in the
+ * comparison, so a genuinely newer save still differs.
+ */
+function payloadSignature(data) {
+  return JSON.stringify(data, (k, v) => (
+    (k === 'ageSeconds' || k === 'writtenAgeSeconds' || k === 'arrivedAgeSeconds') ? 0 : v));
+}
+
 registerView('memory', {
   onEnter(mountToken) {
     state = freshState();
@@ -1069,6 +1178,12 @@ async function refreshScopeList(token, domain, project) {
   if (!names.includes(state.scope)) return;
   state.projectRead = read.data;
   state.scopesFetchedAt = startedAt;
+  // This path proves the project's work-stream list has MOVED since the cached
+  // copy was taken, and it cannot replace that copy itself — its read carries
+  // no `open`, so an entry written from here would be unadoptable anyway.
+  // Dropping it is the honest outcome: a later return to this project pays one
+  // request rather than painting a list this function has just proved wrong.
+  forgetProject(domain, project);
 }
 
 /**
@@ -1115,6 +1230,13 @@ async function reloadActive(token) {
   // history you are part-way through reading. Two call sites, two meanings —
   // do not unify them.
   const wantMachine = state.machine;
+
+  // RELOAD MEANS "MY COPY IS STALE". Every cached read for this project goes,
+  // before the first request rather than after the last: a cache hit inside
+  // this call, or one served to a project switch that happens while it is in
+  // flight, would make the one control whose entire meaning is "go and look
+  // again" inert — which is the defect this button exists to answer.
+  forgetProject(domain, project);
 
   state.detailFetchedAt = Date.now();
   // Both reads below start now, so both marks move together here.
@@ -1214,6 +1336,14 @@ async function saveBrief(token) {
   }
   // Saved: drop the editor and re-read, so the rendered brief, its age and
   // the sidebar row all come from the server rather than from the draft.
+  //
+  // THE CACHE GOES FIRST, unconditionally — including when the user has
+  // already moved to another project, which is the branch that does NOT
+  // re-read. This is the one moment the view knows its own copy is wrong
+  // before any server says so: a stale entry would otherwise paint the
+  // pre-save brief the next time they came back, and the revalidation behind
+  // it would correct it a frame later, which reads as the save having failed.
+  forgetProject(e.domain, e.project);
   state.briefEdit = null;
   if (activeKey() === key) {
     await reloadActive(token);
@@ -1285,6 +1415,51 @@ export function initialPick(projects, remembered) {
   return freshest;
 }
 
+/**
+ * OPEN A PROJECT — one request, one code path, and no blank column.
+ *
+ * ── THE REPORT, AND WHAT WAS MEASURED ────────────────────────────────────
+ * *"When you go from project to project, the main content of the project is
+ * loaded on the right side with some delay — not good UX, missing
+ * transitions."* Reproduced in a browser on a real store (four projects, up
+ * to 22 work-streams). The shipped path cost, per switch:
+ *
+ *   · THREE requests — the index, the project's scope list, and then the
+ *     scoped read, the last two strictly in series because the third's URL
+ *     is not knowable until the second has answered;
+ *   · TWO whole-column repaints, the FIRST of them of an empty column;
+ *   · a main column that collapsed 3,821px -> **215px** for a frame and then
+ *     jumped back, which is what the eye reads as "delay" at 30 ms.
+ *
+ * Going BACK to a project you had just left cost exactly the same as arriving
+ * at it for the first time, although nothing about it had changed.
+ *
+ * ── THE THREE THINGS THAT CHANGED ────────────────────────────────────────
+ *
+ *  1. ONE ROUND TRIP. `GET …?open=newest` answers with the work-stream index
+ *     AND the pair the table puts first, picked SERVER-SIDE by the same order
+ *     rule this view sorts the table by (src/routes/memory.js's
+ *     `tableFirstPair`, pinned against `workStreamOrder`). The second request
+ *     is gone in the ordinary case — and is still there as a fallback, taken
+ *     whenever the server did not answer `open` (an older build) or answered
+ *     with a pair this view would not have put first. The view keeps the
+ *     decision; the server only offers it the answer in advance.
+ *
+ *  2. A CACHE, so a return trip costs nothing visible. See `readCache`.
+ *
+ *  3. NO EMPTY COLUMN. When there is nothing cached the first paint is a
+ *     SKELETON built from the index row this view already holds — the real
+ *     "Working on" line and the real last-saved reading, with the table and
+ *     the brief reserved at their approximate heights — so the click is
+ *     acknowledged in its own frame and the column never collapses. See
+ *     `renderProjectSkeleton`.
+ *
+ * WHAT IS UNCHANGED, DELIBERATELY. `loadScope` still drops `state.detail`
+ * before painting on the paths that go through it, because showing the old
+ * machine list and the old handoff under a new scope's label is a wrong
+ * answer stated confidently. This function no longer NEEDS that path in the
+ * ordinary case — it never paints a half-resolved project at all.
+ */
 async function selectProject(domain, project, token, opts = {}) {
   const key = keyOf(domain, project);
   state.activeDomain = domain;
@@ -1300,27 +1475,40 @@ async function selectProject(domain, project, token, opts = {}) {
   // back — an acknowledgement that outlives the click.
   state.copied = null;
   rememberProject(domain, project);
-  state.projectRead = null;
-  state.detail = null;
   state.detailError = null;
-  state.scope = null;
-  state.machine = null;
   state.journalLimit = JOURNAL_PAGE;
   // A window opened on one project says nothing about the next. Reset with the
   // journal's page size and for the same reason: both are "how much of this
   // list have I asked to see", and the answer does not travel.
   state.wsWindow = WS_WINDOW;
-  state.detailLoading = true;
-  // The START of the read that is about to produce what goes on screen.
-  // Conservative on purpose: a write landing mid-fetch is reported as
-  // stale, which costs one reload the user did not strictly need, rather
-  // than leaving a stale document presenting itself as current.
-  state.detailFetchedAt = Date.now();
-  // The unscoped read below produces the scope list as well as the handoff,
-  // so the picker's mark starts here too. Set before the await, like its
-  // sibling, so a write landing mid-fetch is reported rather than missed.
-  state.scopesFetchedAt = state.detailFetchedAt;
   state.staleWrite = false;
+
+  // ── A PROJECT ALREADY READ PAINTS IN THIS FRAME ───────────────────────
+  //
+  // An entry is ADOPTED only when it can paint the WHOLE screen on its own —
+  // index and opened pair together. One that cannot (a payload from a server
+  // that does not answer `open`) is treated as a miss rather than half-used,
+  // so there is exactly one path that resolves a pair and one place it can go
+  // wrong.
+  const pKey = cacheKeyProject(domain, project);
+  const hit = cacheGet(pKey);
+  const fromCache = !!(hit && applyProjectRead(hit.data, hit.at).opened);
+  if (!fromCache) {
+    state.projectRead = null;
+    state.detail = null;
+    state.scope = null;
+    state.machine = null;
+    state.detailLoading = true;
+    // The START of the read that is about to produce what goes on screen.
+    // Conservative on purpose: a write landing mid-fetch is reported as
+    // stale, which costs one reload the user did not strictly need, rather
+    // than leaving a stale document presenting itself as current.
+    state.detailFetchedAt = Date.now();
+    // The one read below produces the scope list as well as the handoff, so
+    // the picker's mark starts here too. Set before the await, like its
+    // sibling, so a write landing mid-fetch is reported rather than missed.
+    state.scopesFetchedAt = state.detailFetchedAt;
+  }
   render(token);
 
   // A user-initiated selection is the cheapest honest moment to re-ask the
@@ -1331,21 +1519,84 @@ async function selectProject(domain, project, token, opts = {}) {
     refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
   }
 
-  const read = await fetchState(domain, project, {}, token);
+  // ── THE ONE READ ──────────────────────────────────────────────────────
+  //
+  // It is the FIRST FILL on a miss and a background REVALIDATION on a hit,
+  // and it is deliberately the same request either way: two code paths that
+  // must agree about what a project read looks like is how the two would
+  // drift.
+  const startedAt = Date.now();
+  const read = await fetchState(domain, project, { open: 'newest' }, token);
+  // STALE-DROP. A reply for a project the user has already left is discarded
+  // at the point of use, not merely guarded at the point of render: it must
+  // never be written into state at all, or the next render would paint one
+  // project's document under another project's header.
   if (!isCurrentMount(token) || activeKey() !== key) return;
-  state.projectRead = read.data;
-  state.detailError = read.error;
 
-  const scopes = (read.data && read.data.scopes) || [];
-  if (!scopes.length) {
-    state.detailLoading = false;
-    render(token);
+  if (!read.data) {
+    // A FAILED REVALIDATION CHANGES NOTHING — the same rule refreshIndex
+    // follows. What is on screen is still broadly true; report the error only
+    // when there is nothing on screen for it to contradict.
+    if (!fromCache) {
+      state.detailError = read.error;
+      state.detailLoading = false;
+      render(token);
+    }
     return;
   }
+
+  cachePut(pKey, read.data, startedAt);
+
+  // AN IDENTICAL REVALIDATION COSTS NO RENDER AT ALL. The same discipline
+  // `screenSignature` applies to the poll: a repaint that changes no pixel
+  // still closes an open ⓘ panel and churns focus.
+  if (fromCache && payloadSignature(read.data) === payloadSignature(hit.data)) return;
+
+  const applied = applyProjectRead(read.data, startedAt);
+  render(token);
+  if (!applied.opened && applied.pick) {
+    // The fallback: an older server, or one that picked a pair this view would
+    // not have put first. `{deliberate: false}` because the user chose nothing
+    // here — see loadScope.
+    await loadScope(applied.pick.scope, applied.pick.machine || null, token, { deliberate: false });
+  }
+}
+
+/**
+ * Put ONE project payload on screen — the index half and the pair it opened.
+ *
+ * Writes state and returns what the caller still has to do; it never renders,
+ * because both of its callers know something it does not about whether this is
+ * the paint or the revalidation.
+ *
+ * `at` is when the read that produced `data` was ISSUED, and it becomes both
+ * freshness marks. On a cache hit that is a time in the past, deliberately:
+ * the Reload offer then appears for a save that landed while the entry sat in
+ * the Map, which is the fail-safe direction. Stamping a cached paint with
+ * `now` would make the screen claim it had just read a document it had not.
+ *
+ * @returns {{opened: boolean, pick?: object}} `opened` false means the caller
+ *          must still read the pair named by `pick`.
+ */
+function applyProjectRead(data, at) {
+  state.projectRead = data;
+  state.detailError = null;
+  state.detailFetchedAt = at;
+  state.scopesFetchedAt = at;
+
+  const scopes = (data && data.scopes) || [];
+  if (!scopes.length) {
+    state.detail = null;
+    state.scope = null;
+    state.machine = null;
+    state.detailLoading = false;
+    return { opened: true };
+  }
+
   // THE PAIR THIS OPENS IS THE ONE THE TABLE PUTS FIRST, and that is not what
   // the store hands back.
   //
-  // ── THE DEFECT ─────────────────────────────────────────────────────────
+  // ── THE DEFECT (v3.56.0) ───────────────────────────────────────────────
   // This read `scopes[0]` — the store's own order, which is mtime — on the
   // stated grounds that it resolves to the same pair the route's
   // `scope=latest` would. Both are true and both are the wrong clock. **git
@@ -1356,24 +1607,40 @@ async function selectProject(domain, project, token, opts = {}) {
   // was the agent-OLDEST, so the page opened on a two-week-old handoff under a
   // first row reading "5 hr ago", the window STRETCHED to keep that open row
   // visible (all sixteen rows, no "Show more" footer), and the Status block —
-  // which the route now computes on the agent clock — named a different,
-  // fresher work-stream two blocks above. One screen, two clocks, three
-  // disagreements.
+  // which the route computes on the agent clock — named a different, fresher
+  // work-stream two blocks above. One screen, two clocks, three disagreements.
   //
   // `workStreamOrder` is the order the table PAINTS, so its head is the row the
   // user sees first and the one `wsShownCount` needs no stretch to reach.
   //
-  // THE MACHINE IS PASSED TOO, and it has to be: the table marks its open row
-  // off `state.detail` — the pair the STORE resolved — so naming only the scope
-  // would let the store pick a different copy of it by mtime and put the
-  // highlight back on a row far down the list, stretching the window again for
-  // the same reason in a smaller place.
-  //
-  // The route's `scope=latest` is left exactly as it is. It serves callers with
-  // no list in hand; this view has the list, and picks from it.
+  // ── AND WHY THE SERVER'S ANSWER IS CHECKED RATHER THAN TRUSTED ─────────
+  // `?open=newest` asks the route to pick by the SAME rule, so in the ordinary
+  // case the two agree and the second request is gone. They are still compared
+  // here, on the PAIR — scope AND machine, because the table marks its open row
+  // off `state.detail` and naming only the scope would let a different copy of
+  // it be highlighted far down the list. A disagreement is not an error and is
+  // not reported as one: the view falls back to reading the pair IT chose,
+  // which is exactly what it did before this option existed. The fallback is
+  // also what an older server gets, and what a `null` open (a project whose
+  // inner read failed) gets.
   const pick = workStreamOrder(scopes)[0];
-  // `{deliberate: false}` because the user chose nothing here — see loadScope.
-  await loadScope(pick.scope, pick.machine || null, token, { deliberate: false });
+  const pre = data && data.open;
+  if (pre && pre.scope === pick.scope && (pre.machine || null) === (pick.machine || null)) {
+    state.scope = pick.scope;
+    // NOT `pick.machine`. `state.machine` means "a machine the USER picked",
+    // and nobody picked this one — the same `{deliberate: false}` contract
+    // loadScope documents, applied at the site that no longer calls it.
+    state.machine = null;
+    state.detail = pre;
+    state.detailLoading = false;
+    return { opened: true };
+  }
+
+  state.scope = null;
+  state.machine = null;
+  state.detail = null;
+  state.detailLoading = true;
+  return { opened: false, pick };
 }
 
 /**
@@ -1387,6 +1654,26 @@ async function selectProject(domain, project, token, opts = {}) {
  * it ranked — but nobody chose it, so a later save into a DIFFERENT machine
  * folder must still be what Reload finds. A row press and the machine picker
  * pass no opts and are recorded, because there the pair IS the user's.
+ *
+ * ── `opts.reader === true` — THE PRESS OPENED AN OVERLAY ────────────────
+ * Reported from production: *"accessing the scopes is not fluent and feels
+ * buggy."* Measured: a row press repainted the whole main column TWICE
+ * underneath the reader — once into an EMPTY column (this function drops
+ * `state.detail` and renders before its fetch) and once with the result.
+ *
+ * Under `reader`, neither happens. The previous pair stays on screen for the
+ * length of the fetch — there is no new label above it claiming to describe it,
+ * because the document the user is reading is in the overlay — and the arrival
+ * is applied by `patchOpenPair`, four targeted DOM writes rather than a
+ * `setMain`. The full-render fallback is taken whenever any of that function's
+ * preconditions does not hold, so the screen is never left half-updated.
+ *
+ * ── `opts.cache === true` — MAY THIS READ COME OUT OF THE MAP? ─────────
+ * Opt-IN, not opt-out, and the reason is `reloadActive`: the whole meaning of
+ * that button is "my copy is stale, go and look again", and a cache hit there
+ * would make it inert. Only the row press asks for it. A paginated read (a
+ * journal "show more") is never cached at all — the payload is a different
+ * page size under the same pair, and one key cannot mean two page sizes.
  */
 async function loadScope(scope, machine, token, opts = {}) {
   const domain = state.activeDomain;
@@ -1394,23 +1681,185 @@ async function loadScope(scope, machine, token, opts = {}) {
   const key = keyOf(domain, project);
   state.scope = scope;
   state.machine = opts.deliberate === false ? null : machine;
-  // Drop the previous scope's read before painting: keeping it would render
-  // the OLD machine list and the OLD handoff under the NEW scope's label for
-  // the duration of the fetch, which is a wrong answer stated confidently.
-  state.detail = null;
-  state.detailLoading = true;
-  render(token);
 
   const q = { scope };
   if (machine) q.machine = machine;
   if (state.journalLimit !== JOURNAL_PAGE) q.journalLimit = String(state.journalLimit);
+  // Only the DEFAULT journal page is cacheable — see the header.
+  const sKey = state.journalLimit === JOURNAL_PAGE
+    ? cacheKeyScope(domain, project, scope, machine) : null;
+  const hit = (opts.cache && sKey) ? cacheGet(sKey) : null;
 
+  if (hit) {
+    state.detail = hit.data;
+    state.detailError = null;
+    state.detailLoading = false;
+    // The read's own time, not now. Same rule as applyProjectRead: a cached
+    // paint must not claim to have just read the file.
+    state.detailFetchedAt = hit.at;
+    if (opts.reader) patchOpenPair(token); else render(token);
+  } else if (!opts.reader) {
+    // Drop the previous scope's read before painting: keeping it would render
+    // the OLD machine list and the OLD handoff under the NEW scope's label for
+    // the duration of the fetch, which is a wrong answer stated confidently.
+    state.detail = null;
+    state.detailLoading = true;
+    render(token);
+  }
+
+  const startedAt = Date.now();
   const read = await fetchState(domain, project, q, token);
   if (!isCurrentMount(token) || activeKey() !== key || state.scope !== scope) return;
+
+  if (hit) {
+    // A REVALIDATION. A failure keeps what is on screen; an identical answer
+    // costs no paint at all.
+    if (!read.data) return;
+    cachePut(sKey, read.data, startedAt);
+    if (payloadSignature(read.data) === payloadSignature(hit.data)) return;
+    state.detail = read.data;
+    state.detailFetchedAt = startedAt;
+    if (opts.reader) patchOpenPair(token); else render(token);
+    return;
+  }
+
   state.detail = read.data;
   state.detailError = read.error;
   state.detailLoading = false;
-  render(token);
+  if (sKey && read.data) cachePut(sKey, read.data, startedAt);
+  if (opts.reader) patchOpenPair(token); else render(token);
+}
+
+/**
+ * MOVE THE OPEN PAIR WITHOUT REPAINTING THE COLUMN.
+ *
+ * ── WHY A PATCH AT ALL, WHEN THIS VIEW REPAINTS FOR EVERYTHING ELSE ────
+ * Because the column is UNDERNEATH AN OVERLAY at the moment this runs. A
+ * `setMain` replaces the pane by innerHTML: it closes every open ⓘ panel,
+ * drops the journal fold, moves the scroll position and churns focus — all
+ * behind a scrim, for a user who is reading a document and will close it in a
+ * moment and find their page rearranged. v3.27.0's rule that a press must be
+ * acknowledged in its own frame is satisfied by the reader opening, not by the
+ * page behind it flinching.
+ *
+ * ── WHAT DEPENDS ON `state.detail`, ENUMERATED ─────────────────────────
+ * This is a complete list of what `renderProject` computes from the open pair,
+ * taken by reading it rather than by guessing, and each one is either patched
+ * or proven not to move:
+ *
+ *   · the breadcrumb's `shared mirror` badge — `d.readonly`, a property of the
+ *     DOMAIN, identical for every pair in a project;
+ *   · block ①'s three parts, `renderSaveStatus` + `renderStaleNotice` +
+ *     `renderUnlistedNote` — PATCHED, as the one expression `renderProject`
+ *     itself composes, so the two cannot drift;
+ *   · `wsShownCount` — GUARDED: if the new pair would change how many rows are
+ *     painted, this refuses and a full render happens instead;
+ *   · the work-stream rows — PATCHED through the same `wsRowHtml` the painter
+ *     and the "Show more" append both use;
+ *   · the count line — PATCHED, rebuilt whole rather than edited, for the
+ *     reason `showMoreWorkStreams` records;
+ *   · block ⑤'s journal — PATCHED, and its PRESENCE is guarded: a pair with no
+ *     journal at all removes the block, which is a layout change this cannot
+ *     make in place;
+ *   · block ③ the standing brief, and block ②'s lede, ⓘ and empty card — all
+ *     computed from `read` (the project index) alone, which does not move here.
+ *
+ * ANY precondition that does not hold falls through to ONE full render, which
+ * is still half what the shipped code did. A partial patch is never left on
+ * screen: every write happens after every check.
+ *
+ * `renderedSignature` is re-taken at the end. The signature must always
+ * describe what is PAINTED — leaving it stale would make the next poll either
+ * repaint needlessly (closing the reader's own page underneath it) or skip a
+ * repaint it owed.
+ */
+function patchOpenPair(token) {
+  if (!isCurrentMount(token)) return;
+  if (typeof document === 'undefined'
+    || typeof document.getElementById !== 'function'
+    || typeof document.createElement !== 'function') {
+    render(token);
+    return;
+  }
+  const pr = state.projectRead;
+  const d = state.detail;
+  const tbody = document.getElementById('mem-ws-body');
+  const stack = document.querySelector('.mem-status-stack');
+  const scopes = (pr && Array.isArray(pr.scopes)) ? pr.scopes : null;
+  if (!tbody || !stack || !scopes || !scopes.length) { render(token); return; }
+
+  const ordered = workStreamOrder(scopes);
+  const shown = wsShownCount(ordered, d, state.wsWindow);
+  // The window would have to GROW (or shrink) to hold the new pair. That is a
+  // structural change to the table, its footer and its count line together —
+  // one full render says it once instead of three patches agreeing.
+  if (shown !== tbody.children.length) { render(token); return; }
+
+  const statusHtml = renderSaveStatus(pr, d) + renderStaleNotice() + renderUnlistedNote(pr, d);
+  if (!statusHtml) { render(token); return; }
+
+  const journalHtml = renderJournal();
+  const journalBody = document.querySelector('.settings-block-memory-journal .settings-block-body');
+  // PRESENCE, not content: block ⑤ appears and disappears with the journal,
+  // and neither adding nor removing a whole block is an in-place edit.
+  if (!!journalHtml !== !!journalBody) { render(token); return; }
+
+  // ── THE FOLD ELEMENT ITSELF MUST SURVIVE ───────────────────────────────
+  // `wire` binds `toggle` on the `<details>`, and that listener is the only
+  // record of whether the user has the journal open; replacing the element
+  // would drop it silently and the fold would stop remembering itself on the
+  // next render. So the swap below writes the details' INNARDS and keeps the
+  // node — which also means the ONE listener inside it, "Show more", is the
+  // only thing to re-attach.
+  //
+  // Parsed HERE, in the check phase, because a parse that does not yield a
+  // fold is a reason to abandon the patch and the abandonment must happen
+  // before anything has been written.
+  let nextFold = null;
+  const liveFold = journalBody ? journalBody.querySelector('[data-mem-fold="journal"]') : null;
+  if (journalHtml) {
+    if (!liveFold) { render(token); return; }
+    const parsed = document.createElement('div');
+    parsed.innerHTML = journalHtml;
+    nextFold = parsed.querySelector('[data-mem-fold="journal"]');
+    if (!nextFold) { render(token); return; }
+  }
+
+  // ── Every check has passed; write. ────────────────────────────────────
+  const openScope = (d && d.scope) || null;
+  const openMachine = (d && d.machine) || null;
+  const mineMachine = d && d.machineIsThisMachine === true ? d.machine : null;
+  tbody.innerHTML = ordered.slice(0, shown)
+    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine)).join('');
+  // The rows are new elements, so their listeners are too. Scoped to the
+  // tbody, the same way the "Show more" append scopes its own binding.
+  bindWorkStreamRows(tbody, token);
+
+  stack.innerHTML = statusHtml;
+
+  const count = document.getElementById('mem-ws-count');
+  if (count) count.outerHTML = workStreamCounts(pr, scopes.length, shown);
+
+  if (liveFold && nextFold) {
+    // `open` is deliberately not copied across: the live element already
+    // carries what the user chose, and `renderJournal` derives the same value
+    // from `state.openFolds`, so writing it would be a second copy of one fact.
+    liveFold.innerHTML = nextFold.innerHTML;
+    // THE SECOND OF THE TWO "Show more" CALL SITES — see `wire()`, which
+    // carries the first and says why they are not one function. Four lines,
+    // and scripts/test-next-memory-switch.js drives both of them and requires
+    // them to do the same thing.
+    const jm = liveFold.querySelector('#mem-journal-more');
+    if (jm) {
+      jm.addEventListener('click', () => {
+        state.journalLimit = JOURNAL_MORE;
+        const m = state.detail ? state.detail.machine : state.machine;
+        loadScope(state.scope, m, token).catch((err) => reportAsyncMountFailure(token, err));
+      });
+    }
+  }
+
+  renderedSignature = screenSignature();
 }
 
 /** One fetch shape for both reads. Never throws; returns {data, error}. */
@@ -2110,7 +2559,7 @@ function renderProject() {
     }) + '</div>';
   }
   if (state.detailLoading && !read) {
-    return header + '<div class="mem-section">' + gatedLoader(loadGate, 'Reading state…') + '</div>';
+    return header + renderProjectSkeleton();
   }
 
   const scopes = (read && read.scopes) || [];
@@ -2243,6 +2692,99 @@ function renderProject() {
     : '';
 
   return header + statusBlock + streamsBlock + briefBlock + journalBlock;
+}
+
+/**
+ * THE FIRST FRAME OF A PROJECT NOBODY HAS READ YET.
+ *
+ * ── WHAT IT REPLACES, AND WHY THAT WAS THE REPORTED DEFECT ──────────────
+ * A bare `gatedLoader` in a `.mem-section`. Measured in a browser: the main
+ * column went from 5,062px to **215px** on the frame the click landed, sat
+ * there for the round trip, then jumped back. The loading gate means nothing
+ * is even DRAWN in that space for the first 200ms, so what the eye gets is a
+ * column that empties and refills — which is what "loaded with some delay"
+ * describes, at a delay of 30ms.
+ *
+ * ── IT IS NOT A DECORATION, IT IS THE ANSWER, EARLY ─────────────────────
+ * `GET /api/memory` has ALREADY told this view, for every project: the
+ * headline the newest save carried, which work-stream it was, that save's
+ * clock, harness, model and verdict, how many work-streams and saved copies
+ * there are, and whether there is a standing brief. That is most of block ①
+ * and the SHAPE of blocks ② and ③. So the skeleton paints the real Status
+ * reading from the row it already holds and reserves the rest — one ghost row
+ * per saved copy, up to the window — rather than painting a spinner over
+ * facts it is holding in its hand.
+ *
+ * NOTHING HERE IS INVENTED. Every figure comes off the index row; when the row
+ * is missing (the project was selected from a stale list) the ghosts stand
+ * alone and no reading is claimed. `aria-busy` says the region is still
+ * filling, so a screen reader is not told a partial table is the table.
+ *
+ * ── NO PULSE, AND NO FADE ON THE FILL EITHER ───────────────────────────
+ * The ghosts are flat, and the real content that replaces them is not faded
+ * in. Both were considered and both are refused for the same measured reason:
+ * this frame is on screen for 15-40ms. A shimmer is motion that says "wait"
+ * for less time than it takes to read the word, and a 120ms cross-fade over a
+ * 30ms wait makes the screen demonstrably SLOWER than the swap it decorates.
+ * The transition this screen was missing is not an animation — it is the
+ * column keeping its size, which is what this function is for.
+ */
+function renderProjectSkeleton() {
+  const row = state.projects.find((p) => p && p.domain === state.activeDomain
+    && p.project === state.activeProject) || null;
+
+  // ── BLOCK ① — THE REAL RENDERER, WITH THE HALF OF THE DATA WE HAVE ────
+  //
+  // `renderSaveStatus(null, null)` is not a trick: the function was already
+  // written to fall back to the index row for the "Working on" line, because
+  // `projectRead` legitimately has not landed yet at this exact moment, and
+  // with no project read and no open pair every OTHER line it can emit is
+  // correctly silent — the "Last saved" figure, the save verdict, the
+  // shared-harness warning, the brief's own age. So the skeleton claims
+  // exactly the one fact it holds and invents nothing, through the same code
+  // that will paint the finished block, which is why the two cannot say it
+  // differently.
+  const statusBody = renderSaveStatus(null, null) || '<div class="mem-ghost mem-ghost-line"></div>';
+
+  // ONE GHOST PER SAVED COPY, capped at the window the table itself paints, so
+  // the reserved height is the height the table will actually take. Never
+  // fewer than one: a project in this branch has been selected, and a table
+  // with no rows at all is the shape of the EMPTY state, which is a different
+  // screen and must not be implied while a read is in flight.
+  const copies = row && Number.isInteger(row.savedCopies) ? row.savedCopies
+    : (row && Number.isInteger(row.scopeCount) ? row.scopeCount : 1);
+  const ghostRows = Math.max(1, Math.min(WS_WINDOW, copies || 1));
+  let rows = '';
+  for (let i = 0; i < ghostRows; i++) rows += '<div class="mem-ghost mem-ghost-row"></div>';
+
+  // The three blocks are the SAME component, with the same ids, titles and
+  // ledes as the real ones — so the skeleton and the fill differ only in their
+  // bodies and the block chrome does not move at all between the two paints.
+  // The ⓘ folds are deliberately omitted: a help panel a user could open and
+  // have torn away 30ms later is worse than one that arrives with the content.
+  return (
+    renderBlock({
+      num: null, id: 'memory-status', title: 'Status',
+      ledeHtml: 'Where this project stands right now, across every machine.',
+      bodyHtml: '<div class="mem-status-stack" aria-busy="true">' + statusBody + '</div>',
+    }) +
+    renderBlock({
+      num: null, id: 'memory-streams', title: 'Work-streams',
+      ledeHtml: 'Every work-stream of this project, newest first. Open one to read its handoff.',
+      bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>',
+    }) +
+    // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
+    // brief that does not exist would make the column shrink on arrival, which
+    // is the jump this whole function exists to remove, in the other direction.
+    (row && row.hasBrief
+      ? renderBlock({
+        num: null, id: 'memory-brief', title: 'Standing brief',
+        ledeHtml: 'Your goals, firm decisions and working model — read by every agent, written by you.',
+        bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
+          + '<div class="mem-ghost mem-ghost-para"></div></div>',
+      })
+      : '')
+  );
 }
 
 /**
@@ -3800,7 +4342,11 @@ async function openWorkStream(scope, machine, token) {
   }, token);
 
   state.journalLimit = JOURNAL_PAGE;
-  await loadScope(scope, wanted, token);
+  // `reader: true` — the main column must not be repainted underneath the
+  // overlay this press just opened; `cache: true` — a pair read earlier in this
+  // session opens with no request at all. Both are documented on loadScope.
+  // NO `deliberate: false`: a row press IS the user choosing this machine.
+  await loadScope(scope, wanted, token, { reader: true, cache: true });
   if (!isCurrentMount(token)) return;
   if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we read
 
@@ -4063,6 +4609,18 @@ function wire(token) {
   // <details>, so `data-mem-fold="brief"` no longer exists and the transient
   // "open because nothing else is on the page" state v3.54.0 had to chase is
   // not merely fixed but inexpressible.
+  //
+  // DELIBERATELY INLINE, AND NOT SHARED WITH `patchOpenPair`. That function
+  // replaces the journal's contents without a render and has to re-reach the
+  // "Show more" button afterwards, which is the ordinary argument for lifting
+  // these two listeners into one helper. It is refused for the reason this
+  // file's header states twice: `wire` is LIFTED by brace-matching and
+  // EXECUTED by scripts/test-agent-instructions.js against a hand-written set
+  // of stubs, so any module-level helper named here is an undefined
+  // identifier there — a CRASH rather than a failing assertion, which is the
+  // v3.11.0 shape. `patchOpenPair` keeps the <details> ELEMENT alive across
+  // its swap precisely so only ONE of the two listeners below has to be
+  // re-attached there, and that one names this block.
   document.querySelectorAll('[data-mem-fold]').forEach((el) => {
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
@@ -4089,6 +4647,14 @@ function wire(token) {
     });
   }
 
+  // ── "SHOW MORE" ON THE JOURNAL ────────────────────────────────────────
+  // Inline, like the fold above it and for the same reason: `wire` is lifted
+  // and executed against hand-written stubs, so it may not name a helper. The
+  // SECOND copy of these four lines is in `patchOpenPair`, which re-attaches
+  // this one listener after it swaps the journal's contents without a render;
+  // each site names the other, and `scripts/test-next-memory-switch.js` drives
+  // BOTH and requires them to do the same thing, so a change to one that is
+  // not made to the other goes red rather than going unnoticed.
   const more = document.getElementById('mem-journal-more');
   if (more) {
     more.addEventListener('click', () => {

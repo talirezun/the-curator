@@ -121,7 +121,7 @@
  *    returns for a falsy scope. Said so in the source, and measured.
  */
 
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, utimesSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -271,6 +271,70 @@ makeDomain('briefed');
   }
 }
 
+// ── A FIXTURE WHOSE TWO CLOCKS DISAGREE (v3.57.0) ────────────────────────
+//
+// `?open=newest` asks the route to pick the pair the VIEW's table puts first,
+// so that the view can paint a project from ONE response instead of two. The
+// only way to prove it picks on the right clock is a store where the two
+// clocks give different answers — which is not a contrived shape, it is what
+// EVERY synced machine has: git stamps `mtime` with the moment the checkout
+// landed, so the store's own order (mtimeMs, descending) says "whatever
+// arrived last" while every age on the page comes from the journal.
+//
+// Written to disk directly rather than through `saveWorkingState`, for the
+// same reason the shared-mirror fixture is: a save stamps both clocks with
+// `now`, and a fixture that cannot disagree with itself proves nothing.
+//
+// TWO PROJECTS, because the two properties need different shapes:
+//
+//   `clocks/skew`  — mtime and the agent's clock RANKED OPPOSITELY, so a pick
+//                    on either one is unmistakable.
+//   `clocks/tie`   — two pairs saved in the SAME second, with the store's
+//                    order (mtime) putting the LATER name first. Ties are not
+//                    a corner case here: every age on a scope row is a whole
+//                    number of seconds, and on a copied store git gives every
+//                    file the same mtime, so a whole project can tie at once.
+makeDomain('clocks');
+{
+  const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+  const DAY = 86400000;
+  const plant = (project, scope, machine, savedAtIso, mtimeSecondsAgo) => {
+    const dir = join(DOMAINS, 'clocks', 'state', project, scope, machine);
+    mkdirSync(dir, { recursive: true });
+    const cur = join(dir, 'current.md');
+    writeFileSync(cur,
+      '# Handoff\n\n## Headline\n\n' + scope + ' on ' + machine
+      + '\n\n## Where things stand\n\nPlanted.\n');
+    const jr = join(dir, 'journal.jsonl');
+    // `at`, which is the field the store reads — NOT `saved_at`, which is what
+    // this fixture said first and which produced a `writtenAt: null` the pick
+    // then fell back past to the file clock, quietly making the fixture agree
+    // with the defect it exists to catch.
+    writeFileSync(jr, JSON.stringify({
+      at: savedAtIso, scope, machine, headline: scope + ' on ' + machine,
+      harness: 'claude-code', model: 'claude-opus-5', bytes: 120,
+    }) + '\n');
+    // The FILE clock, set after the writes so nothing above resets it.
+    const t = new Date(Date.now() - mtimeSecondsAgo * 1000);
+    for (const f of [cur, jr, dir]) utimesSync(f, t, t);
+  };
+  // skew: the agent-OLD pair carries the NEWEST mtime, so the store lists it
+  // first and a pick on that order opens a fortnight-old handoff.
+  plant('skew', 'agent-old', 'box-a', iso(14 * DAY), 1);
+  plant('skew', 'agent-new', 'box-b', iso(5 * 60 * 1000), 60 * DAY / 1000);
+  // A SECOND MACHINE under the agent-newest SCOPE, ranked the other way by the
+  // two clocks again. Without it, naming the scope alone resolves the same
+  // pair as naming scope AND machine, and "the machine is passed too" is a
+  // claim no assertion can fail — the mutation that drops it ran GREEN until
+  // this row existed.
+  plant('skew', 'agent-new', 'box-c', iso(2 * DAY), 2);
+  // tie: identical agent clocks; `zz` carries the newer mtime and therefore
+  // comes first out of the store, while the table's order falls to the NAME.
+  const tieAt = iso(3 * 60 * 1000);
+  plant('tie', 'zz-second', 'box-a', tieAt, 1);
+  plant('tie', 'aa-first', 'box-a', tieAt, 600);
+}
+
 // ── Recursive fingerprint of the whole domains tree ───────────────────────
 
 function fingerprint(dir) {
@@ -411,14 +475,16 @@ const byName = Object.fromEntries((idx.body.projects || []).map((p) => [p.projec
 // view's Projects list and the menu-bar widget. `blank` is therefore absent,
 // and this assertion is the deliberate replacement for "index lists every
 // domain, not only those with state", which described v3.17.0-v3.47.
-eq('the index lists the projects that HAVE something', Object.keys(byName).length, 3);
+// 5 = alpha + briefed + shared-cohort + the two clock-skew projects added in
+// v3.57.0; `blank` is still absent, which is what the next line asserts.
+eq('the index lists the projects that HAVE something', Object.keys(byName).length, 5);
 ok('...and a domain with neither a brief nor a save is not one of them',
   !byName.blank, JSON.stringify(Object.keys(byName)));
 // THE OMISSION IS ONLY SAFE IF THE SERVER SAYS IT LOOKED. An empty index would
 // otherwise be indistinguishable from "you have no domains", and the view
 // would tell a user with four domains to create a fifth.
 eq('...while the server says how many domains it scanned, so an EMPTY index is not ambiguous',
-  idx.body.domainsScanned, 4);
+  idx.body.domainsScanned, 5);
 
 // THE PAIRS-vs-WORK-STREAMS DISTINCTION. The fixture is deliberately
 // asymmetric — 2 scopes spread over 3 (scope, machine) pairs — so these two
@@ -523,6 +589,213 @@ ok('...and the STORE clamps it (returned <= its own MAX)',
   bigLimit.body.journal.returned <= ws.MAX_JOURNAL_ENTRIES);
 const junkLimit = await call('/:project', { params: { project: 'alpha' }, query: { scope: 'feature-x', journalLimit: 'abc' } });
 eq('a non-numeric journalLimit falls back to the store default without erroring', junkLimit.status, 200);
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§3b — `?open=newest`: the index and the first handoff in ONE answer');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The Agent-memory view needs BOTH halves to paint a project — the work-stream
+// index, which only a scope-LESS read produces, and one pair's `current.md`,
+// which only a SCOPED read produces — and until v3.57.0 it asked twice, in
+// series, because the second URL is not knowable until the first has answered.
+// Measured in a browser on a real store: 3 requests, 3 whole-column repaints,
+// and a main column that collapsed from 5,062px to 215px in between.
+//
+// THREE PROPERTIES ARE LOAD-BEARING and each is asserted on its own:
+//
+//   1. `?scope=` is UNCHANGED. Every other caller of this route, and this same
+//      view's Reload, still goes through it.
+//   2. The pair chosen is the one the VIEW's table puts first — the AGENT's
+//      clock, with the table's tie-break — or the page opens one handoff under
+//      a highlight sitting on another row (the v3.56.0 defect).
+//   3. `open` is byte-for-byte what the equivalent `?scope=&machine=` request
+//      answers, so the client needs one code path rather than two.
+
+// ── 1 · `?scope=` IS BYTE-IDENTICAL, against a recorded fixture ──────────
+//
+// Taken as the SAME call twice — once before the new option existed in this
+// section's mind and once after — is not possible in one process, so what is
+// recorded instead is the full body of a scoped read with the new query
+// present and ABSENT. `open` may not appear, and nothing else may move. Age
+// figures are normalised because the server recomputes them per read against
+// its own `now`; the STAMPS they derive from are left in.
+{
+  const norm = (o) => JSON.stringify(o, (k, v) => (
+    (k === 'ageSeconds' || k === 'writtenAgeSeconds' || k === 'arrivedAgeSeconds') ? 0 : v));
+  const plain = await call('/:domain/:project',
+    { params: { domain: 'alpha', project: 'alpha' }, query: { scope: 'feature-x' } });
+  const withOpt = await call('/:domain/:project',
+    { params: { domain: 'alpha', project: 'alpha' }, query: { scope: 'feature-x', open: 'newest' } });
+  eq('a scoped read still answers 200 with the option present', withOpt.status, 200);
+  ok('`?open=newest` alongside a `scope` changes NOTHING — a caller that has '
+    + 'already decided what to open has nothing for this to pick',
+  norm(plain.body) === norm(withOpt.body),
+  norm(plain.body).slice(0, 200) + ' | ' + norm(withOpt.body).slice(0, 200));
+  ok('...and in particular does not grow an `open` key', !('open' in withOpt.body));
+  // ANTI-VACUITY: the comparator can tell two bodies apart.
+  const other = await call('/:domain/:project',
+    { params: { domain: 'alpha', project: 'alpha' }, query: { scope: 'feature-y' } });
+  ok('CONTROL: the comparator really does report a difference when there is one',
+    norm(plain.body) !== norm(other.body));
+  // An unrecognised value is ignored rather than refused — a client from a
+  // future release must never turn this read into an error.
+  const junk = await call('/:domain/:project',
+    { params: { domain: 'clocks', project: 'skew' }, query: { open: 'something-else' } });
+  eq('an unrecognised `open` value is IGNORED, never a 400', junk.status, 200);
+  ok('...and answers the ordinary scope-less read', Array.isArray(junk.body.scopes) && !('open' in junk.body));
+}
+
+// ── 2 · THE PICK IS ON THE AGENT'S CLOCK ────────────────────────────────
+{
+  const skewIdx = await call('/:domain/:project', { params: { domain: 'clocks', project: 'skew' } });
+  eq('PRECONDITION: the skew fixture has three pairs across two work-streams',
+    (skewIdx.body.scopes || []).length, 3);
+  // The fixture is only a fixture if the two clocks really disagree.
+  const first = (skewIdx.body.scopes || [])[0] || {};
+  ok('FIXTURE: the store lists the agent-OLD pair first, because its FILE is the '
+    + 'newest — which is what a checkout does to every file it writes',
+  first.scope === 'agent-old', JSON.stringify((skewIdx.body.scopes || []).map((s) => s.scope)));
+  ok('...and that pair really is the older SAVE by the agent\'s own clock',
+    first.writtenAgeSeconds > 86400, String(first.writtenAgeSeconds));
+
+  const opened = await call('/:domain/:project',
+    { params: { domain: 'clocks', project: 'skew' }, query: { open: 'newest' } });
+  eq('the read still answers 200', opened.status, 200);
+  eq('...and still carries the whole work-stream index', (opened.body.scopes || []).length, 3);
+  ok('THE OPENED PAIR IS THE AGENT-NEWEST, not the store\'s first',
+    opened.body.open && opened.body.open.scope === 'agent-new',
+    JSON.stringify(opened.body.open && opened.body.open.scope));
+  // THE MACHINE IS NAMED, AND IT HAS TO BE. `agent-new` exists on two machines
+  // whose clocks disagree in opposite directions, so a read that names only the
+  // scope lets the STORE resolve the copy — by mtime — and the highlight lands
+  // on a row the table did not put first. Asserted against the control below,
+  // which shows the two really do resolve differently.
+  eq('...named down to the MACHINE, because the table marks its open row on the pair',
+    opened.body.open.machine, 'box-b');
+  {
+    const scopeOnly = await call('/:domain/:project',
+      { params: { domain: 'clocks', project: 'skew' }, query: { scope: 'agent-new' } });
+    eq('CONTROL: naming the scope ALONE resolves the OTHER machine, on the file '
+      + 'clock — which is what dropping the machine from the pick would open',
+    scopeOnly.body.machine, 'box-c');
+  }
+  ok('...and it carries the document, which is the half a scope-less read cannot give',
+    opened.body.open.current && opened.body.open.current.present === true);
+  ok('...and its journal', opened.body.open.journal && opened.body.open.journal.returned >= 1);
+
+  // THE TIE-BREAK. Both pairs saved in the same second; the store puts `zz`
+  // first on mtime and the table's order falls to the NAME.
+  const tie = await call('/:domain/:project',
+    { params: { domain: 'clocks', project: 'tie' }, query: { open: 'newest' } });
+  const tieFirst = (tie.body.scopes || [])[0] || {};
+  ok('FIXTURE: the two tied pairs are genuinely tied on the agent\'s clock',
+    (tie.body.scopes || []).length === 2
+    && tie.body.scopes[0].writtenAt === tie.body.scopes[1].writtenAt,
+    JSON.stringify((tie.body.scopes || []).map((s) => [s.scope, s.writtenAt])));
+  eq('FIXTURE: ...and the store still puts the LATER name first, on mtime',
+    tieFirst.scope, 'zz-second');
+  eq('A TIE FALLS TO THE NAME, exactly as the table\'s `workStreamOrder` does',
+    tie.body.open && tie.body.open.scope, 'aa-first');
+
+  // A PROJECT WITH NOTHING TO OPEN SAYS SO. `null` rather than an omitted key:
+  // a missing key is what an OLDER server answers, and the view's fallback
+  // depends on telling the two apart.
+  const empty = await call('/:domain/:project',
+    { params: { domain: 'briefed', project: 'briefed' }, query: { open: 'newest' } });
+  eq('a project with no work-streams answers 200', empty.status, 200);
+  ok('...and reports `open: null` — a key that is PRESENT and empty, so a client '
+    + 'can tell "nothing to open" from "this server does not know the option"',
+  'open' in empty.body && empty.body.open === null, JSON.stringify(empty.body.open));
+}
+
+// ── 3 · `open` IS THE SECOND REQUEST'S OWN ANSWER ───────────────────────
+//
+// Compared against the REAL `?scope=&machine=` call rather than against a list
+// of fields, because a field list is a second description of the payload that
+// would have to be maintained beside the store's own — and the disclosure
+// fields (`unlistedEntries`, `requestedMachine`, `machineIsThisHost`,
+// `installIdAvailable`, `machinesTruncated`) are exactly the class this repo
+// keeps losing by enumerating. A deep comparison cannot drop one silently.
+{
+  const norm = (o) => JSON.stringify(o, (k, v) => (
+    (k === 'ageSeconds' || k === 'writtenAgeSeconds' || k === 'arrivedAgeSeconds') ? 0 : v));
+  const opened = await call('/:domain/:project',
+    { params: { domain: 'clocks', project: 'skew' }, query: { open: 'newest' } });
+  const direct = await call('/:domain/:project', {
+    params: { domain: 'clocks', project: 'skew' },
+    query: { scope: opened.body.open.scope, machine: opened.body.open.machine },
+  });
+  ok('`open` is byte-for-byte the answer to the request it replaces',
+    norm(opened.body.open) === norm(direct.body),
+    'open=' + norm(opened.body.open).slice(0, 300) + '\n     direct=' + norm(direct.body).slice(0, 300));
+  // ANTI-VACUITY, twice: the bodies are not both empty, and the comparator can
+  // see a difference.
+  ok('CONTROL: the compared body is a real one, not two empty objects',
+    Object.keys(direct.body).length > 8, String(Object.keys(direct.body).length));
+  const wrong = await call('/:domain/:project',
+    { params: { domain: 'clocks', project: 'skew' }, query: { scope: 'agent-old' } });
+  ok('CONTROL: the comparator reports a difference against the OTHER pair',
+    norm(opened.body.open) !== norm(wrong.body));
+  // THE DISCLOSURE FIELDS SURVIVE THE NESTING. Named individually as well as
+  // covered by the deep compare, because this is the drop class the memory
+  // layer keeps re-learning and a named miss is easier to read than a diff.
+  for (const f of ['installIdAvailable', 'machineIsThisMachine', 'machineCount',
+    'machinesTruncated', 'unlistedMachines']) {
+    ok('the disclosure field `' + f + '` survives being nested under `open`',
+      f in opened.body.open, JSON.stringify(Object.keys(opened.body.open)));
+  }
+  // ...and the OUTER body keeps its own, which the inner read does not carry.
+  for (const f of ['scopeCount', 'distinctScopeCount', 'savedCopies', 'unlistedEntries', 'unlistedReason']) {
+    ok('the index half keeps `' + f + '` beside the opened pair',
+      f in opened.body, JSON.stringify(Object.keys(opened.body)));
+  }
+  eq('`scopeCount` still means the PAIR total on this route, not distinct scopes '
+    + '— a legacy name meaning two things, and neither is redefined here',
+  opened.body.scopeCount, 3);
+  eq('...while `distinctScopeCount` counts the WORK-STREAMS, which is the other '
+    + 'quantity and the reason the unambiguous name was added rather than one '
+    + 'of the two being redefined', opened.body.distinctScopeCount, 2);
+}
+
+// ── 4 · THE TWO RULES HTTP CANNOT REACH ─────────────────────────────────
+//
+// `listWorkingScopes` gives every real row an `ageSeconds` off its own file,
+// so a pair with NO readable time at all cannot be produced through the route.
+// Two of `tableFirstPair`'s rules therefore have no HTTP path, and both are
+// driven directly rather than left as branches with a comment claiming they
+// work — which is the shape this repo names "a test that proves a line exists
+// proves nothing".
+{
+  const { tableFirstPair } = routerMod;
+  ok('the pick is exported so its unreachable rules can be driven at all',
+    typeof tableFirstPair === 'function');
+  const young = { scope: 'young', machine: 'm', writtenAgeSeconds: 10 };
+  const old = { scope: 'old', machine: 'm', writtenAgeSeconds: 99999 };
+  const blind = { scope: 'blind', machine: 'm' };   // no clock of any kind
+  eq('ABSENCE NEVER DISPLACES A READING, whichever side it is on',
+    (tableFirstPair([blind, young, old]) || {}).scope, 'young');
+  eq('...and the same the other way round, so the rule is not an artefact of order',
+    (tableFirstPair([young, old, blind]) || {}).scope, 'young');
+  eq('a pair with no reading still WINS when it is alone — absence is not a '
+    + 'disqualification, only a non-displacement',
+  (tableFirstPair([blind]) || {}).scope, 'blind');
+  eq('...and when every pair is blind, the FIRST is answered rather than none',
+    (tableFirstPair([blind, { scope: 'blind2', machine: 'm' }]) || {}).scope, 'blind');
+  eq('no pairs at all is null, never a fabricated row', tableFirstPair([]), null);
+  eq('...and a non-array is the same answer rather than a throw', tableFirstPair(null), null);
+  ok('a hole in the list is skipped rather than crashing the pick',
+    (tableFirstPair([null, young]) || {}).scope === 'young');
+  // The agent's clock is PREFERRED, not merely accepted — asserted on rows
+  // whose two clocks rank them oppositely, with no filesystem involved.
+  const fileNew = { scope: 'file-new', machine: 'm', writtenAgeSeconds: 99999, ageSeconds: 1 };
+  const agentNew = { scope: 'agent-new', machine: 'm', writtenAgeSeconds: 10, ageSeconds: 99999 };
+  eq('the AGENT\'s clock wins over the file\'s whenever there is one',
+    (tableFirstPair([fileNew, agentNew]) || {}).scope, 'agent-new');
+  // ...and the file clock is a real fallback, not dead text.
+  const noAgent = { scope: 'no-agent', machine: 'm', ageSeconds: 5 };
+  eq('...while a pair with only a file clock is still ranked by it',
+    (tableFirstPair([old, noAgent]) || {}).scope, 'no-agent');
+}
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§4 — Driving every endpoint wrote NOTHING');
@@ -2058,6 +2331,22 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'screenSignature', 'memory.js') + '\n' +
+    // ── THE PROJECT CACHE (v3.57.0) ───────────────────────────────────────
+    // `refreshScopeList` DROPS this project's cached copies when it finds the
+    // work-stream list has moved, so the cache travels with the revalidation
+    // machinery or the shipped function is a ReferenceError here — a CRASH
+    // rather than a failing assertion, which is the shape this file's header
+    // warns about twice. The store itself is a bare Map, so it is declared
+    // here; its SIZE is read off live source rather than typed, for the same
+    // reason the poll constants above are.
+    'const readCache = new Map();\n' +
+    'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n' +
+    extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cacheKeyScope', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'forgetProject', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'refreshIndex', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'refreshScopeList', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'nextPollDelay', 'memory.js') + '\n' +
@@ -2976,14 +3265,32 @@ function makeReloader(stateObj, responder) {
     // this suite agree with itself about which pair is freshest.
     extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
+    // ── THE PROJECT CACHE (v3.57.0) ───────────────────────────────────────
+    // `reloadActive` DROPS every cached copy of this project before its first
+    // request — the whole meaning of the control is "my copy is stale" — and
+    // `loadScope` reads and writes the same store. Both travel with the
+    // functions, lifted rather than stubbed, or the shipped code is a
+    // ReferenceError here.
+    'const readCache = new Map();\n' +
+    'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n' +
+    extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cacheKeyScope', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'forgetProject', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'reloadActive', 'memory.js') + '\n' +
-    'return { reloadActive, loadScope };';
+    'return { reloadActive, loadScope, readCache };';
   const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'URLSearchParams',
-    'encodeURIComponent', 'JOURNAL_PAGE', body)(
+    'encodeURIComponent', 'JOURNAL_PAGE', 'patchOpenPair', body)(
     stateObj, () => { calls.renders++; }, () => mounted,
     async (url) => { calls.urls.push(String(url)); return responder(String(url)); },
-    URLSearchParams, encodeURIComponent, 10);
+    URLSearchParams, encodeURIComponent, 10,
+    // Never reached on this path — `reloadActive` never passes `reader: true`
+    // — and injected anyway, because an undefined collaborator inside a branch
+    // this suite does not take is a crash waiting for the branch that does.
+    () => { calls.patches = (calls.patches || 0) + 1; });
   return { ...api, calls, unmount: () => { mounted = false; } };
 }
 
@@ -3731,8 +4038,18 @@ section('§16 — Projects inside a domain (v3.48.0)');
       'JSON', 'reloadActive', 'refreshIndex', 'reportAsyncMountFailure',
       extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
+      // ── THE PROJECT CACHE (v3.57.0) ─────────────────────────────────────
+      // A successful brief save DROPS this project's cached copies, and does
+      // so on BOTH arms — including the one that does not re-read, because the
+      // user has already moved on. Lifted so that step really runs here; the
+      // Map is returned so §16f can assert the drop rather than the call.
+      'const readCache = new Map();\n' +
+      'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n' +
+      extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'cacheKeyScope', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'forgetProject', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'saveBrief', 'memory.js') + '\n' +
-      'return { saveBrief };')(
+      'return { saveBrief, readCache };')(
       stateObj, () => {}, () => mounted,
       async (url, init) => { calls.push({ url: String(url), init }); return responder(String(url), init); },
       encodeURIComponent, JSON,
@@ -4512,8 +4829,22 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       'JOURNAL_PAGE', 'WS_WINDOW',
       extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
+      // ── THE PROJECT CACHE (v3.57.0) ─────────────────────────────────────
+      // `selectProject` consults the cache before deciding whether to paint a
+      // skeleton, writes the answer back, and hands the payload to
+      // `applyProjectRead` — which is where the open pair is now chosen. All
+      // of it is LIFTED rather than stubbed: a stubbed cache could only ever
+      // miss, and a stubbed applyProjectRead would let this suite agree with
+      // itself about which pair the table puts first.
+      + 'const readCache = new Map();\n'
+      + 'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n'
+      + extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'applyProjectRead', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'selectProject', 'memory.js')
-      + '\nreturn { selectProject };')(
+      + '\nreturn { selectProject, readCache };')(
       st, () => true, () => {}, (d, q) => d + '/' + q,
       () => st.activeDomain + '/' + st.activeProject,
       () => {}, async () => ({ data: { scopes: [], brief: { present: false } }, error: null }),
@@ -4669,8 +5000,22 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       'JOURNAL_PAGE', 'WS_WINDOW',
       extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
+      // ── THE PROJECT CACHE (v3.57.0) ─────────────────────────────────────
+      // `selectProject` consults the cache before deciding whether to paint a
+      // skeleton, writes the answer back, and hands the payload to
+      // `applyProjectRead` — which is where the open pair is now chosen. All
+      // of it is LIFTED rather than stubbed: a stubbed cache could only ever
+      // miss, and a stubbed applyProjectRead would let this suite agree with
+      // itself about which pair the table puts first.
+      + 'const readCache = new Map();\n'
+      + 'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n'
+      + extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'applyProjectRead', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'selectProject', 'memory.js')
-      + '\nreturn { selectProject };')(
+      + '\nreturn { selectProject, readCache };')(
       st, () => true, () => {}, (d, q) => d + '/' + q,
       () => st.activeDomain + '/' + st.activeProject,
       () => {},
@@ -4752,27 +5097,45 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       scope: null, machine: null, wsWindow: WS_WINDOW_SRC });
 
     const urls = [];
+    let renders = 0;
+    let patches = 0;
     const btn = { dataset: { memScope: PRESSED.scope, memMachine: PRESSED.machine },
       _click: null, addEventListener(t, fn) { if (t === 'click') this._click = fn; } };
     const root = { querySelectorAll: (sel) => (sel.includes('mem-ws-open') ? [btn] : []) };
     const press = new Function('state', 'render', 'isCurrentMount', 'fetch',
       'URLSearchParams', 'encodeURIComponent', 'JOURNAL_PAGE',
       'openReader', 'isCurrentReader', 'handoffReaderContent', 'reportAsyncMountFailure',
+      'patchOpenPair',
       'let pendingFocusId = null;\n'
       + extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n'
+      // ── THE PROJECT CACHE (v3.57.0) ───────────────────────────────────
+      // A row press asks `loadScope` for `{reader: true, cache: true}`, so
+      // the cache is on this path and must be the real one: a stub could
+      // only ever miss, and missing is the arm this block drives.
+      + 'const readCache = new Map();\n'
+      + 'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n'
+      + extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cacheKeyScope', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'openWorkStream', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'bindWorkStreamRows', 'memory.js') + '\n'
       + 'return { bindWorkStreamRows };')(
-      st, () => {}, () => true,
+      st, () => { renders++; }, () => true,
       async (url) => { urls.push(String(url)); return { ok: true, json: async () => ({
         ok: true, scope: PRESSED.scope, machine: PRESSED.machine,
         current: { present: true, text: '# pressed\n' }, machines: [],
         journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } }) }; },
       URLSearchParams, encodeURIComponent, 10,
-      () => 1, () => true, () => null, () => {});
+      () => 1, () => true, () => null, () => {},
+      // The targeted DOM update a row press takes INSTEAD of a render. Counted
+      // rather than executed here: what it writes needs a real table, and this
+      // block's question is which of the two paths the press takes.
+      () => { patches++; });
 
     press.bindWorkStreamRows(root, 1);
     ok('SETUP: the row\'s handler was bound', typeof btn._click === 'function');
@@ -5209,6 +5572,14 @@ const EXECUTED = new Set([
   'render', 'captureFocus', 'restoreFocus',
   'screenSignature', 'nextPollDelay', 'stopPoll', 'schedulePoll',
   'fetchIndex', 'fetchState', 'refreshIndex', 'refreshScopeList', 'reloadActive', 'loadScope',
+  // v3.57.0 — the project cache and the one function that decides what a
+  // project payload paints. All seven are LIFTED rather than stubbed into
+  // every harness that reaches them (§11's revalidator, §15's reloader, §16f's
+  // saver and both selectProject harnesses in §17c/§18), because a stubbed
+  // cache could only ever miss and a stubbed applyProjectRead would let this
+  // suite agree with itself about which pair the table puts first.
+  'cacheKeyProject', 'cacheKeyScope', 'cacheGet', 'cachePut', 'forgetProject',
+  'payloadSignature', 'applyProjectRead',
   // v3.48.0 — projects inside a domain. All eight are lifted and run in §16.
   'keyOf', 'activeKey', 'initialPick', 'renderProjectGroups',
   'readRememberedProjects', 'rememberProject', 'renderBriefEditor', 'saveBrief',
@@ -5235,6 +5606,13 @@ const NOT_EXECUTED = {
   openWorkStream: 'async orchestration over loadScope + openReader, both of which §17c injects and counts; its own branches (already-open, fetch-then-open) are asserted there through the row handler',
   showMoreWorkStreams: 'insertAdjacentHTML into a live <tbody>; §17c drives it against a fake table and asserts the appended rows, the label and the count line',
   copyAgentInstructions: 'needs navigator.clipboard; EXECUTED for real (both the granted and the refused arm, plus the switch-mid-copy stamp) in test-agent-instructions.js, which lifts it from this same file',
+  // v3.57.0 — the two that need a painted column to say anything. Both are
+  // EXECUTED for real in scripts/test-next-memory-switch.js, which builds a
+  // DOM model of the main column and asserts what each one writes into it;
+  // §17c above additionally counts patchOpenPair as the path a row press takes
+  // INSTEAD of a render.
+  patchOpenPair: 'targeted DOM writes into a painted main column; EXECUTED against a DOM model in test-next-memory-switch.js, and counted as the row press\'s chosen path in §17c',
+  renderProjectSkeleton: 'the first frame of an unread project; EXECUTED in test-next-memory-switch.js, which asserts it reserves the table\'s height and claims no reading the index row does not carry',
 };
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',
