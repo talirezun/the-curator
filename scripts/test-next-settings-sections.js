@@ -12,7 +12,9 @@
  * fold, warnings never folded, and one rhythm (24 | hairline | 24) supplied by
  * the helper rather than by a margin somebody picked. The other three sections
  * that render a body — MCP bridge, Health & scan limits, Knowledge base — were
- * left on the old shape, and this release moves them across.
+ * left on the old shape, and this release moves them across. General followed
+ * in the same release, from a parallel worktree, which is why it arrives here
+ * second: the array below was written with a note saying to add it on merge.
  *
  * `scripts/test-next-model-gone-ui.js` already pins the RHYTHM (the CSS rule
  * and the wrapper's markup). What nothing pinned is that these three sections
@@ -25,8 +27,9 @@
  *   G1  each renderer calls settingsBlock(), and none emits .settings-section
  *   G2  settings.js carries no inline style that positions or spaces anything
  *   G3  every lede these renderers emit is ≤ 20 visible words  (EXECUTED)
- *   G4  a finding is never inside a fold: the stale note and the validation
- *       error render outside every hidden container                (EXECUTED)
+ *   G4  a finding is never inside a fold: the stale note, the validation error
+ *       and General's menu-bar failure-mode note all render outside every
+ *       hidden container                                           (EXECUTED)
  *   G5  every <details> in this view carries a `data-` hook
  *
  * ── EXECUTED, NOT SCANNED, WHERE IT MATTERS ────────────────────────────────
@@ -59,19 +62,24 @@ function section(t) { console.log('\n[1m' + t + '[0m'); }
 /**
  * THE RENDERER LIST, IN ONE PLACE.
  *
- * ⚠ `renderGeneral` IS DELIBERATELY ABSENT and must be added by the
- * orchestrator AFTER the parallel conversion of that function lands. It is
- * being moved onto `settingsBlock` in another worktree; adding it here before
- * that merge makes this suite red against a file that has not changed yet.
- * When it merges, add the string and nothing else — every guard below reads
- * this array.
+ * `renderGeneral` joined it once its own conversion merged. It is four
+ * `settingsBlock(null, …)` blocks concatenated bare, so it is subject to every
+ * guard below for exactly the reasons the other three are — and it is the one
+ * of the four most likely to regress, because it is the section a design pass
+ * reaches for first. It costs more harness than the others: it is a
+ * COMPOSITION (two row renderers inside one grouped card) and it forks on the
+ * install's update capability, so `REAL` and the dependency set below carry
+ * its collaborators. The note that used to stand here — "add the string and
+ * nothing else, every guard below reads this array" — understated that by a
+ * dozen lines, and adding the string alone threw `ReferenceError:
+ * currentTheme is not defined`.
  *
  * `renderProviders` is absent for a different reason: it does not call
  * `settingsBlock` itself, it concatenates four helpers that each do, and those
  * four are already executed by test-next-model-gone-ui.js and
  * test-next-providers-page.js.
  */
-const SECTION_RENDERERS = ['renderMcp', 'renderHealthLimits', 'renderStorage'];
+const SECTION_RENDERERS = ['renderMcp', 'renderHealthLimits', 'renderStorage', 'renderGeneral'];
 
 // ── Extraction: brace-matched, loud on desync ─────────────────────────────
 // The same matcher test-next-ui-polish.js and test-next-mcp-wizard.js use. A
@@ -126,11 +134,35 @@ for (const needle of ['function renderMcp(', 'function renderStorage(', 'setting
 // the fold, so stubbing them would make G3 and G4 assertions about the stub.
 // deriveMcpStatus and shouldShowMcpStaleNote are lifted real too — G4's whole
 // point is that the note fires from the real decision function.
+//
+// renderGeneral needs more of the file than the other three do, and all of it
+// is lifted REAL rather than stubbed. It concatenates `renderTextSize` and
+// `renderBackgroundMode` inside one grouped card and forks its update lede on
+// `installUpdateStyle`; the copy all three read lives in module-level tables.
+// G4's General arm measures a sentence `renderBackgroundMode` emits, and G3
+// measures ledes `settingsBlock` paints, so a stub anywhere on that path would
+// turn both into assertions about this file's own fixtures. Same set, same
+// reason, as scripts/test-next-settings-default-section.js §6.
+//
+// TX_INFO_GLYPH is the one thing NOT lifted: it arrives as a function
+// parameter in `run()`, and a `const` of that name in the same body is a
+// SyntaxError rather than a shadow.
+function constSource(re, what) {
+  const m = re.exec(code);
+  if (!m) throw new Error(`constSource: "${what}" not found in views/settings.js`);
+  return m[0];
+}
 const REAL = [
+  constSource(/const UPDATE_RECOVERY_INFO =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO'),
+  constSource(/const UPDATE_RECOVERY_INFO_INSTALLER =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO_INSTALLER'),
+  constSource(/const BACKGROUND_MODE_LABELS = \{[\s\S]*?\n\};/, 'BACKGROUND_MODE_LABELS'),
   extractFunction(src, 'settingsBlock'),
   extractFunction(src, 'infoMark'),
   extractFunction(src, 'deriveMcpStatus'),
   extractFunction(src, 'shouldShowMcpStaleNote'),
+  extractFunction(src, 'installUpdateStyle'),
+  extractFunction(src, 'renderTextSize'),
+  extractFunction(src, 'renderBackgroundMode'),
 ].join('\n');
 
 function baseState() {
@@ -144,8 +176,23 @@ function baseState() {
     aiHealthError: null, aiHealth: { costCeilingTokens: 50000, maxPairs: 500 },
     costCeilingInput: '50000', maxPairsInput: '500',
     scanLimitsValidationError: null, aiHealthSaving: false, aiHealthSaved: false,
-    configError: null, config: { domainsPath: '/Users/x/Curator Knowledge' },
+    configError: null,
+    config: {
+      domainsPath: '/Users/x/Curator Knowledge',
+      // THE MENU BAR ICON IS ON. G4's General arm measures a sentence that
+      // renders only in that state, and `renderBackgroundMode` draws the
+      // switch/checkbox pair only when the server offers exactly these three.
+      backgroundModes: ['window', 'tray', 'tray-only'], backgroundMode: 'tray',
+    },
     pickingFolder: false, pathCopyFeedback: null,
+    // ── General ──────────────────────────────────────────────────────────
+    // No `capabilities` on the version record, so installUpdateStyle() resolves
+    // to 'git-pull': the CHECKOUT install mode, which is the one every browser
+    // install is in. The two packaged forks of the update lede are driven by
+    // test-next-settings-default-section.js §6, which runs all three; this
+    // suite measures the block SHAPE, which does not fork.
+    quick: null, live: null, liveConfirmOpen: false, quickLoading: false,
+    updateChecking: false, version: { version: '9.9.9' },
   };
 }
 
@@ -170,6 +217,20 @@ function run(name, state) {
     crossWriteBusy: () => false,
     crossWriteTitle: (c) => 'A write is in flight — ' + c,
     renderCrossWriteBanner: () => '',
+    // General's collaborators that are NOT part of what is measured: the
+    // browser-local preferences it reads, and the panels it delegates to.
+    // Passed by name, so an unlisted one is a named ReferenceError here rather
+    // than a wrong answer in the app — the §6 rule.
+    currentTheme: () => 'dark',
+    currentFontScale: () => 'default',
+    fontScaleOptions: () => [['default', 'Default', 'The default size']],
+    updatesAreBusy: () => false,
+    renderUpdateStatus: () => '<div class="upd-status"></div>',
+    renderQuickSummary: () => '',
+    renderLiveConfirm: () => '',
+    renderLiveResult: () => '',
+    inAppUpdate: null,
+    updaterAttached: null,
   };
   const names = Object.keys(deps);
   const fn = new Function(...names, [REAL, extractFunction(src, name), `return ${name};`].join('\n'));
@@ -280,7 +341,11 @@ function visibleWords(fragment) {
         `${name}: …and is a sentence, not a fragment (${words.length} words, >= 4)`);
     }
   }
-  ok(total >= 4, `CONTROL: ${total} ledes measured across the three sections (a collapse to 0 would pass everything)`);
+  // EIGHT is what the four sections emit today: 2 + 1 + 1 + 4. Stated as a
+  // floor rather than an equality so that adding a block is not a test edit,
+  // but high enough that a section quietly losing its ledes cannot hide behind
+  // the per-renderer ">= 1" above.
+  ok(total >= 8, `CONTROL: ${total} ledes measured across the four sections (a collapse to 0 would pass everything)`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -342,6 +407,36 @@ function insideHiddenContainer(html, marker) {
   ok(html.includes('must be a whole number'), '…carrying the reason, verbatim');
   ok(insideHiddenContainer(html, 'settings-inline-error') === false,
     '…and it is NOT inside any hidden container or ⓘ fold panel');
+}
+{
+  // ── GENERAL: THE MENU BAR FAILURE-MODE NOTE ─────────────────────────
+  // Three separate things can swallow a newly-enabled menu bar icon on a
+  // modern Mac — the notch, a menu bar organiser, the menu bar items
+  // permission — and macOS gives an app no way to find out which, so the
+  // control says so itself. That is a FINDING about the thing the user just
+  // switched on, not an explanation of it, and the NEUTRAL half of the same
+  // control's old 58-word paragraph is precisely what moved under the
+  // Appearance ⓘ when General was converted. Those two halves parted company
+  // in one edit; nothing stopped the next such edit taking this half with it.
+  const NEEDLE = 'If the icon does not appear';
+  const html = run('renderGeneral', baseState());
+  ok(html.includes(NEEDLE),
+    'renderGeneral: with the menu bar icon ON, the failure-mode note is rendered');
+  // NAMED, not '…and it is NOT inside a fold' like the two above it: three
+  // identically-worded lines in one section mean the one that goes red cannot
+  // be read without counting which of the three it was.
+  ok(insideHiddenContainer(html, NEEDLE) === false,
+    'renderGeneral: …and that note is NOT inside any hidden container or ⓘ fold panel');
+  // Two controls, because this marker can go green for two wrong reasons: a
+  // detector that never reports "inside", and a sentence that is not there at
+  // all in the state being measured.
+  const FOLDED = 'scales every piece of text in the app';
+  ok(html.includes(FOLDED) && insideHiddenContainer(html, FOLDED) === true,
+    'CONTROL: the Text size explanation IS inside the Appearance ⓘ fold — so the detector can tell the two apart');
+  const off = baseState();
+  off.config = { ...off.config, backgroundMode: 'window' };
+  ok(!run('renderGeneral', off).includes(NEEDLE),
+    'CONTROL: with the icon OFF the note is absent — so the assertion above is about the ON state, not about the string existing somewhere');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
