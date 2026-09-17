@@ -380,6 +380,77 @@ const state = {
   // `text` is what actually reached the clipboard, which is what the refusal
   // path has to show.
   copied: null,
+
+  // ── THE PER-DOMAIN SESSION CACHE (stale-while-revalidate) ──────────────
+  //
+  // THE REPORTED DEFECT, measured on the maintainer's 3,445-page `articles`
+  // wiki before any of this existed (CDP, 1440x900, a rAF sampler on
+  // `.dm-browse-card.getBoundingClientRect().height` plus a MutationObserver
+  // on `#view-root`):
+  //
+  //   ENTERING the view   the card painted FULL at 16 ms from the state this
+  //                       module had kept, sat there for eight tenths of a
+  //                       second, and then collapsed 585 px -> 26 px at
+  //                       834 ms and re-expanded at 844 ms. That late blink
+  //                       is the reported one, and its cause was ORDERING:
+  //                       loadBrowse ran after `await loadHealth`, i.e. after
+  //                       a 750 ms whole-tree scan, and threw away a list it
+  //                       was about to re-fetch identically.
+  //   SWITCHING domain    26 px for ~60 ms (browse) and 89 px for 380-800 ms
+  //                       (health), i.e. a 521-559 px collapse and re-expand,
+  //                       seven `#view-root` replacements per switch.
+  //
+  // So the list and the project rows for a domain are KEPT, per slug, for the
+  // session, and a switch back to one paints them immediately while a
+  // revalidation runs behind it. `at` is the wall clock of the last
+  // successful fill; nothing branches on it today, and it is recorded because
+  // a cache with no age is a cache nobody can reason about later.
+  //
+  //   cache[slug] = { browse: {entries, memory, memoryTruncated, truncated,
+  //                            total, window}, projects: {rows, truncated,
+  //                            canWrite, readonly}, at }
+  //
+  // CORRECTNESS. This is a THIRD copy of data that is already slug-stamped
+  // twice, so it is deliberately the WEAKEST of the three: it is keyed by
+  // slug, it is only ever read for the slug it is keyed under, and what it
+  // seeds is re-stamped with that same slug — so activeBrowse() and
+  // activeProjects(), the existing LAYER 2, still independently refuse to
+  // paint it under any other domain. A cache entry can therefore make the
+  // screen STALE (bounded by the revalidation that always follows it); it
+  // cannot make the screen WRONG.
+  //
+  // WHAT IS DELIBERATELY NOT CACHED. The health report — `selectDomain`
+  // passes no keep flag to loadHealth and must not, because
+  // scripts/test-next-loading-gate.js §7b pins "a domain SWITCH takes the
+  // clearing path" as a safety property. The health panel's contribution to
+  // the blink is closed by RESERVING ITS HEIGHT instead (see state.reserve),
+  // which removes the jump without ever showing a figure that is not the one
+  // this domain's own last completed scan produced.
+  cache: Object.create(null),
+
+  // The height, in CSS pixels, of the browse card and the health card as they
+  // were LAST PAINTED WITH CONTENT. A placeholder that replaces one of them
+  // reserves that height instead of collapsing to its own intrinsic size.
+  //
+  // MEASURED FROM THE DOM rather than hardcoded, because the right number is
+  // a property of the domain you are leaving and the one you are arriving at,
+  // and those differ: articles' browse card measured 585 px against projects'
+  // 547, and their health cards 452 against 333. A fixed reserve would be
+  // wrong for one of every two domains. Captured in render(), which runs
+  // BEFORE setMain replaces the column, and never from a card that is itself
+  // reserving (that would ratchet the number down to the placeholder's own
+  // height on the second switch).
+  //   { browse: number, health: number }
+  reserve: null,
+
+  // ONE-SHOT ENTER-ANIMATION TOKEN. `{ key, used }` — a block whose content
+  // lands AFTER the view-enter animation has already ended (a first, uncached
+  // page list; a health report after a 750 ms scan) fades itself in on that
+  // FILL ONLY. Written by the loader that produced the fill, consumed by the
+  // first render that paints it, so a later re-render of the same content
+  // does not fade again — a block that re-animates on every repaint is the
+  // flicker this release is removing, wearing a nicer coat.
+  reveal: null,
 };
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
@@ -648,6 +719,26 @@ async function loadDomainsList(token) {
   state.loadError = null;
   render(token);
 
+  // ── THE AI PROBE RIDES ALONGSIDE THE STATS READ, NOT BEHIND IT ─────────
+  //
+  // GET /api/health/ai-available is free, local and has no network in it
+  // (measured 0.8-2.5 ms), and it depends on nothing this function has yet
+  // read. It used to sit between the stats read and the health scan purely
+  // because that is the order the lines were written in, which made a serial
+  // chain out of two independent reads.
+  //
+  // .catch HERE, AT CREATION, not at the await below: a promise that rejects
+  // before anything is awaiting it is an unhandled rejection, and the
+  // fail-safe answer to "can this install call an LLM" is no.
+  const aiProbe = fetchJSON('/api/health/ai-available')
+    .then((info) => {
+      if (!isCurrentMount(token)) return;
+      state.aiAvailable = !!info.available;
+      state.aiProvider = info.provider || null;
+      state.aiModel = info.model || null;
+    })
+    .catch(() => { if (isCurrentMount(token)) state.aiAvailable = false; });
+
   // The state commit is captured rather than applied, so `state.loaded`
   // flips at the moment we PAINT rather than the moment the response
   // lands. That is what lets the min-visible clamp actually hold a loader
@@ -688,21 +779,47 @@ async function loadDomainsList(token) {
   });
   if (!isCurrentMount(token)) return;
 
-  // AI availability is a free, local, no-network check — safe to fetch
-  // every time the view mounts.
-  try {
-    const info = await fetchJSON('/api/health/ai-available');
-    if (!isCurrentMount(token)) return;
-    state.aiAvailable = !!info.available;
-    state.aiProvider = info.provider || null;
-    state.aiModel = info.model || null;
-  } catch {
-    if (!isCurrentMount(token)) return;
-    state.aiAvailable = false;
-  }
-
-  if (!isCurrentMount(token)) return;
   if (state.activeSlug) {
+    // ── THE TWO CHEAP READS START NOW, NOT AFTER THE SCAN ────────────────
+    //
+    // THE ORDERING WAS THE REPORTED DEFECT. These two calls used to sit
+    // AFTER `await loadHealth(...)`, and GET /api/health/:domain is a
+    // whole-tree scan with no cache — measured 753-788 ms on the 3,445-page
+    // `articles` wiki, three consecutive calls, so it is not a cold-start
+    // artefact. The page list is a readdir: 18 ms for the same domain. So
+    // the one thing the user came to see was held behind the housekeeping
+    // report for three quarters of a second, and because loadBrowse used to
+    // blank the card on the way in, what the user actually saw was a fully
+    // painted screen that blinked 834 ms after it settled. Measured, before:
+    // the browse card at 585 px from 16 ms, 26 px at 834 ms, 585 px again at
+    // 844 ms. That late collapse is exactly "it loads like it's having a
+    // problem loading".
+    //
+    // Neither read depends on the scan or on the AI probe, and neither is
+    // awaited: each paints itself when it lands, and with the
+    // stale-while-revalidate in both of them a re-entry now paints nothing
+    // at all unless the answer changed.
+    //
+    // The project list is a cheap read (one stat walk of state/, no LLM and
+    // no network) and it is not paid for, so unlike the semantic scan there
+    // is nothing to preserve across a re-entry: re-ask, always.
+    loadProjects(state.activeSlug, token).catch(reportAsyncActionFailure);
+    // Same again for the page list on a re-entry. Unlike the semantic scan
+    // there is nothing paid to preserve, and unlike the health report there
+    // is no stale-while-revalidate to arrange in the CALLER: loadBrowse
+    // re-stamps its own state with the slug it was called for, keeps a list
+    // already painted for that same slug, and activeBrowse() refuses any
+    // other — so re-asking is both cheap and the safe direction.
+    loadBrowse(state.activeSlug, token).catch(reportAsyncActionFailure);
+
+    // AWAITED, not raced. It resolves in single-digit milliseconds and has
+    // almost certainly landed already, but loadHealth's decision to fetch the
+    // AI cost estimates reads state.aiAvailable — and "almost certainly" is
+    // how a cost figure comes to be missing on a slow machine and present on
+    // a fast one, for the same install.
+    await aiProbe;
+    if (!isCurrentMount(token)) return;
+
     // Cost honesty: a completed, PAID semantic-duplicate scan for THIS same
     // domain survives the remount instead of being thrown away and charged
     // for again. Its destructive-action gate was already re-armed by the
@@ -718,19 +835,13 @@ async function loadDomainsList(token) {
       // ever kept.
       keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, state.activeSlug),
     });
-    // The project list is a cheap read (one stat walk of state/, no LLM and
-    // no network) and it is not paid for, so unlike the semantic scan there
-    // is nothing to preserve across a re-entry: re-ask, always. Not awaited —
-    // it renders itself when it lands, and making the health scan wait on it
-    // would delay the panel above it for no reason.
-    loadProjects(state.activeSlug, token).catch(reportAsyncActionFailure);
-    // Same again for the page list on a re-entry. Unlike the semantic scan
-    // there is nothing paid to preserve, and unlike the health report there
-    // is no stale-while-revalidate to arrange: loadBrowse re-stamps its own
-    // state with the slug it was called for and activeBrowse() refuses any
-    // other, so re-asking is both cheap and the safe direction.
-    loadBrowse(state.activeSlug, token).catch(reportAsyncActionFailure);
-  } else render(token);
+  } else {
+    // No domain to load anything for — but the AI probe is still in flight
+    // and still writes state, so it is awaited here too rather than left to
+    // land on a torn-down mount.
+    await aiProbe;
+    render(token);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1175,6 +1286,13 @@ async function loadHealth(slug, token, opts) {
   try {
     const report = await fetchJSON('/api/health/' + encodeURIComponent(slug));
     if (slug !== state.activeSlug || !isCurrentMount(token)) return; // user switched domains, or left the view, mid-fetch
+    // A report that REPLACES the "Scanning…" placeholder has missed the
+    // view-enter animation by three quarters of a second, so it fades in on
+    // this fill only. A revalidation behind a report already on screen
+    // (`keepStale`) does not: that block is already there, and fading an
+    // in-place update is how a repaint reads as a flicker. One-shot token,
+    // consumed by the render that paints it — see renderHealthPanel.
+    if (!keepStale) state.reveal = { key: slug + ':health', used: false };
     state.health = report;
     state.healthSlug = slug;
     state.healthStale = false;
@@ -2106,6 +2224,55 @@ function selectDomain(slug) {
   state.projectLc = null;
   state.projects = null;
   state.copied = null;
+
+  // ── AND THEN THIS DOMAIN'S OWN LAST-SEEN LISTS COME BACK ───────────────
+  //
+  // THE CLEARING ABOVE IS UNCONDITIONAL AND STAYS THAT WAY. What is restored
+  // here is never the domain we are leaving — it is the slug we are arriving
+  // at, read out of a cache keyed by that slug, and re-stamped with it. So
+  // the property those two lines exist for ("the previous domain's list was
+  // dropped before the ask, never rendered under the new heading") is
+  // untouched: there is no arrangement of this code in which domain A's rows
+  // can appear under domain B's name, and activeBrowse()/activeProjects()
+  // still independently refuse a mismatched stamp at RENDER time.
+  //
+  // IT HAPPENS HERE, BEFORE THE render() BELOW, AND THAT IS THE WHOLE POINT.
+  // Everything in this function runs in one synchronous task, so the browser
+  // paints once, at the end of it. Seeding before that single paint is what
+  // makes the 26 px collapsed card unobservable rather than merely brief —
+  // it was measured on screen for ~60 ms per switch, a 521-559 px jump down
+  // and back up.
+  //
+  // A MISS IS THE STATUS QUO. `state.cache[slug]` is absent on the first
+  // visit to a domain in a session, and both fields simply stay null, which
+  // is exactly what this function did before.
+  const cached = state.cache ? state.cache[slug] : null;
+  if (cached && cached.browse) {
+    state.browse = {
+      slug, loading: false, error: null,
+      entries: cached.browse.entries, memory: cached.browse.memory,
+      memoryTruncated: cached.browse.memoryTruncated, truncated: cached.browse.truncated,
+      total: cached.browse.total,
+      // The filter, the facet and the window are a statement about what the
+      // user was doing on the LAST visit, not about the domain. They reset,
+      // so a switch lands on the whole list the way it always has.
+      filter: '', folder: 'all', window: cached.browse.window,
+    };
+  }
+  if (cached && cached.projects) {
+    state.projects = {
+      slug, loading: false, error: null,
+      rows: cached.projects.rows, truncated: cached.projects.truncated,
+      canWrite: cached.projects.canWrite, readonly: cached.projects.readonly,
+    };
+  }
+  // The scan is DECLARED here rather than a moment later inside loadHealth,
+  // for the reason loadDomainsList already records at its own copy of this
+  // line: loadHealth runs synchronously up to its first await and would set
+  // it anyway, so declaring it now folds two states into the single paint
+  // this task produces instead of leaving an intermediate one in which the
+  // health section has vanished entirely.
+  state.healthLoading = true;
   render(myMountToken);
   loadHealth(slug, myMountToken).catch(reportAsyncActionFailure);
   loadProjects(slug, myMountToken).catch(reportAsyncActionFailure);
@@ -2174,14 +2341,33 @@ function activeProjects() {
 }
 
 async function loadProjects(slug, token) {
-  state.projects = { slug, loading: true, error: null, rows: [], truncated: false, canWrite: false, readonly: false };
-  render(token);
+  // ── STALE-WHILE-REVALIDATE, the same three states as loadBrowse ────────
+  // `painted` = a filled, non-errored list for THIS slug is already on
+  // screen, either because this module's state survived leaving the view or
+  // because selectDomain seeded it from the session cache a moment ago. Then
+  // nothing is blanked and nothing is rendered on the way in; the skeleton
+  // rows below are for a genuinely cold first sight of a domain only.
+  //
+  // WRITTEN INLINE, deliberately, rather than through a shared helper. This
+  // function is LIFTED and EXECUTED by scripts/test-next-domain-projects.js
+  // inside a sandbox whose collaborators are a fixed hand-written list, so a
+  // new free identifier here does not make that suite go red — it makes it
+  // CRASH with a ReferenceError, which reads like a passing run in a summary
+  // line. That is the v3.11.0 shape this repo has recorded twice. `state` is
+  // supplied by every such sandbox, so reaching the cache through it is the
+  // one spelling that stays executable in all of them.
+  const painted = !!(state.projects && state.projects.slug === slug &&
+                     !state.projects.loading && !state.projects.error);
+  if (!painted) {
+    state.projects = { slug, loading: true, error: null, rows: [], truncated: false, canWrite: false, readonly: false };
+    render(token);
+  }
   try {
     // fetchJSON THROWS on a non-2xx and returns the parsed body otherwise —
     // it is this file's one fetch shape and is not re-implemented here.
     const body = await fetchJSON('/api/memory/' + encodeURIComponent(slug) + '/projects');
     if (!isCurrentMount(token) || state.activeSlug !== slug) return;
-    state.projects = {
+    const next = {
       slug,
       loading: false,
       error: null,
@@ -2193,8 +2379,25 @@ async function loadProjects(slug, token) {
       canWrite: !!(body && body.canWrite === true),
       readonly: !!(body && body.readonly === true),
     };
+    // The whole answer, serialised — not a digest of the fields someone
+    // thought the renderer reads. See browseSignature for why.
+    const sig = JSON.stringify([next.rows, next.truncated, next.canWrite, next.readonly]);
+    const slot = (state.cache && (state.cache[slug] || (state.cache[slug] = {}))) || {};
+    // An identical revalidation repaints nothing: setMain() rebuilds the
+    // whole column, and a column that comes back identical is pure cost.
+    if (painted && slot.projectsSig === sig) return;
+    state.projects = next;
+    slot.projects = {
+      rows: next.rows, truncated: next.truncated, canWrite: next.canWrite, readonly: next.readonly,
+    };
+    slot.projectsSig = sig;
   } catch (err) {
     if (!isCurrentMount(token) || state.activeSlug !== slug) return;
+    // A FAILED BACKGROUND RE-ASK NEVER REPLACES A GOOD LIST WITH AN ERROR.
+    // The rows on screen came from a successful read of this same domain and
+    // the user did not ask for the re-ask; blanking them would be strictly
+    // worse than saying nothing.
+    if (painted) return;
     state.projects = {
       slug, loading: false, rows: [], truncated: false, canWrite: false, readonly: false,
       error: err.message,
@@ -2979,6 +3182,26 @@ function browseWindow(b) {
   return Number.isFinite(w) && w >= BROWSE_RENDER_CAP ? w : BROWSE_RENDER_CAP;
 }
 
+/**
+ * The page list's per-domain signature, for the revalidation compare.
+ *
+ * A FULL STRUCTURAL SERIALISATION, not a hand-picked digest of "the fields
+ * that matter". A digest is a second, silently-drifting statement about which
+ * fields the renderer reads, and this repo's recorded failure shape is exactly
+ * that: a check that stopped reaching the thing it protects. JSON.stringify
+ * cannot miss a field the renderer uses, so a revalidation that returns
+ * anything different at all repaints.
+ *
+ * MEASURED before choosing it, on the real 3,445-entry `articles` payload in
+ * the browser (see the release notes for the figure): the cost is a small
+ * fraction of one frame, and it is paid ONCE per revalidation in exchange for
+ * not rebuilding the entire main column — which is the far larger bill, and
+ * the one the user actually sees.
+ */
+function browseSignature(entries, memory, truncated, memoryTruncated) {
+  return JSON.stringify([entries, memory, !!truncated, !!memoryTruncated]);
+}
+
 async function loadBrowse(slug, token) {
   // Capture the gate for THIS call. `loadGate` is module-scoped and the
   // next mount replaces it, so settling the module variable from a stale
@@ -2986,12 +3209,44 @@ async function loadBrowse(slug, token) {
   // loader that is legitimately up. A cancelled gate ignores settle(), so
   // the stale path becomes a no-op instead.
   const gate = loadGate;
-  state.browse = {
-    slug, loading: true, error: null, entries: [], memory: [], memoryTruncated: false,
-    truncated: false, total: 0, filter: '', folder: 'all', window: BROWSE_RENDER_CAP,
-  };
-  if (gate) gate.begin();
-  render(token);
+
+  // ── STALE-WHILE-REVALIDATE: is there anything to blank? ────────────────
+  //
+  // `painted` means a filled, non-errored list for THIS EXACT SLUG is already
+  // in `state.browse` — which happens in two ways, and both are the reported
+  // defect:
+  //
+  //   RE-ENTRY   this module's `state` deliberately survives leaving the
+  //              view, so returning to Domains finds the list already there.
+  //              The old code discarded it and re-fetched the same bytes,
+  //              and because that fetch ran AFTER `await loadHealth` it did
+  //              so 834 ms in — long after the screen had settled, which is
+  //              what made the blink so visible.
+  //   A SWITCH   selectDomain has already seeded this slug's cached list, in
+  //              the same synchronous task, so the collapsed card never
+  //              reaches a frame.
+  //
+  // When it is painted we take no gate, blank nothing, and render nothing on
+  // the way in: the revalidation below is invisible unless it finds a
+  // difference. Only a COLD first sight of a domain shows a placeholder, and
+  // even that one reserves the outgoing card's height (renderBrowsePanel).
+  const painted = !!(state.browse && state.browse.slug === slug &&
+                     !state.browse.loading && !state.browse.error);
+  // THE GATE IS BEGUN ONLY IF WE BLANKED. `begin()`/`settle()` are counted,
+  // so settling a gate we never began decrements somebody else's outstanding
+  // load and hides a loader that is legitimately up — the very hazard the
+  // captured-gate comment above exists for.
+  const began = !painted;
+  let repaint = false;
+
+  if (!painted) {
+    state.browse = {
+      slug, loading: true, error: null, entries: [], memory: [], memoryTruncated: false,
+      truncated: false, total: 0, filter: '', folder: 'all', window: BROWSE_RENDER_CAP,
+    };
+    if (gate) gate.begin();
+    render(token);
+  }
   try {
     // `include=memory` is opt-in ON THE SERVER (see src/routes/wiki.js) and
     // this is the caller that wants it: the memory facet needs the list, and
@@ -3001,28 +3256,77 @@ async function loadBrowse(slug, token) {
     if (!isCurrentMount(token)) return;
     const b = state.browse;
     if (!b || b.slug !== slug) return; // domain switched mid-fetch
-    b.entries = Array.isArray(data.entries) ? data.entries : [];
+    const entries = Array.isArray(data.entries) ? data.entries : [];
     // AN OLDER SERVER ANSWERS WITHOUT IT. A browser tab can be running this
     // shell against a server that predates the flag (the same case the
     // deprecated memory alias exists for), and the honest degradation is an
     // empty facet, never a thrown render.
-    b.memory = Array.isArray(data.memory) ? data.memory : [];
+    const memory = Array.isArray(data.memory) ? data.memory : [];
+    const sig = browseSignature(entries, memory, data.truncated, data.memoryTruncated);
+    // NULL-SAFE, like loadProjects's copy: a state object without a `cache`
+    // gets a throwaway slot rather than a TypeError. Every sandbox in the tree
+    // supplies `state` as a bare object, and a crash there reads like a pass
+    // in a summary line.
+    const slot = (state.cache && (state.cache[slug] || (state.cache[slug] = {}))) || {};
+
+    // ── AN IDENTICAL ANSWER COSTS NOTHING ───────────────────────────────
+    // A revalidation that finds the same list must not repaint: setMain()
+    // replaces the whole main column, which destroys focus, resets the
+    // scroll position of a 3,445-row list and re-runs every binder — for a
+    // screen that would come back pixel-identical. The signature is the
+    // whole response, so "same" here means genuinely same.
+    if (painted && slot.browseSig === sig) { slot.at = Date.now(); return; }
+
+    b.entries = entries;
+    b.memory = memory;
     b.memoryTruncated = !!data.memoryTruncated;
     b.truncated = !!data.truncated;
     b.total = b.entries.length;
     b.loading = false;
+    // The window is a statement about a match set. A revalidation that
+    // CHANGED the list has changed the match set, so it resets — carrying
+    // 600 across would make "Showing 600 of 12" expressible, which is the
+    // same reasoning the filter and facet handlers already apply.
+    if (painted) b.window = BROWSE_RENDER_CAP;
+    repaint = true;
+
+    slot.browse = {
+      entries, memory, memoryTruncated: b.memoryTruncated, truncated: b.truncated, total: b.total,
+      // The WINDOW travels with the cached list rather than being re-derived
+      // at the seed site: selectDomain must not name BROWSE_RENDER_CAP, which
+      // is this view's constant and not part of what a switch knows about.
+      window: BROWSE_RENDER_CAP,
+    };
+    slot.browseSig = sig;
+    slot.at = Date.now();
+
+    // A COLD fill lands after the view-enter animation has already ended, so
+    // it fades itself in ONCE rather than appearing. A revalidation that
+    // replaced the list does not: the block is already on screen, and fading
+    // an update is how a repaint reads as a flicker.
+    if (!painted) state.reveal = { key: slug + ':browse', used: false };
   } catch (err) {
     if (!isCurrentMount(token)) return;
     const b = state.browse;
     if (!b || b.slug !== slug) return;
+    // A FAILED REVALIDATION NEVER DESTROYS A GOOD LIST. The pages on screen
+    // came from a successful read of this same domain; replacing them with
+    // an error card because a background re-ask timed out would be strictly
+    // worse than saying nothing, and the user did not ask for the re-ask.
+    if (painted) return;
     b.loading = false;
     b.error = err.message;
+    repaint = true;
   } finally {
     // MUST be a finally: the two `b.slug !== slug` early returns above
     // (domain switched mid-fetch) would otherwise skip settle and leave
     // the gate pending forever — a loader that appears at 200 ms and never
     // leaves, which is worse than the flash this whole change removes.
-    settleGate(gate, () => render(token));
+    //
+    // ONLY IF WE BEGAN IT. See `began` above: settling a gate this call
+    // never began is what decrements another in-flight load's counter.
+    if (began) settleGate(gate, () => render(token));
+    else if (repaint) render(token);
   }
 }
 
@@ -3041,17 +3345,57 @@ function renderBrowsePanel() {
   // NO GATE. Until v3.49.0 this branch rendered a "Browse pages" button and
   // the list existed only after someone pressed it — which is how a user
   // ended up unable to find his own wiki (see renderMain). The list is now
-  // loaded with the domain, alongside the project list and the health scan,
-  // so this branch is only ever the instant between the first paint and
-  // loadBrowse's own first render. It is the SAME placeholder the loading
-  // branch below shows, deliberately: a control here would flash a gate the
-  // user is not being asked to pass.
+  // loaded with the domain, alongside the project list and the health scan.
+  // It is the SAME placeholder the loading branch below shows, deliberately:
+  // a control here would flash a gate the user is not being asked to pass.
+  //
+  // CORRECTED (v3.57.0): this used to add "so this branch is only ever the
+  // instant between the first paint and loadBrowse's own first render". That
+  // was the DEFECT, not the reassurance it read as — loadBrowse blanked
+  // `state.browse` on every entry and every switch, including for a list it
+  // had already fetched and was about to re-fetch identically, and on entry it
+  // did so 834 ms in because it ran behind an uncached 750 ms health scan.
+  // Measured: 26 px between two 585 px paints. This branch is now reached only
+  // on a genuinely COLD first sight of a domain in a session; see loadBrowse.
   //
   // The read is cheap by construction — GET /api/wiki/:domain/list is a
   // readdir with no file bodies (see the section header) — and the render
   // cap below is what keeps a 3,300-page domain from painting 3,300 rows.
+  // MEASURED in the browser on the real 3,445-entry payload: 1.4 ms to parse
+  // the 483 KB response, 0.3 ms to sign it for the revalidation compare, and
+  // 5.6 ms median (8.5 ms worst of twelve) for a WHOLE main-column repaint
+  // including this card's 150-row build — inside one frame, so the cap and
+  // the v3.50.0 "Show N more" window are doing their job and nothing here
+  // needed optimising.
   if (!b || b.loading) {
-    return BROWSE_EYEBROW + '<div class="dm-browse-card">' +
+    // ── THE PLACEHOLDER HOLDS THE CARD'S HEIGHT ─────────────────────────
+    //
+    // THE BLINK WAS A COLLAPSE, NOT A SPINNER. `gatedLoader` returns the
+    // EMPTY STRING below the 200 ms threshold — correctly, and that decision
+    // is not being reopened here — so this card painted with no children at
+    // all: measured at 26 px between two 585 px paints, a 559 px jump down
+    // and back up. What was missing was not a loader; it was the SPACE.
+    //
+    // The number is the height this card had when it was last painted with
+    // content, captured off the live DOM in render() before the column is
+    // replaced (state.reserve). It is a measurement of the card the user is
+    // looking at, not a guess: the two domains measured here differ by 38 px
+    // (585 vs 547), and their health cards by 119, so one hardcoded reserve
+    // would be wrong for one of every two domains.
+    //
+    // ABSENT IS NOT ZERO. With no reserve recorded — the very first paint of
+    // a session, before any card has ever had content — no min-height is
+    // emitted at all, which is exactly what this branch did before. A
+    // fabricated default would reserve space for a card whose size nothing
+    // has measured.
+    //
+    // aria-busy says the same thing to a screen reader that the reserved
+    // space says to the eye, and it is the honest one to use here: the
+    // region is present and being updated, which is true whether or not the
+    // gate has decided the wait is long enough to put words on the screen.
+    const reserve = state.reserve && state.reserve.browse;
+    return BROWSE_EYEBROW + '<div class="dm-browse-card" aria-busy="true"' +
+      (reserve ? ' style="min-height:' + reserve + 'px"' : '') + '>' +
       gatedLoader(loadGate, 'Loading pages…', 'dm-browse-empty') + '</div>';
   }
   if (b.error) {
@@ -3093,12 +3437,29 @@ function renderBrowsePanel() {
     ? '<div class="dm-browse-note dm-quick-note-busy">' + icon('alertTriangle', 12) + ' This domain has more pages than the listing endpoint returns — the list below is incomplete.</div>'
     : '';
 
+  // ── THE ENTER ANIMATION, FOR CONTENT THAT MISSED IT ───────────────────
+  // A cold first fill of this card lands long after the view-enter animation
+  // has ended, so it appears abruptly. The one-shot token (state.reveal,
+  // written by loadBrowse) fades it in ON THAT FILL ONLY. Consumed here
+  // rather than cleared by the loader, because only the render knows the
+  // block actually reached the screen — and consumed rather than merely read,
+  // because a class that survives into the next repaint would make every
+  // subsequent render of this card fade, which is the flicker this release
+  // exists to remove wearing a nicer coat. A cache hit never sets the token,
+  // so a switch back to a domain you have already seen does not animate.
+  const revealKey = b.slug + ':browse';
+  let revealCls = '';
+  if (state.reveal && state.reveal.key === revealKey && !state.reveal.used) {
+    state.reveal.used = true;
+    revealCls = ' content-reveal';
+  }
+
   return (
     // A `.dm-section`, so its gap to Projects below is the SAME rule as every
     // other gap on this card. See renderProjectsPanel for the reported defect.
     '<section class="dm-section dm-pages">' +
       BROWSE_EYEBROW +
-      '<div class="dm-browse-card">' +
+      '<div class="dm-browse-card' + revealCls + '">' +
         '<div class="dm-browse-controls">' +
           '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
           '<div class="dm-browse-tabs">' + tabs + '</div>' +
@@ -3953,8 +4314,28 @@ function renderHealthPanel(domain, readonly) {
   // Only collapse to "Scanning…" when there is genuinely nothing to show.
   // A rescan behind a report we already have keeps that report on screen.
   if (state.healthLoading && !usable) {
+    // ── THE SCAN'S PLACEHOLDER HOLDS THE CARD'S HEIGHT ──────────────────
+    //
+    // WHY THIS PANEL GETS A RESERVE AND NOT A CACHE, stated because the page
+    // list beside it got the opposite treatment. `selectDomain` passes NO
+    // keep flag to loadHealth, so a domain switch always clears the report —
+    // and that is a SAFETY PROPERTY with a guard of its own
+    // (scripts/test-next-loading-gate.js §7b), not an oversight: showing one
+    // domain's issue counts under another's heading is a correctness bug,
+    // and the figures here are ones a user acts on. So the report is genuinely
+    // re-scanned on every switch, honestly says "Scanning…" while it is, and
+    // what is removed is only the LAYOUT JUMP — measured at 89 px against a
+    // filled card of 452 px (articles) and 333 px (projects), held for
+    // 380-800 ms because GET /api/health/:domain is a whole-tree scan with no
+    // cache (measured 753-788 ms on 3,445 pages, three consecutive calls).
+    //
+    // The `.dm-health-body` line itself is byte-pinned by that same suite as a
+    // measured exemption from the delay-gate rule. Only the card around it
+    // gains the reserved height.
+    const reserve = state.reserve && state.reserve.health;
     return healthSection(
-      '<div class="dm-health-card">' +
+      '<div class="dm-health-card" aria-busy="true"' +
+        (reserve ? ' style="min-height:' + reserve + 'px"' : '') + '>' +
         '<div class="dm-health-top"><div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div></div>' +
         '<div class="dm-health-body">Scanning…</div>' +
       '</div>'
@@ -4023,8 +4404,20 @@ function renderHealthPanel(domain, readonly) {
     { label: 'Dismissed', value: report.counts.dismissed },
   ]);
 
+  // Same one-shot token as the page list's, same reason: a report that lands
+  // after a 750 ms scan has missed the view-enter animation entirely, so it
+  // fades in on the fill that replaced the placeholder — and only that one.
+  // See renderBrowsePanel for why it is consumed here rather than cleared by
+  // the loader.
+  const healthRevealKey = domain.slug + ':health';
+  let healthRevealCls = '';
+  if (state.reveal && state.reveal.key === healthRevealKey && !state.reveal.used) {
+    state.reveal.used = true;
+    healthRevealCls = ' content-reveal';
+  }
+
   return healthSection(
-    '<div class="dm-health-card">' +
+    '<div class="dm-health-card' + healthRevealCls + '">' +
       '<div class="dm-health-top">' +
         '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
         '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
@@ -5736,7 +6129,80 @@ async function loadDismissedRecords(slug) {
 
 // ── Render entry point ─────────────────────────────────────────────────────
 
+// ── THE RESERVED HEIGHTS, MEASURED OFF THE CARD THE USER IS LOOKING AT ────
+//
+// Clamped rather than trusted. A rect can come back 0 (the card is inside a
+// `display:none` ancestor, or the window is minimised) and it can come back
+// enormous (a 3,445-row list rendered before `.dm-browse-list`'s 420 px cap
+// applies, in a browser that has not finished styling). Reserving either
+// number would be worse than reserving nothing: the first re-creates the
+// collapse this exists to remove, and the second opens a hole in the page.
+// Outside the band the previous reading is KEPT, because a reading we do not
+// believe is not evidence that the old one stopped being true.
+const RESERVE_MIN_PX = 80;
+const RESERVE_MAX_PX = 1400;
+
+/**
+ * Record the CURRENT height of the two cards that get replaced by a
+ * placeholder, so the placeholder can hold their space.
+ *
+ * WHY IT LIVES IN render() AND NOT IN renderMain(). It has to read the DOM
+ * BEFORE setMain() replaces it, and it has to do so from a function that is
+ * not lifted into any suite's sandbox: renderMain IS lifted (by
+ * scripts/test-next-domain-card-order.js, against a `document` stand-in with
+ * neither querySelector nor real elements), so a new free identifier there
+ * would make that suite CRASH rather than fail. render() is stubbed by every
+ * sandbox in the tree and lifted by none, which makes it the one place this
+ * can go without coupling a layout measurement to a test harness.
+ *
+ * NEVER FROM A CARD THAT IS ITSELF RESERVING. A placeholder carries
+ * aria-busy, and reading its height would ratchet the reserve down to the
+ * placeholder's own size on the very next switch — the reserve would decay
+ * to nothing over a few clicks and the defect would come back looking like a
+ * regression somewhere else entirely.
+ */
+let reserveCapturedThisTask = false;
+
+function captureCardReserve() {
+  if (typeof document === 'undefined' || !document.querySelector) return;
+  // ── ONCE PER TASK, and that is a correctness rule before it is a cost one.
+  //
+  // A domain switch calls render() three or four times in ONE synchronous
+  // task (selectDomain, then each loader's entry), and every call after the
+  // first would be reading a DOM the previous one has just written — so the
+  // number it captured would be the PLACEHOLDER's height, not the content
+  // card's, and the reserve would decay towards nothing over a few clicks.
+  //
+  // It is also the expensive reading: measured in the browser on the real
+  // 3,445-page domain, this pair of rect reads costs under 0.001 ms against
+  // a clean layout and 4.5 ms when it is forced to flush a just-written
+  // innerHTML. Taking only the first — which is the one against the clean,
+  // already-painted layout — is both the correct number and the free one.
+  //
+  // The flag resets in a microtask, i.e. at the end of the current task and
+  // before any subsequent one, so "this task" needs no clock and no timer.
+  if (reserveCapturedThisTask) return;
+  reserveCapturedThisTask = true;
+  if (typeof queueMicrotask === 'function') queueMicrotask(() => { reserveCapturedThisTask = false; });
+  else Promise.resolve().then(() => { reserveCapturedThisTask = false; });
+  const next = { browse: 0, health: 0 };
+  let any = false;
+  for (const [key, sel] of [['browse', '.dm-browse-card'], ['health', '.dm-health-card']]) {
+    const el = document.querySelector(sel);
+    if (!el || el.getAttribute('aria-busy') === 'true') continue;
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (h >= RESERVE_MIN_PX && h <= RESERVE_MAX_PX) { next[key] = h; any = true; }
+  }
+  if (!any) return;
+  const prev = state.reserve || { browse: 0, health: 0 };
+  state.reserve = {
+    browse: next.browse || prev.browse,
+    health: next.health || prev.health,
+  };
+}
+
 function render(token) {
+  captureCardReserve();
   renderSidebar(token);
   renderMain(token);
 }
@@ -5815,6 +6281,12 @@ registerView('domains', {
       state.kbBusy = false;
       state.kbNotice = null;
     state.aiProgress = null;
+      // A one-shot fade token that nothing consumed is a fade waiting to
+      // happen on a block that has been on screen since before the user left
+      // the view. `state.cache` and `state.reserve` deliberately SURVIVE: the
+      // first is what makes coming back instant, and the second is a
+      // measurement of a card this view will paint again.
+      state.reveal = null;
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
