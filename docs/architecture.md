@@ -1233,7 +1233,7 @@ The entry shape is a **public contract**: `src/routes/config.js` serialises entr
 
 That placement is deliberate and load-bearing. There are seven other entry points into `generateText` (ingest, compile, chat, query, health-AI, shared-brain, diagnostics); validating at a route would leave every other one open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL. The route (`POST /api/config/api-keys/model`) does call the predicate, but as a **read of the same function** to give the user an actionable 400 — not as a second implementation, and not as the only gate.
 
-The lookup is an array scan comparing with `===`, so `'__proto__'`, `'constructor'` and `'toString'` are structurally unable to resolve to anything: no object is ever indexed by the caller's string. `normalizeChatModel` in `chat.js` deliberately adds **no** object lookup of its own so it inherits that property by construction rather than by remembering an `Object.hasOwn` call.
+The lookup is a `Map.get` on a memoised id index (v3.57.0; before that an array scan comparing with `===`), and a `Map` has no prototype chain, so `'__proto__'`, `'constructor'` and `'toString'` are structurally unable to resolve to anything: no plain object is ever indexed by the caller's string. `normalizeChatModel` in `chat.js` deliberately adds **no** object lookup of its own so it inherits that property by construction rather than by remembering an `Object.hasOwn` call.
 
 ### Five model-producing sites, and they are not uniform
 

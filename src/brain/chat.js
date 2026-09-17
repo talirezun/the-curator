@@ -853,9 +853,10 @@ export function normalizeChatProvider(provider, normalizedModel = null) {
 // Validate a per-chat MODEL override. TWO independent gates, both required:
 //
 //   1. isOfferableModel(provider, model) — the OFFERABLE_MODELS allow-list, the
-//      same predicate getProviderInfo applies. Its lookup is an array scan
-//      comparing with `===`, so '__proto__' / 'constructor' / 'toString' cannot
-//      resolve to anything. This wrapper deliberately adds NO object lookup of
+//      same predicate getProviderInfo applies. Its lookup is a `Map.get` on a
+//      memoised id index (v3.57.0; an array scan with `===` before that) — a
+//      Map has no prototype chain, so '__proto__' / 'constructor' / 'toString'
+//      cannot resolve to anything. This wrapper deliberately adds NO object lookup of
 //      its own, so that property is inherited by construction rather than by
 //      remembering an Object.hasOwn call (the v3.0.9 normalizeResponseStyle bug
 //      shape, closed structurally).
