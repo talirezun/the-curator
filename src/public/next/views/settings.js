@@ -176,6 +176,12 @@ import { formatModelSummary } from '../shared/model-summary.js';
 // prose, a paragraph of it directly under the <h1> of four of the five
 // sections. The header component has no parameter that can put it back.
 import { renderViewHeader } from '../shared/text.js';
+// Every link out of this screen into the user documentation. A key, never a
+// path: `docsUrl`/`docsLinkHtml` THROW on an unknown key, and
+// scripts/test-docs-links.js reads the real markdown in docs/ and reds on a
+// heading that no longer matches — so a fold's "Read more in the guide"
+// cannot quietly start landing at the top of a page.
+import { docsLinkHtml } from '../shared/docs-links.js';
 // The design system's own progress component. REUSED rather than replaced by a
 // new linear bar: it refuses to fill a phase that reports nothing, it carries
 // the liveness cue during a long download, and its reduced-motion behaviour is
@@ -1728,6 +1734,37 @@ function renderMain(token) {
 }
 
 // ── General ──────────────────────────────────────────────────────────────
+//
+// ── FOUR BLOCKS, AND NOT ONE OF THEM IS A STEP (v3.54.0) ─────────────────
+//
+// This section used to be four `.settings-field-block`s in a flex column,
+// each opening with a paragraph of 29 to 58 words, sitting in a `gap: 24px`
+// container with nothing between them but that gap. The maintainer's verdict
+// on the same shape one screen over (Providers & keys, v3.53.0) was "a sea of
+// information"; the remedy there was the block — a rule, a bold title, a lede
+// of at most twenty visible words, and everything longer behind the ⓘ or
+// deleted outright. This is that remedy applied here, through the SAME
+// `settingsBlock` helper rather than a second look-alike.
+//
+// EVERY BLOCK PASSES `null` FOR THE NUMERAL. Providers & keys reads top to
+// bottom as a sequence and its numerals are part of what it is saying.
+// Software update, Appearance, System check and Setup guide are four
+// unrelated facilities you visit in whatever order you need them; numbering
+// them would claim an order this page does not have. `settingsBlock(null, …)`
+// also zeroes the 32px indent that exists only to clear a numeral.
+//
+// THE CONCATENATION IS BARE, with no `.settings-section` wrapper. That
+// wrapper was `display: flex; gap: 24px`, and the blocks now carry their own
+// `24 | 1px | 24` rhythm through `.settings-job-block + .settings-job-block`
+// — keeping both would have stacked a 24px flex gap on top of a 24px margin
+// and produced 73px between blocks. `renderProviders` concatenates bare for
+// exactly this reason; this now matches it.
+//
+// WHAT DID NOT MOVE BEHIND A FOLD. The menu bar's failure-mode paragraph
+// ("If the icon does not appear…") stays visible whenever the icon is on, and
+// so does the per-mode consequence line. v3.16.1's rule: a warning behind a
+// click is not a warning, and this one exists precisely because macOS gives
+// an app no way to tell the user WHICH of three things ate its icon.
 
 function renderGeneral() {
   const dark = currentTheme() === 'dark';
@@ -1741,75 +1778,84 @@ function renderGeneral() {
     ? quick.summary
     : null;
 
-  return (
-    '<div class="settings-section" id="section-general">' +
-      // ── SOFTWARE UPDATE COMES FIRST (v3.49.0) ────────────────────────
-      // Reported by a power user: the update panel "sits last". It was the
-      // third of four blocks here, under an appearance group and a system
-      // check, in a section that was itself read top-to-bottom only by
-      // people who had already found it. It is the block a user returns to
-      // most — Appearance, Text size and Menu bar are set once and never
-      // touched again — so it opens the section.
-      //
-      // NOTHING INSIDE IT CHANGED: same id, same copy, same buttons, same
-      // listeners in wireGeneralListeners. Only its position in this
-      // concatenation moved, which is why no update assertion anywhere in
-      // scripts/ had to be relaxed to make room for it.
-      //
-      // The sidebar footer's "Updates" button still lands here (it switches
-      // to this section and runs the check) — a 272px footer has no room for
-      // a version comparison, a partial-install warning and a restart
-      // progress line, and the flow needs a surface that stays put while the
-      // server is restarting under it. That landing is now at the TOP of the
-      // section it lands on, which is what it always implied.
-      '<div class="settings-field-block" id="block-updates">' +
-        '<span class="settings-field-label settings-label-row">Software update' + recovery.btn + '</span>' +
-        // The hint has to be right BEFORE the button is clicked, so it reads
-        // the install's own capability rather than a check result that does
-        // not exist yet. The git sentence ("installing replaces The Curator's
-        // own program files and restarts it") is not merely irrelevant to a
-        // packaged install — it describes something that build refuses to do.
-        (installerMode
-          ? (updaterAttached === true
-            ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build, and installs it here — ' +
-              'it downloads, checks the file, then restarts into the new version. Your knowledge base, API keys and ' +
-              'sync settings are never touched.</p>'
-            : '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
-              'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
-              'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
-              'are never touched.</p>')
-          : '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
-            'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>') +
-        recovery.panel +
-        '<div class="settings-btn-row">' +
-          '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
-            (state.updateChecking ? 'Checking…' : 'Check for updates') +
-          '</button>' +
-        '</div>' +
-        renderUpdateStatus() +
-      '</div>' +
+  // ── SOFTWARE UPDATE COMES FIRST (v3.49.0) ──────────────────────────────
+  // Reported by a power user: the update panel "sits last". It is the block a
+  // user returns to most — Appearance, Text size and Menu bar are set once
+  // and never touched again — so it opens the section. The sidebar footer's
+  // "Updates" button lands here, and that landing is now at the top of the
+  // section it lands on, which is what it always implied.
+  //
+  // THREE LEDES, ONE PER INSTALL MODE, because the sentence has to be right
+  // BEFORE the button is pressed and therefore reads the install's own
+  // capability rather than a check result that does not exist yet. Each is
+  // the first clause of the paragraph it replaces; the rest is under the ⓘ.
+  const updateLede = installerMode
+    ? (updaterAttached === true
+      ? 'Installs the newest build here. Your knowledge base, keys and sync settings are never touched.'
+      : 'Finds the newest build and opens its download page — you run the installer. Your data is untouched.')
+    : 'Installs the published version over this copy. Your knowledge base, keys and sync settings are untouched.';
 
-      // ── THE INSET GROUPED LIST, AND WHY THESE THREE ARE ONE GROUP ────────
-      // A stack of label+control pairs with a gap between them is a FORM; a
-      // rounded card whose rows are separated by a hairline inset to the
-      // label's own x-offset is a macOS settings group. The difference is not
-      // decoration: the separator says "these rows belong to each other and
-      // the ones below do not", which a gap cannot say.
-      //
-      // These three and no others. Appearance, Text size and Menu bar are all
-      // "how the app presents itself on this machine", they are all instant
-      // and reversible, and none of them spends money or writes to disk.
-      // Software update sits ABOVE the group and System check below it, and
-      // neither is IN it for the same reason — each is a multi-state panel
-      // with progress, errors and its own result surface, and a row in a
-      // grouped list cannot hold one honestly. (Software update moved above
-      // in v3.49.0; see its own block for why. The argument for keeping it
-      // out of the group is unchanged by that move.)
-      //
-      // The rows keep .settings-field-block wholesale, so every id, every
-      // data-* hook and every test selector is byte-identical; the group only
-      // adds the card, the padding and the separators around them.
-      '<div class="cur-group cur-group-fields">' +
+  const updateInfo =
+    '<p>' + (installerMode
+      ? (updaterAttached === true
+        ? 'The Curator downloads the build, checks it arrived complete and unaltered, and only then restarts into ' +
+          'it — so a download that never finishes leaves this copy working.'
+        : 'This build does not replace its own program files. The check tells you a newer build exists and opens ' +
+          'the release page; running the installer replaces this copy in place.')
+      : 'Installing fetches the published branch and resets this checkout onto it, then restarts the server, so ' +
+        'the app directory ends up matching what is published rather than merging with it.') + '</p>' +
+    '<p>There is one channel: the check compares this copy with whatever is published right now, and there is no ' +
+    'separate preview track to opt into. ' + docsLinkHtml('settings.software-update', 'Read more in the guide') + '</p>';
+
+  const updateBody =
+    '<div class="settings-field-block" id="block-updates">' +
+      // The recovery mark keeps its own id, its own installer/git fork and its
+      // own panel — scripts/test-release-channel.js pins all three. What it
+      // loses is the "Software update" label it used to hang off, which is now
+      // the block's <h2>; hanging it there twice would be the "names itself
+      // twice" defect v3.50.0 recorded on Wiki health. It gets a sub-label
+      // naming its own subject instead.
+      '<div class="settings-label-row settings-subrow">' +
+        '<span class="settings-field-label">Going back to an earlier version</span>' + recovery.btn +
+      '</div>' +
+      recovery.panel +
+      '<div class="settings-btn-row">' +
+        '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
+          (state.updateChecking ? 'Checking…' : 'Check for updates') +
+        '</button>' +
+      '</div>' +
+      renderUpdateStatus() +
+    '</div>';
+
+  // ── THE INSET GROUPED LIST, AND WHY THESE THREE ARE ONE GROUP ──────────
+  // A stack of label+control pairs with a gap between them is a FORM; a
+  // rounded card whose rows are separated by a hairline inset to the label's
+  // own x-offset is a macOS settings group. The separator says "these rows
+  // belong to each other and the ones below do not", which a gap cannot say.
+  //
+  // These three and no others. Appearance, Text size and Menu bar are all
+  // "how the app presents itself on this machine", all instant and
+  // reversible, and none of them spends money or writes to disk.
+  //
+  // The rows keep .settings-field-block wholesale, so every id, every data-*
+  // hook and every test selector is byte-identical; the group only adds the
+  // card, the padding and the separators around them. What the rows LOST is
+  // their paragraphs: 55 words under Text size and 58 under Menu bar, now one
+  // measured line each, with the reasoning under this block's own ⓘ.
+  const appearanceLede = 'Theme, text size and the menu bar icon. Saved in this browser.';
+  const appearanceInfo =
+    '<p><strong>Text size</strong> scales every piece of text in the app. Icons, controls and the layout keep ' +
+    'their size, so it buys legibility with density rather than zooming the window — your browser’s own zoom ' +
+    'still does that, and this setting is remembered per browser. ' +
+    docsLinkHtml('settings.text-size', 'Read more in the guide') + '</p>' +
+    '<p><strong>Menu bar</strong> puts a small icon in the Mac menu bar showing what your coding agents have ' +
+    'just saved, so you can glance at it without opening the app. It is off by default — until an agent has ' +
+    'written something there is nothing for it to show — and it applies to the Mac app only, because a browser ' +
+    'install has no menu bar presence at all. ' +
+    docsLinkHtml('settings.menu-bar', 'Read more in the guide') + '</p>';
+
+  const appearanceBody =
+    '<div class="cur-group cur-group-fields">' +
       // Appearance. The label sits in a `.cur-group-label` column and the
       // control to its right — the kit's row axis. See the note in
       // views/settings.css on why the stacked axis was reverted.
@@ -1823,54 +1869,74 @@ function renderGeneral() {
         '</div>' +
       '</div>' +
 
-      // Text size. Sits directly under Appearance because it is the same
-      // KIND of setting — how the app looks on this screen — and it uses the
-      // same segmented control for the same reason.
+      // Text size. Same KIND of setting as Appearance — how the app looks on
+      // this screen — and the same segmented control for the same reason.
       //
-      // NO SEPARATE PREVIEW, deliberately: the change applies to the whole
-      // app in the same frame, including to this control and the label above
-      // it, so the app IS the preview. A row of sample text next to it would
-      // be a second thing to read that says less than the real one.
+      // NO SEPARATE PREVIEW, deliberately: the change applies to the whole app
+      // in the same frame, including to this control and the label above it,
+      // so the app IS the preview.
       renderTextSize() +
 
-      // Menu bar. Sits with Appearance and Text size because it is the same
-      // KIND of setting — where the app puts itself on this machine — and it
-      // uses the same segmented control for the same reason.
+      // Menu bar. Same KIND of setting — where the app puts itself on this
+      // machine.
       renderBackgroundMode() +
+    '</div>';
+
+  // ── SYSTEM CHECK ───────────────────────────────────────────────────────
+  // The lede states the three things a user weighs before pressing it: what
+  // it looks at, that it is free, and that it does not touch their content.
+  // WHAT IT COSTS STAYS ON THE BUTTON, never in the fold — the paid action
+  // carries its own price in its own label, which is v3.16.1's rule and the
+  // reason `.btn-ai` exists.
+  const checkLede = 'Confirms the app is set up. Free, instant, never reads your wiki.';
+  const checkInfo =
+    '<p>It reads the app’s own setup: whether an AI key is present, whether the knowledge folder exists and can ' +
+    'be written to, whether the credential files are locked to your account, and whether sync is configured. It ' +
+    'never opens a wiki page.</p>' +
+    '<p>To clean up wiki content — broken links, orphan pages, near-duplicates — use a domain’s health panel ' +
+    'instead. ' + docsLinkHtml('settings.system-check', 'Read more in the guide') + '</p>';
+
+  const checkBody =
+    '<div class="settings-field-block">' +
+      '<div class="settings-btn-row">' +
+        '<button type="button" class="btn btn-secondary" id="btn-run-quick-check"' + (state.quickLoading ? ' disabled' : '') + '>' +
+          (state.quickLoading ? 'Scanning…' : 'Run system check') +
+        '</button>' +
+        // `.btn-ai` — the shell's own tier-4 "spends money" variant, replacing
+        // a settings.css-local look-alike (`.btn-ai-cost`) that painted the
+        // same tint under a second name. One taxonomy, one class.
+        '<button type="button" class="btn btn-ai" id="btn-verify-ai">' +
+          icon('star', 13) + ' Verify AI connection · $0.0001' +
+        '</button>' +
       '</div>' +
 
-      // System check
-      '<div class="settings-field-block">' +
-        '<span class="settings-field-label">System check</span>' +
-        '<p class="settings-hint-text">Confirms the app itself is set up — key, folder, credential permissions, sync. ' +
-        'Free and instant, and it never reads your wiki content. To clean up wiki content, use a domain’s health panel instead.</p>' +
-        '<div class="settings-btn-row">' +
-          '<button type="button" class="btn btn-secondary" id="btn-run-quick-check"' + (state.quickLoading ? ' disabled' : '') + '>' +
-            (state.quickLoading ? 'Scanning…' : 'Run system check') +
-          '</button>' +
-          '<button type="button" class="btn btn-ai-cost" id="btn-verify-ai">' +
-            icon('star', 13) + ' Verify AI connection · $0.0001' +
-          '</button>' +
-        '</div>' +
+      (state.liveConfirmOpen ? renderLiveConfirm() : '') +
+      (state.live ? renderLiveResult() : '') +
 
-        (state.liveConfirmOpen ? renderLiveConfirm() : '') +
-        (state.live ? renderLiveResult() : '') +
+      (summary ? renderQuickSummary(quick) : '') +
+      (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
+    '</div>';
 
-        (summary ? renderQuickSummary(quick) : '') +
-        (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
-      '</div>' +
+  // ── SETUP GUIDE (D-C) ──────────────────────────────────────────────────
+  // The first-run panel is dismissible, so it needs exactly one place it can
+  // be found again — and exactly one `openOnboardingPanel()` call site, which
+  // scripts/test-next-onboarding.js counts.
+  const guideLede = 'Re-opens the first-run checklist: AI key, first domain, first source.';
+  const guideInfo =
+    '<p>The checklist shows itself until setup is finished and then stops; dismissing it is never permanent, and ' +
+    'this button is where it can always be found again. ' +
+    docsLinkHtml('settings.setup-guide', 'Read more in the guide') + '</p>';
 
-      // Setup guide (D-C). The first-run panel is dismissible, so it needs
-      // exactly one place it can be found again.
-      '<div class="settings-field-block">' +
-        '<span class="settings-field-label">Setup guide</span>' +
-        '<p class="settings-hint-text">The first-run checklist — AI key, first domain, first source. ' +
-        'It appears on its own until setup is finished, and dismissing it is never permanent.</p>' +
-        '<div class="settings-btn-row">' +
-          '<button type="button" class="btn btn-secondary" id="btn-show-setup-guide">Show setup guide</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>'
+  const guideBody =
+    '<div class="settings-btn-row">' +
+      '<button type="button" class="btn btn-secondary" id="btn-show-setup-guide">Show setup guide</button>' +
+    '</div>';
+
+  return (
+    settingsBlock(null, 'updates', 'Software update', updateLede, updateBody, updateInfo, null, { html: true }) +
+    settingsBlock(null, 'appearance', 'Appearance', appearanceLede, appearanceBody, appearanceInfo, null, { html: true }) +
+    settingsBlock(null, 'system-check', 'System check', checkLede, checkBody, checkInfo, null, { html: true }) +
+    settingsBlock(null, 'setup-guide', 'Setup guide', guideLede, guideBody, guideInfo, null, { html: true })
   );
 }
 
@@ -1901,10 +1967,12 @@ function renderTextSize() {
     '<div class="settings-field-block">' +
       '<div class="cur-group-label">' +
         '<span class="settings-field-label">Text size</span>' +
-        '<p class="settings-hint-text">Scales every piece of text in the app. Larger is easier to read; ' +
-        'smaller fits more on screen. Icons, controls and the layout keep their size, so this trades ' +
-        'density for legibility rather than zooming the whole window — your browser’s own zoom still ' +
-        'does that. Saved in this browser, and it applies straight away.</p>' +
+        // ONE LINE, and the rest under the Appearance block's ⓘ. This was 55
+        // words in the row itself — the trade, the zoom caveat, the persistence
+        // note — which is a paragraph of reading beside a control you operate
+        // by looking at the result. What survives is the only part that helps
+        // you choose: which direction each option goes.
+        '<p class="settings-hint-text">Larger is easier to read; smaller fits more.</p>' +
       '</div>' +
       '<div class="theme-segmented fs-segmented" role="group" aria-label="Text size">' + buttons + '</div>' +
     '</div>'
@@ -2049,10 +2117,13 @@ function renderBackgroundMode() {
   return (
     '<div class="settings-field-block" id="block-background-mode">' +
       '<span class="settings-field-label">Menu bar</span>' +
-      '<p class="settings-hint-text">Puts a small icon in the Mac menu bar showing what your coding ' +
-      'agents have just saved, so you can glance at it without opening the app. Off by default — ' +
-      'until an agent has written something there is nothing for it to show. This applies to the Mac ' +
-      'app; a browser install has no menu bar presence.</p>' +
+      // ONE LINE, and the rest under the Appearance block's ⓘ, which is where
+      // the 58-word version went: what the icon shows, why it is off by
+      // default, and that a browser install has no menu bar presence. The row
+      // keeps what a user needs to decide with — what it is for, and where it
+      // works. THE FAILURE-MODE PARAGRAPH BELOW IS NOT PART OF THAT MOVE and
+      // stays visible; see the docblock above.
+      '<p class="settings-hint-text">Shows what your agents just saved. Mac app only.</p>' +
       pair +
       (buttons
         ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="Menu bar">' + buttons + '</div>'
@@ -2061,8 +2132,13 @@ function renderBackgroundMode() {
         ? '<div class="settings-inline-error">' + escapeHtml(state.backgroundModeError) + '</div>'
         : '') +
       (chosen ? '<p class="settings-hint-text">' + escapeHtml(chosen) + '</p>' : '') +
+      // A NOTE, not a hint, and never a fold. It names three ways the feature
+      // silently fails with nothing on screen to say so, which is the one
+      // class v3.16.1 forbids putting behind a click. `.settings-fail-note`
+      // gives it a left rule so it reads as an aside about the thing that was
+      // just turned on rather than as more of the same grey prose.
       (active && active !== 'window'
-        ? '<p class="settings-hint-text">If the icon does not appear: it can be pushed off the edge ' +
+        ? '<p class="settings-hint-text settings-fail-note">If the icon does not appear: it can be pushed off the edge ' +
           'behind the notch on a narrow screen, filed into a hidden section by a menu bar organiser ' +
           'such as Bartender or Ice, or withheld by the menu bar items permission in System Settings ' +
           '→ Privacy &amp; Security. macOS gives an app no way to tell which, so check all three.</p>'

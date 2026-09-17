@@ -507,6 +507,48 @@
 .bgmode-segmented { flex-wrap: wrap; }
 .bgmode-seg-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
+/* ── General blocks (v3.54.0) ── */
+
+/* General is now four `settingsBlock(null, …)` blocks — the same component
+   Providers & keys uses — so the rhythm, the heading, the lede and the ⓘ fold
+   all arrive from rules that already exist. These two are the only things the
+   section needs that the block does not already give it.
+
+   ── A SUB-LABEL INSIDE A BLOCK BODY ────────────────────────────────────
+   The Software-update block carries a SECOND info mark: the recovery panel,
+   which answers "how do I go back", not "what does this block do". Its button
+   used to hang off the `Software update` field label; that label is now the
+   block's own <h2>, and repeating the title inside the body to re-host it
+   would be the "names itself twice" shape v3.50.0 recorded on Wiki health. So
+   it gets a row of its own, named for its own subject, set one step quieter
+   than the block title it sits under — it is an escape hatch, not a heading.
+   `.settings-label-row` (above) already supplies the flex/centring; this only
+   takes the weight down. */
+.settings-subrow .settings-field-label { color: var(--text-3); }
+
+/* ── THE FAILURE-MODE NOTE, WHICH MAY NEVER BE A FOLD ─────────────────────
+   Three separate things can eat a new menu bar icon on a modern Mac — the
+   notch, a menu bar organiser, the OS permission — and macOS gives an app no
+   way to find out which. v3.16.1's rule is that a warning behind a click is
+   not a warning, so this paragraph stays on screen whenever the icon is on,
+   while everything neutral about the same control moved under the Appearance
+   block's ⓘ.
+
+   IT KEEPS `.settings-hint-text`'s COLOUR, deliberately. That declaration is
+   --text-2 and is the copy the cascade lands on (see the INERT-COPY note
+   above; scripts/test-next-contrast-ratchet.js §9 pins it at 8.55 dark /
+   7.02 light). Dimming an aside is the reflex, and here it would take the one
+   paragraph a user reads only when something has already gone wrong and make
+   it the hardest one to read. The left rule does the separating instead —
+   --border-strong, a NON-TEXT edge, which is the same 1.48/1.64 the rest of
+   the app draws hairlines at and is recorded app-wide as under the 3:1 floor.
+   Nothing here is carried by that rule alone: remove it and the sentence is
+   still a paragraph of --text-2 body copy. */
+.settings-fail-note {
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--space-5);
+}
+
 /* ── System check results (shared by quick check + live check) ─────── */
 
 .settings-check-results {

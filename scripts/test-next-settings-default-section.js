@@ -47,6 +47,11 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
+// The REAL docs-link builder (see §6b). Imported rather than stubbed so a
+// fold's "Read more in the guide" is proved to resolve through the frozen
+// table in shared/docs-links.js, whose keys scripts/test-docs-links.js
+// checks against the actual markdown headings in docs/.
+import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -246,6 +251,188 @@ if (renderGeneralSrc) {
   ok(iUpdates < iGuide, '…and before the Setup guide, so it is the first thing the section shows');
   ok(renderGeneralSrc.indexOf('id="block-updates"', iUpdates + 1) === -1,
     'there is exactly one update block — it was MOVED, not copied');
+}
+
+// ── §6  GENERAL IS FOUR UNNUMBERED BLOCKS, AND THE LEDES ARE SHORT ────────
+console.log('\n§6  General uses settingsBlock, and no lede runs past 20 words');
+// ─────────────────────────────────────────────────────────────────────────
+// §5 above pins the ORDER of the four blocks. This pins the SHAPE they now
+// have, and it is driven rather than grepped: renderGeneral is lifted out of
+// the live file with its own helpers and EXECUTED against a stub state, so
+// "the lede is at most twenty words" is measured on the string a user is
+// served, not on a source literal that a later concatenation could lengthen.
+//
+// WHY A WORD COUNT IS A GUARD AT ALL. The pattern this release applies is a
+// bold title, a lede of at most twenty visible words, and everything longer
+// behind the ⓘ or deleted. A word count is the only part of that which a
+// machine can check, and it is exactly the part that rots: the four blocks
+// here opened with 29, 55, 29 and 25 words respectively, none of which was
+// written as a paragraph — each grew one clarifying clause at a time.
+{
+  /** Brace-matched function source, from the COMMENT-STRIPPED file so a
+   *  deleted call left behind as `// …` cannot satisfy anything below. */
+  function fnSrc(name) {
+    const m = new RegExp(`(?:^|\\n)function ${name}\\s*\\(`).exec(settingsCode);
+    if (!m) throw new Error(`§6: function ${name} not found`);
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let i = settingsCode.indexOf('{', settingsCode.indexOf('(', start)), depth = 0;
+    for (; i < settingsCode.length; i++) {
+      if (settingsCode[i] === '{') depth++;
+      else if (settingsCode[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+    }
+    const out = settingsCode.slice(start, i);
+    if (!/\n\}$/.test(out)) throw new Error(`§6: function ${name} desynced`);
+    return out;
+  }
+  function constSrc(re, what) {
+    const m = re.exec(settingsCode);
+    if (!m) throw new Error(`§6: ${what} not found`);
+    return m[0];
+  }
+
+  // ── 6a  THE SOURCE-LEVEL HALF ──────────────────────────────────────────
+  const gsrc = functionSource(settingsCode, 'renderGeneral');
+  ok(gsrc !== null, 'renderGeneral() is found');
+  const nullBlocks = (gsrc.match(/settingsBlock\(null,/g) || []).length;
+  ok(nullBlocks >= 4,
+    `renderGeneral composes at least four settingsBlock(null, …) blocks (found ${nullBlocks}) — the same ` +
+    'component Providers & keys uses, and `null` because none of General\'s four is step 1 of anything');
+  ok(!/class="settings-section"/.test(gsrc),
+    'and it concatenates them BARE, with no .settings-section wrapper — that wrapper is `display: flex; ' +
+    'gap: 24px` and the blocks already carry a 24px margin, so keeping both would put 73px between them');
+  ok(!/settingsBlock\([0-9]/.test(gsrc),
+    'no block here is numbered — a numeral would claim a reading order this section does not have');
+
+  // ── 6b  EXECUTED ───────────────────────────────────────────────────────
+  // Only the four functions whose OUTPUT is being measured are lifted;
+  // everything else is a stub passed in by name, so an unlisted collaborator
+  // is a named ReferenceError here rather than a wrong answer in the app.
+  const pieces = [
+    constSrc(/const TX_INFO_GLYPH =[\s\S]*?';\n/, 'TX_INFO_GLYPH'),
+    constSrc(/const UPDATE_RECOVERY_INFO =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO'),
+    constSrc(/const UPDATE_RECOVERY_INFO_INSTALLER =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO_INSTALLER'),
+    constSrc(/const BACKGROUND_MODE_LABELS = \{[\s\S]*?\n\};/, 'BACKGROUND_MODE_LABELS'),
+    fnSrc('infoMark'), fnSrc('settingsBlock'), fnSrc('installUpdateStyle'),
+    fnSrc('renderTextSize'), fnSrc('renderBackgroundMode'), fnSrc('renderGeneral'),
+  ].join('\n\n');
+
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const STUBS = {
+    escapeHtml: esc,
+    // THE REAL ONE, imported at the top of this file — not a stub. A fold that
+    // promises "Read more in the guide" and emits a dead href is the rot
+    // shared/docs-links.js exists to prevent, and docsUrl() THROWS on a key
+    // that is not in its table, so a typo reds this suite here.
+    docsLinkHtml,
+    icon: () => '<svg aria-hidden="true"></svg>',
+    currentTheme: () => 'dark',
+    currentFontScale: () => 'default',
+    fontScaleOptions: () => [['default', 'Default', 'The default size']],
+    updatesAreBusy: () => false,
+    renderUpdateStatus: () => '<div class="upd-status"></div>',
+    renderQuickSummary: () => '',
+    renderLiveConfirm: () => '',
+    renderLiveResult: () => '',
+  };
+  const BASE = {
+    quick: null, live: null, liveConfirmOpen: false, quickLoading: false,
+    updateChecking: false,
+    config: { backgroundModes: ['window', 'tray', 'tray-only'], backgroundMode: 'tray' },
+    version: { version: '9.9.9' },
+  };
+  function renderWith(state, updaterAttached) {
+    const names = [...Object.keys(STUBS), 'state', 'inAppUpdate', 'updaterAttached'];
+    const vals = [...Object.keys(STUBS).map((k) => STUBS[k]), state, null, updaterAttached];
+    return new Function(...names, pieces + '\nreturn renderGeneral;')(...vals)();
+  }
+
+  // THE THREE INSTALL MODES. The update lede forks on them, so a count taken
+  // in one mode says nothing about the other two — and the longest of the
+  // three paragraphs this replaced (43 words) was the one only a packaged
+  // build with no attached updater ever saw.
+  const INSTALLER = { ...BASE, version: { version: '9.9.9', capabilities: { updateStyle: 'download-installer' } } };
+  const MODES = [
+    ['git checkout', BASE, null],
+    ['packaged, updater attached', INSTALLER, true],
+    ['packaged, no updater', INSTALLER, false],
+  ];
+  const stripTags = (h) => h.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  let rendered = null, worst = 0, ledesSeen = 0, renderErr = null;
+  for (const [label, st, attached] of MODES) {
+    let html = '';
+    try { html = renderWith(st, attached); } catch (e) { renderErr = `${label}: ${e && e.message}`; }
+    ok(renderErr === null, `renderGeneral runs for "${label}"${renderErr ? ` — it does not: ${renderErr}` : ''}`);
+    if (renderErr) break;
+    if (label === 'git checkout') rendered = html;
+    const ledes = [...html.matchAll(/<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/g)]
+      .map((m) => stripTags(m[1]));
+    eq(ledes.length, 4, `"${label}" renders four ledes, one per block`);
+    for (const l of ledes) {
+      const n = l.split(/\s+/).filter(Boolean).length;
+      ledesSeen++;
+      worst = Math.max(worst, n);
+      ok(n <= 20, `"${label}" lede is ${n} visible words (ceiling 20): ${l}`);
+    }
+  }
+  ok(ledesSeen === 12, `CONTROL: twelve ledes were actually measured across the three modes (got ${ledesSeen}) — ` +
+    'a mode that silently rendered none would make the ceiling above vacuous');
+  console.log(`      (longest lede across all three install modes: ${worst} words)`);
+
+  // ── 6c  THE FAILURE-MODE SENTENCE IS NOT BEHIND A CLICK ────────────────
+  // v3.16.1: a warning behind a click is not a warning. Three separate things
+  // can eat a new menu bar icon on a modern Mac and macOS gives an app no way
+  // to find out which, so the setting says so itself — VISIBLY, whenever the
+  // icon is on. Everything neutral about the same control moved under the
+  // Appearance block's ⓘ in this release, which is exactly the edit that could
+  // take this with it by accident.
+  const NEEDLE = 'If the icon does not appear';
+  /** Remove every balanced <div …> subtree whose opening tag matches `startRe`. */
+  function dropSubtrees(html, startRe) {
+    let out = html, guard = 0, removed = 0;
+    while (guard++ < 50) {
+      const m = new RegExp(startRe).exec(out);
+      if (!m) break;
+      const scan = /<div\b|<\/div>/g;
+      scan.lastIndex = m.index;
+      let depth = 0, end = -1, t;
+      while ((t = scan.exec(out)) !== null) {
+        if (t[0] === '</div>') { depth--; if (depth === 0) { end = t.index + t[0].length; break; } }
+        else depth++;
+      }
+      if (end === -1) break;
+      out = out.slice(0, m.index) + out.slice(end);
+      removed++;
+    }
+    return { out, removed };
+  }
+  if (rendered) {
+    ok(rendered.includes(NEEDLE),
+      'with the menu bar icon ON, the failure-mode sentence is in the rendered HTML');
+    const iconOff = renderWith({ ...BASE, config: { backgroundModes: ['window', 'tray', 'tray-only'], backgroundMode: 'window' } }, null);
+    ok(!iconOff.includes(NEEDLE),
+      'CONTROL: and it is absent with the icon OFF, so the assertion above is about the ON state and not about the string existing');
+
+    const folds = dropSubtrees(rendered, '<div class="settings-block-info">');
+    const panels = dropSubtrees(folds.out, '<div class="tx-vh-panel"');
+    ok(folds.removed + panels.removed >= 4,
+      `CONTROL: the fold remover really removed something (${folds.removed} info wrappers + ${panels.removed} loose panels) — ` +
+      'without this, "the sentence survived" would be satisfied by a remover that does nothing');
+    ok(!/Read more in the guide/.test(panels.out),
+      'CONTROL: …and what it removed was the folds — every "Read more in the guide" is gone from the remainder');
+    ok(panels.out.includes(NEEDLE),
+      'the failure-mode sentence SURVIVES the removal of every fold and hidden panel — it is on screen, not behind the ⓘ');
+    // ANCHORED INSIDE A TAG. A bare /\shidden/ also matches the sentence's own
+    // prose — "filed into a hidden section by a menu bar organiser" — so the
+    // first draft of this line went red on the very string it is guarding.
+    ok(!/<[^>]*\shidden[\s>]/.test(panels.out),
+      'and nothing else in General is emitted with a hidden ATTRIBUTE, so there is no second place the sentence could have been parked');
+    // The per-mode consequence line is the other thing the design pass was
+    // told to keep visible. It is generated from BACKGROUND_MODE_LABELS, so
+    // pinning the table's own second column keeps this honest.
+    ok(panels.out.includes('A menu bar icon showing what your agents have just saved'),
+      'and so does the ACTIVE mode\'s consequence line — the sentence that replaced a hover-only title= in v3.44.0');
+  }
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
