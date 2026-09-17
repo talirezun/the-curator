@@ -8062,6 +8062,36 @@ function shouldShowMcpStaleNote(status, m, selfTest) {
     !!selfTest && selfTest.ok === true;
 }
 
+/**
+ * ── TWO NUMBERED BLOCKS, BECAUSE THEY REALLY ARE STEPS ─────────────────────
+ *
+ * The numerals are not decoration and they are not applied to every block in
+ * this file (Health and Knowledge base below take none — see
+ * `.settings-block-unnumbered` in views/settings.css). They are an ARGUMENT:
+ * you connect a client, and THEN — once something is calling write tools —
+ * the question of which domain an unqualified "my wiki" means can arise at
+ * all. Reading ② before ① is reading the answer to a question you have not
+ * asked yet.
+ *
+ * Everything here used to be a bare concatenation of a status card, a
+ * paragraph, a button row and a `.settings-field-block` carrying
+ * `style="margin-top:22px"` — a hand-picked number that existed because
+ * nothing else on the screen supplied a rhythm. `settingsBlock` supplies one
+ * (24 | hairline | 24, pinned by scripts/test-next-model-gone-ui.js), so the
+ * inline style is DELETED rather than converted to a token.
+ *
+ * ── WHAT IS VISIBLE, AND WHAT IS NOT ───────────────────────────────────────
+ * The visible lede names the three clients docs/mcp-user-guide.md names and
+ * carries the guide link, because that is the sentence a newcomer needs in
+ * order to know this is a standard rather than a Claude integration. The
+ * ChatGPT exclusion, the transport, and the "the app need not be running"
+ * fact are all TRUE and all still rendered — behind the ⓘ, because none of
+ * them is needed in order to press the button underneath.
+ *
+ * The self-test result, the stale note and the inline error are NOT folded
+ * and must never be: two of them are outcomes of something the user just
+ * did, and the third is a warning. Explanations fold; findings do not.
+ */
 function renderMcp() {
   if (state.mcpError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.mcpError) + '</div>';
@@ -8108,37 +8138,50 @@ function renderMcp() {
   };
   pendingListboxes.push(defaultDomainCfg);
 
-  return (
+  // ── ① CONNECT A CLIENT ───────────────────────────────────────────────────
+  //
+  // WHICH CLIENTS THIS ACTUALLY WORKS WITH (v3.49.0, re-cut here).
+  // Reported by a power user: every string on this screen and in the wizard
+  // said "Claude Desktop", so a newcomer could not tell whether the bridge is
+  // a Claude integration or a standard they can point anything at. It is the
+  // latter — a stdio JSON-RPC server, spawned as a local process — and the
+  // honest limit is the TRANSPORT, not the vendor.
+  //
+  // THE THREE CLIENTS NAMED HERE ARE THE THREE docs/mcp-user-guide.md NAMES,
+  // and no others: a settings screen is not the place to guess at another
+  // company's roadmap. scripts/test-next-mcp-wizard.js §11 checks each name
+  // against the real markdown, so this list cannot drift from what the docs
+  // can back.
+  //
+  // THE LINK STAYS IN THE VISIBLE LEDE rather than moving into the fold with
+  // the rest of the paragraph. It is the one thing here that answers a
+  // question this block cannot answer itself ("what IS an MCP client?"), and
+  // a link reachable only through a disclosure is a link with two clicks on
+  // it. The fold's trailing link is the same destination, which costs
+  // nothing: the fold ships closed, so the two are never on screen together
+  // unless the reader opened the long version — and at the bottom of the long
+  // version, "read more" is the exit.
+  const connectLede =
+    'Works with any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor. ' +
+    '<a href="' + MCP_GUIDE_URL + '" target="_blank" rel="noopener noreferrer">Read the MCP guide</a>.';
+  const connectInfo =
+    'ChatGPT’s web app cannot run a local server, so it cannot connect — the limit is the ' +
+    'transport, not the vendor. The bridge is a separate stdio process the client launches on ' +
+    'demand, so The Curator itself does not have to be running for a client to read your wiki. ' +
+    'Setting up writes a launch command into that client’s own config file, which is why it has ' +
+    'to be re-run whenever your knowledge folder, the app, or Node moves. ' +
+    docsLinkHtml('settings.mcp-bridge', 'Read more in the guide');
+
+  const connectBody =
     '<div class="settings-status-card">' +
       '<span class="' + pillClass + '"><span class="status-pill-dot"></span>' + pillLabel + '</span>' +
       '<code class="mono mcp-path-line">Claude Desktop → ' + escapeHtml(m.mcp_server_name) + ' → ' + escapeHtml(m.domains_dir) + '</code>' +
     '</div>' +
-    // ── WHICH CLIENTS THIS ACTUALLY WORKS WITH (v3.49.0) ────────────────
-    // Reported by a power user: every string on this screen and in the
-    // wizard says "Claude Desktop", so a newcomer cannot tell whether the
-    // bridge is a Claude integration or a standard they can point anything
-    // at. It is the latter — a stdio JSON-RPC server, spawned as a local
-    // process — and the honest limit is the TRANSPORT, not the vendor.
-    //
-    // THE THREE CLIENTS NAMED HERE ARE THE THREE docs/mcp-user-guide.md
-    // NAMES, and no others: a settings screen is not the place to guess at
-    // another company's roadmap. The ChatGPT sentence states the mechanism
-    // rather than a verdict, so it stays true whichever way that product
-    // moves — a page in a browser cannot spawn a program on this Mac.
-    '<p class="settings-hint-text" id="mcp-client-note">Works with any MCP client that runs local ' +
-    'servers — Claude Desktop, Claude Code, Cursor, and others. ChatGPT’s web app cannot run a ' +
-    'local server, so it cannot connect. ' +
-    '<a href="' + MCP_GUIDE_URL + '" target="_blank" rel="noopener noreferrer">Read the MCP guide</a>.</p>' +
-    // Counted from mcp/tools/index.js, not from memory: 18 registered
-    // tools, of which 4 mutate the wiki (the four guarded by
-    // refuseIfReadonly — compile_to_wiki, fix_wiki_issue,
-    // dismiss_wiki_issue, undismiss_wiki_issue). The previous copy said
-    // "seventeen tools, ten read and seven write", which was wrong on all
-    // three numbers and never mentioned that Claude can WRITE at all.
-    // scripts/test-next-mcp-wizard.js pins these against the real table.
-    // Description moved to SECTION_INFO.mcp. The tool counts moved WITH it
-    // verbatim; scripts/test-next-mcp-wizard.js pins them against the real
-    // table, so the numbers still have exactly one reader and one guard.
+    // Body-level buttons, so md (32px): the SIZE is the container's decision,
+    // per the taxonomy comment above `.btn` in shell.css. Exactly one primary
+    // — the wizard is the single action that completes this block. Self-test
+    // and View config are secondary (they inspect rather than complete), and
+    // Copy is ghost: it neither completes nor inspects, it hands you a string.
     '<div class="settings-btn-row">' +
       '<button type="button" class="btn btn-primary" id="btn-mcp-wizard">' + escapeHtml(wizardLabel) + '</button>' +
       '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (state.selfTestLoading ? ' disabled' : '') + '>' +
@@ -8149,17 +8192,30 @@ function renderMcp() {
     '</div>' +
     selfTestHtml +
     staleNoteHtml +
-    snippetHtml +
-    '<div class="settings-field-block" style="margin-top:22px">' +
-      '<span class="settings-field-label">Default domain for MCP writes</span>' +
-      '<p class="settings-hint-text">When a client calls a write tool and the user says “my wiki” without naming a ' +
-      'domain, this one is used. Leave unset to force the model to always name a domain.</p>' +
-      // The shared listbox (shared/listbox.js). No wrapper: the component
-      // draws its own indicator INSIDE the trigger, so there is nothing left
-      // to position a chevron against.
-      renderListboxHtml(defaultDomainCfg) +
-      (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
-    '</div>'
+    snippetHtml;
+
+  // ── ② DEFAULT DOMAIN FOR MCP WRITES ──────────────────────────────────────
+  // The listbox is the whole body. The paragraph that used to sit above it
+  // stated the rule and then its inverse in the same breath; the rule is the
+  // lede, and the inverse — which is the interesting half, because it is the
+  // safer setting and nobody would guess why — is the fold.
+  const domainLede = 'Used when a client says “my wiki” without naming a domain.';
+  const domainInfo =
+    'Leave it unset and a write tool refuses until the model names a domain itself, which is the ' +
+    'safer setting on an install with several domains: a mis-aimed compile writes its pages into ' +
+    'the wrong wiki, and nothing about that is obvious afterwards. ' +
+    docsLinkHtml('settings.mcp-default-domain', 'Read more in the guide');
+
+  const domainBody =
+    // The shared listbox (shared/listbox.js). No wrapper: the component draws
+    // its own indicator INSIDE the trigger, so there is nothing left to
+    // position a chevron against.
+    renderListboxHtml(defaultDomainCfg) +
+    (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '');
+
+  return (
+    settingsBlock(1, 'mcp-connect', 'Connect a client', connectLede, connectBody, connectInfo, '', { html: true }) +
+    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, domainInfo, '', { html: true })
   );
 }
 
@@ -8183,6 +8239,32 @@ function renderSelfTestResult() {
 
 // ── Health & scan limits ──────────────────────────────────────────────────
 
+/**
+ * ── ONE BLOCK, NO NUMERAL, AND TWO FIELDS IN A CARD ────────────────────────
+ *
+ * Unnumbered on purpose: `settingsBlock(null, …)` renders no numeral and no
+ * 32px indent (see `.settings-block-unnumbered`). A numeral is a claim that
+ * something comes first, and this section is one thing — there is no step 2
+ * for it to be step 1 of.
+ *
+ * ── WHY THE SAVE BUTTON STOPPED SITTING FLUSH AGAINST THE LAST FIELD ───────
+ * Before this change the two fields were bare `.settings-field-block`s and
+ * the Save button was the next sibling in the same flex column, at the
+ * column's own `gap`. Measured in the running app that came out at 12px
+ * between the second field's hint line and the top of the button — close
+ * enough that the button read as part of the field rather than as the action
+ * for both of them. Putting the fields inside a `.cur-group.cur-group-fields`
+ * card (the same kit card General's Appearance rows use) gives them an edge
+ * of their own, and `.settings-btn-row`'s own margin then lands the button
+ * clear of it.
+ *
+ * ── WHAT IS NOT FOLDED ─────────────────────────────────────────────────────
+ * The per-field hints state the DEFAULT for the input they sit under, which
+ * is in-context labelling rather than a description — one line, under the
+ * thing it explains. The validation error is a finding, so it is never
+ * folded. The section's own model ("a ceiling REFUSES, it does not
+ * truncate") is in the header's ⓘ, where it already was.
+ */
 function renderHealthLimits() {
   if (state.aiHealthError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>';
@@ -8190,30 +8272,66 @@ function renderHealthLimits() {
   if (!state.aiHealth) {
     return gatedLoader(loadGate, 'Loading scan limits…');
   }
-  return (
-    // Description moved to SECTION_INFO.health. The two per-field hints below
-    // stay where they are: each states a DEFAULT for the input it sits under,
-    // which is in-context labelling, not a view description.
-    '<div class="settings-field-block">' +
-      '<span class="settings-field-label">Cost ceiling per scan</span>' +
-      '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-cost-ceiling" value="' + escapeHtml(state.costCeilingInput) + '"><span class="mono suffix">tokens</span></div>' +
-      '<span class="settings-hint-text">Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite.</span>' +
-    '</div>' +
-    '<div class="settings-field-block">' +
-      '<span class="settings-field-label">Maximum candidate pairs per scan</span>' +
-      '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-max-pairs" value="' + escapeHtml(state.maxPairsInput) + '"></div>' +
-      '<span class="settings-hint-text">After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500.</span>' +
+
+  const lede = 'Caps what one AI duplicate scan may cost. Used by Health → Ask AI scans.';
+  const info =
+    'A scan estimates its own cost before it starts and REFUSES to run when the estimate is over ' +
+    'the ceiling — it does not start and truncate, so nothing is half-scanned and no partial ' +
+    'bill is run up. Raise the ceiling when a scan will not start on a large wiki; lower the pair ' +
+    'cap when you want a cheaper first look at a domain you have not scanned before. Neither ' +
+    'setting affects the free structural health scan. ' +
+    docsLinkHtml('settings.health-limits', 'Read more in the guide');
+
+  const body =
+    // The two fields as rows of the kit's inset group — the same card and the
+    // same label-left/control-right axis General's Appearance rows use. Each
+    // row keeps `.settings-field-block` wholesale, so every id and every test
+    // selector is byte-identical; the card only adds the edge, the padding and
+    // the hairline between them.
+    '<div class="cur-group cur-group-fields">' +
+      '<div class="settings-field-block">' +
+        '<div class="cur-group-label">' +
+          '<span class="settings-field-label">Cost ceiling per scan</span>' +
+          '<span class="settings-hint-text">Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite.</span>' +
+        '</div>' +
+        '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-cost-ceiling" value="' + escapeHtml(state.costCeilingInput) + '"><span class="mono suffix">tokens</span></div>' +
+      '</div>' +
+      '<div class="settings-field-block">' +
+        '<div class="cur-group-label">' +
+          '<span class="settings-field-label">Maximum candidate pairs per scan</span>' +
+          '<span class="settings-hint-text">After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500.</span>' +
+        '</div>' +
+        '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-max-pairs" value="' + escapeHtml(state.maxPairsInput) + '"></div>' +
+      '</div>' +
     '</div>' +
     (state.scanLimitsValidationError ? '<div class="settings-inline-error">' + escapeHtml(state.scanLimitsValidationError) + '</div>' : '') +
-    '<button type="button" class="btn btn-primary" id="btn-save-scan-limits"' + (state.aiHealthSaving ? ' disabled' : '') + '>' +
-      (state.aiHealthSaving ? 'Saving…' : 'Save scan limits') +
-    '</button>' +
-    (state.aiHealthSaved ? '<span class="mono settings-saved-note">' + icon('checkAlt', 12) + ' saved</span>' : '')
-  );
+    // One action, so one primary, at body level and therefore md.
+    '<div class="settings-btn-row">' +
+      '<button type="button" class="btn btn-primary" id="btn-save-scan-limits"' + (state.aiHealthSaving ? ' disabled' : '') + '>' +
+        (state.aiHealthSaving ? 'Saving…' : 'Save scan limits') +
+      '</button>' +
+      (state.aiHealthSaved ? '<span class="mono settings-saved-note">' + icon('checkAlt', 12) + ' saved</span>' : '') +
+    '</div>';
+
+  return settingsBlock(null, 'health-limits', 'Semantic-duplicate scan limits', lede, body, info, '', { html: true });
 }
 
 // ── Knowledge base ────────────────────────────────────────────────────────
 
+/**
+ * ── ONE UNNUMBERED BLOCK ───────────────────────────────────────────────────
+ *
+ * The cross-write banner goes in `settingsBlock`'s NOTICE slot, which renders
+ * above the heading and outside the ⓘ entirely — the same slot block 2 of
+ * Providers uses for the retired-model banner, and for the same reason. It is
+ * a data warning: changing this folder mid-write sends that write's remaining
+ * pages into the new folder, since every write resolves the path fresh, per
+ * call, and nothing caches it. A warning is never foldable.
+ *
+ * The one-line note under the path row is the opposite case — it is the
+ * reassurance that makes the primary button safe to press, so it stays
+ * visible, one line, directly under the thing it is about.
+ */
 function renderStorage() {
   if (state.configError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.configError) + '</div>';
@@ -8229,24 +8347,36 @@ function renderStorage() {
   const chooseTitle = (crossBusy && !state.pickingFolder)
     ? ' title="' + escapeHtml(crossWriteTitle('changing the knowledge base folder mid-write can scatter its remaining pages into the new folder instead.')) + '"'
     : '';
-  return (
-    // Description moved to SECTION_INFO.storage. The cross-write banner stays
-    // unfolded — changing this folder mid-write scatters a run's remaining
-    // pages into the new one, which is a data warning, not an explanation.
-    renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.') +
+
+  const lede = 'The folder every domain lives in. Point Obsidian at it as a vault.';
+  const info =
+    'Every domain is a folder of plain markdown under this path — no database, no index, ' +
+    'nothing the app has to be running to read. Open this same folder in Obsidian with ' +
+    '<em>Open folder as vault</em> and the wikilinks between your pages render as the graph. ' +
+    'Choosing a new folder points The Curator at it; it does not copy or move anything, so the ' +
+    'move itself is yours to make in Finder. ' +
+    docsLinkHtml('settings.knowledge-base', 'Read more in the guide');
+
+  const body =
+    // Row-level buttons, so `btn-xs`: the SIZE is the container's decision.
+    // One primary (Choose folder is the action that completes the block) and
+    // one ghost — "Copy" is a clipboard read, which is the ghost case exactly.
     '<div class="storage-path-row">' +
       '<code class="mono storage-path">' + escapeHtml(state.config.domainsPath) + '</code>' +
-      '<button type="button" class="btn btn-primary" id="btn-choose-folder"' + (chooseDisabled ? ' disabled' : '') + chooseTitle + '>' +
+      '<button type="button" class="btn btn-primary btn-xs" id="btn-choose-folder"' + (chooseDisabled ? ' disabled' : '') + chooseTitle + '>' +
         (state.pickingFolder ? 'Waiting for Finder…' : 'Choose folder') +
       '</button>' +
       // "Copy" is a clipboard-only read — deliberately not gated (see file-header comment).
-      '<button type="button" class="btn btn-secondary" id="btn-copy-path">Copy' + (state.pathCopyFeedback ? ' — ' + escapeHtml(state.pathCopyFeedback) : '') + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-xs" id="btn-copy-path">Copy' + (state.pathCopyFeedback ? ' — ' + escapeHtml(state.pathCopyFeedback) : '') + '</button>' +
     '</div>' +
     '<div class="settings-note-row">' +
       icon('folder', 15) +
-      '<span>Moving this folder does not lose anything — point The Curator at the new location and the graph is picked up as-is.</span>' +
-    '</div>'
-  );
+      '<span>Moving this folder loses nothing; the graph is picked up as-is.</span>' +
+    '</div>';
+
+  return settingsBlock(null, 'storage-folder', 'Vault folder', lede, body, info,
+    renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.'),
+    { html: true });
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────────
