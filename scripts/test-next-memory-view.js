@@ -141,6 +141,10 @@ import {
   renderDescription, renderStatus, renderReadout, renderReadoutGroup,
   renderBadge, renderExplainer,
 } from '../src/public/next/shared/text.js';
+// The docs-link table, imported for the same reason: it takes no imports and
+// THROWS on an unknown key, so lifting the real one is what proves the About
+// panel's link resolves rather than merely that some string was interpolated.
+import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -701,7 +705,12 @@ function makeRenderers(stateObj) {
     // escaping battery both drive the shipped one.
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderProjectGroups', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'renderAbout', 'memory.js') + '\n' +
+    // `renderAbout` is GONE. Its words are the header's ⓘ panel now
+    // (aboutInfoHtml, passed to renderViewHeader as `info`), so what is lifted
+    // here is the function that composes them. It is lifted rather than
+    // dropped because the escaping battery below still has to cover it: it is
+    // the one string on this page that opts into raw HTML.
+    extractFunction(viewSrc, 'aboutInfoHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
     // The five that used to be lifted by NOBODY. renderStaleNotice in
     // particular had no assertion of any kind: replacing its body with
@@ -720,7 +729,7 @@ function makeRenderers(stateObj) {
     extractFunction(listboxSrc, 'findOption', 'listbox.js') + '\n' +
     extractFunction(listboxSrc, 'triggerLabelFor', 'listbox.js') + '\n' +
     extractFunction(listboxSrc, 'renderListboxHtml', 'listbox.js') + '\n' +
-    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, ' +
+    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, renderSaveStatus, freshnessStep, effectiveSave, ' +
     'renderBriefEditor, renderProjectGroups, pendingListboxes };';
@@ -729,9 +738,14 @@ function makeRenderers(stateObj) {
     // The real shared text renderers, so §6's escaping battery runs through
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
-    'renderBadge', 'renderExplainer', body)(
+    'renderBadge', 'renderExplainer',
+    // The REAL docs-link helper, imported rather than stubbed: aboutInfoHtml
+    // ends with one, and a stub would let §6's escaping battery run past the
+    // only <a> this page emits.
+    'docsLinkHtml', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50, [],
-    renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer);
+    renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
+    docsLinkHtml);
 }
 
 const hostileDetail = {
@@ -781,7 +795,7 @@ const html = [
   R.renderHandoff(),
   R.renderJournal(),
   R.renderBrief(hostileState.projectRead, false),
-  R.renderAbout(),
+  R.aboutInfoHtml(),
   R.renderEmptyProject(),
 ].join('\n');
 
@@ -1204,14 +1218,29 @@ ok('the view imports isCurrentMount', viewNoComments.includes('isCurrentMount'))
 ok('every setSidebar/setMain call passes a token', (() => {
   const calls = [...viewNoComments.matchAll(/set(?:Sidebar|Main)\(/g)];
   // Two definitions of the call shape: each call site must mention `token`
-  // within its own statement. Line-scoped and therefore fail-safe.
+  // within its own STATEMENT, read by matching the call's own parentheses.
+  //
+  // IT WAS A 12-LINE WINDOW, and the window was the bug. renderMain's setMain
+  // now opens with a multi-line renderViewHeader options object (eyebrow,
+  // title, info, infoHtml, actionsHtml), which pushed `token` to line 14 and
+  // reddened this assertion over a call that passes the token perfectly well.
+  // A fixed line budget is a guess about formatting; brace matching is a
+  // measurement of the call. The fail-safe direction is kept: an unbalanced
+  // call (which cannot parse anyway) reads to end-of-file and still has to
+  // contain the word.
   const lines = viewNoComments.split('\n');
   let seen = 0;
   for (let i = 0; i < lines.length; i++) {
-    if (!/set(?:Sidebar|Main)\(/.test(lines[i])) continue;
+    const at = lines[i].search(/set(?:Sidebar|Main)\(/);
+    if (at === -1) continue;
     seen++;
-    const chunk = lines.slice(i, i + 12).join('\n');
-    if (!/\btoken\b/.test(chunk)) return false;
+    const from = lines.slice(i).join('\n');
+    let p = from.indexOf('(', at), depth = 0, end = from.length;
+    for (; p < from.length; p++) {
+      if (from[p] === '(') depth++;
+      else if (from[p] === ')') { depth--; if (depth === 0) { end = p; break; } }
+    }
+    if (!/\btoken\b/.test(from.slice(at, end))) return false;
   }
   return seen > 0 && calls.length > 0;
 })());
@@ -1896,6 +1925,15 @@ section('§12 — THE MOUNT CONTRACT, executed rather than grepped');
 //   · the `removeEventListener` block deleted -> two permanent listeners leak
 //     per mount, each holding a closure over a dead mount token.
 //
+// AND SINCE v3.54: THE AGE CLOCK. onEnter arms a 1-second setInterval so the
+// handoff's freshness reading ticks, and NOTHING IN THIS REPOSITORY CAUGHT A
+// LEAKED TIMER before this section was given spies for it. A leaked interval
+// is worse than a leaked listener: it does not merely hold a closure, it RUNS,
+// once a second, walking a DOM that belongs to whatever view mounted next, for
+// the life of the page — and one more of them per rail click. `setInterval`
+// and `clearInterval` are Node globals, so a rig that did not inject them
+// would have armed a REAL timer here and reported nothing either way.
+//
 // §9's `loadGate.cancel()` regex satisfied none of these; it merely happened
 // to sit in the same closure. So the closure is EXECUTED here, against a
 // window and a document that record every listener, with every collaborator
@@ -1908,8 +1946,11 @@ function liftOnEnter() {
   return fn;
 }
 
-function mountView({ hidden = false, mounted = true } = {}) {
-  const log = { scheduled: [], stopped: 0, gateCancelled: 0, closedListboxes: 0, renders: [], loadIndex: 0, refresh: 0 };
+function mountView({ hidden = false, mounted = true, noIntervals = false } = {}) {
+  const log = { scheduled: [], stopped: 0, gateCancelled: 0, closedListboxes: 0, renders: [], loadIndex: 0, refresh: 0,
+    // The age clock: every arm, every disarm, and the callback it was armed
+    // with, so "armed" can be distinguished from "armed with the right thing".
+    intervalsArmed: [], intervalsCleared: [], ticks: 0 };
   const listeners = { window: [], document: [] };
   const mkTarget = (bucket) => ({
     addEventListener: (type, fn) => bucket.push({ type, fn }),
@@ -1923,14 +1964,25 @@ function mountView({ hidden = false, mounted = true } = {}) {
   doc.hidden = hidden;
 
   const body =
-    'let state, myMountToken, loadGate, wakeHandler;\n' +
+    'let state, myMountToken, loadGate, wakeHandler, ageTimer = null;\n' +
     'const __view = {' + liftOnEnter() + '};\n' +
-    'return { onEnter: __view.onEnter, wake: () => wakeHandler, token: () => myMountToken };';
+    'return { onEnter: __view.onEnter, wake: () => wakeHandler, token: () => myMountToken,' +
+    '         timer: () => ageTimer };';
 
+  // Handed out in order, so an arm and its clear can be matched by identity
+  // rather than by count alone — clearing a DIFFERENT handle would otherwise
+  // balance the books while leaving the real timer running.
+  let nextHandle = 100;
+  // Held in a named local so the assertions can compare the function the
+  // interval was armed WITH against this exact reference. Counting arms is not
+  // enough: an interval armed with render() would balance perfectly and would
+  // be the v3.53.1 defect.
+  const tickSpy = () => { log.ticks++; };
   const api = new Function(
     'freshState', 'createLoadingGate', 'isCurrentMount', 'render', 'loadIndex',
     'reportAsyncMountFailure', 'refreshIndex', 'schedulePoll', 'stopPoll',
-    'closeAllListboxes', 'window', 'document', body)(
+    'closeAllListboxes', 'window', 'document',
+    'tickAges', 'AGE_TICK_MS', 'setInterval', 'clearInterval', body)(
     () => ({ loading: true }),
     () => ({ begin: () => {}, cancel: () => { log.gateCancelled++; } }),
     () => mounted,
@@ -1941,9 +1993,17 @@ function mountView({ hidden = false, mounted = true } = {}) {
     (t) => { log.scheduled.push(t); },
     () => { log.stopped++; },
     () => { log.closedListboxes++; },
-    win, doc);
+    win, doc,
+    tickSpy,
+    1000,
+    // `noIntervals` makes setInterval un-callable, which is the engine (or the
+    // headless rig) that has none. onEnter guards on `typeof setInterval ===
+    // 'function'`, so this arm proves the guard is real rather than decorative.
+    noIntervals ? undefined : ((fn, ms) => { log.intervalsArmed.push({ fn, ms, id: nextHandle }); return nextHandle++; }),
+    (id) => { log.intervalsCleared.push(id); });
 
-  return { ...api, log, listeners, setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
+  return { ...api, log, listeners, tickSpy,
+    setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
 }
 
 {
@@ -2214,13 +2274,25 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
   // test-memory-truth.js executes what the strip SAYS, and this proves it is
   // on the page at all. It is ABOVE the reload notice in every branch, which
   // is the placement decision — the answer must not sit under its caveats.
+  //
+  // MATCHED ON THE CLASS TOKEN, NOT ON `class="mem-save"`. Every top-level
+  // block on this page carries `mem-section` as well now (one adjacency rule
+  // owns every gap), so the old exact-attribute match reddened on markup that
+  // was correct in every way the assertion was about. Pinning a full class
+  // ATTRIBUTE makes an assertion about spacing out of an assertion about
+  // placement; the token regex keeps it about placement. The ordering half is
+  // unchanged and still fails if either block moves.
+  const classAt = (out, cls) => out.search(new RegExp('class="[^"]*\\b' + cls + '\\b'));
   for (const [name, out] of [['FULL', full], ['BRIEF-ONLY', briefOnly], ['EMPTY', empty]]) {
     ok('the save-status strip reaches the ' + name + ' branch',
-      out.includes('class="mem-save"'), out.slice(0, 200));
+      classAt(out, 'mem-save') !== -1, out.slice(0, 200));
     ok('...and it is painted ABOVE the reload notice there',
-      out.indexOf('class="mem-save"') < out.indexOf('class="mem-stale"'),
-      out.indexOf('class="mem-save"') + ' vs ' + out.indexOf('class="mem-stale"'));
+      classAt(out, 'mem-save') < classAt(out, 'mem-stale'),
+      classAt(out, 'mem-save') + ' vs ' + classAt(out, 'mem-stale'));
   }
+  ok('self-test: that class matcher is not vacuous and does not match a prefix',
+    classAt('<div class="a mem-save b">', 'mem-save') === 5
+    && classAt('<div class="mem-saved">', 'mem-save') === -1);
 }
 {
   // The unlisted note: the store's own sentence, echoed rather than
@@ -2597,8 +2669,13 @@ section('§16 — Projects inside a domain (v3.48.0)');
   ok('the brief fold really emits a <summary> (not vacuous)', summaries.length === 1);
   ok('no <button>, <textarea> or <input> is inside it',
     summaries.every((x) => !/<(button|textarea|input|select|a)\b/.test(x)), JSON.stringify(summaries));
+  // The literal is re-pinned DELIBERATELY: the class list gained `mem-section`
+  // when every top-level block on this page came under one adjacency rule. The
+  // property under test is unchanged and is still pinned exactly — this fold,
+  // that data attribute, and the `open` attribute present — so dropping the
+  // force-open still reds it.
   ok('an open editor FORCES its fold open — a textarea behind a collapsed disclosure is invisible',
-    /<details class="mem-fold" data-mem-fold="brief" open>/.test(fold));
+    /<details class="mem-fold mem-section" data-mem-fold="brief" open>/.test(fold));
   ok('...and the rendered document is hidden while the editor is up, so there is one copy on screen',
     !fold.includes('mem-doc'));
   // REACHABILITY, and it is not belt-and-braces: a mutation that BUILT the
@@ -2695,6 +2772,397 @@ section('§16 — Projects inside a domain (v3.48.0)');
 }
 
 
+// ════════════════════════════════════════════════════════════════════════
+section('§18 — THE AGE CLOCK, and the things it must never do');
+// ════════════════════════════════════════════════════════════════════════
+//
+// The handoff's freshness reading ticks once a second, so a non-Mac user gets
+// the menubar widget's two readings on the web. That buys two new hazards, and
+// NOTHING IN THIS REPOSITORY COULD SEE EITHER OF THEM before this section:
+//
+//   · A LEAKED TIMER. §12 above executes onEnter and its teardown, but
+//     `setInterval` is a Node GLOBAL, so before the rig injected spies an armed
+//     interval was simply invisible to it — deleting the clearInterval from the
+//     teardown left every assertion in this file green while shipping one
+//     running timer per rail click, for the life of the page.
+//   · A TICK THAT RENDERS. settings.js shipped a once-a-second render tick and
+//     v3.53.1 records it as a defect by name: a render replaces both panes by
+//     innerHTML, which closes the ⓘ panel, shuts any picker that is open and
+//     churns focus. So the tick is executed here against a render SPY.
+
+// ── 18a · TIMER DISCIPLINE, over two full mount/teardown cycles ──────────
+{
+  const m = mountView();
+  const teardown = m.onEnter(11);
+  eq('mount: the age clock is armed exactly once', m.log.intervalsArmed.length, 1);
+  eq('mount: ...at one second, not at the poll interval', m.log.intervalsArmed[0].ms, 1000);
+  ok('mount: ...with tickAges, not with render — a render tick IS the v3.53.1 defect',
+    m.log.intervalsArmed[0].fn === m.tickSpy, 'the interval was armed with something else');
+  eq('mount: nothing is cleared yet', m.log.intervalsCleared.length, 0);
+
+  teardown();
+  eq('teardown: the age clock IS disarmed — otherwise it walks the next view\'s DOM forever',
+    m.log.intervalsCleared.length, 1);
+  eq('teardown: ...and it clears the handle it armed, not some other one',
+    m.log.intervalsCleared[0], m.log.intervalsArmed[0].id);
+
+  teardown();
+  eq('teardown twice clears once — the handle is nulled, so a double teardown is not a double clear',
+    m.log.intervalsCleared.length, 1);
+}
+{
+  // THE BALANCE, which is the property that actually matters: two mounts and
+  // two teardowns must leave nothing running. This is the assertion that reds
+  // when somebody removes the clearInterval, and the one that reds when
+  // somebody arms a second interval somewhere else in onEnter.
+  const m = mountView();
+  const t1 = m.onEnter(1); t1();
+  const t2 = m.onEnter(2); t2();
+  eq('two full mount/teardown cycles arm two intervals', m.log.intervalsArmed.length, 2);
+  eq('...and disarm two', m.log.intervalsCleared.length, 2);
+  eq('...leaving nothing running', new Set(m.log.intervalsArmed.map((x) => x.id)).size
+    - new Set(m.log.intervalsCleared).size, 0);
+}
+{
+  // AN ENGINE WITH NO setInterval. The guard in onEnter is `typeof setInterval
+  // === 'function'`, and an unguarded arm would be a TypeError that kills the
+  // whole mount — no list, no error card, a blank screen.
+  const m = mountView({ noIntervals: true });
+  const teardown = m.onEnter(3);
+  eq('an engine with no setInterval still mounts', m.log.renders.length >= 1, true);
+  eq('...arming nothing', m.log.intervalsArmed.length, 0);
+  teardown();
+  eq('...and its teardown clears nothing rather than throwing', m.log.intervalsCleared.length, 0);
+}
+
+// ── 18b · THE TICK WRITES TEXT AND NEVER RENDERS ────────────────────
+{
+  const renders = [];
+  const mkNode = (at, text) => ({
+    _at: at,
+    textContent: text,
+    getAttribute: (k) => (k === 'data-mem-age-at' ? at : null),
+    querySelector: (sel) => (sel === '.tx-readout-value' ? mkNode._values.get(at) : null),
+  });
+  mkNode._values = new Map();
+  const mkPair = (at, text) => {
+    const value = { textContent: text, writes: 0 };
+    const proxy = {
+      get textContent() { return value.textContent; },
+      set textContent(v) { value.textContent = v; value.writes++; },
+    };
+    mkNode._values.set(at, proxy);
+    return { node: mkNode(at, ''), value };
+  };
+
+  const NOW = Date.parse('2026-09-17T12:00:00.000Z');
+  const a = mkPair(new Date(NOW - 7200_000).toISOString(), 'stale words');
+  const b = mkPair(new Date(NOW - 45_000).toISOString(), 'just now');
+  const bad = mkPair('not a date', 'untouched');
+
+  const box = new Function('document', 'Date', 'render', 'formatAge',
+    extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
+    { querySelectorAll: () => [a.node, b.node, bad.node] },
+    { now: () => NOW, parse: Date.parse },
+    () => { renders.push(1); },
+    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')());
+
+  box();
+  eq('the tick rewrote a stale reading into the right words', a.value.textContent, '2 hr ago');
+  eq('...writing it exactly once', a.value.writes, 1);
+  eq('an already-correct reading is NOT rewritten — a no-op write still dirties the node',
+    b.value.writes, 0);
+  eq('...and its words are left alone', b.value.textContent, 'just now');
+  eq('an unparseable stamp FREEZES rather than printing junk', bad.value.textContent, 'untouched');
+  eq('THE TICK NEVER RENDERS — a render closes the ⓘ and churns focus (v3.53.1)', renders.length, 0);
+
+  // Positive control: the render spy must be able to see a call, or the
+  // assertion above is decorative.
+  const control = [];
+  new Function('render', 'return function t() { render(); };')((x) => control.push(1))();
+  eq('self-test: the render spy DOES record a planted call', control.length, 1);
+}
+{
+  // NO DOM AT ALL. The tick is armed by onEnter and can outlive a document in
+  // a headless engine; it must return rather than throw.
+  const box = new Function('document', 'formatAge',
+    extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
+    undefined, () => 'x');
+  let threw = null;
+  try { box(); } catch (e) { threw = e; }
+  eq('a tick with no document returns quietly', threw, null);
+}
+
+// ── 18c · WHAT YOU OPEN STAYS OPEN ─────────────────────────────
+//
+// The ⓘ panel's open state lives ONLY in the DOM — shared/text.js flips
+// `hidden` and records nothing — so every render closed it. On this screen the
+// poll repaints whenever the reading ages into a new band, so a user reading
+// "How this works" could have it shut under them. v3.53.1 fixed the same shape
+// on Providers & keys and recorded it as UNFIXED here.
+{
+  const mkInfoRig = ({ expandedBefore = [], presentAfter = [], panels = true } = {}) => {
+    const buttons = new Map();
+    const panelEls = new Map();
+    const mk = (id, expanded) => ({
+      _id: id,
+      _expanded: expanded,
+      getAttribute: (k) => (k === 'data-tx-info' ? id : null),
+      setAttribute: (k, v) => { if (k === 'aria-expanded') mk._set.push([id, v]); },
+    });
+    mk._set = [];
+    let phase = 'before';
+    for (const id of expandedBefore) buttons.set(id, mk(id, true));
+    for (const id of presentAfter) {
+      if (!buttons.has(id)) buttons.set(id, mk(id, false));
+      if (panels) panelEls.set(id, { _id: id, hidden: true });
+    }
+    const doc = {
+      querySelectorAll: (sel) => {
+        if (sel === '[data-tx-info][aria-expanded="true"]') {
+          return phase === 'before' ? expandedBefore.map((id) => buttons.get(id)) : [];
+        }
+        if (sel === '[data-tx-info]') {
+          return presentAfter.map((id) => buttons.get(id)).filter(Boolean);
+        }
+        return [];
+      },
+      getElementById: (id) => panelEls.get(id) || null,
+      querySelector: () => null,
+      activeElement: null,
+    };
+    const body =
+      'let pendingFocusId = null;\nlet renderedSignature = null;\n' +
+      'function screenSignature() { return "SIG"; }\n' +
+      extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
+      'return render;';
+    const render = new Function('state', 'document', 'FOCUSABLE_IDS', 'FOCUS_FALLBACK',
+      'isCurrentMount', 'renderSidebar', 'renderMain', 'wire', body)(
+      { detailLoading: false }, doc, FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC, () => true,
+      () => { phase = 'after'; }, () => {}, () => {});
+    return { render, panelEls, set: mk._set };
+  };
+
+  const MAIN = 'tx-vh-info-agent-memory';
+  const SIDE = 'tx-vh-info-agent-memory-sidebar';
+
+  const r = mkInfoRig({ expandedBefore: [MAIN], presentAfter: [MAIN, SIDE] });
+  r.render(1);
+  eq('an ⓘ panel open BEFORE the render is open after it', r.panelEls.get(MAIN).hidden, false);
+  ok('...with its button saying so — both halves or neither, because the shared '
+    + 'listener reads aria-expanded to decide what the NEXT click does',
+    r.set.some(([id, v]) => id === MAIN && v === 'true'), JSON.stringify(r.set));
+  eq('CONTROL: a panel that was CLOSED is not opened — restore only ever opens',
+    r.panelEls.get(SIDE).hidden, true);
+
+  const both = mkInfoRig({ expandedBefore: [MAIN, SIDE], presentAfter: [MAIN, SIDE] });
+  both.render(1);
+  ok('BOTH marks are covered — the rail\'s header carries one too, and it is the '
+    + 'one that was live and unfixed',
+    both.panelEls.get(MAIN).hidden === false && both.panelEls.get(SIDE).hidden === false);
+
+  const gone = mkInfoRig({ expandedBefore: [MAIN], presentAfter: [] });
+  let threw = null;
+  try { gone.render(1); } catch (e) { threw = e; }
+  eq('a panel that the render did not re-emit is simply not restored, never a crash', threw, null);
+
+  const noPanel = mkInfoRig({ expandedBefore: [MAIN], presentAfter: [MAIN], panels: false });
+  threw = null;
+  try { noPanel.render(1); } catch (e) { threw = e; }
+  eq('a button whose panel is missing is skipped rather than half-opened', threw, null);
+  ok('...and its button is NOT told it is expanded',
+    !noPanel.set.some(([, v]) => v === 'true'), JSON.stringify(noPanel.set));
+
+  // BOTH ids are in FOCUSABLE_IDS, or a keyboard user reading either panel is
+  // dropped to <body> on the next poll — the v3.17.1 defect this view's focus
+  // handling exists for, reopened on the newest control.
+  for (const id of [MAIN + '-btn', SIDE + '-btn']) {
+    ok('FOCUSABLE_IDS names ' + id, FOCUSABLE_IDS_SRC.includes(id), JSON.stringify(FOCUSABLE_IDS_SRC));
+  }
+}
+
+// ── 18d · THE RENDERED HANDOFF: a lead fold with the widget's readings ─────
+{
+  const now = Date.now();
+  const st = (over = {}) => ({
+    activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
+    detailLoading: false, journalLimit: 10, openFolds: {}, ageTickerArmed: true,
+    projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 7200 }],
+      brief: { present: false } },
+    detail: {
+      scope: 'main', machine: 'boxa', machines: [{ machine: 'boxa', writtenAgeSeconds: 7200 }],
+      current: { present: true, writtenAgeSeconds: 7200,
+        writtenAt: new Date(now - 7200_000).toISOString(),
+        savedAt: new Date(now - 7200_000).toISOString(),
+        text: '# T\n\n> Headline\n\n## Where things stand\n\nBody.\n' },
+      journal: { returned: 1, total: 1, totalUnknown: false,
+        entries: [{ at: new Date(now - 7200_000).toISOString(), harness: 'claude-code', model: 'opus-5', headline: 'h', rejections: [] }] },
+    },
+    ...over,
+  });
+
+  const h = makeRenderers(st()).renderHandoff();
+  ok('the handoff is a <details> the user can collapse, like the other two',
+    /<details[^>]*data-mem-fold="handoff"/.test(h), h.slice(0, 260));
+  ok('...OPEN by default, because it is the answer this screen exists to give',
+    /<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/.test(h), h.slice(0, 260));
+  ok('...marked as the LEADER, so three cards do not have to be read to be ranked',
+    /class="[^"]*\bmem-fold-lead\b/.test(h), h.slice(0, 260));
+
+  const sum = (m => m ? m[0] : '')(/<summary[\s\S]*?<\/summary>/.exec(h));
+  ok('the summary really exists (the checks below are not vacuous)', sum.length > 60, sum);
+  ok('THE PIP is in the summary, at the step the age says — the SAME class the '
+    + 'save strip uses, never a second freshness ladder',
+    /class="mem-save-pip mem-save-pip-s2"/.test(sum), sum);
+  ok('THE LIVE CLOCK is in the summary, carrying the stamp effectiveSave resolved',
+    /data-mem-age-at="[^"]+"/.test(sum), sum);
+  ok('...and the words beside it are the age, not a raw timestamp',
+    /class="tx-readout-value">2 hr ago</.test(sum), sum);
+  ok('...saying it updates live, because it does',
+    /updates live/.test(sum), sum);
+  for (const control of ['<button', '<select', '<input', '<textarea', '<a ']) {
+    ok('the summary holds no ' + control + '> — a control there toggles its own section',
+      !sum.toLowerCase().includes(control), sum);
+  }
+  ok('the document itself is in the fold BODY, not the summary',
+    /class="mem-fold-body"[\s\S]*chat-md-h/.test(h));
+
+  // "updates live" IS A CLAIM. With no clock armed it must not be made.
+  const still = makeRenderers(st({ ageTickerArmed: false })).renderHandoff();
+  ok('CONTROL: with no clock armed the reading does NOT claim to update live',
+    !/updates live/.test(still) && /class="tx-readout-value">2 hr ago</.test(still), still.slice(0, 600));
+
+  // A REMEMBERED CLOSE WINS over the default, exactly as the brief's does.
+  const closed = makeRenderers(st({ openFolds: { handoff: false } })).renderHandoff();
+  ok('a fold the user closed STAYS closed across the next render',
+    !/<details[^>]*data-mem-fold="handoff"[^>]*\sopen>/.test(closed), closed.slice(0, 200));
+
+  // AN UNKNOWN AGE is the dashed ring and words, never step 0 and never "0s".
+  const unknown = makeRenderers(st({
+    detail: { ...st().detail, current: { ...st().detail.current, writtenAgeSeconds: null, writtenAt: null, savedAt: null },
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } },
+  })).renderHandoff();
+  ok('an unknown age takes the dashed -unknown ring, not step 0',
+    /mem-save-pip-unknown/.test(unknown) && !/mem-save-pip-s0/.test(unknown), unknown.slice(0, 400));
+  ok('...and says so in words rather than showing a bare mark',
+    /time unknown/.test(unknown), unknown.slice(0, 400));
+  ok('...and emits NO clock hook, because there is nothing to recount',
+    !/data-mem-age-at/.test(unknown), unknown.slice(0, 400));
+}
+
+// ── 18d2 · A MID-READ FOLD MUST NOT EMIT A STATE IT DOES NOT MEAN ────────
+//
+// FOUND BY LOOKING at the rendered page, not by any assertion in this file: the
+// standing brief was open on every visit, on a screen whose whole design is
+// that the handoff is what you came for.
+//
+// The mechanism is two things meeting. (1) loadScope drops `state.detail`
+// before it paints — deliberately, so the old machine's handoff is never shown
+// under the new scope's label — so renderProject runs once with `d === null`,
+// and the brief's "I am the only content here" rule is momentarily TRUE.
+// (2) Chrome queues a `toggle` event for a <details> parsed WITH an `open`
+// attribute; measured in a real browser, a freshly-innerHTML'd `<details open>`
+// fires one. wire()'s listener writes `openFolds.brief = true`, and a
+// remembered value beats the default forever after — so a 200ms transient
+// became the permanent state.
+//
+// Same class as v3.53.1's Providers & keys finding (a render landing inside the
+// spec's queued toggle). The fix is the same shape: do not emit a state you do
+// not mean. Pinned here BEHAVIOURALLY — the fold's markup, mid-read — rather
+// than by asserting the guard's source, because a source scan proves a line
+// exists and nothing about what it does (v3.0.17).
+{
+  const midRead = {
+    activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
+    detailLoading: true, detail: null, staleWrite: false, journalLimit: 10, openFolds: {},
+    projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
+      brief: { present: true, text: '# B\n\n## Goal\n\nShip it.', updatedAt: new Date().toISOString() } },
+  };
+  const out = makeRenderers(midRead).renderProject();
+  ok('mid-read: the page really is in the full branch (the check is not vacuous)',
+    /data-mem-fold="brief"/.test(out), out.slice(0, 200));
+  ok('mid-read: the standing brief is NOT emitted open — a transient `open` is made '
+    + 'permanent by the toggle Chrome queues for a parsed-open <details>',
+    !/<details[^>]*data-mem-fold="brief"[^>]*\sopen>/.test(out),
+    (/<details[^>]*data-mem-fold="brief"[^>]*>/.exec(out) || [''])[0]);
+
+  // CONTROL, in both directions, so the fix cannot have been made by simply
+  // never opening the brief: with the read SETTLED and no handoff, it opens —
+  // which is the case the rule exists for.
+  const settledNoHandoff = { ...midRead, detailLoading: false,
+    detail: { scope: 'main', machine: 'boxa', current: { present: false }, machines: [],
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } } };
+  ok('CONTROL: once the read has SETTLED with no handoff, the brief does open — '
+    + 'otherwise the page would be blank',
+    /<details[^>]*data-mem-fold="brief"[^>]*\sopen>/.test(makeRenderers(settledNoHandoff).renderProject()));
+
+  const settledWithHandoff = { ...midRead, detailLoading: false,
+    detail: { scope: 'main', machine: 'boxa', machines: [],
+      current: { present: true, writtenAgeSeconds: 120, writtenAt: new Date().toISOString(),
+        text: '## Where things stand\n\nx' },
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } } };
+  ok('CONTROL: with a handoff to read, the brief stays closed',
+    !/<details[^>]*data-mem-fold="brief"[^>]*\sopen>/.test(makeRenderers(settledWithHandoff).renderProject()));
+}
+
+// ── 18e · THE PAGE: an ⓘ in the header, and no explainer card ───────────
+{
+  const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
+  ok('renderMain builds its header with an `info` panel — "How this works" is the mark now',
+    callSiteCount(src, 'renderViewHeader', { within: 'renderMain' }) > 0
+    && /info: aboutInfoHtml\(\)/.test(src), 'no info on the centre header');
+  ok('...as raw HTML, which is what lets the panel carry its list and its docs link',
+    /infoHtml: true/.test(src));
+  ok('the explainer component is GONE from this view — not imported, not called',
+    !/renderExplainer/.test(src));
+  ok('...and no branch of the page emits one',
+    !makeRenderers(hostileState).renderProject().includes('tx-explainer'));
+  ok('the About panel ends with a docs link from the frozen table',
+    /docsLinkHtml\('memory\.overview'/.test(src));
+  ok('...and that link really resolves and really renders',
+    /<a href="https:\/\/github\.com\/[^"]*working-state\.md"/.test(makeRenderers(hostileState).aboutInfoHtml()));
+  ok('the sidebar\'s lock CARD is gone and its sentence is behind the rail\'s own mark',
+    !/mem-sidebar-foot/.test(src)
+    && /Agents save handoffs here over MCP; you write the standing brief\./.test(src));
+  ok('"Copy agent instructions" is in the header\'s action slot, not floating in the breadcrumb',
+    /actionsHtml:[\s\S]{0,240}id="mem-copy-agent"/.test(src)
+    && callSiteCount(src, 'renderViewHeader', { within: 'renderMain' }) > 0);
+  ok('...and the breadcrumb row no longer carries it',
+    !/mem-project-head[\s\S]{0,900}mem-copy-agent/.test(src));
+}
+
+// ── 18f · memory.css: one column, one rhythm ──────────────────────
+{
+  const css = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleOf = (sel) => {
+    const i = css.indexOf(sel + ' {');
+    return i === -1 ? null : css.slice(i, css.indexOf('}', i));
+  };
+  ok('ONE adjacency rule owns every gap, at the Domains rhythm (24px)',
+    /\.mem-section \+ \.mem-section \{[^}]*margin-top:\s*var\(--space-12\)/.test(css),
+    'the .mem-section adjacency rule is missing or is not --space-12');
+  for (const sel of ['.mem-save', '.mem-doc-card', '.mem-fold']) {
+    const r = ruleOf(sel);
+    ok(sel + ' exists', !!r);
+    ok(sel + ' no longer caps ITS BOX at the prose measure — that is what left four '
+      + 'different right edges on one page', !!r && !/max-width/.test(r), r || '');
+  }
+  ok('...and the measure is on the PROSE instead',
+    /\.mem-doc \{[^}]*max-width:\s*var\(--prose-max\)/.test(css));
+  ok('the lead fold is marked with the accent, and only the lead fold',
+    /\.mem-fold-lead \{[^}]*var\(--accent\)/.test(css)
+    && !/\.mem-fold \{[^}]*var\(--accent\)/.test(css));
+  ok('...and it is a rule plus weight plus elevation, not colour alone',
+    /\.mem-fold-lead \{[^}]*border-left:[^;]*var\(--accent\)[\s\S]*?box-shadow:\s*var\(--elev-1\)/.test(css));
+  ok('no block declares its own top or bottom margin to fight the one rule',
+    !/\.mem-(save|stale|controls|doc-card|fold|project-head) \{[^}]*margin-(top|bottom):/.test(css),
+    'a section still carries its own margin');
+  ok('the pip STILL carries no transition (every render replaces the pane)',
+    !/\.mem-save-pip[^{]*\{[^}]*transition/.test(css));
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 section('§17 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
 // ═════════════════════════════════════════════════════════════════════════
@@ -2715,7 +3183,7 @@ const EXECUTED = new Set([
   // effectiveSave is additionally lifted into §5 and §11.
   'effectiveSave', 'freshnessStep', 'renderSaveStatus', 'newestPair', 'harnessOf',
   'firstNote', 'saveLine',
-  'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'renderAbout',
+  'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderCopyOutcome', 'renderProject',
   'render', 'captureFocus', 'restoreFocus',
@@ -2724,6 +3192,9 @@ const EXECUTED = new Set([
   // v3.48.0 — projects inside a domain. All eight are lifted and run in §16.
   'keyOf', 'activeKey', 'initialPick', 'renderProjectGroups',
   'readRememberedProjects', 'rememberProject', 'renderBriefEditor', 'saveBrief',
+  // The age clock (§18). Lifted and driven against a fake document, with a
+  // render spy proving it never reaches for one.
+  'tickAges',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on

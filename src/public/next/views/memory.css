@@ -9,6 +9,37 @@
    therefore neutralised under prefers-reduced-motion by tokens/motion.css.
    A literal `0.16s ease` here would silently bypass that (v3.9.2). */
 
+/* ── ONE COLUMN, ONE RHYTHM ──────────────────────────────────
+
+   THE DEFECT, MEASURED on the shipped screen. Three blocks capped themselves
+   at `--prose-max` (68ch) — .mem-save, .mem-doc-card and .mem-fold — and five
+   more (.mem-stale, .mem-note, .mem-controls, .empty-card, the explainer) did
+   not, so one page carried FOUR different right edges inside an 844px content
+   box: roughly 360, 526, 676 and full width. The maintainer's words for it
+   were "squeezed, with the right third empty".
+
+   A MEASURE LIMIT BELONGS ON PROSE, NOT ON A CARD. 68ch exists so a LINE OF
+   TEXT is readable; a card is a container, and capping the container caps the
+   border with it. So the cap moved inward — onto .mem-doc, .mem-doc-headline
+   and the strip's own lines — and every box now ends at the same right edge.
+   `--prose-max` is used on text elements in this file and on no box.
+
+   ONE RULE OWNS EVERY GAP. The page used to space itself with a margin-top or
+   a margin-bottom on each block: eight declarations, all free to disagree,
+   which is how "How this works" came to sit at 0px from the journal above it
+   (the shared explainer declares no margin at all, and nothing else supplied
+   one — that class may not even be NAMED here, by a guard in
+   scripts/test-next-memory-ingest-text.js, comments included).
+   Now every top-level block carries `.mem-section`, each one's own margin is
+   zeroed below, and the single adjacency rule here decides the spacing — the
+   same 24px rhythm, and the same fix, v3.50.0 applied to the Domains screen
+   after finding 24+4 / 22 / 0 coming from four different declarations.
+
+   THE FIRST SECTION TAKES NO MARGIN, deliberately: `+` is an adjacency
+   selector, so the top of the column sits where the view header leaves it. */
+
+.mem-section + .mem-section { margin-top: var(--space-12); }
+
 /* ── Sidebar: project list ───────────────────────────────────────────── */
 
 /* The PROJECTS eyebrow and its Refresh control share a row. Baseline
@@ -23,39 +54,29 @@
   margin-top: 10px;
 }
 
-/* Quiet by default — this is the fallback for the automatic revalidation,
-   not the primary way anyone is expected to keep the screen current, and a
-   prominent button would imply the screen does not update on its own.
+/* THE KIT PAINTS THIS BUTTON NOW. The markup is `btn btn-ghost btn-xs
+   mem-refresh`: shell.css's taxonomy calls the quiet rung `.btn-ghost` — a
+   control that must be reachable and must not compete — and this button is
+   its definition. It is the fallback for an automatic revalidation, and a
+   prominent one would imply the screen does not update on its own.
 
-   --text-2 (8.34 dark / 7.26 light on --surface), not --text-3: this file's
-   own .mem-row-meta note records that --text-3 reaches only 3.87-4.38 across
-   every surface here and so clears the AA 4.5 floor on none of them.
-   Interactive TEXT is held to the text floor, not to the 3:1 that applies to
-   a graphical boundary. */
+   WHAT WAS DELETED, AND WHY IT COULD BE. Fourteen declarations painting
+   background, border, radius, colour, type, cursor, hover, active and focus BY
+   HAND, plus a bespoke press transform — every one of them a local answer to a
+   question shell.css answers once. That is the same one-copy-per-view shape
+   the design foundation removed for `.btn-xs` itself, which had five copies in
+   five view stylesheets and was in fact being rendered by whichever one the
+   document happened to link last.
+
+   WHAT SURVIVES IS GEOMETRY, and only what the kit cannot know: this button is
+   a flex item in a baseline-aligned row and must not stretch, and it must
+   clear the 28pt hit floor. `.btn-xs` is --control-sm, which IS 28px, so the
+   min-height is belt and braces against a future size change rather than a
+   correction — it is kept because the kit suite asserts it here.            */
 .mem-refresh {
   flex: none;
-  /* Measured at 51x16 in a rendered page — the padding alone never reached
-     macOS's 28pt default, and no `height` declaration existed for a source
-     scan to catch. The BOX grows; the type does not. The row it sits in is
-     baseline-aligned (see above), which the taller box does not disturb. */
   min-height: var(--hit-min);
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: var(--text-2xs);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.mem-refresh:hover { background: var(--mat-row-hover); color: var(--text); }
-.mem-refresh:active { background: var(--mat-row-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
-.mem-refresh:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
 .mem-row-list { display: flex; flex-direction: column; gap: 2px; }
 
@@ -193,7 +214,8 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  margin-bottom: 12px;
+  /* NO margin of its own. `.mem-section + .mem-section` owns every gap on this
+     page — see the rhythm block at the top of the file. */
 }
 .mem-project-mark {
   width: 9px;
@@ -204,20 +226,21 @@
 }
 .mem-project-name { font: var(--type-h3); color: var(--text); }
 
-/* ── "Copy agent instructions" ─────────────────────────────────────────────
-   PUSHED TO THE FAR END of the header rather than sitting next to the name.
-   The three spans before it are one phrase — domain / project — and a control
-   inside that phrase reads as part of the title. `margin-left: auto` is the
-   whole trick; the kit owns everything else about a .btn, and the height is
-   the same compact step the Domains project rows use for the same reason:
-   this is a list-level utility, not a call to action.                       */
-.mem-copy-agent {
-  margin-left: auto;
-  flex: none;
-  height: var(--control-sm);
-  padding: 0 10px;
-  font-size: var(--text-xs);
-}
+/* ── "Copy agent instructions" ─────────────────────────────────
+
+   `.mem-copy-agent` IS GONE, AND ITS ABSENCE IS THE FIX. The rule was three
+   lines of geometry and one line — `margin-left: auto` — that decided the
+   layout of the whole row: it stretched a short breadcrumb into a full-width
+   flex row and parked the button alone at the far right, above cards that
+   ended hundreds of pixels short of it. The maintainer saw a control floating
+   top-right belonging to nothing, which is exactly what it was.
+
+   The button is `btn btn-secondary btn-xs` in renderViewHeader's `actionsHtml`
+   slot now — the sanctioned place for a control beside a title, the one
+   views/domains.js uses for Rename / Delete / Ask this domain — so shell.css
+   paints it and shared/text.css places it. This view declares nothing about it,
+   which is the point: a view that restyles a kit control is how five copies of
+   `.btn-xs` came to exist in five stylesheets.                               */
 
 /* The clipboard-refusal fallback. The block is a paragraph, so it cannot go
    in a status sentence; a sunken mono block that wraps rather than scrolls
@@ -308,7 +331,6 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
   padding: 8px 10px;
   border-radius: var(--radius-md);
   border: 1px solid var(--accent);
@@ -351,13 +373,14 @@
                     --attention border  7.22 /  3.21   (3:1 non-text floor)
                     --text-2            8.67 /  8.38
                     --text (the bold lead) 13.75 / 16.41                    */
+/* NO max-width, and NO margin. The box runs to the column's edge like every
+   other section; the MEASURE limit is on the sentences inside it (see
+   .mem-save-line below), which is where a measure limit belongs. */
 .mem-save {
-  margin-bottom: 12px;
   padding: 12px 14px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface);
-  max-width: var(--prose-max);
 }
 .mem-save-main {
   display: flex;
@@ -420,10 +443,16 @@
 
 /* The qualifying lines. Each appears ONLY when it has something to say, so the
    healthy case is the reading plus one brief line and nothing else. */
+/* THE MEASURE LIMIT LIVES HERE, not on the box. These are the strip's
+   sentences — several of them long — and 68ch is the width at which a line of
+   text is comfortable to read. Capping the CARD instead (which is what this
+   file used to do) made the border stop short as well, which is the ragged
+   right edge this pass removes. */
 .mem-save-line {
   display: flex;
   align-items: flex-start;
   gap: 7px;
+  max-width: var(--prose-max);
   margin-top: 9px;
   /* --text-2, not --text-3: these are the strip's quietest WARNINGS, and this
      file's standing rule is that a caution must never be the hardest sentence
@@ -462,7 +491,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 14px;
-  margin-bottom: 14px;
 }
 /* min-width: 0 is load-bearing, not tidiness. A flex item defaults to
    min-width: auto — a content-based floor — so .mem-ctl refused to shrink
@@ -518,21 +546,23 @@
 
 /* ── The handoff document ────────────────────────────────────────────── */
 
+/* The loading and empty arms of the handoff, plus the brief-only notice. The
+   handoff ITSELF is a `.mem-fold` now (the lead fold), so this rule no longer
+   paints the main document — it paints the cards that stand in for it. No
+   max-width: the measure limit is on .mem-doc and .mem-doc-headline. */
 .mem-doc-card {
   padding: 18px 20px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface);
-  max-width: var(--prose-max);
 }
-.mem-doc-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-/* WHEN it was saved and WHO saved it are ONE instrument now — a readout from
+/* `.mem-doc-head` IS GONE. It was the handoff card's title row — an eyebrow on
+   the left, the save stamp on the right — and both of those are in the lead
+   fold's <summary> now, which is itself a flex row and needs no second one.
+   Deleted rather than left standing: a rule nothing can match is a claim about
+   the screen that is no longer true.
+
+   WHEN it was saved and WHO saved it are ONE instrument — a readout from
    shared/text.js — so this rule no longer paints text. It survives only as the
    carrier of the exact ISO timestamp on `title`, which formatAge's own docblock
    relies on when it rounds to "2 hr ago"; a readout states a reading and takes
@@ -545,12 +575,18 @@
    that — stepping the readout's figure down a size because it looked loud
    beside the headline. It is MEANT to be loud: the figure is the valuable
    thing on this screen and reading as chrome is the defect being fixed. */
-.mem-doc-stamp { display: block; }
+/* It was `display: block` inside `.mem-doc-head`. The stamp lives in the lead
+   fold's <summary> now and is a flex item there. `min-width: 0` is the same
+   load-bearing declaration `.mem-ctl` carries: a flex item's default
+   `min-width: auto` is a CONTENT-based floor, and this one holds a harness
+   name and a model id. */
+.mem-doc-stamp { min-width: 0; }
 
 /* The one-line headline the agent wrote, promoted out of the document's
    preamble (see splitHandoffPreamble in memory.js). It is the only part of
    that preamble that says something the controls above do not. */
 .mem-doc-headline {
+  max-width: var(--prose-max);
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
   color: var(--text);
@@ -613,7 +649,10 @@
 /* Rendered markdown. `.chat-md-h` is emitted by shared/markdown.js (the
    shared renderer, not chat.js's own markup) — styled here SCOPED under
    .mem-doc so nothing leaks into or out of any other view. */
-.mem-doc { color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+/* THE HANDOFF'S OWN PROSE, and the single most important use of the measure
+   limit in this file: an agent's handoff is the longest running text on the
+   screen. 68ch here, on the TEXT, rather than on the card that frames it. */
+.mem-doc { max-width: var(--prose-max); color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
 .mem-doc > *:first-child { margin-top: 0; }
 .mem-doc > *:last-child { margin-bottom: 0; }
 .mem-doc p { margin: 0 0 10px; }
@@ -668,13 +707,52 @@
 
 /* ── Disclosures ─────────────────────────────────────────────────────── */
 
+/* THREE FOLDS, AND ONE OF THEM LEADS.
+
+   No max-width and no margin: the box runs to the column's edge and
+   `.mem-section + .mem-section` spaces it. The measure limit is on `.mem-doc`
+   inside the body, where the running text actually is.
+
+   THE BASE IS THE QUIET ONE. --border-subtle, no elevation: the standing brief
+   and the session journal are CONTEXT. They are read when you go looking for
+   them, and three identically-weighted cards are three cards you have to read
+   before you can rank them.                                                 */
 .mem-fold {
-  margin-top: 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--surface);
-  max-width: var(--prose-max);
 }
+
+/* THE LEADER — the current handoff, and only ever one of the three.
+
+   Why it is marked at all: the ask was that the three important cards "read
+   fast", and a page of identical cards ranks nothing. Why only ONE: v3.16.1's
+   rule — a flag on every row carries no information. So the handoff takes the
+   accent rule and the other two stay exactly as they were.
+
+   THREE STEPS, NOT ONE, because a single signal is a single point of failure:
+     · a 3px accent rule down the leading edge — the same device v3.53.1 used
+       to mark the build lane, at the same weight;
+     · the full --border rather than --border-subtle, so the box reads one step
+       more present even with colour stripped out;
+     · one step of elevation (--elev-1), which lifts it off the flat pair.
+
+   CONTRAST. The rule is a graphical boundary, so 3:1 governs, and --accent on
+   --surface measures 4.30 dark / 6.57 light in this file's own table — the
+   same measurement .mem-save-pip-s2 and .mem-project-mark are built on. No
+   TEXT takes an accent colour here: the eyebrow, the reading and the
+   provenance all keep the type system's own colours, so nothing in this card
+   is decoded from hue alone.                                                */
+.mem-fold-lead {
+  border-color: var(--border);
+  border-left: 3px solid var(--accent);
+  box-shadow: var(--elev-1);
+}
+/* The 3px rule eats 2px of the left padding, so the summary's contents would
+   sit 2px right of the other two folds' and the column would read as ragged.
+   Taken back here rather than by re-declaring every child's padding. */
+.mem-fold-lead > .mem-fold-summary { padding-left: 12px; }
+.mem-fold-lead > .mem-fold-body { padding-left: 14px; }
 .mem-fold-summary {
   display: flex;
   align-items: center;
@@ -709,6 +787,27 @@
    --text-3 does not clear 4.5:1 on any surface in this file. */
 .mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
 .mem-fold-body { padding: 2px 16px 15px; }
+
+/* ── THE LEAD SUMMARY: an eyebrow, a pip, and a reading ──────────────────
+
+   The other two summaries are a word and a meta value. This one carries the
+   menubar widget's readings, so the break goes BEFORE the pip: the pip belongs
+   with the reading it qualifies, and keeping them adjacent is what lets the
+   pair wrap together at a narrow width instead of the pip stranding itself on
+   one line and its words on another. (Exactly the lesson v3.53.1 recorded in
+   the other direction, where a chip broke every model name in half.)
+
+   TABULAR FIGURES on the reading, because it is a CLOCK now — tickAges
+   rewrites it every second, and proportional digits make the words jitter as
+   they change. The numeral set is the one tokens/typography.css already
+   defines; this only asks for it.
+
+   `flex-wrap` because a machine id, a harness and a model name are all long
+   and the reading must be able to drop to its own line rather than push the
+   chevron off the left edge.                                                */
+.mem-fold-summary-lead { gap: 10px; flex-wrap: wrap; }
+.mem-fold-summary-lead .mem-save-pip { margin-left: auto; }
+.mem-fold-summary-lead .mem-doc-stamp { font-variant-numeric: var(--numeric-tabular); }
 
 /* `.mem-quiet` IS GONE, and its removal is the point of this pass. It carried
    FOUR unrelated roles at once — the About fold's static explanation, the
@@ -935,6 +1034,10 @@
    so the marker saying WHICH scope you are reading must never be reduced
    away. */
 @media (prefers-reduced-motion: reduce) {
-  .mem-row:active,
-  .mem-refresh:active { transform: none; }
+  /* `.mem-refresh:active` is NOT listed any more: that button's press travel
+     is `.btn:active` in shell.css now, and shell.css neutralises its own under
+     reduced motion. Repeating it here would be this view overriding a rule it
+     no longer owns — and it would go on "working" if the kit ever changed,
+     which is how a stale local copy survives. `.mem-row` is still ours. */
+  .mem-row:active { transform: none; }
 }

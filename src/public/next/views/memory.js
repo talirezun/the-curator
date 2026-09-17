@@ -57,15 +57,26 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Dense information, quiet presentation. What a person coming here actually
 // wants is one thing — "where did my agent leave this?" — so the handoff is
-// the only thing on screen by default. Everything that is context rather
-// than answer sits behind a native <details>:
+// what is open by default and everything else is folded beside it.
 //
+// ONE COLUMN, THREE FOLDS, ONE LEADER. Every top-level block carries
+// `.mem-section` and ONE adjacency rule in memory.css owns every gap between
+// them, so the cards, the notices, the picker row and the folds all end at the
+// same right edge and sit 24px apart — the Domains rhythm. The three that
+// carry state are native <details> of the same family:
+//
+//   · the CURRENT HANDOFF — open unless the user has closed it, and the only
+//     one with the accent rule, because it is the answer the screen exists to
+//     give. Its <summary> carries the menubar widget's two readings: the
+//     freshness pip and an age that ticks once a second (see tickAges);
 //   · the standing brief (rarely changes; the handoff is what churns) —
 //     EXCEPT when there is no handoff, where it opens, because then it is
 //     the only content there is;
-//   · the journal (history, not state);
-//   · "How this works" (explains the three tiers and the read-only rule —
-//     needed exactly once per user, then never again).
+//   · the journal (history, not state).
+//
+// "How this works" is NOT a fourth card. It explains the three tiers and the
+// read-only rule, which is read once per user and then never again, so it is
+// the header's ⓘ panel — a mark beside the title (see renderMain).
 //
 // Native <details> rather than a hand-rolled disclosure: keyboard operation
 // and screen-reader announcement come free, which is the same reasoning
@@ -73,10 +84,13 @@
 //
 // THE <summary> HAZARD (v3.0.1-beta.18, and settings.js's model picker):
 // an interactive control placed inside a <summary> toggles its own section
-// when clicked. Every control in this view — the two selects, the journal's
-// "Show more" button — is a SIBLING of its <details>, or lives in the
-// <details> BODY. There is therefore no propagation path to suppress, so no
-// later edit can drop a stopPropagation that isn't there.
+// when clicked. Every control in this view — the two pickers, the journal's
+// "Show more" button, the brief's Edit/Save/Cancel — is a SIBLING of its
+// <details>, or lives in the <details> BODY. The handoff's summary is the
+// newest place this could have gone wrong and it holds spans only: an eyebrow,
+// a pip and a readout, no button and no link. There is therefore no
+// propagation path to suppress, so no later edit can drop a stopPropagation
+// that isn't there.
 //
 // SQUARE marker, not round: agent memory is a different KIND of thing from a
 // knowledge domain, and the rail already puts them side by side. Domains use
@@ -97,8 +111,12 @@ import { renderMarkdown } from '../shared/markdown.js';
 // asserts these imports are present AND reached, because a component that ships
 // unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadout, renderExplainer, renderViewHeader,
+  renderDescription, renderStatus, renderReadout, renderViewHeader,
 } from '../shared/text.js';
+// Every link out of the app into docs/ is a key in ONE table, checked offline
+// against the real markdown (shared/docs-links.js). The "How this works" panel
+// ends with one rather than with a hand-typed URL that nothing can verify.
+import { docsLinkHtml } from '../shared/docs-links.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
@@ -162,6 +180,23 @@ const POLL_BASE_MS = 20000;
 const POLL_DUTY = 20;              // spend at most 1/20th of the wall clock refreshing
 const POLL_MAX_MS = 300000;
 
+// ── THE AGE CLOCK IS NOT THE POLL, and conflating them is how the menubar
+//    widget's one useful property would have been lost here ────────────────
+//
+// The freshness reading on the handoff is the widget's reading, and a widget
+// ticks. The poll above is a NETWORK cost and is throttled accordingly; the
+// age clock is arithmetic over a timestamp already in hand, so it costs one
+// Date.parse per painted reading per second and asks the server nothing.
+//
+// It writes `textContent` on the elements carrying `data-mem-age-at` and it
+// MUST NOT call render(): a render replaces both panes by innerHTML, which
+// closes the ⓘ panel, churns focus and shuts any picker the user has open.
+// settings.js shipped a 1s render tick and v3.53.1 records it as a defect.
+// The PIP's class is deliberately not re-derived here either — it is cut on
+// formatAge's own unit bands, which is exactly when screenSignature changes
+// and the pane repaints anyway, so mark and word still move together.
+const AGE_TICK_MS = 1000;
+
 function freshState() {
   return {
     loading: true,
@@ -218,7 +253,8 @@ function freshState() {
     //
     // A key is written here only when the user actually toggles one, so
     // `undefined` still means "no opinion" and each fold keeps its own
-    // default (the brief opens when it is the only content there is).
+    // default — the HANDOFF opens (it is the answer this screen gives) and
+    // the brief opens when it is the only content there is.
     openFolds: {},
 
     // ── Revalidation bookkeeping (see the Revalidation block above) ──────
@@ -255,6 +291,12 @@ function freshState() {
     refreshing: false,
     // How long the last index refresh took, in ms. Feeds nextPollDelay.
     lastRefreshMs: 0,
+    // WHETHER THE AGE CLOCK IS RUNNING, so the reading can say "updates live"
+    // only when it genuinely does. onEnter sets it after arming the interval;
+    // an engine with no setInterval (or a test rig that injects none) leaves it
+    // false and the provenance simply omits the clause. A reading that claims
+    // to be live and is frozen is worse than a reading that never claimed it.
+    ageTickerArmed: false,
   };
 }
 
@@ -283,7 +325,13 @@ let pendingFocusId = null;
 
 const FOCUSABLE_IDS = [
   'mem-scope-select', 'mem-machine-select', 'mem-journal-more',
-  'mem-fold-brief', 'mem-fold-journal', 'mem-fold-about',
+  'mem-fold-handoff', 'mem-fold-brief', 'mem-fold-journal',
+  // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
+  // render replaces the pane they sit in — so without these two entries a
+  // keyboard user reading either panel is dropped to <body> on the next poll.
+  // The ids are the component's own derivation from the title (and, for the
+  // rail, from the variant): see renderViewHeader's panelId block.
+  'tx-vh-info-agent-memory-btn', 'tx-vh-info-agent-memory-sidebar-btn',
   // Both revalidation controls. `mem-reload` is the one that matters: it
   // REMOVES itself on success (the notice it lives in is gone once the
   // reload lands), so it needs the same fallback treatment as "Show more".
@@ -304,12 +352,6 @@ const FOCUS_FALLBACK = {
   // Reloading dismisses the notice this button lives in. The sidebar's
   // Refresh is the nearest stable control that does the same KIND of thing.
   'mem-reload': '#mem-refresh',
-  // The About fold is the SHARED explainer component now, and shared/text.js
-  // owns its markup — its <summary> carries no id. Its identity lives on the
-  // <details> as data-tx-explainer, so it is resolved by attribute instead.
-  // Without this, focusing that summary and re-rendering would drop focus to
-  // <body>: the exact v3.17.1 defect this view's focus handling exists for.
-  'mem-fold-about': '[data-tx-explainer="about"] > .tx-explainer-summary',
   // Clicking Edit replaces the button with the editor, so restoring "by id"
   // would drop focus every time it worked. The textarea is what the user
   // asked for.
@@ -327,6 +369,9 @@ const FOCUS_FALLBACK = {
 let myMountToken = 0;
 let loadGate = null;
 let pollTimer = null;
+// The 1-second age clock (see AGE_TICK_MS). Held here, beside pollTimer, so
+// the teardown that disarms one is the obvious place to disarm the other.
+let ageTimer = null;
 let wakeHandler = null;
 // The signature of what render() last painted. Compared against a freshly
 // computed one so a revalidation that changed nothing costs no render at
@@ -337,6 +382,16 @@ registerView('memory', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    // THE AGE CLOCK. Armed here — BEFORE the first paint, so the very first
+    // reading may already say "updates live" — cleared in the teardown below,
+    // and armed nowhere else: one arm site and one disarm site is the only
+    // shape a reader can check at a glance. `state.ageTickerArmed` is written
+    // only after the interval really exists, because that flag is what lets
+    // the provenance line make the claim.
+    if (typeof setInterval === 'function') {
+      ageTimer = setInterval(tickAges, AGE_TICK_MS);
+      state.ageTickerArmed = true;
+    }
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });
@@ -371,6 +426,10 @@ registerView('memory', {
       // the life of the page.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
       stopPoll();
+      // The age clock is a timer like any other: left armed it would go on
+      // walking a DOM that belongs to whatever view mounted next, once a
+      // second, for the life of the page.
+      if (ageTimer !== null) { clearInterval(ageTimer); ageTimer = null; }
       // navigate() closes the reader itself but explicitly does NOT reach
       // into view-owned popovers (see its comment) — so a menu left open on
       // a rail click is this view's to close. The component also self-closes
@@ -424,6 +483,61 @@ function schedulePoll(token) {
       .catch((err) => reportAsyncMountFailure(token, err))
       .finally(() => { if (isCurrentMount(token)) schedulePoll(token); });
   }, nextPollDelay());
+}
+
+/**
+ * THE AGE CLOCK — one second, `textContent`, and NOTHING else.
+ *
+ * ── WHY IT EXISTS ───────────────────────────────────────────────────────
+ * The menubar widget carries two readings a non-Mac user has never had: a
+ * freshness colour and an age that MOVES. "Saved 3 min ago" that sat frozen
+ * for twenty minutes is the same class of defect as the mtime reading
+ * effectiveSave exists to fix — a figure that has quietly stopped being true.
+ * The pane's own repaint is governed by screenSignature, which is folded
+ * through formatAge and therefore fires when the WORD changes… but only when
+ * a poll happens to come round, up to POLL_MAX_MS later. This closes that gap.
+ *
+ * ── WHAT IT MUST NOT DO ─────────────────────────────────────────────────
+ * It must not call render(). A render replaces both panes by innerHTML: it
+ * closes the ⓘ panel, drops the caret out of the brief editor, shuts any
+ * listbox that is open and churns focus. settings.js shipped a once-a-second
+ * render tick and v3.53.1 records it as a defect by name. So this walks the
+ * elements the last paint left behind and writes text into them, exactly as
+ * views/ingest.js's elapsed-clock does.
+ *
+ * ── AND WHAT IT DELIBERATELY DOES NOT TOUCH ─────────────────────────────
+ * The PIP. Its class is cut on formatAge's own unit bands (freshnessStep), so
+ * the instant the word changes band is the instant screenSignature changes and
+ * the pane repaints with the right mark. Re-deriving the class here would be a
+ * second implementation of that rule, free to disagree with the first.
+ *
+ * ── THE TARGET ──────────────────────────────────────────────────────────
+ * `data-mem-age-at` carries the ISO stamp that effectiveSave resolved, and it
+ * sits on the WRAPPER this view owns. The words themselves live inside a
+ * shared/text.js readout, whose `value` is HTML-ESCAPED by the component — so
+ * a view cannot place an element of its own around the figure and has to reach
+ * the component's emitted `.tx-readout-value` instead. If that class is ever
+ * renamed the clock FREEZES rather than overwriting the label beside it, and a
+ * frozen reading is at most one poll stale because the signature still moves.
+ * That is the fail-safe direction, and it is a trade-off, not an oversight.
+ */
+function tickAges() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  const now = Date.now();
+  const nodes = document.querySelectorAll('[data-mem-age-at]');
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i];
+    const at = el.getAttribute('data-mem-age-at');
+    const t = at ? Date.parse(at) : NaN;
+    if (!Number.isFinite(t)) continue;
+    const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
+    if (words === null) continue;
+    const target = el.querySelector('.tx-readout-value');
+    // Written only when it CHANGED. A no-op assignment still dirties the node
+    // for the browser and, on a screen reader watching a live region, still
+    // reads. Most of the 60 ticks in a minute have nothing to say.
+    if (target && target.textContent !== words) target.textContent = words;
+  }
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -1214,12 +1328,75 @@ export function splitHandoffPreamble(raw) {
 
 // ── Render ───────────────────────────────────────────────────────────────
 
+/**
+ * ── WHAT YOU OPEN STAYS OPEN ───────────────────────────────────
+ *
+ * THE DEFECT, and it was live on this screen before either ⓘ was added to it:
+ * an open info panel's state lives ONLY in the DOM — shared/text.js flips
+ * `hidden` and sets `aria-expanded`, and records nothing anywhere else — so
+ * every render closed it. On Agent memory that is not a rare event: the poll
+ * repaints whenever screenSignature changes, which includes the reading simply
+ * ageing into the next band, so a user reading "How this works" could have it
+ * shut under them while they read. v3.53.1 found and fixed the same shape on
+ * Providers & keys and recorded it as UNFIXED here.
+ *
+ * The <details> on this page do NOT need this: their open state is already in
+ * `state.openFolds`, written by the delegated `toggle` listener in wire(), and
+ * re-emitted as an `open` attribute on the next paint. Only the two ⓘ panels
+ * are DOM-only, so only they are captured.
+ *
+ * RESTORE ONLY EVER OPENS. Closing here would fight a renderer that forces a
+ * panel open, and a panel that snapped shut is the defect being fixed while a
+ * stray open one is visible and one click from closed. BOTH HALVES OR NEITHER:
+ * shared/text.js's delegated listener reads `aria-expanded` to decide what the
+ * next click does, so a panel shown with its button still saying "false" would
+ * take two clicks to close.
+ *
+ * EVERYTHING IS INLINE, AND THAT IS A CONSTRAINT, NOT A STYLE. `render`,
+ * `captureFocus` and `restoreFocus` are LIFTED out of this file and executed by
+ * scripts/test-next-memory-view.js §13 with a fixed set of injected
+ * collaborators; any other free identifier is a ReferenceError there — a CRASH
+ * rather than a failing assertion, which is the v3.11.0 shape this file warns
+ * about twice. So no module-level helper, and the `typeof` guards are what let
+ * the same code run against that suite's minimal fake document (which has no
+ * querySelectorAll) and under Node with no DOM at all. In a browser both are
+ * always taken.
+ */
 function render(token) {
   if (!isCurrentMount(token)) return;
   renderedSignature = screenSignature();
   captureFocus();
+
+  const doc = (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function')
+    ? null : document;
+  // Taken BEFORE the swap, off the LIVE DOM rather than off state: the click
+  // that opened the panel was applied synchronously by the component's own
+  // listener, so the DOM is the only place the fact exists at all.
+  const openInfos = [];
+  if (doc) {
+    const marks = doc.querySelectorAll('[data-tx-info][aria-expanded="true"]');
+    for (let i = 0; i < marks.length; i++) {
+      const id = marks[i].getAttribute('data-tx-info');
+      if (id) openInfos.push(id);
+    }
+  }
+
   renderSidebar(token);
   renderMain(token);
+
+  if (doc && openInfos.length) {
+    const marks = doc.querySelectorAll('[data-tx-info]');
+    for (let i = 0; i < marks.length; i++) {
+      const btn = marks[i];
+      const id = btn.getAttribute('data-tx-info');
+      if (!id || openInfos.indexOf(id) === -1) continue;
+      const panel = doc.getElementById(id);
+      if (!panel) continue;
+      panel.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+    }
+  }
+
   wire(token);
   restoreFocus();
 }
@@ -1238,15 +1415,13 @@ function captureFocus() {
   const active = document.activeElement;
   const id = active && active.id;
   if (id && FOCUSABLE_IDS.includes(id)) { pendingFocusId = id; return; }
-  // ...and the same for a shared-component summary, which has no id to read.
-  // FOCUSABLE_IDS stays the ONE list of what this view will restore to: the
-  // data attribute is mapped onto its existing entry rather than becoming a
-  // second, parallel list free to disagree with it.
-  if (active && typeof active.closest === 'function') {
-    const ex = active.closest('[data-tx-explainer]');
-    const key = ex && ex.dataset ? 'mem-fold-' + ex.dataset.txExplainer : null;
-    if (key && FOCUSABLE_IDS.includes(key)) pendingFocusId = key;
-  }
+  // THE ID-LESS BRANCH IS GONE WITH THE ELEMENT IT EXISTED FOR. It resolved the
+  // shared explainer's <summary>, which carries no id of its own, through
+  // `data-tx-explainer`. "How this works" is now the header's ⓘ — a real
+  // <button> with a real id, which the list above names — so every control this
+  // view will restore to has an id again and the attribute walk has nothing
+  // left to find. Deleted rather than left standing: a branch that can no
+  // longer be taken is a claim about the screen that is no longer true.
 }
 
 function restoreFocus() {
@@ -1330,9 +1505,15 @@ function renderSidebar(token) {
   // in the same position — still prose floating under a title. renderViewHeader
   // has no field that can put it back there.
   //
-  // The clause that was cut is `read here, written by them`: the sidebar FOOT
-  // already states it unfolded, permanently, beside a lock glyph. Two copies of
-  // one fact, on screen at once, is what this pass exists to remove.
+  // The clause that was cut is `read here, written by them`: it is back, in
+  // ONE place, as the second sentence of this panel.
+  //
+  // WHY IT MOVED. It had been a floating card at the foot of the rail — a lock
+  // glyph and a sentence, under the project list, belonging to nothing. The
+  // maintainer flagged it as undesigned, and he is right about the mechanism as
+  // well as the look: it is the same KIND of content as the sentence already
+  // behind this mark (what this screen is and who writes it), rendered in a
+  // second place with a second treatment. One mark, one panel, one voice.
   //
   // The Refresh button's tooltip is folded in here rather than deleted. It was
   // the only place that said the screen re-checks by itself, and a `title=` is
@@ -1341,7 +1522,8 @@ function renderSidebar(token) {
     variant: 'sidebar',
     title: 'Agent memory',
     info: 'The working brief your agents leave for each other. This screen re-checks by itself '
-      + 'when you come back to it, so Refresh is rarely needed.',
+      + 'when you come back to it, so Refresh is rarely needed. '
+      + 'Agents save handoffs here over MCP; you write the standing brief.',
   });
 
   if (state.loading) {
@@ -1390,16 +1572,23 @@ function renderSidebar(token) {
       // No `title=`. The sentence it carried is in the header's info panel,
       // where a keyboard or touch user can actually reach it; the word
       // "Refresh" is its own accessible name.
-      '<button type="button" class="mem-refresh" id="mem-refresh">Refresh</button>' +
+      //
+      // THE KIT'S QUIET TIER, NAMED. shell.css's taxonomy calls this rung
+      // `.btn-ghost` — a control that must be reachable and must not compete —
+      // and this button is its definition: the fallback for an automatic
+      // revalidation, where prominence would imply the screen does not update
+      // on its own. It used to be a bespoke `.mem-refresh` rule painting the
+      // same intent by hand, which is the one-copy-per-view shape the design
+      // foundation removed for `.btn-xs`. `.mem-refresh` survives for the hit
+      // target and the flex behaviour only.
+      '<button type="button" class="btn btn-ghost btn-xs mem-refresh" id="mem-refresh">Refresh</button>' +
     '</div>';
 
-  setSidebar(
-    head + projectsHead +
-    rows +
-    '<div class="mem-sidebar-foot">' + icon('lockAlt', 12) +
-      '<span>Agents write the handoffs here through MCP. You write the standing brief.</span></div>',
-    token
-  );
+  // NO FOOT CARD. The lock glyph and its sentence are the header's info panel
+  // now (see `head` above). What sat here was a floating, undesigned block
+  // under the list — and, once the same fact was behind the mark, a second
+  // copy of it on the same screen.
+  setSidebar(head + projectsHead + rows, token);
 }
 
 function renderMain(token) {
@@ -1416,12 +1605,52 @@ function renderMain(token) {
     body = renderProject();
   }
 
-  // DELIBERATELY NO `info`. renderAbout() below already owns the mechanism
-  // explanation ("How this works"), and a second copy behind the mark would be
-  // two hand-maintained descriptions of one thing — free to drift, which is the
-  // shape this repo keeps re-learning. The header is eyebrow + title, nothing else.
+  // ── "HOW THIS WORKS" IS THE MARK NOW, NOT A CARD ────────────────────────
+  //
+  // REWRITTEN, and the note it replaces was right when it was written. It said
+  // there must be no `info` here because renderAbout() already owned the
+  // mechanism explanation, and a second copy behind the mark would be two
+  // hand-maintained descriptions of one thing. That reasoning forbade a COPY.
+  // This is a MOVE: renderAbout is gone, its four call sites with it, and the
+  // text below is now the only description of the three tiers in this view.
+  //
+  // WHY IT MOVED. As a <details> it was a full-width card at the foot of every
+  // branch of this page — the widest thing on screen, under the three cards that
+  // actually carry state, and (because .tx-explainer sets no margin of its own)
+  // glued to the journal above it with a 0px gap. It is read once per user and
+  // then never again, which is exactly what the header's ⓘ is for:
+  // renderViewHeader says so about itself, and this view's own fold is the
+  // pattern that component was generalised FROM. The affordance is a mark
+  // beside the title, where Finder, Mail and System Settings put the same thing.
+  //
+  // WHAT IT MAY NOT CARRY is unchanged: no warning, no cost, no refusal.
+  // v3.16.1's rule is that a warning behind a click is not a warning, and every
+  // byte of this panel explains a mechanism. The read-only rule in its last
+  // paragraph is a DESIGN FACT, not a caution — the store has no endpoint to
+  // reach even if the sentence were missed.
+  //
+  // `infoHtml: true`, so this call owns escaping. Every byte is a literal
+  // except the docs link, whose URL comes from the frozen table in
+  // shared/docs-links.js and whose label the helper escapes.
+  //
+  // THE ACTION SLOT is the component's sanctioned place for a control beside a
+  // title — the same slot views/domains.js uses for Rename / Delete / Ask this
+  // domain. "Copy agent instructions" used to float at the far right of the
+  // breadcrumb row on a `margin-left: auto`, which is how it came to sit alone
+  // above the cards, belonging to nothing. It is offered only when there is a
+  // project to compose a block FOR: composeAgentInstructions needs the pair,
+  // and a button that can only fail is worse than no button.
   setMain(
-    renderViewHeader({ eyebrow: 'your agents’ brain', title: 'Agent memory' }) +
+    renderViewHeader({
+      eyebrow: 'your agents’ brain',
+      title: 'Agent memory',
+      info: aboutInfoHtml(),
+      infoHtml: true,
+      actionsHtml: state.activeProject
+        ? '<button type="button" class="btn btn-secondary btn-xs" id="mem-copy-agent">'
+          + 'Copy agent instructions</button>'
+        : '',
+    }) +
     body,
     token
   );
@@ -1478,18 +1707,24 @@ function renderCopyOutcome() {
   const c = state.copied;
   if (!c) return '';
   if (c.domain !== state.activeDomain || c.project !== state.activeProject) return '';
+  // ONE `.mem-section`, wrapped here rather than at the call site, because the
+  // refusal arm is TWO elements (a status box and the block itself) and the
+  // page's single adjacency rule spaces SIBLINGS. Returning two bare siblings
+  // would put a 24px gap between a refusal and the text it is handing over.
+  // The empty arms above return before the wrapper, so an outcome that renders
+  // nothing never emits an empty box for the rule to space around.
   if (c.ok) {
-    return renderStatus({
+    return '<div class="mem-section">' + renderStatus({
       state: 'success',
       title: 'Agent instructions copied',
       detail: COPY_SUCCESS_BANNER,
-    });
+    }) + '</div>';
   }
-  return renderStatus({
+  return '<div class="mem-section">' + renderStatus({
     state: 'attention',
     title: 'Could not copy',
     detail: 'Your browser refused clipboard access. Select the block below and copy it by hand.',
-  }) + '<pre class="mem-copy-fallback">' + escapeHtml(c.text) + '</pre>';
+  }) + '<pre class="mem-copy-fallback">' + escapeHtml(c.text) + '</pre></div>';
 }
 
 /**
@@ -1518,38 +1753,26 @@ function renderProject() {
   const read = state.projectRead;
   const d = state.detail;
 
+  // ── A BREADCRUMB, AND NOTHING ELSE ───────────────────────────────
+  // "Copy agent instructions" used to live at the end of this row on a
+  // `margin-left: auto`, which made a full-width row out of what is otherwise
+  // a short phrase and floated the button alone above the cards. It is in the
+  // header's action slot now (renderMain), beside the title, which is where
+  // this design system puts a control belonging to the whole screen.
+  //
+  // WHAT STAYS. Domain then project, with the domain quiet: the project is
+  // what the screen is about, the domain is where it lives, and both are shown
+  // always because the rail groups by domain and this is the only place that
+  // can answer "which domain is this?".
   const header =
-    '<div class="mem-project-head">' +
+    '<div class="mem-project-head mem-section">' +
       '<span class="mem-project-mark"></span>' +
-      // DOMAIN THEN PROJECT, with the domain quiet. The project is what the
-      // screen is about; the domain is where it lives, and a user with one
-      // project per domain should be able to read past it. Both are shown
-      // always, because the rail groups by domain and a header that dropped
-      // it would be the only place on screen that could not answer "which
-      // domain is this?".
       '<span class="mem-project-domain">' + escapeHtml(String(state.activeDomain || '')) + '</span>' +
       '<span class="mem-project-sep">/</span>' +
       '<span class="mem-project-name">' + escapeHtml(state.activeProject) + '</span>' +
       (d && d.readonly
         ? '<span class="mem-badge mem-badge-quiet">shared mirror</span>'
         : '') +
-      // ── THE ENTRY-FILE BLOCK, ON THE SCREEN THAT ANSWERS "WHY IS THIS
-      // EMPTY?" ────────────────────────────────────────────────────────────
-      // Measured 2026-09-10: an agent on Claude Code with the continuity
-      // skill installed and listed activated it in 0 of 4 headless runs, so
-      // it never read state and never saved one; with this block in the file
-      // that harness loads every session, 3 of 4 read at the start and saved
-      // before stopping. opencode activates the skill natively and was 4/4
-      // either way. So the commonest cause of a project with nothing under it
-      // is not that the user forgot to ask — it is that the harness never
-      // told the agent to — and this button is the fix, one paste away, on
-      // the screen where the emptiness is visible.
-      //
-      // NOT gated on the readonly arm. Nothing here writes: it composes text
-      // from two names already on screen and puts it on the clipboard. A
-      // shared-mirror project is still a project someone can resume.
-      '<button type="button" class="btn btn-secondary mem-copy-agent" id="mem-copy-agent">' +
-        'Copy agent instructions</button>' +
     '</div>' +
     // PROMOTED OUT OF A TOOLTIP, not folded behind a mark. This qualifies who
     // WROTE what you are about to read — it can be someone else on your cohort
@@ -1557,19 +1780,19 @@ function renderProject() {
     // qualify the claims below them, not behind a click. It was a `title=` on a
     // non-focusable <span>: unreachable by keyboard, unreachable by touch.
     (d && d.readonly
-      ? '<div class="mem-note">' + icon('lockAlt', 13) +
+      ? '<div class="mem-note mem-section">' + icon('lockAlt', 13) +
         '<span>A read-only Shared Brain mirror — this state can have been written by ' +
         'someone else on your cohort.</span></div>'
       : '') +
     renderCopyOutcome();
 
   if (state.detailError) {
-    return header + renderStatus({
+    return header + '<div class="mem-section">' + renderStatus({
       state: 'danger', title: 'Could not read this project’s memory', detail: state.detailError,
-    }) + renderAbout();
+    }) + '</div>';
   }
   if (state.detailLoading && !read) {
-    return header + gatedLoader(loadGate, 'Reading state…');
+    return header + '<div class="mem-section">' + gatedLoader(loadGate, 'Reading state…') + '</div>';
   }
 
   const scopes = (read && read.scopes) || [];
@@ -1595,7 +1818,7 @@ function renderProject() {
   const staleNote = renderStaleNotice();
 
   if (!scopes.length && !hasBrief) {
-    return header + saveStatus + staleNote + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
+    return header + saveStatus + staleNote + unlistedNote + renderEmptyProject(unlisted);
   }
 
   // A brief with no handoff: the store says so (`message`) and the view used
@@ -1608,10 +1831,23 @@ function renderProject() {
   if (!scopes.length) {
     return (
       header + saveStatus + staleNote + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
-      renderBrief(read, true) + renderAbout()
+      renderBrief(read, true)
     );
   }
 
+  // ── ONE COLUMN, ONE RHYTHM ───────────────────────────────────
+  // Every block below is a `.mem-section`, and ONE adjacency rule in
+  // memory.css owns every gap between them — the same 24 / 24 / 24 rhythm
+  // v3.50.0 measured onto the Domains screen after finding four different
+  // declarations producing 24+4 / 22 / 0. Each block's own margin is zeroed
+  // there, so there is exactly one place a gap can be wrong.
+  //
+  // THREE FOLDS, ONE LEADER. The handoff is the answer this screen exists to
+  // give, so it opens by default and takes the accent rule; the brief and the
+  // journal are context and stay shut. It is a <details> like the other two
+  // because the maintainer asked to be able to collapse it — reading a
+  // fifteen-hundred-word handoff is not what every visit is for — and because
+  // three cards that behave three different ways cannot be learned at a glance.
   return (
     header +
     saveStatus +
@@ -1621,9 +1857,28 @@ function renderProject() {
     renderHandoff() +
     // The brief opens only when there is no handoff to read — then it is the
     // only content on the page, and folding it away would leave a blank view.
-    renderBrief(read, !(d && d.current && d.current.present)) +
-    renderJournal() +
-    renderAbout()
+    //
+    // …AND NOT WHILE ONE IS STILL BEING READ, which is a defect found by
+    // LOOKING at the rendered page rather than by any assertion. `state.detail`
+    // is dropped before a scope read paints, deliberately, so this branch runs
+    // once with `d === null` — "there is no handoff", which is true for about
+    // 200ms and false afterwards — and emits the fold OPEN.
+    //
+    // THAT TRANSIENT IS PERMANENT, because of a browser behaviour this repo has
+    // met before: Chrome QUEUES a `toggle` event for a <details> parsed WITH an
+    // `open` attribute (measured in the harness: a freshly-innerHTML'd
+    // `<details open>` fires one). wire()'s listener then writes
+    // `openFolds.brief = true`, and a remembered value beats the default
+    // forever after. So the standing brief was open on every visit — on a page
+    // whose whole design is that the handoff is what you came for.
+    //
+    // This is the same class as v3.53.1's finding on Providers & keys (a render
+    // landing in the middle of the spec's queued `toggle`), and the fix is the
+    // same shape: do not emit a state you do not mean. While the read is in
+    // flight nothing is known about whether there is a handoff, and the honest
+    // default for "unknown" is the one the user chose — closed.
+    renderBrief(read, !state.detailLoading && !(d && d.current && d.current.present)) +
+    renderJournal()
   );
 }
 
@@ -1643,7 +1898,7 @@ function renderProject() {
 function renderStaleNotice() {
   if (!state.staleWrite) return '';
   return (
-    '<div class="mem-stale" role="status">' +
+    '<div class="mem-stale mem-section" role="status">' +
       '<span class="mem-stale-text">An agent has saved to this project since you opened it — ' +
         'what is below may not be the latest.</span>' +
       // btn-secondary is NAMED, not implied. `.btn` alone carries no
@@ -1857,7 +2112,7 @@ function renderSaveStatus(read, d) {
   }
 
   if (!primary && !lines.length) return '';
-  return '<section class="mem-save" aria-label="Save status">' + primary + lines.join('') + '</section>';
+  return '<section class="mem-save mem-section" aria-label="Save status">' + primary + lines.join('') + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -1944,7 +2199,7 @@ function renderUnlistedNote(read, d) {
     : '';
 
   return (
-    '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
+    '<div class="mem-note mem-note-loud mem-section">' + icon('alertTriangle', 13) +
       '<span><b>Some state here is on disk but is not being read.</b> ' +
       escapeHtml(reason + machineClause) + '</span></div>'
   );
@@ -1962,7 +2217,7 @@ function renderBriefOnlyNotice(read, unlisted) {
     ? read.message
     : 'No session state saved for this project yet — only the project brief.';
   return (
-    '<div class="mem-doc-card mem-doc-empty">' +
+    '<div class="mem-doc-card mem-doc-empty mem-section">' +
       '<div class="mem-doc-empty-title">No handoff saved yet</div>' +
       // `msg` is the STORE's own sentence and is escaped by renderDescription's
       // default path — this call deliberately does not opt into raw HTML.
@@ -1992,7 +2247,7 @@ function renderEmptyProject(unlistedEntries) {
   // will read again. Renaming is the only move that gets the content back.
   if (unlisted) {
     return (
-      '<div class="empty-card">' +
+      '<div class="empty-card mem-section">' +
         '<div class="empty-title">Nothing readable for this project yet</div>' +
         renderDescription('No handoff could be read here — but this project’s ' +
           '<span class="mono">state/</span> folder is not empty, and the note above says why. ' +
@@ -2003,7 +2258,7 @@ function renderEmptyProject(unlistedEntries) {
   }
 
   return (
-    '<div class="empty-card">' +
+    '<div class="empty-card mem-section">' +
       '<div class="empty-title">Nothing saved for this project yet</div>' +
       // `html: true`, so the project name is escaped HERE, explicitly, rather
       // than relying on the component: opting into raw HTML moves that duty to
@@ -2145,17 +2400,56 @@ function renderScopeControls(scopes) {
     : '';
 
   if (!scopeCtl && !machineCtl && !elsewhere && !truncated) return '';
-  return '<div class="mem-controls">' + scopeCtl + machineCtl + elsewhere + truncated + '</div>';
+  return '<div class="mem-controls mem-section">' + scopeCtl + machineCtl + elsewhere + truncated + '</div>';
 }
 
-/** The handoff itself — the one thing on screen by default. */
+/**
+ * THE HANDOFF — the answer this screen exists to give, and now an instrument.
+ *
+ * ── A FOLD, LIKE THE OTHER TWO ────────────────────────────────────
+ * It was the one card on this page that could not be collapsed, so a page with
+ * a long handoff was a page you scrolled past to reach the brief and the
+ * journal. It is a native <details> now — same `.mem-fold` family, same
+ * delegated `toggle` listener, same remembered-open bookkeeping — and it
+ * OPENS BY DEFAULT: `state.openFolds.handoff === undefined` means the user has
+ * expressed no opinion, and the default for the answer to the question is to
+ * show it. Once they close it, it stays closed, exactly as renderBrief does.
+ *
+ * ── THE LEADER ─────────────────────────────────────────────
+ * Three folds that look identical are three folds you have to read to rank.
+ * `.mem-fold-lead` gives this one a 3px accent rule, the full --border and one
+ * step of elevation; the brief and the journal keep --border-subtle and no
+ * shadow. One row is marked out of three, which is the v3.16.1 rule: a flag on
+ * every row carries nothing.
+ *
+ * ── THE WIDGET'S READINGS, ON THE WEB ────────────────────────────
+ * The menubar widget carries two things this screen did not: a freshness
+ * COLOUR and an age that MOVES. Every non-Mac user has neither. So the summary
+ * carries the same `.mem-save-pip` the save strip does — the SAME class, from
+ * the SAME freshnessStep(effectiveSave(…).seconds), never a second ladder (the
+ * tray's own 120 / 1800 / 43200 bands would desync the mark from the word) —
+ * and the age words tick once a second (see tickAges).
+ *
+ * ONE VOCABULARY, TWO PLACEMENTS. The strip above still answers "am I saved?"
+ * for the whole project; this answers it for the document you are about to
+ * read, and both are rendered from effectiveSave, so they cannot name two
+ * different times for one save.
+ *
+ * ── NO CONTROL IN THE <summary> ────────────────────────────────
+ * The v3.0.1-beta.18 hazard this view's header block records: an interactive
+ * control inside a <summary> toggles its own section when clicked. Everything
+ * in this summary is a <span> or a <div> — no button, no select, no input, no
+ * link — so there is no propagation path for a later edit to forget to stop.
+ */
 function renderHandoff() {
   const d = state.detail;
-  if (state.detailLoading) return '<div class="mem-doc-card">' + gatedLoader(loadGate, 'Reading handoff…') + '</div>';
+  if (state.detailLoading) {
+    return '<div class="mem-doc-card mem-section">' + gatedLoader(loadGate, 'Reading handoff…') + '</div>';
+  }
   if (!d) return '';
   if (!d.current || !d.current.present) {
     return (
-      '<div class="mem-doc-card mem-doc-empty">' +
+      '<div class="mem-doc-card mem-doc-empty mem-section">' +
         '<div class="mem-doc-empty-title">No handoff under this scope yet</div>' +
         renderDescription(d.message || 'Nothing has been saved here.') +
       '</div>'
@@ -2164,17 +2458,14 @@ function renderHandoff() {
 
   // Through effectiveSave, exactly as the strip above does, so the document's
   // own byline and the freshness reading at the top of the pane are ONE
-  // measurement rendered twice rather than two that can disagree. The byline
-  // stays because it is the document's provenance — which machine, harness and
-  // model produced THIS text — and the strip answers a wider question; what
-  // they must never do is name two different times for one save.
+  // measurement rendered twice rather than two that can disagree.
   const savedWhen = effectiveSave(d.current);
   const savedAge = formatAge(savedWhen.seconds);
-  // WHEN this was saved and WHO saved it are one measurement, and they were
-  // two elements in two places (`.mem-doc-stamp` in the head, `.mem-doc-who`
-  // under the headline) styled to look like quiet chrome. renderReadout is the
-  // instrument role: the figure is mono at full --text, the provenance steps
-  // back by SIZE and FAMILY rather than by dropping under the contrast floor.
+  const step = freshnessStep(savedWhen.seconds);
+  // WHEN this was saved and WHO saved it are one measurement. renderReadout is
+  // the instrument role: the figure is mono at full --text, the provenance
+  // steps back by SIZE and FAMILY rather than by dropping under the contrast
+  // floor.
   //
   // ABSENT IS NOT ZERO, and this is the case that proves it: with no savedAt
   // and no journal entry there is no reading, so nothing renders — never
@@ -2186,8 +2477,16 @@ function renderHandoff() {
   // parser over that sentence would break the first time its wording moved.
   const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
   const who = j0 ? [j0.harness, j0.model].filter(Boolean).join(' · ') : '';
+  // "· updates live" IS A CLAIM, AND IT IS ONLY MADE WHEN IT IS TRUE. It is
+  // appended off `state.ageTickerArmed`, which onEnter writes only after the
+  // interval really exists — not off the presence of the attribute, which
+  // would be this view asserting its own intent rather than reporting a fact.
+  // It is also withheld when the reading is a raw ISO stamp rather than an age
+  // (the savedAge-less fallback below), because that string does not tick.
+  const live = savedAge && state.ageTickerArmed ? '· updates live' : '';
+  const prov = [who, live].filter(Boolean).join(' ');
   const readout = savedValue
-    ? renderReadout({ label: 'Saved', value: savedValue, provenance: who || undefined })
+    ? renderReadout({ label: 'Saved', value: savedValue, provenance: prov || undefined })
     : (who ? renderReadout({ label: 'Written by', value: who }) : '');
   // The exact ISO stamp stays reachable on hover, which formatAge's own
   // docblock relies on when it rounds to "2 hr ago". A wrapper carries it
@@ -2198,9 +2497,16 @@ function renderHandoff() {
   const stampTitle = savedWhen.source === 'agent' && savedWhen.at
     ? 'Saved ' + savedWhen.at + (d.current.arrivedAt ? ' · arrived here ' + d.current.arrivedAt : '')
     : (d.current.savedAt || null);
-  const stamp = readout && stampTitle
-    ? '<span class="mem-doc-stamp" title="' + escapeHtml(stampTitle) + '">' + readout + '</span>'
-    : readout;
+  // `data-mem-age-at` is the clock's only hook, and it is emitted ONLY when
+  // there is an age to move: an ISO-stamp fallback has no seconds to recount,
+  // and a reading with no time at all has nothing. tickAges skips an
+  // unparseable stamp too, so a bad value freezes rather than printing junk.
+  const ageAttr = savedAge && savedWhen.at
+    ? ' data-mem-age-at="' + escapeHtml(savedWhen.at) + '"' : '';
+  const stamp = readout
+    ? '<span class="mem-doc-stamp"' + ageAttr +
+      (stampTitle ? ' title="' + escapeHtml(stampTitle) + '"' : '') + '>' + readout + '</span>'
+    : '';
 
   const notes = [];
   if (d.current.truncated) {
@@ -2217,18 +2523,35 @@ function renderHandoff() {
 
   const { headline, body } = splitHandoffPreamble(d.current.text || '');
 
+  // The user's own toggle wins; `undefined` (never touched) opens. Same rule
+  // and the same shape as renderBrief, so the three folds behave alike.
+  const remembered = state.openFolds ? state.openFolds.handoff : undefined;
+  const foldAttr = (remembered === undefined ? true : !!remembered) ? ' open' : '';
+
   // renderMarkdown (shared/markdown.js) HTML-escapes the whole string before
   // emitting any markup — the escape-first invariant that module's own suite
   // pins. State text is untrusted (syncs from other machines; inside a
   // shared-* mirror it can be another person's), so it must never reach the
   // DOM any other way.
   return (
-    '<section class="mem-doc-card" aria-label="Current handoff">' +
-      '<div class="mem-doc-head"><span class="cur-eyebrow">CURRENT HANDOFF</span>' + stamp + '</div>' +
-      (headline ? '<div class="mem-doc-headline">' + escapeHtml(headline) + '</div>' : '') +
-      noteHtml +
-      '<div class="mem-doc">' + renderMarkdown(body) + '</div>' +
-    '</section>'
+    '<details class="mem-fold mem-fold-lead mem-section" data-mem-fold="handoff"' + foldAttr + '>' +
+      '<summary class="mem-fold-summary mem-fold-summary-lead" id="mem-fold-handoff">' +
+        icon('chevronRight', 14) +
+        '<span class="cur-eyebrow">CURRENT HANDOFF</span>' +
+        '<span class="mem-save-pip' +
+          (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
+          '" aria-hidden="true"></span>' +
+        // NO READING IS STILL A READING TO REPORT. With neither an age nor a
+        // provenance the summary says so in words rather than showing a bare
+        // eyebrow beside a dashed ring nobody can decode.
+        (stamp || '<span class="mem-fold-meta">time unknown</span>') +
+      '</summary>' +
+      '<div class="mem-fold-body">' +
+        (headline ? '<div class="mem-doc-headline">' + escapeHtml(headline) + '</div>' : '') +
+        noteHtml +
+        '<div class="mem-doc">' + renderMarkdown(body) + '</div>' +
+      '</div>' +
+    '</details>'
   );
 }
 
@@ -2325,7 +2648,7 @@ function renderBrief(read, openIt) {
 
   if (!read || !read.brief || !read.brief.present) {
     return (
-      '<details class="mem-fold" data-mem-fold="brief"' + foldAttr + '>' +
+      '<details class="mem-fold mem-section" data-mem-fold="brief"' + foldAttr + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
           '<span>Standing brief</span><span class="mem-fold-meta">not written</span></summary>' +
         '<div class="mem-fold-body">' +
@@ -2339,7 +2662,7 @@ function renderBrief(read, openIt) {
   const b = read.brief;
   const age = formatAge(b.updatedAt ? Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)) : null);
   return (
-    '<details class="mem-fold" data-mem-fold="brief"' + foldAttr + '>' +
+    '<details class="mem-fold mem-section" data-mem-fold="brief"' + foldAttr + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
         '<span>Standing brief</span>' +
         '<span class="mem-fold-meta"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
@@ -2374,7 +2697,7 @@ function renderJournal() {
   const journalOpen = (state.openFolds && state.openFolds.journal) ? ' open' : '';
   if (!j.returned) {
     return (
-      '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
+      '<details class="mem-fold mem-section" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
           '<span>Session journal</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body">' +
@@ -2511,7 +2834,7 @@ function renderJournal() {
     : '';
 
   return (
-    '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
+    '<details class="mem-fold mem-section" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
         '<span>Session journal</span>' +
         '<span class="mem-fold-meta">' + escapeHtml(String(j.returned)) + '</span></summary>' +
@@ -2534,63 +2857,62 @@ function renderJournal() {
 }
 
 /**
- * The one explanatory surface, and now the SHARED one.
+ * THE ONE EXPLANATORY SURFACE — now the header's ⓘ panel, not a card.
  *
- * ── WHY THIS SITE IN PARTICULAR ─────────────────────────────────────────
- * This fold is the reason shared/text.js has an explainer role at all: it is
- * generalised FROM here (that module's §5 says so), because this view already
- * proved the pattern. Measured before the component existed, Agent memory
- * ships 87 characters of explanation on first paint where Shared Brain ships
- * 376 — the difference is that this one is folded. Leaving it bespoke would
- * mean the app's best example of a pattern was the one place not using it.
+ * ── WHAT CHANGED, AND WHAT DID NOT ─────────────────────────────────
+ * The WORDS are unchanged. What moved is the container: this was a
+ * `renderExplainer` <details> appended to all four content branches, so the
+ * widest element on the page was the one read once per lifetime, and it sat
+ * hard against the journal above it because .tx-explainer declares no margin.
+ * renderMain now passes this HTML as the header's `info`, which is the same
+ * component family under the same rules and the shape renderViewHeader
+ * documents for exactly this content.
  *
- * BOTH LOAD-BEARING PROPERTIES ARE KEPT, because the component keeps them:
- * a native <details> (so keyboard operation and screen-reader announcement
- * come free) and DEFAULT CLOSED (needed once, then never again). Neither is
- * re-implemented here — `open` is passed only when the user has opened it.
+ * BOTH LOAD-BEARING PROPERTIES SURVIVE THE MOVE, because the header keeps
+ * them: the panel is a real, keyboard-operable control (a <button> with
+ * aria-expanded / aria-controls, Escape to close and focus returned), and it
+ * is HIDDEN on first paint — needed once per user, then never again.
  *
- * NOTHING IS HIDDEN THAT WARNS. This fold explains a mechanism; it carries no
- * caution, no cost and no refusal, which is exactly the content an explainer
- * is for. The component makes the alternative structurally awkward — there is
- * no parameter that puts toned text INSIDE the fold — and this call has no
- * reason to reach for one. The read-only rule stated in the last paragraph is
- * a DESIGN FACT, not a warning: the sidebar states it unfolded, permanently,
- * and the store has no write endpoint to reach even if it were missed here.
+ * NOTHING HERE WARNS. No caution, no cost, no refusal; v3.16.1's rule is that
+ * a warning behind a click is not a warning, and renderViewHeader has no
+ * `state` or `warningTone` field to tempt one in. The read-only rule in the
+ * last paragraph is a DESIGN FACT, not a caution — the store has no write
+ * endpoint for tiers 2 and 3 even if the sentence were missed.
  *
- * `html: true`, so this call owns escaping. Every byte below is a literal;
- * nothing user-supplied, machine-supplied or store-supplied reaches it.
+ * THE LINK IS DATA. `docsLinkHtml('memory.overview', …)` resolves through the
+ * frozen table in shared/docs-links.js, which scripts/test-docs-links.js
+ * checks against the real markdown in docs/ — so a renamed heading reds a
+ * commit rather than silently landing a reader at the top of a page.
+ *
+ * The caller passes `infoHtml: true` and therefore owns escaping. Every byte
+ * returned here is a literal or the helper's own escaped output; nothing
+ * user-supplied, machine-supplied or store-supplied reaches it.
  */
-function renderAbout() {
-  return renderExplainer({
-    // `id` lands as data-tx-explainer, which is what wire() keys the open-fold
-    // memory on and what FOCUS_FALLBACK resolves the summary through.
-    id: 'about',
-    summary: 'How this works',
-    open: !!(state.openFolds && state.openFolds.about),
-    html: true,
-    body:
-      '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
-      'thing you build inside it, and a domain can hold several. Agent memory is kept per project, in ' +
-      '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
-      '<ul class="mem-about-list">' +
-        '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
-        'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
-        'editor; saving replaces the whole document.</li>' +
-        '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
-        'session, so it starts knowing what you already settled. One per <b>work-stream</b> per machine ' +
-        '(the files call a work-stream a <i>scope</i>), so parallel threads never overwrite each other. ' +
-        'Overwritten on every save, so it never grows stale behind you.</li>' +
-        '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
-        'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
-      '</ul>' +
-      '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
-      'other over sync. Reading a work-stream with no machine named gives you the most recently written one, ' +
-      'whichever machine that was.</p>' +
-      '<p>Your agents write the handoff and the journal through the ' +
-      '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
-      'something because an agent observed it. The brief is yours. Everything here is plain markdown, so a ' +
-      'text editor works too.</p>',
-  });
+function aboutInfoHtml() {
+  return (
+    '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
+    'thing you build inside it, and a domain can hold several. Agent memory is kept per project, in ' +
+    '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
+    '<ul class="mem-about-list">' +
+      '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
+      'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
+      'editor; saving replaces the whole document.</li>' +
+      '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
+      'session, so it starts knowing what you already settled. One per <b>work-stream</b> per machine ' +
+      '(the files call a work-stream a <i>scope</i>), so parallel threads never overwrite each other. ' +
+      'Overwritten on every save, so it never grows stale behind you.</li>' +
+      '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
+      'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
+    '</ul>' +
+    '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
+    'other over sync. Reading a work-stream with no machine named gives you the most recently written one, ' +
+    'whichever machine that was.</p>' +
+    '<p>Your agents write the handoff and the journal through the ' +
+    '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
+    'something because an agent observed it. The brief is yours. Everything here is plain markdown, so a ' +
+    'text editor works too.</p>' +
+    '<p>' + docsLinkHtml('memory.overview', 'Read more in the guide') + '</p>'
+  );
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────
@@ -2655,13 +2977,16 @@ function wire(token) {
   // Record which disclosures are open so the next render can re-open them.
   // `toggle` fires only on a real change, never on parse, so emitting `open`
   // in the markup above does not feed back into this.
-  // `[data-tx-explainer]` is the SHARED explainer (About). One handler over
-  // both, keyed on whichever attribute the element carries — a second loop
-  // would be two descriptions of one behaviour, free to drift.
-  document.querySelectorAll('[data-mem-fold], [data-tx-explainer]').forEach((el) => {
+  //
+  // ONE SELECTOR AGAIN. It used to cover `[data-tx-explainer]` as well, for the
+  // shared About fold; that fold is the header's ⓘ now and its open state is
+  // handled by render()'s own capture/restore (a panel is not a <details> and
+  // emits no `toggle`). The three folds this page still has — handoff, brief,
+  // journal — all carry `data-mem-fold`, so one attribute is again enough.
+  document.querySelectorAll('[data-mem-fold]').forEach((el) => {
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
-      const key = el.dataset.memFold || el.dataset.txExplainer;
+      const key = el.dataset.memFold;
       if (key) state.openFolds[key] = el.open;
     });
   });
