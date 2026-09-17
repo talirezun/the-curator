@@ -301,44 +301,22 @@
   text-overflow: ellipsis;
 }
 
-/* ── The freshness mark ───────────────────────────────────────────────
-   Cut on formatDayAge's own bands (shared/age.js): s3 today, s2 this week,
-   s1 this month, s0 older, and a DASHED ring for "we do not know".
+/* ── The freshness mark is NOT declared here any more ─────────────────
+   The `.dm-fresh-*` ladder that used to sit at this point was a
+   byte-identical copy of views/ingest.css's `.ing-fresh-*`, guarded by a
+   suite asserting the two stayed identical — a guard against a duplication
+   rather than a reason for one, and recorded as KNOWN AND UNFIXED in
+   v3.54.0. Both copies are deleted. The knowledge row now wears
+   `.fresh-dot fresh-<tier>` from shared/freshness.css.
 
-   The ladder mirrors views/memory.css's `.mem-save-pip-s*` — filled accent,
-   accent ring, neutral ring, faint ring — because that is the same reading
-   (how fresh is this?) on a different surface, and two ladders saying one
-   thing in two visual languages is how a user learns neither. Colour comes
-   from TOKENS only; this file's hex baseline is a number that may only
-   SHRINK and this block does not touch it.
-
-   IT IS NEVER THE ONLY CARRIER. The age phrase sits immediately beside it
-   and says the same thing in words, so the dot is redundant by design —
-   which is also why it is aria-hidden. It is also deliberately NOT the same
-   shape as `.dm-row-dot` at the row's head: that one is the domain's
-   IDENTITY colour and carries no state, and two dots that looked alike
-   would read as one scale. */
-.dm-fresh {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  box-sizing: border-box;
-  background: transparent;
-}
-/* today */
-.dm-fresh-s3 { background: var(--accent); }
-/* this week */
-.dm-fresh-s2 { box-shadow: inset 0 0 0 2px var(--accent); }
-/* this month */
-.dm-fresh-s1 { box-shadow: inset 0 0 0 2px var(--text-3); }
-/* a month or more — dormant, NOT a failure: a finished domain is supposed to
-   look like this, so it gets the quietest ring and no colour. */
-.dm-fresh-s0 { box-shadow: inset 0 0 0 1.5px var(--text-faint); }
-/* AGE UNKNOWN IS NOT AGE ZERO and it is not "old" either — a dashed ring, so
-   the one state we cannot measure looks different in KIND rather than merely
-   further along the ramp. */
-.dm-fresh-unknown { border: 1.5px dashed var(--text-faint); }
+   THE ONE THING THAT MOVED WITH IT, and it matters here more than in
+   ingest.css: the mark is still deliberately NOT the same shape or ink as
+   `.dm-row-dot` at the row's head. That one is the domain's IDENTITY colour
+   and carries no state; two marks that looked alike would read as one scale.
+   `.fresh-dot` is 8px round like the identity dot but never violet, which is
+   a sharper separation than the old ladder had — the old `.dm-fresh-s3`
+   painted `var(--accent)`, the same family the identity dots are drawn
+   from. */
 
 .dm-row-mirror {
   flex: none;

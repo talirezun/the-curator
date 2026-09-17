@@ -120,6 +120,18 @@ import { docsLinkHtml } from '../shared/docs-links.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
+// THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
+// live in this file, beside the first screen that needed it; it is now one
+// half of the app-wide scale shared/freshness.css paints, so it lives in
+// shared/age.js with the rest of the age vocabulary and the numbers are
+// unchanged. `formatAge` deliberately stays a byte-identical COPY in this
+// file rather than an import — this module registers a view and reaches for a
+// DOM at import time, so shared/age.js (which must stay importable in plain
+// Node) copies it in the other direction, and scripts/test-sidebar-status-
+// rows.js pins the two bodies against each other. Importing a pure numeric
+// function out of that DOM-free module has no such constraint.
+import { freshnessStep } from '../shared/age.js';
+
 // The paste-into-your-entry-file block. ONE text, shared with the Domains
 // view — see that module's header for what was measured and why the wording
 // is frozen. This screen offers it because this screen is where someone ends
@@ -1231,39 +1243,12 @@ export function effectiveSave(row, now = Date.now()) {
   return none;
 }
 
-/**
- * THE FIVE FRESHNESS STEPS, and why they are exactly these five.
- *
- * The question this screen has to answer in about a second is "am I saved?",
- * asked by someone whose context is running out and who is least able to go
- * reading. A word alone does not do it — "5 min ago" and "4 hr ago" are the
- * same shape at a glance — so the reading carries a pre-attentive mark too.
- *
- * The steps are NOT tuned constants. They are formatAge's own unit bands, so
- * the mark and the word change at the same instant and can never contradict
- * each other on screen:
- *
- *   4  under a minute   "just now"        an agent is saving right now
- *   3  minutes          "N min ago"       this session
- *   2  hours            "N hr ago"        today
- *   1  days             "N days ago"      this week
- *   0  weeks and older  "N weeks ago"+    dormant
- *
- * A NULL AGE IS NULL, not step 0. "We do not know when this was saved" and
- * "this was saved a long time ago" are different facts and the mark must not
- * merge them.
- *
- * NOT a bar and not a percentage: "how old" has no maximum, so a half-full
- * meter would be inventing one. Five discrete states, always beside the words.
- */
-export function freshnessStep(seconds) {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
-  if (seconds < 60) return 4;
-  if (seconds < 3600) return 3;
-  if (seconds < 86400) return 2;
-  if (seconds < 604800) return 1;
-  return 0;
-}
+// THE FIVE FRESHNESS STEPS used to be declared here. They are now in
+// shared/age.js — same five bands, same numbers, same null-is-not-zero rule —
+// because the pip they drive is one mark on an app-wide scale rather than
+// this screen's private ladder, and shared/freshness.css paints the same
+// scale on both sidebars. See the import at the top of this file for why
+// `formatAge` above is still a copy while this one is an import.
 
 /**
  * One-line summary of a project's memory for the sidebar row.

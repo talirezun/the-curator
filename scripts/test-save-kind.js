@@ -350,10 +350,21 @@ const { renderReadout } = await import('../src/public/next/shared/text.js');
 const escapeHtml = new Function(extractFunction(
   readFileSync(join(NEXT, 'app.js'), 'utf8'), 'escapeHtml', 'app.js') + '\nreturn escapeHtml;')();
 
-const LIFT = ['formatAge', 'effectiveSave', 'freshnessStep', 'newestPair', 'harnessOf',
+// `freshnessStep` MOVED to shared/age.js when the freshness scale became
+// app-wide, so it is lifted from THERE — see the same note in
+// test-memory-truth.js. This extractor matches a `function <name>(`
+// declaration, so neither the old path nor a one-line re-export in memory.js
+// would resolve; re-pointing is what keeps the suite executing the REAL
+// shipped function.
+const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
   'firstNote', 'saveLine', 'renderSaveStatus'];
+const LIFT_AGE = ['freshnessStep'];
+const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
+const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
 function lifted(stateObj) {
-  const body = LIFT.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n') +
+  const body = LIFT_VIEW.map((n) => extractFunction(viewSrc, n, 'memory.js'))
+    .concat(LIFT_AGE.map((n) => extractFunction(ageSrc, n, 'shared/age.js')))
+    .join('\n') +
     '\nreturn { ' + LIFT.join(', ') + ' };';
   return new Function('state', 'escapeHtml', 'icon', 'renderReadout', body)(
     stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', renderReadout);

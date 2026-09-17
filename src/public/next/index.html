@@ -137,6 +137,25 @@
      not have to touch this file. -->
 <link rel="stylesheet" href="/next/shared/switch.css">
 
+<!-- shared/freshness.css — the ONE freshness scale in /next: how recently
+     something happened, said the same way on the Agent-memory pip, both
+     sidebar status rows and (in its own colour space, since desktop/ may not
+     import src/) the menubar tray. It owns the whole `fresh-` prefix, and is
+     linked here for the same reason the five components above are: a view
+     that adopts the mark must not have to touch this file.
+
+     Linked ABOVE the views on purpose, so a view may still add PLACEMENT at
+     equal specificity after this point — the same layering the components
+     above document. views/memory.css does exactly that for its own pip,
+     which keeps its 12px square geometry there and takes only the --fresh-*
+     ink from tokens/color.css.
+
+     Load-bearing twice over, as the <link>s above record: without it every
+     freshness mark in the app renders as an invisible transparent box in
+     both themes, AND the file is invisible to scripts/test-css-tokens.js §5,
+     which discovers /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/freshness.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

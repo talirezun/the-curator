@@ -1829,7 +1829,7 @@ const CHAT_CSS = 'src/public/next/views/chat.css';
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-section('11. tokens/material.css defines every THEMED name in BOTH themes');
+section('11. every TOKEN FILE defines every THEMED name in BOTH themes');
 // ─────────────────────────────────────────────────────────────────────────
 // WHY THIS IS A CORRECTNESS CHECK AND NOT A STYLE ONE. `:root` and
 // `[data-theme="light"]` BOTH have specificity (0,1,0), so the LATER
@@ -1843,8 +1843,53 @@ section('11. tokens/material.css defines every THEMED name in BOTH themes');
 // treats a definition ANYWHERE in the cascade as "defined", which is exactly
 // right for the undefined-reference question and exactly wrong for this one.
 // So this section parses the two blocks SEPARATELY.
+//
+// ── IT COVERED ONE FILE, AND THAT IS HOW TWO NAMES SLIPPED PAST IT ───────
+// This section was written for tokens/material.css and named that file
+// directly, so tokens/color.css — where the whole semantic layer lives — was
+// never graded by the very rule material.css's own prose explains. Widened to
+// a LIST below. What it immediately found in color.css:
+//
+//   · --border-focus was declared once, at :root, as var(--violet-500) — a
+//     PALETTE PRIMITIVE, which by design is not restated per theme. So the
+//     light theme painted the DARK accent on every focus ring in the app,
+//     22 sites. Fixed at source (it is now var(--violet-600) under light,
+//     which is light's own --accent, exactly as the dark value is dark's).
+//   · --info-tint is `var(--accent-tint)`, whose target IS restated, so it is
+//     SAFE — see the alias refinement below, which is the second thing this
+//     widening needed.
+//
+// TWO REFINEMENTS THE WIDER SCAN NEEDED, both of them about color.css having
+// a layer material.css does not have:
+//
+//   · PALETTE PRIMITIVES (--ink-500, --violet-400, --teal-600, …) are the raw
+//     ramp. They are theme-INVARIANT by construction: #4A4A5E is #4A4A5E in
+//     both themes, and the semantic aliases above them are what switch. All
+//     42 of them would otherwise be reported as parity failures, which would
+//     have made the widening unusable and is exactly the pressure that gets a
+//     guard narrowed back to one file.
+//   · AN ALIAS WHOSE TARGET IS ITSELF RESTATED IS SAFE. A custom property
+//     whose value is `var(--x)` is substituted at COMPUTED-VALUE time on the
+//     element that declares it, so `--info-tint: var(--accent-tint)` on
+//     :root picks up whichever --accent-tint that same element carries — the
+//     light one under [data-theme="light"]. Grading it as a leak would demand
+//     a redundant restatement and teach the next reader the wrong model of
+//     how custom properties cascade. --border-focus fails this test precisely
+//     BECAUSE its target is a primitive, which is what makes it a real defect
+//     rather than a false positive.
 {
-  const materialRel = 'src/public/next/tokens/material.css';
+  // Each entry: the file, and whether it is expected to carry a theme table
+  // at all. shared/freshness.css is in the list on purpose WITHOUT one — the
+  // assertion for it is that it declares no tokens of its own, which is the
+  // property that keeps the freshness colours in the token layer where both
+  // themes can see them. A hex or a new --fresh-* declared in that sheet
+  // would be a token invisible to this parity rule.
+  const TOKEN_FILES = [
+    { rel: 'src/public/next/tokens/material.css', themed: true },
+    { rel: 'src/public/next/tokens/color.css', themed: true },
+    { rel: 'src/public/next/shared/freshness.css', themed: false },
+  ];
+  const materialRel = TOKEN_FILES[0].rel;
   const materialRaw = readFileSync(path.join(ROOT, materialRel), 'utf8');
   // cleanCss() first, and that is load-bearing: material.css's own prose
   // contains the literal string `[data-theme="light"]` (it explains this very
@@ -1917,6 +1962,24 @@ section('11. tokens/material.css defines every THEMED name in BOTH themes');
     (/#[0-9a-f]{3,8}\b|rgba?\(|linear-gradient|\binset\b/i.test(v) ||
     /var\(--(violet|ink|red|teal|entity|concept|summary|accent|text|surface|canvas|border|danger|hairline|ring|mat|gloss|elev|control-edge)/.test(v)));
 
+  // ── The two color.css-shaped refinements, defined once and used below ──
+  // A PALETTE PRIMITIVE is the raw ramp: --ink-500, --violet-400, --teal-600.
+  // Declared once, consumed by both themes, never restated — that is what
+  // makes them a palette rather than a theme.
+  const isPrimitive = (name) =>
+    /^--(ink|violet|entity|concept|summary|teal|red)-\d+$/.test(name);
+  // An alias into a name the light block DOES restate resolves per theme on
+  // its own, because var() inside a custom property is substituted at
+  // computed-value time on the declaring element. --info-tint is the live
+  // example; --border-focus is the counter-example, and it aliased a
+  // PRIMITIVE, which is why it leaked.
+  const aliasTarget = (v) => { const m = /^var\((--[a-z0-9-]+)\)$/.exec(v); return m ? m[1] : null; };
+  const resolvesPerTheme = (v, light) => {
+    let t = aliasTarget(v), hops = 0;
+    while (t && hops++ < 8) { if (light.has(t)) return true; t = null; }
+    return false;
+  };
+
   const themed = [...darkDecls.keys()].filter((k) => isThemed(darkDecls.get(k), k));
   const invariant = [...darkDecls.keys()].filter((k) => !isThemed(darkDecls.get(k), k));
   const missing = themed.filter((k) => !lightDecls.has(k));
@@ -1932,6 +1995,82 @@ section('11. tokens/material.css defines every THEMED name in BOTH themes');
     strayInvariant.length === 0
       ? 'and no theme-invariant name is restated for no reason'
       : 'invariant names needlessly duplicated in the light block: ' + strayInvariant.join(', '));
+
+  // ── THE SAME RULE, over every token file rather than the one it was
+  // written for. material.css is re-graded here too: a second, independent
+  // pass over the same file is cheap and proves the generalised code agrees
+  // with the hand-written pass above.
+  for (const { rel, themed: expectsTable } of TOKEN_FILES) {
+    const name = rel.split('/').pop();
+    const raw = readFileSync(path.join(ROOT, rel), 'utf8');
+    const fileBody = dropAtRules(cleanCss(raw));
+    const at = fileBody.indexOf('[data-theme=');
+
+    if (!expectsTable) {
+      // A sheet that is NOT a token file must declare no tokens at all. This
+      // is the assertion that keeps shared/freshness.css a consumer: a
+      // --fresh-* declared there would be invisible to the parity rule above,
+      // which is how a colour comes to exist in one theme only.
+      const own = [...decls(fileBody).keys()];
+      ok(own.length === 0,
+        own.length === 0
+          ? `${name} declares no custom properties of its own — its colours come from the token layer, where both themes can see them`
+          : `${name} declares ${own.length} custom propert(ies) that no theme table grades: ${own.join(', ')}`);
+      continue;
+    }
+
+    ok(at > 0, `${name} has a real [data-theme="light"] block`);
+    const fDark = decls(fileBody.slice(0, at));
+    const fLight = decls(fileBody.slice(at));
+    const fThemed = [...fDark.keys()].filter(
+      (k) => isThemed(fDark.get(k), k) && !isPrimitive(k) && !resolvesPerTheme(fDark.get(k), fLight));
+    const fMissing = fThemed.filter((k) => !fLight.has(k));
+    ok(fThemed.length >= 10,
+      `${name}: ${fThemed.length} themed names need a light value (${[...fDark.keys()].filter(isPrimitive).length} palette primitives excluded, ` +
+      `${[...fDark.keys()].filter((k) => isThemed(fDark.get(k), k) && !isPrimitive(k) && resolvesPerTheme(fDark.get(k), fLight)).length} self-resolving aliases excluded)`);
+    ok(fMissing.length === 0,
+      fMissing.length === 0
+        ? `${name}: every one of them is restated under [data-theme="light"]`
+        : `${name}: these would paint their DARK value onto the LIGHT theme — ${fMissing.join(', ')}`);
+    // Anti-vacuity, per file: the diff must be able to report a real miss.
+    // Counted as a DELTA against whatever is already missing, not against
+    // zero — a first draft asserted `=== 1` and went red alongside the real
+    // failure when a mutation removed --border-focus, reporting "the detector
+    // is vacuous" about a run in which the detector had just fired correctly.
+    {
+      const fake = new Map(fLight);
+      fake.delete(fThemed[0]);
+      ok(fThemed.filter((k) => !fake.has(k)).length === fMissing.length + 1,
+        `${name}: anti-vacuity — deleting one themed name from the light block IS reported (${fThemed[0]})`);
+    }
+  }
+
+  // The two refinements must each be able to sort a real case, in BOTH
+  // directions. A classifier that says "not a leak" about everything would
+  // make the loop above green over a genuinely broken file.
+  ok(isPrimitive('--ink-500') && isPrimitive('--teal-600') && !isPrimitive('--text-2')
+     && !isPrimitive('--fresh-hot') && !isPrimitive('--border-focus'),
+    'anti-vacuity: the palette-primitive test sorts a ramp step from a semantic alias');
+  {
+    const light = new Map([['--accent-tint', 'rgba(1,2,3,0.1)']]);
+    ok(resolvesPerTheme('var(--accent-tint)', light) && !resolvesPerTheme('var(--violet-500)', light)
+       && !resolvesPerTheme('#ABCDEF', light),
+      'anti-vacuity: an alias into a RESTATED name resolves per theme; one into a primitive, and a bare hex, do not');
+  }
+  // The exact defect the widening found, pinned by name so it cannot come
+  // back quietly.
+  {
+    const colorBody = dropAtRules(cleanCss(readFileSync(path.join(ROOT, 'src/public/next/tokens/color.css'), 'utf8')));
+    const cAt = colorBody.indexOf('[data-theme=');
+    ok(decls(colorBody.slice(cAt)).has('--border-focus'),
+      '--border-focus carries a LIGHT value — it aliased a palette primitive, so the light theme was painting the dark accent on all 22 focus rings');
+    ok(!decls(colorBody.slice(cAt)).has('--info-tint'),
+      '…and --info-tint deliberately does NOT, because it aliases --accent-tint, which the light block restates: adding one would teach the wrong model of the cascade');
+    for (const n of ['--fresh-hot', '--fresh-mid', '--fresh-cold', '--fresh-hot-halo']) {
+      ok(decls(colorBody.slice(0, cAt)).has(n) && decls(colorBody.slice(cAt)).has(n),
+        `${n} — the freshness scale — is declared in BOTH themes`);
+    }
+  }
 
   // Anti-vacuity, both directions: the classifier must be able to sort a real
   // pair, and the parity check must be able to report a real miss.

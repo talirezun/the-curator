@@ -2010,7 +2010,7 @@ function renderSidebar(token) {
           '<span class="dm-row-meta">' +
             '<span class="dm-row-figure">' + pagesText + '</span>' +
             '<span class="dm-row-sep" aria-hidden="true">·</span>' +
-            freshnessDotHtml('dm', d.lastIngestDate, now) +
+            freshnessDotHtml(d.lastIngestDate, now) +
             clockGlyph(12) +
             '<span class="dm-row-age">' + escapeHtml(age || 'nothing written yet') + '</span>' +
             // The absolute date, kept and REACHABLE — visually hidden rather
