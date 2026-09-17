@@ -583,6 +583,73 @@ export function renderViewHeader(o) {
 }
 
 /**
+ * ── THE ⓘ MARK, ON ITS OWN ─────────────────────────────────────────────────
+ *
+ * `renderViewHeader` above owns the mark for a VIEW HEADER. This is the same
+ * affordance for everything that is not a header — a block's lede, a row, a
+ * caption — returned as TWO fragments rather than one string, because the mark
+ * is inline and the panel is a block: the caller places each where its own
+ * layout wants it. They are only ever emitted together.
+ *
+ * This file already owned the MECHANISM (`data-tx-info`, `tx-vh-info`,
+ * `tx-vh-panel` and the one delegated listener at the bottom); what it did not
+ * own was a way to ask for the affordance outside a header. views/settings.js
+ * answered that with a local `infoMark` in v3.53.0 and views/domains.js copied
+ * it by hand, so the mechanism had one home and its callers had three.
+ *
+ * ── WHY THE COPIES ARE STILL THERE ─────────────────────────────────────────
+ * Four shipped suites LIFT `infoMark` out of views/settings.js by
+ * brace-matching and EXECUTE it — test-next-title-affordances.js,
+ * test-next-settings-sections.js, test-api-keys-contract.js,
+ * test-next-provider-rows.js. Deleting it in the same pass that introduces this
+ * one would take those with it. So the copies coexist for now and
+ * scripts/test-shared-block.js proves they emit the same BYTES over a fixture
+ * matrix, which is the property that matters while both are live. Collapsing
+ * them is a later pass, with those four re-pointed at this export.
+ *
+ * The output is byte-identical to that copy on purpose, down to the `-btn`
+ * suffix on the button id: the ids are pinned by name in shipped suites
+ * (`data-tx-info="settings-block-info-<id>"`), and the panel is opened by the
+ * delegated listener below, which keys on exactly this attribute.
+ *
+ * ── WHAT MUST NEVER GO INSIDE THE PANEL ────────────────────────────────────
+ * A CONTROL. The listener toggles on the BUTTON, so anything focusable inside
+ * the panel is reachable only after that toggle — the licence `{html: true}`
+ * grants is for a link, a <strong> or a <code>, not for a button. The fragment
+ * is then the CALLER's to escape: interpolating anything a user or a provider
+ * typed into it, unescaped, is how this becomes an injection. The default is
+ * ESCAPED, and the test is `=== true` rather than truthy, so a stray string
+ * cannot switch escaping off.
+ *
+ * @param {string} id     stable DOM id for the panel (the button gets id + '-btn')
+ * @param {string} label  accessible name; falls back to 'More information'
+ * @param {string} info   the prose that would otherwise have been a `title=`
+ * @param {{html?: boolean}} [opts]  `{html: true}` treats `info` as a TRUSTED
+ *   HTML fragment instead of escaping it. Mirrors `renderViewHeader`'s
+ *   `infoHtml`, which is the same decision taken once already.
+ * @returns {{btn: string, panel: string}} two fragments, or '' / '' when there
+ *   is no id or nothing to say — so a caller can concatenate unconditionally.
+ */
+export function renderInfoMark(id, label, info, opts) {
+  const asHtml = !!opts && opts.html === true;
+  const text = typeof info === 'string' ? info.trim() : '';
+  if (!id || !text) return { btn: '', panel: '' };
+  const name = label || 'More information';
+  return {
+    btn:
+      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
+        ' data-tx-info="' + escapeHtml(id) + '"' +
+        ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
+        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
+        INFO_GLYPH +
+      '</button>',
+    panel:
+      '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
+        ' aria-label="' + escapeHtml(name) + '" hidden>' + (asHtml ? text : escapeHtml(text)) + '</div>',
+  };
+}
+
+/**
  * The circled-i, inlined.
  *
  * app.js's icon() cannot be imported — this module takes no imports so it stays

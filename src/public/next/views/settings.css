@@ -1830,63 +1830,7 @@
    inside carry another, so a third would make the build list read as nested
    twice. What separates the blocks is a rule and a heading, which is what the
    reader is actually using to navigate. */
-/* ── ONE RULE FOR BLOCK-TO-BLOCK SPACING (Providers & keys) ────────────────
-   MEASURED on the shipped page, and it was the Domains defect one screen over
-   (v3.50.0): the gap BETWEEN two blocks was 16px of padding plus a 1px rule =
-   17px, against 14px of gap INSIDE a block — so a block break read as very
-   slightly larger than a paragraph break, and the maintainer's verdict was that
-   the four blocks were "a sea of information" with nothing separating them.
 
-   Now the same two-sided rhythm `.dm-section + .dm-section` gives Domains, and
-   for the same reason: 24 | hairline | 24 = --space-12 on each side of the
-   rule, one step above the 16px `.cur-group + .cur-group` uses for two groups
-   INSIDE one block, so a block break reads as larger than a group break rather
-   than the same size. The margin is on the ADJACENT sibling only, so the first
-   block keeps its own top padding and the page does not open with a gap. */
-.settings-job-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding-top: var(--space-12);
-  border-top: 1px solid var(--border);
-}
-.settings-job-block + .settings-job-block { margin-top: var(--space-12); }
-
-/* The lede's fold panel is a SIBLING of the lede, not a child — shared/text.js
-   addresses it by id and toggles `hidden`, and a panel nested inside the <p>
-   would be invalid markup around a <div>. It takes the lede's own 32px indent
-   so the fold opens under the prose column rather than under the numeral.
-
-   The indent is on a WRAPPER rather than on the panel itself: shared/text.css
-   owns the whole `tx-` prefix and scripts/test-next-text-system.js fails on a
-   `tx-` selector appearing in any other /next stylesheet — comments included.
-   A first draft of this rule was `.settings-block > .tx-vh-panel` and that
-   guard caught it, which is the guard doing exactly its job. */
-.settings-block-info { margin-left: 32px; }
-/* `display: contents` so the wrapper adds no box of its own when the panel
-   inside it is `hidden` — otherwise the block's flex `gap` would reserve a row
-   for an empty div above every closed fold. */
-.settings-block-info:not(:has(> :not([hidden]))) { display: contents; }
-.settings-job-title {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-.settings-job-lede {
-  margin: 0;
-  max-width: 66ch;   /* the prose cap, not the card's — at 1200px an uncapped lede ran ~163 columns (v3.54.0) */
-  font-size: var(--text-md);
-  line-height: 1.55;
-  color: var(--text-2);
-}
-.settings-job-lede strong { color: var(--text); font-weight: var(--weight-semibold); }
-.settings-job-lede code {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--text);
-}
 .settings-job-empty {
   margin: 0;
   padding: 12px var(--space-6);
@@ -2134,70 +2078,6 @@
   .settings-nav-row::before { transition: none; }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   PROVIDERS & KEYS — FOUR NUMBERED BLOCKS  (v3.45.0)
-
-   The page reads top to bottom as a sequence, and the number is part of the
-   argument rather than decoration: block 1 is the only block that can do
-   anything on a fresh install, so it leads, and every block below it stays
-   PRESENT and honestly empty until it can answer. Hiding an empty block would
-   lose a step silently and the page would stop reading as a flow.
-
-   The numeral sits on the accent tint rather than a filled disc: it is a
-   position marker, not a control and not a status, and a filled violet disc at
-   20px would out-weigh the heading beside it. Its contrast is not asserted as
-   TEXT because it is `aria-hidden` and duplicated by the heading order — but it
-   is on --accent-text over --accent-tint, which the token file measures above
-   the 4.5 floor in both themes anyway.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-.settings-block-hd {
-  display: flex;
-  align-items: baseline;
-  /* WAS --space-5 (10px) while the indent below was 32px = 20px numeral +
-     12px, so the heading text started at 30px and the lede under it at 32px.
-     A 2px step between a title and the sentence under it is not read as a
-     step — it is read as one of them being slightly wrong, which is what it
-     was. --space-6 IS the 12px the indent was derived from; this is the gap
-     catching up with the arithmetic that was already written down. */
-  gap: var(--space-6);
-  margin-bottom: var(--space-3);
-}
-.settings-block-num {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-full);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: var(--numeric-tabular);
-  background: var(--accent-tint);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-border);
-  /* Optically centred against a baseline-aligned heading. */
-  transform: translateY(2px);
-}
-/* The lede and the body sit under the heading TEXT, not under the numeral, so
-   the numerals form a column down the left edge and the prose forms a second
-   column beside it. 32px = the 20px numeral + the 12px gap `.settings-block-hd`
-   above now really uses, derived rather than guessed: a hand-picked indent
-   drifts the moment the numeral changes size. */
-.settings-block-lede { margin-left: 32px; }
-.settings-block-body { margin-left: 32px; }
-/* ── A BLOCK THAT IS NOT A STEP WEARS NO NUMBER, AND NO INDENT WITH IT ────
-   The numerals are an ARGUMENT — Providers & keys reads top to bottom as a
-   sequence and the number is part of what it is saying. A section that is
-   merely a section (General's Software update, Appearance, System check) is
-   not step 1 of anything, and numbering it would claim an order that does
-   not exist. `settingsBlock(null, ...)` renders no `.settings-block-num`,
-   and this class zeroes the indent that only existed to clear one: without
-   it the prose would hang 32px inside a heading with nothing to its left. */
-.settings-block-unnumbered .settings-block-lede,
-.settings-block-unnumbered .settings-block-body,
-.settings-block-unnumbered .settings-block-info { margin-left: 0; }
 .settings-block-footnote {
   margin: var(--space-6) 0 0;
   font: var(--type-body-sm);

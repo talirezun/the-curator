@@ -184,7 +184,12 @@ section('§6  THE OTHER PLACE THE CONTAINER DECIDES GEOMETRY — the settings bl
    as the literal `var(--space-6)`, so the next person may change the numeral
    or the gap as long as the three numbers still add up. */
 {
-  const settings = stripComments(readFileSync(join(NEXT, 'views/settings.css'), 'utf8'));
+  // THE THREE NUMBERS MOVED FILE, NOT VALUE. v3.55.0 lifted the block
+  // component out of views/settings.css into shell.css so a second view can
+  // borrow it (shared/block.js). The arithmetic is the same arithmetic; this
+  // reads it where it now lives, and §6b below pins that the original file
+  // kept no copy.
+  const settings = stripComments(readFileSync(join(NEXT, 'shell.css'), 'utf8'));
   const space = stripComments(readFileSync(join(NEXT, 'tokens/space.css'), 'utf8'));
   const tok = (name) => {
     const m = new RegExp('--' + name + ':\\s*(\\d+)px').exec(space);
@@ -194,7 +199,7 @@ section('§6  THE OTHER PLACE THE CONTAINER DECIDES GEOMETRY — the settings bl
   const numW = /\.settings-block-num\s*\{[^}]*width:\s*(\d+)px/.exec(settings);
   const indent = /\.settings-block-lede\s*\{\s*margin-left:\s*(\d+)px/.exec(settings);
   ok(!!gapVar && !!numW && !!indent,
-    'CONTROL: the three numbers are all readable from views/settings.css + tokens/space.css');
+    'CONTROL: the three numbers are all readable from shell.css + tokens/space.css');
   if (gapVar && numW && indent) {
     const gap = tok(gapVar[1]);
     ok(Number.isFinite(gap), `CONTROL: --${gapVar[1]} resolves to a px value (${gap})`);
@@ -209,6 +214,23 @@ section('§6  THE OTHER PLACE THE CONTAINER DECIDES GEOMETRY — the settings bl
   const js = readFileSync(join(NEXT, 'views/settings.js'), 'utf8');
   ok(/const numbered = num != null;/.test(js),
     'and settingsBlock decides it with `!= null`, not a falsy test — a numbering scheme must not silently lose a 0');
+}
+
+/* §6b — THE SAME "DEFINED ONCE" RULE §1 AND §2 APPLY TO THE BUTTON FAMILY.
+
+   The block is now a SHARED component (src/public/next/shared/block.js), and a
+   shared component whose stylesheet is a view's is not shared — index.html
+   links views/settings.css LAST of the view sheets, so any other view's own
+   rules sit EARLIER in the cascade than the component it is borrowing. The
+   relocation is only real if the original kept no copy: two declarations of a
+   rhythm is exactly the four-unrelated-declarations shape v3.50.0 removed from
+   Domains, one file later. */
+for (const sel of ['.settings-job-block', '.settings-job-title', '.settings-job-lede',
+                   '.settings-block-hd', '.settings-block-num', '.settings-block-lede',
+                   '.settings-block-body', '.settings-block-info']) {
+  const where = declaredIn(sel);
+  ok(where.length === 1 && where[0] === 'shell.css',
+    `${sel} is declared exactly once, in shell.css — found in [${where.join(', ') || 'nowhere'}]`);
 }
 
 

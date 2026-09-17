@@ -48,6 +48,11 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const settingsSrc = read('src/public/next/views/settings.js');
 const settingsCss = read('src/public/next/views/settings.css');
+// The block rhythm moved to shell.css with the rest of the block component
+// (v3.55.0, shared/block.js): a second view cannot borrow a rule that lives
+// in the LAST-linked view sheet. The assertions below follow it rather than
+// being deleted — what they pin is the rhythm, not the file it sat in.
+const shellCss = read('src/public/next/shell.css');
 const chatSrc = read('src/public/next/views/chat.js');
 const ingestSrc = read('src/public/next/views/ingest.js');
 
@@ -637,10 +642,16 @@ section('\u00a77  THE FREE-MODEL CAUTION IS NEVER FOLDED, AND THE RHYTHM IS ONE 
   // because a computed gap needs a browser — and stated as such rather than
   // dressed up as behaviour.
   const rule = /\.settings-job-block \+ \.settings-job-block\s*\{\s*margin-top:\s*var\(--space-12\)\s*;?\s*\}/;
-  ok(rule.test(settingsCss),
+  ok(rule.test(shellCss),
     'SOURCE GUARD: one adjacent-sibling rule gives every block break the same gap');
-  ok(/\.settings-job-block \{[\s\S]*?padding-top: var\(--space-12\);[\s\S]*?\}/.test(settingsCss),
+  ok(/\.settings-job-block \{[\s\S]*?padding-top: var\(--space-12\);[\s\S]*?\}/.test(shellCss),
     'SOURCE GUARD: \u2026and the matching padding above the rule, so the gap reads 24 | hairline | 24');
+  // \u2026AND NOWHERE ELSE. A relocation that leaves the original behind is two
+  // copies, which is the state this release exists to remove. Comments stripped:
+  // views/settings.css still QUOTES the adjacency in the note explaining why
+  // .catalogue-sync's hand-tuned pull was deleted.
+  ok(!/\.settings-job-block\s*[{,+]/.test(settingsCss.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'SOURCE GUARD: \u2026and views/settings.css keeps NO copy of it');
   // Run against DECLARATIONS, never raw text: the rule that removed this pull
   // explains itself in a comment that QUOTES it, and a check reading its own
   // subject's comment is this repo's named "a guard that stopped reaching the
