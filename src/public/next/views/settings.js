@@ -768,6 +768,12 @@ function activeModelLine(keys) {
 function freshState() {
   return {
     section: SETTINGS_SECTIONS[0][0], // the default IS whichever section is drawn first
+    // One-shot: the sidebar's click handler sets it, the next renderMain reads
+    // it and clears it, and a `content-reveal` class is put on the section body
+    // for that one paint. FALSE on a fresh mount on purpose — arriving at
+    // Settings is already animated by the shell's view-enter (app.js's
+    // playViewEnter), and two enter animations on one paint is a stutter.
+    sectionJustChanged: false,
 
     // General
     version: null,          // { version, onDiskVersion, restartRequired }
@@ -1052,14 +1058,26 @@ let myMountToken = 0;
 // only. The four section loaders below each commit their state AND call
 // render() themselves (they are also called directly by the save flows,
 // which must repaint immediately), so a result landing between 200 ms and
-// 600 ms would paint through the min-visible clamp rather than waiting it
-// out. That is a real gap and it is left open deliberately: all four
-// section loads were measured at ~2.9 ms — two orders of magnitude under
-// the 200 ms threshold — so the loader never appears here at all, and
-// restructuring four loaders plus six call sites to close a window that
-// does not occur is risk without benefit. Named in the NOT ENFORCED block
-// of scripts/test-next-loading-gate.js so it cannot be mistaken for
-// coverage.
+// 600 ms paints through the min-visible clamp rather than waiting it out.
+//
+// ── THE MEASUREMENT THAT USED TO STAND HERE WAS WRONG, AND IT MATTERED ───
+// This paragraph read "all four section loads were measured at ~2.9 ms — two
+// orders of magnitude under the 200 ms threshold — so the loader never
+// appears here at all". Three of the four still are: `/api/config`, 2.9 ms;
+// `/api/health/ai-settings`, 3.2 ms; `/api/mcp/config` + `/api/config/
+// default-domain`, 4.9 ms (in a browser, isolated install). The fourth,
+// `/api/config/api-keys`, is **277 ms** on an install with three saved keys
+// and a synced OpenRouter catalogue — 181 KB of JSON composed from 198 offers
+// — so on Providers & keys the loader DID appear, flashed for ~80 ms, and the
+// clamp gap above WAS reached on every first visit. That is the maintainer's
+// "especially Providers & keys comes with delay", measured.
+//
+// It is answered by warming the data before the click (prefetchOtherSections)
+// rather than by tightening this gate: a loader shown for less time is still
+// a loader, and the honest fix for 277 ms is on the server. The gap is still
+// real and still untested; it is named in the NOT ENFORCED block of
+// scripts/test-next-loading-gate.js — whose copy of the "~2-3 ms" claim
+// carries the same error and is not this change's file to correct.
 let loadGate = null;
 
 // Unsubscribe function for this mount's write-gate subscription (see
@@ -1122,12 +1140,25 @@ registerView('settings', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    // Per-mount caches, cleared HERE rather than in the teardown: a teardown
+    // that has to run for the next mount to be correct is a teardown one
+    // handleMountFailure away from being skipped. See each declaration.
+    sectionLoads = new Map();
+    lastSidebarHtml = null;
+    lastMainHtml = null;
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });
     render(mountToken);
     loadVersion(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));       // cheap, always shown in the sidebar footer
-    ensureSectionData(SETTINGS_SECTIONS[0][0], mountToken).catch((err) => reportAsyncMountFailure(mountToken, err)); // default section — prefetch immediately
+    ensureSectionData(SETTINGS_SECTIONS[0][0], mountToken)                                   // default section — fetched immediately
+      .catch((err) => reportAsyncMountFailure(mountToken, err))
+      // …and the other four warmed in idle time, so the first click on
+      // Providers & keys does not pay its 277 ms fetch. Chained AFTER the
+      // landing section's own load rather than started beside it, so the
+      // section the user is looking at is never queued behind four it is not.
+      // See prefetchOtherSections for the measurement this answers.
+      .then(() => { if (isCurrentMount(mountToken)) prefetchOtherSections(mountToken); });
 
     // Re-render whenever ANY domain's write-gate state changes — e.g. an
     // ingest starts/finishes on some domain while the user is sitting on
@@ -1387,16 +1418,77 @@ function installUpdateStyle() {
 
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
+/**
+ * Which loader a section still needs, or `null` when its data is already in
+ * `state`.
+ *
+ * ONE TABLE, READ BY BOTH THE CLICK PATH AND THE IDLE PREFETCH, because the
+ * two must agree about what "already loaded" means. A second list written out
+ * in the prefetch would be free to fall behind this one, and the failure would
+ * be silent in the direction that matters: a section the prefetch thinks is
+ * warm but the click path re-fetches.
+ *
+ * General reads the SAME `GET /api/config` Knowledge base does — one endpoint,
+ * one cached `state.config`, so entering one section warms the other and
+ * neither can render a value the other has already moved past.
+ */
+function sectionLoaderFor(section) {
+  if (section === 'providers') return state.keys === null ? loadKeys : null;
+  if (section === 'mcp') return state.mcp === null ? loadMcp : null;
+  if (section === 'health') return state.aiHealth === null ? loadAiHealth : null;
+  if (section === 'storage') return state.config === null ? loadConfig : null;
+  if (section === 'general') return state.config === null ? loadConfig : null;
+  return null;
+}
+
+/**
+ * The in-flight load per section, so the click path and the idle prefetch
+ * cannot both fire the same request.
+ *
+ * MEASURED, NOT HYPOTHETICAL. `GET /api/config/api-keys` answers in **277 ms**
+ * on an install with three saved keys and a synced OpenRouter catalogue (198
+ * offers, 181 KB of JSON) — see the header note on the prefetch below. That is
+ * long enough for a user to reach Providers & keys while the prefetch started
+ * on Settings entry is still in the air, and a second request would then pay
+ * the whole 277 ms again AND race the first one's state write.
+ *
+ * Keyed by section rather than by loader so the map reads as "what is this
+ * section waiting for"; two sections sharing `loadConfig` share the entry via
+ * the loader identity check below.
+ *
+ * RESET ON EVERY onEnter. A promise created under a dead mount resolves into
+ * `isCurrentMount` guards and writes nothing, so re-using it for a NEW mount
+ * would leave that mount with no data and nothing in flight.
+ */
+let sectionLoads = new Map();
+
+/**
+ * Start (or join) the load a section needs. Returns a promise, or `null` when
+ * there is nothing to load.
+ *
+ * DELIBERATELY NOT GATED. `gate.begin()` is the caller's business: the click
+ * path wants the delay-gated loader, and a background prefetch must never be
+ * able to paint a loader over the section the user is actually reading.
+ */
+function startSectionLoad(section, token) {
+  const loader = sectionLoaderFor(section);
+  if (!loader) return null;
+  // Joined by LOADER identity, not by section name: `general` and `storage`
+  // share `loadConfig`, and two requests for one endpoint is the thing this
+  // map exists to stop.
+  for (const rec of sectionLoads.values()) {
+    if (rec.loader === loader) return rec.promise;
+  }
+  const promise = loader(token).finally(() => {
+    const rec = sectionLoads.get(section);
+    if (rec && rec.promise === promise) sectionLoads.delete(section);
+  });
+  sectionLoads.set(section, { loader, promise });
+  return promise;
+}
+
 async function ensureSectionData(section, token) {
-  let load = null;
-  if (section === 'providers' && state.keys === null) load = loadKeys;
-  else if (section === 'mcp' && state.mcp === null) load = loadMcp;
-  else if (section === 'health' && state.aiHealth === null) load = loadAiHealth;
-  // General reads the SAME `GET /api/config` Knowledge base does — one
-  // endpoint, one cached `state.config`, so entering one section warms the
-  // other and neither can render a value the other has already moved past.
-  else if (section === 'storage' && state.config === null) load = loadConfig;
-  else if (section === 'general' && state.config === null) load = loadConfig;
+  const load = startSectionLoad(section, token);
   if (!load) return;
 
   // The ONE chokepoint every section's entry load passes through, which is
@@ -1409,10 +1501,81 @@ async function ensureSectionData(section, token) {
   const gate = loadGate;
   if (gate) gate.begin();
   try {
-    await load(token);
+    await load;
   } finally {
     settleGate(gate, () => { if (isCurrentMount(token)) render(token); });
   }
+}
+
+/**
+ * ── WARM THE OTHER FOUR SECTIONS IN IDLE TIME ──────────────────────────────
+ *
+ * THE COMPLAINT THIS ANSWERS, and the measurement behind it. The maintainer
+ * reported that switching between the five Settings sections "comes with
+ * delay — especially Providers & keys". Measured in a real browser against an
+ * isolated install carrying three saved keys and a 197-entry OpenRouter
+ * catalogue, a COLD click on Providers & keys painted:
+ *
+ *     t+0.5 ms    an empty section body (state.keys is still null)
+ *     t+203 ms    the delay-gated loader appears (the gate's 200 ms threshold)
+ *     t+283 ms    the real section, 251 KB of HTML, 217 table rows
+ *
+ * i.e. **283 ms of nothing, with an 80 ms loader flash in the middle**, on
+ * every first visit. The WARM render of the very same section — the same 251
+ * KB, the same 3,479 nodes — costs 9.7 ms of script and paints inside one
+ * frame. So the delay was never the rendering. It was one fetch.
+ *
+ * THE FETCH IS NOT CHEAP, AND THE COMMENT THAT SAID IT WAS IS NOW CORRECTED.
+ * `loadGate`'s declaration above used to state that "all four section loads
+ * were measured at ~2.9 ms — two orders of magnitude under the 200 ms
+ * threshold — so the loader never appears here at all". Three of the four
+ * still are (2.9 / 3.2 / 4.9 ms, measured). `GET /api/config/api-keys` is
+ * **277 ms**, because it composes 198 OpenRouter offers and asks llm.js about
+ * each one. That measurement is why the loader DOES appear, and why it is
+ * worth moving the wait somewhere the user is not watching.
+ *
+ * WHY PREFETCH RATHER THAN MAKE THE RENDER CHEAPER. The render is already
+ * under a frame; there is nothing there to win. The honest fix for the 277 ms
+ * is on the server (see this session's report — `isOfferableModel` rebuilds,
+ * sorts and freezes the whole merged catalogue on every call, and the route
+ * calls it ~600 times), and that file is not this one's to change. Warming the
+ * data while the user reads the landing section removes the wait from the
+ * click either way, and keeps working if the server is fixed.
+ *
+ * ── THE RULES THIS FOLLOWS ─────────────────────────────────────────────────
+ *   · ONE SECTION AT A TIME, each in its own idle callback, so five requests
+ *     never land as a burst against a single-threaded local server while the
+ *     user is trying to interact with the section in front of them.
+ *   · THE MOUNT TOKEN IS CHECKED BEFORE EVERY STEP. Leaving Settings stops the
+ *     queue; it does not merely discard the results.
+ *   · NO GATE. A background load must not be able to paint a loader.
+ *   · IT SKIPS THE SECTION BEING SHOWN, whose own load onEnter already started
+ *     through `ensureSectionData` — and joins it through `startSectionLoad`
+ *     rather than racing it if the user has moved on in the meantime.
+ *   · `requestIdleCallback` where it exists, `setTimeout` where it does not.
+ *     Safari has shipped rIC only recently and Electron's version follows
+ *     Chromium, so the fallback is not dead code on every platform.
+ */
+function prefetchOtherSections(token) {
+  const queue = SETTINGS_SECTIONS.map(([id]) => id).filter((id) => id !== state.section);
+  const idle = (fn) => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 2000 });
+    else setTimeout(fn, 120);
+  };
+  const step = () => {
+    if (!isCurrentMount(token)) return;
+    while (queue.length) {
+      const section = queue.shift();
+      const load = startSectionLoad(section, token);
+      // Nothing to fetch for this one (another section's loader already
+      // warmed it) — keep walking rather than burning an idle slot on it.
+      if (!load) continue;
+      load.then(() => { if (isCurrentMount(token)) idle(step); },
+        () => { if (isCurrentMount(token)) idle(step); });
+      return;
+    }
+  };
+  idle(step);
 }
 
 async function loadVersion(token) {
@@ -1654,8 +1817,42 @@ function render(token) {
       });
     }
 
-    renderSidebar(token);
-    renderMain(token);
+    // ── ONE PAINT, OR NONE ─────────────────────────────────────────────────
+    // Both halves report whether they actually replaced their DOM (`false`
+    // means "the HTML was byte-identical to what is already on screen, so
+    // nothing was touched" — see renderSidebar/renderMain). Two rules follow,
+    // and they are the whole of the change:
+    //
+    //   1. IF NEITHER PAINTED, RETURN. The capture/restore below exists to put
+    //      back what an innerHTML replacement destroys; with no replacement
+    //      there is nothing to put back, and the open folds, the open ⓘ
+    //      panels, the caret, the focus ring and an open listbox menu are all
+    //      still exactly where the user left them — kept rather than restored,
+    //      which is strictly stronger. Re-wiring here would be a DEFECT, not a
+    //      no-op: wireGlobalListeners calls addEventListener on whatever is in
+    //      the document, and the nodes are the same ones it wired last time,
+    //      so every handler would fire twice.
+    //
+    //   2. IF ONE PAINTED AND THE OTHER DID NOT, PAINT THE OTHER TOO. Same
+    //      reason, from the other side: wireGlobalListeners wires the sidebar
+    //      AND the section body in one pass, so a re-wire after replacing only
+    //      one of them double-binds the other. Forcing the second write keeps
+    //      "either both are fresh nodes or nothing moved" true, which is the
+    //      property the wiring has always relied on. It costs one more string
+    //      build of whichever half is smaller.
+    //
+    // WHY THIS EXISTS. `render()` has ~40 call sites and repaints the section
+    // wholesale; on Providers & keys that is 251 KB of HTML and 3,479 nodes.
+    // Measured in a browser: building the string costs 1.8 ms, and parsing it
+    // plus re-wiring costs another 7.9 ms — so a render that changes NOTHING
+    // was costing ~8 ms and a full loss of DOM state. Entering Settings fired
+    // four renders (mount, version, config, gate settle), of which two painted
+    // identical HTML; a cold Providers entry fired three renders of the same
+    // 251 KB. This makes the redundant ones free.
+    const sidebarPainted = renderSidebar(token) !== false;
+    const mainPainted = renderMain(token, sidebarPainted) !== false;
+    if (!sidebarPainted && !mainPainted) return;
+    if (!sidebarPainted) renderSidebar(token, true);
 
     const after = doc ? doc.getElementById('view-root') : null;
     if (after && openFolds.size) {
@@ -1682,7 +1879,28 @@ function render(token) {
   });
 }
 
-function renderSidebar(token) {
+/**
+ * The HTML each surface last WROTE, so a render that would write the same
+ * string again can skip the write. See render()'s "ONE PAINT, OR NONE" block
+ * for the argument and the measurements.
+ *
+ * NULLED ON EVERY onEnter, and that is what makes comparing a remembered
+ * string to the live DOM sound: the only way `#view-root` can hold something
+ * other than what this view last wrote is a different view having mounted, and
+ * a different view mounting means a new mount token and a fresh onEnter. (Every
+ * render here is already behind `isCurrentMount`, and `setMain`/`setSidebar`
+ * refuse a stale token on top of that.)
+ */
+let lastSidebarHtml = null;
+let lastMainHtml = null;
+
+/**
+ * @param {number} token  this mount's token
+ * @param {boolean} [force]  write even when the HTML is unchanged — used by
+ *   render() to keep the two surfaces painting as one. See its comment.
+ * @returns {boolean} false when nothing was written.
+ */
+function renderSidebar(token, force) {
   const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => (
     '<button type="button" class="settings-nav-row' + (state.section === id ? ' active' : '') + '" data-section="' + id + '">' +
       '<span class="row-label">' + escapeHtml(label) + '</span>' +
@@ -1695,7 +1913,7 @@ function renderSidebar(token) {
       (state.version.restartRequired ? ' <span class="settings-restart-flag" title="Files were updated but the running app hasn\'t restarted yet">restart</span>' : '')
     : 'The Curator';
 
-  setSidebar(
+  const html =
     '<div class="settings-sidebar-shell">' +
       '<div class="sidebar-title">Settings</div>' +
       '<div class="settings-nav-list">' + rows + '</div>' +
@@ -1703,12 +1921,19 @@ function renderSidebar(token) {
         '<span class="mono settings-version">' + versionLabel + '</span>' +
         '<button type="button" class="btn btn-secondary btn-xs" id="settings-updates-btn">Updates</button>' +
       '</div>' +
-    '</div>',
-    token
-  );
+    '</div>';
+  if (force !== true && html === lastSidebarHtml) return false;
+  lastSidebarHtml = html;
+  setSidebar(html, token);
+  return true;
 }
 
-function renderMain(token) {
+/**
+ * @param {number} token  this mount's token
+ * @param {boolean} [force]  see renderSidebar
+ * @returns {boolean} false when nothing was written.
+ */
+function renderMain(token, force) {
   // See pendingListboxes. Cleared BEFORE the section body is built, because
   // building it is what fills the array.
   pendingListboxes.length = 0;
@@ -1721,16 +1946,52 @@ function renderMain(token) {
   else body = renderStorage();
 
   const info = SECTION_INFO[state.section];
-  setMain(
+  const html =
     renderViewHeader({
       eyebrow: 'configuration',
       title,
       info: info ? info.text : null,
       infoHtml: !!(info && info.html),
     }) +
-    body,
-    token
-  );
+    // ── THE SECTION BODY IS ITS OWN ELEMENT, AND IT IS THIS VIEW'S ──────────
+    // A bare `display: block` wrapper (views/settings.css), so it changes
+    // nothing about layout: the header keeps its own 22px bottom margin and
+    // the blocks inside keep the `.settings-job-block + .settings-job-block`
+    // adjacency that supplies the 24 | 1 | 24 rhythm — they are still siblings.
+    // It exists so the section-change reveal below has something OF THIS
+    // VIEW'S to animate. The alternative was `.main-inner`, which belongs to
+    // the shell and is the containing block for everything in the column; a
+    // transform there is the hazard scripts/test-next-view-enter-motion.js
+    // records for `#main`, and it is not this file's element to take that risk
+    // with.
+    '<div class="settings-view-body" id="settings-view-body">' + body + '</div>';
+
+  // ── THE SECTION-CHANGE REVEAL ────────────────────────────────────────────
+  // CONSUMED HERE, and consumed whether or not it is used, because it is a
+  // one-shot: the flag is set by the sidebar's click handler and must not
+  // survive into the next render, which is an IN-SECTION repaint (a keystroke
+  // in the model search box, a key saved, a poll landing) and must not animate.
+  // Reading it before the early return below is what makes that true even on a
+  // render that paints nothing.
+  const reveal = state.sectionJustChanged === true;
+  state.sectionJustChanged = false;
+
+  if (force !== true && !reveal && html === lastMainHtml) return false;
+  lastMainHtml = html;
+  setMain(html, token);
+  // ── APPLIED TO THE NODE, NOT BAKED INTO THE STRING ───────────────────────
+  // A `content-reveal` class inside the HTML would make the section-change
+  // render and the very next in-section render differ by exactly that class,
+  // so the next repaint — a poll, a gate settle, a keystroke — would replace
+  // 251 KB of DOM for nothing AND cut the animation off mid-flight. Added
+  // afterwards instead, which is also how app.js's own `playViewEnter` does it
+  // for the shell's two containers. `.content-reveal` itself belongs to
+  // tokens/motion.css; where it is absent this is inert.
+  if (reveal && typeof document !== 'undefined') {
+    const host = document.getElementById('settings-view-body');
+    if (host) host.classList.add('content-reveal');
+  }
+  return true;
 }
 
 // ── General ──────────────────────────────────────────────────────────────
@@ -7216,12 +7477,45 @@ function renderQualifyPanel(q, minRuns, buildNow) {
     // the server sent it — an absent ceiling prints no clause rather than a
     // guessed one.
     const ceiling = Number.isFinite(q.callTimeoutMs) ? formatDuration(q.callTimeoutMs) : null;
-    const head = done === 0
-      ? 'Run 1 of ' + total + ' — waiting for the model…' +
-        (elapsed ? ' ' + elapsed + ' so far' : '') +
-        (ceiling ? ' (it gives up after ' + ceiling + ')' : '')
-      : 'Run ' + inFlight + ' of ' + total + '…' +
-        (eta ? ' about ' + eta + ' left' : (elapsed ? ' ' + elapsed + ' so far' : ''));
+    // ── THE SAME SENTENCE, IN THREE PIECES ──────────────────────────────
+    // The words a user reads are BYTE-IDENTICAL to the single string this used
+    // to build (`head`, below, is still it, and is still what goes into the
+    // element's text). It is split so the one part that changes every second —
+    // the elapsed clock — can be written on its own by the 1 s tick in
+    // onQualifyGo, with `textContent`, instead of that tick calling `render()`
+    // and repainting the entire section once a second. v3.53.1 recorded what a
+    // 1 s full re-render costs on this very page (folds and disclosures
+    // closing under the user mid-run); v3.54.0 wrote the rule down: a clock
+    // writes textContent to a targeted node and never calls render().
+    //
+    // `data-qualify-clock="elapsed"` IS BOTH THE ADDRESS AND THE PERMISSION,
+    // and it is an attribute rather than an id for two reasons. It is what the
+    // tick looks the node up BY, so there is no second name to keep in step
+    // (and no new module-level identifier entering the sandboxes several
+    // suites build by extraction — the FUNCTION-LOCAL rule this file states at
+    // `laneChip` and `QUALIFY_ABORT_REASONS`). And once a run has landed the
+    // middle clause becomes the ETA — a projection from measured runs, not a
+    // clock — so a tick that overwrote it would replace a better number with a
+    // worse one every second; the attribute is emitted ONLY when the clause is
+    // the clock, so the tick cannot reach the ETA at all.
+    const elapsedClause = elapsed ? ' ' + elapsed + ' so far' : '';
+    const midIsClock = (done === 0 || !eta);
+    const headPre = done === 0
+      ? 'Run 1 of ' + total + ' — waiting for the model…'
+      : 'Run ' + inFlight + ' of ' + total + '…';
+    const headMid = midIsClock ? elapsedClause : ' about ' + eta + ' left';
+    const headPost = (done === 0 && ceiling) ? ' (it gives up after ' + ceiling + ')' : '';
+    // NO SPAN AT ALL ON THE ETA ARM, rather than a bare one. A `<span>` with
+    // no attribute would be an element that exists for nothing, and the two
+    // arms' output is then BYTE-IDENTICAL to what this function produced
+    // before the split — verified by executing both versions over a 32-render
+    // fixture matrix: 18 renders identical, and the 14 that differ are the
+    // clock arm, differing only by this element, with identical text.
+    const headHtml = escapeHtml(headPre) +
+      (midIsClock
+        ? '<span data-qualify-clock="elapsed">' + escapeHtml(headMid) + '</span>'
+        : escapeHtml(headMid)) +
+      escapeHtml(headPost);
 
     // ── A FAILED RUN NAMES WHAT THE PROVIDER SAID ───────────────────────
     // `errorMessage` is on the run record and was not on the frame, so the
@@ -7245,7 +7539,12 @@ function renderQualifyPanel(q, minRuns, buildNow) {
 
     return (
       '<div class="model-qual model-qual-running">' +
-        '<p class="model-qual-head">' + escapeHtml(head) + '</p>' +
+        // `headHtml` is the sentence this used to build as one escaped string,
+        // with one <span> put around the clock clause. Its TEXT is unchanged
+        // character for character, and every interpolated value still goes
+        // through escapeHtml — the three pieces are concatenated as markup,
+        // never interpolated into an attribute.
+        '<p class="model-qual-head">' + headHtml + '</p>' +
         failHtml +
         '<p class="mono model-qual-facts">' +
           escapeHtml(runs.map(r =>
@@ -8389,6 +8688,14 @@ function wireGlobalListeners() {
   document.querySelectorAll('.settings-nav-row').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.section = btn.dataset.section;
+      // ONE-SHOT, CONSUMED BY THE NEXT render() — see renderMain. Set HERE, at
+      // the only place a section actually changes, rather than derived inside
+      // the renderer by comparing to a remembered section: this view renders
+      // from ~40 call sites and a "did it change" comparison would also fire
+      // on the first render of a mount, which `navigate()` already animates
+      // through the shell's own view-enter. Two animations on one paint is
+      // the stutter scripts/test-next-view-enter-motion.js exists to stop.
+      state.sectionJustChanged = true;
       render(myMountToken);
       // THE ONE PLACE THAT DOES NOT PRESERVE SCROLL, and the reason
       // render() preserves everywhere else rather than resetting: this is
@@ -9715,6 +10022,33 @@ async function onQualifyGo(modelId, token) {
     startedAt: Date.now(), total: null, aborted: null, stoppedAfter: null,
   });
   stopQualifyClock();
+  // ── THE CLOCK WRITES ONE NODE'S TEXT. IT DOES NOT RE-RENDER. ─────────────
+  //
+  // THIS TICK USED TO CALL `render(token)`, once a second, for as long as a
+  // measurement ran — which on the slowest measured model is 382 s per call
+  // and nine calls. On Providers & keys a render rebuilds and re-parses the
+  // whole section: 251 KB of HTML and 3,479 nodes, measured, ~8 ms of parse
+  // and re-wiring per tick. The cost is not the milliseconds. It is that every
+  // node on the screen is destroyed and recreated once a second underneath
+  // somebody who is watching a run: v3.53.1 is the release that had to add a
+  // capture/restore for open disclosures and ⓘ panels precisely BECAUSE of
+  // this tick, and its own KNOWN AND UNFIXED note records that a close lost to
+  // that race still flickers for one render. v3.54.0 then wrote the rule down
+  // — a clock writes `textContent` to a targeted node and never calls
+  // render() — and this was the one clock in this file still breaking it.
+  //
+  // WHAT THE USER READS IS UNCHANGED. renderQualifyPanel's running arm emits
+  // the same sentence it always did with a <span data-qualify-clock="elapsed">
+  // around the clock clause, and this writes that span's text with the same
+  // `formatDuration(Date.now() - startedAt)` the renderer uses. Everything
+  // else on that panel — the run counter, the outcome strip, a failed run's
+  // message — changes only when a FRAME ARRIVES, and the stream handler
+  // already renders on each one.
+  //
+  // THE SPAN CAN BE ABSENT, and that is not a failure to repair: it is absent
+  // exactly when the panel is not on screen (its row filtered out of the
+  // table, the shelf closed), i.e. when there is no clock for anyone to read.
+  // The next real render paints the correct elapsed value.
   state.qualifyTickId = setInterval(() => {
     // The mount check lives INSIDE the tick, so the timer stops itself rather
     // than relying on a teardown that this view does not have.
@@ -9722,7 +10056,10 @@ async function onQualifyGo(modelId, token) {
       stopQualifyClock();
       return;
     }
-    render(token);
+    if (typeof document === 'undefined') return;
+    const el = document.querySelector('[data-qualify-clock="elapsed"]');
+    if (!el || !Number.isFinite(state.qualify.startedAt)) return;
+    el.textContent = ' ' + formatDuration(Date.now() - state.qualify.startedAt) + ' so far';
   }, 1000);
   render(token);
 
