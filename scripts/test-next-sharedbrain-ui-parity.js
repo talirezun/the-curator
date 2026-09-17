@@ -46,6 +46,10 @@ import path from 'node:path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
+// shared/text.js takes no imports by design, precisely so a suite can EXECUTE
+// it rather than scan it (see its own "WHY IT HAS NO IMPORTS" header).
+import { renderDescription } from '../src/public/next/shared/text.js';
+
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const shared = R('src/public/next/views/shared.js');
 const wizard = R('src/public/next/views/shared-brain-wizard.js');
@@ -162,13 +166,16 @@ const SHARED_FNS = [
   'formatRelativeTime', 'composeDoneMessage', 'renderActions',
   'renderPushConfirm', 'renderSynthesizeConfirm', 'renderSkips', 'renderEnabled',
 ];
-const sharedBox = new Function(
+// renderDescription is the REAL export of shared/text.js, not a stub: §4 below
+// asserts that the off state's CTA descriptions wear the system's own class,
+// and a stub would let this file certify a class it had itself invented.
+const sharedBox = new Function('renderDescription',
   'let state = { flagError: null, listError: null, enabling: false, connections: [], cards: {}, expandedSkips: new Set(), expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   SHARED_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SHARED_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)();
+)(renderDescription);
 
 /** Brace-free sibling of extractFunction: lifts a top-level `const NAME = …;`
  *  out of live source. Needed because panelStep3() now interpolates a real
@@ -633,6 +640,82 @@ section('3. Phase 4 — the ten admin properties of the third deleted block');
     '…but IS offered a pull, which is the whole point of the membership');
   ok(/data-sb-action="push/.test(actionsClosed),
     '(control) a contributing member IS offered a push — the check above is not vacuous');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+section('4. The OFF STATE joins the button taxonomy and the kit');
+// ═══════════════════════════════════════════════════════════════════════
+//
+// NOT a parity property — nothing deleted with the old shell guarded this.
+// It is here because this file is the one that EXECUTES renderEnabled, and the
+// two things being pinned are properties of its output.
+{
+  sharedBox.__setState({
+    flagError: null, listError: null, enabling: false,
+    connections: [], cards: {}, expandedSkips: new Set(), expandedAdmin: new Set(),
+  });
+  const off = renderEnabled();
+
+  // ── ONE PRIMARY ────────────────────────────────────────────────────────
+  // shell.css's taxonomy: at most one `btn-primary` per card, row or panel,
+  // and it is "the one action that completes the step". Both CTAs open the
+  // same wizard at different steps, so both are routes and only the
+  // recommended one is primary — the shape the Sync view's decision panels
+  // already use. Counted, not spot-checked: a third CTA added as a primary
+  // would pass any single-button assertion.
+  const primaries = (off.match(/\bbtn-primary\b/g) || []).length;
+  ok(primaries === 1,
+    `shared off state: EXACTLY ONE btn-primary across both CTA cards (found ${primaries})`);
+  ok(/id="btn-sb-join"[^>]*>|class="btn btn-primary" id="btn-sb-join"/.test(off) &&
+     /btn btn-primary" id="btn-sb-join"/.test(off),
+    '…and it is JOIN — the branch whose precondition (an invite token) the reader either holds or does not');
+  ok(/btn btn-secondary" id="btn-sb-create"/.test(off),
+    '…while "set one up" is secondary, not a second invitation competing with it');
+
+  // ── THE DESCRIPTION IS THE SYSTEM'S ────────────────────────────────────
+  // `.sb-cta-desc` was --text-sm (12px) where every other description role in
+  // the app is 13px; a 16px title over a 12px line is the 4px step that made
+  // these cards read as oversized. The class is asserted on the OUTPUT, so a
+  // hand-rolled <p class="tx-desc"> would pass — which is fine: the class is
+  // the contract, and the CSS assertion below proves nothing redefines it here.
+  const descs = (off.match(/class="tx-desc"/g) || []).length;
+  ok(descs === 2, `shared off state: both CTA descriptions carry tx-desc (found ${descs})`);
+  ok(!/sb-cta-desc/.test(off), '…and the private 12px class is emitted nowhere');
+
+  // (control) the fixture really produced the off state, not an error branch.
+  ok(/btn-sb-join/.test(off) && /btn-sb-create/.test(off) && off.length > 300,
+    '(control) renderEnabled with zero connections really rendered the two CTA cards');
+}
+{
+  // ── THE CHROME, in the stylesheet ──────────────────────────────────────
+  // A source scan, and it says so. Comment-stripped: this file's own CSS now
+  // explains WHY `.sb-cta-desc` was deleted, and a raw scan would read that
+  // sentence as the rule it asserts is gone — the shape v3.19.0 recorded.
+  const sbCss = R('src/public/next/views/shared.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const body = (sel) => {
+    const at = sbCss.indexOf(sel + ' {');
+    if (at === -1) return null;
+    const close = sbCss.indexOf('}', at);
+    return close === -1 ? null : sbCss.slice(at, close);
+  };
+  ok(!/\.sb-cta-desc\s*[{,]/.test(sbCss),
+    'shared.css declares NO .sb-cta-desc — the role belongs to shared/text.js, not to this view');
+  for (const sel of ['.sb-cta-card', '.sb-enable-card', '.sb-card']) {
+    const b = body(sel) || '';
+    ok(/border:\s*1px solid var\(--hairline\)/.test(b),
+      `${sel} takes the kit's --hairline edge, not --border (the material edge belongs to chrome that floats)`);
+    ok(/box-shadow:\s*var\(--elev-1\)/.test(b),
+      `${sel} takes --elev-1 — a content card in this app is a RAISED surface`);
+    ok(/border-radius:\s*var\(--radius-lg\)/.test(b),
+      `${sel} takes var(--radius-lg), not a px literal that drifts from the token`);
+  }
+  // The CTA row is a grid now, so two cards sit side by side instead of a
+  // 640px column with ~870px of dead space between title and button.
+  const row = body('.sb-cta-row') || '';
+  ok(/display:\s*grid/.test(row) && /repeat\(auto-fit/.test(row) && !/max-width/.test(row),
+    '.sb-cta-row is an uncapped auto-fit grid — two-up where the column allows, one-up where it does not');
+  ok(body('.sb-cta-card') !== null && body('.thisSelectorIsInvented') === null,
+    '(control) the rule reader finds a real rule and returns null for an invented one');
 }
 
 // ═══════════════════════════════════════════════════════════════════════

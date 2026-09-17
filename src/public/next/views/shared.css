@@ -80,66 +80,112 @@
 
 /* ── Disabled (feature-flag off) state ───────────────────────────────── */
 
+/* ── THE VIEW'S ONE CARD MEASURE ─────────────────────────────────────────
+   This view had THREE measures and no stated rule: `.sb-enable-card` 560,
+   `.sb-cta-row` 640 and `.sb-cards` uncapped, so the connected state's cards
+   jumped to the full 1144px content box while the off state sat in a 640px
+   strip — the same screen, two different apps.
+
+   The rule adopted is shell.css's own, stated where `.main-inner` moved to
+   1200px: CAP THE PROSE, NEVER THE CARDS. So the two card CONTAINERS
+   (`.sb-cta-row`, `.sb-cards`) take the column, and the one card that is a
+   PARAGRAPH plus a button — the off-off state, where there is nothing else on
+   the screen — keeps a measure. That measure is this token, and it is the 560
+   the enable card already had; nothing about the rendered off-off state moves,
+   it just stops being an unexplained literal. */
+:root { --sb-col: 560px; }
+
 .sb-enable-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 20px 22px;
+  gap: var(--space-7);
+  padding: var(--space-8) var(--space-10);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  /* Onto the kit's `.cur-group` contract (shell.css): --hairline, not --border,
+     plus --elev-1. A content card in this app is a RAISED surface with a
+     hairline edge; --border is the two-line material edge's weight and belongs
+     to chrome that floats. */
+  border: 1px solid var(--hairline);
+  box-shadow: var(--elev-1);
   background: var(--surface);
-  max-width: 560px;
+  max-width: var(--sb-col);
 }
 .sb-enable-title { font: var(--type-h3); color: var(--text); }
 
 /* ── Not-connected CTA cards + "add another" row ─────────────────────── */
 
-.sb-cta-row { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+/* TWO-UP, AND UNCAPPED. It was a 640px one-up COLUMN of two cards, each with
+   its title on the left and its button on the right — about 870px of dead
+   space between the two at a 1144px content box once the cap came off, which
+   is why a bare uncap was the wrong fix. As a grid the cards take half the
+   column each and the button sits a card's width from its own title.
+   `auto-fit` + minmax collapses to one column when the main column cannot hold
+   two, so no viewport breakpoint is guessed at. */
+.sb-cta-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--space-8);
+  align-items: start;
+}
 .sb-cta-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-8);
   flex-wrap: wrap;
-  padding: 16px 18px;
+  padding: var(--space-8) var(--space-10);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--elev-1);
   background: var(--surface);
 }
 .sb-cta-content { flex: 1; min-width: 200px; }
 .sb-cta-title {
-  margin: 0 0 4px;
+  margin: 0 0 var(--space-2);
   font: var(--type-h3);
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-4);
 }
 .sb-cta-title svg { flex: none; color: var(--accent-text); }
-.sb-cta-desc { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+/* `.sb-cta-desc` WAS HERE and is deleted. It was --text-sm (12px) where every
+   other description role in the app is 13px — `.tx-desc`, `.settings-job-lede`,
+   `.empty-body` — and the 4px step between a --type-h3 title and a 12px line is
+   what made these two cards read as oversized; the TITLE is the same size every
+   block title in the app takes. views/shared.js emits renderDescription()
+   instead, so the role is the system's and this file styles none of it. */
 
-.sb-add-more { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.sb-add-more { display: flex; gap: var(--space-5); margin-top: var(--space-7); flex-wrap: wrap; }
 
 /* ── Cards container ──────────────────────────────────────────────────── */
 
+/* NO max-width, and that is now a decision rather than an omission: a
+   connection card carries a header, a stats row, an actions strip and a skips
+   list, so it is a DATA card and takes the column — the same width the CTA row
+   above occupies in the off state, so the view does not change shape when the
+   first connection lands. */
 .sb-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-8);
 }
 
 .sb-card {
-  padding: 16px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
+  padding: var(--space-8);
+  /* Was the literal 10px — the same number `--radius-lg` resolves to, so this
+     renders identically and stops being a value that drifts from the token. */
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--elev-1);
   background: var(--surface);
 }
 
 .sb-card-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
   flex-wrap: wrap;
 }
 .sb-card-title {

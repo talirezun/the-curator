@@ -2197,6 +2197,144 @@ function runClearSelectedFile(initialState, fileInputStub) {
   ok(renderCalls.length === 1, '§16c …and still renders, rather than throwing on a null fileInput');
 }
 
+// ── §17 — THE CONFIRM GATE USES THE COLUMN ──────────────────────────────
+//
+// REPORTED, with a screenshot: a 480px field stack pinned to the left of a
+// 959px main column, with an uncapped overwrite row and uncapped status boxes
+// running the full width beside it — three measures on one screen, none of
+// them chosen. shell.css's own note on raising the content cap to 1200px names
+// this view: the stack "had room for a NEIGHBOUR and no room to put one".
+//
+// §17a is a CSS scan and says so; §17b EXECUTES the gate, because "the file
+// list and the cost card are in different columns" is a property of the
+// emitted markup, not of a stylesheet.
+console.log('\n§ 17  Confirm gate — one column measure, two columns');
+{
+  // A rule's body, comment-stripped so a paragraph explaining a deleted rule
+  // cannot satisfy a scan for that rule (the hazard this repo keeps recording).
+  const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleBody = (selector) => {
+    const at = cssNoComments.indexOf(selector + ' {');
+    if (at === -1) return null;
+    const close = cssNoComments.indexOf('}', at);
+    return close === -1 ? null : cssNoComments.slice(at + selector.length + 2, close);
+  };
+
+  // (1) ONE measure, declared once, and the five copies of 480 are gone.
+  const colDecls = (cssNoComments.match(/--ing-col\s*:/g) || []).length;
+  ok(colDecls === 1,
+    '§17a views/ingest.css declares --ing-col EXACTLY once (found ' + colDecls + ') — ' +
+    'five rules used to carry `max-width: 480px` independently');
+  const stale480 = (cssNoComments.match(/max-width:\s*480px/g) || []).length;
+  ok(stale480 === 0,
+    '§17a …and no `max-width: 480px` literal survives anywhere in the sheet (found ' + stale480 + ')');
+  ok(/max-width:\s*var\(--ing-col\)/.test(ruleBody('.ing-field') || ''),
+    '§17a .ing-field takes the token — it is the single-file form\'s measure, where there is no grid');
+  ok(/max-width:\s*var\(--ing-col\)/.test(ruleBody('.ing-status-block') || ''),
+    '§17a .ing-status-block is CAPPED — an uncapped renderStatus box ran the full 959px column');
+  ok(/max-width:/.test(ruleBody('.ing-queue-overwrite-row') || ''),
+    '§17a .ing-queue-overwrite-row is capped — it was the single widest thing on the screenshot');
+  // CONTROL: the reader really reaches rule bodies, so the four above are not
+  // passing on `null`.
+  ok(ruleBody('.ing-field') !== null && ruleBody('.thisRuleDoesNotExist') === null,
+    '§17a control: the rule reader finds a real rule and returns null for an invented one');
+
+  // (2) The estimate card's horizontal padding. `padding: var(--space-2) 0`
+  // was written for `.ing-queue-estimate-row` children, each carrying their
+  // own inset; v3.20.0 replaced those rows with renderReadoutGroup and the
+  // zero stayed, so "Estimated cost" sat 1px from the card's border.
+  const estBody = ruleBody('.ing-queue-estimate') || '';
+  const pad = /padding:\s*([^;]+);/.exec(estBody);
+  const padParts = pad ? pad[1].trim().split(/\s+/) : [];
+  const horiz = padParts.length >= 2 ? padParts[1] : padParts[0];
+  ok(!!pad && horiz !== '0' && horiz !== '0px',
+    '§17a .ing-queue-estimate has NON-ZERO horizontal padding (got ' + (horiz || 'no padding rule') + ')');
+  // And the four rules that owned that inset are really gone, not just unused.
+  for (const dead of ['.ing-queue-estimate-row', '.ing-queue-estimate-basis', '.ing-queue-warnings']) {
+    ok(!new RegExp(dead.replace('.', '\\.') + '\\s*[{,+]').test(cssNoComments),
+      '§17a the dead rule ' + dead + ' is deleted, not left to describe markup nobody emits');
+  }
+}
+{
+  // ── §17b — EXECUTED. Which cell each part lands in. ───────────────────
+  // renderQueueConfirmGate is driven with the real renderConfirmGrid,
+  // renderQueueInputFields and renderQueueEstimate; only the leaves (the
+  // listbox, the drop zone, the file rows) are stubs, and each stub emits a
+  // MARKER so a part that vanished cannot be mistaken for a part that moved.
+  const NEED17 = ['renderConfirmGrid', 'renderQueueInputFields', 'renderQueueConfirmGate', 'renderQueueEstimate'];
+  const b17 = {};
+  for (const n of NEED17) {
+    b17[n] = extractFunction(js, n);
+    ok(!!b17[n], '§17b extracted a body for ' + n + '() from the real source');
+  }
+  if (NEED17.every((n) => b17[n])) {
+    const gate = new Function('state', `
+      const escapeHtml = (s) => String(s == null ? '' : s);
+      const icon = () => '<svg></svg>';
+      const renderListboxHtml = () => '<div data-stub="listbox"></div>';
+      const domainListboxCfg = () => ({});
+      const renderDropZoneHtml = () => '<div data-stub="dropzone"></div>';
+      const renderStatus = (o) => '<div class="tx-status" data-stub="status">' + o.title + '</div>';
+      const renderReadoutGroup = () => '<div class="tx-readout-group" data-stub="readout"></div>';
+      const renderInfoMark = (id) => ({ btn: '<button data-stub="info" id="' + id + '-btn"></button>',
+                                        panel: '<div class="tx-vh-panel" id="' + id + '" hidden></div>' });
+      const resolveEstimateFileList = (e, sel) => sel;
+      const renderQueueRejectedItem = () => '<li data-stub="rejected"></li>';
+      const renderQueueFileListItem = () => '<li data-stub="file"></li>';
+      const formatQueueBytes = (b) => b + ' B';
+      const formatUsdRange = (lo, hi) => '$' + lo + '-$' + hi;
+      const formatTokenRange = (lo, hi) => lo + '-' + hi;
+      ${b17.renderConfirmGrid}
+      ${b17.renderQueueInputFields}
+      ${b17.renderQueueEstimate}
+      ${b17.renderQueueConfirmGate}
+      return renderQueueConfirmGate();
+    `);
+    const out = gate({
+      domain: 'articles',
+      selectedFiles: [{ name: 'a.md' }, { name: 'b.md' }],
+      queueBudgetInput: '', queueOverwriteInput: false, queueSubmitting: false,
+      queueEstimateLoading: false, queueEstimateError: null, queueSubmitError: null,
+      queueEstimate: {
+        files: { count: 2, totalBytes: 2048, rejected: [{ name: 'c.docx', reason: 'no' }] },
+        provider: 'gemini', model: 'flash-lite',
+        estimate: { usdLow: 0.01, usdHigh: 0.05, inputTokensLow: 1, inputTokensHigh: 2,
+          outputTokensLow: 3, outputTokensHigh: 4, basis: 'the long one', basisLede: 'the short one' },
+        warnings: [],
+      },
+    });
+
+    const inputAt  = out.indexOf('ing-confirm-col-input');
+    const decideAt = out.indexOf('ing-confirm-col-decide');
+    ok(/class="ing-confirm-grid"/.test(out) && inputAt > 0 && decideAt > inputAt,
+      '§17b the gate emits the two-column grid, input cell first');
+    // The four things that must be on the LEFT.
+    for (const [what, needle] of [['the domain picker', 'data-stub="listbox"'],
+                                  ['the drop zone', 'data-stub="dropzone"'],
+                                  ['the "will be ingested" list', 'id="ing-queue-file-list"'],
+                                  ['the "won\'t be included" list', 'data-stub="rejected"']]) {
+      const at = out.indexOf(needle);
+      ok(at > inputAt && at < decideAt, '§17b ' + what + ' is in the INPUT cell (at ' + at + ')');
+    }
+    // The five things that must be on the RIGHT.
+    for (const [what, needle] of [['the cost card', 'class="ing-queue-estimate"'],
+                                  ['the budget cap', 'id="ing-queue-budget"'],
+                                  ['the overwrite switch', 'id="ing-queue-overwrite"'],
+                                  ['the Start button', 'id="ing-queue-start-btn"'],
+                                  ['the basis ⓘ', 'data-stub="info"']]) {
+      const at = out.indexOf(needle);
+      ok(at > decideAt, '§17b ' + what + ' is in the DECIDE cell (at ' + at + ')');
+    }
+    // The confirm HEAD spans both — it names the batch, not one column.
+    ok(out.indexOf('ing-queue-confirm-head') >= 0 && out.indexOf('ing-queue-confirm-head') < inputAt,
+      '§17b the "Batch ingest — N files" head sits ABOVE the grid, not inside a column');
+    // CONTROL: the markers really are distinguishable positions, so an
+    // assertion comparing them is not comparing -1 to -1.
+    ok(out.indexOf('data-stub="listbox"') !== -1 && out.indexOf('class="ing-queue-estimate"') !== -1,
+      '§17b control: both marker strings are actually present in the output');
+  }
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────
 console.log('\n' + '─'.repeat(60));
 console.log('Passed: ' + passed + '   Failed: ' + failed);

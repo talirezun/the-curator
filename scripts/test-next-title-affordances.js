@@ -332,8 +332,13 @@ section('§4  THE CONVERTED SITES — named, on top of the class guard');
   ok('shared: the note is built from BOTH busy conditions, so neither goes silent',
     /if \(pushBusyDomain && !readOnly\) blocked\.push/.test(sh) &&
     /if \(mirrorBusy\) blocked\.push/.test(sh));
+  // RE-POINTED from an exact-list match on the whole import statement. That
+  // shape asserted the import's MEMBERSHIP AND ITS ORDER AND ITS LENGTH, so
+  // adding a third name to the same statement failed an assertion whose own
+  // label is about renderStatus alone. What is meant is: the name is imported
+  // from the text system, not merely referenced.
   ok('shared: renderStatus is actually imported, not just referenced',
-    /import \{ renderViewHeader, renderStatus \} from '\.\.\/shared\/text\.js';/.test(sh));
+    /import \{[^}]*\brenderStatus\b[^}]*\} from '\.\.\/shared\/text\.js';/.test(sh));
 
   ok('ingest: the Ingest button’s blocked reason is no longer a tooltip',
     !ing.includes('btnTitle'));

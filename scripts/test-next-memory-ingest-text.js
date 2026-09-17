@@ -59,7 +59,7 @@ import { stripComments, functionSource, callSiteCount } from './test-helpers/sou
 // a suite can run it rather than scan it. Anything importing next/app.js
 // throws `ReferenceError: document is not defined` at module scope.
 import {
-  renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderExplainer,
+  renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderExplainer, renderInfoMark,
 } from '../src/public/next/shared/text.js';
 // Same contract, same reason: shared/docs-links.js takes no imports and THROWS
 // on an unknown key, so the About panel's link is proven to resolve rather than
@@ -409,30 +409,47 @@ const baseState = {
 section('§5  BEHAVIOURAL — the real ingest renderers, including the money ones');
 // ═══════════════════════════════════════════════════════════════════════════
 
+// `renderConfirmGrid` is LIFTED with the renderers rather than stubbed: it is
+// the function that decides which COLUMN each part of the confirm gate lands
+// in, and a stub would let the estimate card and the file list collapse into
+// one cell with every assertion below still green.
+//
+// `renderInfoMark` is the REAL export of shared/text.js, for the same reason
+// escapeHtml is real here — it is the thing that decides what is HIDDEN, and
+// the whole point of the caveat arm below is that one sentence is not.
 function ingRenderers(stateObj) {
   const body =
+    functionSource(ingSrc, 'renderConfirmGrid').replace(/^export\s+/, '') + '\n' +
     functionSource(ingSrc, 'renderQueueEstimate').replace(/^export\s+/, '') + '\n' +
     functionSource(ingSrc, 'renderQueuePausedBanner').replace(/^export\s+/, '') + '\n' +
-    'return { renderQueueEstimate, renderQueuePausedBanner };';
+    'return { renderQueueEstimate, renderQueuePausedBanner, renderConfirmGrid };';
   return new Function('state', 'escapeHtml', 'icon',
     'resolveEstimateFileList', 'renderQueueRejectedItem', 'renderQueueFileListItem',
     'formatQueueBytes', 'formatUsdRange', 'formatTokenRange', 'pausedReasonCopy',
-    'renderStatus', 'renderReadoutGroup', body)(
+    'renderStatus', 'renderReadoutGroup', 'renderInfoMark', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>',
     (est, sel) => sel, () => '<li>r</li>', () => '<li>f</li>',
     (b) => b + ' B', (lo, hi) => '$' + lo + ' – $' + hi, (lo, hi) => lo + '–' + hi,
     (r) => ({ title: 'Paused — ' + r, body: 'Recoverable. Resume when ready.' }),
-    renderStatus, renderReadoutGroup);
+    renderStatus, renderReadoutGroup, renderInfoMark);
 }
 
 {
+  // THE BASIS IS NOW TWO STRINGS. `basis` is the estimator's full 140-226-word
+  // account and lives behind the ⓘ; `basisLede` is the ≤20 words that stay on
+  // screen, and it is what the readout's PROVENANCE slot renders. The fixture
+  // carries both so the split can be asserted in both directions.
+  const LEDE = 'Sized against this wiki’s real page list — about 2.6x an empty domain. ' +
+    'Actual spend can land above the range.';
+  const FULL_BASIS = 'Estimated for Gemini against the "x" domain. ' +
+    'ONLY-IN-THE-FULL-BASIS. Both ends are estimates rather than limits.';
   const est = {
     files: { count: 2, totalBytes: 2048, rejected: [] },
     provider: 'gemini', model: 'flash-lite',
     estimate: { usdLow: 0.01, usdHigh: 0.05, inputTokensLow: 1, inputTokensHigh: 2,
-      outputTokensLow: 3, outputTokensHigh: 4, basis: 'measured against an empty domain' },
+      outputTokensLow: 3, outputTokensHigh: 4, basis: FULL_BASIS, basisLede: LEDE },
     warnings: ['This batch is large.', 'One file is a scanned PDF.'],
   };
   const R = ingRenderers({ selectedFiles: [{ name: 'a' }, { name: 'b' }], queueBudgetInput: '', queueOverwriteInput: false, queueSubmitting: false });
@@ -440,21 +457,62 @@ function ingRenderers(stateObj) {
 
   ok('the cost estimate renders as a READOUT GROUP', /class="tx-readout-group"/.test(out), out.slice(0, 400));
   ok('...with the cost as a figure', /tx-readout-value">\$0\.01 – \$0\.05</.test(out), out.slice(0, 900));
-  ok('...and the estimator’s basis as PROVENANCE on the cost it qualifies',
-    /tx-readout-prov">measured against an empty domain</.test(out), out.slice(0, 900));
+  ok('...and the estimator’s LEDE as PROVENANCE on the cost it qualifies',
+    /tx-readout-prov">Sized against this wiki/.test(out), out.slice(0, 1200));
 
-  // THE MONEY INVARIANT. v3.16.1: "a warning behind a click is not a warning."
+  // ── THE MONEY INVARIANT, MEASURED RATHER THAN SPELLED ───────────────────
+  // v3.16.1: "a warning behind a click is not a warning." The old form of this
+  // assertion was `!/<details/`, which was TRUE OF A SURFACE THAT HAD NEVER
+  // HAD A <details> and would have stayed true if the whole cost caveat had
+  // been moved into an ⓘ panel — the affordance this view actually uses. It is
+  // replaced by a check on WHERE the words land: strip every hidden container
+  // out of the markup and the caveat must survive; the full basis must not.
+  //
+  // `hiddenStripped` removes any element carrying `hidden` or `tx-vh-panel`,
+  // non-greedily up to the next `</div>` — which is exact for renderInfoMark's
+  // panel (a single flat div of escaped text) and deliberately crude enough
+  // that a NESTED fold would defeat it in the safe direction: more gets
+  // stripped, so a caveat hidden inside one goes red.
+  const hiddenStripped = out
+    .replace(/<div[^>]*\btx-vh-panel\b[^>]*>[\s\S]*?<\/div>/g, '')
+    .replace(/<[a-z]+[^>]*\bhidden\b[^>]*>[\s\S]*?<\/[a-z]+>/g, '');
   ok('an estimator warning renders as a STATUS box', /class="tx-status tx-status-attention"/.test(out), out.slice(0, 600));
-  ok('...and is NOT inside any fold — there is no <details> on this surface at all',
-    !/<details/.test(out), out.slice(0, 400));
-  ok('...and both warning lines survive',
-    /This batch is large\./.test(out) && /One file is a scanned PDF\./.test(out), out.slice(0, 900));
+  ok('...and survives the removal of every hidden container — it is not folded',
+    /This batch is large\./.test(hiddenStripped) && /One file is a scanned PDF\./.test(hiddenStripped),
+    hiddenStripped.slice(0, 900));
+  ok('THE SPEND CAVEAT IS VISIBLE: "can land above the range" survives the same strip',
+    /can land above the range/.test(hiddenStripped), hiddenStripped.slice(0, 1200));
+  ok('...while the FULL basis is inside the panel, and only there',
+    /ONLY-IN-THE-FULL-BASIS/.test(out) && !/ONLY-IN-THE-FULL-BASIS/.test(hiddenStripped),
+    out.slice(0, 1600));
+  ok('CONTROL: the hidden-stripper really removes something — it is not a no-op',
+    hiddenStripped.length < out.length, `${hiddenStripped.length} vs ${out.length}`);
 
-  // ABSENT IS NOT ZERO on the spending surface: no basis, no provenance line.
-  const noBasis = R.renderQueueEstimate({ ...est, estimate: { ...est.estimate, basis: null }, warnings: [] });
+  // ── THE TWO COLUMNS ─────────────────────────────────────────────────────
+  // The file list is what you are about to spend on; the cost card is the
+  // decision. They are in different grid cells, so the Start button is no
+  // longer below a 220px scrolling list with its price above it.
+  const decideAt = out.indexOf('ing-confirm-col-decide');
+  const listAt = out.indexOf('ing-queue-file-list');
+  const cardAt = out.indexOf('ing-queue-estimate');
+  ok('the confirm gate renders the two-column grid', /class="ing-confirm-grid"/.test(out) && decideAt > 0, out.slice(0, 400));
+  ok('...with the FILE LIST in the input cell', listAt > 0 && listAt < decideAt, `list@${listAt} decide@${decideAt}`);
+  ok('...and the COST CARD in the decide cell', cardAt > decideAt, `card@${cardAt} decide@${decideAt}`);
+
+  // ABSENT IS NOT ZERO on the spending surface: no basis at all, no provenance.
+  const noBasis = R.renderQueueEstimate({ ...est, estimate: { ...est.estimate, basis: null, basisLede: null }, warnings: [] });
   ok('no basis renders NO provenance line — never "—", never a fabricated one',
     !/tx-readout-prov/.test(noBasis), noBasis.slice(0, 800));
+  ok('...and no ⓘ either, rather than a mark that opens an empty panel',
+    !/tx-vh-info/.test(noBasis), noBasis.slice(0, 800));
   ok('no warnings renders NO status box', !/tx-status/.test(noBasis), noBasis.slice(0, 400));
+
+  // A server that sends only the long form must not end up saying NOTHING
+  // about how the range was reached — the degradation is verbose, never silent.
+  const ledeless = R.renderQueueEstimate({ ...est, estimate: { ...est.estimate, basisLede: null }, warnings: [] });
+  ok('no lede falls back to the FULL basis in the visible provenance, not to silence',
+    /tx-readout-prov">Estimated for Gemini/.test(ledeless) && !/tx-vh-info/.test(ledeless),
+    ledeless.slice(0, 900));
 
   // A pause is recoverable, so it is `attention` and never `danger`.
   const paused = R.renderQueuePausedBanner({ pausedReason: 'rate_limit', pausedMessage: 'retry in 60s' });
@@ -500,7 +558,30 @@ function ingRenderers(stateObj) {
 section('§6  CSS hygiene in the two adopted stylesheets');
 // ═══════════════════════════════════════════════════════════════════════════
 
-for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
+// ── COMMENTS ARE STRIPPED BEFORE THESE SCANS ────────────────────────────
+// Correction, not a loosening, and the same one scripts/test-next-text-system.js
+// already made to its own `tx-` leak detector. These are RULE assertions, and a
+// raw scan cannot tell a rule from a sentence: views/ingest.css now carries a
+// comment saying precisely that the panel's spacing belongs to shared/text.css
+// and must NOT be reached into from here — and that comment, naming the class
+// it refuses to style, reddened the guard. A guard that fires on prose teaches
+// people to reword the explanation instead of fixing the code, and the next
+// reader deletes the reasoning rather than the defect. Stripping can only
+// remove FALSE positives: a real rule is never inside a comment. The controls
+// below prove the detector still fires.
+const stripCssComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '');
+{
+  const probe = '.chat-x { color: red; }\n.tx-vh-panel { margin-top: 6px; }';
+  ok('CONTROL: a real `.tx-` RULE is still detected after stripping',
+     /\.tx-[a-z]/.test(stripCssComments(probe)));
+  ok('CONTROL: ...and a comment that merely NAMES one is not',
+     !/\.tx-[a-z]/.test(stripCssComments('/* `.tx-vh-panel` is text.css’s, not ours. */\n.chat-x { color: red; }')));
+  ok('CONTROL: ...including a px size quoted in a comment',
+     !/font-size:\s*\d/.test(stripCssComments('/* was font-size: 13px before the ramp */\n.a{font-size:var(--text-sm)}')));
+}
+
+for (const [name, rawCss] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
+  const css = stripCssComments(rawCss);
   const px = [...css.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => m[0]);
   ok(`${name}: NO frozen px font-size — --font-scale multiplies the --text-* ramp, ` +
      `so a px literal silently freezes at 1x while everything around it grows ` +

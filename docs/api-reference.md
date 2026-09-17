@@ -466,7 +466,8 @@ Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs th
     "inputTokensLow": 180000, "inputTokensHigh": 180000,
     "outputTokensLow": 9000, "outputTokensHigh": 9000,
     "usdLow": 1.9, "usdHigh": 2.4,
-    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" against the \"ai-tech\" domain, currently 40 entities, 90 concepts, 12 KB index. Cost depends heavily on how large this wiki ALREADY is, not just on the files being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) what is already there. For THIS batch, that existing content works out to about 3.1x the input tokens the same files would cost against an empty domain. ... Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did."
+    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" against the \"ai-tech\" domain, currently 40 entities, 90 concepts, 12 KB index. Cost depends heavily on how large this wiki ALREADY is, not just on the files being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) what is already there. For THIS batch, that existing content works out to about 3.1x the input tokens the same files would cost against an empty domain. ... Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did.",
+    "basisLede": "Sized against this wiki's real page list — about 3.1x an empty domain. Actual spend can land above the range."
   },
   "domainContext": { "pageCount": 140, "indexBytes": 12288 },
   "warnings": []
@@ -474,6 +475,8 @@ Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs th
 ```
 
 `usdLow` assumes prompt caching applies (multi-call documents only); `usdHigh` assumes it does not. Both are `null` (with a `warnings[]` entry) if no AI provider is configured, or if the configured model has no published price on file — `files`/token counts are still returned in that case. **`usdHigh` is an estimate, not a ceiling** — it is the no-caching end of a range, and on a real measured live batch (see [docs/ingestion-pipeline.md §10g.8](ingestion-pipeline.md#10g8--how-the-cost-estimate-is-derived)) actual spend came in at 103.1% of `usdHigh`. Do not treat it as a spending guarantee.
+
+`basisLede` is the **short** form of `basis` — at most 20 visible words, carrying the per-batch multiple (when one was computed) and, always, the sentence that actual spend can land above the range. The two describe the same estimate and always quote the same multiple: `basis` is the full account, `basisLede` is the one line that has to stay on screen. The Ingest confirm gate renders `basisLede` as the cost readout's provenance and puts `basis` behind an ⓘ; a client that shows only one of the two should show `basisLede`, never `basis` alone truncated. When the domain is small enough that the multiple would be noise (under 1.05x), both strings drop it rather than quoting "about 1.0x". Both fields also appear on a job's `estimate` object (`GET /api/ingest-queue/:id`).
 
 A file whose size is missing or not a valid non-negative number is placed in `rejected` (not silently priced at $0) with a reason naming the problem.
 

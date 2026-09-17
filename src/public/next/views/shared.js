@@ -173,7 +173,10 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // The ONE text system in /next (shared/text.js). The view header owns the
 // eyebrow, the title and the info mark; it has NO parameter that renders a
 // paragraph under the title, which is what this view used to do.
-import { renderViewHeader, renderStatus } from '../shared/text.js';
+// renderDescription is the ONE description role (13px, --text-2, 68ch). The
+// off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
+// under every other description in the app.
+import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
 
 function freshState() {
   return {
@@ -503,21 +506,40 @@ function renderEnabled() {
     );
   }
   if (state.connections.length === 0) {
+    // ── ONE PRIMARY, AND WHICH ONE IS AN ARGUMENT, NOT A COIN TOSS ────────
+    // Both of these were `btn-primary` after v3.54.0's re-tiering, which the
+    // taxonomy (the comment above `.btn` in shell.css) does not allow: at most
+    // one primary per card, row or panel. Neither COMMITS anything — both open
+    // the same wizard at different steps — so by the taxonomy they are both
+    // tier 2, and the house precedent for a pair of routes is the Sync view's
+    // decision panels, which mark ONE recommended route primary.
+    //
+    // Join is the primary because it is the one with a PRECONDITION already
+    // satisfied: a user reading this card either holds an invite token or does
+    // not, and the one who does is here to paste it. "Set up a new Shared
+    // Brain" is the branch a user takes deliberately, having decided to run a
+    // cohort; it does not need to be the inviting thing on the screen.
+    //
+    // The descriptions are renderDesc, not a private `.sb-cta-desc` at 12px:
+    // every peer description in the app (`.tx-desc`, `.settings-job-lede`,
+    // `.empty-body`) is 13px, and the 4px step between a 16px title and a 12px
+    // line is what made these cards read as oversized — not the title, which
+    // is `--type-h3`, the same size every block title takes.
     return (
       '<div class="sb-cta-row">' +
         '<div class="sb-cta-card">' +
           '<div class="sb-cta-content">' +
             '<h4 class="sb-cta-title">' + icon('users', 16) + ' I have an invite token</h4>' +
-            '<p class="sb-cta-desc">From my cohort, team, or research group.</p>' +
+            renderDescription('From my cohort, team, or research group.') +
           '</div>' +
           '<button type="button" class="btn btn-primary" id="btn-sb-join">Join →</button>' +
         '</div>' +
         '<div class="sb-cta-card">' +
           '<div class="sb-cta-content">' +
             '<h4 class="sb-cta-title">' + icon('sparkles', 16) + ' I’m starting a new Shared Brain</h4>' +
-            '<p class="sb-cta-desc">Set one up for my cohort or team.</p>' +
+            renderDescription('Set one up for my cohort or team.') +
           '</div>' +
-          '<button type="button" class="btn btn-primary" id="btn-sb-create">Set up →</button>' +
+          '<button type="button" class="btn btn-secondary" id="btn-sb-create">Set up →</button>' +
         '</div>' +
       '</div>'
     );

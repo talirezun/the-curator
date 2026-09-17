@@ -490,7 +490,12 @@ section('6. Digits that align or tick carry tabular figures');
     ['views/chat.css', '.chat-num'], ['views/chat.css', '.chat-scope-count'],
     ['views/chat.css', '.chat-conv-meta'], ['views/chat.css', '.chat-compile-change-detail'],
     ['views/domains.css', '.dm-stat-value'],
-    ['views/ingest.css', '.ing-num'], ['views/ingest.css', '.ing-queue-estimate-row strong'],
+    // `.ing-queue-estimate-row strong` WAS HERE. The rule it named is deleted:
+    // v3.20.0 replaced those rows with renderReadoutGroup and the row rules sat
+    // dead for four releases, this WANT entry certifying a selector nothing
+    // emitted. The figure's tabular treatment did not go with it — it lives on
+    // `.tx-readout-value` in shared/text.css, which is where the role is now.
+    ['views/ingest.css', '.ing-num'],
     ['views/memory.css', '.mem-row-meta'], ['views/memory.css', '.mem-j-when'],
     ['views/sync.css', '.sync-pending-note'],
     ['views/shared.css', '.sb-num'],

@@ -134,8 +134,13 @@ import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/li
 // elsewhere in the tree. renderReadout and renderDescription are those two roles.
 // scripts/test-next-memory-ingest-text.js asserts these imports are present AND
 // reached: a component that ships unused is the shape this repo keeps re-learning.
+// renderInfoMark is the shared ⓘ + panel pair (v3.54.0). It is used HERE for
+// exactly one thing: the estimator's 140-226-word `basis`, which used to render
+// as the cost readout's provenance line. The ≤20-word `basisLede` — including
+// the caveat that real spend can exceed the range — stays visible; see
+// renderQueueEstimate for why that split is not negotiable on a money surface.
 import {
-  renderStatus, renderReadoutGroup, renderViewHeader,
+  renderStatus, renderReadoutGroup, renderViewHeader, renderInfoMark,
 } from '../shared/text.js';
 
 // The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
@@ -1719,7 +1724,20 @@ function renderIngestForm() {
       '</div>'
     : '';
 
-  return (
+  // ── THE SAME TWO COLUMNS AS THE BATCH GATE ────────────────────────────
+  // LEFT is the form; RIGHT is everything the form produces — the ring, a
+  // run that settled in another tab, the duplicate question, the failure and
+  // the change report. Before this the output stacked BELOW a 480px strip, so
+  // a finished ingest pushed the drop zone off the top of the screen on the
+  // one screen whose next action is usually "and now the next file".
+  //
+  // The right cell is emitted even when empty, and that is the point rather
+  // than an oversight: `auto-fit` collapses a track with no ITEM in it, so an
+  // omitted cell would let the form stretch across the whole column and the
+  // single-file screen would change width the moment a result arrived. An
+  // empty <div> holds the track, so the form sits at the same measure the
+  // batch gate's left column does, at every width.
+  return renderConfirmGrid(
     '<div class="ing-field">' +
       '<span class="ing-label" id="ing-domain-label">Domain</span>' +
       renderListboxHtml(domainListboxCfg({ disabled: state.submitting })) +
@@ -1749,7 +1767,9 @@ function renderIngestForm() {
     '<button type="button" class="btn btn-ai" id="ing-submit-btn"' +
       (btnDisabled ? ' disabled' : '') + '>' +
       icon('sparkles', 14) + ' ' + (state.submitting ? 'Ingesting…' : 'Ingest') +
-    '</button>' +
+    '</button>',
+    // RIGHT — what the form produced. Every one of these self-suppresses when
+    // there is nothing to say, so the cell is empty until a run exists.
     renderProgress() +
     renderRemoteProgress() +
     renderRemoteOutcome() +
@@ -3632,7 +3652,46 @@ function renderQueueSection() {
   return renderQueueConfirmGate();
 }
 
+// ── THE CONFIRM GATE'S TWO COLUMNS, IN ONE PLACE ─────────────────────────
+// Called by renderQueueConfirmGate for the loading / error / not-yet states
+// and by renderQueueEstimate for the real one, so the gate cannot end up with
+// two different layouts depending on which branch produced it. The grid's own
+// behaviour (when it is one track, when it is two) lives entirely in
+// views/ingest.css — this function decides only WHICH SIDE a thing is on.
+function renderConfirmGrid(leftHtml, rightHtml) {
+  return (
+    '<div class="ing-confirm-grid">' +
+      '<div class="ing-confirm-col ing-confirm-col-input">' + leftHtml + '</div>' +
+      '<div class="ing-confirm-col ing-confirm-col-decide">' + rightHtml + '</div>' +
+    '</div>'
+  );
+}
+
+// The destination and the drop zone — the left column's fixed head, above
+// whatever file lists the estimate produces. A builder rather than a literal
+// because renderQueueEstimate needs the same two fields above ITS lists, and
+// two copies of a field pair is how the two domain pickers came to disagree
+// (see domainListboxCfg's own header).
+function renderQueueInputFields() {
+  return (
+    '<div class="ing-field">' +
+      '<span class="ing-label" id="ing-domain-label">Domain</span>' +
+      renderListboxHtml(domainListboxCfg({ disabled: false })) +
+    '</div>' +
+    '<div class="ing-field">' +
+      renderDropZoneHtml({ disabled: false, multiHint: false }) +
+    '</div>'
+  );
+}
+
 function renderQueueConfirmGate() {
+  const inputFields = renderQueueInputFields();
+  const submitError = state.queueSubmitError
+    ? '<div class="ing-status-block">' +
+        renderStatus({ state: 'danger', title: 'Could not start this batch', detail: state.queueSubmitError }) +
+      '</div>'
+    : '';
+
   let estimateBody = '';
   if (state.queueEstimateLoading) {
     const n = state.selectedFiles.length;
@@ -3664,27 +3723,24 @@ function renderQueueConfirmGate() {
       state: 'danger', title: 'Could not estimate this batch', detail: state.queueEstimateError,
     });
   } else if (state.queueEstimate) {
-    estimateBody = renderQueueEstimate(state.queueEstimate);
+    // The estimate owns the whole gate once it exists: it has file lists for
+    // the left column and a cost card for the right, so it builds the grid
+    // itself rather than being handed a half-filled one.
+    return renderQueueEstimate(state.queueEstimate, { inputFields, submitError });
   }
 
-  return (
-    '<div class="ing-field">' +
-      '<span class="ing-label" id="ing-domain-label">Domain</span>' +
-      renderListboxHtml(domainListboxCfg({ disabled: false })) +
-    '</div>' +
-    '<div class="ing-field">' +
-      renderDropZoneHtml({ disabled: false, multiHint: false }) +
-    '</div>' +
-    (state.queueSubmitError
-      ? '<div class="ing-status-block">' +
-          renderStatus({ state: 'danger', title: 'Could not start this batch', detail: state.queueSubmitError }) +
-        '</div>'
-      : '') +
-    estimateBody
-  );
+  return renderConfirmGrid(inputFields, submitError + estimateBody);
 }
 
-function renderQueueEstimate(est) {
+/**
+ * @param {object} est   the /estimate payload
+ * @param {{inputFields?: string, submitError?: string}} [opts]
+ *   The left column's head and any start-failure box. DEFAULTED, and that is
+ *   deliberate: scripts/test-next-memory-ingest-text.js executes this function
+ *   with the estimate alone, and a required second argument would make the
+ *   money assertions depend on a fixture for the domain picker.
+ */
+function renderQueueEstimate(est, opts) {
   const fileList = resolveEstimateFileList(est, state.selectedFiles);
   const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
   const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
@@ -3730,13 +3786,45 @@ function renderQueueEstimate(est) {
       })
     : '';
 
+  // ── THE FULL BASIS IS BEHIND THE ⓘ; THE SPEND CAVEAT IS NOT ──────────────
+  // `basis` is 140-226 words and rendered as the readout's provenance line —
+  // --text-2xs monospace, about sixteen lines of it — directly under the one
+  // figure on this screen a user is deciding on. It is the v3.54.0 help
+  // pattern's exact case: a ≤20-word lede in the role, the full account behind
+  // the mark.
+  //
+  // WHAT DOES NOT FOLD. settings.js records the rule from v3.16.1 — warnings,
+  // costs, spend figures and irreversibility never go in an info panel — so
+  // `basisLede` carries the caveat that actual spend can land above the range,
+  // and it is the visible provenance. The estimator's own warnings were
+  // already unfoldable (renderStatus, above the Start button) and stay that
+  // way. If the server sends no lede, the FULL basis goes back in the
+  // provenance line: a long sentence is worse than a short one, and both are
+  // better than a spending screen that says nothing about its own accuracy.
+  const basisLede = typeof est2.basisLede === 'string' ? est2.basisLede.trim() : '';
+  const basisFull = typeof est2.basis === 'string' ? est2.basis.trim() : '';
+  const provenance = basisLede || basisFull || undefined;
+  // ONE estimate card exists at a time (renderQueueSection returns the panel
+  // instead of the gate the moment a job exists), so a fixed id is
+  // document-unique by construction — which is what renderInfoMark's contract
+  // asks for. A counter would make this renderer's output differ between two
+  // calls with identical input, which is worse for no gain.
+  const basisMark = (basisLede && basisFull)
+    ? renderInfoMark('ing-estimate-basis', 'How this range was worked out', basisFull)
+    : { btn: '', panel: '' };
+
   return (
     '<div class="ing-queue-confirm-head">' +
       '<h3 class="ing-queue-confirm-title">Batch ingest — <span class="ing-num">' + count + '</span> file' + (count === 1 ? '' : 's') + '</h3>' +
       '<div class="ing-queue-confirm-sub">' + formatQueueBytes(totalBytes) + ' total · ' + provider + ' · ' + model + '</div>' +
     '</div>' +
-    rejectedHtml +
-    fileListHtml +
+    renderConfirmGrid(
+      // LEFT — what you are about to spend on.
+      (opts && opts.inputFields ? opts.inputFields : '') +
+      rejectedHtml +
+      fileListHtml,
+      // RIGHT — the decision.
+      (opts && opts.submitError ? opts.submitError : '') +
     // THE TWO FIGURES THIS WHOLE GATE EXISTS FOR, as instruments. They were a
     // hand-built label/value row: the label in body prose, the figure bolded
     // mono — close to right, and one more private description of a role the
@@ -3744,41 +3832,44 @@ function renderQueueEstimate(est) {
     // mono at full --text and steps the label back by SIZE and FAMILY, so the
     // cost stops competing with the sentence above it.
     //
-    // `basis` — the estimator's own account of HOW it arrived at the range —
-    // is PROVENANCE, which is exactly the third field of a readout, and it
-    // hangs off the cost it qualifies rather than floating under both rows.
-    //
     // ABSENT IS NOT ZERO: formatUsdRange already returns an honest "unknown"
     // string rather than a fabricated $0.00 (test-ingest-queue-frontend.js
     // pins that), and renderReadout drops a provenance line that was never
     // supplied rather than printing "—". Neither behaviour is re-implemented
     // here; both are inherited.
-    '<div class="ing-queue-estimate">' +
-      renderReadoutGroup([
-        { label: 'Estimated cost', value: costRange, provenance: est2.basis || undefined },
-        { label: 'Estimated tokens', value: tokIn + ' in / ' + tokOut + ' out' },
-      ]) +
-    '</div>' +
-    warningsHtml +
-    '<div class="ing-field ing-queue-budget-row">' +
-      '<label class="ing-label" for="ing-queue-budget">Budget cap (optional)</label>' +
-      '<input type="number" class="ing-select ing-queue-budget-input" id="ing-queue-budget" min="0" step="0.01" placeholder="No cap" value="' + escapeHtml(state.queueBudgetInput) + '">' +
-    '</div>' +
-    '<label class="ing-queue-overwrite-row"><input type="checkbox" class="cur-check" id="ing-queue-overwrite"' + (state.queueOverwriteInput ? ' checked' : '') + '> <span>Overwrite existing pages for files already ingested</span></label>' +
-    '<div class="ing-queue-confirm-actions">' +
-      // sparkles marks a token-spending action (design rule), paired here
-      // with the real "Estimated cost" row already rendered above — the
-      // pairing the design asks for, unlike the single-file Ingest button.
-      // `btn-ai` for the same reason the single-file button takes it, and
-      // with more force: this one has a priced estimate beside it, so the
-      // tint and the figure say the same thing. Its two neighbours stay
-      // --control-md so the row reads as one strip of controls.
-      '<button type="button" class="btn btn-ai" id="ing-queue-start-btn"' + (state.queueSubmitting ? ' disabled' : '') + '>' +
-        icon('sparkles', 14) + ' ' + (state.queueSubmitting ? 'Uploading…' : 'Start batch') +
-      '</button>' +
-      '<button type="button" class="btn btn-secondary" id="ing-queue-addmore-btn">Add more files</button>' +
-      '<button type="button" class="btn btn-ghost" id="ing-queue-clear-btn">Clear all</button>' +
-    '</div>'
+      '<div class="ing-queue-estimate">' +
+        renderReadoutGroup([
+          { label: 'Estimated cost', value: costRange, provenance },
+          { label: 'Estimated tokens', value: tokIn + ' in / ' + tokOut + ' out' },
+        ]) +
+        (basisMark.btn
+          ? '<div class="ing-queue-estimate-more">' +
+              '<span class="ing-queue-estimate-more-label">How this range was worked out</span>' +
+              basisMark.btn +
+            '</div>' + basisMark.panel
+          : '') +
+      '</div>' +
+      warningsHtml +
+      '<div class="ing-field ing-queue-budget-row">' +
+        '<label class="ing-label" for="ing-queue-budget">Budget cap (optional)</label>' +
+        '<input type="number" class="ing-select ing-queue-budget-input" id="ing-queue-budget" min="0" step="0.01" placeholder="No cap" value="' + escapeHtml(state.queueBudgetInput) + '">' +
+      '</div>' +
+      '<label class="ing-queue-overwrite-row"><input type="checkbox" class="cur-check" id="ing-queue-overwrite"' + (state.queueOverwriteInput ? ' checked' : '') + '> <span>Overwrite existing pages for files already ingested</span></label>' +
+      '<div class="ing-queue-confirm-actions">' +
+        // sparkles marks a token-spending action (design rule), paired here
+        // with the real "Estimated cost" row already rendered above — the
+        // pairing the design asks for, unlike the single-file Ingest button.
+        // `btn-ai` for the same reason the single-file button takes it, and
+        // with more force: this one has a priced estimate beside it, so the
+        // tint and the figure say the same thing. Its two neighbours stay
+        // --control-md so the row reads as one strip of controls.
+        '<button type="button" class="btn btn-ai" id="ing-queue-start-btn"' + (state.queueSubmitting ? ' disabled' : '') + '>' +
+          icon('sparkles', 14) + ' ' + (state.queueSubmitting ? 'Uploading…' : 'Start batch') +
+        '</button>' +
+        '<button type="button" class="btn btn-secondary" id="ing-queue-addmore-btn">Add more files</button>' +
+        '<button type="button" class="btn btn-ghost" id="ing-queue-clear-btn">Clear all</button>' +
+      '</div>'
+    )
   );
 }
 

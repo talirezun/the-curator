@@ -39,6 +39,64 @@
    one place, legible in both themes. */
 
 
+/* ── THIS VIEW HAS ONE COLUMN MEASURE, AND IT IS DECLARED ONCE ────────────
+   FIVE separate rules carried `max-width: 480px` — `.ing-field`,
+   `.ing-queue-section`, `.ing-queue-estimate`, `.ing-queue-skeleton` and the
+   already-dead `.ing-queue-warnings`. Five copies of one decision, which is
+   the shape this repo keeps recording (`.btn-xs` above: four copies, one of
+   which rendered). They are one token now.
+
+   WHY THE NUMBER MOVED, 480 -> 560. shell.css raised the app-wide content cap
+   to 1200px (a 1144px content box) with the note that Ingest's 480px field
+   stack "had room for a NEIGHBOUR and no room to put one". The answer to that
+   is a SECOND COLUMN (`.ing-confirm-grid` below), not a wider strip — but the
+   single-file form has no neighbour to give it, so it takes the measure the
+   batch gate's own column resolves to at the cap: (1144 - 32 gap) / 2 = 556,
+   rounded to 560. At 1370px the batch column measures ~463 and the single-file
+   form measures 560; at 2000px they are 556 and 560. The two surfaces read as
+   the same app at both widths, which the 480 pocket beside a 959px column
+   did not.
+
+   It is NOT a prose measure. Paragraph roles carry their own `ch` cap
+   (shared/text.css's `--prose-max` and the 68ch on `.tx-desc`); this is the
+   width of a stack of CONTROLS. */
+:root { --ing-col: 560px; }
+
+/* ── THE CONFIRM GATE IS TWO COLUMNS ──────────────────────────────────────
+   REPORTED, with a screenshot: a 480px stack pinned to the left of a 959px
+   column, with `.ing-queue-overwrite-row` (uncapped, 959px) and the
+   renderStatus boxes (uncapped) running the full width beside it — so the
+   page had three different measures and none of them looked chosen.
+
+   The split is by ROLE, not by size. LEFT is what you are about to spend on
+   (destination, drop zone, the two file lists); RIGHT is the decision (the
+   cost card, any notes, the budget cap, the overwrite switch and the actions).
+   Before this, the Start button sat below a 220px-tall scrolling file list
+   and the cost it belongs to was above that list.
+
+   `auto-fit` + `minmax`, NOT a viewport media query. The thing that has to
+   fit is the MAIN COLUMN, and the main column is the viewport minus a 72px
+   rail, a 272px sidebar, 56px of padding and a scrollbar — so a viewport
+   breakpoint would be a guess at a number the grid can measure exactly.
+   Two tracks appear when the column can hold 2*420 + 32; below that it is one
+   track, with `min(420px, 100%)` so a narrow column shrinks instead of
+   overflowing. `align-items: start` so the shorter column does not stretch its
+   card to the height of the file list.
+
+   The columns come out equal, where the brief asked for 420/360. Equal is what
+   auto-fit gives, and the right column is the one carrying the money: it earns
+   the width. */
+.ing-confirm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--space-8);
+  align-items: start;
+}
+/* `min-width: 0` on both: a grid item's automatic minimum size is its CONTENT,
+   so one long filename in the list would otherwise push its track past its
+   share and shove the other column off. */
+.ing-confirm-col { min-width: 0; }
+
 /* ── Sidebar: cross-mount busy note ──────────────────────────────────── */
 
 .ing-sidebar-busy {
@@ -58,7 +116,10 @@
 
 /* ── Form ─────────────────────────────────────────────────────────────── */
 
-.ing-field { margin-bottom: var(--space-8); max-width: 480px; }
+/* Binds in the SINGLE-FILE form, where there is no grid. Inside
+   `.ing-confirm-grid` the track is narrower than `--ing-col` at every width the
+   app renders at, so the cap is inert there and the column is what decides. */
+.ing-field { margin-bottom: var(--space-8); max-width: var(--ing-col); }
 
 .ing-label {
   display: block;
@@ -442,7 +503,10 @@
 
 .ing-progress {
   margin: var(--space-8) 0 var(--space-2);
-  max-width: 480px;
+  /* Onto the view's measure with the form it reports on: these two sit
+     directly under the single-file stack, so a third number here would put
+     three different edges down one column. */
+  max-width: var(--ing-col);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -503,7 +567,7 @@
   display: flex;
   gap: var(--space-6);
   align-items: flex-start;
-  max-width: 480px;
+  max-width: var(--ing-col);
   margin-top: var(--space-8);
   padding: var(--space-7) var(--space-8);
   border-radius: var(--radius-lg);
@@ -668,7 +732,10 @@
 }
 .ing-queue-confirm-sub { font-size: var(--text-xs); color: var(--text-2); }
 
-.ing-queue-section { margin-bottom: var(--space-8); max-width: 480px; }
+/* NO CAP. This block only ever renders inside `.ing-confirm-grid`'s left
+   track, which already bounds it; a second measure here would be a number
+   competing with the grid for the same job. */
+.ing-queue-section { margin-bottom: var(--space-8); max-width: 100%; }
 .ing-queue-section-label {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
@@ -760,6 +827,21 @@
 .ing-queue-file-size { color: var(--text-2); font-size: var(--text-xs); flex-shrink: 0; }
 .ing-queue-file-rejected .ing-queue-file-name { color: var(--danger-text); }
 .ing-queue-file-reason { color: var(--text-2); font-size: var(--text-xs); flex-shrink: 0; text-align: right; }
+/* ── A REJECTED ROW STACKS, AND THIS IS A DEFECT FOUND BY LOOKING ─────────
+   Rendered at 477px of column: `slides.docx` broke as "slides.d / ocx", one
+   fragment per line, because the row is a flex line where the REASON refuses
+   to shrink (`flex-shrink: 0`, right, and it is a whole sentence) while the
+   NAME is the flexible item carrying `overflow-wrap: anywhere`. So the
+   sentence took the row and the filename — the one thing the user has to read
+   to know WHICH file was refused — was shredded into the remainder. Same shape
+   as the slug column v3.53.0 found at 230px, and PRE-EXISTING: the row behaved
+   identically in the 480px stack this release replaces.
+
+   Accepted rows keep the one-line `name … size` shape; only the rejected ones
+   stack, because only they carry a sentence. */
+.ing-queue-file-rejected { align-items: flex-start; flex-wrap: wrap; gap: var(--space-1); }
+.ing-queue-file-rejected .ing-queue-file-name { flex: 1 0 100%; overflow-wrap: anywhere; }
+.ing-queue-file-rejected .ing-queue-file-reason { flex: 1 1 100%; text-align: left; }
 .ing-queue-file-remove {
   flex: none;
   width: 20px;
@@ -798,48 +880,49 @@
   inset: calc((var(--hit-min) - 20px) / -2);
 }
 
+/* ── THE PADDING WAS A LIVE DEFECT, VISIBLE IN THE REPORTED SCREENSHOT ────
+   `padding: var(--space-2) 0` — ZERO horizontal — was correct when this card's
+   children were `.ing-queue-estimate-row`s, each carrying its own
+   `var(--space-5)` inset. v3.20.0 replaced those rows with renderReadoutGroup
+   and the card kept the padding built for them, so "Estimated cost" sat 1px
+   from the card's own border. The inset moves to the card, where it belongs
+   now that the card's child is one flex group rather than a list of rows.
+
+   The four rules that owned that inset — `.ing-queue-estimate-row`, its
+   `::before` separator, its `strong`, and `.ing-queue-estimate-basis` — are
+   DELETED rather than left as a fallback: a dead rule set is how a stylesheet
+   starts lying about what the view renders (the same reasoning that removed
+   the linear progress bar above). `.ing-queue-estimate-row strong` was also a
+   WANT entry in scripts/test-next-views-kit.js §6; it went with the rule.
+   Tabular figures survive the deletion because `.tx-readout-value` carries
+   them in shared/text.css, which is where the role now lives. */
 .ing-queue-estimate {
-  max-width: 480px;
+  max-width: 100%;
   margin-bottom: var(--space-7);
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   box-shadow: var(--elev-1);
-  padding: var(--space-2) 0;
+  padding: var(--space-5) var(--space-6);
 }
-.ing-queue-estimate-row {
-  position: relative;
+/* The full estimator basis — 140 to 226 words of it — used to render as the
+   readout's provenance line: --text-2xs monospace, about sixteen lines, under
+   the one figure on this screen a user is deciding on. It is behind the ⓘ now
+   and a ≤20-word lede stands in its place. What did NOT move is the SPEND
+   CAVEAT: "actual spend can land above the range" is in the lede, unfolded,
+   because v3.16.1's rule is that a cost warning behind a click is not a
+   warning, and this is the surface that rule was learned on. */
+.ing-queue-estimate-more {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-6);
-  padding: var(--space-3) var(--space-5);
-  font-size: var(--text-sm);
-  color: var(--text-2);
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
 }
-.ing-queue-estimate-row + .ing-queue-estimate-row::before {
-  content: "";
-  position: absolute;
-  left: var(--space-5);
-  right: 0;
-  top: 0;
-  height: var(--hairline-w);
-  background: var(--hairline-strong);
-}
-/* The figure on the right of each row. Tabular so a dollar range, a token
-   range and a file count line up down the column instead of drifting with
-   their digits — the reason a settings list is a list. */
-.ing-queue-estimate-row strong {
-  color: var(--text);
-  font-variant-numeric: var(--numeric-tabular);
-}
-.ing-queue-estimate-basis {
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  margin-top: var(--space-2);
-  padding: 0 var(--space-5);
-  line-height: var(--leading-normal);
-}
+/* The panel's own spacing is shared/text.css's, NOT this file's: only that file
+   may declare a `tx-` rule (scripts/test-next-text-system.js), and a descendant
+   selector reaching into it from here is exactly the leak that guard exists to
+   stop. */
+.ing-queue-estimate-more-label { font: var(--type-body-sm); color: var(--text-2); }
 
 /* ── The estimate's loading placeholder ───────────────────────────────────
    Same box, same rhythm, same row height as the answer it is standing in
@@ -847,7 +930,9 @@
    arrival jump twice. `.cur-skeleton` (shell.css) owns the shimmer and its
    reduced-motion behaviour; nothing here re-declares either. */
 .ing-queue-skeleton {
-  max-width: 480px;
+  /* Same reasoning as `.ing-queue-estimate`: it stands in that card's place,
+     in the same grid track, so the track is the measure. */
+  max-width: 100%;
   margin-bottom: var(--space-7);
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -882,24 +967,27 @@
 /* One numeric span for counts this view emits without a class of their own. */
 .ing-num { font-variant-numeric: var(--numeric-tabular); }
 
-.ing-queue-warnings {
-  max-width: 480px;
-  margin-bottom: var(--space-7);
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--attention-text);
-  background: var(--attention-tint);
-  color: var(--text);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-}
+/* `.ing-queue-warnings` WAS HERE and is deleted. It had no emitter in
+   views/ingest.js — the estimator's warnings go through renderStatus (see
+   renderQueueEstimate's own comment on why they are one box and never folded),
+   and this was the hand-rolled amber box that renderStatus replaced. It was
+   also the fifth carrier of the 480px measure, so a reader counting the caps
+   found one that could never render. */
 
+/* A currency field stays short — this cap is about the CONTROL, not the
+   column, and is deliberately not `--ing-col`. */
 .ing-queue-budget-row { max-width: 220px; }
 .ing-queue-budget-input {}
+/* WAS UNCAPPED, and measured 959px beside a 480px stack — the single widest
+   thing on the reported screenshot was the checkbox. It lives in the grid's
+   right track now, so the cap below is the belt to that: if this row is ever
+   rendered outside the grid it lands on the view's own measure rather than
+   running the full column again. */
 .ing-queue-overwrite-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  max-width: var(--ing-col);
   font-size: var(--text-sm);
   color: var(--text-2);
   margin-bottom: var(--space-8);
@@ -1074,7 +1162,16 @@
    These replace five `style="margin-*"` attributes that used to sit inline on
    the error boxes. Spacing is a property of WHERE a status appears, so it
    belongs to this file; the box itself belongs to the system.              */
-.ing-status-block { margin-top: var(--space-7); margin-bottom: var(--space-7); }
+/* THE CAP IS NEW. These blocks carried geometry but no measure, so a
+   renderStatus box ran the full 959px column beside a 480px field stack — the
+   second uncapped orphan on the reported screenshot. `--ing-col` is the same
+   measure the controls take, so a failure message lines up with the form it is
+   about. Inside `.ing-confirm-grid` the track is narrower and wins. */
+.ing-status-block {
+  margin-top: var(--space-7);
+  margin-bottom: var(--space-7);
+  max-width: var(--ing-col);
+}
 
 /* ── THE ONE INGEST FAILURE WITH SOMETHING TO DO ABOUT IT ──────────────────
    Every other failure here is "try again" and the generic danger block says so

@@ -586,6 +586,9 @@ export function toWire(job) {
       usdLow: wireNum(est.usdLow),
       usdHigh: wireNum(est.usdHigh),
       basis: wireStr(est.basis, 4000),
+      // ≤20 words by construction; the cap is the allow-list doing its job on
+      // a field it did not build, not a real expectation about the length.
+      basisLede: wireStr(est.basisLede, 400),
     } : null,
     currentIndex: wireNum(job.currentIndex),
     consecutiveFailures: wireNum(job.consecutiveFailures),
@@ -934,6 +937,38 @@ function buildBasisString({ domain, provider, model, price, stats, indexBytes, s
 }
 
 /**
+ * The ≤20-word version of `buildBasisString`, for the line that stays VISIBLE.
+ *
+ * ── WHY THERE ARE TWO STRINGS AND NOT ONE ──────────────────────────────────
+ * `basis` above is 140-226 words and the UI rendered every one of them under
+ * the cost figure, in 10px monospace, on the screen where a user decides to
+ * spend money. It is now behind an ⓘ (views/ingest.js), and this is what takes
+ * its place in the readout.
+ *
+ * ── THE ONE CLAUSE THAT MAY NEVER MOVE BEHIND THE FOLD ─────────────────────
+ * "actual spend can land above the range". v3.16.1's rule is that a warning
+ * behind a click is not a warning, and this particular caveat is not
+ * decoration: a measured real batch came in at 103.1% of `usdHigh` (see the
+ * docblock above buildBasisString). Both arms below end with it. If you are
+ * shortening this string, shorten the first sentence.
+ *
+ * The multiple uses the SAME ≥1.05 display threshold and the same formatting
+ * as `overheadNote`, so the short line and the long one can never quote
+ * different numbers for the same batch.
+ */
+function buildBasisLede({ sizeMultiplier }) {
+  const showMult = typeof sizeMultiplier === 'number' && Number.isFinite(sizeMultiplier) && sizeMultiplier >= 1.05;
+  const mult = showMult
+    ? (sizeMultiplier >= 10 ? String(Math.round(sizeMultiplier)) : sizeMultiplier.toFixed(1))
+    : null;
+  return showMult
+    ? `Sized against this wiki's real page list — about ${mult}x an empty domain. ` +
+      `Actual spend can land above the range.`
+    : `Sized against this wiki's real page list, not a flat rate. ` +
+      `Actual spend can land above the range.`;
+}
+
+/**
  * @param {string} domain
  * @param {Array<{name: string, size: number}>} files  metadata only — no bytes read
  */
@@ -1043,6 +1078,10 @@ export async function estimateIngestQueueCost(domain, files) {
     usdLow: price ? round6(perFile.reduce((n, e) => n + (e.usdLow || 0), 0)) : null,
     usdHigh: price ? round6(perFile.reduce((n, e) => n + (e.usdHigh || 0), 0)) : null,
     basis: buildBasisString({ domain, provider, model, price, stats, indexBytes: index.length, sizeMultiplier }),
+    // The visible half of the same account. `basis` is unchanged, byte for
+    // byte — scripts/test-ingest-queue.js pins six substrings and the
+    // per-batch multiple in it, and the ⓘ panel shows it in full.
+    basisLede: buildBasisLede({ sizeMultiplier }),
   };
 
   return {
