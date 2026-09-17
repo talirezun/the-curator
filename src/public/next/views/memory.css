@@ -180,8 +180,15 @@
 .mem-row-mark-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
 
 .mem-row-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+/* --text-md, the SIDEBAR ROW NAME rung. Every sidebar list in the app renders
+   the same thing here — the name of the item the row selects — and the four
+   that carry it had drifted to two sizes: measured in a browser at 1400px,
+   dark, `.dm-row-name` (Domains) and `.ing-dest-name` (Ingest) came back
+   13px, while `.mem-row-name`, `.sync-domain-name` and `.sb-conn-name` came
+   back 12px. All five are 13 now; the weight step to --weight-medium on the
+   ACTIVE row is unchanged and is still what marks the selection. */
 .mem-row-name {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -296,7 +303,28 @@
   border-radius: 2px;                      /* square — same rule as the rows */
   background: var(--accent);
 }
-.mem-project-name { font: var(--type-h3); color: var(--text); }
+/* ── THE BREADCRUMB IS A SUBTITLE, NOT A HEADING ─────────────────────────
+   `domain / project` sits directly under the view's own <h1> ("Agent
+   memory", --type-h1, 27/600) and directly ABOVE the page's block titles
+   ("Status", "Work-streams", "Standing brief" — `.settings-job-title`,
+   --type-h3, 16/600). It used to be --type-h3 itself, which made the line
+   that says WHICH PROJECT exactly as loud as every section heading below it:
+   measured in a browser at 1400px, dark, `.mem-project-name`,
+   `.mem-project-domain`, `.mem-project-sep` and `.settings-job-title` all
+   came back 16px/600, so the page had four things at one rank and no
+   readable order between them.
+
+   It takes the SUBTITLE rung instead — --text-base / --weight-medium — which
+   is one step under a block title and one step over the body. Smaller than
+   the headings beneath it is the right direction, not an inversion: this
+   line qualifies the <h1> it is attached to (it is the h1's object), while a
+   block title opens a section of its own, and the accent square beside it
+   plus its position under the title carry the attachment. */
+.mem-project-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
 
 /* ── "Copy agent instructions" ─────────────────────────────────
 
@@ -836,6 +864,23 @@
   text-transform: uppercase;
   color: var(--text-2);
 }
+/* ── IT IS A READING, NOT A TITLE ────────────────────────────────────────
+   BODY size and MEDIUM weight, capped at two lines. The headline an agent
+   wrote is the most interesting sentence on this screen and the temptation
+   is to set it like a heading; it must not be one. It is arbitrary-length
+   text from a file (MAX_HEADLINE_CHARS in working-state.js lets it run to
+   200 characters), so at a title rung a long one becomes three or four lines
+   of bold that dwarf the block title above it and push the Last-saved strip
+   off the first screen. --text-md / --weight-medium is the same treatment a
+   sidebar row's ACTIVE name gets: legible, emphasised, not a heading.
+
+   TWO LINES, not one: measured at 1400px the Status block gives this line
+   about 900px, and a 200-character headline needs roughly two of them — a
+   one-line clamp would ellipsise the majority of real headlines, and the
+   whole point of the line is that you can read it without opening anything.
+   `-webkit-line-clamp` with `-webkit-box` is the only cross-browser form
+   that ellipsises a multi-line clamp; `line-clamp` is set alongside it so
+   the rule moves to the standard property without a second edit. */
 .mem-working-text {
   flex: 1;
   min-width: 0;
@@ -843,6 +888,11 @@
   font-weight: var(--weight-medium);
   color: var(--text);
   line-height: var(--leading-snug);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 .mem-working-age {
   flex: none;
@@ -872,7 +922,12 @@
    Work-streams block renders in place of the table. */
 
 .mem-doc-empty { border-style: dashed; }
-.mem-doc-empty-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-2); margin-bottom: 5px; }
+/* SUB-TITLE rung — --text-md / --weight-semibold, the same one `.tx-status-title`,
+   `.dm-lc-title`, `.settings-shelf-title` and `.model-lane-title` carry. It was
+   --text-sm / medium, i.e. a fourth heading size on a page that already has
+   three. The COLOUR stays --text-2: this card stands in for a document that is
+   not there, so it is quieter than a real title on purpose. */
+.mem-doc-empty-title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--text-2); margin-bottom: 5px; }
 /* `.mem-doc-empty-body` is gone — both empty cards render the shared description role, which
    is the description role and is --text-2 rather than the sub-floor --text-3
    this rule used. */
@@ -1238,8 +1293,11 @@
    domain having to be hidden — the rail groups by it, so a header that
    dropped it would be the only place on screen that could not answer "which
    domain is this?". */
+/* Same SUBTITLE rung as `.mem-project-name` above — see its comment for why
+   the breadcrumb is not a heading. */
 .mem-project-domain {
-  font: var(--type-h3);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   /* --text-2, not --text-3. It is quieter than the project name beside it,
      but it is still a NAME the user reads, and this file's rule is that the
      third rung is for labels only. */
@@ -1249,7 +1307,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mem-project-sep { font: var(--type-h3); color: var(--text-faint); }
+.mem-project-sep { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--text-faint); }
 
 /* ── THE STANDING-BRIEF EDITOR ───────────────────────────────────────────
    The one control on this screen that writes. It sits in the fold BODY and

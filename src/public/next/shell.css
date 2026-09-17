@@ -1335,9 +1335,25 @@ body.guide-docked .main {
 .cur-group + .cur-group { margin-top: var(--space-8); }
 
 /* The group's own caption sits ABOVE the card, indented to the row padding,
-   which is what puts the label and the first row's label on one x-axis. */
+   which is what puts the label and the first row's label on one x-axis.
+
+   ── IT IS AN EYEBROW, SO IT TAKES THE EYEBROW TOKEN ──────────────────────
+   This rule used to spell out `var(--weight-medium) var(--text-xs)/1
+   var(--font-sans)` — byte-for-byte `--type-eyebrow` except for the FAMILY,
+   which it set to sans. Every other eyebrow in the app is mono: `.cur-eyebrow`
+   (tokens/base.css), `.dm-path-eyebrow`, `.chat-scope-eyebrow`,
+   `.view-eyebrow`. Measured in a browser, Domains at 1400px, dark:
+   `.cur-group-title` ("OVERVIEW", "PAGES · THE WIKI", "WIKI HEALTH") came
+   back 11px/500 SANS while "KNOWLEDGE" in the sidebar beside it came back
+   11px/500 MONO — one role, two faces, on one screen.
+
+   typography.css's own header reserves mono for "everything the machine
+   owns", and names "eyebrow labels" in that list, so sans was the deviation
+   and not the rule. Nothing else about this caption moves: the size, weight,
+   line-height, tracking, case and colour are unchanged, because the token
+   carries the first three and the three declarations below carry the rest. */
 .cur-group-title {
-  font: var(--weight-medium) var(--text-xs)/1 var(--font-sans);
+  font: var(--type-eyebrow);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
   color: var(--text-3);

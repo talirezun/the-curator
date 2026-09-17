@@ -91,10 +91,39 @@
 }
 
 /* THE FIGURE. Mono is the design system's own rule for counts and
-   timestamps, not a preference: "the mono/sans split IS the brand voice". */
+   timestamps, not a preference: "the mono/sans split IS the brand voice".
+
+   ── THE SIZE IS DECLARED HERE AND NOWHERE ELSE, AND IT IS ONE RUNG BELOW A
+   BLOCK TITLE ───────────────────────────────────────────────────────────
+   Was --text-lg (16px), which is EXACTLY the block-title rung — so in the
+   Agent memory Status block the reading "38 min ago" and the block's own
+   heading "Status" rendered at the same size, and in the Domains Wiki-health
+   card the figure "0" rendered LARGER than the card title beside it (14px at
+   the time). Measured in a browser at 1400px, dark, --font-scale 1:
+
+     Status block title `.settings-job-title` .... 16px / 600 sans
+     the figure         `.tx-readout-value`  .... 16px / 500 MONO
+     the Working-on line `.mem-working-text`  .... 13px / 500 sans
+
+   Mono at a given px reads WIDER and heavier than sans at the same px — IBM
+   Plex Mono's figures are full-width by construction — so an equal number is
+   not an equal-looking number, and the instrument out-shouted both the
+   heading above it and the sentence that is the actual subject of the block.
+
+   --text-base (14px) is the answer rather than --text-md (13px): it is still
+   a clear step ABOVE the description (--type-body-sm, 13) and the label
+   (--text-xs, 11) beneath it, so the figure is still the loudest thing in
+   its own readout, and it is a clear step BELOW --type-h3 (16), so no figure
+   anywhere in the app can compete with the title of the block it sits in.
+   The standard's ceiling is --text-lg; this sits one rung under it.
+
+   Every readout in the app comes through this one rule (renderReadout in
+   shared/text.js is the only emitter, and no other stylesheet may declare a
+   `tx-` rule), so the decision is taken ONCE — the property
+   scripts/test-next-text-system.js §8 pins. */
 .tx-readout-value {
   font-family: var(--font-mono);
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   letter-spacing: var(--track-mono);

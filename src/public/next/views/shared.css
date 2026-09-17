@@ -40,7 +40,11 @@
   margin-left: 6px;
   padding: 2px 7px;
   vertical-align: middle;
-  font: var(--weight-medium) 10px/1.6 var(--font-mono);
+  /* --text-2xs, not a frozen 10px: the literal resolved to exactly the same
+     size at --font-scale 1 and then STAYED at 10px at every other setting,
+     so the pill shrank against the sidebar title beside it on Larger and
+     Largest. The pill two rules below already spelt it this way. */
+  font: var(--weight-medium) var(--text-2xs)/1.6 var(--font-mono);
   color: var(--accent-text);
   background: var(--accent-tint);
   border: 1px solid var(--accent-border);
@@ -75,7 +79,12 @@
    this pair is built on would be gone. Same reasoning as the v3.17.1 handoff
    headings: when the dim end of a pair has to move up, move the bright end too.
    Size (--text-sm vs --text-2xs) still separates them. */
-.sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* --text-md is the SIDEBAR ROW NAME rung (views/domains.css's `.dm-row-name`
+   and views/ingest.css's `.ing-dest-name` carry the same one). This was
+   --text-sm, one rung under them, for no reason either file records. The
+   COLOUR stays --text — see scripts/test-next-contrast-ratchet.js, which pins
+   it against the `.sb-conn-state` beside it. */
+.sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-md); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-conn-state { font-size: var(--text-2xs); color: var(--text-2); }
 
 /* ── Disabled (feature-flag off) state ───────────────────────────────── */
@@ -208,7 +217,11 @@
   border: 1px solid var(--attention-text);
   border-radius: var(--radius-full);
 }
-.sb-card-repo { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; text-align: right; }
+/* --text-sm (12px), not a frozen 12.5px. The half-pixel bought nothing a
+   rung could not — it rendered as 12.5 at --font-scale 1 and as 12.5 at
+   every other setting, so Settings > General's text-size control could not
+   reach the repository line on a Shared Brain card. */
+.sb-card-repo { flex: 1; min-width: 200px; font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; text-align: right; }
 a.sb-card-repo:hover { color: var(--text-link); }
 
 /* ── Stats grid ───────────────────────────────────────────────────────── */
@@ -430,7 +443,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-token-check-unknown { color: var(--text); border-color: var(--attention-text); background: var(--attention-tint); }
 .sb-admin-row-text { flex: 1; min-width: 220px; }
 .sb-admin-row-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   color: var(--text);
   display: flex;
@@ -643,7 +656,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
 }

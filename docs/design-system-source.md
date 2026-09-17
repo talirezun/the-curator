@@ -289,6 +289,7 @@ to an app-side token already recorded above.
 | The content cap | `.main-inner` in `shell.css`, `--prose-max` in `tokens/space.css` | — (measured in the browser; see below) |
 | The status row | `src/public/next/shared/age.js` | `scripts/test-sidebar-status-rows.js` |
 | The freshness scale (v3.55.0) | `src/public/next/shared/freshness.css` + the `--fresh-*` family in `tokens/color.css` | `scripts/test-freshness-scale.js` |
+| The type standard (v3.56.0) | **§9 below** — the role → token table; the ramp itself is `tokens/typography.css` | `scripts/test-next-text-system.js` §10, `scripts/test-css-tokens.js` (`FROZEN_PX_CEILING`) |
 
 ### 1. The button taxonomy, and who decides the size
 
@@ -750,6 +751,108 @@ warnings stay where they were — `renderStatus`, unfolded, above the Start butt
 With no lede on the wire the **full** basis goes back into the provenance line:
 a long sentence is worse than a short one, and both beat a spending screen that
 says nothing about its own accuracy.
+
+### 9. The type standard: one size per role (v3.56.0)
+
+The bundle ships a **size ramp** and a set of **composed roles**
+(`--type-h1 … --type-eyebrow`). It does not say which of them a *block title*,
+a *sidebar row name* or a *readout figure* takes — so, as with the buttons in
+§1, the app answered that question once per view. The maintainer's report, from
+his own production screenshots: *"some titles are much bigger than they should
+be — we need a standard, the size of fonts set per role."*
+
+Measured before anything moved, in a real browser over all seven views and
+their sidebars at 1400 px, dark theme, `--font-scale: 1`, with
+`getComputedStyle` on live elements: **five roles were rendering at two sizes
+each, one eyebrow was rendering in the wrong FACE, and three rules had left the
+ramp entirely.** The table below is the standard; the assertions in
+`scripts/test-next-text-system.js` **§10** are the part of it a stylesheet edit
+cannot walk away from.
+
+| Role | Token | At scale 1 | Where |
+|---|---|---|---|
+| View title — the one `<h1>` on a screen | `--type-h1` | 27 / 600 sans | `.view-title`, `.reader-title` |
+| Hero or overlay title — a column or modal with **no** `<h1>` | `--type-h2` | 22 / 600 sans | `.chat-empty-title`, `.mcpw-title`, `.sbw-title` |
+| **Block, card and sidebar title** | `--type-h3` | 16 / 600 sans | `.settings-job-title`, `.sidebar-title`, `.sb-card-title`, `.sync-setup-title`, `.dm-health-title`, `.empty-title`, … |
+| Page subtitle — the line that qualifies the `<h1>` | `--text-base` / `--weight-medium` | 14 / 500 sans | `.mem-project-name`, `.mem-project-domain`, `.mem-project-sep` |
+| Sub-title — a group **inside** a block or card | `--text-md` / `--weight-semibold` | 13 / 600 sans | `.tx-status-title`, `.settings-shelf-title`, `.model-lane-title`, `.ing-change-title`, … |
+| Eyebrow | `--type-eyebrow` + `--track-eyebrow`, uppercase | 11 / 500 **mono** | `.cur-eyebrow`, `.cur-group-title`, `.dm-path-eyebrow`, `.chat-scope-eyebrow` |
+| Body | `--type-body` | 14 / 400 sans | `body`, `.chat-answer`, `.view-body` |
+| Lede / description | `--type-body-sm` | 13 / 400 sans | `.tx-desc`, `.settings-job-lede`, `.tx-explainer-body` |
+| **Readout value** — an instrument's figure | `--text-base`, mono | 14 / 500 mono | `.tx-readout-value`, declared **once**, in `shared/text.css` |
+| Readout label | `--text-xs` | 11 / 500 sans | `.tx-readout-label` |
+| Readout provenance | `--text-2xs` | 10 / 400 mono | `.tx-readout-prov` |
+| Tile figure — a **display** readout in a dedicated group | `--text-2xl` | 22 / 600 sans | `.dm-stat-value` (the five OVERVIEW tiles) — the one deliberate exception, below |
+| Sidebar row name | `--text-md` (weight steps to `--weight-medium` on the **active** row only) | 13 | `.dm-row-name`, `.mem-row-name`, `.sync-domain-name`, `.sb-conn-name`, `.ing-dest-name`, `.chat-conv-title` |
+| Sidebar row meta | `--text-2xs` | 10 / 400 | `.dm-row-meta`, `.mem-row-meta`, `.chat-conv-meta`, `.ing-dest-meta`, `.sb-conn-state` |
+| Micro-label — a table header or an uppercase strip label | `--text-2xs` / `--weight-medium`, uppercase | 10 / 500 | `.mem-ws-table th`, `.browse-table th`, `.mem-working-label` |
+| Note / caption | `--text-xs` | 11 / 400 | `.tx-note`, `.rail-cap` (`--type-caption`) |
+| Button label | `--text-md`; `--text-xs` on `.btn-xs` | 13 / 11 | `.btn` in `shell.css` |
+
+**No rule anywhere sets a font size in px.** A px literal renders at 1×
+whatever the user picks in Settings → General, silently — the whole reason the
+ramp is `calc(<n>px * var(--font-scale))`. `scripts/test-css-tokens.js`'s
+`FROZEN_PX_CEILING` is a **ratchet that may only ever tighten**; v3.56.0 lowered
+it from `shell.css: 3, views/shared.css: 2, views/sync.css: 2` to
+**`shell.css: 1`**, and the one remaining entry is not a font size at all —
+`.rail-badge`'s `font: … var(--text-2xs)/15px …` sets a **line-height** matched
+to the badge's own 15 px box, so the digit stays centred in a fixed-height pill
+at every text scale.
+
+#### The readout figure is one rung under the block title
+
+`.tx-readout-value` was `--text-lg` — **exactly the block-title rung** — and it
+is set in mono, whose figures are full-width by construction, so at an equal px
+it reads heavier than the sans heading beside it. Two consequences were visible
+in the maintainer's screenshots: in the Agent-memory Status block the reading
+*"38 min ago"* rendered at the same size as the block's own heading *"Status"*
+and louder than the "Working on" line that is the block's actual subject; in the
+Domains Wiki-health card the figure **`0`** rendered *larger* than the card
+title beside it, which was `--text-base` / 500 at the time.
+
+Both halves were wrong and both moved: the figure dropped to **`--text-base`**
+and `.dm-health-title` took the card-title rung it always belonged to. The
+ceiling the standard states is `--text-lg`; the figure sits one rung under it,
+still a clear step above the description (13) and the label (11) beneath it, so
+**a figure is the loudest thing in its own readout and never competes with the
+title of the block containing it.**
+
+#### The one deliberate exception: the Domains OVERVIEW tiles
+
+`.dm-stat-value` stays at **`--text-2xl` (22 / 600, sans)** rather than joining
+the readout rung, and it is the only size in the table that is not shared with
+another view. Those five tiles are a **display** readout: the figure *is* the
+content of its own group, it sits alone under a one-word eyebrow with nothing to
+compete with, and the group's whole job is to answer "how big is this domain" at
+a glance. Its sans face is also left alone — the mono/sans split in
+`tokens/typography.css` would argue for mono, but changing the face of the
+screen's headline figures is a design change with its own proof, not a side
+effect of a sizing pass.
+
+#### The Memory "Working on" line is a reading, not a title
+
+It carries the headline an agent wrote — arbitrary text from a file, up to
+`MAX_HEADLINE_CHARS` (200) in `working-state.js`. At a title rung a long one
+becomes three or four lines of bold that dwarf the block title above it and push
+the Last-saved strip off the first screen, which is what the screenshots showed.
+It takes the **body** rung, `--text-md` / `--weight-medium` — the same treatment
+a sidebar row's *active* name gets — and is clamped to **two** lines. Two, not
+one: the Status block gives it about 900 px at 1400 px, so a 200-character
+headline needs roughly two of them, and a one-line clamp would ellipsise the
+majority of real headlines when the point of the line is that you can read it
+without opening anything.
+
+#### One eyebrow face
+
+`.cur-group-title` — the caption above every kit group ("OVERVIEW",
+"PAGES · THE WIKI", "WIKI HEALTH") — spelt out
+`var(--weight-medium) var(--text-xs)/1 var(--font-sans)`, which is
+`--type-eyebrow` **byte for byte except for the family**. Measured on the
+Domains screen, it rendered 11 px / 500 **sans** while "KNOWLEDGE" in the
+sidebar beside it rendered 11 px / 500 **mono**: one role, two faces, on one
+screen. `tokens/typography.css`'s own header reserves mono for "everything the
+machine owns" and names *eyebrow labels* in that list, so the sans was the
+deviation. Nothing else about the caption moved.
 
 ## Things the app deliberately does not take from the bundle
 

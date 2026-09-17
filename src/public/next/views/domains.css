@@ -548,9 +548,17 @@
   min-width: 240px;
   color: var(--attention);
 }
+/* CARD TITLE, so it takes the card-title rung — `--type-h3`, 16/600, the
+   same one `.sb-card-title`, `.sync-setup-title`, `.ing-queue-panel-title`,
+   `.empty-title` and `.sidebar-title` all carry. It was 14/500, the only
+   card title in the app at a rung of its own, and the cost was visible:
+   measured in a browser at 1400px, dark, the Wiki-health card's figure
+   (`.tx-readout-value`, 16px mono at the time) rendered LARGER than the
+   title of the card containing it. Both halves of that inversion are fixed —
+   the figure dropped a rung in shared/text.css, this title took the rung it
+   always belonged to. */
 .dm-health-title {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
+  font: var(--type-h3);
   color: var(--text);
 }
 
@@ -771,7 +779,7 @@
 .dm-confirm-title,
 .dm-plan-title {
   font-size: var(--text-md);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   color: var(--text);
   margin-bottom: 6px;
 }

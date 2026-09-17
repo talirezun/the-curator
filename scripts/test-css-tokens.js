@@ -1726,17 +1726,27 @@ function findFrozenFontSizes(rawCss) {
 
 // ── 10b. The real /next tree ────────────────────────────────────────────
 // Ceilings for the files this change does not own. Each needs a reason.
+// ── THE RATCHET ONLY EVER TIGHTENS ──────────────────────────────────────
+// v3.56.0 (the type-size standard) closed the last three real ones and
+// LOWERED the ceilings to match, which is the only direction this map may
+// move: shell.css 3 -> 1, views/shared.css 2 -> gone, views/sync.css 2 ->
+// gone. The two 12.5px repo lines took --text-sm and the Shared Brain beta
+// pill took --text-2xs (the pill two rules below it in the same file already
+// spelt it that way).
+//
+// shell.css keeps ONE, and it is not a font SIZE: `.rail-badge` sets
+// `font: … var(--text-2xs)/15px …`, where the 15px is the LINE-HEIGHT and
+// equals the badge's own `height: 15px`, so the glyph stays optically centred
+// in a fixed-height pill at every text scale. A unitless line-height there
+// would grow past the badge's box on Larger/Largest and push the digit out of
+// it. The detector cannot tell a frozen size from a frozen leading inside the
+// `font` shorthand, and teaching it to would buy a second parser for one
+// deliberate rule — so the ceiling of 1 is the record of that decision.
 const FROZEN_PX_CEILING = new Map([
   ['src/public/next/shell.css', {
-    max: 3,
-    note: 'reader chrome + the sidebar count badge (2 font-size, 1 font shorthand) — ' +
-          'shell.css is not this change\'s file; same fix, separate change.' }],
-  ['src/public/next/views/shared.css', {
-    max: 2,
-    note: 'Shared Brain card repo line + one font shorthand.' }],
-  ['src/public/next/views/sync.css', {
-    max: 2,
-    note: 'Sync repo/status lines at 12.5px.' }],
+    max: 1,
+    note: '.rail-badge\'s `/15px` is a LINE-HEIGHT matched to the badge\'s 15px box, ' +
+          'not a frozen font size — see the block above this map.' }],
 ]);
 
 const frozenByFile = new Map();

@@ -1713,7 +1713,7 @@
   padding: 16px 18px;
 }
 .chat-compile-change-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   color: var(--text);
   margin: 0 0 12px;

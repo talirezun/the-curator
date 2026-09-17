@@ -1683,7 +1683,7 @@
   padding: 12px 3px 0;
 }
 .model-lane-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   color: var(--text);
 }
@@ -1927,7 +1927,7 @@
 }
 .build-list-title {
   font-size: var(--text-md);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   color: var(--text);
 }
 .build-list-count { font-size: var(--text-2xs); color: var(--text-2); margin-left: auto; }  /* 4.38 -> 8.09, measured */
@@ -2206,7 +2206,7 @@
 .build-change-summary:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 .build-change-title {
   font-size: var(--text-md);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   color: var(--text);
 }
 .build-change-sub { font-weight: var(--weight-regular); color: var(--text-3); }

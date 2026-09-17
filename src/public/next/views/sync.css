@@ -74,7 +74,10 @@
 .sync-sb-meta,
 .sync-decision-files { font-variant-numeric: var(--numeric-tabular); }
 
-.sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* --text-md is the SIDEBAR ROW NAME rung (views/domains.css's `.dm-row-name`
+   and views/ingest.css's `.ing-dest-name` carry the same one). This was
+   --text-sm, one rung under them, for no reason either file records. */
+.sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-md); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* .sync-domain-state and .sync-domain-footnote styled a per-domain state
    column that could only ever render "—" (no endpoint exposes per-domain
    sync state) and the footnote apologising for it. Both removed with the
@@ -198,7 +201,10 @@
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.sync-repo { flex: 1; min-width: 220px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+/* --text-sm (12px), not a frozen 12.5px — same fix, same reason, as
+   views/shared.css's `.sb-card-repo`: a px literal is the one size the
+   Settings > General text-size control cannot reach. */
+.sync-repo { flex: 1; min-width: 220px; font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
 .sync-last { font-size: var(--text-2xs); color: var(--text-2); flex: none; }
 
 .sync-status-actions {

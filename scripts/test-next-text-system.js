@@ -582,6 +582,304 @@ console.log('\n§9  NO LOCAL COPY - the renderers are single-source');
 }
 
 // =======================================================================
+// §10  THE ROLE → TOKEN STANDARD (v3.56.0)
+// =======================================================================
+//
+// The maintainer's ask, from his own production screenshots: "some titles are
+// much bigger than they should be — we need a standard, the size of fonts set
+// per role". docs/design-system-source.md § "The type standard" is that
+// standard in prose; this section is the part of it a stylesheet edit cannot
+// walk away from.
+//
+// IT GUARDS THE TOKEN, NOT THE NUMBER. Every assertion below reads the
+// stylesheet for which `--text-*` / `--type-*` name a role takes, never for a
+// px value — so a future change to the ramp's own values in
+// tokens/typography.css moves the whole app at once and reds nothing here,
+// which is exactly the property a ramp is for. What it refuses is a rule
+// that leaves the ramp, or a role that picks a different rung in one view
+// than in another.
+//
+// COMMENTS ARE STRIPPED FIRST, for the reason §8 already records: a guard
+// that fires on prose teaches people to reword explanations instead of fixing
+// code. The controls at the end of each block prove each detector still bites.
+console.log('\n§10  THE ROLE -> TOKEN STANDARD');
+{
+  const stripCssComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ');
+
+  // Every /next stylesheet, from disk. A hardcoded list is how a guard goes
+  // blind (§8's own note), and the views/ directory grows.
+  const sheets = walk(NEXT, '.css')
+    .map((p) => [p.replace(NEXT + '/', ''), stripCssComments(readFileSync(p, 'utf8'))]);
+  ok(sheets.length >= 15,
+     `enumerated ${sheets.length} /next stylesheets from disk`);
+
+  // Split a stylesheet into { selector, decls } records. Deliberately dumb:
+  // a brace walker over comment-stripped source, which is all these
+  // assertions need and is the same shape the other CSS suites use.
+  function rules(css) {
+    const out = [];
+    let depth = 0, selStart = 0;
+    for (let i = 0; i < css.length; i++) {
+      const c = css[i];
+      if (c === '{') {
+        if (depth === 0) {
+          const sel = css.slice(selStart, i).trim().replace(/\s+/g, ' ');
+          const close = matchBrace(css, i);
+          if (close !== -1 && !sel.startsWith('@')) out.push({ sel, decls: css.slice(i + 1, close) });
+        }
+        depth++;
+      } else if (c === '}') {
+        depth--;
+        if (depth <= 0) { depth = 0; selStart = i + 1; }
+      }
+    }
+    return out;
+  }
+  function matchBrace(css, at) {
+    let d = 0;
+    for (let i = at; i < css.length; i++) {
+      if (css[i] === '{') d++;
+      else if (css[i] === '}') { d--; if (d === 0) return i; }
+    }
+    return -1;
+  }
+  // The size a rule sets, as the TOKEN NAME it reads — from `font-size:` or
+  // from the `font:` shorthand — or 'PX-LITERAL', or null for "sets none".
+  function sizeTokenOf(decls) {
+    const fs = decls.match(/(?:^|[;{])\s*font-size\s*:\s*([^;}]+)/);
+    const sh = decls.match(/(?:^|[;{])\s*font\s*:\s*([^;}]+)/);
+    const v = fs ? fs[1] : (sh ? sh[1] : null);
+    if (v === null) return null;
+    const t = v.match(/var\((--(?:text|type)-[a-z0-9-]+)\)/);
+    if (t) return t[1];
+    if (/(?:^|[^a-zA-Z0-9_.-])\d*\.?\d+px/.test(fs ? v : v.replace(/\/\s*[\d.]+px/, '/L')))
+      return 'PX-LITERAL';
+    return v.trim();
+  }
+  function weightTokenOf(decls) {
+    const m = decls.match(/(?:^|[;{])\s*font-weight\s*:\s*([^;}]+)/);
+    if (m) {
+      const t = m[1].match(/var\((--weight-[a-z]+)\)/);
+      return t ? t[1] : m[1].trim();
+    }
+    const sh = decls.match(/(?:^|[;{])\s*font\s*:\s*([^;}]+)/);
+    if (sh) {
+      const t = sh[1].match(/var\((--weight-[a-z]+)\)/);
+      if (t) return t[1];
+      const r = sh[1].match(/var\((--type-[a-z0-9-]+)\)/);
+      if (r) return { '--type-h1': '--weight-semibold', '--type-h2': '--weight-semibold',
+                      '--type-h3': '--weight-semibold', '--type-body': '--weight-regular',
+                      '--type-body-sm': '--weight-regular', '--type-label': '--weight-medium',
+                      '--type-mono': '--weight-regular', '--type-eyebrow': '--weight-medium',
+                      '--type-caption': '--weight-medium', '--type-display': '--weight-semibold' }[r[1]] || null;
+    }
+    return null;
+  }
+  const allRules = sheets.flatMap(([file, css]) => rules(css).map((r) => ({ ...r, file })));
+  ok(allRules.length > 400,
+     `parsed ${allRules.length} top-level rules across those sheets`);
+
+  // ── (i) EVERY STANDARDISED TITLE READS A RAMP TOKEN ───────────────────
+  // The list is EXPLICIT rather than a `-title$` pattern, and that is the
+  // point: it names the selectors this release measured and moved, so a
+  // rename cannot silently drop one out of the guard's reach (the assertion
+  // below proves every name is still findable). Three rungs:
+  //   VIEW    = --type-h1            the one <h1> on a screen
+  //   HERO    = --type-h2            a column or overlay with no <h1>
+  //   TITLE   = --type-h3            block, card and sidebar titles
+  //   SUB     = --text-md / semibold a group inside a block or card
+  // `.tx-vh-title` is deliberately NOT here, and the first draft of this
+  // section put it here and went red, which is the useful kind of red: it
+  // sets `margin: 0` and NOTHING ELSE. renderViewHeader emits it as a second
+  // class beside `.view-title` (main region) or `.sidebar-title` (sidebar),
+  // and those two carry the size — so the header component takes whichever
+  // rung its position calls for rather than declaring a third. Listing a
+  // placement-only class as a size role would have pinned a size that rule
+  // must never grow.
+  const VIEW_TITLE = ['.view-title', '.reader-title'];
+  const HERO_TITLE = ['.chat-empty-title', '.mcpw-title', '.sbw-title'];
+  const CARD_TITLE = [
+    '.sidebar-title', '.settings-job-title', '.dm-health-title',
+    '.sb-card-title', '.sb-cta-title', '.sb-enable-title',
+    '.sync-setup-title', '.sync-decision-title', '.chat-browse-title',
+    '.ing-queue-panel-title', '.ing-queue-confirm-title', '.obp-title', '.cfd-title',
+  ];
+  const SUB_TITLE = [
+    '.tx-status-title', '.dm-lc-title', '.dm-confirm-title', '.settings-shelf-title',
+    '.model-lane-title', '.build-list-title', '.build-change-title',
+    '.sb-admin-row-title', '.sb-outcome-headline', '.ing-change-title',
+    '.chat-compile-change-title', '.mem-doc-empty-title',
+  ];
+  // The page-subtitle rung: the line that qualifies the <h1> it sits under.
+  const PAGE_SUBTITLE = ['.mem-project-name', '.mem-project-domain', '.mem-project-sep'];
+  // The sidebar list row's own name.
+  const ROW_NAME = ['.dm-row-name', '.mem-row-name', '.sync-domain-name',
+                    '.sb-conn-name', '.ing-dest-name', '.chat-conv-title'];
+
+  /**
+   * TARGETING, not equality. A rule reaches `.reader-title` as
+   * `.reader-body .reader-title` and `.dm-row-name` as
+   * `.dm-row.active .dm-row-name`, so a comma-part TARGETS the class when its
+   * final compound is exactly that class. The first draft compared the whole
+   * selector string and reported `.reader-title` as having no rule at all —
+   * the shape where a guard passes by not looking.
+   */
+  function targets(selectorList, cls) {
+    return selectorList.split(',').some((part) => {
+      const last = part.trim().split(/\s+|>|\+|~/).filter(Boolean).pop();
+      return last === cls;
+    });
+  }
+  /**
+   * EVERY size-setting rule that reaches `sel`, not just the winning one.
+   * Deciding a winner would need a specificity calculator adjudicating a
+   * cross-file cascade — the decorative-guard shape this file's header
+   * refuses — and it is not needed: the standard's claim is that NO rule
+   * anywhere puts this role off its rung, which is strictly stronger.
+   */
+  function sizesOf(sel) {
+    return allRules
+      .filter((r) => targets(r.sel, sel) && sizeTokenOf(r.decls) !== null)
+      .map((r) => ({ token: sizeTokenOf(r.decls), weight: weightTokenOf(r.decls), file: r.file, sel: r.sel }));
+  }
+  /** The one a human means by "what size is this" — for the readable message. */
+  function sizeOf(sel) {
+    const hits = sizesOf(sel);
+    return hits.length ? hits[hits.length - 1] : { token: 'NO-RULE', weight: null, file: null };
+  }
+
+  const ROLE_CHECKS = [
+    ['view title', VIEW_TITLE, ['--type-h1'], null],
+    ['hero / overlay title', HERO_TITLE, ['--type-h2'], null],
+    ['block / card / sidebar title', CARD_TITLE, ['--type-h3', '--text-lg'], '--weight-semibold'],
+    ['sub-title inside a block', SUB_TITLE, ['--text-md'], '--weight-semibold'],
+    ['page subtitle under the h1', PAGE_SUBTITLE, ['--text-base'], '--weight-medium'],
+    ['sidebar row name', ROW_NAME, ['--text-md', '--type-body-sm'], null],
+  ];
+  for (const [role, sels, allowed, weight] of ROLE_CHECKS) {
+    const bad = [];
+    for (const sel of sels) {
+      const hits = sizesOf(sel);
+      if (!hits.length) { bad.push(`${sel} has NO size rule anywhere`); continue; }
+      for (const h of hits) {
+        if (!allowed.includes(h.token)) bad.push(`${h.file} \`${h.sel}\` reads ${h.token}`);
+        else if (weight && h.weight !== weight) bad.push(`${h.file} \`${h.sel}\` is ${h.weight}, not ${weight}`);
+      }
+    }
+    ok(bad.length === 0,
+       `${role}: every size rule reaching its ${sels.length} selectors reads ${allowed.join(' or ')}` +
+       (weight ? ` at ${weight}` : '') +
+       (bad.length ? ` — OFF STANDARD: ${bad.join('; ')}` : ''));
+  }
+
+  // The list is only a guard while every name in it still exists. A renamed
+  // class would otherwise resolve to NO-RULE... which the check above already
+  // catches — so this asserts the inverse: nothing in the standard is a name
+  // no stylesheet has ever heard of.
+  const everySel = [...VIEW_TITLE, ...HERO_TITLE, ...CARD_TITLE, ...SUB_TITLE,
+                    ...PAGE_SUBTITLE, ...ROW_NAME];
+  const ghosts = everySel.filter((s) => sizeOf(s).token === 'NO-RULE');
+  ok(ghosts.length === 0,
+     `all ${everySel.length} standardised selectors resolve to a real rule` +
+     (ghosts.length ? ` — GHOSTS: ${ghosts.join(', ')}` : ''));
+
+  // CONTROLS for (i): the size reader must see both declaration forms, and
+  // must call a px literal a px literal.
+  ok(sizeTokenOf('font: var(--type-h3); color: var(--text);') === '--type-h3',
+     'CONTROL: the size reader resolves the `font:` SHORTHAND form');
+  ok(sizeTokenOf('font-size: var(--text-md); font-weight: 600;') === '--text-md',
+     'CONTROL: ...and the `font-size:` longhand form');
+  ok(sizeTokenOf('font-size: 14.5px;') === 'PX-LITERAL',
+     'CONTROL: ...and reports a frozen px literal as PX-LITERAL');
+  ok(sizeTokenOf('font: var(--weight-medium) var(--text-2xs)/15px var(--font-mono);') === '--text-2xs',
+     'CONTROL: ...and is not fooled by a px LINE-HEIGHT inside the shorthand (.rail-badge)');
+  ok(sizeTokenOf('color: var(--text-2); margin: 0;') === null,
+     'CONTROL: ...and returns null for a rule that sets no size at all');
+  ok(weightTokenOf('font: var(--type-h3);') === '--weight-semibold',
+     'CONTROL: the weight reader unpacks a composed --type-* role');
+
+  // ── (ii) THE READOUT VALUE IS DECLARED ONCE, AND NO VIEW RAISES IT ────
+  // The figure competes with the block title it sits inside if it reaches the
+  // title rung, which is exactly what shipped: --text-lg on BOTH. It is
+  // --text-base now, and the ceiling the standard states is --text-lg.
+  const RAMP_ORDER = ['--text-2xs', '--text-xs', '--text-sm', '--text-md',
+                      '--text-base', '--text-lg', '--text-xl', '--text-2xl',
+                      '--text-3xl', '--text-4xl', '--text-5xl'];
+  const readoutDecls = allRules.filter((r) =>
+    /(^|[\s,>+~])\.tx-readout-value(\s|,|$)/.test(r.sel) && sizeTokenOf(r.decls) !== null);
+  ok(readoutDecls.length === 1 && readoutDecls[0].file === 'shared/text.css',
+     `the readout value's size is declared EXACTLY ONCE, in shared/text.css ` +
+     `(found ${readoutDecls.length}: ${readoutDecls.map((r) => r.file).join(', ') || 'none'})`);
+  const readoutToken = readoutDecls.length ? sizeTokenOf(readoutDecls[0].decls) : null;
+  ok(readoutToken === '--text-base',
+     `the readout value is --text-base — one rung under the block title, so a figure never ` +
+     `out-shouts the heading of the block containing it (reads ${readoutToken})`);
+  ok(RAMP_ORDER.indexOf(readoutToken) <= RAMP_ORDER.indexOf('--text-lg'),
+     'and it is at or under the standard\'s --text-lg ceiling');
+  // §8 already refuses a `tx-` RULE in any other sheet, which is what makes
+  // "declared once" enforceable at all. Named here so the two cannot drift.
+  ok(sheets.filter(([f]) => f !== 'shared/text.css')
+        .every(([, css]) => !/\.tx-readout-value/.test(css)),
+     'no other stylesheet mentions .tx-readout-value at all, so nothing can override it upward');
+
+  // ── (iii) THE MEMORY "WORKING ON" LINE IS A READING, NOT A TITLE ──────
+  // Arbitrary-length text from a file (MAX_HEADLINE_CHARS = 200), so at a
+  // title rung a long headline dwarfs the block title above it.
+  const working = sizeOf('.mem-working-text');
+  ok(RAMP_ORDER.indexOf(working.token) <= RAMP_ORDER.indexOf('--text-md'),
+     `the Working-on line is ${working.token}, at or under --text-md — it is the agent's own ` +
+     'sentence, not a heading');
+  const WEIGHT_NUM = { '--weight-regular': 400, '--weight-medium': 500, '--weight-semibold': 600, '--weight-bold': 700 };
+  ok((WEIGHT_NUM[working.weight] || 400) <= 600,
+     `...and its weight is ${working.weight} (<= --weight-semibold), never bolder than a title`);
+  const workingRule = allRules.find((r) => r.sel.split(',').map((s) => s.trim()).includes('.mem-working-text'));
+  ok(!!workingRule && /-webkit-line-clamp\s*:\s*[12]\b/.test(workingRule.decls),
+     'and it is CLAMPED to one or two lines — a 200-character headline must not push the ' +
+     'Last-saved strip off the first screen');
+
+  // ── (iv) NO NEW PX FONT SIZE ANYWHERE THE STANDARD REACHES ────────────
+  // The hard ratchet lives in test-css-tokens.js's FROZEN_PX_CEILING (lowered
+  // to shell.css: 1 by this release). This is the per-ROLE half: not one
+  // selector in the standard may leave the ramp, ever, under any ceiling.
+  const offRamp = everySel
+    .concat(['.tx-readout-value', '.mem-working-text'])
+    .map((s) => [s, sizeOf(s)])
+    .filter(([, r]) => r.token === 'PX-LITERAL' || !/^--(text|type)-/.test(r.token));
+  ok(offRamp.length === 0,
+     `every selector in the standard reads a --text-* or --type-* token — a px literal is the ` +
+     `one size Settings > General's text-size control cannot reach` +
+     (offRamp.length ? ` — OFF RAMP: ${offRamp.map(([s, r]) => `${s} = ${r.token}`).join(', ')}` : ''));
+
+  // ── (v) ONE EYEBROW FACE ──────────────────────────────────────────────
+  // typography.css reserves mono for "everything the machine owns", and names
+  // eyebrow labels in that list. `.cur-group-title` was the one sans eyebrow.
+  const EYEBROWS = ['.cur-eyebrow', '.cur-group-title'];
+  const sansEyebrow = EYEBROWS.filter((sel) => {
+    const r = allRules.filter((x) => x.sel.split(',').map((s) => s.trim()).includes(sel));
+    return !r.some((x) => /var\(--type-eyebrow\)|var\(--font-mono\)/.test(x.decls));
+  });
+  ok(sansEyebrow.length === 0,
+     'every shell eyebrow takes --type-eyebrow (mono) — the app had one in sans, on the same ' +
+     'screen as three in mono' + (sansEyebrow.length ? ` — SANS: ${sansEyebrow.join(', ')}` : ''));
+
+  // CONTROLS for (ii)-(v): each detector fires on a planted violation, driven
+  // through the REAL readers rather than a re-implementation of them.
+  const plantedRaise = rules('.mem-status .tx-readout-value { font-size: var(--text-2xl); }');
+  ok(plantedRaise.length === 1 && sizeTokenOf(plantedRaise[0].decls) === '--text-2xl'
+     && RAMP_ORDER.indexOf('--text-2xl') > RAMP_ORDER.indexOf('--text-lg'),
+     'CONTROL: a planted view override raising .tx-readout-value above the ceiling IS detected');
+  const plantedBig = rules('.mem-working-text { font-size: var(--text-lg); font-weight: var(--weight-bold); }');
+  ok(RAMP_ORDER.indexOf(sizeTokenOf(plantedBig[0].decls)) > RAMP_ORDER.indexOf('--text-md')
+     && WEIGHT_NUM[weightTokenOf(plantedBig[0].decls)] > 600,
+     'CONTROL: a planted Working-on line at --text-lg / bold IS detected on both axes');
+  const plantedPx = rules('.dm-health-title { font-size: 15px; }');
+  ok(sizeTokenOf(plantedPx[0].decls) === 'PX-LITERAL',
+     'CONTROL: a planted px literal on a standardised title IS detected');
+  ok(!/var\(--type-eyebrow\)|var\(--font-mono\)/.test('font: var(--weight-medium) var(--text-xs)/1 var(--font-sans);'),
+     'CONTROL: the eyebrow-face detector FIRES on the sans form this release replaced');
+}
+
+// =======================================================================
 console.log('\n------------------------------------------------------------');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed === 0) console.log('All text-system offline assertions green');

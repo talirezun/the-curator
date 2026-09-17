@@ -303,8 +303,23 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
   // PREFIX OWNERSHIP, mirrored here. test-next-text-system.js walks the whole
   // tree for this; asserting it in the view's OWN suite means a domains-only
   // edit goes red here too, next to the person who made it.
-  ok(!/\.tx-[a-z]/.test(domainsCss),
-     'views/domains.css names no tx- class anywhere — shared/text.css owns that prefix, so a view cannot re-dress a role');
+  //
+  // OVER `domainsCssCode`, WITH COMMENTS STRIPPED, and that is a correction
+  // rather than a loosening. The canonical guard in test-next-text-system.js
+  // §8 already strips them, and its own comment says why: "a guard firing on
+  // prose teaches people to reword comments instead of fixing code, and the
+  // next person deletes the explanation rather than the defect." This mirror
+  // read the RAW file, so it went red on a comment that merely NAMED
+  // `.tx-readout-value` in order to record why `.dm-health-title` moved to the
+  // card-title rung — an explanation, not a rule. Stripping can only remove
+  // FALSE positives: a real rule is never inside a comment, and the two
+  // controls below prove the detector still bites.
+  ok(!/\.tx-[a-z]/.test(domainsCssCode),
+     'views/domains.css declares no tx- RULE — shared/text.css owns that prefix, so a view cannot re-dress a role');
+  ok(/\.tx-[a-z]/.test(stripCssComments('.dm-x { color: red; }\n.tx-readout-value { font-size: var(--text-lg); }')),
+     'CONTROL: a real `.tx-` RULE in this file WOULD still be detected');
+  ok(!/\.tx-[a-z]/.test(stripCssComments('/* `.tx-readout-value` dropped a rung; see shared/text.css. */\n.dm-x { color: red; }')),
+     'CONTROL: ...and a comment that merely NAMES one is not, which is the false positive removed');
 
   // The wrappers the placement rules hang on must EXIST in the markup, or
   // the spacing silently does nothing.

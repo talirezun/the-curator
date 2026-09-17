@@ -636,7 +636,7 @@
 
 .ing-change-summary { }
 .ing-change-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   color: var(--text);
   margin-bottom: var(--space-7);
