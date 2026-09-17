@@ -2228,12 +2228,40 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
   const stale480 = (cssNoComments.match(/max-width:\s*480px/g) || []).length;
   ok(stale480 === 0,
     '§17a …and no `max-width: 480px` literal survives anywhere in the sheet (found ' + stale480 + ')');
-  ok(/max-width:\s*var\(--ing-col\)/.test(ruleBody('.ing-field') || ''),
-    '§17a .ing-field takes the token — it is the single-file form\'s measure, where there is no grid');
+  // THE TOKEN'S ROLE CHANGED, AND THIS ARM CHANGED WITH IT, DELIBERATELY.
+  // It used to require `.ing-field { max-width: var(--ing-col) }` and called
+  // the token "the single-file form's measure, where there is no grid". Both
+  // halves were false: the single-file form goes through renderConfirmGrid
+  // too, and once that grid collapses to ONE cell (§17c) the cap was the only
+  // thing left holding the domain picker and the drop zone at 560px inside a
+  // 1144px cell — the reported pocket, with the empty half removed and the
+  // narrow half kept. `--ing-col` now binds NOTICES (words) and controls take
+  // their container, so this arm asserts the opposite of what it used to.
+  ok(!/max-width:/.test(ruleBody('.ing-field') || ''),
+    '§17a .ing-field carries NO max-width — it holds CONTROLS (the domain listbox, the ' +
+    'drop zone, the action row) and takes the cell it is in');
   ok(/max-width:\s*var\(--ing-col\)/.test(ruleBody('.ing-status-block') || ''),
     '§17a .ing-status-block is CAPPED — an uncapped renderStatus box ran the full 959px column');
   ok(/max-width:/.test(ruleBody('.ing-queue-overwrite-row') || ''),
     '§17a .ing-queue-overwrite-row is capped — it was the single widest thing on the screenshot');
+  // The token binds the NOTICE blocks, and it has to keep binding them: with
+  // the form now taking the whole column in the single-cell state, an uncapped
+  // status box or duplicate banner would run 1144px of sentence beside it —
+  // the "three measures, none of them chosen" shape from the other direction.
+  for (const notice of ['.ing-duplicate', '.ing-progress']) {
+    ok(/max-width:\s*var\(--ing-col\)/.test(ruleBody(notice) || ''),
+      '§17a ' + notice + ' keeps the token — it is words, and words take the notice measure');
+  }
+  // §17c(iii) — THE CONTROLS CARRY NOTHING BELOW THE COLUMN. The drop zone is
+  // the element the report was about; it has never had a cap of its own, and
+  // it must not acquire one, because in the single-cell state its container is
+  // the whole column and a cap here would silently restore the pocket.
+  for (const control of ['.ing-drop-zone', '.ing-field']) {
+    const body = ruleBody(control) || '';
+    ok(body !== '' && !/max-width:/.test(body),
+      '§17c ' + control + ' declares NO max-width — in the single-cell state nothing may ' +
+      'hold a control below the column it sits in');
+  }
   // CONTROL: the reader really reaches rule bodies, so the four above are not
   // passing on `null`.
   ok(ruleBody('.ing-field') !== null && ruleBody('.thisRuleDoesNotExist') === null,
@@ -2332,6 +2360,97 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
     // assertion comparing them is not comparing -1 to -1.
     ok(out.indexOf('data-stub="listbox"') !== -1 && out.indexOf('class="ing-queue-estimate"') !== -1,
       '§17b control: both marker strings are actually present in the output');
+  }
+}
+{
+  // ── §17c — EXECUTED. THE EMPTY SECOND CELL IS GONE. ───────────────────
+  //
+  // REPORTED: the single-file form sat in a narrow left pocket with empty
+  // space beside it. Measured on the shipped build in the COMMON state — no
+  // file chosen, no result — the form was 477px at a 1370px window and 564px
+  // at 2000px, with an EMPTY <div> holding an equal track to its right. The
+  // held track was deliberate (the comment said the form "does not change
+  // width when a result arrives"); the trade was refused, because the hole is
+  // permanent and the reflow has a cause on the screen.
+  //
+  // Measured after (same harness, real functions, real stylesheet): single
+  // cell 970px at 1370 and 1144px at 2000; two cells 477/477 and 564/564 the
+  // moment a result exists. The rejected alternative — form always full width,
+  // result stacked BELOW — was rendered too: the 640px result under a 970px
+  // form left right edges at 1012 and 1342 (504px apart at 2000), which is the
+  // "three measures, none of them chosen" shape §17 exists to prevent.
+  //
+  // EXECUTED, not scanned: "there is no second cell" is a property of the
+  // emitted markup. Every renderer on the right is stubbed to '' for the empty
+  // arm and to a marker for the result arm, so a cell that VANISHED cannot be
+  // confused with a cell that stayed empty.
+  const NEED17c = ['renderConfirmGrid', 'renderIngestForm'];
+  const b17c = {};
+  for (const n of NEED17c) {
+    b17c[n] = extractFunction(js, n);
+    ok(!!b17c[n], '§17c extracted a body for ' + n + '() from the real source');
+  }
+  if (NEED17c.every((n) => b17c[n])) {
+    const form = new Function('state', 'resultHtml', `
+      const escapeHtml = (s) => String(s == null ? '' : s);
+      const icon = () => '<svg></svg>';
+      const renderListboxHtml = () => '<div data-stub="listbox"></div>';
+      const domainListboxCfg = () => ({});
+      const renderDropZoneHtml = () => '<div data-stub="dropzone"></div>';
+      const renderSelectedFileHtml = () => '<div data-stub="selected"></div>';
+      const renderStatus = (o) => '<div data-stub="status">' + o.title + '</div>';
+      const isRemoteIngestRunning = () => false;
+      const isDomainWriteBusy = () => false;
+      const getDomainWriteLabel = () => 'ingest';
+      const renderProgress = () => '';
+      const renderRemoteProgress = () => '';
+      const renderRemoteOutcome = () => '';
+      const renderDuplicate = () => '';
+      const renderIngestFailure = () => '';
+      const renderResult = () => resultHtml;
+      ${b17c.renderConfirmGrid}
+      ${b17c.renderIngestForm}
+      return renderIngestForm();
+    `);
+    const baseState = {
+      domain: 'articles', domains: [{ slug: 'articles', displayName: 'Articles' }],
+      submitting: false, file: null, fileError: null, errorMessage: null, errorCode: null,
+    };
+
+    // (a) NOTHING TO SHOW → ONE CELL.
+    const empty = form({ ...baseState }, '');
+    ok(/class="ing-confirm-grid ing-confirm-grid-single"/.test(empty),
+      '§17c with no file and no result the form emits the SINGLE-cell wrapper');
+    ok((empty.match(/ing-confirm-col /g) || []).length === 1,
+      '§17c …exactly ONE .ing-confirm-col is emitted (found ' +
+      (empty.match(/ing-confirm-col /g) || []).length + ')');
+    ok(!/ing-confirm-col-decide/.test(empty),
+      '§17c …and there is NO decide cell — an empty <div> holding a track IS the reported hole');
+    ok(/data-stub="dropzone"/.test(empty) && /data-stub="listbox"/.test(empty),
+      '§17c control: the single cell really carries the form (drop zone + domain picker)');
+
+    // (b) A RESULT ARRIVES → TWO CELLS, the shipped shape, unchanged.
+    const withResult = form({ ...baseState }, '<div data-stub="result"></div>');
+    const gridAt = withResult.indexOf('class="ing-confirm-grid"');
+    ok(gridAt >= 0 && !/ing-confirm-grid-single/.test(withResult),
+      '§17c with a result the wrapper is the plain two-column grid, NOT the single variant');
+    const inAt = withResult.indexOf('ing-confirm-col-input');
+    const decAt = withResult.indexOf('ing-confirm-col-decide');
+    ok(inAt > 0 && decAt > inAt,
+      '§17c …both cells are emitted, input first (input ' + inAt + ', decide ' + decAt + ')');
+    ok(withResult.indexOf('data-stub="result"') > decAt,
+      '§17c …and the result is INSIDE the decide cell, not stacked below the form');
+
+    // (c) WHITESPACE IS NOTHING. Every caller concatenates self-suppressing
+    // renderers, so a stray newline between two empty strings must not buy a
+    // second cell — a truthiness check here would have kept the hole alive on
+    // any future right side built with a line break in it.
+    const ws = new Function(b17c.renderConfirmGrid + '\nreturn renderConfirmGrid("L", "\\n   \\n");')();
+    ok(/ing-confirm-grid-single/.test(ws) && !/ing-confirm-col-decide/.test(ws),
+      '§17c a whitespace-only right side collapses too (`.trim()`, not truthiness)');
+    const notWs = new Function(b17c.renderConfirmGrid + '\nreturn renderConfirmGrid("L", "  x  ");')();
+    ok(!/ing-confirm-grid-single/.test(notWs) && /ing-confirm-col-decide/.test(notWs),
+      '§17c control: one non-space character on the right still buys the second cell');
   }
 }
 

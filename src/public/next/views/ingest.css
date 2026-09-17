@@ -39,7 +39,7 @@
    one place, legible in both themes. */
 
 
-/* ── THIS VIEW HAS ONE COLUMN MEASURE, AND IT IS DECLARED ONCE ────────────
+/* ── THIS VIEW HAS ONE NOTICE MEASURE, AND IT IS DECLARED ONCE ────────────
    FIVE separate rules carried `max-width: 480px` — `.ing-field`,
    `.ing-queue-section`, `.ing-queue-estimate`, `.ing-queue-skeleton` and the
    already-dead `.ing-queue-warnings`. Five copies of one decision, which is
@@ -49,17 +49,30 @@
    WHY THE NUMBER MOVED, 480 -> 560. shell.css raised the app-wide content cap
    to 1200px (a 1144px content box) with the note that Ingest's 480px field
    stack "had room for a NEIGHBOUR and no room to put one". The answer to that
-   is a SECOND COLUMN (`.ing-confirm-grid` below), not a wider strip — but the
-   single-file form has no neighbour to give it, so it takes the measure the
-   batch gate's own column resolves to at the cap: (1144 - 32 gap) / 2 = 556,
-   rounded to 560. At 1370px the batch column measures ~463 and the single-file
-   form measures 560; at 2000px they are 556 and 560. The two surfaces read as
-   the same app at both widths, which the 480 pocket beside a 959px column
-   did not.
+   is a SECOND COLUMN (`.ing-confirm-grid` below), not a wider strip, and 560
+   is the measure that column resolves to at the cap: (1144 - 32 gap) / 2 =
+   556, rounded up. So a notice sitting outside the grid lines up with the one
+   sitting inside it.
 
-   It is NOT a prose measure. Paragraph roles carry their own `ch` cap
-   (shared/text.css's `--prose-max` and the 68ch on `.tx-desc`); this is the
-   width of a stack of CONTROLS. */
+   ── WHAT IT BINDS, AND WHAT IT STOPPED BINDING ───────────────────────────
+   REPORTED, and measured before anything moved: with `.ing-field` capped at
+   this token, the single-file form was a 560px stack at the left of a 1144px
+   column with an empty cell beside it — the maintainer's "narrow left pocket".
+   renderConfirmGrid now collapses to ONE cell when nothing is on the right,
+   and this token would have gone on holding the form at 560 inside a cell
+   1144 wide, which is the same pocket with the hole moved.
+
+   So the token binds NOTICES only — `.ing-status-block`, `.ing-duplicate`,
+   `.ing-progress`, `.ing-queue-overwrite-row`: blocks whose content is words,
+   which a 1144px line does not help anyone read. CONTROLS take their
+   container: the domain listbox, the drop zone and the action row are the
+   thing you came to use, and the container is what decides how wide they are.
+   That split is shell.css's own house rule for the 1200px cap — CAP THE
+   PROSE, NEVER THE CARDS — applied inside one view.
+
+   It is still NOT a `ch` prose measure. Paragraph ROLES carry their own
+   (shared/text.css's `--prose-max`, the 68ch on `.tx-desc`); this is the width
+   of a block, matched to the grid column so the two agree. */
 :root { --ing-col: 560px; }
 
 /* ── THE CONFIRM GATE IS TWO COLUMNS ──────────────────────────────────────
@@ -97,6 +110,15 @@
    share and shove the other column off. */
 .ing-confirm-col { min-width: 0; }
 
+/* `.ing-confirm-grid-single` — emitted by renderConfirmGrid when nothing is on
+   the right — DELIBERATELY HAS NO RULE OF ITS OWN, and that is recorded here
+   so the next reader does not hunt for one or add an empty block. `auto-fit`
+   already collapses the track with no item in it and hands the whole column to
+   the survivor (measured: 970px at a 1370px window, 1144px at 2000px), and
+   `gap` and `align-items` have nothing to act on with one child. It is a
+   marker: the state is nameable in the DOM, so a guard can assert it and a
+   future rule has a hook that is not `:only-child`. */
+
 /* ── Sidebar: cross-mount busy note ──────────────────────────────────── */
 
 .ing-sidebar-busy {
@@ -116,10 +138,17 @@
 
 /* ── Form ─────────────────────────────────────────────────────────────── */
 
-/* Binds in the SINGLE-FILE form, where there is no grid. Inside
-   `.ing-confirm-grid` the track is narrower than `--ing-col` at every width the
-   app renders at, so the cap is inert there and the column is what decides. */
-.ing-field { margin-bottom: var(--space-8); max-width: var(--ing-col); }
+/* NO CAP — the field is a CONTROL and takes its cell. It carried
+   `max-width: var(--ing-col)` under a note saying the cap was inert inside the
+   grid and only bound "the single-file form, where there is no grid". Both
+   halves were wrong by the time they were read: the single-file form goes
+   through renderConfirmGrid like everything else, and the cap was the ONLY
+   thing binding once that grid collapsed to one cell — it held the domain
+   picker and the drop zone at 560 inside a 1144px cell. Measured with it
+   removed: 970 at a 1370px window, 1144 at 2000, and 477 / 564 the moment a
+   result opens the second column. The notice blocks keep `--ing-col`; see the
+   token's own note for why the split is by ROLE. */
+.ing-field { margin-bottom: var(--space-8); }
 
 .ing-label {
   display: block;

@@ -1731,12 +1731,14 @@ function renderIngestForm() {
   // a finished ingest pushed the drop zone off the top of the screen on the
   // one screen whose next action is usually "and now the next file".
   //
-  // The right cell is emitted even when empty, and that is the point rather
-  // than an oversight: `auto-fit` collapses a track with no ITEM in it, so an
-  // omitted cell would let the form stretch across the whole column and the
-  // single-file screen would change width the moment a result arrived. An
-  // empty <div> holds the track, so the form sits at the same measure the
-  // batch gate's left column does, at every width.
+  // WHEN THERE IS NOTHING ON THE RIGHT, THERE IS NO RIGHT. Every renderer
+  // below self-suppresses, so before the first run this call hands
+  // renderConfirmGrid a blank string and gets back ONE cell at the full column
+  // (see its own note for the measurements that changed the earlier decision
+  // to hold the track with an empty <div>). The form does then narrow when a
+  // ring or a result arrives — accepted, and stated rather than hidden: that
+  // is a state change with a cause on the screen, whereas the hole was
+  // permanent. Measured: 970 -> 477 at a 1370px window, 1144 -> 564 at 2000.
   return renderConfirmGrid(
     '<div class="ing-field">' +
       '<span class="ing-label" id="ing-domain-label">Domain</span>' +
@@ -3658,11 +3660,40 @@ function renderQueueSection() {
 // two different layouts depending on which branch produced it. The grid's own
 // behaviour (when it is one track, when it is two) lives entirely in
 // views/ingest.css — this function decides only WHICH SIDE a thing is on.
+//
+// ── AN EMPTY SECOND CELL IS A HOLE, NOT A HELD TRACK ─────────────────────
+// REPORTED: the single-file form sat in a narrow left pocket with nothing
+// beside it. Measured on the shipped build, in the COMMON state (no file
+// chosen, no result): the form 477px wide at a 1370px window and 564px at
+// 2000px, with an EMPTY <div> holding an equal track to its right — 477 and
+// 564px of nothing, on the screen a user meets first.
+//
+// The previous note here defended that on purpose: an empty cell keeps
+// `auto-fit` from collapsing the track, so the form "does not change width
+// when a result arrives". That trade is now refused. A permanent hole in the
+// common state costs more than a one-off reflow in the state that has a
+// visible cause, and the cause is the most legible one an app has — a panel
+// appeared where there was none.
+//
+// So: a blank right side (empty, or whitespace from a run of renderers that
+// all self-suppressed) emits ONE cell, and `auto-fit` gives it the whole
+// column. Anything at all on the right emits the two-column shape unchanged.
+// `.trim()` rather than a truthiness check, because every caller builds the
+// right side by CONCATENATING self-suppressing renderers, and a stray newline
+// between two empty strings is still "nothing to show".
 function renderConfirmGrid(leftHtml, rightHtml) {
+  const right = rightHtml == null ? '' : String(rightHtml);
+  if (!right.trim()) {
+    return (
+      '<div class="ing-confirm-grid ing-confirm-grid-single">' +
+        '<div class="ing-confirm-col ing-confirm-col-input">' + leftHtml + '</div>' +
+      '</div>'
+    );
+  }
   return (
     '<div class="ing-confirm-grid">' +
       '<div class="ing-confirm-col ing-confirm-col-input">' + leftHtml + '</div>' +
-      '<div class="ing-confirm-col ing-confirm-col-decide">' + rightHtml + '</div>' +
+      '<div class="ing-confirm-col ing-confirm-col-decide">' + right + '</div>' +
     '</div>'
   );
 }
