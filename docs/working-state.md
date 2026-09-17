@@ -1043,22 +1043,37 @@ typed confirmation, given a standing brief, and where **Copy marker line** hands
 
 ![The Curator's Agent memory screen with the "curator" project open, dark theme. The sidebar lists projects grouped by domain, each row carrying the project name, its newest headline and a freshness dot — under PROJECTS: "field-notes, 1 scope · 1 day ago", "projects, 1 scope · 2 weeks ago", "lumina, 22 scopes · 5 days ago" and "curator, 13 scopes · 2 weeks ago", the last of which is selected — under a heading "Agent memory" carrying an ⓘ mark and a PROJECTS row with a Refresh link. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The first block is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ. Its card holds, on one line, an amber square pip, the small label WORKING ON, the sentence "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0" and, at the right edge, "3 hr ago". Under it a hollow square pip beside "Last saved" over "2 weeks ago" in large monospace, with "curator-v3-17-1-acceptance · claude-code" beneath. Then three qualifying lines: "This file arrived on this computer 3 hr ago — the reading above is the agent’s own clock, not the file’s."; "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 3 hr ago."; and "Written on talis-macbook-pro-17d23c and synced here — local paths and processes may differ from what the handoff describes." Below a hairline inside the same card, "Standing brief — 3 hr ago". A second block headed Work-streams holds a table with the columns WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS, ordered newest first: session-2026-09-17-settings-design-unification at 3 hr ago and session-2026-09-13-readme-video-screenshots at 5 hr ago carry filled amber dots, session-2026-09-14-website-seo-perf at 3 days ago a filled grey one, and the three rows below it — 1 week ago and two at 2 weeks ago — hollow grey ones, each with that save’s own headline, its machine and its harness and model. More of the project’s thirteen saved copies continue below the bottom edge.](images/curator-agent-memory.png)
 
-**What the view puts in front of you (rebuilt in v3.55.0).** It was three
-collapsible panels under a row of dropdowns. It is now a dashboard of **five
-unnumbered blocks**, each a heading, a one-line lede and an ⓘ:
+**What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0).**
+It was three collapsible panels under a row of dropdowns. It is now a dashboard of
+**four unnumbered blocks**, each a heading, a one-line lede and an ⓘ:
 
 | Block | The reading it gives |
 |---|---|
 | **Status** | *Working on* — the newest save's headline, with a freshness pip and an age that ticks while you watch; *Last saved*, with the work-stream and harness that wrote it; which of the two clocks the figure came from; every qualifying line (trimmed content, a file that arrived by sync, newer state in another work-stream, **another machine that saved after this one**, two tools sharing one handoff file); and the standing brief's age |
-| **Work-streams** | One row per **(work-stream, machine)** pair, newest first: freshness dot and slug, that save's own headline, its age, the machine (tagged **this machine** only on positive evidence) and the harness · model. Clicking a row opens it — which is what replaced the Work-stream and Machine dropdowns. Under the table, *"N work-streams · M saved copies"*, both taken from the store's uncapped counts |
-| **Current handoff** | The open work-stream's handoff, at the column's full width |
+| **Work-streams** | One row per **(work-stream, machine)** pair, newest first: freshness dot and slug, that save's own headline, its age, the machine (tagged **this machine** only on positive evidence) and the harness · model. The newest **five** are painted, with a *Show N more* row under the table that appends the rest; pressing a row opens its handoff in the reader — which is what replaced the Work-stream and Machine dropdowns. Under the table, *"N work-streams · M saved copies"*, both taken from the store's uncapped counts, plus *"showing 5 of 13"* while the window is short of the list |
 | **Standing brief** | The document, with a **pencil** in its own toolbar. ⌘S / ⌘↵ save, Esc closes (raising an inline Discard / Keep editing bar when the draft changed), and a live *modified · words · bytes of 32768* line disables Save before the 32 KB ceiling is hit rather than after |
 | **Session journal** | One line per save, newest first — unchanged |
+
+**The handoff is not one of them.** Through v3.55.0 it was block ③, carrying the
+open work-stream's whole document between the table and the brief — so a screen
+whose job is to say *where things stand* opened with fifteen hundred words about
+one work-stream. In v3.56.0 the table is the index and a row press opens the
+document in the shell's **reader**, the same right-hand overlay a wiki page opens
+in, over a page that stays where it was. It is no new route and no second fetch:
+the reader composes what `GET /api/memory/:domain/:project` already returned. It
+carries the file's real path (`state/<project>/<scope>/<machine>/current.md`), the
+scope and machine as chips, the same *Saved* reading the Status block gives —
+computed by the same function, so the two can never disagree about one save — the
+`incomplete` / `summary shortened` badges on that reading, the truncation and
+read-sanitisation notes unfolded, and the rendered markdown. Esc, the scrim and
+the ✕ close it and return focus to the row that opened it.
 
 **Status is first, above everything that could qualify it**, because it is what
 someone with almost no context left actually arrives for; the stale-write notice
 and the "not everything could be listed" note render inside it, and nothing in it
-is ever folded. A block with nothing to report does not render at all.
+is ever folded. A block with nothing to report does not render at all — except
+**Work-streams**, which renders its own empty card for a project with no saves,
+since the place you look for a work-stream is the block named after one.
 
 Two readings the [menu bar widget](#a-second-read-surface-the-menu-bar-widget-mac-app-off-by-default)
 already carried are on the web surface too, so they are not Mac-only: the

@@ -1310,9 +1310,14 @@ The **Agent memory** rail item opens a browser for the working state your agents
 each other. Almost all of it is **read-only** — agents write this over MCP and the app shows it —
 with exactly one exception, the **standing brief**, which is your document and has a pencil.
 
+The page is a **dashboard**, not a document: four blocks that say where the project stands, over a
+table of its work-streams. Reading one work-stream's handoff is a separate act, and since v3.56.0
+it happens in the **[reader](#reading-a-handoff)** — the same right-hand panel a wiki page opens
+in, over a table that stays where it was.
+
 ![The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, then a PROJECTS row with a Refresh link, then a second PROJECTS heading — the domain’s name — over four rows. Each row has a small square marker, the project name, a one-line headline under it, and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago", "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago", "lumina / D370 PR #452 READY TO MERGE: head b… / 22 scopes · 5 days ago", and "curator / v3.17.1 fixes are complete and green in th… / 13 scopes · 2 weeks ago", which is selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The first block is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ. Its card holds, on one line, an amber square pip, the small label WORKING ON, the sentence "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0" and, at the right edge, "3 hr ago". Under it a hollow square pip beside "Last saved" over "2 weeks ago" in large monospace, with "curator-v3-17-1-acceptance · claude-code" beneath. Then three qualifying lines: "This file arrived on this computer 3 hr ago — the reading above is the agent’s own clock, not the file’s."; "Newer state in this project: session-2026-09-17-settings-design-unification on talis-macbook-pro-acb035 — 3 hr ago."; and "Written on talis-macbook-pro-17d23c and synced here — local paths and processes may differ from what the handoff describes." Below a hairline inside the same card, "Standing brief — 3 hr ago". A second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. Six rows are visible, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-17-settings-design-unification" with a filled amber dot and "3 hr ago"; "session-2026-09-13-readme-video-screenshots", amber, "5 hr ago"; "session-2026-09-14-website-seo-perf", filled grey, "3 days ago"; then three hollow grey rows — "session-2026-09-04-ingest-ux-and-chrome" at "1 week ago", "session-2026-09-02-audit-and-plan" and "session-2026-09-01-menubar-widget-design" at "2 weeks ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 for the first five, talis-macbook-pro-17d23c for the last — and a harness line such as "Claude Code · claude-fable-5-1" or "claude-code · opus". More of the project’s thirteen saved copies continue below the bottom edge.](images/curator-agent-memory.png)
 
-*One project's state, open, and the top two of its [five blocks](#the-five-blocks). **Status**
+*One project's state, open, and the top two of its [four blocks](#the-four-blocks). **Status**
 answers "am I saved?" in one glance — the **Working on** headline, a live age, the Last-saved
 reading, and here three of its qualifying lines at once. **Work-streams** is the table that
 replaced the old Work-stream and Machine dropdowns: one row per saved copy, newest first, click
@@ -1320,10 +1325,13 @@ a row to open it. Its dots are the app-wide [freshness scale](#the-freshness-dot
 and because the table is ordered by the same clock the dots are cut on, they cool straight down the
 column: amber for the two saved today, filled grey at three days, hollow grey from a week out.*
 
-> **The sidebar row and the Status block name different work-streams in this photograph**, and the
-> Status block is the one to trust: it re-derives the project's newest save from the agent's own
-> clock, while the row beside it is still reading the store's index. It is
-> [reported](https://github.com/talirezun/the-curator/issues) and not yet fixed.
+> **One project, one clock.** An earlier build of this screen could show a sidebar row naming a
+> fortnight-old work-stream beside a Status block reporting a save three hours ago, because the row
+> took its headline and age from whichever copy the *filesystem* had touched most recently while
+> every age on the page is the **agent's** own clock — and on a synced store those are different
+> things, since git rewrites file times on checkout. The row now speaks for the same pair the page
+> does. (Fixed in v3.55.0; an earlier edition of this guide, and its screenshot, showed the
+> disagreement.)
 
 - **The sidebar lists your projects, grouped by domain** — domains in domain order, projects
   nested under their domain. Each row now carries three things: the project name, the **Working
@@ -1351,17 +1359,17 @@ column: amber for the two saved today, filled grey at three days, hollow grey fr
   this page is a dashboard rather than a page of prose. The sidebar has its own ⓘ carrying the
   short version.
 
-#### The five blocks
+#### The four blocks
 
-The project page is **five blocks**, in this order, each one a heading, a one-line lede and an ⓘ
+The project page is **four blocks**, in this order, each one a heading, a one-line lede and an ⓘ
 holding the argument behind it (*rebuilt in v3.55.0 — it was three collapsible panels and a row of
-dropdowns*). They are deliberately **not numbered**: they are sections, not steps.
+dropdowns; the fifth block, **Current handoff**, became the reader in v3.56.0*). They are
+deliberately **not numbered**: they are sections, not steps.
 
 | Block | The question it answers | What is in it |
 |---|---|---|
 | **Status** | *Am I saved, and is it any good?* | The **Working on** headline with a freshness pip and an age that ticks while you watch; the **Last saved** reading with the work-stream and harness that wrote it; which clock the reading came from; every qualifying line — see [the save-status strip](#the-save-status-strip) below; and the standing brief's age |
-| **Work-streams** | *What else is going on in this project, and where?* | One row per saved copy — see the table below. Click a row to open its handoff |
-| **Current handoff** | *What did the last session leave for the next one?* | The handoff for the open work-stream, as a fold with its own freshness pip and live clock. Full width since v3.55.0 |
+| **Work-streams** | *What else is going on in this project, and where?* | One row per saved copy, newest first — see [the table below](#the-work-stream-table). Press a row to read its handoff in the [reader](#reading-a-handoff) |
 | **Standing brief** | *What standing instructions does every agent read?* | Your document, with a **pencil** to edit it — see [Editing the standing brief](#editing-the-standing-brief) |
 | **Session journal** | *What has happened here over time?* | One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. History, not the present |
 
@@ -1370,9 +1378,18 @@ no context left actually arrives for, so it must not sit under two conditional n
 on the days those appear. The stale-write notice and the "not everything could be listed" note
 render **inside** it, under the reading they qualify, and nothing in Status is ever folded.
 
+**There is no longer a block holding a handoff document.** Through v3.55.0 the open work-stream's
+handoff sat on the page, full width, between the table and the brief — so a dashboard meant to say
+*where things stand* opened with fifteen hundred words about one work-stream. Reading a handoff is
+a different act from surveying a project, and it now happens in the reader. **The wiki settled
+this years ago:** a list of pages, and a press opens one in the right-hand panel.
+
 **A block with nothing to say does not render.** A project with no saves shows Status (if there is
-anything to report), no Work-streams table, and a Current handoff block whose body explains that
-no agent has written one yet.
+anything to report), then a **Work-streams** block carrying a card instead of a table — *"No
+handoff saved yet"*, and a sentence saying whether the project has a brief and nothing else, or
+nothing at all yet. That card used to live in the handoff block; it moved here rather than
+disappearing with it, because the place you look for a work-stream is the block called
+Work-streams.
 
 #### The work-stream table
 
@@ -1389,13 +1406,69 @@ column and the dots cool with them, and the order can never contradict the readi
 | **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
 | **Harness** | The agent tool and the model that wrote the save, e.g. *"claude-code · opus"* |
 
-**Click a row to open it.** That replaces the whole picker: pick the work-stream and the machine
-in one gesture, from a list that already tells you which is worth opening.
+**Press a row to open it.** That replaces the whole picker: pick the work-stream and the machine
+in one gesture, from a list that already tells you which is worth opening — and since v3.56.0 the
+handoff opens in the [reader](#reading-a-handoff) rather than underneath the table.
+
+**The table shows the newest five, and a `Show N more` row extends it** (*v3.56.0*). A project that
+has run for a month across two machines is twenty rows, and twenty rows own the page the same way
+the handoff document used to. The row sits **under** the table rather than inside it, so it can
+never scroll out of reach of the list it extends, and pressing it **appends** the next window —
+the rows you have already read do not move.
+
+**The step is all the rest, not another five.** A project with seven work-streams has two hidden,
+and pressing twice for two rows is the friction rather than the rows; so the button says *"Show 2
+more"* and that is the end of it. Past twenty the step becomes ten, because one press that paints
+forty rows is a wall.
+
+Two details worth knowing:
+
+- **The window resets when you switch projects.** Every project opens at five.
+- **The work-stream you have open is always painted**, even when it sits past the window — the
+  window is *stretched* down to it rather than the row being lifted to the top. This table's
+  header says *newest first*, and a highlighted row sitting above one three minutes younger would
+  be the same lie in a smaller font.
 
 Under the table sits a line like *"13 work-streams · 15 saved copies"*. **Those are two different
 numbers and both are real:** each machine writes into its own folder inside a work-stream, so one
-work-stream can appear as several rows. If the store could only return the most recently saved
-copies, the line says so and gives the true total — it never reports a cap as a measurement.
+work-stream can appear as several rows. While rows are hidden, a third clause is appended —
+*"· showing 5 of 13"* — and it disappears once everything is on screen, because a list that fits
+says nothing about its own length. That clause is **about this table's window**; if the store
+itself could only return the most recently saved copies, it says so in its own separate clause and
+gives the true total. Two caps, two sentences — neither is ever reported as the other.
+
+#### Reading a handoff
+
+Pressing a work-stream row opens its handoff in the **reader** — the slide-in panel over the main
+column that a wiki page opens in ([§11](#inside-the-reader)), with the rail and the sidebar still
+live behind it. That is exactly right for a document you are reading *about* a project you are
+still looking at.
+
+| In the reader | What it holds |
+|---|---|
+| **The path line** | `state/<project>/<work-stream>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
+| **The title** | The handoff's own first line. A handoff with no headline is titled after its work-stream |
+| **The chips** | A `handoff` type badge, then `work-stream: <slug>`, `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
+| **The reading** | *"Saved 5 days ago · claude-code · opus-5 · updates live"* — the **same** figure the Status block shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
+| **The notes** | The truncation and sanitisation warnings, in full and never folded |
+| **The body** | The handoff, rendered as Markdown |
+
+**To close it:** press **Esc**, click the dimmed area outside it, or click the **✕** — and focus
+goes back to the row you pressed, so the keyboard is never left stranded in a panel it cannot
+leave. It also closes, as every reader does, the moment you click anything in the rail.
+
+A handoff has **no raw-source bar** — it is not a wiki page and there is no ingested document
+behind it — and nothing ever links to one, so the **BACKLINKS** heading the reader always draws
+reads *"BACKLINKS · 0"* with *"No other page links here yet"* under it. That is the reader's own
+furniture rather than a claim about your handoff; it is on the list to hide for this kind of page.
+If a work-stream is listed but its handoff cannot be read on this machine, the reader **says so in
+words** rather than opening an empty page — a blank panel would read as *"this handoff is empty"*,
+which is a different claim.
+
+> **The exact timestamp is in the reader, not in a tooltip.** It travels in the accessible name
+> beside the age, along with the words *file time* when the reading is the file's rather than the
+> agent's, and *"arrived here …"* when the two clocks disagree. The old fold carried it on hover,
+> where nobody found it.
 
 #### Editing the standing brief
 
@@ -1412,9 +1485,22 @@ read-only Shared Brain mirror gets no pencil at all, because the write would onl
 The editor is the **full width of the column** and opens at 320px tall — the four template headings
 alone are close to twenty lines, so a shorter field meant dragging it before you could start. A
 live line under it reads **modified · N words · N bytes of 32768** and updates as you type; over
-the cap, **Save is disabled** and the reason is printed beside the figure rather than waiting for
-a refusal you could have seen coming. **Preview** swaps the field for the rendered markdown and
-back, never side by side, and your draft is kept byte for byte across the toggle.
+the cap, **Save is disabled** and a **Too long to save** warning appears beside the figure rather
+than waiting for a refusal you could have seen coming. **Preview** swaps the field for the rendered
+markdown and back, never side by side, and your draft is kept byte for byte across the toggle.
+
+> **That warning only appears when it is true** (*fixed in v3.56.0*). Through v3.55.0 it was
+> painted in every state the editor has ever had — so a brief of 8,484 bytes showed a warning about
+> a 32,768-byte limit it was nowhere near, on the one screen whose job is to say whether a save
+> will land, with **Save** enabled beside it. The markup had always been right; a stylesheet rule
+> was overriding the browser's own "hide this" rule. If you saw it and concluded your brief was too
+> long, it was not.
+
+**Bytes, not characters.** The limit the app refuses at is measured in bytes, which is what the
+route measures, and a brief full of em dashes, arrows and accented names runs out sooner than its
+character count suggests. The counter shows both that figure and a **word** count, because they
+answer different questions: bytes answer *will this save?*, words answer *is this a brief or a
+novel?*
 
 > **Saving replaces the whole document.** The brief is not merged with what was there, so send the
 > complete brief rather than an addition — the same rule a handoff save follows, and for the same

@@ -265,7 +265,7 @@ of N peer modes. The bundle models the second and the third; this is the first.
 Appearance (Light / Dark) stays segmented, because it is a mode pair and System
 Settings itself draws it that way.
 
-## The unification pass (v3.54.0–v3.55.0) — the patterns the bundle does not model
+## The unification pass (v3.54.0–v3.56.0) — the patterns the bundle does not model
 
 The bundle defines **tokens and component specs**. It does not say *which*
 component a given job takes, how wide a column may be, or what a status row
@@ -277,9 +277,10 @@ vocabularies.
 The rules below are now declared **once each, in one file each**, and each
 one names the file that owns it. Five of them landed in v3.54.0; **§6–§8 are
 v3.55.0**, which finished two of the five — the block left `views/settings.js`,
-and the status row's three private freshness ladders became one named scale.
-None of them is a token change: every value below resolves to a bundle token or
-to an app-side token already recorded above.
+and the status row's three private freshness ladders became one named scale;
+**§9–§10 are v3.56.0**, and both are rules that were already being followed in
+some files and nowhere written down. None of them is a token change: every value
+below resolves to a bundle token or to an app-side token already recorded above.
 
 | Pattern | Owner (the authoritative file) | Guard |
 |---|---|---|
@@ -289,6 +290,8 @@ to an app-side token already recorded above.
 | The content cap | `.main-inner` in `shell.css`, `--prose-max` in `tokens/space.css` | — (measured in the browser; see below) |
 | The status row | `src/public/next/shared/age.js` | `scripts/test-sidebar-status-rows.js` |
 | The freshness scale (v3.55.0) | `src/public/next/shared/freshness.css` + the `--fresh-*` family in `tokens/color.css` | `scripts/test-freshness-scale.js` |
+| The `[hidden]` counter-rule (v3.56.0) | each stylesheet, immediately beside the class that sets `display` | `scripts/test-next-memory-view.js` §16h |
+| The reader as the detail view (v3.56.0) | `openReader` / `closeReader` / `dismissReader` in `src/public/next/app.js` | `scripts/test-next-memory-view.js` |
 
 ### 1. The button taxonomy, and who decides the size
 
@@ -750,6 +753,109 @@ warnings stay where they were — `renderStatus`, unfolded, above the Start butt
 With no lede on the wire the **full** basis goes back into the provenance line:
 a long sentence is worse than a short one, and both beat a spending screen that
 says nothing about its own accuracy.
+
+### 9. The `[hidden]` counter-rule (v3.56.0)
+
+**An author rule that sets `display` defeats `hidden`, and nothing warns you.**
+`[hidden] { display: none }` lives in the **user-agent** stylesheet. Author rules
+beat UA rules at every specificity, so the moment a class on that element
+declares `display`, the attribute stops doing anything — the element is visible
+in every state it will ever have, and every markup assertion about it stays
+green, because the markup was never wrong.
+
+That is not a hypothetical. The standing brief's "Too long to save" wall was
+emitted `hidden` below the 32,768-byte cap and toggled by the input handler
+without a render, both asserted; and it was on screen over an 8,484-byte draft
+with **Save** enabled, because `.mem-note { display: flex }` was winning.
+
+**The rule.** Any element toggled by the `hidden` attribute whose class sets
+`display` needs its own `[hidden]` rule in the same stylesheet, next to the class
+it defends against:
+
+```css
+.mem-note[hidden] { display: none; }
+```
+
+`.mem-note[hidden]` is **(0,2,0)** against `.mem-note`'s (0,1,0) — a class plus an
+attribute against a class — so it wins on specificity alone. **No `!important`**,
+and the visible state is untouched. Where the element takes more than one class
+(`.mem-note.mem-note-loud`), check the arithmetic against each: two separate
+class rules are (0,1,0) each, so one attribute rule still covers both; a
+*compound* selector would not be covered by it.
+
+Four rules in the tree carry this today, and it is worth knowing that they split
+in two:
+
+| Rule | Status |
+|---|---|
+| `.mem-note[hidden]` (`views/memory.css`) | **Live.** `.mem-note` sets `display: flex` |
+| `.reader-source-bar[hidden]` (`views/domains.css`) | **Live.** `.reader-source-bar` sets `display: flex` |
+| `.chat-cost-panel[hidden]` (`views/chat.css`) | **Prophylactic.** The class sets no `display`; the rule is declared *before* it so a future one cannot win by source order |
+| `.tx-vh-panel[hidden]` (`shared/text.css`) | **Prophylactic**, same shape |
+
+The two prophylactic ones are the pattern working as intended: `views/chat.css`
+wrote its rule and the reason for it in v3.23.0, and `views/memory.css` simply
+never carried one. **Declare it whether or not the class sets `display` today** —
+it costs one line, and the failure it prevents is silent, permanent and
+indistinguishable from a markup bug.
+
+**Guard it by resolving the cascade, not by reading either layer.** §16h of
+`scripts/test-next-memory-view.js` takes the wall's real class list off the
+*rendered markup* rather than a retyped literal, and asks what `display`
+resolves to — so a `display` added later to either class reds the suite instead
+of reopening the defect. A test asserting `hidden` is in the markup passed
+throughout, and proved nothing.
+
+### 10. The reader is the detail view (v3.56.0)
+
+**A list on the page, and a press opens one item in the right-hand overlay.**
+The wiki settled this years ago: `views/domains.js` lists pages and opens one in
+the shell's reader, and has opened *memory* rows the same way since v3.50.0.
+v3.56.0 made it the rule rather than one view's habit — Agent memory's work-stream
+table is now an index, and its handoff document, which had been a full-width block
+on the page, opens in the same overlay.
+
+**Why it is a rule and not a preference.** A dashboard answers *where do things
+stand*; a document is a different act, and fifteen hundred words of one
+work-stream sitting underneath the summary of all of them turns a page you scan
+into a page you scroll. The overlay also keeps the rail and the sidebar live
+behind it, which is the correct relationship for a document you are reading
+*about* something you are still looking at.
+
+**What it costs, and what it does not.** Nothing new on the wire: the reader
+*composes* a payload out of a read the view had already made. So "open in the
+reader" is a rendering decision, not a fetch, and a view that already has the
+data should not be adding a route to adopt this.
+
+**The one shell change it needed** — and it is here because *a reader the keyboard
+cannot get out of is not an alternative to a document on the page*. The payload
+takes an optional **`returnFocusTo`**, an element id, and the three **user**
+dismiss paths (Esc, the scrim, the ✕) go through `dismissReader`, which reads the
+id before `closeReader` clears the state and focuses it after. `closeReader` is
+untouched, so `navigate()` still does **not** pull focus into a pane it is about
+to replace, and a payload without the field behaves exactly as every payload did
+before. Pass an **id**, never a node: every render on these screens replaces the
+pane by `innerHTML` while the reader is up, so a captured node is a node the
+document no longer contains.
+
+Two omissions in the memory payload are themselves the pattern:
+
+- **No `domain` field.** That field switches on the reader's raw-source bar,
+  which asks `GET /api/wiki/:domain/source` about a wiki page. A handoff is not a
+  wiki page and has no ingested source, so supplying it would buy a request that
+  can only answer "no". `views/domains.js` omits it on the same kind of row.
+- **No backlinks.** Nothing links to a handoff, so the payload's `backlinks` is `[]`.
+
+**Known gap, recorded rather than claimed away:** `renderReader` draws its
+**BACKLINKS** heading and its "no other page links here yet" note
+*unconditionally*, so a handoff shows `BACKLINKS · 0` — reader furniture
+answering a question this kind of page does not have. The raw-source bar is
+correctly suppressed (it is gated on `p.domain`); the backlinks block has no
+equivalent gate. A payload-level opt-out is the fix, and it is not built.
+
+**An absent document is said, never rendered as an empty one.** A pair can be
+listed and its `current.md` still unreadable here; a blank panel reads as *"this
+handoff is empty"*, which is a different claim from *"there is nothing to read"*.
 
 ## Things the app deliberately does not take from the bundle
 
