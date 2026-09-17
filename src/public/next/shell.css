@@ -1063,6 +1063,54 @@ textarea {
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ── View EXIT motion (v3.57.0) ───────────────────────────────────────────
+   The other half of the gesture. Until now a view change had no leaving
+   phase at all: MEASURED frame by frame, the first painted frame after a
+   rail click was already the NEW view at opacity 0 — the outgoing column
+   stopped existing in the same task as the click, so all a user could see
+   was an arrival. The maintainer's word for it was "not fluent".
+
+   app.js's navigate() now adds `.view-exit`, waits `--dur-instant`, and only
+   then tears down and mounts (which fires the enter above). 80 out, 180 in.
+
+   THE SAME TWO CONTAINERS, AND FOR THE SAME REASONS. Every argument in the
+   block above — never `#main` (containing block for the reader's fixed
+   scrim), never `.main-inner` / `.sidebar-inner` (replaced 2-9x per
+   navigation) — binds identically here, and app.js drives both from one
+   VIEW_ENTER_TARGETS list so the two cannot drift apart.
+
+   LEFTWARD, because the enter arrives from the right: content leaves the way
+   the next screen is coming from, which reads as one flow rather than two
+   unrelated fades. `-6px` / `-4px` are the enter's `8px` / `5px` scaled to a
+   shorter duration — a departure that travels as far as an arrival in two
+   thirds of the time reads as a lurch. `overflow-x: hidden` on both columns
+   makes a horizontal translate structurally unable to flash a scrollbar (the
+   enter block records the measurement).
+
+   `forwards` IS REQUIRED HERE, where the enter deliberately has no fill mode.
+   The enter's job ends with the element at its natural state; this one's job
+   is to HOLD opacity 0 until the mount swaps the content, and without the
+   fill the column would snap back to fully-visible for the frame between the
+   animation ending and the timer firing — a flash of the OLD view on its way
+   out. The held state is the reason app.js clears this class as the first
+   statement of mountView() rather than trusting any single call path, and the
+   reason resolvedMotionMs() refuses to start the sequence in a hidden
+   document, where the timer that clears it may be clamped to a second.
+
+   Durations come from tokens, so tokens/motion.css's reduced-motion block
+   already zeroes them; the `animation: none` escape below is the second
+   layer, and app.js independently skips the whole exit when the resolved
+   duration reads 0 — three layers, because a column stuck at opacity 0 is
+   not a cosmetic failure. */
+@keyframes shell-exit-main {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(-6px); }
+}
+@keyframes shell-exit-sidebar {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(-4px); }
+}
+
 /* NO animation-fill-mode, and that is a measured choice, not an omission.
 
    The first cut used `backwards`, on the assumption it was needed to stop a
@@ -1105,9 +1153,65 @@ textarea {
   animation: shell-enter-sidebar var(--dur-fast) var(--ease-out);
 }
 
+/* `--ease-in-out` rather than `--ease-out`: this is the only motion in the
+   shell that LEAVES, and something leaving should gather speed rather than
+   decelerate into nothing. There is no `--ease-in` in tokens/motion.css and
+   this change does not add one for a single consumer. */
+#view-root.view-exit {
+  animation: shell-exit-main var(--dur-instant) var(--ease-in-out) forwards;
+}
+#sidebar.view-exit {
+  animation: shell-exit-sidebar var(--dur-instant) var(--ease-in-out) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #view-root.view-enter,
-  #sidebar.view-enter { animation: none; }
+  #sidebar.view-enter,
+  #view-root.view-exit,
+  #sidebar.view-exit { animation: none; }
+}
+
+/* ── content-reveal ───────────────────────────────────────────────────────
+   THE ONE PRIMITIVE for content that lands AFTER the view's enter animation
+   has ended, and the second half of the "not fluent" report.
+
+   MEASURED on a chat -> domains navigation: `#view-root`'s child was replaced
+   9 times for that one navigation, and the first frame of the enter animation
+   carried a 922-character loading placeholder which was replaced by the
+   71,543-character real list at t=14ms. Domains gets away with it because the
+   swap lands while the column is still at 13% opacity; a view whose data
+   arrives after 180 ms gets a hard pop into a fully-opaque column, with no
+   motion of its own anywhere in the app to soften it.
+
+   A view emits this class on a block's FIRST fill only — re-emitting it on
+   every render turns a refresh into a flash, which is the defect, not the
+   fix. It is deliberately a CLASS and not a rule on any container: only the
+   view knows which of its blocks just arrived.
+
+   It REUSES `curator-panel-in` from tokens/motion.css rather than declaring a
+   near-identical keyframe. A `translateY(4px)` twin of that file's
+   `translateY(3px)` is exactly the drift shape motion.css's own comments
+   retired two keyframes to close, and test-next-press-motion.js §5 refuses
+   duplicate bodies. The amplitude argument transfers intact: these blocks
+   appear IN FLOW and push what is below them down, so a large travel reads as
+   the page jolting rather than as content arriving.
+
+   NO FILL MODE, and that is the measured choice this file already records for
+   `.view-enter` immediately above: `backwards`/`both` are not needed to stop
+   a flash of the finished state (t=0 IS the from-state without one), and they
+   add a second way for a block to be pinned at opacity 0 by a frozen
+   document timeline. For a container the user is meant to READ, invisible-
+   forever is the worse failure.
+
+   The reduce escape has to be here, in the same file, because that is the
+   shape scripts/test-next-reduced-motion.js recognises as coverage — a reduce
+   block in tokens/motion.css cannot confer it. */
+.content-reveal {
+  animation: curator-panel-in var(--dur-mid) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content-reveal { animation: none; }
 }
 
 /* ── First-run guidance dock ─────────────────────────────────────────────
@@ -2430,6 +2534,29 @@ body.guide-docked .main {
 }
 .reader-scrim.open { opacity: 1; pointer-events: auto; }
 
+/* THE `.open` GATE BELOW HAD NEVER FIRED, up to and including v3.56.0, and
+   the cause was in app.js rather than here. renderReader() wrote `.open`
+   into the markup string, so the scrim entered the DOM already in its end
+   state — and a transition needs a start state that was computed and then
+   changed. MEASURED at the first animation frame after clicking a wiki row:
+   scrim `opacity: 1`, panel `transform: matrix(1,0,0,1,0,0)`, i.e. finished
+   before it began. The reader appeared as a hard cut, which is what the
+   maintainer reported as "feels buggy".
+
+   These rules are unchanged in shape; what changed is that renderReader()
+   now inserts without `.open`, flushes style, and then adds it — and patches
+   in place on every LATER render rather than replacing the node, because a
+   replacement mid-transition rebuilds the panel at its end state and cuts the
+   entrance short. Both halves are documented at that function.
+
+   `.reader-closing` is the same overlay after a user dismiss: `.open` is
+   removed so these rules run in reverse, and app.js strips the node's id,
+   role and aria-modal so what remains is decoration with no identity. It
+   needs no rule of its own — it is defined by the absence of `.open` — and
+   is declared here only so a reader of this block knows the class exists and
+   what removes the node (transitionend, with a timer as the floor). */
+
+
 /* DELIBERATELY NOT --radius-xl, and deliberately keeping its directional
    shadow literal. This is a DRAWER, not a centered dialog: it is flush to
    the top, right and bottom of the main column, so a corner radius would
@@ -2450,13 +2577,31 @@ body.guide-docked .main {
   box-shadow: -24px 0 60px -20px rgba(0,0,0,0.6);
   display: flex;
   flex-direction: column;
-  transform: translateX(16px) translateY(6px);
+  /* AMPLITUDE, re-decided now that the transition actually runs (see the
+     `.reader-scrim` block above — it never had, so nobody had ever seen this
+     value move). Two changes:
+
+     `translateY(6px)` is GONE. This surface is a drawer: flush to the top,
+     right and bottom of the main column, with a border only on its left. A
+     vertical component makes it read as a popover drifting up into place,
+     which is a different piece of furniture. It moves on one axis, the axis
+     it is attached to.
+
+     `16px` -> `28px`. On a 620px panel, 16px is a nudge — at 180ms it reads
+     as a fade with a wobble rather than as something arriving from the right
+     edge. 28px is still far short of a full 620px slide, which would need a
+     longer duration than the system has (`--dur-slow` is 240ms) and would
+     make every page open feel heavy. A literal px here matches the enter
+     keyframes above, which carry 8px/5px for the same reason: the motion
+     vocabulary in tokens/motion.css names durations and curves, not
+     distances. */
+  transform: translateX(28px);
   opacity: 0;
   transition: transform var(--t-enter), opacity var(--t-enter);
   pointer-events: none;
 }
 .reader-scrim.open .reader-panel {
-  transform: translateX(0) translateY(0);
+  transform: translateX(0);
   opacity: 1;
   pointer-events: auto;
 }

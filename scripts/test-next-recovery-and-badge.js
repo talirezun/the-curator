@@ -360,9 +360,16 @@ ok(appCode.includes('syncBadgeMarkup(_syncPendingCount)'),
   'renderRail() renders the badge from the live cached count');
 
 // Refresh triggers — one per moment, no chatty poll.
+// v3.57.0: navigate() gained an exit phase and hands the mount to
+// mountView(), which may run one animation tick later. The badge refresh
+// moved with the mount — one refresh per MOUNT, not one per click, so three
+// rapid rail clicks inside one exit window still cost a single fetch.
+const mountViewFn = extractFunction(appCode, 'mountView', 'next/app.js');
+ok(/refreshSyncBadge\(\)/.test(mountViewFn),
+  'a view change refreshes the badge (the /next equivalent of a tab click), from mountView()');
 const navigateFn = extractFunction(appCode, 'navigate', 'next/app.js');
-ok(/refreshSyncBadge\(\)/.test(navigateFn),
-  'navigate() refreshes the badge (the /next equivalent of a tab click)');
+ok(/\bmountView\s*\(/.test(navigateFn),
+  '...and navigate() is what reaches it');
 const bootFn = extractFunction(appCode, 'boot', 'next/app.js');
 // v3.30.0+: boot() arms the hidden-aware WRAPPER, not the raw refresher
 // directly — see §4b for the wrapper's own behaviour, executed.

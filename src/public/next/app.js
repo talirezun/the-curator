@@ -544,6 +544,87 @@ const VIEW_ENTER_CLASS = 'view-enter';
 // wrong id here is a reader bug, not a cosmetic one.
 const VIEW_ENTER_TARGETS = ['view-root', 'sidebar'];
 
+// The EXIT half of the same gesture, added in v3.57.0. Same two containers,
+// same reasoning — every argument above about #main, `.main-inner` and the
+// reader's fixed scrim applies identically to a class that also animates
+// `transform`, so the exit reuses VIEW_ENTER_TARGETS rather than growing a
+// second list that could drift away from it.
+const VIEW_EXIT_CLASS = 'view-exit';
+
+/** The resolved value of a `--dur-*` token, in milliseconds. 0 means "do not
+ *  animate", and every caller must treat it that way.
+ *
+ *  THIS IS HOW REDUCED MOTION IS READ, and it is deliberately not a
+ *  `matchMedia('(prefers-reduced-motion: reduce)')` call. tokens/motion.css
+ *  expresses reduced motion by ZEROING the `--dur-*` custom properties at
+ *  `:root`, so the honest question is "what is this duration right now",
+ *  which also covers a user agent, an embedding or a future rule that zeroes
+ *  them for some other reason. One mechanism, one answer, no second source of
+ *  truth to disagree with the stylesheet.
+ *
+ *  `document.hidden` returns 0 as well, and that is load-bearing rather than
+ *  tidiness: both motion sequences this file drives hand control to a timer
+ *  or a `transitionend`, and a document with no rendering opportunities
+ *  delivers neither on time — a backgrounded tab clamps `setTimeout` to
+ *  ~1s and never fires `transitionend` at all. shell.css's "NO
+ *  animation-fill-mode" block records the same hazard for the enter
+ *  animation and accepts it because nothing is waiting on it; here something
+ *  IS, so the sequence is skipped instead. A hidden document has nobody
+ *  looking at the motion, so skipping it costs nothing.
+ *
+ *  Fails CLOSED (0) on anything unexpected — a shell that cannot read its own
+ *  tokens navigates instantly rather than sitting behind a timer.
+ */
+function resolvedMotionMs(token) {
+  try {
+    if (document.hidden === true) return 0;
+    if (typeof getComputedStyle !== 'function') return 0;
+    const raw = String(getComputedStyle(document.documentElement).getPropertyValue(token) || '').trim();
+    if (!raw) return 0;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return /\dms$/.test(raw) ? n : n * 1000;   // `120ms` | `0.12s`
+  } catch {
+    return 0;
+  }
+}
+
+/** Put both stable containers into the leaving state.
+ *
+ *  Same inertness contract as playViewEnter(): no mount token, no teardown,
+ *  no view state, no persisted key, no pointer-events change. Null-safe on
+ *  every element.
+ *
+ *  It removes VIEW_ENTER_CLASS first so a view change requested WHILE the
+ *  previous enter animation is still running cannot leave both classes on the
+ *  element at once — two `animation` declarations on one element resolve by
+ *  cascade order, not by intent, and the loser silently does nothing.
+ */
+function applyViewExit() {
+  for (const id of VIEW_ENTER_TARGETS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.remove(VIEW_ENTER_CLASS);
+    el.classList.add(VIEW_EXIT_CLASS);
+  }
+}
+
+/** Take both stable containers back out of the leaving state.
+ *
+ *  Called as the FIRST statement of mountView(), not from navigate(), so the
+ *  invariant is structural: no path can mount a view while a container still
+ *  wears the exit class. That matters because the exit rule holds
+ *  `opacity: 0` with `animation-fill-mode: forwards` — a mount that forgot to
+ *  clear it would paint an invisible column with nothing in the console.
+ */
+function clearViewExit() {
+  for (const id of VIEW_ENTER_TARGETS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.remove(VIEW_EXIT_CLASS);
+  }
+}
+
 /** Restart the shell's enter animation on both stable containers.
  *
  *  Purely cosmetic and deliberately inert: it touches no mount token, no
@@ -569,6 +650,52 @@ function playViewEnter() {
   }
 }
 
+// ── The view change, in two phases ───────────────────────────────────────
+//
+// THE SYMPTOM (maintainer, v3.56.0, production): "switching views on the
+// rail is not fluent". MEASURED before changing anything, frame by frame at
+// 1280x860: at t=0 the outgoing column is destroyed and the incoming one
+// mounted in the SAME task, so the first painted frame after the click is
+// already the new view at opacity 0, sliding in. There was no leaving
+// gesture at all — the old screen simply stopped existing, and the fade the
+// user could see was only the arrival.
+//
+// So navigate() now has an EXIT phase: both stable containers fade and drift
+// out over `--dur-instant`, and only then is the outgoing view torn down and
+// the new one mounted (which fires the existing enter). Total 80 + 180 ms.
+//
+// WHAT THAT COSTS, STATED PLAINLY: the mount is no longer synchronous with
+// the call. Every navigate() call site under src/public/next was read for
+// code that touches the new view's DOM immediately after navigating; the
+// rail, boot(), and the seven cross-view buttons do not. ONE does —
+// views/onboarding.js's `go()` calls `navigate('domains')` and then
+// `goToDomainsCreate()`, which clicks `#dm-new-domain-btn` synchronously.
+// That file is not this change's to edit; its own comment already documents
+// the degradation ("It can fail to help; it cannot break anything") and the
+// user lands on Domains with that button in front of them. The fix is one
+// line there — wrap the click in `afterViewMount()` below — and it is
+// reported rather than made here.
+//
+// `afterViewMount(cb)` exists for exactly that shape: it runs `cb` once the
+// pending mount has happened (immediately when nothing is pending), so a
+// caller that needs the new view's DOM has a supported way to wait that does
+// not depend on guessing the exit duration.
+//
+// WHAT STAYS SYNCHRONOUS, deliberately:
+//   • the reader closes (the hard rule below), so the overlay never lingers
+//     over a column that is leaving;
+//   • `state.view` and the rail highlight, so the click is acknowledged in
+//     the same frame — a rail that lights up 80 ms late is the opposite of
+//     fluent, and `state.view` means "the selected view" to all four of its
+//     readers in this file.
+// `_mountedView` is what is ACTUALLY mounted, and it — never `state.view` —
+// decides whose teardown and onExit run. Without that split, two navigations
+// inside one exit window would fire onExit on a view that never mounted.
+const VIEW_EXIT_TOKEN = '--dur-instant';
+let _mountedView = null;           // the view whose onEnter has run
+let _pendingNav = null;            // { name, timer } while an exit is playing
+let _afterMountQueue = [];         // callbacks waiting for the pending mount
+
 export function navigate(name) {
   if (!registry || !registry.has(name)) return;
 
@@ -577,7 +704,10 @@ export function navigate(name) {
   // navigation, unconditionally, before anything else — a view is never
   // given the chance to leave either open behind it.
   //
-  // Reader: global shell state, closed directly, right here.
+  // Reader: global shell state, closed directly, right here. Closed
+  // INSTANTLY, not through dismissReader()'s animated path — the column it
+  // sits over is about to be replaced, and an overlay outliving its own
+  // backdrop is the "buggy" reading this release exists to remove.
   //
   // Model/length picker: NOT closed here. It's owned by whichever view
   // renders it (today: Chat's composer, views/chat.js) — this function has
@@ -590,16 +720,68 @@ export function navigate(name) {
   // here can do it for you.
   closeReader();
 
+  // Acknowledge the click in this frame, before any waiting.
+  state.view = name;
+  renderRailActive();
+
+  // LAST REQUESTED VIEW WINS. A second navigate() inside the exit window
+  // RETARGETS the one already in flight rather than cancelling and restarting
+  // it: exactly one mount happens, of the last name asked for, and the user
+  // does not pay a second 80 ms for changing their mind. Restarting the exit
+  // would also re-trigger the animation from opacity 1 mid-fade, which reads
+  // as a flicker.
+  if (_pendingNav) { _pendingNav.name = name; return; }
+
+  // No exit on the first navigate of the session (nothing to leave — boot()
+  // would otherwise fade an empty shell out before fading it in), none when
+  // re-entering the view already mounted (navigate() still re-mounts; what it
+  // must not do is animate a departure that is not happening), and none when
+  // motion is off — see resolvedMotionMs().
+  const exitMs = (_mountedView === null || name === _mountedView)
+    ? 0
+    : resolvedMotionMs(VIEW_EXIT_TOKEN);
+
+  if (exitMs <= 0) { mountView(name); return; }
+
+  applyViewExit();
+  _pendingNav = {
+    name,
+    timer: setTimeout(() => {
+      const target = _pendingNav ? _pendingNav.name : name;
+      _pendingNav = null;
+      mountView(target);
+    }, exitMs),
+  };
+}
+
+/** Run `cb` once the view that navigate() was last asked for is mounted.
+ *
+ *  Immediate when nothing is pending, so it is always safe to wrap a
+ *  post-navigation DOM read in it. Errors are contained: a throwing callback
+ *  must never break a mount.
+ */
+export function afterViewMount(cb) {
+  if (typeof cb !== 'function') return;
+  if (!_pendingNav) { try { cb(); } catch (err) { console.error('[next] afterViewMount callback failed', err); } return; }
+  _afterMountQueue.push(cb);
+}
+
+function mountView(name) {
+  // FIRST, unconditionally: the exit rule holds opacity 0 with
+  // `animation-fill-mode: forwards`, so every path that mounts must clear it.
+  clearViewExit();
+
   if (currentTeardown) {
     try { currentTeardown(); } catch (err) { console.error('[next] view teardown failed', err); }
     currentTeardown = null;
   }
-  const prev = state.view;
+  const prev = _mountedView;
   if (prev && registry.has(prev) && typeof registry.get(prev).onExit === 'function') {
     try { registry.get(prev).onExit(); } catch (err) { console.error('[next] onExit failed', err); }
   }
 
   state.view = name;
+  _mountedView = name;
   mountToken += 1;
   const myToken = mountToken;
 
@@ -647,6 +829,17 @@ export function navigate(name) {
   // hatch instead of reproducing the crash on every launch.
   if (!mountFailed) {
     try { localStorage.setItem(VIEW_KEY, name); } catch { /* private mode etc. */ }
+  }
+
+  // Drained LAST, after onEnter has painted — that is the whole point of the
+  // queue. Taken by value first so a callback that itself navigates (and so
+  // queues another) cannot loop here.
+  if (_afterMountQueue.length) {
+    const queued = _afterMountQueue;
+    _afterMountQueue = [];
+    for (const cb of queued) {
+      try { cb(); } catch (err) { console.error('[next] afterViewMount callback failed', err); }
+    }
   }
 }
 
@@ -871,13 +1064,43 @@ export function closeReader() {
 // after a navigation that control is about to be destroyed and the focus the
 // user actually wants is the rail item they just activated.
 //
-// Reads the id BEFORE closeReader() clears `state.reader`, and focuses AFTER —
-// the overlay is `aria-modal`, so moving focus while it is still in the DOM
-// would put it behind the dialog.
+// Only this path ANIMATES the close, for the same reason. closeReader() is
+// still the instant one, so navigate() replaces the column with nothing
+// hanging over it.
+//
+// HOW THE ANIMATED CLOSE STAYS HONEST. Shell state goes to "closed"
+// immediately — `state.reader = null` and a bumped `readerEpoch`, exactly as
+// closeReader() would — so nothing can paint into a reader that is on its way
+// out, a second Esc is a no-op, and `isCurrentReader()` answers no. What
+// lingers for the fade is a PURELY DECORATIVE node: it loses its `id`, its
+// `role` and `aria-modal` (so assistive technology stops seeing a dialog the
+// app considers closed), gains `aria-hidden` and `.reader-closing`, and the
+// `.open` class it loses already turns off `pointer-events` in shell.css.
+// renderReader() ignores anything carrying `.reader-closing`, so a reader
+// re-opened mid-fade takes the first-open path — whose `innerHTML =` write
+// removes the ghost outright, and whose `finish()` then finds no parent and
+// no-ops. closeReader()'s `innerHTML = ''` clears it the same way. There is
+// therefore no state in which two scrims can both answer to `#reader-scrim`
+// or `#reader-source-bar`.
+//
+// Because the node is decorative and inert, focus moves IMMEDIATELY rather
+// than after the fade — the old comment's rule (never focus behind a live
+// aria-modal dialog) is satisfied by there no longer being one.
 function dismissReader() {
   const back = state.reader && typeof state.reader.returnFocusTo === 'string'
     ? state.reader.returnFocusTo : null;
-  closeReader();
+
+  const scrim = liveReaderScrim();
+  const ms = scrim ? resolvedMotionMs(READER_CLOSE_TOKEN) : 0;
+
+  if (ms <= 0) {
+    closeReader();
+  } else {
+    readerEpoch += 1;
+    state.reader = null;
+    detachReaderScrim(scrim, ms);
+  }
+
   if (!back) return;
   const el = document.getElementById(back);
   if (!el || typeof el.focus !== 'function') return;
@@ -886,16 +1109,85 @@ function dismissReader() {
   try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
 }
 
-// Renders the FULL overlay (scrim + header + body) from `state.reader` on
+// The scrim that IS the reader right now — never one already fading out.
+function liveReaderScrim() {
+  const root = document.getElementById('reader-root');
+  if (!root || typeof root.querySelector !== 'function') return null;
+  return root.querySelector('.reader-scrim:not(.reader-closing)');
+}
+
+/** Turn a live scrim into an inert fading ghost and remove it when it lands.
+ *
+ *  The removal is driven by `transitionend` with a timer as the floor, not by
+ *  the timer alone: `transitionend` is the accurate signal, and the timer is
+ *  what guarantees the node cannot outlive its animation if the event is
+ *  dropped (an interrupted transition fires nothing at all). Whichever
+ *  arrives first wins, and both go through the same idempotent `finish`.
+ */
+function detachReaderScrim(scrim, ms) {
+  if (!scrim) return;
+  try {
+    scrim.classList.add('reader-closing');
+    scrim.classList.remove('open');
+    scrim.removeAttribute('id');
+    scrim.setAttribute('aria-hidden', 'true');
+    const panel = scrim.querySelector ? scrim.querySelector('.reader-panel') : null;
+    if (panel) { panel.removeAttribute('role'); panel.removeAttribute('aria-modal'); }
+  } catch { /* a shell without a real classList is a test harness; fall through */ }
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    try { scrim.removeEventListener('transitionend', onEnd); } catch { /* not a real node */ }
+    try { if (scrim.parentNode) scrim.parentNode.removeChild(scrim); } catch { /* already gone */ }
+  };
+  const onEnd = (e) => { if (!e || e.target === scrim) finish(); };
+  try { scrim.addEventListener('transitionend', onEnd); } catch { /* not a real node */ }
+  setTimeout(finish, ms + READER_CLOSE_SLACK_MS);
+}
+
+// The reader's entrance and exit are both `transition: … var(--t-enter)`, so
+// `--dur-mid` is the duration to wait on. Named here rather than spelled at
+// the call site so the JS and the stylesheet cannot drift to two answers.
+const READER_CLOSE_TOKEN = '--dur-mid';
+// Enough for the transition to have started and finished under a frame or two
+// of scheduling jitter. It is a FLOOR for the fallback removal, never the
+// mechanism — `transitionend` normally gets there first.
+const READER_CLOSE_SLACK_MS = 60;
+
+// Renders the whole overlay (scrim + header + body) from `state.reader` on
 // every call, including a call that only updates already-open content (e.g.
 // a view swapping a loading placeholder for the fetched page, or following
-// a backlink to a new page while the overlay stays open). This is safe
-// because the "open" class is present in the markup from the very first
-// paint (no separate rAF-deferred class toggle drives the entry
-// transition), so a full re-paint never restarts or skips an animation —
-// verify this holds if that changes. Doing a full re-paint (rather than an
-// in-place DOM patch) is what lets this function stay the single source of
-// truth for reader markup; no view needs to reach into `.reader-body`.
+// a backlink to a new page while the overlay stays open).
+//
+// THE ENTRANCE HAD NEVER PLAYED, and this is where it was lost. shell.css has
+// written a slide-and-fade for `.reader-scrim` / `.reader-panel` since the
+// overlay shipped, gated on the `.open` class — and this function put `.open`
+// straight into the markup string, so the element entered the DOM ALREADY in
+// its end state. A transition needs a start state that was computed and then
+// changed; an element inserted already carrying its end-state class has never
+// had one, so nothing transitions. MEASURED at the first animation frame
+// after a wiki row click: scrim opacity 1, panel transform
+// `matrix(1,0,0,1,0,0)` — the finished state, one frame in.
+//
+// So the FIRST open (nothing in #reader-root) inserts WITHOUT `.open`, forces
+// a style flush by reading a computed value off the new node, then adds
+// `.open` in the same task — the standard enter-transition idiom, and the
+// reason it must be a read and not a bare statement is that the flush is the
+// whole point.
+//
+// EVERY LATER CALL WHILE THE READER IS OPEN PATCHES IN PLACE, and that half
+// is just as load-bearing. This function is called again within milliseconds
+// of the first open (loading placeholder -> fetched page), then again by
+// loadReaderSource(), then on every backlink. Re-writing `#reader-root`'s
+// innerHTML destroys the panel mid-transition and rebuilds it at its end
+// state, which cuts the entrance off at whatever fraction had played. The old
+// comment's claim that a full re-paint "never restarts or skips an animation"
+// was true only because there was no animation to skip. Patching the header
+// path and the body keeps the running transition alive, and this function
+// stays the single source of truth for reader markup either way — no view
+// reaches into `.reader-body`.
 function renderReader() {
   const root = document.getElementById('reader-root');
   if (!state.reader) {
@@ -949,27 +1241,60 @@ function renderReader() {
       '<div class="reader-backlinks">' + backlinksHtml + '</div>';
   }
 
-  root.innerHTML =
-    '<div class="reader-scrim open" id="reader-scrim">' +
-      '<div class="reader-panel" role="dialog" aria-modal="true" aria-label="Page reader">' +
-        '<div class="reader-header">' +
-          icon('book', 14) +
-          '<span class="reader-path mono">' + escapeHtml(p.slug || '') + '</span>' +
-          '<span class="reader-keycap">esc</span>' +
-          '<button class="reader-close" id="reader-close-btn" title="Close" aria-label="Close">' + icon('close', 15) + '</button>' +
+  const open = liveReaderScrim();
+  if (open) {
+    // ALREADY OPEN — patch, never replace. See this function's header: a
+    // replacement here is what would cut the entrance short, because the
+    // loading -> content swap lands inside the 180 ms the panel is sliding.
+    const pathEl = open.querySelector('.reader-path');
+    if (pathEl) pathEl.textContent = p.slug || '';
+    const body = open.querySelector('.reader-body');
+    if (body) {
+      body.innerHTML = bodyInner;
+      // A fresh element used to start at the top; following a backlink must
+      // still land at the top of the new page rather than where the reader
+      // was scrolled on the previous one.
+      body.scrollTop = 0;
+    }
+    // The scrim and close button persist, so their listeners persist too —
+    // re-binding here would fire dismissReader() once per repaint.
+  } else {
+    // FIRST OPEN — inserted WITHOUT `.open` so the transition has a start
+    // state, flushed, then opened. Both halves are required; see the header.
+    root.innerHTML =
+      '<div class="reader-scrim" id="reader-scrim">' +
+        '<div class="reader-panel" role="dialog" aria-modal="true" aria-label="Page reader">' +
+          '<div class="reader-header">' +
+            icon('book', 14) +
+            '<span class="reader-path mono">' + escapeHtml(p.slug || '') + '</span>' +
+            '<span class="reader-keycap">esc</span>' +
+            '<button class="reader-close" id="reader-close-btn" title="Close" aria-label="Close">' + icon('close', 15) + '</button>' +
+          '</div>' +
+          '<div class="reader-body">' + bodyInner + '</div>' +
         '</div>' +
-        '<div class="reader-body">' + bodyInner + '</div>' +
-      '</div>' +
-    '</div>';
+      '</div>';
 
-  document.getElementById('reader-scrim').addEventListener('click', (e) => {
-    if (e.target.id === 'reader-scrim') dismissReader();
-  });
-  document.getElementById('reader-close-btn').addEventListener('click', dismissReader);
+    const scrim = document.getElementById('reader-scrim');
+    // THE FLUSH. Reading a computed value forces the style recalculation that
+    // gives the freshly-inserted node a before-change style; without it the
+    // engine coalesces insertion and class-add into one style change and no
+    // transition runs — which is precisely the defect this replaced. The
+    // value is discarded; the READ is the operation.
+    try { void getComputedStyle(scrim).opacity; } catch { /* harness DOM */ }
+    scrim.classList.add('open');
+
+    scrim.addEventListener('click', (e) => {
+      if (e.target === scrim) dismissReader();
+    });
+    document.getElementById('reader-close-btn').addEventListener('click', dismissReader);
+  }
 
   if (!p.loading && !p.error && typeof p.onBacklinkClick === 'function') {
     const backlinks = Array.isArray(p.backlinks) ? p.backlinks : [];
-    root.querySelectorAll('[data-reader-backlink-index]').forEach((btn) => {
+    // Scoped to the LIVE scrim, not to #reader-root: a closing ghost still
+    // carries its own backlink rows for the length of the fade, and binding
+    // a fresh handler onto one would make a dead overlay navigable.
+    (liveReaderScrim() || root).querySelectorAll('[data-reader-backlink-index]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const b = backlinks[Number(btn.dataset.readerBacklinkIndex)];
         if (b) p.onBacklinkClick(b.path, b.title);
