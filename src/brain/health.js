@@ -14,8 +14,9 @@
  * This module is the single source of truth used by both the /api/health
  * route and (in the future) the CLI repair scripts.
  */
-import { readFile, writeFile, readdir, rm } from 'fs/promises';
+import { readFile, writeFile, readdir, rm, stat, lstat } from 'fs/promises';
 import { existsSync } from 'fs';
+import { createHash } from 'crypto';
 import path from 'path';
 import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
@@ -324,13 +325,235 @@ async function walkMdFiles(rootDir) {
   return out;
 }
 
+// ── Scan cache (v3.57.0) ─────────────────────────────────────────────────────
+//
+// WHY. Measured on an isolated copy of the maintainer's real 3,445-page
+// `articles` wiki: `scanWiki` reads every page and took 733 ms. The Domains
+// view re-runs it on every mount and every domain switch, so an UNCHANGED
+// wiki was paying full price on every repeat visit.
+//
+// THE SHAPE IS logDateCache's (files.js), NOT A NEW ONE. That cache keys one
+// file's parsed answer on its own mtime+size so a cache MISS is provably the
+// exact original code path with nothing removed, and there is no
+// invalidation logic to get wrong — a changed file changes its stat, which
+// changes the signature, which misses. This is the same idea widened from
+// one file to a whole tree: `computeWikiSignature` hashes `relpath:mtimeNs:
+// size` for every file `scanWikiUncached` actually reads, sorted so file
+// order never matters, and the hash IS the cache key's second half.
+//
+// WHAT THE SIGNATURE MUST COVER, AND WHY IT IS BUILT FROM TWO SOURCES.
+// `scanWikiUncached`'s content-scan loop reads every file `walkMdFiles`
+// returns (recursive, symlink-safe) except the two literal root files
+// `index.md`/`log.md`, whose CONTENT is never read (see the `continue` in
+// that loop) — so they cannot affect the report and are excluded here to
+// avoid invalidating the cache on a change that could never change the
+// answer. Separately, `counts.entities/concepts/summaries` come from
+// `listMd('entities'|'concepts'|'summaries')`, which resolves each canonical
+// folder through `wikiFile` and lists ITS resolved target — normally the
+// same files `walkMdFiles` already found, but not when a canonical folder
+// is itself a symlink: `walkMdFiles`'s `e.isDirectory()` check is false for
+// a symlinked directory, so it never descends into one (the module-level
+// comment above `walkMdFiles` states this is deliberate), while `listMd`
+// resolves the symlink and lists what it points at. Skipping the `listMd`
+// pass would silently miss changes behind a symlinked canonical folder — a
+// stale cache HIT on a wiki that no longer matches its own report. Both
+// passes are UNIONED into one absolute-path Set before stating, so the
+// common (no-symlink) case stats each file exactly once.
+//
+// `.health-dismissed.jsonl` is read by `loadDismissed` and is not a `.md`
+// file, so it is stated explicitly; its ABSENCE is itself a distinct,
+// hashed value (not skipped) so the first dismissal ever written — which
+// creates the file — is a signature change, not a silent hit.
+//
+// BOUND. `healthScanCache` holds at most HEALTH_SCAN_CACHE_MAX domains
+// (keyed by resolved wiki directory, not domain name, so a renamed-then-
+// recreated domain never reuses a stale slot by accident) with simple LRU:
+// a hit moves its entry to the end (Map preserves insertion order), and an
+// insert past the bound evicts the OLDEST (first-iterated) entry. This is a
+// pure cache — nothing correctness-bearing depends on WHICH stale entry is
+// evicted first, only that the bound holds.
+//
+// MUTATION SAFETY. Nothing in this codebase mutates a `scanWiki` report in
+// place today (`fixIssue`'s bulk path reassigns `issues` to a NEW filtered
+// array via `.filter`, never touching `report[type]`; the MCP tool spreads
+// fields into a new object and `enforceSizeLimit` reassigns trimmed fields
+// to new sliced arrays — verified by reading every call site). But a cache
+// entry surviving across HTTP requests is exactly the kind of shared state
+// where "nothing does today" is not a promise the code enforces, so a cache
+// HIT returns `structuredClone(entry.result)` and a cache WRITE stores
+// `structuredClone(report)` — the cache and every caller are always looking
+// at their own copy, in both directions, regardless of what either does to
+// it afterwards.
+//
+// CONCURRENCY. Two overlapping scans of the same domain race to `.set()` the
+// same key with (presumably) the same signature and equal-by-value results;
+// last-writer-wins on an immutable value is harmless, so no lock is taken.
+const HEALTH_SCAN_CACHE_MAX = 8;
+const healthScanCache = new Map(); // wikiDir → { signature, result }
+
+/**
+ * A cheap signature for everything `scanWikiUncached(domain)` reads, so a
+ * repeat scan of an unchanged wiki can be recognised as unchanged without
+ * re-reading a single page. See the block comment above for what is covered
+ * and why. Returns a sha1 hex digest — cache-key strength, not cryptographic
+ * strength; sha1 is faster and this is never exposed or compared against
+ * attacker-controlled input.
+ *
+ * WHY THIS IS TWO PLAIN LOOPS AND NOT A `Set` PIPED THROUGH `Promise.all`.
+ * §8c below (H1, "the containment gate is unbypassable by construction")
+ * requires that every path reaching `stat` be a bare identifier whose OWN
+ * declaration is a direct `wikiFile(...)` / `wikiPath(...)` call, or a
+ * `for (const NAME of walkMdFiles(...))` loop variable — a name bound as a
+ * callback PARAMETER (e.g. `.map(async (abs) => stat(abs))`) is refused
+ * regardless of where the value actually came from, because the guard is
+ * syntactic, not a real dataflow analysis, and a bound parameter list is not
+ * one of the shapes it trusts. So this stays sequential and uses exactly the
+ * two shapes the rest of the module already uses for the same reason: a
+ * `for...of` over `walkMdFiles(wikiDir)` (named `full`, like every other
+ * such loop here), and a `wikiFile(wikiDir, folder, name)` call assigned
+ * straight into a freshly-declared `abs` (like `fixOrphanLink`'s `at()`).
+ * Measured cost of staying sequential is reported in the WP4 final report.
+ */
+async function computeWikiSignature(wikiDir) {
+  // `seen` is bookkeeping only — never itself passed to a filesystem call —
+  // so entities/concepts/summaries files that `walkMdFiles` already found
+  // (the common, non-symlinked case) are stated once, not twice.
+  const seen = new Map(); // absolute path → "relpath:mtimeNs:size"
+
+  // Pass 1 — the exact file set `scanWikiUncached`'s content-scan loop reads.
+  // `index.md`/`log.md` are excluded: that loop explicitly skips their
+  // CONTENT (see the `continue` there), so a change to either can never
+  // change the report, and hashing them would only cause cache misses that
+  // buy nothing.
+  //
+  // Fired CONCURRENTLY (measured on the maintainer's real 3,447-page
+  // `articles` wiki: sequential `stat` of every file cost ~150-180ms —
+  // itself over this cache's own ~150ms worthwhile-it budget; concurrent
+  // dispatch brought the SAME work down to ~25-36ms). Each iteration is a
+  // no-argument async IIFE
+  // closing over `full` rather than taking it as a parameter, specifically
+  // so §8c's provenance check still sees `stat(full, …)` as using the SAME
+  // `for (const full of walkMdFiles(...))`-bound name every other loop in
+  // this module already uses — an arrow-function PARAMETER named `full`
+  // would instead be a `param` binding, which the guard refuses unless the
+  // parameter is literally named `wikiDir`/`rootDir`/`dir` (see the
+  // docblock above this function). `seen.set(...)` from many settled
+  // closures is safe without a lock: JS is single-threaded, so there is no
+  // interleaving inside one `Map.set` call, only between them.
+  const allFiles = await walkMdFiles(wikiDir);
+  const pass1 = [];
+  for (const full of allFiles) {
+    pass1.push((async () => {
+      const rel = path.relative(wikiDir, full).split(path.sep).join('/');
+      if (rel === 'index.md' || rel === 'log.md') return;
+      let st = null;
+      try { st = await stat(full, { bigint: true }); } catch { st = null; }
+      // A file gone between listing and stat is simply omitted — the NEXT
+      // scan (uncached, since this listing is already stale) will see it
+      // missing from `walkMdFiles`, and the report will already reflect
+      // that.
+      if (st) seen.set(full, `${rel}:${st.mtimeNs}:${st.size}`);
+    })());
+  }
+  await Promise.all(pass1);
+
+  // Pass 2 — `counts.entities/concepts/summaries` come from `listMd`, which
+  // resolves each canonical folder through `wikiFile` and lists what THAT
+  // resolves to. Identical to pass 1's files UNLESS a canonical folder is
+  // itself a symlink: `walkMdFiles`'s `e.isDirectory()` check is false for a
+  // symlinked directory (see the comment above `walkMdFiles`), so it never
+  // descends into one, while `listMd` follows it. Skipping this pass
+  // outright would silently miss changes behind a symlinked canonical
+  // folder — a stale cache HIT on a wiki that no longer matches its own
+  // report.
+  //
+  // But the FULL per-file `listMd` + `wikiFile` walk is expensive — each
+  // `wikiFile` call re-derives `wikiDir`'s realpath from scratch
+  // (`resolveInsideWiki` → `isPhysicallyInside`, both synchronous syscalls),
+  // and measured at ~3,450 calls that cost ~107ms even though EVERY file
+  // was already in `seen` from pass 1 on an ordinary (non-symlinked) wiki —
+  // three quarters of this whole cache's cost, spent re-confirming files it
+  // already knew about. So each folder gets ONE cheap `lstat` first: a real
+  // directory is what `walkMdFiles` already handles (and handles MORE
+  // thoroughly — it recurses into nested subfolders `listMd` does not), so
+  // the expensive per-file path only runs for the folder that is ACTUALLY a
+  // symlink, which on every wiki this cache has been measured against is
+  // zero of the three.
+  for (const folder of ['entities', 'concepts', 'summaries']) {
+    const folderAbs = wikiFile(wikiDir, folder);
+    let folderIsSymlink = false;
+    if (folderAbs) {
+      try { folderIsSymlink = (await lstat(folderAbs)).isSymbolicLink(); }
+      catch { folderIsSymlink = false; }
+    }
+    if (!folderIsSymlink) continue;
+    for (const name of await listMd(wikiDir, folder)) {
+      const abs = wikiFile(wikiDir, folder, name);
+      if (!abs || seen.has(abs)) continue;
+      let st = null;
+      try { st = await stat(abs, { bigint: true }); } catch { st = null; }
+      if (st) {
+        const rel = path.relative(wikiDir, abs).split(path.sep).join('/');
+        seen.set(abs, `${rel}:${st.mtimeNs}:${st.size}`);
+      }
+    }
+  }
+
+  const lines = [...seen.values()];
+
+  // `.health-dismissed.jsonl` is read by `loadDismissed` and is not a `.md`
+  // file, so neither pass above sees it — stated explicitly. Its ABSENCE is
+  // itself a distinct, hashed value (never just skipped), so the first
+  // dismissal ever written — which creates the file — is a signature
+  // change, not a silent hit.
+  const dismissedAbs = wikiFile(wikiDir, '.health-dismissed.jsonl');
+  let dSt = null;
+  if (dismissedAbs) {
+    try { dSt = await stat(dismissedAbs, { bigint: true }); } catch { dSt = null; }
+  }
+  lines.push(`.health-dismissed.jsonl:${dSt ? `${dSt.mtimeNs}:${dSt.size}` : 'absent'}`);
+
+  lines.sort();
+  return createHash('sha1').update(lines.join('\n')).digest('hex');
+}
+
+function cacheGet(wikiDir, signature) {
+  const entry = healthScanCache.get(wikiDir);
+  if (!entry || entry.signature !== signature) return null;
+  // Touch for LRU: delete + re-set moves it to the end of Map's iteration
+  // order, which is what `cacheSet`'s eviction reads as "oldest".
+  healthScanCache.delete(wikiDir);
+  healthScanCache.set(wikiDir, entry);
+  return entry.result;
+}
+
+function cacheSet(wikiDir, signature, result) {
+  if (!healthScanCache.has(wikiDir) && healthScanCache.size >= HEALTH_SCAN_CACHE_MAX) {
+    const oldest = healthScanCache.keys().next().value;
+    healthScanCache.delete(oldest);
+  }
+  healthScanCache.set(wikiDir, { signature, result: structuredClone(result) });
+}
+
+// No test-only export to clear this cache: unlike `logDateCache`
+// (files.js), which several suites share a process with and therefore do
+// need a reset, this cache is exercised only by
+// scripts/test-health-scan-cache.js, and that suite gives every scenario
+// its own never-before-scanned temp wiki directory — a fresh cache key by
+// construction — rather than reusing one domain across cases and needing to
+// clear it. Adding an export here would also mean adding it to
+// scripts/test-wiki-page.js §8c's pinned export-surface enumeration, a file
+// this change does not otherwise need to touch.
+
 // ── Scanner ─────────────────────────────────────────────────────────────────
 
 /**
- * Scan a domain's wiki and return a structured issue report.
- * Pure — no writes.
+ * The actual scan. Always fresh — no cache lookup here, so a direct call
+ * (from a test, or from `scanWiki` on a miss) is never surprised by stale
+ * data. `scanWiki` below is the cached, public entry point; everything in
+ * this module and every other caller should use THAT, not this.
  */
-export async function scanWiki(domain) {
+async function scanWikiUncached(domain) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) {
     throw new Error(`No wiki found for domain: ${domain}`);
@@ -553,6 +776,44 @@ export async function scanWiki(domain) {
     hyphenVariants:    filtered.hyphenVariants,
     missingBacklinks:  filtered.missingBacklinks,
   };
+}
+
+/**
+ * Scan a domain's wiki and return a structured issue report. Pure — no
+ * writes. This is the cached, public entry point (see the "Scan cache"
+ * section above `scanWikiUncached`) — every caller in this codebase should
+ * use this, not `scanWikiUncached` directly.
+ *
+ * `scannedAt` on the returned report is honest about WHEN the wiki was last
+ * actually read: a cache hit returns the `scannedAt` of the scan that
+ * produced it, not the time of this call, because the whole point of a hit
+ * is that nothing has changed since. A cache miss stamps the current time,
+ * same as before this cache existed.
+ *
+ * `opts.noCache` bypasses the cache in both directions — it neither reads
+ * nor writes it — for a caller that needs a guaranteed-fresh read without
+ * disturbing what a subsequent normal call would see. No caller in this
+ * codebase currently needs it (every write path changes at least one file's
+ * mtime, which changes the signature, which already forces a miss on the
+ * next scan) — it exists because a future one may, and "the bypass didn't
+ * exist yet" is a worse reason to add unsafe code than "add the bypass".
+ */
+export async function scanWiki(domain, opts = {}) {
+  const { noCache = false } = opts;
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) {
+    throw new Error(`No wiki found for domain: ${domain}`);
+  }
+
+  if (noCache) return scanWikiUncached(domain);
+
+  const signature = await computeWikiSignature(wikiDir);
+  const hit = cacheGet(wikiDir, signature);
+  if (hit) return structuredClone(hit);
+
+  const report = await scanWikiUncached(domain);
+  cacheSet(wikiDir, signature, report);
+  return report;
 }
 
 // ── Fix handlers ────────────────────────────────────────────────────────────

@@ -1716,7 +1716,11 @@ GET /api/health/:domain
 src/routes/health.js  —  validates domain
       │
       ▼
-src/brain/health.js  →  scanWiki(domain)  (pure, no writes)
+src/brain/health.js  →  scanWiki(domain, opts?)  (pure, no writes)
+      ├─ Cache check (v3.57.0): a cheap signature (mtime+size hash) over every
+      │   file the scan reads — an unchanged wiki returns the prior result
+      │   (~30-40ms vs ~800ms cold on a 3,400-page wiki) without touching a
+      │   single page; opts.noCache forces a fresh read
       ├─ Walk wiki/*.md files
       ├─ For every [[wikilink]]: resolve target; record incoming links;
       │   flag folder-prefix violations; flag broken targets with suggestions
