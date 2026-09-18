@@ -604,7 +604,7 @@ If you move your knowledge folder, re-run the wizard in the browser install — 
 | **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, and the default write domain. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
-At the foot of that list is the version — for example `The Curator v3.52.0` — next to an **Updates** button that switches to General and runs the check.
+At the foot of that list is the version — for example `The Curator v3.59.0` — next to an **Updates** button that switches to General and runs the check.
 
 The theme switch in the rail footer and the **Appearance** control in General are the same setting and stay in step. Text size applies across the whole app, including button and text-box labels, and is remembered in this browser; control heights and icons deliberately stay put so buttons do not grow into each other.
 
