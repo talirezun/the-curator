@@ -113,3 +113,42 @@ export function composeAgentInstructions(args) {
  */
 export const COPY_SUCCESS_BANNER =
   'Agent instructions copied — paste into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules';
+
+// ── v3.59.0: the foundations tier gets a SECOND, separately pinned paragraph ─
+//
+// TEMPLATE above is frozen because it is a measured artefact — editing it
+// would silently invalidate the 2026-09-10 experiment. TEMPLATE_FOUNDATIONS is
+// NOT that: it is new prose for a feature the experiment predates, so it has
+// no numbers of its own to protect. It still gets the same discipline
+// (a byte-for-byte pin against a hand-written literal and a sha256, in
+// scripts/test-agent-instructions.js) for the ordinary reason any model-read
+// instruction text in this repo does: a well-meant reword is a silent
+// behaviour change to every agent that reads it next.
+//
+// It is composed AFTER the pinned block, never merged into it — TEMPLATE's
+// own 501-byte/sha256 pin has to keep matching TEMPLATE alone, so a second,
+// independent constant is the only shape that lets both stay frozen at once.
+// No placeholders: unlike TEMPLATE, it names no project — the paragraph above
+// it has already said which project and which tools to call on it.
+export const TEMPLATE_FOUNDATIONS = [
+  'This project also keeps foundations — canonical documents such as its architecture and firm',
+  'decisions — that travel with it. At session start, call `get_project_context` instead of',
+  '`get_working_state` to receive them alongside the brief and handoff. On every',
+  '`save_working_state` call, include `foundations_read` (the hashes you were given) so the next',
+  'session knows what changed.',
+].join('\n') + '\n';
+
+/**
+ * The block for one project, PLUS the foundations addendum — what the Copy
+ * control pastes as of v3.59.0. `composeAgentInstructions` itself is
+ * untouched (its output is still exactly the measured 501-byte artefact for
+ * the same arguments), so anything that still wants the original alone keeps
+ * calling it directly.
+ *
+ * @param {{domain: string, project: string}} args
+ * @returns {string} heading, blank line, the measured block, a blank line,
+ *   then the foundations paragraph — one trailing newline.
+ */
+export function composeAgentInstructionsFull(args) {
+  return composeAgentInstructions(args) + '\n' + TEMPLATE_FOUNDATIONS;
+}

@@ -66,7 +66,8 @@ Related pages:
 | Page | What you find there | Link |
 |---|---|---|
 | Working state, layout on disk | How projects and scopes are stored | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#2-layout-on-disk |
-| Working state, the MCP tools | The tools an agent calls | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#3-the-four-mcp-tools |
+| Working state, the MCP tools | The tools an agent calls | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#3-the-six-mcp-tools |
+| Working state, foundations | Canonical documents that travel with a project | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#the-foundations-tier--canonical-documents-that-travel |
 | Working state, activation | Making an agent actually save | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it |
 | Working state, limits | What the store will not do | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#5-limits |
 | Standing brief template | A copyable project brief file | https://github.com/talirezun/the-curator/blob/main/docs/project-brief-template.md |

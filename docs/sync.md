@@ -49,6 +49,24 @@ That's why the handoff and its journal live at `state/<scope>/<machine>/current.
 
 **The one exception:** `state/project.md`, the standing project brief, has *no* machine segment — one file per project, because the brief belongs to the project rather than to any one machine. Edit it from two machines between syncs and you're back in the conflicting-hunk case above: the loser's edit is dropped with no warning. In practice this is a small risk (the brief changes rarely, and only one function ever writes it), but if you hand-edit it in Obsidian, sync soon after — the same advice this guide already gives for any wiki page.
 
+**Foundations (v3.59.0) share the same carve-out, and for a project's canonical documents the
+mitigation that covers the brief — "it changes rarely, and only one function writes it" — doesn't
+hold quite as cleanly.** `state/<project>/foundations/` has no machine segment either, by design:
+a repo-owned mirror is meant to be identical bytes on every machine, so there is normally nothing
+for two copies to disagree about. But a mirror *can* be refreshed independently on several
+machines at different commits of the same repository, and when that happens on two machines
+between syncs, it is the same conflicting-hunk case as the brief — the loser's refresh is dropped
+silently. The rule this release ships is to treat that as acceptable rather than to add a second
+mechanism: a repo-owned mirror **converges to whichever machine saved last**, and that is a safe
+place to land *because the repository, not the mirror, is the source of truth*. Any machine can
+re-assert its own checkout's state on its next save (passing `repo_root` to `save_working_state`,
+or pressing **Refresh from repo** in the app) — the refresh is a cheap, idempotent byte comparison,
+so "just refresh again" is a real fix rather than a workaround. The Foundations block shows the
+stored commit beside your local checkout's `HEAD` when it's reachable, so a mirror that has drifted
+behind is visible rather than silent. Curator-owned foundations — the ones an agent wrote for you
+rather than mirrored from a repository — are lower-traffic still, and share the brief's carve-out
+exactly: edit rarely, sync soon after.
+
 Because `state/` syncs, an agent saving working state adds to your pending-changes count exactly like an ingest or a chat message does. If you see the Sync badge tick up between sessions with no ingest to explain it, a saved handoff is a normal cause, not a bug — see [`working-state.md`](working-state.md) for what's actually being written.
 
 ---

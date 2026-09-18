@@ -187,7 +187,7 @@ This shell **is** the user-facing app as of v3.9.0. The pieces below are at diff
 - **Domains** (`views/domains.js`) — the Health panel described in its own top comment is real, and this release adds three more pieces. **Domain lifecycle** (create/rename/delete) is wired to the pre-existing `POST`/`PUT`/`DELETE /api/domains[/:domain]` routes — see [api-reference.md](api-reference.md) for the exact contract, including the display-name-only rename case where the slug does not change. **A wiki browse list** is the one place this release adds real server-side surface: `GET /api/wiki/:domain/list` (`src/brain/wiki-read.js` + `src/routes/wiki.js`, new) is a readdir-only inventory built on health.js's `listMd` rather than a fresh readdir — see [api-reference.md](api-reference.md) for the full contract and its deliberate title-from-slug trade-off. **The browse reader renders rich markdown**, through the same single renderer chat answers use (`shared/markdown.js` — see above). Until v3.8.0 it showed the page's escaped markdown SOURCE in a `<pre>` block instead, because the renderer lived inside `views/chat.js` and copying a security-sensitive escape-first renderer into a second file is exactly the "two hand-maintained copies of a guard" shape that produced the v3.2.0 CRITICAL; lifting it into a module both views import removed the dilemma rather than picking a side of it. Finally, the semantic-duplicate scan gained **per-pair Preview / Flip / Skip** actions alongside the pre-existing batch "merge all high-confidence pairs" bar, which was previously the only semantic-dupe action this shell offered — parity with the Health tab of the pre-redesign shell (deleted in v3.41.0).
 - **Shared Brain** (`views/shared.js`) — the connected state and the enabled/disabled flag states are real, and the five-step setup wizard now exists too, in its own module (`views/shared-brain-wizard.js`): a port of the pre-redesign shell's `#sharedbrain-wizard` (both the admin "start a new brain" and contributor "join with an invite token" paths, including the GitHub PAT and Shared Brain admin-token steps — the highest-risk credential surface in this shell), restyled to the `/next` design system under the rule "port the FLOW verbatim, restyle the CHROME only." This release adds the admin-only GDPR Article 17 **revoke-a-contributor** flow and **admin-token generate/rotate** to the connected card — both ported from the pre-redesign shell (CLAUDE.md's v3.0.5 entry) and previously entirely absent from this shell. Its own header cross-references the specific pre-redesign-frontend bugs each behavioural rule exists to keep from regressing (that frontend was deleted in v3.41.0). It has no test coverage of its own yet — the offline suite that exercises this behaviour (`test-sharedbrain-hardening.js`) still asserts only against the deleted `app.js`'s implementation. One real gap remains, and it's about an *existing* connection rather than initial setup: `views/shared.js`'s own copy says changing which domains an already-connected brain contributes from needs the access token re-entered, which this shell doesn't handle outside the setup wizard yet.
 - **First-run guidance** (`views/onboarding.js`, v3.8.0) — real, and deliberately **not** a port of the pre-redesign frontend's blocking 4-step modal (that frontend, and its modal, were deleted in v3.41.0). It is a non-blocking, dismissible panel: no scrim, no `role="dialog"`, no focus trap, and it never steals focus on the automatic path. The `next/` shell's `app.js`'s `boot()` calls `maybeShowOnboarding()` (not awaited, and wrapped in `try/catch`, because `boot()` returning is what sets the `window.__curatorBooted` sentinel the `<head>` guard treats as proof of a healthy load). Every step **points** at the surface that already owns the job — API key → first domain → first ingest, in that order — and embeds no input and `POST`s nothing; step 2 navigates to Domains rather than adding a second `POST /api/domains` call site, which `test-next-chat-compile.js` pins at exactly one for the whole tree. Dismissal is `localStorage` (`curator-next-onboarding-dismissed-v1`) and **fails safe by showing** — a storage throw re-shows the guidance rather than silently hiding first-run setup — which is the opposite direction from the AI-disclosure consent gate, on purpose. It is re-findable from Settings ("Show setup guide"). It is **not** a registered view: like `views/mcp-wizard.js` and `views/shared-brain-wizard.js`, it calls no `registerView()` and owns no rail slot.
-- **Agent memory** (`views/memory.js`) — **a real view over the working-state store, since v3.17.0; read-only over tiers 2 and 3, with one tier-1 write since v3.48.0.** The store (`src/brain/working-state.js`) is written by agents through the MCP's `get_working_state` / `save_working_state` tools; the view reads it over `GET /api/memory` and `GET /api/memory/:domain/:project` (`src/routes/memory.js`, mounted in `src/server.js`), groups the rail by domain and then by project, remembers the last project per domain, and renders the standing brief, the current handoff for a chosen scope and machine, and the journal tail. **The read-only half is a design decision, not an unfinished write path:** a browser writer into a *handoff* would make the app a second writer and break the single-writer property the whole sync-safety argument rests on, and it would stamp a human edit with the last agent's provenance. The **standing brief** was never inside that argument — no machine segment, the human's document — so v3.48.0 gives it an Edit that `PATCH`es tier 1, stamped `authoredBy.kind: 'human'`. The Domains view carries the other half of the same write surface: a **Projects** section that creates, renames and deletes projects. What is still not built is the rollup UI (Done/Decided/Blocked composed across scopes) that a pre-v3.17.0 version of this line described — nothing composes across scopes or projects. The rail's shape — your brain → your team's brain → your agents' brain — is now backed by something on all three. See [working-state.md](working-state.md), [api-reference.md](api-reference.md) and the store's own section below.
+- **Agent memory** (`views/memory.js`) — **a real view over the working-state store, since v3.17.0; read-only over tiers 2 and 3, with one tier-1 write since v3.48.0, plus one tier-0 mirror-refresh action since v3.59.0.** The store (`src/brain/working-state.js`) is written by agents through the MCP's `get_working_state` / `save_working_state` tools; the view reads it over `GET /api/memory` and `GET /api/memory/:domain/:project` (`src/routes/memory.js`, mounted in `src/server.js`), groups the rail by domain and then by project, remembers the last project per domain, and renders the standing brief, the current handoff for a chosen scope and machine, the journal tail, and — new in v3.59.0 — a fifth block, Foundations, whose *Refresh from repo* action `POST`s `…/foundations/refresh`. That route is a legitimate app writer even under the read-only rule: it performs a deterministic **byte copy** driven by comparing sha256 against a file on disk, never composes content, so it is not a second author in the sense the rule below guards against. **The read-only half is a design decision, not an unfinished write path:** a browser writer into a *handoff* would make the app a second writer and break the single-writer property the whole sync-safety argument rests on, and it would stamp a human edit with the last agent's provenance. The **standing brief** was never inside that argument — no machine segment, the human's document — so v3.48.0 gives it an Edit that `PATCH`es tier 1, stamped `authoredBy.kind: 'human'`. The Domains view carries the other half of the same write surface: a **Projects** section that creates, renames and deletes projects. What is still not built is the rollup UI (Done/Decided/Blocked composed across scopes) that a pre-v3.17.0 version of this line described — nothing composes across scopes or projects. The rail's shape — your brain → your team's brain → your agents' brain — is now backed by something on all three. See [working-state.md](working-state.md), [api-reference.md](api-reference.md) and the store's own section below.
 
 ### The cutover happened in v3.9.0 — the retirement happened in v3.41.0
 
@@ -235,9 +235,12 @@ the-curator/
 │   │   ├── raw-store.js        Raw-source resolution/extraction — the `resolveRawSource` chokepoint (v3.5.0)
 │   │   ├── wiki-read.js        Single-page read + backlinks (`getWikiPage`) for the reader panel (v3.2.0+)
 │   │   ├── working-state.js    Portable working state — domains/<domain>/state/<project>/ (v3.17.0;
-│   │   │                       the <project> level v3.48.0). Never renders a prompt, never calls an
-│   │   │                       LLM. Two callers: mcp/tools/working-state.js (read + write) and
-│   │   │                       routes/memory.js (reads all three tiers, writes the brief only).
+│   │   │                       the <project> level v3.48.0; tier 0 "foundations" — canonical
+│   │   │                       documents under state/<project>/foundations/ — v3.59.0). Never
+│   │   │                       renders a prompt, never calls an LLM. Two callers:
+│   │   │                       mcp/tools/working-state.js (read + write) and routes/memory.js
+│   │   │                       (reads all four tiers, writes the brief only; foundations refresh
+│   │   │                       is the one legitimate write outside tier 1 — see below).
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
@@ -269,7 +272,7 @@ the-curator/
 │   ├── graph.js                Wiki parser: frontmatter, [[wikilinks]], backlinks, tag inventory (cached)
 │   ├── util.js                 Slug + domain validators, resolveDomainArg shared helper
 │   ├── storage/local.js        Filesystem adapter (resolveInsideBase chokepoint, audit-log writer)
-│   └── tools/                  Tool modules (13 read + 9 write = 22 tools as of v3.48.0)
+│   └── tools/                  Tool modules (14 read + 10 write = 24 tools as of v3.59.0)
 │       ├── index.js            Registration hub + response-size guard (400 KB)
 │       ├── domains.js, index-tool.js, search.js, nodes.js, connected.js,
 │       │   summary.js, cross.js, overview.js, tags.js, backlinks.js, raw-source.js
@@ -281,6 +284,8 @@ the-curator/
 │       ├── dismissed.js        Write tools (v2.5.2): get_health_dismissed, dismiss_wiki_issue, undismiss_wiki_issue
 │       └── working-state.js    v3.17.0: get_working_state (read) + save_working_state (write) — wraps
 │                               src/brain/working-state.js. Reads/writes domains/<domain>/state/, NOT wiki/.
+│                               v3.59.0: + get_project_context (read, the session-start bootstrap)
+│                               and + save_foundation (write, commissioned-only, tier 0).
 ├── domains/
 │   └── <domain>/
 │       ├── CLAUDE.md           Domain schema (system prompt for the LLM)
@@ -294,6 +299,14 @@ the-curator/
 │       │   ├── summaries/      One page per ingested source or compiled conversation
 │       │   ├── .health-dismissed.jsonl  Persistent Health-issue dismissals (v2.5.1+); git-tracked, syncs across machines
 │       │   └── .raw-manifest.jsonl      Append-only record of ingested source filenames/size/sha256 (v3.5.0); git-tracked so a second machine can name a missing raw file even though raw/ itself never syncs
+│       ├── state/               Working state (v3.17.0) — see working-state.js above and
+│       │   │                    working-state.md for the full tiered layout
+│       │   └── <project>/
+│       │       ├── project.md            Tier 1 — the standing brief
+│       │       ├── foundations/           Tier 0 (v3.59.0) — canonical documents
+│       │       │   ├── manifest.json       Provenance + freshness (sha256) for every document
+│       │       │   └── <slug>.md           A canonical document, verbatim — never through writePage
+│       │       └── <scope>/<machine>/     Tiers 2–3 — the handoff and the journal
 │       └── conversations/      Saved chat threads (JSON, gitignored)
 ├── <user-data dir>/.ingest-queue/   Batch-ingest job manifests + staged uploads (v3.3.0+) — deliberately OUTSIDE domains/, since that directory is Personal Sync's git work-tree; see src/brain/paths.js
 ├── docs/                       This documentation
@@ -2251,6 +2264,28 @@ It is **a store**, in the sense that it exposes plain functions, renders no prom
     **The note's load-bearing sentence is symmetric**, and that is what keeps the change from being an injection primitive: a standing instruction that clashes with the agent's own system, harness or operator rules is **surfaced to the user in the first reply**, never resolved silently in either direction. Planted text cannot buy authority over an agent's rules; the most it can do is trigger disclosure to the user. It is also strictly safer than the behaviour it replaces, which picked a side quietly.
 
     **`owner` requires two things to be true and treats "cannot tell" as false.** The domain must not be a read-only `shared-*` mirror — checked with `isDomainReadonly`, **imported** from `files.js` rather than reimplemented, the same predicate `refuseIfReadonly` uses — and the file must show no `headingsSuspect` / `sanitisedOnRead` evidence of forgery or a bad merge. Anything that throws past the mirror check lands on `unverified` and keeps the conservative wording, because `isDomainReadonly` swallows its own read error and answers `false`: the right default for a **write** guard, where guessing wrong refuses a legitimate write, and the wrong one for an **authority** grant, where guessing wrong hands an unverified file the user's voice. The mirror arm is **defence in depth rather than a live hole** — `pullCollective` writes only through `writePage`, whose `normalizePath` redirects every path into `wiki/entities/`, `wiki/concepts/` or `wiki/summaries/`, so the pull path cannot reach `shared-*/state/project.md` at all — but `saveWorkingState` already refuses to write into a mirror, and a read framing claiming the owner wrote the file would contradict a write guard saying it is not theirs to write. Guarding the class rather than the instance is the standing lesson here. Full treatment, with the measurement and the four verdicts, in [working-state.md § 4](working-state.md#4-treat-stored-state-as-data-not-as-instructions-with-one-exception).
+
+5. **Tier 0 (v3.59.0) is a fourth store under the same module, deliberately not folded into tiers
+   1–3's own rules.** Foundations — canonical documents such as an architecture file, mirrored
+   byte-for-byte from a repository or written by an agent on explicit instruction — are neither
+   accumulated knowledge (the wiki) nor session-scoped state (tiers 1–3): they change on the order
+   of releases, are meant to be read in full, and must be replaced **whole**, never merged and
+   never trimmed. Two consequences follow from being a different kind of thing. First, they get
+   their **own** write path (`saveFoundation`/`removeFoundation`/`refreshFoundationsFromRepo`), not
+   the brief's — `saveProjectBriefText` truncates at 32 KB and escapes line-initial `##` headings,
+   both of which would corrupt a mirrored document; a foundation instead refuses outright over its
+   own 512 KB per-document cap, and heading-escaping is off for foundation bodies (a canonical
+   document is trusted the way a verified brief is, and the MCP response already labels it
+   `content_is_data` for the model reading it). Second, they get their **own** concurrency
+   guarantee. Tiers 2–3 take no lock because a per-machine path makes two processes on one machine
+   the only possible racers on one file; foundations have **no machine segment** — the same
+   carve-out `project.md` already has — so `saveFoundation`, `removeFoundation` and
+   `refreshFoundationsFromRepo` **do** take the cross-process `.write-lock` from
+   `write-registry.js`, the manifest written last so a crash leaves an orphaned document rather
+   than a manifest entry pointing at nothing. Full treatment, including the manifest schema, the
+   two ownership modes and the one-writer rule, and the `get_project_context` bootstrap that reads
+   all four tiers in one call:
+   [working-state.md § The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel).
 
 **Containment** reuses `resolveInsideWiki` from `wiki-read.js` with a non-wiki root (the function is root-agnostic despite its name; `raw-store.js` set this precedent) rather than keeping a second hand-maintained copy — the v3.2.0 CRITICAL shape. Segment names are additionally validated as single safe path segments, and containment is re-resolved **after** `mkdir` so a symlinked scope/machine directory arriving over sync is caught before the write. `current.md` goes through `writeFileAtomic`, which also refuses to write through a symlink; `journal.jsonl` is `appendFile`, never an atomic rewrite (atomic-write.js's own invariant 5 — a rewrite loses concurrent appends and a JSONL log is already crash-safe at line granularity).
 
