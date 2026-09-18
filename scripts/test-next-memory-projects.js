@@ -2168,7 +2168,7 @@ const REPO = join(TMP, 'repo');
   eq('...and says it was an orphan', orphan.body.wasOrphan, true);
   ok('...and it is gone', !existsSync(join(dir, 'stray.md')));
 
-  // ── REMOVAL WORKS ON A MIRROR TOO, SINCE v3.61.2 ──────────────────────
+  // ── REMOVAL WORKS ON A MIRROR TOO, SINCE v3.61.1 ──────────────────────
   //
   // THE DEFECT THIS CLOSES: this route answered 400 `repo_owned` here, so a
   // mirrored project's document list could not be edited AT ALL — the
@@ -2238,7 +2238,7 @@ const REPO = join(TMP, 'repo');
       cur.body.sourceKept, false);
 
     // ── THE GATE IS THE MANIFEST, AND IT IS STILL A GATE ────────────────
-    // v3.61.2 moved DELETE off `requireCuratorOwned` and on to
+    // v3.61.1 moved DELETE off `requireCuratorOwned` and on to
     // `requireManifest`, and the two arms that survived the move have to be
     // asserted or the change reads as "the gate went away". A mutation
     // deleting the `no_manifest` arm was GREEN before these two lines: the
@@ -2526,7 +2526,7 @@ const REPO = join(TMP, 'repo');
         ['a read-only mirror', { params: { domain: 'shared-cohort', project: 'shared-cohort', slug: 'a.md' }, body: { confirm: 'a.md' } }, 403],
         ['no confirmation', { params: { domain: 'alpha', project: 'curated', slug: 'decisions.md' }, body: {} }, 400],
         ['the wrong confirmation', { params: { domain: 'alpha', project: 'curated', slug: 'decisions.md' }, body: { confirm: 'decisions' } }, 400]]],
-    // ── AND NOT A REPO-OWNED PROJECT ANY MORE (v3.61.2) ────────────────
+    // ── AND NOT A REPO-OWNED PROJECT ANY MORE (v3.61.1) ────────────────
     // A repo-owned project WAS on this list, refused 400 `repo_owned`. It is
     // not a refusal now: removing a mirrored entry is the decision to stop
     // mirroring that document, not an edit to a file whose author is the

@@ -871,7 +871,7 @@ repository — edit it there and refresh", and a curator-owned one now reads "Ed
 Foundations table" — true in both cases, and no longer a Shared Brain sentence sitting under a
 document that was never a Shared Brain mirror at all.
 
-**Removal was curator-owned only in v3.61.0, and that was wrong — corrected in v3.61.2.** The
+**Removal was curator-owned only in v3.61.0, and that was wrong — corrected in v3.61.1.** The
 original `DELETE …/foundations/:slug` refused a mirror (`repo_owned`) on the reasoning, recorded in
 the route at the time, that a mirrored document is dropped by no longer listing it on the next
 refresh, never by deleting the copy, "which the next refresh would simply put back." The second half

@@ -110,7 +110,7 @@ On a curator-owned project, each row in the Foundations block carries an Edit co
 
 This does not add a second writer to a document the way it might sound: one ownership is set per project, and a human edit is stamped as a human's the same way an agent's edit is stamped as an agent's, so nothing reading a foundation's history is ever told the wrong thing wrote it.
 
-**Removing a document is different from editing one, since version 3.61.2.** Editing a mirrored document's content is still refused — that would create two writers of one file. Removing its *entry*, though, works on either ownership: on a mirror it stops copying that one file (the source is untouched, and you can mirror it again), and on a curator-owned project it deletes the only copy there is. Each row in a mirrored project's table carries its own Remove button for this.
+**Removing a document is different from editing one, since version 3.61.1.** Editing a mirrored document's content is still refused — that would create two writers of one file. Removing its *entry*, though, works on either ownership: on a mirror it stops copying that one file (the source is untouched, and you can mirror it again), and on a curator-owned project it deletes the only copy there is. Each row in a mirrored project's table carries its own Remove button for this.
 
 ## How does an agent start a session with all of this?
 

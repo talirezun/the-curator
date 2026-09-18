@@ -47,7 +47,7 @@
  *
  * So the write surface here is: create / rename / delete a project, replace
  * a project's brief, set the ownership once, WRITE one canonical document on a
- * curator-owned project only — and REMOVE one on either ownership (v3.61.2).
+ * curator-owned project only — and REMOVE one on either ownership (v3.61.1).
  * The asymmetry is the point and is argued at `requireManifest`: an edit to a
  * mirrored document would make two writers of one file, while removing its
  * entry is the decision to stop mirroring it and touches nothing in the
@@ -81,7 +81,7 @@
  *   GET    /:domain/:project/foundations/:slug   one document (`?raw=1`)
  *   PUT    /:domain/:project/foundations/:slug   write one  {text, title?, role?}
  *   DELETE /:domain/:project/foundations/:slug   remove one {confirm} — EITHER
- *                                                ownership (v3.61.2): on a
+ *                                                ownership (v3.61.1): on a
  *                                                mirror it stops mirroring
  *                                                that document and leaves the
  *                                                source file alone; only PUT
@@ -920,7 +920,7 @@ async function requireCuratorOwned(res, domain, project) {
 }
 
 /**
- * The same read, WITHOUT the ownership refusal — for REMOVAL (v3.61.2).
+ * The same read, WITHOUT the ownership refusal — for REMOVAL (v3.61.1).
  *
  * ── WHY REMOVAL IS NOT AN EDIT, AND WHY v3.61.0 GOT THIS WRONG ───────────
  * `requireCuratorOwned` refuses a mirror because an EDIT there would be
@@ -1652,7 +1652,7 @@ router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
       });
     }
 
-    // ── REMOVAL WORKS ON BOTH OWNERSHIPS (v3.61.2) ──────────────────────
+    // ── REMOVAL WORKS ON BOTH OWNERSHIPS (v3.61.1) ──────────────────────
     //
     // It did not, and that was the defect: `requireCuratorOwned` refused a
     // mirror here on the grounds — written into this comment in v3.61.0 —

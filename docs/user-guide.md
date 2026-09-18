@@ -3367,7 +3367,7 @@ anything else.
 the rest of the app uses. It is information only: an old document is still offered, still ticked or
 not by the same rule, and the list is never reordered by age — the sort stays role, then path.
 
-**Removing a mirrored document.** *New in v3.61.2* — before this, a mirrored project's document
+**Removing a mirrored document.** *New in v3.61.1* — before this, a mirrored project's document
 list could not be edited at all. Every row of a mirrored project's table now carries its own labelled
 **Remove** button (a curator-owned table's rows carry a pencil **Edit** instead, opening the editor
 described below, which has its own **Delete**). Pressing a mirrored row's Remove opens a confirm

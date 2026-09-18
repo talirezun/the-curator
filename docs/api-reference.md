@@ -2463,7 +2463,7 @@ collision (see below the table).
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
 | `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror |
-| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.2**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
+| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
 | `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
@@ -2509,7 +2509,7 @@ always carries `authoredBy.kind: 'human'`, never an agent's harness and model. `
 a mirror outright — editing its content would make two writers of one file, exactly the property
 the ownership gate exists to protect.
 
-**`DELETE` is the one asymmetry, since v3.61.2: it works on either ownership.** Removing a
+**`DELETE` is the one asymmetry, since v3.61.1: it works on either ownership.** Removing a
 manifest entry is not a claim about a document's content, it is the decision to stop mirroring or
 keep it — a different thing from writing content, and the gate for it is the manifest existing at
 all (`requireManifest`), not who owns it. `POST …/foundations/refresh` is the older exception and
@@ -2970,12 +2970,12 @@ document.
 
 ### DELETE /api/memory/:domain/:project/foundations/:slug
 
-**New in v3.61.0; works on a mirror too since v3.61.2.** Remove one document. **Body: `{ confirm }`,
+**New in v3.61.0; works on a mirror too since v3.61.1.** Remove one document. **Body: `{ confirm }`,
 and it must equal the document's slug exactly** — the same enforced-at-the-route rule
 `DELETE …/projects/:project` already follows, so the confirmation cannot be skipped by a client
 that does not render it.
 
-**The gate is the manifest, not the ownership — the v3.61.2 correction.** v3.61.0 refused this
+**The gate is the manifest, not the ownership — the v3.61.1 correction.** v3.61.0 refused this
 route with `repo_owned` on a mirror, on the reasoning that "a mirrored document is dropped by no
 longer listing it on the next refresh, never by deleting the copy, which the next refresh would
 simply put back." The second half is false: `refreshFoundationsFromRepo` builds its work list from

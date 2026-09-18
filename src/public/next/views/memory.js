@@ -4960,7 +4960,7 @@ function skeletonOf(d) {
 /**
  * "STOP MIRRORING THIS DOCUMENT?" — the confirm strip for a row Remove.
  *
- * ── IN FLOW, UNDER THE TABLE, NEVER A DIALOG (v3.61.2) ──────────────────
+ * ── IN FLOW, UNDER THE TABLE, NEVER A DIALOG (v3.61.1) ──────────────────
  * The same rule the editor's own delete strip and the brief's unsaved-draft
  * bar follow: the thing under discussion has to stay on screen while the owner
  * decides about it. A modal would cover the row they are looking at.
@@ -5117,7 +5117,7 @@ function fndRowHtml(d, editable, readonly) {
             'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
           '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
           '</button>'
-          // ── STOP MIRRORING, ON A MIRRORED ROW (v3.61.2) ────────────────
+          // ── STOP MIRRORING, ON A MIRRORED ROW (v3.61.1) ────────────────
           //
           // THE DEFECT: a mirrored project's document list could not be
           // edited AT ALL. The maintainer mirrored his own repository, got 25
@@ -5501,7 +5501,7 @@ function renderFoundations(read) {
           // rather than absent: a screen reader reading the row still hears
           // which column the button is in. Emitted only on the arm that HAS
           // a row control — a column reserved for nothing is furniture.
-          // ── AND ON THE MIRRORED ARM TOO, SINCE v3.61.2 ───────────────
+          // ── AND ON THE MIRRORED ARM TOO, SINCE v3.61.1 ───────────────
           // It used to be curator-only, because a mirror had no row control:
           // the DELETE route refused one. It has a control now — Remove,
           // meaning stop mirroring — so the column exists on both arms and is
@@ -6533,10 +6533,10 @@ async function saveFoundation(token) {
  * configured a git client recovers it, and without it nothing does.
  */
 /**
- * REMOVE ONE DOCUMENT FROM THE TABLE — the row control's request (v3.61.2).
+ * REMOVE ONE DOCUMENT FROM THE TABLE — the row control's request (v3.61.1).
  *
  * The SAME route the editor's delete uses, with the same typed confirmation:
- * `DELETE …/foundations/:slug` with `{confirm: slug}`. Since v3.61.2 that
+ * `DELETE …/foundations/:slug` with `{confirm: slug}`. Since v3.61.1 that
  * route accepts both ownerships, because removing a mirrored entry is the
  * decision to stop mirroring it rather than an edit to a file whose author is
  * the folder (the argument is at `requireManifest` in routes/memory.js, and
@@ -6805,7 +6805,7 @@ function bindFoundationRows(root, token) {
     });
   });
 
-  // ── THE ROW REMOVE CONTROLS (v3.61.2) ──────────────────────────────────
+  // ── THE ROW REMOVE CONTROLS (v3.61.1) ──────────────────────────────────
   // A press only ASKS: it records which row and re-renders, which paints the
   // confirm strip under the table with that document named. Nothing is
   // requested until the strip's own primary is pressed, and the request

@@ -804,7 +804,7 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 //   POST   …/foundations/init       sets the ownership, ONCE
 //   PUT    …/foundations/:slug      one curator-owned document, verbatim
 //   DELETE …/foundations/:slug      removes one, slug as its own confirmation
-//   DELETE …/foundations/:slug      v3.61.2 — the SAME route from the table
+//   DELETE …/foundations/:slug      v3.61.1 — the SAME route from the table
 //                                   row's Remove control, because a mirrored
 //                                   document can be un-mirrored without an
 //                                   editor it is not allowed to have
@@ -865,7 +865,7 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   const head = /\.mem-fnd-row\s*\{([^}]*)\}/.exec(memCss);
   ok('memory.css: `.mem-fnd-row` is a flex row', !!head && /display:\s*flex/.test(head[1]),
     head ? head[1] : 'rule not found');
-  // ── AND IT IS A COLUMN NOW (v3.61.2) ──────────────────────────────────
+  // ── AND IT IS A COLUMN NOW (v3.61.1) ──────────────────────────────────
   //
   // v3.61.0 made it a WRAPPING ROW: the fold flexible at a 480px floor, the
   // controls beside it, wrapping under ~771px. The maintainer's screenshot of
@@ -889,7 +889,7 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
     !/\.mem-fnd-refresh\s*\{[^}]*position:\s*absolute/.test(memCss));
   {
     const fold = /\.mem-fnd-row\s*>\s*\.mem-fold\s*\{([^}]*)\}/.exec(memCss);
-    // THE FLEX BASIS IS GONE WITH THE ARRANGEMENT THAT NEEDED IT (v3.61.2).
+    // THE FLEX BASIS IS GONE WITH THE ARRANGEMENT THAT NEEDED IT (v3.61.1).
     // 480px was the floor below which the fold's own content stopped being
     // comfortable while something sat beside it; nothing sits beside it now,
     // so a basis would only be a width the fold is not allowed to be.

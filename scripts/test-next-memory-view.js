@@ -1162,7 +1162,7 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'fndSize', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
-    // ── THE ROW-REMOVE CONFIRM STRIP (v3.61.2) ──────────────────────────
+    // ── THE ROW-REMOVE CONFIRM STRIP (v3.61.1) ──────────────────────────
     // Lifted rather than stubbed: it is the sentence somebody reads before
     // stopping a mirror, and the difference between it and the editor's
     // delete strip — the SOURCE FILE is untouched — is the whole reason it
@@ -2311,7 +2311,7 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 //   POST   …/foundations/init           sets the ownership, ONCE
 //   PUT    …/foundations/:slug          one CURATOR-owned document, verbatim
 //   DELETE …/foundations/:slug          removes one, with the slug as confirm
-//   DELETE …/foundations/:slug          v3.61.2: the ROW control's removal —
+//   DELETE …/foundations/:slug          v3.61.1: the ROW control's removal —
 //                                       the SAME route and the same body, from
 //                                       a second call site, because the table
 //                                       can now stop mirroring one document
@@ -2391,7 +2391,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   // so a client that skipped the confirm strip deletes nothing. The same
   // discipline the project delete has carried since v3.48.0.
   //
-  // ── ASSERTED OVER EVERY DELETE, NOT THE FIRST ONE (v3.61.2) ───────────
+  // ── ASSERTED OVER EVERY DELETE, NOT THE FIRST ONE (v3.61.1) ───────────
   // There are two call sites now — the editor's footer and the table row's
   // Remove — and they are the same route with the same body. Checking only
   // `del` (the first match) would let the second one send anything at all,
@@ -6931,7 +6931,7 @@ const fndRead = (payload) => ({
     // FIVE CELLS vs SIX (plus the actions cell on the curator arm only).
     const cells = (h) => (h.match(/<td /g) || []).length;
     eq('a curator-owned row is five cells plus the actions cell', cells(curRow), 6);
-    // ── AND A MIRRORED ROW HAS AN ACTIONS CELL TOO, SINCE v3.61.2 ───────
+    // ── AND A MIRRORED ROW HAS AN ACTIONS CELL TOO, SINCE v3.61.1 ───────
     // It had none, because a mirror had no row control: the DELETE route
     // refused one, and a control whose only outcome is a refusal is worse
     // than no control. The route accepts removal on both ownerships now — it
@@ -7017,7 +7017,7 @@ const fndRead = (payload) => ({
     const repoTable = F.renderFoundations(fndRead(fndPayload([fndDoc()])));
     ok('CONTROL: the mirrored table still has Source AND Copy',
       />Source</.test(repoTable) && />Copy</.test(repoTable), repoTable.slice(0, 1400));
-    ok('...and an actions column on BOTH arms since v3.61.2, because a mirrored row has a '
+    ok('...and an actions column on BOTH arms since v3.61.1, because a mirrored row has a '
       + 'control now (Remove = stop mirroring); it is withheld only where nothing may be written',
     (repoTable.match(/<th scope="col">/g) || []).length >= 6
       && /visually-hidden">Actions/.test(repoTable), repoTable.slice(0, 600));
@@ -7555,7 +7555,7 @@ const EXECUTED = new Set([
   // no-manifest arm of `renderFoundations` to this, the screen it actually
   // describes — see the §21 note beside its own assertions.
   'renderNoProjects',
-  // v3.61.2: the row-Remove confirm strip. EXECUTED through the real
+  // v3.61.1: the row-Remove confirm strip. EXECUTED through the real
   // `renderFoundations` over five states — present, a press in flight, a
   // refusal, a slug the table no longer holds, and one stamped for another
   // project — because the sentence it carries, that a mirror's SOURCE FILE is
@@ -7597,7 +7597,7 @@ const NOT_EXECUTED = {
   initFoundations: 'async orchestration over the init POST plus a re-read; EXECUTED against a fake fetch in test-next-foundations-editor.js, which asserts the body the chooser built, the refusal keeping the choice, and the hand-off to refreshFoundations on an already-owned mirror',
   loadFoundationDraft: 'async orchestration over the `?raw=1` read; EXECUTED in test-next-foundations-editor.js, which asserts the RAW query, the byte-exact draft and that a second Edit press wins the race',
   saveFoundation: 'async orchestration over the PUT plus a re-read; EXECUTED in test-next-foundations-editor.js, which asserts the three fields, the stamp, the late-reply drop and that a failure keeps the draft',
-  stopMirroringFoundation: 'async orchestration over the SAME DELETE deleteFoundation uses, from the row control (v3.61.2); the request shape is asserted over EVERY DELETE call site in the fetch census above (one URL, one body, the slug as its own confirmation), the strip it drives is executed over five states, and the route arm it depends on — removal allowed on a mirror, PUT still refused — is driven end to end in test-next-memory-projects.js',
+  stopMirroringFoundation: 'async orchestration over the SAME DELETE deleteFoundation uses, from the row control (v3.61.1); the request shape is asserted over EVERY DELETE call site in the fetch census above (one URL, one body, the slug as its own confirmation), the strip it drives is executed over five states, and the route arm it depends on — removal allowed on a mirror, PUT still refused — is driven end to end in test-next-memory-projects.js',
   deleteFoundation: 'async orchestration over the DELETE; EXECUTED in test-next-foundations-editor.js, which asserts the slug travels as its own confirmation and that a refusal closes the strip rather than the editor',
   // ── v3.61.0's THREE ────────────────────────────────────────────────────
   requestProject: 'the one-shot handoff from the OTHER view (P1-10): a module variable set by views/domains.js and cleared on read here, so driving it needs both halves. EXECUTED in test-next-memory-switch.js, which sets it and then runs the arrival decision',

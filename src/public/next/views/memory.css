@@ -1398,7 +1398,7 @@
    were in the markup. At a narrow container the row WRAPS, putting the
    controls under the summary rather than on top of it; that is the behaviour a
    reserve was approximating and getting wrong. */
-/* ── AND THE ROW BECAME A COLUMN (v3.61.2) ───────────────────────────────
+/* ── AND THE ROW BECAME A COLUMN (v3.61.1) ───────────────────────────────
    THE REPORTED DEFECT, with a screenshot of a 25-document mirror: the
    documents table "takes about three quarters of the card" with Refresh from
    repo and Add from folder floating to its right. That is this rule working
@@ -1445,7 +1445,7 @@
 /* `min-width: 0` is still load-bearing on a column: a flex item's automatic
    minimum is its content, and the fold holds a table wide enough to push past
    the card without it. The 480px basis is gone with the side-by-side
-   arrangement it existed for (v3.61.2). */
+   arrangement it existed for (v3.61.1). */
 .mem-fnd-row > .mem-fold { min-width: 0; }
 .mem-fnd-head-controls {
   display: flex;
@@ -1776,7 +1776,7 @@
    family's own ink rather than a colour of its own — `--danger-text` on the
    tint the bar already carries — and the words carry it too ("could not"), so
    colour is never the only signal. It is a whole-row item so a long server
-   sentence does not squeeze the two controls it sits beside (v3.61.2). */
+   sentence does not squeeze the two controls it sits beside (v3.61.1). */
 .mem-fnd-stop-error {
   flex: 1 1 100%;
   color: var(--danger-text);
