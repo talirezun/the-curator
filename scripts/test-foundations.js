@@ -338,6 +338,13 @@ section('4. saveFoundation — the cap, the budget, ownership, the shrink guard,
   rmSync(path.join(fdir('fcrash', 'fcrash'), FOUNDATIONS_MANIFEST_FILENAME), { recursive: true, force: true });
   const relist = await saveFoundation('fcrash', 'fcrash', { slug: 'stranded', text: '# S\nbody' });
   assert(relist.ok && (await listFoundations('fcrash', 'fcrash')).orphanFiles.length === 0, 're-saving lists it and clears the orphan');
+  // …and an orphan beside a VALID manifest is disclosed too (the shape sync or
+  // a hand copy leaves; the branch above was the no-manifest one).
+  writeFileSync(path.join(fdir('fcrash', 'fcrash'), 'late-orphan.md'), '# late\n');
+  const validIdx = await listFoundations('fcrash', 'fcrash');
+  assert(validIdx.present === true && JSON.stringify(validIdx.orphanFiles) === JSON.stringify(['late-orphan.md']),
+    'with a valid manifest, an unlisted .md is still disclosed by name', JSON.stringify(validIdx.orphanFiles));
+  rmSync(path.join(fdir('fcrash', 'fcrash'), 'late-orphan.md'));
   // The opposite shape — an entry with no file — cannot be produced by this
   // store's write order, but sync or a hand edit can: it is disclosed too.
   rmSync(path.join(fdir('fcrash', 'fcrash'), 'stranded.md'));
@@ -424,7 +431,10 @@ const SRC = {
   assert(r1.missing.length === 1 && r1.missing[0] === 'docs/not-there.md', 'a listed file that is not there is MISSING, not an error');
   const reasons = Object.fromEntries(r1.refused.map((x) => [x.path, x.reason]));
   assert(/only \.md and \.txt/.test(reasons['secret.json'] || ''), 'secret.json is refused: not .md/.txt');
-  assert(/outside the repository root/.test(reasons['../outside/outside.md'] || ''), '../ is refused: outside the root');
+  // EXACT reason, deliberately: the physical (realpath) arm would also refuse
+  // this path, with the symlink wording — pinning the lexical wording is what
+  // proves the LEXICAL arm answers first, before any filesystem access.
+  assert(reasons['../outside/outside.md'] === 'outside the repository root', '../ is refused by the LEXICAL arm: "outside the repository root"', reasons['../outside/outside.md']);
   assert(/absolute/.test(reasons['/etc/passwd'] || ''), 'an absolute path is refused');
   assert(/symlink/.test(reasons['docs/link.md'] || ''), 'a symlink that resolves outside the root is refused');
   assert(/already mirrored as "decisions\.md"/.test(reasons['docs\\decisions.md'] || ''),
@@ -463,7 +473,10 @@ const SRC = {
   // 6d. Freshness is COMPUTED: fresh → stale after an edit → fresh after a refresh; missing → unreachable.
   const f1 = await listFoundations('frepo', 'proj');
   assert(f1.documents.every((d) => d.freshness === 'fresh') && f1.repo.reachable === true, 'every mirror is fresh right after a refresh');
-  writeFileSync(path.join(REPO_DIR, 'docs', 'architecture.md'), '# Architecture v2\n');
+  // Over the 1 KB protection floor on purpose, so §6f's shrink to 4 bytes is a
+  // shrink a guard WOULD refuse — and the refresh must not.
+  const ARCH_V2 = `# Architecture v2\n${'v'.repeat(3000)}\n`;
+  writeFileSync(path.join(REPO_DIR, 'docs', 'architecture.md'), ARCH_V2);
   const f2 = await listFoundations('frepo', 'proj');
   assert(f2.staleCount === 1 && f2.documents.find((d) => d.slug === 'architecture.md').freshness === 'stale', 'an edited source reads STALE');
   rmSync(path.join(REPO_DIR, 'notes', 'api.txt'));
@@ -474,7 +487,7 @@ const SRC = {
     'the refresh updates the edited one and reports the vanished one as missing', JSON.stringify(r3).slice(0, 200));
   assert(existsSync(path.join(fdir('frepo', 'proj'), 'api.md')) && manifestOf('frepo', 'proj').documents.some((d) => d.slug === 'api.md'),
     'the vanished source\'s COPY and ENTRY are KEPT — never deleted silently');
-  assert(readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'), 'utf8') === '# Architecture v2\n', '…and the refreshed copy is the new bytes');
+  assert(readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'), 'utf8') === ARCH_V2, '…and the refreshed copy is the new bytes');
 
   // 6e. Unreachable root on this machine.
   const mf = manifestOf('frepo', 'proj');
@@ -485,10 +498,13 @@ const SRC = {
   writeFileSync(path.join(fdir('frepo', 'proj'), FOUNDATIONS_MANIFEST_FILENAME), JSON.stringify(mf, null, 2));
 
   // 6f. NO shrink guard on a refresh — the repository is the truth.
+  assert(manifestOf('frepo', 'proj').documents.find((d) => d.slug === 'architecture.md').bytes > MIN_PROTECTED_BODY_BYTES,
+    'PRECONDITION: the mirrored document is over the protection floor, so a guard WOULD fire');
   writeFileSync(path.join(REPO_DIR, 'docs', 'architecture.md'), '# A\n');
   const r4 = await refreshFoundationsFromRepo('frepo', 'proj', REPO_DIR);
-  assert(r4.ok && r4.refreshed.includes('architecture.md') && readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'), 'utf8') === '# A\n',
-    'a source that shrank to 4 bytes is mirrored without a refusal');
+  assert(r4.ok && r4.refreshed.includes('architecture.md') && r4.refused.length === 0
+    && readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'), 'utf8') === '# A\n',
+    'a source that shrank from 3 KB to 4 bytes is mirrored without a refusal — no shrink guard on a refresh', JSON.stringify(r4.refused));
 
   // 6g. Ownership and the cap, on the refresh side.
   const cur = await saveFoundation('frepo', 'proj', { slug: 'hand', text: 'x' });
