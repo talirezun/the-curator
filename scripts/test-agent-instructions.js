@@ -60,6 +60,7 @@ import { functionSource } from './test-helpers/source-scan.js';
 import {
   composeAgentInstructions, COPY_SUCCESS_BANNER, HEADING, TEMPLATE,
   composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS, TEMPLATE_SEED,
+  TEMPLATE_DRAFT_ASK, composeDraftingAsk,
 } from '../src/public/next/shared/agent-instructions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -922,6 +923,163 @@ section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way
     '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b';
   eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 0c522294...',
     createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('S9 -- v3.61.0: the drafting request -- composed, not appended, never duplicated');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// TEMPLATE_DRAFT_ASK answers a different question from TEMPLATE_FOUNDATIONS
+// and TEMPLATE_SEED: those two are STANDING instructions, pasted into an entry
+// file and re-read every session. This one is a ONE-OFF chat message asking an
+// agent to draft a project's unfilled foundations -- so it gets S1's exact
+// discipline (a hand-written literal AND an independent sha256) for the same
+// reason every model-read instruction text in this file does, but it must
+// stay OUT of composeAgentInstructionsFull, on pain of turning a "draft these
+// now" request into a standing "keep re-drafting" instruction. And because a
+// fourth frozen constant is only worth having if the first three are still
+// frozen, this section re-asserts all three of their pins -- proof that
+// adding it disturbed none of them.
+
+{
+  // A second, hand-written copy -- same reasoning as MEASURED_EXP_WIDGET,
+  // HAND_WRITTEN_FOUNDATIONS and HAND_WRITTEN_SEED above: deriving the
+  // expectation from TEMPLATE_DRAFT_ASK would make this a tautology that
+  // passes for any text, including an edited one.
+  const HAND_WRITTEN_DRAFT_ASK =
+    'Draft the unfilled foundations of the Curator project {{DOMAIN_PROJECT}} — {{DOCUMENTS}} — ' +
+    'from what you can see of this codebase. Show me each document before saving. When I approve ' +
+    'one, save it with save_foundation and commissioned_by_owner: true; do not invent facts to ' +
+    'fill a prompt — leave the prompt and ask me.';
+  const DRAFT_ASK_SHA256 =
+    'd038aa3a63e865979a41e8cf062a8cb9391352e90714171017072561d4975ed1';
+
+  eq('TEMPLATE_DRAFT_ASK matches the hand-written second copy',
+    TEMPLATE_DRAFT_ASK, HAND_WRITTEN_DRAFT_ASK);
+  eq('...and hashes to the pinned sha256',
+    createHash('sha256').update(TEMPLATE_DRAFT_ASK, 'utf8').digest('hex'), DRAFT_ASK_SHA256);
+  ok('...at most 60 words, measured on the TEMPLATE (placeholders unsubstituted) -- ' +
+    'Q8: the sha pin covers the template, never a rendered string',
+    TEMPLATE_DRAFT_ASK.trim().split(/\s+/).length <= 60,
+    TEMPLATE_DRAFT_ASK.trim().split(/\s+/).length + ' words');
+
+  // The load-bearing phrases: the exact tool, the exact gate, the approval
+  // order, and the no-invention rule this release also puts in
+  // skills/my-curator/SKILL.md -- the two must not be able to say different
+  // things about what an agent may invent.
+  for (const phrase of [
+    'save_foundation', 'commissioned_by_owner', 'Show me each document before saving',
+    'do not invent facts',
+  ]) {
+    ok('the drafting ask names ' + JSON.stringify(phrase), TEMPLATE_DRAFT_ASK.includes(phrase));
+  }
+  ok('both placeholders are present, unsubstituted, in the pinned template',
+    TEMPLATE_DRAFT_ASK.includes('{{DOMAIN_PROJECT}}') && TEMPLATE_DRAFT_ASK.includes('{{DOCUMENTS}}'));
+
+  // CONTROL -- a one-word change must fail its own pin.
+  const nudgedAsk = TEMPLATE_DRAFT_ASK.replace('invent', 'guess');
+  ok('CONTROL -- a one-word change to the drafting ask fails the literal',
+    nudgedAsk !== HAND_WRITTEN_DRAFT_ASK);
+  ok('CONTROL -- ...and the hash',
+    createHash('sha256').update(nudgedAsk, 'utf8').digest('hex') !== DRAFT_ASK_SHA256);
+
+  // ── composeDraftingAsk: substitution, purity, the refusal ────────────────
+
+  // Three real documents (Q8: the project's ACTUAL unfilled skeleton slugs,
+  // never a fixed guess) -- named by role.
+  const three = composeDraftingAsk({
+    domain: 'curator', project: 'curator',
+    documents: [
+      { slug: 'architecture.md', role: 'architecture' },
+      { slug: 'decisions.md', role: 'decisions' },
+      { slug: 'roadmap.md', role: 'roadmap' },
+    ],
+  });
+  eq('three real documents render as a natural-English list, no Oxford comma',
+    three,
+    'Draft the unfilled foundations of the Curator project curator/curator — ' +
+    'architecture, decisions and roadmap — from what you can see of this codebase. ' +
+    'Show me each document before saving. When I approve one, save it with ' +
+    'save_foundation and commissioned_by_owner: true; do not invent facts to fill a ' +
+    'prompt — leave the prompt and ask me.');
+  ok('no placeholder survives into a model-read text', !/\{\{|\}\}/.test(three));
+
+  // A document with no role falls back to its title.
+  const byTitle = composeDraftingAsk({
+    domain: 'acme', project: 'lumina', documents: [{ slug: 'conventions.md', title: 'Conventions' }],
+  });
+  ok('a document named only by title still renders', byTitle.includes('— Conventions —'));
+
+  // ZERO documents -- and the omitted case -- both fall back to the four
+  // default roles a fresh curator-owned project is actually seeded with
+  // (foundation-skeletons.js's seeding order).
+  const zeroExplicit = composeDraftingAsk({ domain: 'acme', project: 'lumina', documents: [] });
+  const zeroOmitted = composeDraftingAsk({ domain: 'acme', project: 'lumina' });
+  eq('an empty documents array falls back to the four default roles, named',
+    zeroExplicit.includes('— architecture, decisions, conventions and roadmap —'), true);
+  eq('...and an OMITTED documents argument renders byte-identically',
+    zeroOmitted, zeroExplicit);
+
+  ok('the domain/project pair substitutes exactly as it does for the entry-file block',
+    three.includes('project curator/curator —'));
+
+  // PURITY. No shared state, no clock, no I/O.
+  const p1 = composeDraftingAsk({ domain: 'd', project: 'p' });
+  composeDraftingAsk({ domain: 'other', project: 'other', documents: [{ role: 'x' }] });
+  const p2 = composeDraftingAsk({ domain: 'd', project: 'p' });
+  eq('same arguments in, byte-identical string out', p1, p2);
+  ok('TEMPLATE_DRAFT_ASK is not mutated by composing from it',
+    TEMPLATE_DRAFT_ASK.includes('{{DOMAIN_PROJECT}}') && TEMPLATE_DRAFT_ASK.includes('{{DOCUMENTS}}'));
+
+  // THE REFUSAL -- same shape as composeAgentInstructions, same reason: a
+  // rendered sentence naming project "" tells an agent to save_foundation
+  // into a project that cannot exist.
+  threw('an empty project is refused, not composed around',
+    () => composeDraftingAsk({ domain: 'd', project: '' }));
+  threw('an empty domain is refused too', () => composeDraftingAsk({ domain: '', project: 'p' }));
+  threw('a missing project is refused', () => composeDraftingAsk({ domain: 'd' }));
+  threw('no arguments at all is refused', () => composeDraftingAsk());
+  threw('...as is a non-object argument', () => composeDraftingAsk('acme/lumina'));
+  threw('...and a numeric project, which is not a slug', () => composeDraftingAsk({ domain: 'd', project: 7 }));
+
+  // NEVER APPENDED. The whole reason this is a fourth, separate constant.
+  const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
+  ok('composeAgentInstructionsFull does NOT carry the drafting ask',
+    !full.includes('Draft the unfilled foundations'));
+  ok('...nor any fragment of its wording',
+    !full.includes('save_foundation and commissioned_by_owner'));
+
+  // The pins this whole section exists to protect: S1's, S7's and S8's facts
+  // about the first three constants must all still hold -- proof that adding
+  // a fourth constant touched none of them.
+  const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
+  const ORIGINAL_SHA256 =
+    '85dc8f9738e783e3c909133fd899c84978aa48b7c4e2c9ab922d927305244f5b';
+  const FOUNDATIONS_SHA256 =
+    '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b';
+  const SEED_SHA256 =
+    'f28cc8c1a30a5ef17266bd466660f4f5ff93117e548c3d6793af473a7ff89180';
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 501 bytes',
+    Buffer.byteLength(original, 'utf8'), 501);
+  eq('...and still hashes to 85dc8f97...',
+    createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
+  eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 0c522294...',
+    createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
+  eq('S8\'s pin still bites: TEMPLATE_SEED still hashes to f28cc8c1...',
+    createHash('sha256').update(TEMPLATE_SEED, 'utf8').digest('hex'), SEED_SHA256);
+  eq('...and composeAgentInstructionsFull is still exactly the three-paragraph v3.61.0 shape',
+    full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED);
+
+  // ONE TEXT. Extends S6's scan (same mechanism, same reason) to this
+  // constant's distinguishing sentences: nothing yet imports
+  // composeDraftingAsk into a view, so today this is vacuously true, but it is
+  // the tripwire that keeps it true once a view does.
+  for (const [name, src] of [['domains.js', DOMAINS_SRC], ['memory.js', MEMORY_SRC]]) {
+    ok(name + ' does not carry a second copy of the drafting-ask sentence',
+      !src.includes('Draft the unfilled foundations of the Curator project'));
+    ok(name + ' does not carry a second copy of its approval-gate sentence',
+      !src.includes('save_foundation and commissioned_by_owner'));
+  }
 }
 
 console.log('\n' + '─'.repeat(60));

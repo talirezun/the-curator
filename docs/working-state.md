@@ -710,6 +710,14 @@ existing, ownerless project's Foundations block:
   later", writes no manifest at all — the project exists, its foundations do not, and the same
   choice is offered again the first time its Foundations block is opened and finds none.
 
+**Asking an agent to draft a skeleton, without composing the request yourself.** The app hands out
+one ready-made sentence for this — naming the project, its actual unfilled documents, and the
+`save_foundation` / `commissioned_by_owner` gate — from a single pinned template
+(`TEMPLATE_DRAFT_ASK` / `composeDraftingAsk` in `src/public/next/shared/agent-instructions.js`),
+so the words a user pastes into Claude Code, Claude Desktop or Cursor are the SAME text everywhere
+rather than a per-screen paraphrase; it is a one-off chat message and, unlike the standing
+agent-instructions block, is never appended to it.
+
 ### Freshness is computed, never remembered
 
 There is no "fresh" flag stored anywhere. A repo-owned document's freshness is answered fresh, at

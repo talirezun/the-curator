@@ -3394,6 +3394,11 @@ v3.61.0 there was exactly one: asking an agent to write it. All three now:
 | **Choose a file…** | Read from your disk into the editor, shown to you, saved only when you press **Save** — a `curator`-owned copy from here on, with no checkout behind it | The document exists as a file, but you don't want a repository dependency, or the project has no repository at all |
 | **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
 
+**Asking, without composing the request yourself.** The Foundations block's **Copy the drafting
+request** puts a ready-made ask on your clipboard — naming this project, its actual unfilled
+documents, and the `save_foundation` / `commissioned_by_owner` gate — the exact same sentence in
+every harness, because it comes from one pinned template rather than being retyped per screen.
+
 ### Making sure your agent actually does it
 
 Everything above assumes the agent *reaches for* the continuity skill. On some harnesses it does
