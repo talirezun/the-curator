@@ -61,8 +61,7 @@
  * Run with:  node scripts/test-foundations-init.js     (exit 0 = all green)
  */
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, statSync, realpathSync,
-} from 'fs';
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, statSync, realpathSync, utimesSync } from 'fs';
 import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -654,6 +653,44 @@ const SCAN = path.join(TMP, 'onboard');
   assert(s.candidates[0].suggestedRole === 'architecture', '…and the first row really is the architecture one');
   assert(s.truncated === false && s.cap === MAX_REPO_SCAN_CANDIDATES && s.maxDocumentBytes === MAX_FOUNDATION_BYTES,
     'the response carries truncated:false, the cap and the per-document limit');
+
+  // ── `modifiedAt` — THE SOURCE FILE'S OWN AGE (v3.61.1) ────────────────
+  //
+  // Why the field exists: a picker that lists twelve paths, twelve titles and
+  // twelve sizes still cannot answer the one question somebody onboarding a
+  // real repository asks about each of them — is this document still
+  // maintained. It comes off the `stat` the scan already does for the size,
+  // so it costs no syscall, and the picker renders it on the app's shared
+  // freshness scale.
+  //
+  // Driven against a KNOWN mtime rather than "some ISO string": a field read
+  // from the wrong stat (the symlink's rather than its target's, say) would
+  // still look like a timestamp.
+  {
+    const KNOWN = new Date('2025-03-04T05:06:07.000Z');
+    utimesSync(path.join(SCAN, 'docs/architecture.md'), KNOWN, KNOWN);
+    const s2 = await scanRepoForFoundations(SCAN);
+    const arch2 = s2.candidates.find((c) => c.path === 'docs/architecture.md') || {};
+    assert(arch2.modifiedAt === KNOWN.toISOString(),
+      'each row carries `modifiedAt`, the source file’s own mtime, as an ISO string',
+      jstr({ got: arch2.modifiedAt, want: KNOWN.toISOString() }));
+    // UNIFORM ACROSS ROWS, including the refused one: the age is a fact about
+    // the file, not a property of being usable, and a field that means
+    // "unknown" on some rows and "too large" on others means nothing.
+    assert(s2.candidates.every((c) => c.modifiedAt === null || typeof c.modifiedAt === 'string'),
+      '…and every row carries the field, a string or null, never absent',
+      jstr(s2.candidates.map((c) => typeof c.modifiedAt)));
+    const huge2 = s2.candidates.find((c) => c.path === 'docs/huge.md') || {};
+    assert(typeof huge2.modifiedAt === 'string',
+      '…including the row over the per-document cap, which is still a real file with a real age',
+      jstr(huge2.modifiedAt));
+    // AND THE SORT IS UNTOUCHED. The maintainer asked to SEE the age, not to
+    // have the rows rearranged by it: the oldest document in the tree is still
+    // first when its role ranks first.
+    assert(s2.candidates[0].path === 'docs/architecture.md',
+      '…and the oldest file in the tree is STILL the first row, because the sort is role '
+      + 'rank then path and `modifiedAt` does not enter it', jstr(s2.candidates[0]));
+  }
 
   // Refusals, and the two that must not be conflated.
   for (const badRoot of ['', '   ', 'relative/docs', './x', 42, null, undefined]) {

@@ -1258,7 +1258,16 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // "does an in-flight write observe this", not "does it touch the disk" —
     // the same axis that exempts /ui-state and /background-mode, applied the
     // other way round.
-    expectedMutatingCount: 16,
+    // 16 -> 17: POST /pick-path (v3.61.1) — opens a folder dialog and RETURNS
+    // THE PATH, mutating nothing. It is the deliberate counterpart of
+    // /pick-folder directly above it in the source, which opens the same dialog
+    // and then calls setDomainsDir() itself; the Foundations chooser needs a
+    // folder name for a text field and must not repoint the knowledge base to
+    // get it. This tripwire fired on it, which is the tripwire working: the
+    // bump IS the human look the comment above demands, and the exemption below
+    // carries the reason — including the assertion, driven in §17, that the
+    // route calls no setter at all.
+    expectedMutatingCount: 17,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
@@ -1271,6 +1280,8 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
           'selects which domain MCP write tools assume when the caller does not name one; an in-flight write already carries an explicit domain captured at request time, so changing this default cannot affect it (see CLAUDE.md section 5 of this same file\'s own docblock).' },
         { method: 'POST', path: '/ui-state', reason:
           'records "the user has already been told this" — a privacy consent, two one-time dismissals and the install-origin verdict. Nothing on any WRITE path reads these four fields: they are consumed only by views/onboarding.js, views/cutover-notice.js and views/domains.js when deciding whether to put a panel on screen, so an in-flight ingest, sync or update cannot observe the change. Guarding it would be actively HARMFUL for the same reason api-keys/validate is exempt above and GET /api/ingest/activity is unguarded: a 409 would fire precisely while a long ingest is running, i.e. exactly when the user dismisses a panel — and the failure it would cause is the app re-showing something the user already dismissed, which is the symptom this endpoint exists to prevent. The write itself is bounded to five literal strings by setUiState()\'s allow-list (src/brain/config.js), so an unguarded POST cannot put attacker-chosen content into .curator-config.json.' },
+        { method: 'POST', path: '/pick-path', reason:
+          'shows a folder dialog and answers with the chosen path. It is a POST because it has a side effect on the SCREEN (a modal dialog) and takes a body (the prompt KEY, looked up in a frozen table of literals because the repo arm builds a shell command), not because it writes anything: it calls no setter, touches no file and holds no lock — §17 of this file drives it against a fake picker and asserts that setDomainsDir is never reached and that .curator-config.json is byte-identical afterwards. Guarding it would be wrong in the same way /ui-state\'s would be, and worse: the dialog blocks for as long as the person browses, so a 409 raised by an in-flight write would refuse the one control that makes the Foundations chooser usable, in favour of protecting state this route cannot reach. The route it is NOT is /pick-folder, which opens the same dialog and then mutates the knowledge-base path — that one is guarded, twice (middleware plus a re-check after the dialog closes), and this exemption must never be read as covering it.' },
         { method: 'POST', path: '/background-mode', reason:
           'records whether this install shows a menu bar icon, and whether it keeps its Dock icon — a three-value enum read by the desktop shell before it creates the tray or the window, and again when the user flips it. NOTHING on any write path reads it: unlike domainsPath (which getDomainsDir() re-resolves per call, mid-ingest included) and the provider/model fields (which getProviderInfo() and resolveProviderDefault() re-resolve per LLM call), this value is consumed only by desktop/ at startup and on change, so an in-flight ingest, sync or update cannot observe it. Guarding it would be actively HARMFUL for the same reason /ui-state is exempt above: a 409 would fire precisely while a long ingest is running, refusing to let the user turn OFF a menu bar icon because the app is busy doing something the icon has no bearing on. The write itself is bounded to three literal strings by setBackgroundMode()\'s allow-list (src/brain/config.js), which REFUSES rather than coercing, so an unguarded POST cannot put attacker-chosen content into .curator-config.json and cannot leave the UI reporting a mode the file does not hold.' },
         { method: 'POST', path: '/api-keys/validate', reason:
@@ -2376,6 +2387,125 @@ console.log('\n=== 16. RE-CONFIRM: a present-but-inert WRITABILITY guard IS caug
     ') — proving the writability axis is only trustworthy BECAUSE it is driven live end-to-end (section 13) against every one of its 8 routes, not because bodyIsGuarded\'s source scan is reliable on its own (it is not — see section 15). If section 13 were ever weakened to a source-scan-only check, this exact shape would go undetected on the writability axis too.');
 
   await new Promise(r => mutServer16.close(r));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// 17. POST /pick-path IS A READ (v3.61.1) — driven, not asserted by name
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The exemption above claims two things and this section proves both: the
+// route answers a folder pick WITHOUT mutating anything, and it is not
+// `pick-folder` wearing a different name. The second half matters more than
+// the first — the two routes open the SAME dialog, and the only difference is
+// the four lines after it closes. A future edit that "unified" them would be
+// invisible to every other assertion in this file, because the route would
+// still be exempt and the exemption would still read plausibly.
+{
+  console.log('\n=== 17. POST /pick-path opens a dialog and mutates NOTHING (v3.61.1) ===');
+  const { pickPathHandler } = await import('../src/routes/config.js');
+  const { getDomainsDir } = await import('../src/brain/config.js');
+
+  const fakeRes = () => {
+    const r = { code: 200, body: null };
+    r.status = (c) => { r.code = c; return r; };
+    r.json = (b) => { r.body = b; return r; };
+    return r;
+  };
+  const NATIVE = { folderPickerStyle: 'native-dialog' };
+
+  // BEFORE: the resolved knowledge folder and the config file's own bytes.
+  const dirBefore = getDomainsDir();
+  const cfgPath = getCuratorConfigFile();
+  const cfgBefore = existsSync(cfgPath)
+    ? createHash('sha256').update(readFileSync(cfgPath)).digest('hex') : 'absent';
+
+  let promptSeen = null;
+  const r1 = fakeRes();
+  await pickPathHandler({ body: { prompt: 'foundations' } }, r1, {
+    caps: NATIVE,
+    pickFolderHook: async ({ prompt }) => { promptSeen = prompt; return '/Users/someone/code/thing'; },
+  });
+  eq(r1.code, 200, 'pick-path: a chosen folder answers 200');
+  assert(r1.body && r1.body.ok === true && r1.body.path === '/Users/someone/code/thing',
+    'pick-path: ...and carries the path the dialog returned (' + JSON.stringify(r1.body) + ')');
+  assert(typeof promptSeen === 'string' && /documents/i.test(promptSeen),
+    'pick-path: the prompt the hook is shown comes from the ROUTE\'s frozen table, keyed by the ' +
+    'body\'s `prompt` — never the client\'s own text, because the repo arm interpolates it into a ' +
+    'shell command (' + JSON.stringify(promptSeen) + ')');
+
+  // THE ONE THAT MATTERS: nothing moved.
+  eq(getDomainsDir(), dirBefore,
+    'pick-path: the resolved knowledge folder is UNCHANGED after a successful pick — this is the ' +
+    'whole reason the route exists rather than a flag on /pick-folder');
+  const cfgAfter = existsSync(cfgPath)
+    ? createHash('sha256').update(readFileSync(cfgPath)).digest('hex') : 'absent';
+  eq(cfgAfter, cfgBefore,
+    'pick-path: ...and .curator-config.json is byte-identical (sha256), so the route wrote no ' +
+    'setting of any kind');
+
+  // AND THE SOURCE SCAN, WITH ITS OWN POSITIVE CONTROL. A behavioural check
+  // cannot see a mutation the fake never triggers, so the handler's own body
+  // is scanned for every setter token — and the scan is proven non-vacuous by
+  // running it against `pickFolderHandler`, which MUST contain one.
+  {
+    const src = readFileSync(path.join(REPO_ROOT, 'src/routes/config.js'), 'utf8');
+    const bodyOf = (name) => {
+      const i = src.search(new RegExp('export\\s+async\\s+function\\s+' + name + '\\s*\\('));
+      if (i < 0) return null;
+      let depth = 0, started = false;
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') { depth++; started = true; } else if (src[j] === '}') { depth--; }
+        if (started && depth === 0) return src.slice(i, j + 1);
+      }
+      return null;
+    };
+    const SETTERS = ['setDomainsDir', 'setApiKeys', 'setConfig', 'writeFileAtomic', 'setUiState'];
+    const pickPathBody = bodyOf('pickPathHandler');
+    const pickFolderBody = bodyOf('pickFolderHandler');
+    assert(pickPathBody && pickFolderBody, 'pick-path: both handler bodies brace-matched');
+    const found = SETTERS.filter((t) => pickPathBody.includes(t));
+    eq(found.length, 0,
+      'pick-path: its handler body names NO setter (' + SETTERS.join(', ') + ') — found: ' + JSON.stringify(found));
+    assert(SETTERS.some((t) => pickFolderBody.includes(t)),
+      'pick-path CONTROL: the same scan finds a setter in pickFolderHandler, so the assertion above ' +
+      'is a measurement rather than a scan that cannot fail');
+  }
+
+  // THE OTHER THREE ANSWERS, each keyed on `reason` alone.
+  const r2 = fakeRes();
+  await pickPathHandler({ body: {} }, r2, { caps: NATIVE, pickFolderHook: async () => null });
+  assert(r2.code === 200 && r2.body && r2.body.reason === 'cancelled',
+    'pick-path: a dismissed dialog is `cancelled` at 200 — not an error, and the UI says nothing');
+
+  const r3 = fakeRes();
+  await pickPathHandler({ body: {} }, r3, { caps: NATIVE, pickFolderHook: null });
+  assert(r3.code === 501 && r3.body && r3.body.reason === 'no-dialog',
+    'pick-path: no desktop bridge answers `no-dialog` at 501 — the one answer that WITHHOLDS the ' +
+    'button, with the typed field named in the hint');
+  assert(r3.body && /type or paste/i.test(r3.body.hint || ''),
+    'pick-path: ...and the hint names the way that still works');
+
+  const r4 = fakeRes();
+  await pickPathHandler({ body: {} }, r4, {
+    caps: NATIVE, pickFolderHook: async () => { throw new Error('the dialog exploded'); },
+  });
+  assert(r4.code === 500 && r4.body && r4.body.reason === 'failed' && /exploded/.test(r4.body.message),
+    'pick-path: a picker that should have worked and did not is `failed`, carrying the reason');
+
+  // AN UNKNOWN PROMPT KEY TAKES THE DEFAULT rather than being refused: the
+  // worst outcome of a stale client must be a generic dialog title, not a
+  // dead first-run task. `__proto__` is the hostile shape the own-property
+  // lookup exists for.
+  for (const key of ['not-a-key', '__proto__', 'constructor']) {
+    const rp = fakeRes();
+    let seen = null;
+    await pickPathHandler({ body: { prompt: key } }, rp, {
+      caps: NATIVE, pickFolderHook: async ({ prompt }) => { seen = prompt; return '/x'; },
+    });
+    assert(rp.code === 200 && typeof seen === 'string' && seen.length > 0 && !seen.includes(key),
+      'pick-path: the prompt key ' + JSON.stringify(key) + ' falls back to the frozen default ' +
+      'rather than reaching the dialog (' + JSON.stringify(seen) + ')');
+  }
 }
 
 // ── Teardown ─────────────────────────────────────────────────────────────

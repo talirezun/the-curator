@@ -1050,6 +1050,22 @@
   align-items: center;
   gap: var(--space-2);
 }
+/* ── THE DOCUMENTS FIELD'S RHYTHM (v3.61.1) ──────────────────────────────
+   The other host of shared/foundations-init.js had the identical defect and
+   takes the identical fix (views/memory.css's `.mem-fnd-init-wrap`): the
+   description, the never-folded "Set once" note and the option cards were
+   **0px** apart, because none of the three carries a bottom margin. 16px is
+   the kit's group step, one rung under the 24px block step — these are parts
+   of one field, not separate blocks.
+
+   `gap` and not margins, and a wrapper class and not `.tx-note + …`: this
+   stylesheet may not declare a rule on a `tx-` name (shared/text.css owns
+   that prefix; scripts/test-next-text-system.js fails a second declarer). */
+.dm-proj-fnd-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
 .dm-lc-input {
   width: 100%;
   max-width: 420px;

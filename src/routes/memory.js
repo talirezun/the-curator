@@ -46,9 +46,12 @@
  *     down, beside the code it governs.
  *
  * So the write surface here is: create / rename / delete a project, replace
- * a project's brief, and — on a curator-owned project only — set, write or
- * remove one canonical document. All tier 1 and tier 0, all on files an
- * agent does not race for.
+ * a project's brief, set the ownership once, WRITE one canonical document on a
+ * curator-owned project only — and REMOVE one on either ownership (v3.61.2).
+ * The asymmetry is the point and is argued at `requireManifest`: an edit to a
+ * mirrored document would make two writers of one file, while removing its
+ * entry is the decision to stop mirroring it and touches nothing in the
+ * folder. All tier 1 and tier 0, all on files an agent does not race for.
  *
  * ── THE ONE PROPERTY THIS DOES COST, STATED RATHER THAN IMPLIED AWAY ─────
  * `project.md` has no `<machine>` segment, so it is the one file in the
@@ -77,7 +80,12 @@
  *   DELETE /:domain/projects/:project        delete        {confirm}
  *   GET    /:domain/:project/foundations/:slug   one document (`?raw=1`)
  *   PUT    /:domain/:project/foundations/:slug   write one  {text, title?, role?}
- *   DELETE /:domain/:project/foundations/:slug   remove one {confirm}
+ *   DELETE /:domain/:project/foundations/:slug   remove one {confirm} — EITHER
+ *                                                ownership (v3.61.2): on a
+ *                                                mirror it stops mirroring
+ *                                                that document and leaves the
+ *                                                source file alone; only PUT
+ *                                                is curator-only
  *   POST   /:domain/:project/foundations/init    set ownership ONCE
  *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?}
  *   GET    /:domain/:project                 one project's brief + state
@@ -911,6 +919,55 @@ async function requireCuratorOwned(res, domain, project) {
   return { ok: true, index };
 }
 
+/**
+ * The same read, WITHOUT the ownership refusal — for REMOVAL (v3.61.2).
+ *
+ * ── WHY REMOVAL IS NOT AN EDIT, AND WHY v3.61.0 GOT THIS WRONG ───────────
+ * `requireCuratorOwned` refuses a mirror because an EDIT there would be
+ * overwritten by the next refresh: the folder is the author, so a write here
+ * would make two writers of one file. That argument does not reach removal.
+ * Removing a mirrored document is not a claim about its CONTENT, it is the
+ * decision to stop mirroring it — and the refresh's work list is built from
+ * `manifest.documents` (`refreshCore`, working-state.js), so an entry that is
+ * gone STAYS gone until somebody names that file again. v3.61.0's own comment
+ * here claimed "the next refresh would simply put it back", and the code says
+ * otherwise; the release recorded the refusal as "arguably wrong" and this is
+ * the correction.
+ *
+ * What it leaves in place: the typed confirmation, the slug grammar, the
+ * read-only-mirror refusal, `no_manifest` and `manifest_unreadable`. PUT keeps
+ * `requireCuratorOwned` unchanged — a mirrored document still cannot be
+ * EDITED here, which is the invariant that matters.
+ *
+ * Returns `{ok: true, index}` or sends the refusal and returns `{ok: false}`.
+ */
+async function requireManifest(res, domain, project) {
+  let index;
+  try { index = await fstore().listFoundations(domain, project); }
+  catch (err) {
+    res.status(500).json({ ok: false, reason: 'io', error: err.message });
+    return { ok: false };
+  }
+  if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
+  if (index && index.manifestError) {
+    res.status(400).json({
+      ok: false, reason: 'manifest_unreadable', domain, project, manifestError: index.manifestError,
+      error: `This project's foundations/manifest.json could not be read (${index.manifestError}). `
+        + 'Nothing was removed: rewriting a manifest this app cannot read could drop entries for '
+        + 'documents it cannot see. Fix or remove that file first.',
+    });
+    return { ok: false };
+  }
+  if (!index || index.present !== true) {
+    res.status(400).json({
+      ok: false, reason: 'no_manifest', domain, project,
+      error: 'This project has no canonical documents yet, so there is nothing to remove.',
+    });
+    return { ok: false };
+  }
+  return { ok: true, index };
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // GUARDS — every one of them runs BEFORE any path is built.
 // ═════════════════════════════════════════════════════════════════════════
@@ -1057,6 +1114,14 @@ router.get('/repo-scan', async (req, res) => {
         // called `adr/` has to be able to say why it is there.
         matchedBy: c.matchedBy ?? null,
         firstHeading: c.firstHeading ?? null,
+        // ── WHEN THE SOURCE FILE WAS LAST TOUCHED (v3.61.1) ────────────
+        // The store's ISO `mtime`, forwarded FIELD BY FIELD like every
+        // other key here rather than by a spread, so a field the store
+        // grows does not reach a client until somebody decides it should.
+        // `?? null` and not a truthiness test: the store already answers
+        // null for an unreadable timestamp, and the picker renders an
+        // absent age as "unknown" rather than inventing one.
+        modifiedAt: typeof c.modifiedAt === 'string' ? c.modifiedAt : null,
       })),
       truncated: out.truncated === true,
       // THE CAP, THE DEPTH AND THE WALL, named rather than left for a view
@@ -1587,18 +1652,40 @@ router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
       });
     }
 
-    // OWNERSHIP IS CHECKED AFTER THE CONFIRMATION and before anything is
-    // removed. A mirrored document is dropped by no longer listing it on the
-    // next refresh, never by deleting the copy — which the next refresh
-    // would simply put back.
-    const gate = await requireCuratorOwned(res, domain, project);
+    // ── REMOVAL WORKS ON BOTH OWNERSHIPS (v3.61.2) ──────────────────────
+    //
+    // It did not, and that was the defect: `requireCuratorOwned` refused a
+    // mirror here on the grounds — written into this comment in v3.61.0 —
+    // that "a mirrored document is dropped by no longer listing it on the next
+    // refresh, never by deleting the copy, which the next refresh would simply
+    // put back". The second half is false. `refreshCore` builds its work list
+    // from `manifest.documents`, so an entry that is gone stays gone; and the
+    // first half describes a control the app does not have. The result was a
+    // mirrored project whose document list could not be edited at all —
+    // reported by the maintainer on his own repository, 25 rows including
+    // files he never meant to mirror. v3.61.0 recorded the refusal as
+    // "arguably wrong"; it is wrong.
+    //
+    // So the gate is the MANIFEST rather than the ownership, and the ownership
+    // is REPORTED instead, because the outcome a person needs to read differs:
+    // a curator document is gone for good, a mirror's SOURCE FILE is untouched
+    // and can be mirrored again. `PUT` keeps `requireCuratorOwned` — a
+    // mirrored document still cannot be edited here, which is the invariant
+    // the two-writers argument actually protects.
+    const gate = await requireManifest(res, domain, project);
     if (!gate.ok) return;
+    const wasMirrored = gate.index && gate.index.ownership === 'repo';
 
     const out = await fstore().removeFoundation(domain, project, slug);
     if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
     res.json({
       ok: true, domain, project,
       removed: out.slug || slug,
+      // WHICH OUTCOME THIS WAS. The copy is gone either way; on a mirror the
+      // file it was copied FROM is still in the folder, and saying so is the
+      // difference between "stopped mirroring" and "deleted my document".
+      ownership: wasMirrored ? 'repo' : 'curator',
+      sourceKept: wasMirrored === true,
       // WHAT IT WAS. An orphan is a file on disk the manifest never listed —
       // the shape a crash between a document write and the manifest write
       // leaves behind — and removing one is a legitimate cleanup, reported

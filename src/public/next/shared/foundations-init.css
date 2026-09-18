@@ -27,10 +27,41 @@
    and this surface has no freshness reading to paint anyway: a document that
    has not been mirrored yet cannot be fresh or stale against anything. */
 
+/* ── THE RHYTHM (v3.61.1) ─────────────────────────────────────────────────
+   THE REPORTED DEFECT, in the maintainer's words on the shipped v3.61.0
+   block: "very cramped together". Measured in the browser at 1370px before
+   the change, top to bottom:
+
+     block lede → the "Set once" note        16px
+     "Set once" note → the card               0px
+     question line → the option cards         0px
+     option cards → the arm's controls        8px
+     seed tick → the file row                 6px
+     the arm → the action row                 4px
+
+   Three of those six are at or under 8px, and two are ZERO — the question
+   "Choose how they arrive." literally touched the option cards, and the card
+   touched the note above it. Nothing was wrong with any single value; what
+   was missing is a RHYTHM, in which a gap between two things says how
+   related they are.
+
+   The ladder this uses is the kit's own, and it is the one design-system §2
+   states for the Settings block: 24px (`--space-12`) between things that are
+   separate decisions, 16px (`--space-8`) between groups inside one decision,
+   and 6–8px inside a group. So:
+
+     the chooser's own stack (question → options → arm → …)   16px
+     the arm's controls, as a group                            12px
+     a row's internals                                          6px
+
+   and the arm is INDENTED under the option that opened it rather than
+   sitting at the option cards' own level, which is the other half of the
+   complaint: the seed tick and the file row read as three more items in one
+   flat list of six, at the same indent as the two choices above them. */
 .fnd-init {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-8);
 }
 
 /* ── THE TWO (OR THREE) ANSWERS ───────────────────────────────────────────
@@ -63,7 +94,10 @@
      the chooser 49px past its own card. `min(…, 100%)` caps the track at the
      container, so the layout degrades to one column and 0px of overflow. */
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  gap: var(--space-3);
+  /* 6px between two cards a person is choosing BETWEEN read as one control
+     with a seam in it. 12px is the kit's step for items inside a group and is
+     the same gap the arm gives its own controls. */
+  gap: var(--space-6);
 }
 .fnd-init-opt {
   display: flex;
@@ -100,12 +134,56 @@
   line-height: var(--leading-normal);
 }
 
-/* ── THE ARM THE ANSWER OPENS ─────────────────────────────────────────── */
+/* ── THE ARM THE ANSWER OPENS ───────────────────────────────────────────
+   A SUB-PANEL UNDER THE OPTION THAT OPENED IT (v3.61.1), not a sixth item in
+   a flat list. Three devices, all cheap and all existing tokens: a 2px rule
+   on the accent BORDER ink (the same ink the pressed option card's own border
+   takes, so the arm reads as belonging to it), the faint accent wash the ⓘ
+   panel already uses for "this is subordinate to the thing above it", and an
+   indent.
+
+   NO NEW COLOUR: `--accent-border` and `--accent-tint` are both already on
+   screen in this component, on the pressed option card immediately above.
+
+   The rule is on the INLINE-START edge (`border-inline-start`), which is the
+   edge the indent is on, so the two agree without a second literal. */
 .fnd-init-arm {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-6);
+  padding: var(--space-4) 0 var(--space-4) var(--space-8);
+  border-inline-start: 2px solid var(--accent-border);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--accent-tint);
 }
+/* The arm's own instruction, and the one above the candidate list. Both are
+   INSTRUCTIONS in design-system §3's sense — what to do next, and what a tick
+   means — and both are one line at the widths this component renders at. They
+   take the same face as a block lede and the note's colour, because they do a
+   lede's job inside a group rather than at a block's head. */
+.fnd-init-armhd,
+.fnd-init-listhd {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-2);
+  max-width: var(--prose-max);
+}
+/* THE REASON A CONTROL IS OFF, and the file-picker's privacy line. `.tx-note`
+   owns the face; this kills only its top margin, because inside a flex column
+   with a `gap` a margin would add to the gap rather than replace it.
+
+   ── AND THE `[hidden]` COUNTER-RULE (design-system §9) ─────────────────
+   `.tx-note` declares `display: flex`, and an author rule that sets `display`
+   DEFEATS the `hidden` attribute — the UA's `[hidden] { display: none }` is
+   an author-beatable rule, so the note would be visible in every state and
+   every markup assertion about it would still be green. Both of these notes
+   are emitted ALWAYS and toggled by `hidden` on the live node (the fields
+   beside them must not be re-rendered under the caret), so the counter-rule
+   is load-bearing rather than defensive. (0,2,0) beats `.tx-note`'s (0,1,0)
+   whatever the order. */
+.fnd-init-why { margin-top: 0; }
+.fnd-init-why[hidden] { display: none; }
 .fnd-init-label { display: block; }
 .fnd-init-row {
   display: flex;
@@ -270,6 +348,28 @@
   color: var(--text-2);
   font-variant-numeric: var(--numeric-tabular);
 }
+/* THE OVER-BUDGET WARNING. Emitted always and `hidden` under the budget, for
+   the same reason the reason-notes are — the tick that crosses the line
+   patches this node rather than re-rendering the list. `.fnd-init-note` sets
+   `display: flex`, so it needs the same counter-rule (design-system §9). */
+.fnd-init-budget[hidden] { display: none; }
+
+/* ── THE SOURCE FILE'S AGE, ON THE ROW (v3.61.1) ─────────────────────────
+   The shared dot and the shared words. NOTHING HERE DECLARES A `.fresh-`
+   RULE — shared/freshness.css owns that prefix outright and
+   scripts/test-freshness-scale.js fails a second declarer — so the gap
+   between the mark and the word belongs to this wrapper, exactly as
+   views/memory.css's `.fnd-fresh` does for the documents table. And no
+   `--fresh-*` token touches text here: the dot is the graphic, the word is
+   the fact, and `--text-3` is a text colour that clears the 4.5 floor. */
+.fnd-init-cand-age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
 
 /* ── THE SEVEN ROLES ──────────────────────────────────────────────────────
    One pressed. `flex: 0 0 auto` so a role never stretches: these are seven
@@ -279,6 +379,36 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   flex: 1 1 100%;
+}
+/* ── THE SLOT ONE ROW'S OPTIONS ARE WRITTEN INTO (v3.61.1) ───────────────
+   Part of every candidate row, filled by the binder for the ONE row whose
+   role is being changed. `:empty` rather than a `hidden` attribute, because
+   the binder's write is `innerHTML = ''` — the emptiness IS the state, and a
+   second flag saying the same thing is a second thing to get wrong. It takes
+   the full row width so seven options wrap under the row rather than beside
+   it. */
+.fnd-init-roleslot { flex: 1 1 100%; }
+.fnd-init-roleslot:empty { display: none; }
+
+/* ── "as <role>", INSIDE THE TYPED-PATH GROUP (v3.61.1) ──────────────────
+   The seven chips used to sit at the arm's own level under this field, with
+   no label, which is how they read as an unexplained row of buttons. The word
+   "as" is what makes the row a sentence about the field above it.
+
+   `[hidden]` counter-rule, again by necessity: this rule sets `display`, and
+   the row is revealed by the field's input handler toggling the attribute on
+   the live node rather than by a render. */
+.fnd-init-extra-as {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.fnd-init-extra-as[hidden] { display: none; }
+.fnd-init-as-word {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
 }
 .fnd-init-role {
   flex: 0 0 auto;
@@ -327,6 +457,11 @@
    flex row, and no `cursor` rule, because a <button> already carries the
    kit's. */
 .fnd-init-file { flex: none; }
+/* The native folder picker, beside the typed field. `flex: none` for the
+   reason every other control in these rows carries it: the field is the item
+   that grows, and a button that stretches to fill a gap reads as the row's
+   subject. */
+.fnd-init-pick { flex: none; }
 .fnd-init-file-hint {
   flex: 1 1 200px;
   min-width: 0;
