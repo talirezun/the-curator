@@ -260,7 +260,7 @@ if (renderGeneralSrc) {
 }
 
 // ── §6  GENERAL IS FOUR UNNUMBERED BLOCKS, AND THE LEDES ARE SHORT ────────
-console.log('\n§6  General uses settingsBlock, and no lede runs past 20 words');
+console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words');
 // ─────────────────────────────────────────────────────────────────────────
 // §5 above pins the ORDER of the four blocks. This pins the SHAPE they now
 // have, and it is driven rather than grepped: renderGeneral is lifted out of
@@ -378,7 +378,7 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 20 words')
       const n = l.split(/\s+/).filter(Boolean).length;
       ledesSeen++;
       worst = Math.max(worst, n);
-      ok(n <= 20, `"${label}" lede is ${n} visible words (ceiling 20): ${l}`);
+      ok(n <= 13, `"${label}" lede is ${n} visible words (ceiling 13, the v3.58.0 rule): ${l}`);
     }
   }
   ok(ledesSeen === 12, `CONTROL: twelve ledes were actually measured across the three modes (got ${ledesSeen}) — ` +

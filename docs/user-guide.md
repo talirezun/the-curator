@@ -3832,8 +3832,9 @@ mean?"* be a question you have. There is a [picture of it](#option-c--my-curator
 in §13.
 
 Block ① opens with the one fact a newcomer needs — **"Works with any MCP client
-that runs local servers: Claude Desktop, Claude Code, Cursor."** — and a link to
-the [MCP guide](mcp-user-guide.md). Under the **ⓘ** beside it: that ChatGPT's web
+running local servers: Claude Desktop, Claude Code, Cursor."** — thirteen words,
+nothing more. Under the **ⓘ** beside it: the link to the
+[MCP guide](mcp-user-guide.md), and that ChatGPT's web
 app cannot connect because it cannot run a local server (the limit is the
 transport, not the vendor), that the bridge is a separate process the client
 launches on demand so The Curator need not be running, and that setting up writes
