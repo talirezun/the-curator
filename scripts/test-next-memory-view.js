@@ -1162,6 +1162,13 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'fndSize', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
+    // ── THE ROW-REMOVE CONFIRM STRIP (v3.61.2) ──────────────────────────
+    // Lifted rather than stubbed: it is the sentence somebody reads before
+    // stopping a mirror, and the difference between it and the editor's
+    // delete strip — the SOURCE FILE is untouched — is the whole reason it
+    // is a second renderer. A stub would let that sentence go missing with
+    // every assertion here green.
+    extractFunction(viewSrc, 'renderFoundationStop', 'memory.js') + '\n' +
     // ── "COPY THE DRAFTING REQUEST" AND ITS ⓘ (v3.61.0, P2-8) ───────────
     // `foundationsDraftAsk` decides whether the control is offered, withheld
     // with a reason, or absent, and `renderFoundations` composes it — so it is
@@ -2304,13 +2311,26 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 //   POST   …/foundations/init           sets the ownership, ONCE
 //   PUT    …/foundations/:slug          one CURATOR-owned document, verbatim
 //   DELETE …/foundations/:slug          removes one, with the slug as confirm
+//   DELETE …/foundations/:slug          v3.61.2: the ROW control's removal —
+//                                       the SAME route and the same body, from
+//                                       a second call site, because the table
+//                                       can now stop mirroring one document
+//                                       without opening an editor (which a
+//                                       mirrored document has no right to)
 //
 // Every one of them is still on tier 0 or tier 1. NOTHING here can reach a
 // work-stream handoff or a journal: the boundary is unmoved and the assertions
 // below say so by NAMING each URL rather than by counting.
-eq('EXACTLY FIVE fetches in the view carry a request init', withInit.length, 5);
+//
+// SIX, AND THE SIXTH IS NOT A NEW ROUTE. The count is exact on purpose — a
+// floor would let a genuinely new write arrive in silence — so a second caller
+// of an already-declared route still has to be declared, which is this
+// paragraph. What it must NOT do is reach a different URL or carry a different
+// body, and the assertions below check both by name: there is one DELETE
+// SHAPE, asserted over every DELETE the view makes.
+eq('EXACTLY SIX fetches in the view carry a request init', withInit.length, 6);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 5,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 6,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -2370,10 +2390,24 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   // THE SLUG IS SENT AS ITS OWN CONFIRMATION, and the route re-checks it —
   // so a client that skipped the confirm strip deletes nothing. The same
   // discipline the project delete has carried since v3.48.0.
-  ok('...carrying the slug as its own typed confirmation, which the route re-checks',
-    del && /body:\s*JSON\.stringify\(\{\s*confirm:\s*slug\s*\}\)/.test(del.init),
-    del ? del.init.slice(0, 220) : 'none');
-  ok('every one of the five URLs is under /api/memory and escapes its segments',
+  //
+  // ── ASSERTED OVER EVERY DELETE, NOT THE FIRST ONE (v3.61.2) ───────────
+  // There are two call sites now — the editor's footer and the table row's
+  // Remove — and they are the same route with the same body. Checking only
+  // `del` (the first match) would let the second one send anything at all,
+  // which is precisely the shape this section exists to refuse.
+  const dels = withMethod('DELETE');
+  eq('...and there are exactly TWO of them: the editor\'s and the row\'s', dels.length, 2);
+  ok('...EVERY one carrying the slug as its own typed confirmation, which the route re-checks',
+    dels.length > 0 && dels.every((d) => /body:\s*JSON\.stringify\(\{\s*confirm:\s*slug\s*\}\)/.test(d.init)),
+    JSON.stringify(dels.map((d) => d.init.slice(0, 120))));
+  ok('...every one at ONE document under foundations/, never a collection',
+    dels.every((d) => d.url.includes("'/foundations/'")),
+    JSON.stringify(dels.map((d) => d.url.slice(0, 120))));
+  ok('...and none of them naming anything but a slug — no ownership, no force, no path',
+    dels.every((d) => !/ownership|force|repoRoot|path/.test(d.init)),
+    JSON.stringify(dels.map((d) => d.init.slice(0, 160))));
+  ok('every one of the six URLs is under /api/memory and escapes its segments',
     inits.every((x) => x.url.includes("'/api/memory/'") && x.url.includes('encodeURIComponent')),
     JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
   // NONE of the five can reach a work-stream handoff or a journal: neither
@@ -2395,9 +2429,9 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly FIVE `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly SIX `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
-  JSON.stringify(methods) === JSON.stringify(["'DELETE'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
+  JSON.stringify(methods) === JSON.stringify(["'DELETE'", "'DELETE'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -6897,7 +6931,80 @@ const fndRead = (payload) => ({
     // FIVE CELLS vs SIX (plus the actions cell on the curator arm only).
     const cells = (h) => (h.match(/<td /g) || []).length;
     eq('a curator-owned row is five cells plus the actions cell', cells(curRow), 6);
-    eq('...and a mirrored row is six, with no actions cell', cells(F.fndRowHtml(fndDoc(), false)), 6);
+    // ── AND A MIRRORED ROW HAS AN ACTIONS CELL TOO, SINCE v3.61.2 ───────
+    // It had none, because a mirror had no row control: the DELETE route
+    // refused one, and a control whose only outcome is a refusal is worse
+    // than no control. The route accepts removal on both ownerships now — it
+    // is the decision to stop mirroring, not an edit — so the cell exists on
+    // both arms and the two tables are 6 and 7 cells wide.
+    eq('...and a mirrored row is seven: its six plus the actions cell',
+      cells(F.fndRowHtml(fndDoc(), false)), 7);
+    ok('...whose control is STOP MIRRORING, labelled and on the danger face — never the '
+      + 'pencil, which would promise an edit the route refuses',
+    /class="btn btn-danger btn-xs fnd-stop"/.test(F.fndRowHtml(fndDoc(), false))
+      && />Remove</.test(F.fndRowHtml(fndDoc(), false))
+      && !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false)),
+    F.fndRowHtml(fndDoc(), false));
+    ok('...carrying the slug on its own element and an aria-label naming the document, '
+      + 'because "Remove" alone is a row nobody can identify by ear',
+    /data-fnd-stop="architecture\.md"/.test(F.fndRowHtml(fndDoc(), false))
+      && /aria-label="Stop mirroring [^"]+"/.test(F.fndRowHtml(fndDoc(), false)),
+    F.fndRowHtml(fndDoc(), false));
+    // A READ-ONLY SHARED BRAIN MIRROR GETS NO CELL ON EITHER ARM: nothing
+    // there may be written at all, and the third argument is what says so.
+    ok('a read-only row gets NO actions cell on either arm — nothing there may be written',
+      cells(F.fndRowHtml(fndDoc(), false, true)) === 6
+      && cells(F.fndRowHtml(fndDoc({ source: { kind: 'curator', path: null } }), true, true)) === 5
+      && !/fnd-stop|fnd-edit/.test(F.fndRowHtml(fndDoc(), false, true)),
+    F.fndRowHtml(fndDoc(), false, true));
+
+    // ── THE CONFIRM STRIP, AND THE SENTENCE THAT IS NOT "DELETED" ───────
+    // On a mirror the copy goes and the SOURCE FILE DOES NOT, which is the
+    // one fact somebody needs before pressing — and it is why this is a
+    // second strip rather than the editor's. "Cannot be undone" would be
+    // FALSE here.
+    {
+      const withStop = (over) => {
+        const R = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina',
+          openFolds: { foundations: true }, fnd: null,
+          fndStop: { domain: 'acme', project: 'lumina', slug: 'architecture.md',
+            busy: false, error: null, ...(over || {}) } });
+        return R;
+      };
+      const mirrored = withStop().renderFoundations(fndRead(fndPayload([fndDoc()])));
+      ok('the strip names the document and says the folder is untouched',
+        /Stop mirroring <b>architecture\.md<\/b>/.test(mirrored)
+        && /file in your folder is untouched/.test(mirrored), mirrored.slice(-900));
+      ok('...and does NOT say it cannot be undone, which would be false on a mirror',
+        !/cannot be undone/.test(mirrored.slice(mirrored.indexOf('Stop mirroring <b>'))),
+        mirrored.slice(-900));
+      ok('...with the filled danger face on the confirm and a ghost beside it',
+        /id="mem-fnd-stop-go"/.test(mirrored) && /btn-danger-solid/.test(mirrored)
+        && /id="mem-fnd-stop-no"/.test(mirrored), mirrored.slice(-700));
+      ok('...in flow, never a dialog that would cover the row under discussion',
+        !/<dialog/.test(mirrored) && /role="alertdialog"/.test(mirrored), mirrored.slice(-700));
+      const busy = withStop({ busy: true }).renderFoundations(fndRead(fndPayload([fndDoc()])));
+      ok('a press in flight disables both controls and says what is happening',
+        /id="mem-fnd-stop-go" disabled>Removing/.test(busy)
+        && /id="mem-fnd-stop-no" disabled/.test(busy), busy.slice(-700));
+      const failed = withStop({ error: 'the store said no' })
+        .renderFoundations(fndRead(fndPayload([fndDoc()])));
+      ok('a refusal keeps the strip OPEN with the reason in it — a closed question would leave '
+        + 'the row as it was with nothing said',
+      /mem-fnd-stop-error/.test(failed) && /the store said no/.test(failed), failed.slice(-700));
+      // A CONFIRM ABOUT A ROW THAT IS NO LONGER THERE IS NOT A QUESTION.
+      const gone = withStop({ slug: 'vanished.md' })
+        .renderFoundations(fndRead(fndPayload([fndDoc()])));
+      ok('a strip for a slug the table no longer holds is not painted at all',
+        !/mem-fnd-stop-go/.test(gone), gone.slice(-500));
+      // AND IT BELONGS TO THIS PROJECT: a switch must not carry the question.
+      const other = makeRenderers({ activeDomain: 'acme', activeProject: 'other',
+        openFolds: { foundations: true }, fnd: null,
+        fndStop: { domain: 'acme', project: 'lumina', slug: 'architecture.md' } })
+        .renderFoundations(fndRead(fndPayload([fndDoc()])));
+      ok('...and a strip stamped for another project is not painted under this one',
+        !/mem-fnd-stop-go/.test(other), other.slice(-500));
+    }
     // AND THE HEAD AGREES WITH THE BODY, from ONE condition.
     const curTable = F.renderFoundations(fndRead(fndPayload(
       [fndDoc({ skeleton: false, freshness: 'n/a' })],
@@ -6910,8 +7017,10 @@ const fndRead = (payload) => ({
     const repoTable = F.renderFoundations(fndRead(fndPayload([fndDoc()])));
     ok('CONTROL: the mirrored table still has Source AND Copy',
       />Source</.test(repoTable) && />Copy</.test(repoTable), repoTable.slice(0, 1400));
-    ok('...and no actions column at all, because no row there has a control',
-      !/visually-hidden">Actions</.test(repoTable));
+    ok('...and an actions column on BOTH arms since v3.61.2, because a mirrored row has a '
+      + 'control now (Remove = stop mirroring); it is withheld only where nothing may be written',
+    (repoTable.match(/<th scope="col">/g) || []).length >= 6
+      && /visually-hidden">Actions/.test(repoTable), repoTable.slice(0, 600));
   }
 
   // THE COUNT RIDES INTO THE STATUS LINE AND THE SUMMARY, from ONE derivation.
@@ -7446,6 +7555,12 @@ const EXECUTED = new Set([
   // no-manifest arm of `renderFoundations` to this, the screen it actually
   // describes — see the §21 note beside its own assertions.
   'renderNoProjects',
+  // v3.61.2: the row-Remove confirm strip. EXECUTED through the real
+  // `renderFoundations` over five states — present, a press in flight, a
+  // refusal, a slug the table no longer holds, and one stamped for another
+  // project — because the sentence it carries, that a mirror's SOURCE FILE is
+  // untouched, is the whole reason it is not the editor's delete strip.
+  'renderFoundationStop',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on
@@ -7482,6 +7597,7 @@ const NOT_EXECUTED = {
   initFoundations: 'async orchestration over the init POST plus a re-read; EXECUTED against a fake fetch in test-next-foundations-editor.js, which asserts the body the chooser built, the refusal keeping the choice, and the hand-off to refreshFoundations on an already-owned mirror',
   loadFoundationDraft: 'async orchestration over the `?raw=1` read; EXECUTED in test-next-foundations-editor.js, which asserts the RAW query, the byte-exact draft and that a second Edit press wins the race',
   saveFoundation: 'async orchestration over the PUT plus a re-read; EXECUTED in test-next-foundations-editor.js, which asserts the three fields, the stamp, the late-reply drop and that a failure keeps the draft',
+  stopMirroringFoundation: 'async orchestration over the SAME DELETE deleteFoundation uses, from the row control (v3.61.2); the request shape is asserted over EVERY DELETE call site in the fetch census above (one URL, one body, the slug as its own confirmation), the strip it drives is executed over five states, and the route arm it depends on — removal allowed on a mirror, PUT still refused — is driven end to end in test-next-memory-projects.js',
   deleteFoundation: 'async orchestration over the DELETE; EXECUTED in test-next-foundations-editor.js, which asserts the slug travels as its own confirmation and that a refusal closes the strip rather than the editor',
   // ── v3.61.0's THREE ────────────────────────────────────────────────────
   requestProject: 'the one-shot handoff from the OTHER view (P1-10): a module variable set by views/domains.js and cleared on read here, so driving it needs both halves. EXECUTED in test-next-memory-switch.js, which sets it and then runs the arrival decision',

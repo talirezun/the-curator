@@ -4957,7 +4957,57 @@ function skeletonOf(d) {
   return !!d && d.skeleton === true;
 }
 
-function fndRowHtml(d, editable) {
+/**
+ * "STOP MIRRORING THIS DOCUMENT?" — the confirm strip for a row Remove.
+ *
+ * ── IN FLOW, UNDER THE TABLE, NEVER A DIALOG (v3.61.2) ──────────────────
+ * The same rule the editor's own delete strip and the brief's unsaved-draft
+ * bar follow: the thing under discussion has to stay on screen while the owner
+ * decides about it. A modal would cover the row they are looking at.
+ *
+ * ── AND IT NAMES THE OUTCOME, WHICH IS NOT "DELETED" ────────────────────
+ * On a mirror the copy goes and the SOURCE FILE DOES NOT. That is the whole
+ * difference between this strip and the editor's, and it is the sentence
+ * somebody needs before pressing: "are you sure?" over 25 rows is a question
+ * about none of them, and "cannot be undone" would be false here — the file is
+ * still in the folder and can be mirrored again from the same picker.
+ *
+ * `.btn-danger-solid` is the taxonomy's one sanctioned filled-danger use: a
+ * confirm whose primary action IS the destruction. The row's own opener stays
+ * tinted.
+ */
+function renderFoundationStop(facts) {
+  const st = state.fndStop;
+  if (!st || st.domain !== state.activeDomain || st.project !== state.activeProject) return '';
+  const slug = String(st.slug || '');
+  // A SLUG THAT IS NO LONGER IN THE TABLE IS NOT A QUESTION. A refresh that
+  // dropped the document, or a second tab, would otherwise leave a confirm
+  // about a row nobody can see — answered against a document already gone.
+  if (!facts.docs.some((d) => String(d.slug || '') === slug)) return '';
+  const mirrored = facts.ownership === 'repo';
+  return (
+    '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Stop mirroring this document">' +
+      '<span>' + (mirrored
+    ? 'Stop mirroring <b>' + escapeHtml(slug) + '</b>? The copy is removed and your agents '
+          + 'stop reading it; the file in your folder is untouched, and you can mirror it again '
+          + 'from the same picker.'
+    : 'Remove <b>' + escapeHtml(slug) + '</b>? The document is removed from this project and '
+          + 'from your agents\u2019 next session. It cannot be undone from inside The Curator; if '
+          + 'you sync, a git client can still recover it.') + '</span>' +
+      '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-fnd-stop-go"' +
+        (st.busy ? ' disabled' : '') + '>' +
+        escapeHtml(st.busy ? 'Removing\u2026' : (mirrored ? 'Stop mirroring' : 'Remove permanently')) +
+      '</button>' +
+      '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-stop-no"' +
+        (st.busy ? ' disabled' : '') + '>Keep it</button>' +
+      (st.error
+        ? '<span class="mem-fnd-stop-error">' + escapeHtml(String(st.error)) + '</span>'
+        : '') +
+    '</div>'
+  );
+}
+
+function fndRowHtml(d, editable, readonly) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -5058,17 +5108,38 @@ function fndRowHtml(d, editable) {
       // here would make a six-column head sit over a seven-cell body — the
       // browser tolerates it and the columns quietly stop lining up, which is
       // exactly the class of defect only a rendered look finds.
-      (editable
-        ? '<td class="fnd-cell-edit">' +
-          '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
+      (readonly ? '' : '<td class="fnd-cell-edit">' +
+        (editable
+          ? '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
             ' data-fnd-edit="' + escapeHtml(slug) + '"' +
             ' aria-label="' + escapeHtml('Edit ' + (d.title || slug)) + '">' +
             '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
             'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
           '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
-          '</button>' +
-        '</td>'
-        : '') +
+          '</button>'
+          // ── STOP MIRRORING, ON A MIRRORED ROW (v3.61.2) ────────────────
+          //
+          // THE DEFECT: a mirrored project's document list could not be
+          // edited AT ALL. The maintainer mirrored his own repository, got 25
+          // rows including files he never meant to carry, and had no way to
+          // remove one — the route answered 400 `repo_owned` on a DELETE, a
+          // refusal v3.61.0 itself recorded as "arguably wrong".
+          //
+          // It is a `.btn-danger` and not a ghost because the taxonomy is
+          // explicit that the tinted danger face means DESTROYS DATA, and
+          // this destroys the copy. It is LABELLED rather than a glyph, for
+          // the reason this table's own header records: a pencil on a
+          // document is unambiguous and "stop copying this file across from a
+          // folder" is not, so a mark for it would be a guess.
+          //
+          // The word is "Remove" and not "Delete", because what goes is the
+          // COPY: the file in the folder is untouched, which the confirm
+          // strip says in full before anything happens.
+          : '<button type="button" class="btn btn-danger btn-xs fnd-stop"' +
+            ' data-fnd-stop="' + escapeHtml(slug) + '"' +
+            ' aria-label="' + escapeHtml('Stop mirroring ' + (d.title || slug)) + '">' +
+            'Remove</button>') +
+        '</td>') +
     '</tr>'
   );
 }
@@ -5389,7 +5460,7 @@ function renderFoundations(read) {
       '</span>' +
     '</summary>';
 
-  const rows = facts.docs.map((d) => fndRowHtml(d, curator)).join('');
+  const rows = facts.docs.map((d) => fndRowHtml(d, curator, readonly)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
@@ -5430,10 +5501,20 @@ function renderFoundations(read) {
           // rather than absent: a screen reader reading the row still hears
           // which column the button is in. Emitted only on the arm that HAS
           // a row control — a column reserved for nothing is furniture.
-          (curator ? '<th scope="col"><span class="visually-hidden">Actions</span></th>' : '') +
+          // ── AND ON THE MIRRORED ARM TOO, SINCE v3.61.2 ───────────────
+          // It used to be curator-only, because a mirror had no row control:
+          // the DELETE route refused one. It has a control now — Remove,
+          // meaning stop mirroring — so the column exists on both arms and is
+          // withheld only where NOTHING may be written, which is a read-only
+          // Shared Brain mirror. The cost is stated rather than hidden: the
+          // repo-owned table is seven columns wide now and still scrolls
+          // horizontally under ~600 px, which `overflow-x: auto` carries and
+          // this release does not claim to have fixed.
+          (readonly ? '' : '<th scope="col"><span class="visually-hidden">Actions</span></th>') +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
-      '</table></div>' + (adding ? renderFoundationsInit(facts) : '');
+      '</table></div>' + renderFoundationStop(facts)
+      + (adding ? renderFoundationsInit(facts) : '');
   const open = (editing || adding || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
   return notes +
     '<div class="mem-fnd-row">' +
@@ -6451,6 +6532,84 @@ async function saveFoundation(token) {
  * reading that document. There is no in-app undo; with Personal Sync
  * configured a git client recovers it, and without it nothing does.
  */
+/**
+ * REMOVE ONE DOCUMENT FROM THE TABLE — the row control's request (v3.61.2).
+ *
+ * The SAME route the editor's delete uses, with the same typed confirmation:
+ * `DELETE …/foundations/:slug` with `{confirm: slug}`. Since v3.61.2 that
+ * route accepts both ownerships, because removing a mirrored entry is the
+ * decision to stop mirroring it rather than an edit to a file whose author is
+ * the folder (the argument is at `requireManifest` in routes/memory.js, and
+ * `refreshCore` builds its work list from the manifest, so the entry stays
+ * gone).
+ *
+ * ── THE TWO PRECONDITIONS, CHECKED AGAIN AFTER THE AWAIT ────────────────
+ * The mount token, and that `state.fndStop` still names the SAME document —
+ * the request takes a round trip during which a project switch or a second
+ * press can land, and applying this answer to another project's table is the
+ * class of defect `activeBrowse`/`activeProjects` exist to stop one view up.
+ */
+async function stopMirroringFoundation(token) {
+  const st = state.fndStop;
+  if (!st || st.busy) return;
+  const { domain, project, slug } = st;
+  st.busy = true;
+  st.error = null;
+  render(token);
+
+  let ok = false;
+  let error = null;
+  let sourceKept = false;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: slug }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    ok = res.ok && !!(data && data.ok);
+    sourceKept = !!(data && data.sourceKept);
+    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+
+  if (!isCurrentMount(token)) return;
+  if (!state.fndStop || state.fndStop.domain !== domain
+      || state.fndStop.project !== project || state.fndStop.slug !== slug) return;
+
+  if (!ok) {
+    // THE STRIP STAYS OPEN WITH THE REASON IN IT. A refusal that closed the
+    // question would leave the row exactly as it was with nothing said.
+    state.fndStop.busy = false;
+    state.fndStop.error = error;
+    render(token);
+    return;
+  }
+  state.fndStop = null;
+  // The table is re-read rather than patched: the manifest's totals, the
+  // summary's four clauses and the freshness of every remaining row are the
+  // store's answers, and a client that subtracted one row from its own copy
+  // would be publishing an arithmetic result as a measurement.
+  forgetProject(domain, project);
+  // THE SAME TWO CALLS THE EDITOR'S DELETE MAKES, and no invented banner. The
+  // outcome is on screen already: the row is gone and the summary's counts
+  // move with it. The one fact a banner could add — that the SOURCE FILE was
+  // not touched — is said in the confirm strip BEFORE the press, which is
+  // where somebody deciding needs it rather than after the decision.
+  // `sourceKept` is read off the response all the same, because a route that
+  // stopped reporting it would be a silent change to what this control means.
+  void sourceKept;
+  if (activeKey() === keyOf(domain, project)) {
+    await reloadActive(token);
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  } else {
+    render(token);
+  }
+}
+
 async function deleteFoundation(token) {
   const e = state.fndEdit;
   if (!e || e.busy || e.deleting || e.isNew) return;
@@ -6645,6 +6804,40 @@ function bindFoundationRows(root, token) {
       loadFoundationDraft(slug, token).catch((err) => reportAsyncMountFailure(token, err));
     });
   });
+
+  // ── THE ROW REMOVE CONTROLS (v3.61.2) ──────────────────────────────────
+  // A press only ASKS: it records which row and re-renders, which paints the
+  // confirm strip under the table with that document named. Nothing is
+  // requested until the strip's own primary is pressed, and the request
+  // carries the slug as its own confirmation so a client that skipped the
+  // strip still removes nothing.
+  root.querySelectorAll('[data-fnd-stop]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const slug = btn.dataset ? btn.dataset.fndStop : btn.getAttribute('data-fnd-stop');
+      if (!slug) return;
+      state.fndStop = {
+        domain: state.activeDomain, project: state.activeProject, slug,
+        busy: false, error: null,
+      };
+      if (!state.openFolds) state.openFolds = {};
+      state.openFolds.foundations = true;
+      render(token);
+    });
+  });
+  const stopNo = root.getElementById ? root.getElementById('mem-fnd-stop-no') : null;
+  if (stopNo) {
+    stopNo.addEventListener('click', () => {
+      if (state.fndStop && state.fndStop.busy) return;
+      state.fndStop = null;
+      render(token);
+    });
+  }
+  const stopGo = root.getElementById ? root.getElementById('mem-fnd-stop-go') : null;
+  if (stopGo) {
+    stopGo.addEventListener('click', () => {
+      stopMirroringFoundation(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
 
   // ── "Add document" ─────────────────────────────────────────────────────
   // An EMPTY editor, opened in the frame of the press with no request at all:

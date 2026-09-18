@@ -804,11 +804,24 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 //   POST   …/foundations/init       sets the ownership, ONCE
 //   PUT    …/foundations/:slug      one curator-owned document, verbatim
 //   DELETE …/foundations/:slug      removes one, slug as its own confirmation
+//   DELETE …/foundations/:slug      v3.61.2 — the SAME route from the table
+//                                   row's Remove control, because a mirrored
+//                                   document can be un-mirrored without an
+//                                   editor it is not allowed to have
+//
+// SIX METHOD KEYS, FIVE ROUTES. The census stays EXACT rather than becoming a
+// floor — a floor lets a genuinely new write arrive in silence — so a second
+// caller of an already-declared route still has to be declared, which is the
+// line above. What it must not do is reach a different URL or carry a
+// different body, and `test-next-memory-view.js` asserts that over EVERY
+// DELETE call site rather than over the first one it finds.
 {
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly FIVE mutating HTTP methods', methods.length === 5, methods.join(','));
-  ok('...and they are DELETE, PATCH, POST, POST and PUT, every one a LITERAL',
-    methods.join(',') === "method: 'DELETE',method: 'PATCH',method: 'POST',method: 'POST',method: 'PUT'",
+  ok('memory.js issues exactly SIX mutating HTTP method keys, over five routes',
+    methods.length === 6, methods.join(','));
+  ok('...and they are DELETE, DELETE, PATCH, POST, POST and PUT, every one a LITERAL',
+    methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'POST',"
+      + "method: 'POST',method: 'PUT'",
     methods.join(','));
   ok('...the PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
@@ -852,9 +865,22 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   const head = /\.mem-fnd-row\s*\{([^}]*)\}/.exec(memCss);
   ok('memory.css: `.mem-fnd-row` is a flex row', !!head && /display:\s*flex/.test(head[1]),
     head ? head[1] : 'rule not found');
-  ok('...that WRAPS, so the controls take their own line rather than sitting on '
-    + 'top of the summary at a narrow container',
-  !!head && /flex-wrap:\s*wrap/.test(head[1]), head ? head[1] : '');
+  // ── AND IT IS A COLUMN NOW (v3.61.2) ──────────────────────────────────
+  //
+  // v3.61.0 made it a WRAPPING ROW: the fold flexible at a 480px floor, the
+  // controls beside it, wrapping under ~771px. The maintainer's screenshot of
+  // a 25-document mirror is that design working as written and being wrong —
+  // 285px of a 970px card spent permanently on two buttons, with the
+  // six-column table living in 668px and scrolling horizontally at a width
+  // where it did not have to. The wrap behaviour it approximated at one
+  // width is now the layout at every width: the fold takes the card, the
+  // controls sit on their own row under it. Measured at 1370px on a mirrored
+  // project: table 668 -> 940px, overflow inside the fold 139 -> 0.
+  ok('...and it is a COLUMN, so the fold takes the card and the controls sit on their own '
+    + 'row rather than taking 285px of it permanently',
+  !!head && /flex-direction:\s*column/.test(head[1]), head ? head[1] : '');
+  ok('...with no wrap needed, because there is nothing beside the fold to wrap',
+    !!head && !/flex-wrap:\s*wrap/.test(head[1]), head ? head[1] : '');
   ok('...and the 150px reserve on the summary line is GONE — a px reserve for a '
     + 'variable control count is a literal that fails silently',
   !/\.mem-fnd-row\s*>\s*\.mem-fold\s*>\s*\.mem-fold-summary\s*\{[^}]*padding-right:\s*150px/
@@ -863,13 +889,15 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
     !/\.mem-fnd-refresh\s*\{[^}]*position:\s*absolute/.test(memCss));
   {
     const fold = /\.mem-fnd-row\s*>\s*\.mem-fold\s*\{([^}]*)\}/.exec(memCss);
-    ok('the fold is the flexible half', !!fold && /flex:/.test(fold[1]), fold ? fold[1] : 'no rule');
-    const basis = fold && /flex:\s*1\s+1\s+(\d+)px/.exec(fold[1]);
-    ok('...with a measured floor, not the 320px one that let a 589px block '
-      + 'squeeze the fold to 328 and overflow the mirrored table by 139px',
-    !!basis && Number(basis[1]) >= 480, basis ? basis[1] + 'px' : 'no basis');
-    ok('...and `min-width: 0`, without which a long summary refuses to wrap and '
-      + 'pushes the controls off the card',
+    // THE FLEX BASIS IS GONE WITH THE ARRANGEMENT THAT NEEDED IT (v3.61.2).
+    // 480px was the floor below which the fold's own content stopped being
+    // comfortable while something sat beside it; nothing sits beside it now,
+    // so a basis would only be a width the fold is not allowed to be.
+    ok('the fold no longer carries a flex basis, because nothing competes with it for the '
+      + 'card\'s width', !!fold && !/flex:\s*1\s+1\s+\d+px/.test(fold[1]),
+    fold ? fold[1] : 'no rule');
+    ok('...but `min-width: 0` STAYS — a flex item\'s automatic minimum is its content, and '
+      + 'the fold holds a table wide enough to push past the card without it',
     !!fold && /min-width:\s*0/.test(fold[1]), fold ? fold[1] : '');
   }
   ok('the control row collapses when it is empty, so a state with no controls '

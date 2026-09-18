@@ -2168,12 +2168,96 @@ const REPO = join(TMP, 'repo');
   eq('...and says it was an orphan', orphan.body.wasOrphan, true);
   ok('...and it is gone', !existsSync(join(dir, 'stray.md')));
 
-  const mirror = await call('delete', '/:domain/:project/foundations/:slug',
-    { params: { domain: 'tier0', project: 'mirrored', slug: 'architecture.md' }, body: { confirm: 'architecture.md' } });
-  eq('a repo-owned document refuses the delete with 400', mirror.status, 400);
-  eq('...under repo_owned', mirror.body.reason, 'repo_owned');
-  ok('...and the copy is still there',
-    existsSync(join(st, 'mirrored', 'foundations', 'architecture.md')));
+  // ── REMOVAL WORKS ON A MIRROR TOO, SINCE v3.61.2 ──────────────────────
+  //
+  // THE DEFECT THIS CLOSES: this route answered 400 `repo_owned` here, so a
+  // mirrored project's document list could not be edited AT ALL — the
+  // maintainer mirrored his own repository, got 25 rows including files he
+  // never meant to carry, and had no way to drop one. v3.61.0 recorded the
+  // refusal as "arguably wrong" on the grounds that "the next refresh would
+  // simply put it back"; `refreshCore` builds its work list from
+  // `manifest.documents`, so it does not, and the entry stays gone.
+  //
+  // Driven against the REAL store and the REAL repository fixture, because
+  // the three facts that matter are all on disk: the copy goes, the MANIFEST
+  // ENTRY goes, and the SOURCE FILE the copy came from does not.
+  {
+    const src = join(REPO, 'docs', 'architecture.md');
+    ok('PRECONDITION: the source file is on disk and the copy is listed', existsSync(src)
+      && existsSync(join(st, 'mirrored', 'foundations', 'architecture.md')), src);
+    const before = JSON.parse(readFileSync(join(st, 'mirrored', 'foundations', 'manifest.json'), 'utf8'));
+    ok('PRECONDITION: …and the manifest lists it',
+      before.documents.some((d) => d.slug === 'architecture.md'), JSON.stringify(before.documents.map((d) => d.slug)));
+
+    const mirror = await call('delete', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'mirrored', slug: 'architecture.md' }, body: { confirm: 'architecture.md' } });
+    eq('a repo-owned document can now be REMOVED — stop mirroring, not an edit', mirror.status, 200);
+    eq('...and the response says which outcome this was', mirror.body.ownership, 'repo');
+    eq('...and that the source file was kept, which is the difference from a delete',
+      mirror.body.sourceKept, true);
+    ok('...the COPY is gone',
+      !existsSync(join(st, 'mirrored', 'foundations', 'architecture.md')));
+    const after = JSON.parse(readFileSync(join(st, 'mirrored', 'foundations', 'manifest.json'), 'utf8'));
+    ok('...the MANIFEST ENTRY is gone, which is what makes a refresh leave it alone',
+      !after.documents.some((d) => d.slug === 'architecture.md'),
+      JSON.stringify(after.documents.map((d) => d.slug)));
+    ok('...and the SOURCE FILE in the folder is untouched — the sentence the confirm strip '
+      + 'promises before anything happens', existsSync(src), src);
+
+    // AND THE INVARIANT THE OWNERSHIP GATE ACTUALLY PROTECTS IS UNMOVED: a
+    // mirrored document still cannot be EDITED here, because a write would
+    // make two writers of one file.
+    const stillRefused = await call('put', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'mirrored', slug: '0001-use-markdown.md' },
+        body: { text: '# Mine now\n' } });
+    eq('CONTROL: PUT on a mirrored document is STILL refused with 400', stillRefused.status, 400);
+    eq('...still under repo_owned', stillRefused.body.reason, 'repo_owned');
+    // The OTHER mirrored document — the decision record, whose slug the store
+    // DERIVED from `decisions/0001-use-markdown.md` — is still on disk with
+    // its own bytes. Named by that derived slug, because it is what the mirror
+    // wrote: a guess at `decisions.md` asserts about a file that was never
+    // there, which is how the first cut of this assertion failed while the
+    // route behaved correctly.
+    ok('...and that document is unchanged on disk',
+      existsSync(join(st, 'mirrored', 'foundations', '0001-use-markdown.md'))
+      && !/Mine now/.test(readFileSync(join(st, 'mirrored', 'foundations', '0001-use-markdown.md'), 'utf8')));
+
+    // A CURATOR-OWNED REMOVAL STILL REPORTS ITSELF AS ONE: the two outcomes
+    // are different sentences to a person, and a client that could not tell
+    // them apart would say "your folder is untouched" about a document that
+    // only ever lived here.
+    writeFileSync(join(dir, 'temp-one.md'), '# Temp\n');
+    const seed = await call('put', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'curated', slug: 'temp-one.md' }, body: { text: '# Temp\n' } });
+    ok('PRECONDITION: a curator document exists to remove', seed.status === 200, String(seed.status));
+    const cur = await call('delete', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'curated', slug: 'temp-one.md' }, body: { confirm: 'temp-one.md' } });
+    eq('a curator-owned removal answers 200', cur.status, 200);
+    eq('...reporting curator ownership', cur.body.ownership, 'curator');
+    eq('...and NOT claiming a source file was kept, because there is none',
+      cur.body.sourceKept, false);
+
+    // ── THE GATE IS THE MANIFEST, AND IT IS STILL A GATE ────────────────
+    // v3.61.2 moved DELETE off `requireCuratorOwned` and on to
+    // `requireManifest`, and the two arms that survived the move have to be
+    // asserted or the change reads as "the gate went away". A mutation
+    // deleting the `no_manifest` arm was GREEN before these two lines: the
+    // suite proved the ownership refusal was gone and nothing proved the rest
+    // of the gate was still there.
+    const none = await call('delete', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'ownerless', slug: 'architecture.md' },
+        body: { confirm: 'architecture.md' } });
+    eq('a project that has never chosen an ownership has nothing to remove — 400',
+      none.status, 400);
+    eq('...under no_manifest, which is a different fact from "no such document"',
+      none.body.reason, 'no_manifest');
+    const badm = await call('delete', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'tier0', project: 'badmanifest', slug: 'architecture.md' },
+        body: { confirm: 'architecture.md' } });
+    eq('a manifest this app cannot read refuses the removal with 400', badm.status, 400);
+    eq('...under manifest_unreadable — rewriting it could drop entries for documents '
+      + 'nobody can see', badm.body.reason, 'manifest_unreadable');
+  }
 
   eq('DELETE refuses an unusable slug with 400',
     (await call('delete', '/:domain/:project/foundations/:slug',
@@ -2441,8 +2525,15 @@ const REPO = join(TMP, 'repo');
       [['an unknown domain', { params: { domain: 'nope', project: 'lumina', slug: 'a.md' }, body: { confirm: 'a.md' } }, 404],
         ['a read-only mirror', { params: { domain: 'shared-cohort', project: 'shared-cohort', slug: 'a.md' }, body: { confirm: 'a.md' } }, 403],
         ['no confirmation', { params: { domain: 'alpha', project: 'curated', slug: 'decisions.md' }, body: {} }, 400],
-        ['the wrong confirmation', { params: { domain: 'alpha', project: 'curated', slug: 'decisions.md' }, body: { confirm: 'decisions' } }, 400],
-        ['a repo-owned project', { params: { domain: 'alpha', project: 'lumina', slug: 'a.md' }, body: { confirm: 'a.md' } }, 400]]],
+        ['the wrong confirmation', { params: { domain: 'alpha', project: 'curated', slug: 'decisions.md' }, body: { confirm: 'decisions' } }, 400]]],
+    // ── AND NOT A REPO-OWNED PROJECT ANY MORE (v3.61.2) ────────────────
+    // A repo-owned project WAS on this list, refused 400 `repo_owned`. It is
+    // not a refusal now: removing a mirrored entry is the decision to stop
+    // mirroring that document, not an edit to a file whose author is the
+    // folder, and the real-store arm above proves all three facts on disk
+    // (the copy goes, the manifest entry goes, the source file stays). PUT
+    // keeps its own repo-owned row directly above, which is the invariant
+    // the ownership gate exists for.
     ['post', '/:domain/:project/foundations/init', 'initFoundations',
       [['an unknown domain', { params: { domain: 'nope', project: 'lumina' }, body: { ownership: 'curator' } }, 404],
         ['a read-only mirror', { params: { domain: 'shared-cohort', project: 'shared-cohort' }, body: { ownership: 'curator' } }, 403],

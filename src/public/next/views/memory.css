@@ -1398,11 +1398,30 @@
    were in the markup. At a narrow container the row WRAPS, putting the
    controls under the summary rather than on top of it; that is the behaviour a
    reserve was approximating and getting wrong. */
+/* ── AND THE ROW BECAME A COLUMN (v3.61.2) ───────────────────────────────
+   THE REPORTED DEFECT, with a screenshot of a 25-document mirror: the
+   documents table "takes about three quarters of the card" with Refresh from
+   repo and Add from folder floating to its right. That is this rule working
+   exactly as v3.61.0 wrote it — `flex: 1 1 480px` on the fold, the controls
+   beside it at their own width, wrapping only under ~771px — and the design
+   was wrong: it spends 285px of a 970px card on two buttons, permanently, so
+   the six-column mirrored table lives in 668px and scrolls horizontally at a
+   window width where it did not have to.
+
+   A COLUMN instead. The fold takes the card, the controls sit on their own
+   row underneath it, and the wrap behaviour the old rule approximated at one
+   width is now the layout at every width. Measured at 1370px on a mirrored
+   project: table 668 → 940px, horizontal overflow inside the fold 139 → 0.
+
+   The 480px floor and its whole derivation are gone with the side-by-side
+   arrangement that needed them; the note is kept in the history rather than
+   here, because the measurement that produced it (a 589px block squeezing the
+   fold to 328) is about a layout this no longer has. */
 .mem-fnd-row {
   display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-6);
 }
 /* `min-width: 0` is load-bearing: a flex item's automatic minimum is its
    content, so without it a long summary line refuses to wrap and pushes the
@@ -1423,16 +1442,18 @@
    block (a 1370px window) fold 668 / controls 285 side by side, mirrored table
    overflow 0; at a 589px block (a 1000px window) the controls wrap and the
    table's overflow goes 139 -> 0. */
-.mem-fnd-row > .mem-fold { flex: 1 1 480px; min-width: 0; }
+/* `min-width: 0` is still load-bearing on a column: a flex item's automatic
+   minimum is its content, and the fold holds a table wide enough to push past
+   the card without it. The 480px basis is gone with the side-by-side
+   arrangement it existed for (v3.61.2). */
+.mem-fnd-row > .mem-fold { min-width: 0; }
 .mem-fnd-head-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  flex: none;
-  /* Optically level with the summary's own text, which sits 6px inside the
-     fold's padding box. */
-  padding-top: 6px;
+  /* Their own row under the fold now, so there is no summary line to be
+     optically level with and no width to hold back from the table. */
 }
 .mem-fnd-head-controls:empty { display: none; }
 /* The Domains pointer, on a project with no documents chosen. Its own row
@@ -1750,6 +1771,18 @@
   line-height: var(--leading-normal);
 }
 .mem-fnd-delete-bar > span { flex: 1; min-width: 0; }
+/* The row-Remove strip reuses the bar above (same question, same face) and
+   adds one thing: a refusal, in flow, keeping the strip open. It takes the
+   family's own ink rather than a colour of its own — `--danger-text` on the
+   tint the bar already carries — and the words carry it too ("could not"), so
+   colour is never the only signal. It is a whole-row item so a long server
+   sentence does not squeeze the two controls it sits beside (v3.61.2). */
+.mem-fnd-stop-error {
+  flex: 1 1 100%;
+  color: var(--danger-text);
+}
+/* The strip belongs to the table above it, not to the card's edge. */
+.fnd-wrap + .mem-fnd-delete-bar { margin-top: var(--space-6); }
 /* Pushed away from Save and Cancel rather than sitting beside them: a control
    that destroys a document must not be one mis-click from the commit. */
 .mem-fnd-delete { margin-left: auto; }
