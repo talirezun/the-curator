@@ -138,17 +138,43 @@ export const TEMPLATE_FOUNDATIONS = [
   'session knows what changed.',
 ].join('\n') + '\n';
 
+// ── v3.61.0: a THIRD, separately pinned paragraph — the seed for a skeleton ──
+//
+// v3.59.0 taught an agent to READ foundations. It said nothing about a
+// foundation that arrives as a SKELETON — a document seeded with prompts
+// rather than facts (the "start a project" flow, `foundation-skeletons.js`,
+// WP-S) — and an agent with no instruction to look for that banner has no
+// reason to treat a skeleton any differently from a finished document, or to
+// know that filling one in is something it may do at all.
+//
+// TEMPLATE_SEED closes that gap the same way TEMPLATE_FOUNDATIONS closed the
+// first one: composed AFTER it, never merged into it, so TEMPLATE's own
+// 501-byte/sha256 pin and TEMPLATE_FOUNDATIONS's own pin both keep matching
+// their own text alone. A third independent constant is the only shape that
+// lets all three stay frozen at once. Pinned the same way (a hand-written
+// literal AND a sha256, in scripts/test-agent-instructions.js §S8) for the
+// same reason: a well-meant reword of model-read instruction text is a
+// silent behaviour change to every agent that reads it next.
+export const TEMPLATE_SEED = [
+  'Some foundations may be skeletons — prompts, not facts; the document says so',
+  'at the top. As you learn the project, fill each one and save it with',
+  '`save_foundation` (`commissioned_by_owner: true` — this block is the owner\'s',
+  'commission). On the first commit, export the filled foundations into the',
+  'repository\'s `docs/` folder.',
+].join('\n') + '\n';
+
 /**
- * The block for one project, PLUS the foundations addendum — what the Copy
- * control pastes as of v3.59.0. `composeAgentInstructions` itself is
- * untouched (its output is still exactly the measured 501-byte artefact for
- * the same arguments), so anything that still wants the original alone keeps
- * calling it directly.
+ * The block for one project, PLUS the foundations addendum, PLUS the seed
+ * addendum — what the Copy control pastes as of v3.61.0. `composeAgentInstructions`
+ * itself is untouched (its output is still exactly the measured 501-byte
+ * artefact for the same arguments), so anything that still wants the
+ * original alone keeps calling it directly.
  *
  * @param {{domain: string, project: string}} args
  * @returns {string} heading, blank line, the measured block, a blank line,
- *   then the foundations paragraph — one trailing newline.
+ *   the foundations paragraph, a blank line, then the seed paragraph — one
+ *   trailing newline.
  */
 export function composeAgentInstructionsFull(args) {
-  return composeAgentInstructions(args) + '\n' + TEMPLATE_FOUNDATIONS;
+  return composeAgentInstructions(args) + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED;
 }

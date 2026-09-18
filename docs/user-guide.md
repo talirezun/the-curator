@@ -3293,9 +3293,106 @@ the action is withheld and a short note says why rather than offering a button t
 
 **What this tier does not do, yet.** Nothing selects which documents belong in a project
 automatically — you, or an agent you asked, decide what is canonical. Nothing summarises a
-document with an LLM on the way in or out — a foundation is stored and returned verbatim. And the
-app does not offer an editor for a curator-owned foundation in this release; writing one is an
-agent action, on your instruction, over MCP.
+document with an LLM on the way in or out — a foundation is stored and returned verbatim. *(Before
+v3.61.0 the app had no editor for a curator-owned foundation at all — writing one was an agent
+action, on your instruction, over MCP, and only over MCP. The next section is what changed.)*
+
+### Start a project
+
+*New in v3.61.0.* Creating a project — **Domains → Projects → New project** — now asks a second
+question, right below the brief: **where do this project's foundations live?** You are choosing
+the [ownership mode](#foundations--canonical-documents-that-travel) up front, on the one occasion
+it can still be changed for free — a project holds only one, and the first document saved into it
+sets it for good.
+
+| Choice | What happens | When to pick it |
+|---|---|---|
+| **Curator keeps them** *(the default)* | Four skeleton documents are seeded immediately — `architecture.md`, `decisions.md`, `conventions.md`, `roadmap.md` — each a **prompt to answer**, not a fact. This project is now `curator`-owned. Optionally, on this same form, **start from files** — pick one or more existing `.md`/`.txt` documents from your computer and each becomes a real document alongside the seeds (untick "seed the four skeletons" if you don't want those too) | You have no repository yet, or the project is not code at all — research, a client engagement, a body of reading |
+| **Mirror from a repository on this Mac** | A path field plus **Find documents** scans that checkout for candidate files and offers them as checkboxes, each with a role you can correct — this project is now `repo`-owned, and the checkout, not the app, is the source of truth from here on | You already have an architecture doc, a decisions log, or similar, checked in — or just sitting in a folder, whether or not that folder is a git repository |
+| **Decide later** | Nothing is written. The same choice reappears the first time you open this project's Foundations block | You are not sure yet, or you are creating several projects at once and do not want to stop for each one |
+
+**Onboarding a project that already has its documents.** The "Mirror" path above is not only for a
+brand-new checkout with nothing in it yet — point it at the folder where your architecture doc,
+decision log and roadmap **already live**, and **Find documents** goes looking for them itself,
+rather than making you type every path by hand. It looks in three places: anything under a `docs/`
+or `doc/` folder; anywhere in the tree, a file whose *name* says what it is — `architecture.md`,
+`decisions.md`, `adr-0012.md`, `CONTRIBUTING.md`, `roadmap.md`, `README.md`, and so on; and every
+document inside a folder literally called `adr`, `adrs`, `decisions`, `architecture` or `rfcs` — the
+layout a lot of real repositories already use. Nothing it finds is guessed *content* — the checkbox
+list shows you the path and the document's own first heading, and you tick what belongs. If it
+misses one, a typed path field beside the list adds it by hand. **The folder does not need to be a
+git repository at all** — a plain folder of documents works exactly as well as a mirror source; the
+only difference is that the Foundations table then shows the source path with no commit beside it,
+because there is no commit to show.
+
+The banner after creation says which one fired — *"Created project lumina · 4 skeletons seeded"*,
+*"· 3 documents mirrored"*, or *"· documents: decide later"* — and, if the project itself was
+created but its foundations could not be (an unreachable checkout, say), a second, un-folded line
+names the reason: the project always exists after this action, never half of one.
+
+An existing project with no foundations yet is not stuck with whatever you picked, or did not pick,
+at creation — the same two-way choice (Curator-kept or mirrored; "decide later" makes no sense once
+you are already looking at the empty block) is offered again from the **Foundations** block on the
+Agent memory screen, the moment you open it and it finds no manifest.
+
+**What a skeleton actually is.** Not a template you fill in blanks of — a real markdown document,
+with real `##` headings, whose first line is a visible banner: *"Skeleton — not yet written. Answer
+the prompts below and delete this line. An agent fills it only when the owner asks."* Under each
+heading sits a question, not a fact — "What are the three or four decisions that would surprise a
+new contributor?" rather than an invented answer. Nothing in The Curator ever answers those
+questions for you. An agent may, but **only when you have asked it to**, exactly as it would before
+touching your standing brief: it calls `save_foundation` with `commissioned_by_owner: true` — the
+same flag `save_project_brief` has required since v3.48.0 — and there is no soft failure mode
+around that flag; the tool refuses outright without it. The agent-instructions block ([§13b, "Making
+sure your agent actually does it"](#making-sure-your-agent-actually-does-it)) now carries one more
+paragraph saying exactly this, plus one more line: on the first commit after a skeleton is filled,
+export it into the repository's own `docs/` folder — so a document that started life inside The
+Curator ends up back where a foundation belongs, checked in beside the code it describes.
+
+```mermaid
+flowchart TD
+    C["Create a project<br/><i>Domains → Projects → New project</i>"]
+    C --> Q{"Where do the<br/>foundations live?"}
+    Q -->|"Curator keeps them"| SEED["4 skeletons seeded<br/><i>architecture · decisions ·<br/>conventions · roadmap</i>"]
+    Q -->|"Mirror from a repository"| MIRROR["Documents copied<br/>byte-for-byte from the checkout"]
+    Q -->|"Decide later"| LATER["Nothing written —<br/>asked again from the block"]
+    SEED --> FILL["An agent fills each skeleton,<br/>ONLY on your instruction<br/><i>save_foundation, commissioned_by_owner: true</i>"]
+    FILL --> EXPORT["On the first commit,<br/>exported into the repo's own docs/"]
+    MIRROR --> STALE["Stays fresh via Refresh from repo —<br/>never edited in place"]
+```
+
+**Editing a foundation, in the app.** Only a **curator-owned** document can be edited here — a
+repo-owned one is mirrored, so editing it in the app would be immediately overwritten by the next
+refresh; the app says so and points you at the checkout instead. On a curator-owned project, each
+row in the Foundations block's table carries its own **Edit** control, and the block's own header
+carries **Add document**. Either one opens an editor **in place of the table**, inside the same
+fold — the standing brief's own pattern — with the document's title and role, a plain-text box that
+renders in the same monospace face as everywhere else code-shaped text appears in this app, and a
+live byte counter. **Save** is disabled past **512 KB** — a canonical document cannot be honestly
+trimmed, so this is a wall, not a warning — and a project nearing its **200 KB** total budget is
+told so without being stopped, the same "disclose, never refuse" rule a handoff already follows.
+Filling in a skeleton and saving it **clears the skeleton mark** — the next read of that document is
+an ordinary foundation, banner and all, exactly as if you had deleted the first line yourself.
+**Delete** sits in the editor's own footer, behind a confirmation naming the document, for the
+occasional skeleton you decide the project does not need.
+
+**Add document** offers two ways to start that editor, side by side: an **empty editor**, or
+**Choose a file…**, which reads a `.md`/`.txt` file straight off your computer into the editor's
+text box so you can review it before anything is saved — nothing is uploaded until you press
+**Save**, and a file over the 512 KB wall is refused before it is even read, naming both sizes.
+The slug, title and role are guessed from the file (its basename, its first `# ` heading, and the
+same role guess the repository scan uses) and are yours to correct before saving. Picking a file
+whose slug matches an existing skeleton **replaces that skeleton** and clears its mark — the
+banner says so, so you are never left wondering whether you overwrote a document.
+
+**Getting an existing document into a curator-owned project — three ways in, not one.** Before
+v3.61.0 there was exactly one: asking an agent to write it. All three now:
+
+| Way in | What actually happens | When to use it |
+|---|---|---|
+| **Mirror from a repository** | Scanned from a checkout you point at, copied byte-for-byte, kept fresh by **Refresh from repo** — never edited here | The document already lives in a repository and should keep that repository as its source of truth |
+| **Choose a file…** | Read from your disk into the editor, shown to you, saved only when you press **Save** — a `curator`-owned copy from here on, with no checkout behind it | The document exists as a file, but you don't want a repository dependency, or the project has no repository at all |
+| **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
 
 ### Making sure your agent actually does it
 

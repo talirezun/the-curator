@@ -63,9 +63,26 @@ re-assert its own checkout's state on its next save (passing `repo_root` to `sav
 or pressing **Refresh from repo** in the app) — the refresh is a cheap, idempotent byte comparison,
 so "just refresh again" is a real fix rather than a workaround. The Foundations block shows the
 stored commit beside your local checkout's `HEAD` when it's reachable, so a mirror that has drifted
-behind is visible rather than silent. Curator-owned foundations — the ones an agent wrote for you
-rather than mirrored from a repository — are lower-traffic still, and share the brief's carve-out
-exactly: edit rarely, sync soon after.
+behind is visible rather than silent. Curator-owned foundations — written for you by an agent, or
+(v3.61.0) by you directly, in the app's own editor — are lower-traffic still, and share the brief's
+carve-out exactly: edit rarely, sync soon after.
+
+#### Foundations, and the no-machine-segment bargain, again
+
+**v3.61.0 gave a curator-owned foundation a second, human writer** — the Foundations block's own
+editor, described in [working-state.md](working-state.md#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file)
+— and it is worth stating plainly that this does **not** change anything about the paragraph above.
+The bargain was never "only one *process* may touch this file" — a browser and an MCP-connected
+agent are always two processes, and were before this release too. It was "one **ownership** per
+project, and whichever writer touches a document stamps it with the truth about who wrote it": a
+human edit through the app is stamped `authoredBy: {kind: 'human'}`, an agent's through
+`save_foundation` stamped with its own harness and model, and neither can land on a repo-owned
+mirror at all — that ownership check happens in the store, before any write reaches disk, the same
+gate that already refused a mismatched `save_foundation` call. What is genuinely new is only that
+you, personally, are now one more source of edits sharing this file's no-machine-segment risk: edit
+a curator-owned foundation on your laptop, edit the *same* one on your desktop before syncing either,
+and you are in the ordinary conflicting-hunk case two paragraphs up — the loser's edit dropped with
+no warning. The advice does not change either: edit it, then sync soon after.
 
 Because `state/` syncs, an agent saving working state adds to your pending-changes count exactly like an ingest or a chat message does. If you see the Sync badge tick up between sessions with no ingest to explain it, a saved handoff is a normal cause, not a bug — see [`working-state.md`](working-state.md) for what's actually being written.
 

@@ -92,6 +92,24 @@ Each document is capped at 512 KB and is refused above it, because a canonical d
 
 In the app, Foundations is the fifth block on the Agent memory screen, between Standing brief and Session journal, closed by default. Each row shows the document's role, title, size, source and freshness; pressing a row opens it in the reader.
 
+## How do I start a project, and where do its foundations come from?
+
+Creating a project — Domains → Projects → New project — asks a second question below the brief: where do this project's foundations live? A project holds only one ownership mode, and the first document saved into it sets that mode for good, so this is the one moment it is free to choose.
+
+Three choices. **Curator keeps them** (the default) seeds four skeleton documents immediately — architecture, decisions, conventions and roadmap — each a prompt to answer, not a fact; this makes the project curator-owned. **Mirror from a repository on this Mac** points at a checkout (a plain folder works too, no git required) and scans it for candidate documents to copy byte-for-byte; this makes the project repository-owned. **Decide later** writes nothing, and the same choice reappears the first time you open that project's Foundations block.
+
+A skeleton is a real markdown document, not a fill-in-the-blanks template: real headings, and under each one a question rather than an invented answer, with a fixed banner at the top saying it is unfilled. An agent fills one in only when you ask it to — the same commissioned-only rule the standing brief already follows.
+
+An existing project that already has its documents is not stuck asking an agent to paste them in one at a time. Three ways an existing document gets into a curator-owned project: mirrored from a repository or a plain folder you point at; chosen from a file on your own computer, read into the editor for you to review before saving; or written by an agent, only when you have asked it to.
+
+## Can I edit a foundation myself?
+
+Yes, since version 3.61.0 — but only a **curator-owned** one. A repository-owned document is mirrored, so editing it in the app would be overwritten by the next refresh; the app tells you to edit the source and refresh instead.
+
+On a curator-owned project, each row in the Foundations block carries an Edit control, and the block's own header carries Add document. Either opens an editor in place of the table, the same pattern the standing brief already uses. Saving is disabled past 512 KB — a canonical document cannot be honestly trimmed — and a project nearing its 200 KB total budget is told so without being stopped. Filling in a skeleton and saving it clears the skeleton mark for good.
+
+This does not add a second writer to a document the way it might sound: one ownership is set per project, and a human edit is stamped as a human's the same way an agent's edit is stamped as an agent's, so nothing reading a foundation's history is ever told the wrong thing wrote it.
+
 ## How does an agent start a session with all of this?
 
 One call. `get_project_context` returns the standing brief, the latest handoff, and the foundations the caller has not already seen, in one response — so a cold session on any machine and in any tool has what it needs without a second round trip.

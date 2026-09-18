@@ -105,6 +105,12 @@ export const DOCS_LINKS = {
   // canonical, and the two ways one arrives (an agent commissioned to write it,
   // or a byte copy refreshed from the project's repository).
   'memory.foundations': { file: 'user-guide.md', anchor: 'foundations--canonical-documents-that-travel' },
+  // v3.61.0: the start-a-project flow and the curator-owned editor. This one
+  // is reached from the Foundations block's own ⓘ (WP-V), on the sentence
+  // that names how a curator-owned document gets edited — what someone
+  // pressing "Edit" wants next is the walkthrough, not the tier's definition
+  // again (that is `memory.foundations`, above).
+  'memory.foundations-edit': { file: 'user-guide.md', anchor: 'start-a-project' },
 };
 for (const v of Object.values(DOCS_LINKS)) Object.freeze(v);
 Object.freeze(DOCS_LINKS);
