@@ -1377,6 +1377,112 @@
    in both states rather than jumping when the first brief lands. */
 .mem-fold-flat > .mem-fold-body { padding: 11px 14px; padding-right: 46px; }
 
+/* ── TIER 0 — FOUNDATIONS ────────────────────────────────────────────────
+
+   The block's body is the SAME shape the standing brief's is: a `.mem-fold`
+   with one control anchored at the top-right of its own row. That is why
+   `.mem-fnd-row` copies `.mem-brief-row`'s `position: relative` rather than
+   inventing a layout — the pencil and "Refresh from repo" occupy the same
+   corner of the same card, so a reader moving between the two blocks finds
+   the control in the place they just left it.
+
+   The control is a LABELLED button rather than an icon, and that difference is
+   deliberate: a pencil on a document is unambiguous, "copy six files across
+   from a repository" is not, and a glyph for it would be a guess. */
+.mem-fnd-row { position: relative; }
+.mem-fnd-refresh {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  flex: none;
+}
+/* Room for the button, so a long summary line cannot run under it. The brief's
+   own rule reserves 46px for an icon; a labelled button needs more. */
+.mem-fnd-row > .mem-fold > .mem-fold-summary { padding-right: 150px; }
+
+/* THE TABLE. Same chrome as the work-streams table above it — it is the same
+   KIND of thing, a list of rows you press to read one — so the type, the
+   hairlines and the horizontal scroll are the same declarations rather than a
+   second opinion about them. Six columns at the Largest text scale in a narrow
+   window will overflow; a table that scrolls beats a page that does. */
+.fnd-wrap { overflow-x: auto; }
+.fnd-table { width: 100%; border-collapse: collapse; }
+.fnd-table th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  /* --text-2, never --text-3: this file's standing rule, counted by a guard in
+     scripts/test-next-memory-ingest-text.js. */
+  color: var(--text-2);
+  padding: 0 var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline-strong);
+  white-space: nowrap;
+}
+.fnd-table td {
+  padding: var(--space-3) var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+.fnd-table tbody tr:last-child td { border-bottom: none; }
+/* Hover and press on the ROW, not on the button inside it — the same division
+   the work-stream table makes, and for the same reason: the button is what the
+   keyboard reaches, the row is what the eye reads. */
+.fnd-row { transition: background var(--t-state), transform var(--t-press); }
+.fnd-row:hover { background: var(--mat-row-hover); }
+.fnd-row:active { transform: translateX(var(--press-shift)); }
+.fnd-open {
+  display: block;
+  width: 100%;
+  min-height: var(--hit-min);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  /* The kit's chrome pair (scripts/test-next-views-kit.js checks they travel
+     together): a control that shows an I-beam and drag-selects its own label
+     reads as text rather than as a row you can press. */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fnd-open:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+/* THE ROLE IS A CLASSIFICATION, not prose: seven fixed words, and a reader
+   scans the column rather than reading it. Mono and quiet, so the document
+   TITLE beside it stays the thing the eye lands on. */
+.fnd-role {
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* The source path is the piece of DATA in this table someone retypes — into a
+   shell, into an editor — so it takes the code face, as the work-stream slug
+   does one table up. The commit beside it is quieter: it qualifies the path
+   rather than being a second path. */
+.fnd-cell-source { min-width: 0; }
+.fnd-src-path { font: var(--type-mono); font-size: var(--text-2xs); color: var(--text); }
+.fnd-commit { font: var(--type-mono); font-size: var(--text-2xs); color: var(--text-2); white-space: nowrap; }
+/* THE DOT AND THE WORD, ALWAYS TOGETHER. The app-wide freshness scale is a
+   graphical mark and it never carries a reading on its own — colour is not the
+   only carrier anywhere in this app, and here the word is the reading and the
+   dot is the glance. */
+.fnd-cell-fresh { white-space: nowrap; }
+/* The GAP is on the wrapper, never on `.fresh-dot`: shared/freshness.css owns
+   the `.fresh-` prefix outright and no other stylesheet may declare a rule on
+   it (scripts/test-freshness-scale.js fails one that does). */
+.fnd-fresh { display: inline-flex; align-items: center; gap: var(--space-3); }
+.fnd-cell-size, .fnd-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
+.fnd-table th:first-child,
+.fnd-table td:first-child { padding-left: 10px; }
+
 .mem-brief-editor { display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* ── THE DRAFT'S OWN READOUT ──────────────────────────────────
@@ -1499,6 +1605,12 @@
      theirs — in the SAME file as the transform, which is what
      scripts/test-next-press-motion.js requires. */
   .mem-ws-more:active { transform: none; }
+  /* Tier 0's rows press exactly as the work-stream rows above them do, so
+     their opt-out sits beside theirs — in the SAME file as the transform,
+     which is what scripts/test-next-press-motion.js requires. The Refresh
+     button is NOT listed: its travel is `.btn:active` in shell.css, which
+     neutralises its own. */
+  .fnd-row:active { transform: none; }
 }
 /* ── THE HANDOFF, INSIDE THE SHELL'S READER (v3.56.0) ────────────────────
 

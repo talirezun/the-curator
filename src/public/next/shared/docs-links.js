@@ -89,6 +89,14 @@ export const DOCS_LINKS = {
   // the next reader does not go looking for a #session-journal that the
   // docs have never had.
   'memory.session-journal': { file: 'working-state.md', anchor: 'the-three-tiers' },
+  // TIER 0 — the canonical documents that travel with a project. The landing
+  // is the USER GUIDE rather than working-state.md, deliberately: the other
+  // four keys above answer "what is this tier", and this one is reached from a
+  // block whose ⓘ has already said that. What someone opening it wants next is
+  // the part only the guide carries — which documents are worth making
+  // canonical, and the two ways one arrives (an agent commissioned to write it,
+  // or a byte copy refreshed from the project's repository).
+  'memory.foundations': { file: 'user-guide.md', anchor: 'foundations--canonical-documents-that-travel' },
 };
 for (const v of Object.values(DOCS_LINKS)) Object.freeze(v);
 Object.freeze(DOCS_LINKS);
