@@ -66,6 +66,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+// REAL, not a stub (v3.58.0). panelAdminStep1 now puts its glossary behind the
+// shared ⓘ mark, and §10 asserts that the glossary is still in this panel's
+// markup — a stub returning '' would satisfy the ASSERTION while the user got
+// nothing. shared/text.js takes no imports and guards on `typeof document`,
+// so it loads headless. Same rule as `settingsBlock` in
+// scripts/test-next-settings-sections.js: lift the thing that paints.
+import { renderInfoMark } from '../src/public/next/shared/text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -741,12 +748,12 @@ const MARKUP_FNS = [
   'panelStep1', 'panelStep2', 'panelStep3', 'panelStep4', 'panelStep5',
   'panelAdminStep1', 'panelAdminStep2', 'wizardShellHtml',
 ];
-const markup = new Function(
+const markup = new Function('renderInfoMark',
   ESCAPE + '\n' + ICON_STUB +
   WIZ_CONSTS.map((n) => extractConst(wizard, n, 'wizard')).join('\n') + '\n' +
   MARKUP_FNS.map((n) => extractFunction(wizard, n, 'wizard')).join('\n\n') + '\n' +
   `return { ${MARKUP_FNS.join(', ')} };`
-)();
+)(renderInfoMark);
 {
   const labels = extractConst(wizard, 'STEP_LABELS', 'wizard');
   ok(!/'PAT'/.test(labels), 'no progress pip is labelled "PAT" any more');
@@ -781,6 +788,26 @@ const markup = new Function(
   const p1 = markup.panelStep1(), p2 = markup.panelStep2(), a1 = markup.panelAdminStep1();
   ok(/<strong>private repository<\/strong>/.test(a1) && /folder GitHub stores for you/.test(a1),
     '"repository" is glossed where an admin first meets it');
+  // ── WHERE THE GLOSS SITS (v3.58.0) ────────────────────────────────────
+  // The 54-word paragraph under this panel's heading became a 13-word
+  // instruction plus an ⓘ holding the two glosses. Both halves need pinning,
+  // because each can regress into the other: the gloss can be deleted (the
+  // assertion above catches that), or the whole paragraph can come back
+  // un-folded (nothing caught that). The visible sentence is measured by the
+  // same rule Settings' ledes are — a word is a whitespace-separated token
+  // carrying a letter or digit, tags stripped first.
+  {
+    const vis = (a1.match(/<p class="sbw-hint">([\s\S]*?)<\/p>/) || [, ''])[1]
+      .replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;|&#\d+;/gi, ' ').trim()
+      .split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    ok(vis.length >= 4 && vis.length <= 13,
+      `…and the sentence above it is ${vis.length} visible words (4..13): "${vis.join(' ')}"`);
+    ok(/class="tx-vh-panel"[^>]*hidden/.test(a1),
+      '…with the gloss inside a fold that ships CLOSED, present in the markup rather than fetched');
+    const panel = (a1.match(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/) || [, ''])[1];
+    ok(/folder GitHub stores for you/.test(panel) && /right to write to it/.test(panel),
+      '…and it is THAT fold the two glosses are in, not a second copy somewhere visible');
+  }
   ok(/<strong>collaborator<\/strong>/.test(p2) && /read and write that repository/.test(p2),
     '"collaborator" is glossed where a member first meets it');
   ok(/branch is one line of history/.test(a1), '"branch" is glossed beside the branch field');

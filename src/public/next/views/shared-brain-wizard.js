@@ -137,6 +137,10 @@
 
 import { escapeHtml, icon } from '../app.js';
 import { createLoadingGate, loaderHtml } from '../shared/loading-gate.js';
+// The ⓘ mark (v3.58.0). One affordance app-wide: shared/text.js owns the
+// markup AND the single delegated toggle listener, which it installs on
+// import, so a panel rendered here behaves exactly as one in Settings.
+import { renderInfoMark } from '../shared/text.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -933,11 +937,24 @@ function panelStep2() {
 }
 
 function panelAdminStep1() {
+  const repoWhy = renderInfoMark('sbw-admin-repo-info', 'What a repository and a collaborator are',
+    'A <strong>repository</strong> is a folder GitHub stores for you, with a history of every change. ' +
+    'Any name works; you’ll paste its full name below. Adding someone as a <strong>collaborator</strong> ' +
+    'is how GitHub grants them the right to write to it.', { html: true });
   return (
     '<div id="sbw-panel-admin-step-1" class="sbw-panel sbw-hidden">' +
       '<h3>Name your Shared Brain and its repository</h3>' +
-      '<p class="sbw-hint">First create a <strong>private repository</strong> on GitHub for your cohort — a repository is a folder GitHub stores for you, with a history of every change. Any name works; you’ll paste its full name below. ' +
-        'Then add each member as a <strong>collaborator</strong>, which is how GitHub grants them the right to write to it.</p>' +
+      // ── ONE INSTRUCTION, THEN THE ⓘ (v3.58.0) ────────────────────────────
+      // 54 words under a heading, of which the two INSTRUCTIONS were sixteen:
+      // create the repo, add the members. Everything else glossed a word
+      // ("repository", "collaborator") or previewed a field two rows down —
+      // definitions and mechanism, which is what the mark is for. The glosses
+      // are moved, not cut: they are the first thing a first-time admin meets
+      // those words in, and scripts/test-next-sharedbrain-wizard.js §10 checks
+      // both are still in this panel's markup.
+      '<p class="sbw-hint">Create a <strong>private repository</strong> on GitHub, then add each member as a <strong>collaborator</strong>. ' +
+        repoWhy.btn + '</p>' +
+      repoWhy.panel +
       '<a href="https://github.com/new" target="_blank" rel="noopener" class="btn btn-secondary sbw-link-btn">' + icon('plus', 14) + ' Open GitHub → create a new private repo</a>' +
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-admin-repo">Repository <span class="sbw-label-note">(owner/name)</span></label>' +

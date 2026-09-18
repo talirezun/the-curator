@@ -26,7 +26,8 @@
  * ── THE GUARDS ─────────────────────────────────────────────────────────────
  *   G1  each renderer calls settingsBlock(), and none emits .settings-section
  *   G2  settings.js carries no inline style that positions or spaces anything
- *   G3  every lede these renderers emit is ≤ 20 visible words  (EXECUTED)
+ *   G3  every lede these renderers emit is ≤ 13 visible words  (EXECUTED)
+ *   G3b no loose sentence sits between a block heading and its body (EXECUTED)
  *   G4  a finding is never inside a fold: the stale note, the validation error
  *       and General's menu-bar failure-mode note all render outside every
  *       hidden container                                           (EXECUTED)
@@ -196,7 +197,7 @@ function baseState() {
   };
 }
 
-function run(name, state) {
+function run(name, state, over) {
   const deps = {
     state,
     escapeHtml: (x) => String(x)
@@ -232,10 +233,35 @@ function run(name, state) {
     inAppUpdate: null,
     updaterAttached: null,
   };
+  // `over` overrides injected collaborators BY NAME, so an unknown key is a
+  // silent no-op rather than a new free identifier — the §6 rule, kept.
+  Object.assign(deps, over || {});
   const names = Object.keys(deps);
   const fn = new Function(...names, [REAL, extractFunction(src, name), `return ${name};`].join('\n'));
   return fn(...names.map((n) => deps[n]))();
 }
+
+/**
+ * THE THREE INSTALL MODES, because the update lede FORKS on them.
+ *
+ * `baseState()` resolves to the git-checkout mode, which is the one every
+ * browser install is in — and for a long time it was the only one measured
+ * here, with a comment pointing at test-next-settings-default-section.js §6 for
+ * the other two. That was fine while both ceilings said twenty. It stopped
+ * being fine when this file's ceiling moved to THIRTEEN and §6's stayed at
+ * twenty: a packaged fork could then be 15 words and nothing would go red.
+ * Proven by mutation — restoring the 15-word attached-updater lede left every
+ * assertion in this file green. So the modes are measured where the ceiling is.
+ */
+const INSTALL_MODES = [
+  ['git checkout', (s) => s, {}],
+  ['packaged, updater attached',
+    (s) => ({ ...s, version: { version: '9.9.9', capabilities: { updateStyle: 'download-installer' } } }),
+    { updaterAttached: true }],
+  ['packaged, no updater',
+    (s) => ({ ...s, version: { version: '9.9.9', capabilities: { updateStyle: 'download-installer' } } }),
+    { updaterAttached: false }],
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('G1  Each section renders as settingsBlock() calls — never .settings-section');
@@ -297,14 +323,23 @@ section('G2  No inline style positions or spaces anything in this view');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('G3  Every lede is at most 20 visible words  (EXECUTED)');
+section('G3  Every lede is at most 13 visible words  (EXECUTED)');
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// TWENTY IS THE LINE v3.53.0 DREW and it is about reading, not about counting:
+// TWENTY WAS THE LINE v3.53.0 DREW and it is about reading, not about counting:
 // a lede is the one sentence a user reads before deciding whether to act, and
 // past roughly twenty words it stops being a sentence they read and becomes a
 // paragraph they skip — which is how the 500-word block 4 that release found
 // came to exist, one true sentence at a time.
+//
+// THIRTEEN IS THE LINE v3.58.0 DRAWS, and it is MEASURED rather than picked:
+// an audit of every shipped block lede found a MEDIAN of 13 visible words, so
+// thirteen is where the ledes that were written one sentence at a time already
+// sit. A ceiling above the median is a ceiling that only the outliers feel,
+// and it was the outliers — 18, 17, 16, 15, 14 — that carried a second clause
+// each. The rule the ceiling enforces: a lede carries an INSTRUCTION, a
+// CONDITION or a READING the user needs before acting; a DEFINITION never goes
+// in a lede, it goes behind the ⓘ.
 //
 // A WORD is a whitespace-separated token carrying at least one letter or digit,
 // so a bare "→" or "·" between two clauses is punctuation rather than a word.
@@ -335,8 +370,8 @@ function visibleWords(fragment) {
     for (const l of ledes) {
       const words = visibleWords(l);
       total += 1;
-      ok(words.length <= 20,
-        `${name}: "${words.slice(0, 6).join(' ')}…" is ${words.length} visible words (<= 20)`);
+      ok(words.length <= 13,
+        `${name}: "${words.slice(0, 6).join(' ')}…" is ${words.length} visible words (<= 13)`);
       ok(words.length >= 4,
         `${name}: …and is a sentence, not a fragment (${words.length} words, >= 4)`);
     }
@@ -345,7 +380,122 @@ function visibleWords(fragment) {
   // floor rather than an equality so that adding a block is not a test edit,
   // but high enough that a section quietly losing its ledes cannot hide behind
   // the per-renderer ">= 1" above.
+  //
+  // IT IS ALSO THE CONTROL ON THE CEILING. Tightening 20 → 13 makes DELETING a
+  // lede the cheapest way to pass, and a deleted lede is not a shorter lede —
+  // it is a block that no longer says what it is for. This number must not
+  // fall when the ceiling does.
   ok(total >= 8, `CONTROL: ${total} ledes measured across the four sections (a collapse to 0 would pass everything)`);
+
+  // …AND THE UPDATE LEDE IN ALL THREE INSTALL MODES. See INSTALL_MODES above.
+  let modeLedes = 0;
+  for (const [label, shape, over] of INSTALL_MODES) {
+    const html = run('renderGeneral', shape(baseState()), over);
+    const ledes = ledesOf(html);
+    ok(ledes.length === 4, `"${label}" renders four ledes, one per General block (${ledes.length})`);
+    for (const l of ledes) {
+      const words = visibleWords(l);
+      modeLedes++;
+      ok(words.length >= 4 && words.length <= 13,
+        `"${label}": "${words.slice(0, 6).join(' ')}…" is ${words.length} visible words (4..13)`);
+    }
+  }
+  ok(modeLedes === 12,
+    `CONTROL: ${modeLedes} ledes measured across the three install modes — a mode rendering none would make the ceiling vacuous`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('G3b  No loose sentence between a block heading and its body  (EXECUTED)');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE OTHER HALF OF THE RULE. G3 caps the lede; nothing capped the paragraphs
+// BESIDE it. `settingsBlock` emits, in order: the heading, then at most one
+// `.settings-block-lede` with the ⓘ button inside it, then at most one
+// `.settings-block-info` fold, then the body. A renderer that wants one more
+// sentence has exactly three honest homes for it — the lede (if it fits and is
+// an instruction, a condition or a reading), the ⓘ (if it is a definition, a
+// mechanism or an argument), or a `.tx-note` under the control it qualifies,
+// INSIDE the body. What it must not do is concatenate a loose `<p>` between the
+// heading and the body, which is the shape the whole text pass exists to
+// remove and the one nothing here could see: the `<p>` renders, no assertion
+// notices, and the block quietly grows a second voice.
+//
+// MEASURED ON THE RENDERED HTML, not on the source: `settingsBlock` is called
+// with a `body` string, so a source scan cannot tell a `<p>` that lands in the
+// gap from one that lands inside the body where it is legitimate.
+{
+  /** Remove one balanced <div …> subtree starting at `open` (an index of '<div'). */
+  function dropBalancedDiv(s, open) {
+    const scan = /<div\b|<\/div>/g;
+    scan.lastIndex = open;
+    let depth = 0, m;
+    while ((m = scan.exec(s)) !== null) {
+      if (m[0] === '</div>') { depth--; if (depth === 0) return s.slice(0, open) + s.slice(m.index + 6); }
+      else depth++;
+    }
+    return s; // unbalanced — leave it, and let the assertion below report it
+  }
+  /** The slice between each block heading's close and its body's open. */
+  function blockGaps(html) {
+    const gaps = [];
+    let at = 0;
+    for (;;) {
+      const hd = html.indexOf('class="settings-block-hd"', at);
+      if (hd < 0) break;
+      const h2end = html.indexOf('</h2>', hd);
+      const hdClose = html.indexOf('</div>', h2end < 0 ? hd : h2end);
+      const bodyAt = html.indexOf('<div class="settings-block-body">', hdClose);
+      if (hdClose < 0 || bodyAt < 0) break;
+      gaps.push(html.slice(hdClose + '</div>'.length, bodyAt));
+      at = bodyAt + 1;
+    }
+    return gaps;
+  }
+  /** '' when a gap holds only the allowed lede + ⓘ fold; otherwise what is left over. */
+  function looseInGap(gap) {
+    let rest = gap.replace(/^\s*<p class="settings-job-lede settings-block-lede">[\s\S]*?<\/p>/, '');
+    const info = rest.indexOf('<div class="settings-block-info">');
+    if (info >= 0) rest = dropBalancedDiv(rest, info);
+    return rest.trim();
+  }
+
+  let gapsSeen = 0;
+  for (const name of SECTION_RENDERERS) {
+    const html = run(name, baseState());
+    const gaps = blockGaps(html);
+    ok(gaps.length >= 1, `CONTROL: ${name}() emits ${gaps.length} heading→body gap(s) to measure`);
+    gapsSeen += gaps.length;
+    const loose = gaps.map(looseInGap).filter(Boolean);
+    ok(loose.length === 0,
+      loose.length
+        ? `${name}: loose markup between a heading and its body — it is a lede, an ⓘ, a .tx-note in the body, or it is cut:\n      ${loose.map((l) => l.slice(0, 160).replace(/\n/g, ' ')).join('\n      ')}`
+        : `${name}: nothing but the lede and its ⓘ fold sits between each heading and its body`);
+  }
+  ok(gapsSeen >= 8, `CONTROL: ${gapsSeen} gaps measured (a parser that found none would pass everything)`);
+
+  // POSITIVE CONTROL. A detector that can never say "loose" is the same green
+  // as a clean page. Inject the exact shape the rule forbids — a bare
+  // paragraph after the lede, before the body — into a COPY of real output and
+  // require the detector to catch it. `.settings-hint-text` is the class the
+  // two Shared Brain surfaces used for precisely this, so it is the shape a
+  // regression would actually take.
+  {
+    const clean = run('renderStorage', baseState());
+    ok(looseInGap(blockGaps(clean)[0]) === '', 'CONTROL: the real block reads clean…');
+    const dirty = clean.replace('<div class="settings-block-body">',
+      '<p class="settings-hint-text">A sentence nobody decided to put anywhere.</p><div class="settings-block-body">');
+    const caught = looseInGap(blockGaps(dirty)[0]);
+    ok(caught.includes('nobody decided'),
+      '…and CONFIRMED RED: an injected loose paragraph in that same gap IS reported');
+  }
+  // …and the ⓘ fold, which sits in the same gap legitimately, is NOT reported.
+  {
+    const withFold = run('renderHealthLimits', baseState());
+    ok(/class="settings-block-info"/.test(withFold),
+      'CONTROL: renderHealthLimits really emits an ⓘ fold in the gap under test');
+    ok(looseInGap(blockGaps(withFold)[0]) === '',
+      '…and the detector does not mistake that fold for a loose sentence');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -437,6 +587,28 @@ function insideHiddenContainer(html, marker) {
   off.config = { ...off.config, backgroundMode: 'window' };
   ok(!run('renderGeneral', off).includes(NEEDLE),
     'CONTROL: with the icon OFF the note is absent — so the assertion above is about the ON state, not about the string existing somewhere');
+
+  // ── THE COMPLEMENT: WHAT MOVED INTO A FOLD IS REALLY IN IT (v3.58.0) ───
+  //
+  // G4 asserts that findings are NOT folded. Nothing asserted the other
+  // direction, and tightening the lede ceiling to thirteen words made that
+  // direction the live hazard: the cheapest way to shorten a lede is to delete
+  // its second clause, and a deleted clause and a moved clause produce the same
+  // short lede. The update block's second sentence — the one saying an update
+  // replaces the program and not the data — was MOVED under this block's ⓘ, and
+  // it is the answer to the question the button raises. Proven by mutation:
+  // deleting it from `updateInfo` left every assertion in this file green.
+  //
+  // One mode is enough because the sentence is now mode-INDEPENDENT: it was
+  // three near-copies inside the three forked ledes and is one sentence in a
+  // fold that does not fork. That is the property, so assert it.
+  const MOVED = 'are never touched';
+  ok(html.includes(MOVED) && /replaces the program, not what it holds/.test(html),
+    'renderGeneral: the "an update does not touch your data" sentence is still rendered somewhere');
+  ok(insideHiddenContainer(html, MOVED) === true,
+    '…in the Software update ⓘ fold — moved there, not deleted, and not loose beside the lede');
+  ok((html.match(new RegExp(MOVED, 'g')) || []).length === 1,
+    '…exactly once: three forked near-copies became one mode-independent sentence');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

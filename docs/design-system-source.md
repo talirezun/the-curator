@@ -425,11 +425,18 @@ lede, body, info, notice?, infoOpts?)` calls. One block is:
 ```
   [ notice — never folded, above the heading ]
   ①  Bold title
-      Lede, ≤ 20 visible words, with the ⓘ mark at its end
+      Lede — OPTIONAL, ≤ 13 visible words, with the ⓘ mark at its end
       [ ⓘ panel — sibling of the lede, hidden on first paint ]
       Body — the controls
   ────────────────── 1px --border ──────────────────
 ```
+
+**Nothing else goes in that gap.** A lede is optional (nine view headers carry
+none), and the two slots above are the whole of what may sit between the
+heading and the body: a loose `<p>` there is the shape §3 removes.
+`scripts/test-next-settings-sections.js` G3b measures the RENDERED gap for each
+block — a `<p>` in the body is legitimate, one in the gap is not, and only the
+output can tell them apart.
 
 **The rhythm is 24 | hairline | 24**, and it is one rule rather than four
 declarations:
@@ -507,9 +514,45 @@ backdrop filter.
 
 | Role | Use for | Rule |
 |---|---|---|
-| **The lede** | the one fact that says what the block is for | **≤ 20 visible words**, capped at `66ch` |
+| **The lede** | the one fact the reader needs *before* acting | **optional; ≤ 13 visible words**, capped at `66ch` |
 | **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — capped at `68ch`, ships closed |
 | **`.tx-note`** | the single line that qualifies the control directly above it | **one line by contract** (`align-items: center`); a note that wraps is a `.tx-desc` that has not admitted it yet |
+
+**Thirteen is measured, not chosen** (v3.58.0). v3.53.0 drew the line at twenty
+and the pass that applied it everywhere then audited what had been written:
+**17 shipped block ledes, median 13 visible words** — and nine view headers
+carrying none at all. So thirteen is where the ledes that came out well already
+sit, and twenty was a ceiling only the outliers ever felt. It was the outliers
+— 18, 17, 16, 15, 14 — that each carried a second clause, and in every case that
+second clause was a definition or a reassurance rather than something the reader
+needed before pressing the button.
+
+**A lede carries exactly one of three things**, and if what you have is not one
+of them, it is not a lede:
+
+| Admissible | Example |
+|---|---|
+| an **INSTRUCTION** — what to do, or where the control is | "Pick any model you have connected — per message, in the composer." |
+| a **CONDITION** — when this applies, or what qualifies | "Any MCP client running local servers: Claude Desktop, Claude Code, Cursor." |
+| a **READING** — a figure or state the reader needs before acting | "Caps what one scan may cost. Used by Health → Ask AI scans." |
+
+**A DEFINITION never goes in a lede.** "A repository is a folder GitHub stores
+for you" is true, useful, and the reader does not need it to press the button;
+it goes behind the ⓘ with the mechanism and the argument. The same applies to
+reassurance — "your knowledge base is never touched" answers *is this safe?*,
+which is a question about the mechanism — provided it is not on the never-fold
+list below.
+
+**No loose sentence between a heading and its content.** A block may hold a
+heading, at most one lede, the ⓘ fold, and its body. A paragraph that is none of
+those is a second voice nobody decided to add: move it into the lede if it fits
+and is admissible, into the ⓘ if it explains, into a `.tx-note` under the
+control it qualifies, or cut it. The two Shared Brain surfaces were the worked
+example — a 49-word `.settings-hint-text` under the off-state's title and a
+54-word one under the wizard's admin step, each doing a lede's job at four times
+the length. `scripts/test-next-settings-sections.js` G3b enforces the gap on the
+four Settings sections, with a positive control that injects a loose paragraph
+and requires the detector to catch it.
 
 **What may never be folded**, because a warning behind a click is not a warning
 (v3.16.1): warnings and banners, costs, refusals, validation errors, and the
