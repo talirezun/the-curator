@@ -24,15 +24,31 @@
 
 ## What it is, in plain words
 
-You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts —
-and The Curator turns them into a connected personal wiki: a page for every person, tool and idea
-worth one, all linked to each other. Every new source **updates the pages that already exist**
-instead of adding another copy, so the wiki gets better the more you feed it, and you can ask it
-questions in ordinary language and get answers that point at the pages they came from. All of it
-lives on your own computer as plain text files you can open, edit and back up yourself — no
-account, no database, nothing of yours on anyone else's server. And if you work with AI coding
-assistants, it can also hold **where a piece of work stands**, so the next session picks up where
-the last one stopped.
+**The Curator is a context machine.** It builds and keeps the context your work runs on — what you
+have read, where the work stands, and the documents a project is built against — as plain markdown
+files on your own computer, and carries all three across sessions, machines, AI tools and models.
+
+The building half is what you touch first. You drop in the things you read — PDFs, Markdown and
+text files: articles, notes, transcripts — and The Curator turns them into a connected personal
+wiki: a page for every person, tool and idea worth one, all linked to each other. Every new source
+**updates the pages that already exist** instead of adding another copy, so the wiki gets better
+the more you feed it, and you can ask it questions in ordinary language and get answers that point
+at the pages they came from. None of it needs an account, a database, or anything of yours on
+anyone else's server.
+
+### The three kinds of context it carries
+
+| Kind | What it holds | How it changes | Example |
+|---|---|---|---|
+| **Compounded knowledge** — the wiki | Entities, concepts and summaries, cross-linked into a graph | **Accumulates** — a new source updates existing pages instead of duplicating them | A page per person, tool and idea across everything you have read |
+| **Volatile state** — the standing brief, the handoff, the journal | Where a piece of work stands, per project | **Supersedes** — each save replaces the last, because a resolved blocker must not come back | Where you stopped, what you decided, what to do next |
+| **Canonical documents** — foundations, new in v3.59.0 | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — mirrored byte-for-byte from a repository, or written by an agent you asked | The document an agent should not start work without |
+
+Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.
+Which of the three a thing belongs in is the most useful distinction in the product, and the one
+that repays learning first — [the decision table](docs/working-state.md#1-the-problem-it-solves)
+spells it out. All three live in one domain folder and sync together, and the two an agent needs
+before it can start — the state and the canonical documents — arrive in a single MCP call.
 
 **On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
 couple of minutes.** On Windows and Linux it runs as a local server you open in your browser —
@@ -42,11 +58,10 @@ same code, same release, same features.
 
 ## Your brain → your team's brain → your agents' brain
 
-The Curator is where your **context** lives — both the knowledge you have accumulated and the
-state of the work you are doing — as plain markdown files on your own machine. Any editor opens
-them. Your own private GitHub repo syncs them. Any local MCP client — an AI assistant allowed
-to launch a small helper program on your machine, like Claude Desktop, Claude Code or Cursor —
-reads and writes them.
+The three kinds above are *what* is carried. This is *who reads it* — the arc the product name
+has always pointed at. Any editor opens the files. Your own private GitHub repo syncs them. Any
+local MCP client — an AI assistant allowed to launch a small helper program on your machine, like
+Claude Desktop, Claude Code or Cursor — reads and writes them.
 
 **That last part is the whole argument.** Claude Projects, ChatGPT Projects and Cursor rules each
 hold your accumulated context inside one vendor's product, and you leave it behind on the day you
@@ -58,14 +73,15 @@ owner — you.
 |---|---|---|
 | **1. Your brain** — a personal wiki per domain | What you have read and understood: entities, concepts, summaries, all cross-linked | Knowledge **accumulates** — every source adds to existing pages instead of duplicating them |
 | **2. Your team's brain** — [Shared Brain](docs/shared-brain-user-guide.md) *(opt-in)* | The same, built collectively by a cohort, team or research group; your other domains never leave your machine | Knowledge **accumulates**, collectively |
-| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands, per **project** — what is settled, what to do next, what was already tried and ruled out. A domain holds as many projects as you build in it | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back |
+| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands, per **project** — what is settled, what to do next, what was already tried and ruled out — plus that project's **foundations**, its canonical documents held verbatim. A domain holds as many projects as you build in it | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back. A foundation is **replaced whole** |
 
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
 written by your agent at the end of a session and read at the start of the next one, so
 the work survives a change of session, agent, model, harness *(the app you run the agent in)*
-*or* machine — and, since v3.59.0, also carries **foundations**, a project's own canonical
-documents (architecture, decisions, conventions) mirrored or agent-written so they travel with it
-too instead of staying locked inside a code checkout ([working-state.md](docs/working-state.md#the-foundations-tier--canonical-documents-that-travel)).
+*or* machine. Since v3.59.0 it also carries **foundations**: a project's architecture, decisions
+and conventions, mirrored byte-for-byte from its repository or written by an agent you asked, so
+they travel with the project instead of staying locked inside a code checkout that only one
+machine has ([working-state.md](docs/working-state.md#the-foundations-tier--canonical-documents-that-travel)).
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
 > The Curator's job is everything else — summarizing, cross-referencing, filing, and bookkeeping.
@@ -118,8 +134,9 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 6. (optional) Join a Shared Brain → your opted-in domain contributes to a
    collective wiki; everyone's reading compounds together
          ↓
-7. (optional) Point an agent at a domain over MCP → it saves where the
-   work stands at the end of a session and reads it back at the start of the next
+7. (optional) Point an agent at a domain over MCP → one call at the start of a
+   session hands it the brief, the last handoff and the project's canonical
+   documents; it saves where the work stands again at the end
          ↓
 8. (optional, Mac app) Turn on the menu bar icon → glance at what your agents
    have just saved without opening the app
@@ -391,7 +408,7 @@ model-by-model measurements: [§ 16b](docs/user-guide.md#16b-choosing-your-ai-mo
 |------|------|----------|
 | **Chat** | Built into the app | "How does X relate to Y?", synthesising across sources, multi-turn conversation — answers stream in as they are written, and on OpenRouter you can watch the model reason first ([§9](docs/user-guide.md#watching-the-answer-arrive--streaming-and-the-thinking-region)) |
 | **Visual** | [Obsidian](https://obsidian.md) graph view | Seeing the whole map, spotting clusters, browsing pages |
-| **Frontier model** | Any local MCP client — Claude Desktop, Claude Code, Cursor | Deep research over the full graph, plus reading and writing working state |
+| **Frontier model** | Any local MCP client — Claude Desktop, Claude Code, Cursor | Deep research over the full graph, plus reading and writing working state and a project's canonical documents |
 
 They don't compete and they need no sync or export between them — all three read the same markdown.
 → [User Guide § 13](docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
@@ -409,11 +426,12 @@ looked at. → [AI Wiki Health Guide](docs/ai-health.md)
 ### Querying it with a frontier model
 
 Building a second brain is rewarding. Querying it with a frontier model is the moment it becomes
-irreplaceable. The **My Curator** MCP bridge exposes **twenty-two tools** — thirteen that read
+irreplaceable. The **My Curator** MCP bridge exposes **twenty-four tools** — fourteen that read
 (search, nodes, tags, backlinks, multi-hop traversal, cross-domain search, topology overview, the
-original source document behind a summary, your projects, and prior working state) and nine
-health/authoring tools, of which six actually change anything on disk. By capability rather than
-grouping: **sixteen read, six write.** That lets a model ask things a search bar cannot:
+original source document behind a summary, your projects, prior working state, and the one-call
+project bootstrap that opens a session) and ten health/authoring tools, of which seven actually
+change anything on disk. By capability rather than grouping: **seventeen read, seven write.** That
+lets a model ask things a search bar cannot:
 
 > *"What ideas in my AI domain have I never explicitly connected to my business strategy domain?"*
 
@@ -478,7 +496,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
-| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; projects inside a domain; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
+| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; projects inside a domain; the foundations tier — canonical documents that travel with a project; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
 | [Standing brief template](docs/project-brief-template.md) | A copyable `state/project.md` — the brief you write by hand so every agent on a project starts from the same instructions |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |

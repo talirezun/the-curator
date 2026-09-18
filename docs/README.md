@@ -2,14 +2,28 @@
 
 ## What is The Curator?
 
-**The Curator is where your context lives** — both the knowledge you have accumulated and the
-state of the work you are doing — as plain markdown files on your own machine. Any editor opens
-them, your own private GitHub repo syncs them, and any local MCP client reads and writes them.
+**The Curator is a context machine.** It builds and keeps the context your work runs on — what you
+have read, where the work stands, and the documents a project is built against — as plain markdown
+files on your own machine. Any editor opens them, your own private GitHub repo syncs them, and any
+local MCP client reads and writes them.
 
 That matters because the alternatives do not work that way. Claude Projects, ChatGPT Projects and
 Cursor rules each hold your accumulated context inside one vendor's product, and you leave it
 behind on the day you switch tools, models or machines. There is nothing here to leave behind:
 the files *are* the product, and the app is a convenience over them.
+
+### The three kinds of context
+
+| Kind | What it holds | How it changes | Where it lives |
+|---|---|---|---|
+| **Compounded knowledge** | The wiki — entities, concepts, summaries, cross-linked | **Accumulates**: a new source updates existing pages rather than duplicating them | `domains/<d>/wiki/` |
+| **Volatile state** | The standing brief, the handoff, the journal — where a piece of work stands | **Supersedes**: each save replaces the last, so a resolved blocker cannot come back | `domains/<d>/state/<project>/` |
+| **Canonical documents** *(v3.59.0)* | Foundations — architecture, decisions, conventions, roadmap, held verbatim | **Replaced whole**: mirrored byte-for-byte from a repository, or written by an agent you asked | `domains/<d>/state/<project>/foundations/` |
+
+Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim
+— [the decision table](working-state.md#1-the-problem-it-solves) says which is which, and
+[the foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
+covers the third row end to end.
 
 ### The three layers
 
@@ -19,11 +33,12 @@ the files *are* the product, and the app is a convenience over them.
 |---|---|---|---|
 | **1. Your brain** | Knowledge you have read and understood — entities, concepts, summaries, cross-linked | **Accumulates**: a new source updates existing pages rather than duplicating them | `domains/<d>/wiki/` |
 | **2. Your team's brain** | The same, built collectively by a cohort, team or research group. Opt-in; your other domains never leave your machine | **Accumulates**, collectively | `domains/shared-<slug>/wiki/` (read-only mirror) |
-| **3. Your agents' brain** | Where the work stands: what is settled, what to do next, what was tried and ruled out | **Supersedes**: each save replaces the previous handoff, so a resolved blocker cannot come back | `domains/<d>/state/` |
+| **3. Your agents' brain** | Where the work stands: what is settled, what to do next, what was tried and ruled out — and the project's canonical documents | **Supersedes** for the handoff; a canonical document is **replaced whole** | `domains/<d>/state/` |
 
-One format, one owner, three layers. Layers 1 and 2 are built by *ingesting* sources — that is
-the means, not the point. Layer 3 is written by an agent over MCP and read back by the next
-session, on any tool and any machine.
+The three kinds above are *what* is carried; these three layers are *who reads it*. One format,
+one owner. Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point.
+Layer 3 is written by an agent over MCP and read back by the next session, on any tool and any
+machine.
 
 **The boundary between layers 1–2 and layer 3 is worth learning before you use it.** Knowledge
 accumulates; state supersedes. Durable material put into state is overwritten by the next save,
@@ -61,7 +76,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 - **Ingest** any PDF, Markdown or text file — an article, a note, a transcript — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
 - **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Answers stream in as the model writes them rather than landing all at once, and on OpenRouter you can watch a reasoning model think first. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
-- **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines. On a Mac you can also put an optional **menu bar icon** there (off by default) that answers *"is my state actually saved, and how long ago?"* without opening the app
+- **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines, along with the project's canonical documents. On a Mac you can also put an optional **menu bar icon** there (off by default) that answers *"is my state actually saved, and how long ago?"* without opening the app
 - **Sync** your entire wiki, chat history and working state across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with Push only / Pull only alongside it) for daily use
 - **Build** a personal library that gets smarter over time — the more you add, the richer the connections
 
@@ -82,7 +97,7 @@ paste into an assistant that needs to understand The Curator before it helps you
 
 **Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository. Prefer to let an AI agent do it? See [Set up sync with a coding agent](sync-via-coding-agent.md).
 
-**Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
+**Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Since v3.59.0 the same one call also hands it the project's canonical documents: [the foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel), or [the plain-language version](user-guide.md#foundations--canonical-documents-that-travel) in the user guide. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
 
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 
@@ -129,7 +144,7 @@ first group applies to all three.
 
 | Document | What's inside |
 |----------|---------------|
-| [working-state.md](working-state.md) | Carry build context across sessions, agents, models, harnesses and machines through MCP. What the store holds, why state supersedes while knowledge accumulates, how to treat what comes back, the two read surfaces (the in-app view and the Mac menu bar icon), and what is deliberately not built |
+| [working-state.md](working-state.md) | Carry build context across sessions, agents, models, harnesses and machines through MCP. What the store holds, why state supersedes while knowledge accumulates, **the foundations tier — canonical documents that travel with a project, mirrored from a repository or written on your instruction**, how to treat what comes back, the two read surfaces (the in-app view and the Mac menu bar icon), and what is deliberately not built |
 | [project-brief-template.md](project-brief-template.md) | A copyable `state/project.md` — the standing brief you write by hand. Carries the `## Operating directives` convention, the capability-fallback pattern, and the limit on what a directive may ask for |
 
 **For developers**

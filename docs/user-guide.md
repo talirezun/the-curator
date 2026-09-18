@@ -38,7 +38,9 @@ This guide covers everything from first-time setup to daily use. No technical ba
 
 ## 1. What is this app?
 
-The Curator is a local, AI-powered knowledge curation system. You feed it documents — articles, PDFs, notes — and it:
+**The Curator is a context machine.** It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — as plain markdown files on your own computer, and carries all three across sessions, machines, AI tools and models.
+
+The building half is what you touch first. You feed it documents — articles, PDFs, notes — and it:
 
 - Automatically **atomizes** them into three network components: *Entities* (people, tools, companies), *Concepts* (ideas, techniques, frameworks), and *Summaries* (source narratives that connect them)
 - Builds a **compounding wiki** of interlinked pages — unlike RAG systems that re-derive knowledge on every query, The Curator writes persistent pages that grow richer with every source you add
@@ -47,9 +49,23 @@ The Curator is a local, AI-powered knowledge curation system. You feed it docume
 
 The big idea: instead of one giant notebook where everything gets lost, you have **separate, focused wikis per topic** (e.g. AI/Tech, Business, Personal Growth). Each one compounds with every source you add. You are the curator; the AI is the diligent librarian.
 
+### The three kinds of context it carries
+
+Everything The Curator holds for you is one of three kinds. They look alike — all markdown, all inside your domain folder — and they behave completely differently when something is written to them.
+
+| Kind | What it holds | How it changes | Example |
+|---|---|---|---|
+| **Compounded knowledge** — the wiki | Entities, concepts and summaries, cross-linked into a graph | **Accumulates** — a new source updates existing pages instead of duplicating them | A page per person, tool and idea across everything you have read |
+| **Volatile state** — the standing brief, the handoff, the journal | Where a piece of work stands, per project | **Supersedes** — each save replaces the last, because a resolved blocker must not come back | Where you stopped, what you decided, what to do next |
+| **Canonical documents** — foundations, new in v3.59.0 | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — mirrored byte-for-byte from a repository, or written by an agent you asked | The document an agent should not start work without |
+
+**Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the sentence to carry into everything below. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
+
+The three kinds are *what* is carried. The three layers below are *who reads it*.
+
 ### The three layers, and the one rule that separates them
 
-The Curator stores three different kinds of thing. They look similar — all markdown, all in your domain folder — but **two of them accumulate and one of them supersedes**, and mixing that up is the single most important thing to understand.
+The same material, grouped by who it is for: **your brain → your team's brain → your agents' brain.** One domain — one folder — holds all three, so they share one sync, one backup, one editor and one bridge to your agents.
 
 ```mermaid
 flowchart TD
@@ -57,7 +73,7 @@ flowchart TD
 
     D --> L1[1 · YOUR BRAIN<br/>wiki/<br/>entities · concepts · summaries]
     D --> L2[2 · YOUR TEAM'S BRAIN<br/>a shared wiki, mirrored in<br/>read-only · opt-in]
-    D --> L3[3 · YOUR AGENTS' BRAIN<br/>state/<br/>what you are working on]
+    D --> L3[3 · YOUR AGENTS' BRAIN<br/>state/<br/>what you are working on<br/>· plus the project's foundations]
 
     L1 --> A1[ACCUMULATES<br/>a new source makes an existing<br/>page richer, never a duplicate]
     L2 --> A2[ACCUMULATES<br/>collectively, from a cohort]
@@ -66,7 +82,32 @@ flowchart TD
 
 **Why the third one is different.** Knowledge is additive: everything you learn about a topic is worth keeping. Working state is not — "blocked on the login bug" stops being true the moment you fix it, and a store that merely *added* the fix would leave the stale blocker sitting there beside it. So each save of your working state replaces the one before it. Knowledge grows; state is current or it is worthless.
 
+Layer 3 also holds the third kind of context, a project's **foundations** — its architecture, its firm decisions, its conventions. Those are not volatile and are not merged either: each one is replaced whole and read verbatim, so an agent gets the document rather than a paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel).
+
 The middle layer is off unless you turn it on, and only the domains you explicitly opt in ever leave your machine.
+
+### A day with the Curator
+
+Nothing below is required on day one. It is the shape of a full day once all three kinds of context are in place.
+
+1. **Morning — you add something.** A PDF you were sent lands in **Ingest**. The model reads it once and writes a summary page plus entity and concept pages, linking them into what is already there. A person mentioned in it already had a page, so that page got deeper rather than a second copy. *(→ [§8](#8-ingest-a-source))*
+2. **Midday — you ask.** In **Chat** you ask how this connects to something you read months ago. The answer is built from your own pages and cites them, and you can open any page it names. If the answer is worth keeping, **Compile to Wiki** turns the thread into pages of its own. *(→ [§9](#9-chat-with-your-brain))*
+3. **Afternoon — an agent picks up a build, cold.** You open a new session in whatever tool you are using and say *"resume Lumina."* One call hands the agent your standing brief, the last handoff — where the work stopped, what is settled, what was already ruled out — and the project's canonical documents, which it has either never read or has not read since they changed. It starts from your architecture rather than from a guess at it. *(→ [§13b](#13b-working-state--carrying-context-between-sessions))*
+4. **Evening — it writes down where it got to.** The agent saves the handoff before it stops; the save overwrites, so what you get back tomorrow is current rather than a pile. On a Mac, the optional **menu bar icon** tells you it landed without opening the app. *(→ [§6b](#6b-the-menu-bar-icon-mac-app))*
+5. **Whenever you like — it all travels.** One **Sync** click pushes the wiki, the conversations and the state to your own private GitHub repository, and pulls them down on the other machine. *(→ [§15](#15-sync-across-computers))*
+
+Step 3 is the one that used to be impossible. Working state and the wiki already travelled; a project's canonical documents lived only inside a code checkout, so an agent on another machine — or in another tool, or simply started in the wrong folder — could not see them at all.
+
+### Where to go deep
+
+| If you want… | Read |
+|---|---|
+| To add sources and understand what ingest costs and produces | [§8 Ingest a source](#8-ingest-a-source) · [§19 API keys, cost and free tier](#19-api-keys-cost--free-tier) |
+| To ask your wiki questions and compile answers back into it | [§9 Chat with your brain](#9-chat-with-your-brain) |
+| To build one wiki together with a cohort or team | [§15b Shared Brain](#15b-shared-brain) |
+| To carry build context between sessions, tools and machines | [§13b Working state](#13b-working-state--carrying-context-between-sessions) |
+| The canonical documents a project is built against | [§13b → Foundations](#foundations--canonical-documents-that-travel) |
+| The whole product in one document, including what it deliberately does not do | [Product Overview](product-overview.md) |
 
 > 📖 **For the long-form story** of why a second brain matters and how the parts of The Curator fit together philosophically, read **[Knowledge Immortality — Building a Second Brain with The Curator](../research/articles/knowledge-immortality-second-brain.md)**. It's a 15-minute essay covering the Karpathy spark, what markdown gives you, every section of the app in plain language, and the case for *compounding* knowledge. Recommended before you start ingesting.
 
@@ -86,7 +127,7 @@ Batch-upload 20+ PDFs on a topic. The Curator extracts all distinct methodologie
 Upload reports, competitor analyses, and meeting transcripts. Build an intelligence layer where the most-referenced nodes grow largest, giving you a visual heat map of your knowledge. Query for synthesised strategic answers that bypass recency bias.
 
 **Software Architects & Development Teams**
-Ingest architecture decision records, API specs, and post-mortems. New team members can ask *"Why did we choose X over Y?"* and get an answer cited directly from a document written years ago. The Curator becomes a conversational Senior Engineer that never leaves.
+Ingest architecture decision records, API specs, and post-mortems. New team members can ask *"Why did we choose X over Y?"* and get an answer cited directly from a document written years ago. The Curator becomes a conversational Senior Engineer that never leaves. The documents a build is *governed* by — rather than merely informed by — go in a project's [foundations](#foundations--canonical-documents-that-travel) instead, where they are kept verbatim and handed to an agent at the start of every session.
 
 **Medical & Scientific Researchers**
 Drop in clinical trial PDFs and papers. The graph reveals hidden intersections — a compound used in one domain showing efficacy in another study — by visually bridging entity nodes across your entire literature corpus.
@@ -136,6 +177,7 @@ flowchart TD
 | Change AI provider | Three providers ship today, and swapping is a Settings choice. Your wiki doesn't care which one wrote it. |
 | Work across several machines | Sync is your own private GitHub repository. No account with us, and nothing of yours passes through us. |
 | Move a coding session to a different tool | Working state is plain markdown and JSONL, designed for exactly that move. |
+| Start a session on a machine that has never checked the repository out | A project's canonical documents travel with it as foundations, so they are readable without a checkout. |
 
 **And what is *not* yet neutral — said plainly, because an overclaim would be worse than the gap:**
 
@@ -2829,7 +2871,7 @@ block is covered in [§16](#default-domain-for-mcp-writes-v252).*
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
-- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **22 tools in total: 16 that read and 6 that write.** (Four of those — `get_working_state` and `save_working_state` since v3.17.0, `list_projects` and `save_project_brief` since v3.48.0 — touch a project’s working state rather than its wiki; see [§13b](#13b-working-state--carrying-context-between-sessions).)
+- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **24 tools in total: 17 that read and 7 that write.** (Six of those — `get_working_state` and `save_working_state` since v3.17.0, `list_projects` and `save_project_brief` since v3.48.0, `get_project_context` and `save_foundation` since v3.59.0 — touch a project’s working state rather than its wiki; see [§13b](#13b-working-state--carrying-context-between-sessions).)
 - **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
 - **Write to your wiki** (v2.5.2+) — say *"save what we discussed to my second brain"* and Claude calls `compile_to_wiki` to commit the conversation as a summary page plus any new entity/concept pages. Same merge pipeline as the in-app Compile button.
 - **Heal your wiki** (v2.5.2+) — say *"check my wiki for problems"* and Claude scans, auto-fixes the safe ones, asks before destructive merges, and respects your persistent dismissals.

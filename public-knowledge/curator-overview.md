@@ -2,7 +2,9 @@
 
 ## What is The Curator?
 
-The Curator is a program you run on your own computer. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
+The Curator is a context machine you run on your own computer. It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — and carries all three across sessions, machines, AI tools and models.
+
+The building half is what you touch first. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
 
 Every new source updates the pages that already exist instead of adding another copy, so the wiki gets better the more you feed it. You can ask it questions in ordinary language and get answers that point at the pages they came from.
 
@@ -12,6 +14,20 @@ The software is free and open source. The only thing you pay for is an API key w
 
 A typical source becomes about 18 to 20 interlinked pages: one summary page for the source, plus entity pages (people, tools, companies, datasets) and concept pages (ideas, techniques, principles). That figure is the model's, not a constant — across the measured model catalogue the same document produces between 5 and 27 pages, and the app prints the figure for whichever model you pick.
 
+## What are the three kinds of context?
+
+Everything The Curator holds for you is one of three kinds. They are all plain markdown in the same folder, and they behave completely differently when something is written to them.
+
+| Kind | What it holds | How it changes |
+|---|---|---|
+| Compounded knowledge — the wiki | Entities, concepts and summaries, cross-linked into a graph | Accumulates: a new source updates existing pages instead of duplicating them |
+| Volatile state — the standing brief, the handoff, the journal | Where a piece of work stands, per project | Supersedes: each save replaces the last, so a resolved blocker cannot come back |
+| Canonical documents — foundations, added in version 3.59.0 | A project's architecture, firm decisions, conventions, roadmap, held verbatim | Replaced whole: mirrored byte-for-byte from a code repository, or written by an agent on your explicit instruction |
+
+**Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the rule to learn before using it. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
+
+The three kinds are what is carried. The three layers below are who reads it.
+
 ## What are the three layers, and what is the one rule?
 
 The Curator holds three layers of the same idea, in one format, with one owner: your brain, then your team's brain, then your agents' brain.
@@ -20,9 +36,7 @@ The Curator holds three layers of the same idea, in one format, with one owner: 
 |---|---|---|
 | 1. Your brain — a personal wiki per domain | What you have read and understood: entities, concepts and summaries, cross-linked into a graph | Knowledge accumulates — a new source updates existing pages instead of duplicating them |
 | 2. Your team's brain — Shared Brain, opt-in | The same, built collectively by a cohort, team or research group, one opted-in domain at a time; your other domains never leave your machine | Knowledge accumulates, collectively |
-| 3. Your agents' brain — working state | Where the work stands, per project: what is settled, what to do next, what was already tried and ruled out | State supersedes — each save replaces the previous handoff, because a resolved blocker must not come back |
-
-The one rule to learn before using it: **knowledge accumulates, state supersedes.** Layers 1 and 2 add new material to what is already there. Layer 3 overwrites. Put something durable into state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
+| 3. Your agents' brain — working state | Where the work stands, per project: what is settled, what to do next, what was already tried and ruled out — and that project's canonical documents | State supersedes; a canonical document is replaced whole |
 
 All three live inside the same container, called a domain, so they share one folder, one sync, one backup, one editor and one bridge to your agents.
 
@@ -138,7 +152,7 @@ It is still an **opt-in beta.** General availability is gated on a structured pi
 
 ## Can it remember what my AI coding agent was working on?
 
-Yes — that is the third layer, called working state or agent memory. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine.
+Yes — that is the third layer, called working state or agent memory. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
 
 There is a dedicated file in this knowledge base covering how it is structured, what belongs in it, how it is set up and what it measurably does.
 
@@ -190,6 +204,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 - **It is not multi-user and it is not a server.** Shared Brain is not real-time collaboration: it is push, administrator-run synthesis, and pull.
 - **It does not force your agent to save.** Capture is advisory and there are no hooks. A session that ends without saving leaves the previous state — stale, never corrupted. That is the fail-safe direction and the reason no enforcement was added, but it means the memory layer is inert until the continuity discipline is installed in whatever agent you use.
 - **The app cannot write your handoffs.** They have exactly one writer, an agent, by design. The app reads them. The standing brief is the exception and always was the human's.
+- **The app cannot edit a canonical document either, in this release.** It reads foundations and can refresh a repository-owned mirror, which is a byte copy rather than an edit. Writing one is an agent action, on your instruction. Nothing selects what belongs in a project's foundations automatically, and nothing summarises a foundation on the way in or out.
 - **A browser-only assistant cannot use the MCP bridge.** The bridge is a local child process, so the client has to be able to start a local program. That is a limit of the transport, not a choice about vendors.
 - **Two agent tools on one computer will overwrite each other** in a shared work-stream. Give each one its own scope.
 - **A handoff does not bind the next session.** It reliably tells the next session what it does not know; measurably, it does not stop a model deciding it knows better.
@@ -203,7 +218,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 
 ## What version is it, and is the project active?
 
-Version **3.52.0**, as of 13 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
+Version **3.59.0**, as of 18 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 

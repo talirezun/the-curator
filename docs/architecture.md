@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Curator is a local Node.js web application. It has no external database — all knowledge is stored as plain markdown files on disk. An LLM is the only external dependency at runtime, reached through one of three providers — Google Gemini, Anthropic Claude, or OpenRouter — selected by which API key is configured.
+The Curator is a context machine: it builds and keeps the three kinds of context a piece of work runs on — compounded knowledge (the wiki, which accumulates), volatile state (the standing brief, handoff and journal, which supersede) and canonical documents (foundations, replaced whole and read verbatim) — and carries all three across sessions, machines, harnesses and models. Concretely it is a local Node.js web application. It has no external database — all of that is plain markdown files on disk. An LLM is the only external dependency at runtime, reached through one of three providers — Google Gemini, Anthropic Claude, or OpenRouter — selected by which API key is configured.
 
 ### Core design philosophy: Curation, not retrieval
 
