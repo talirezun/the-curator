@@ -893,7 +893,7 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   return dropped;
 }
 {
-  const { saveFoundation, refreshFoundationsFromRepo, getProjectContext, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME } = WS;
+  const { saveFoundation, refreshFoundationsFromRepo, initFoundations, getProjectContext, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME } = WS;
   // (1) Curator-authored documents, with a save that carries `foundationsRead`.
   const P_CUR = 'zz-found-curator';
   mkDomain(P_CUR);
@@ -934,6 +934,16 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   ok(o1.ok, 'FIXTURE: one listed document beside the orphan');
   writeFileSync(path.join(DOMAINS, P_ORPHAN, 'state', FOUNDATIONS_DIRNAME, 'orphan.md'), '# Orphan — written, never listed\n');
 
+  // (6) SKELETONS (v3.61.0). A seeded project's documents are PROMPTS, and
+  // `skeletonCount` is one assignment away from being dropped by any consumer
+  // — the same class as every field above it. The MCP layer also composes a
+  // framing sentence from it, so a drop would silently stop telling an agent
+  // that what it is reading is a list of questions.
+  const P_SKEL = 'zz-found-skeletons';
+  mkDomain(P_SKEL);
+  const seeded = await initFoundations(P_SKEL, P_SKEL, { ownership: 'curator' });
+  ok(seeded.ok && seeded.seeded.length === 4, 'FIXTURE: four skeletons seeded', JSON.stringify(seeded).slice(0, 160));
+
   const CASES = [
     ['curator documents, delta read against the handoff', P_CUR, {}],
     ['curator documents, first-session read (all)', P_CUR, { include: 'all' }],
@@ -942,6 +952,8 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
     ['repo mirror whose root is UNREACHABLE', P_UNREACH, {}],
     ['MALFORMED manifest', P_BAD, {}],
     ['ORPHAN file beside a listed document', P_ORPHAN, {}],
+    ['SKELETONS, index only', P_SKEL, { include: 'index' }],
+    ['SKELETONS, bodies included', P_SKEL, { include: 'all' }],
   ];
   let keys = 0;
   for (const [label, dom, opts] of CASES) {
@@ -980,6 +992,14 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   const orphan = await getProjectContext(P_ORPHAN, P_ORPHAN, {});
   ok(orphan.foundations.orphanFiles.length === 1 && orphan.foundations.orphanFiles[0] === 'orphan.md',
     'corpus: the orphan file really is disclosed by name');
+  const skel = await getProjectContext(P_SKEL, P_SKEL, { include: 'index' });
+  ok(skel.foundations.skeletonCount === 4 && skel.foundations.index.every((d) => d.skeleton === true),
+    'corpus: the seeded project really reports four skeletons, flagged row by row',
+    JSON.stringify({ n: skel.foundations.skeletonCount, f: skel.foundations.index.map((d) => d.skeleton) }));
+  const skelPayload = JSON.parse(JSON.stringify(await getProjectContextHandler({ project: P_SKEL, include: 'index' }, storage)));
+  ok(skelPayload.foundations.index.every((d) => d.skeleton === true) && /UNFILLED SKELETON/.test(skelPayload.content_is_data),
+    'corpus: the MCP payload keeps the per-row flag AND frames them as prompts, on an index-only read too',
+    JSON.stringify(skelPayload.content_is_data).slice(-200));
   const budget = await getProjectContext(P_CUR, P_CUR, { include: 'all', maxBytes: 1024 });
   ok(budget.foundations.budget.omitted.length >= 1 || budget.foundations.budget.truncated === true,
     'corpus: the 1 KB budget really omits or truncates', JSON.stringify(budget.foundations.budget));
