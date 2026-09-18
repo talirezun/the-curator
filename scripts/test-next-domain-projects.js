@@ -677,6 +677,29 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     /Set once — a project is mirrored or kept here, never both/.test(create)
     && create.indexOf('Set once') < create.indexOf('data-fnd-own='), create.slice(0, 900));
   ok('...in flow, not behind the mark', !/tx-vh-panel[^>]*>[^<]*Set once/.test(create));
+
+  // ── v3.61.1: THE SAME RHYTHM AS THE OTHER HOST ────────────────────────
+  //
+  // The maintainer's "very cramped together" was reported against the Agent
+  // memory block, and this form had the identical defect from the identical
+  // cause: the description, the never-folded "Set once" note and the option
+  // cards are three elements none of which carries a bottom margin, so they
+  // measured 0px apart. Both hosts now put that run in ONE named stack with
+  // one gap — a rhythm is a property of the stack, not of its children
+  // (design-system §2).
+  //
+  // The px are CSS and are measured in the browser pass. The STRUCTURE is
+  // what a future edit can silently remove, so it is pinned here — including
+  // that the chooser really is inside the stack rather than beside it, which
+  // is the shape that would look right in source and render flat.
+  ok('the documents field is ONE stack, so its three parts have a decided gap',
+    /<div class="dm-proj-fnd-stack">/.test(create), create.slice(0, 900));
+  ok('...opening before the description and closing after the chooser',
+    create.indexOf('dm-proj-fnd-stack') < create.indexOf('Set once')
+      && create.indexOf('Set once') < create.indexOf('data-fnd-init='), create.slice(0, 900));
+  ok('...and the label with its ⓘ stays OUTSIDE it, because the eyebrow has its own '
+    + 'rhythm (`.dm-lc-label`) and gaining a second one would double it',
+  create.indexOf('dm-proj-fnd-head') < create.indexOf('dm-proj-fnd-stack'), create.slice(0, 900));
   // ── THE CONSEQUENCE OF THE PRIMARY, ABOVE THE ACTION ROW (P2-5) ───────
   // Derived from the chosen arm rather than folded into the button's own
   // label: a label that changes width as the form is answered moves the
@@ -822,6 +845,23 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     && !/<label class="btn[^"]*fnd-init-file"/.test(cur));
   ok('...and it says out loud that nothing is uploaded until the project is created',
     /nothing is uploaded until you create the project/i.test(cur));
+  // ── v3.61.1: AS A ONE-LINE NOTE, NOT A PARAGRAPH BESIDE THE BUTTON ────
+  // It was 22 words wrapped next to the control — the longest run of text in
+  // the card, under a checkbox and above the primary. Two of its three
+  // clauses were mechanism ("each file becomes one document", "read on this
+  // computer") and moved behind the field's own ⓘ, which says both in the
+  // room it has for them. What stays visible is the privacy claim, because
+  // that is the question a control which reads your files raises before it is
+  // pressed.
+  ok('...on the kit’s one-line note rather than as a paragraph beside the button',
+    /class="tx-note fnd-init-why"><span>Optional/.test(cur), cur.slice(-800));
+  {
+    const txt = /class="tx-note fnd-init-why"><span>([^<]*)</.exec(cur)[1];
+    const words = txt.trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    ok('...of at most 13 visible words (' + words.length + '): ' + txt, words.length <= 13);
+  }
+  ok('...and the mechanism it dropped is in the field’s ⓘ, not lost',
+    /a file you choose is read in this browser/i.test(create), 'FOUNDATIONS_INFO_HTML');
 }
 {
   // THE TYPED CONFIRMATION. The route enforces it independently, so this is

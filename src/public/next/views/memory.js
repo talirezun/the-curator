@@ -223,6 +223,14 @@ import {
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
   bindFoundationsChooser, renderRoleOptions, renderRefusedList,
   readPickedFile, slugForFilename, roleForBasename, titleFromText, formatBytes,
+  // ── ONE PREDICATE FOR THE COMMIT, SHARED WITH THE OTHER HOST (v3.61.1) ──
+  // What makes "Set up documents" pressable is a fact about the CHOICE, not
+  // about this view, so the rule lives beside the choice. This view calls it
+  // twice — once for the disabled flag at render, once in the patch the
+  // chooser's `onSelect` triggers — and both answers come from the same
+  // function, which is what stops a button and the sentence under it
+  // disagreeing.
+  commitBlockedReason,
 } from '../shared/foundations-init.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
@@ -3173,7 +3181,9 @@ function renderProject() {
       + 'source; the source line then shows the path with no commit beside it. A mirrored document '
       + 'belongs to its repository, so it is changed THERE and re-copied here.</p>'
       + '<p><b>Kept by The Curator</b> means the document lives only here, and there are three ways '
-      + 'one arrives: you write or paste it, you import a file from this computer, or an '
+      + 'one arrives: you write or paste it, you import a file from this computer — <b>each file '
+      + 'you choose becomes one document</b>, read in this browser and shown to you before '
+      + 'anything is saved, never uploaded anywhere — or an '
       + '<b>agent you ask</b> writes it — a commissioned write, the same permission the standing '
       + 'brief needs, and nothing writes one on its own. Setting this up seeds four '
       + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
@@ -5539,11 +5549,36 @@ function renderFoundationsInit(facts) {
     : freshChooser({ allowLater: false });
   if (repoOnly) choice.ownership = 'repo';
   const busy = !!(ini && ini.busy);
-  const ready = repoOnly
+  // ── AND ONE MORE CONDITION, WITH ITS REASON (v3.61.1) ──────────────────
+  // A mirror that has been SCANNED and has nothing ticked would set the
+  // ownership and copy no documents — `chooserBody` omits an empty `files`, so
+  // the wire would carry a decision nobody made. `commitBlockedReason` is the
+  // shared rule (it keys on `candidates` being a non-empty array, so pointing
+  // at a folder WITHOUT scanning stays a complete answer), and the same call
+  // decides both the disabled flag and the sentence under the button — one
+  // predicate, so the control and its explanation cannot come apart.
+  const blocked = commitBlockedReason(choice);
+  const ready = (repoOnly
     ? !!String(choice.repoRoot || '').trim()
-    : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim());
+    : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
 
   return (
+    // ── THE STATE'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ───────
+    // Measured before this: the "Set once" note and the card below it were
+    // **0px** apart, and so were the card's question line and the option
+    // cards under it. Both were the default — a `.tx-note` carries a top
+    // margin and no bottom one, and a `<p>` in a block body carries neither —
+    // so the gaps were nobody's decision. A flex column with one gap is the
+    // fix rather than a margin per element, for the reason
+    // design-system §2 gives the Settings block: a rhythm is a property of
+    // the stack, and a margin on a child is a property of the child.
+    //
+    // The class also exists because the shared text kit's names are OFF
+    // LIMITS to this stylesheet — scripts/test-next-text-system.js fails any
+    // stylesheet but shared/text.css that declares a `tx-` rule — so
+    // `.tx-note + .mem-fnd-row` could not have been written here even though
+    // it is the obvious selector.
+    '<div class="mem-fnd-init-wrap">' +
     // ── IRREVERSIBILITY NEVER FOLDS (§3.10) ──────────────────────────────
     // The store refuses a mismatch on every later write, so this choice is
     // made once. That is on the never-fold list: a cost, a refusal and an
@@ -5557,7 +5592,12 @@ function renderFoundationsInit(facts) {
         escapeHtml('Set once — a project is mirrored or kept here, never both.') +
         '</span></div>') +
     '<div class="mem-fnd-row">' +
-      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+      // `mem-fnd-init-body` gives this card's own contents the same 16px
+      // rhythm and drops the 46px right reserve `.mem-fold-flat` keeps for
+      // the brief's pencil — there is no control in this card's top-right
+      // corner, and the reserve was 32px of the chooser's width spent on
+      // nothing.
+      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-fnd-init-body">' +
         renderDescription(repoOnly
           ? 'Nothing mirrored yet. Point at the folder and choose which files to copy.'
           : 'No canonical documents yet. Choose how they arrive.') +
@@ -5581,7 +5621,19 @@ function renderFoundationsInit(facts) {
               : (repoOnly ? 'Add from folder' : 'Set up documents')) +
           '</button>' +
         '</div>' +
+        // ── WHY THE COMMIT IS OFF (v3.61.1) ────────────────────────────
+        // Emitted ALWAYS and merely `hidden`, because a tick does NOT
+        // re-render this block any more — the chooser's binder hands the
+        // reason back through `onSelect` and this node is patched in place.
+        // A conditional emit would give the patch nothing to write into.
+        // `.fnd-init-why` carries the `[hidden]` counter-rule `.tx-note`
+        // needs (design-system §9).
+        '<div class="tx-note fnd-init-why" id="mem-fnd-init-why"' +
+          (blocked ? '' : ' hidden') + '>' +
+          '<span>' + escapeHtml(blocked) + '</span>' +
+        '</div>' +
       '</div></div>' +
+    '</div>' +
     '</div>'
   );
 }
@@ -6498,6 +6550,33 @@ function bindFoundationRows(root, token) {
       id: 'mem-fnd-init',
       choice: state.fndInit.choice,
       onChange: () => render(token),
+      // ── A TICK PATCHES; IT DOES NOT RENDER (v3.61.1) ──────────────────
+      //
+      // THE DEFECT: `onChange` is `render(token)` — a full view render — and
+      // every tick went through it. Measured on a 44-candidate folder, the
+      // list's own scrollTop went 1105 → 0, the container came back a
+      // different node and the focused checkbox lost focus. The maintainer's
+      // words: "when I select or deselect a document I'm always thrown at the
+      // top — confusing with 50 documents."
+      //
+      // The chooser now patches its own count, budget line and row controls
+      // and hands back only what THIS view owns: whether its primary can be
+      // pressed, and the sentence saying why not. Two `textContent` writes and
+      // two flags, with every node checked before it is touched — the same
+      // shape v3.57.0's row press uses, and the reason it takes no render.
+      onSelect: (reason) => {
+        const go = root.getElementById ? root.getElementById('mem-fnd-init-go') : null;
+        const why = root.getElementById ? root.getElementById('mem-fnd-init-why') : null;
+        // `busy` is the request in flight and outranks the tick state: a
+        // disabled-because-saving button must not be re-armed by a tick.
+        const saving = !!(state.fndInit && state.fndInit.busy);
+        if (go) go.disabled = saving || !!reason;
+        if (why) {
+          const span = why.querySelector ? why.querySelector('span') : null;
+          if (span) span.textContent = reason || '';
+          why.hidden = !reason;
+        }
+      },
       onFailure: (err) => reportAsyncMountFailure(token, err),
     });
   }

@@ -812,6 +812,122 @@ export async function pickFolderHandler(_req, res, deps = null) {
 router.post('/pick-folder', guardConcurrent('change the knowledge folder'),
   (req, res) => pickFolderHandler(req, res));
 
+/**
+ * POST /api/config/pick-path — SHOW a folder picker and say what was picked.
+ *
+ * ── WHY THIS IS NOT `pick-folder` WITH A FLAG (v3.61.1) ──────────────────
+ * `pick-folder` above does not merely ASK — its own docblock calls the code
+ * after the dialog "the ONE set of post-pick rules", and those rules end in
+ * `setDomainsDir()`. It is a mutation of the one setting that decides where
+ * every domain, wiki and project in the app lives. The Foundations chooser
+ * needs the opposite thing: a folder name to put in a text field, with the
+ * knowledge base left exactly where it is. Adding a `mutate: false` parameter
+ * to that handler would put "and sometimes it does not repoint your whole
+ * knowledge base" inside a route whose every existing caller depends on the
+ * mutation, one boolean away from the worst silent outcome this app has.
+ *
+ * So this route is DELIBERATELY the smaller thing, and the smallness is the
+ * feature: it opens a dialog, it reads back a string, it returns it. It calls
+ * no setter, takes no write lock and needs no `guardConcurrent` — there is
+ * nothing for a concurrent write to conflict with, and the existence check
+ * `pick-folder` runs before mutating is not this route's business either (the
+ * caller is going to hand the path to `/repo-scan`, which resolves it through
+ * `realpath` and answers `repo-unreachable` on its own terms).
+ *
+ * ── THE PROMPT IS A KEY, NEVER THE CLIENT'S TEXT ─────────────────────────
+ * The repo arm builds a shell command string, so a client-supplied prompt
+ * would be interpolated into `osascript -e '…'` — the one shape this app
+ * refuses everywhere (`/api/mcp/reveal-config` uses `execFile` for exactly
+ * this reason). `prompt` is therefore a KEY into a frozen table of literals
+ * written here, and an unknown key takes the default rather than being
+ * refused: the worst outcome of a stale client sending an unknown key should
+ * be a slightly generic dialog title, not a dead first-run task.
+ *
+ * ── FOUR ANSWERS, AND THE CLIENT KEYS ON `reason` ALONE ──────────────────
+ *   200 {ok:true, path}                the person chose a folder
+ *   200 {ok:false, reason:'cancelled'} they dismissed the dialog — not an error
+ *   501 {ok:false, reason:'no-dialog'} this build/platform has no picker at all
+ *   500 {ok:false, reason:'failed'}    a picker that should work did not
+ * `no-dialog` is the one the UI has to treat as a FACT rather than a failure:
+ * a chooser that keeps offering a button which cannot work is worse than one
+ * that withholds it and says why (v3.16.1), and the typed field beside it is
+ * the answer in that state.
+ */
+const PICK_PATH_PROMPTS = Object.freeze({
+  foundations: 'Choose the folder that holds this project’s documents:',
+  generic: 'Choose a folder:',
+});
+
+export async function pickPathHandler(req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  const execAsync = (deps && deps.execAsync) || defaultExec;
+  const pickHook = (deps && Object.hasOwn(deps, 'pickFolderHook'))
+    ? deps.pickFolderHook
+    : getDesktopHook('pickFolder');
+
+  const key = req && req.body && typeof req.body.prompt === 'string' ? req.body.prompt : '';
+  // `Object.hasOwn`, not `PICK_PATH_PROMPTS[key]` guarded by truthiness: the
+  // own-property test is what stops `__proto__` / `constructor` reaching the
+  // lookup at all, which is the rule `normalizeResponseStyle` and
+  // `listOfferableModels` already carry in this tree.
+  const prompt = Object.hasOwn(PICK_PATH_PROMPTS, key)
+    ? PICK_PATH_PROMPTS[key] : PICK_PATH_PROMPTS.generic;
+
+  const noDialog = (detail) => res.status(501).json({
+    ok: false, reason: 'no-dialog',
+    message: 'This build cannot open a folder picker' + (detail ? ` (${detail})` : '') + '.',
+    hint: 'Type or paste the full path to the folder instead.',
+  });
+
+  if (caps.folderPickerStyle === 'native-dialog') {
+    // NOT a fallback to osascript, for the reason `pickFolderHandler` records
+    // at length: under the hardened runtime a missing usage description kills
+    // the process rather than returning an error.
+    if (typeof pickHook !== 'function') return noDialog('no desktop bridge');
+    let picked;
+    try { picked = await pickHook({ prompt }); }
+    catch (err) {
+      return res.status(500).json({
+        ok: false, reason: 'failed',
+        message: (err && err.message) || 'The folder picker failed.',
+        hint: 'You can type or paste the full path instead.',
+      });
+    }
+    const p = typeof picked === 'string' ? picked.trim() : '';
+    return p ? res.json({ ok: true, path: p }) : res.json({ ok: false, reason: 'cancelled' });
+  }
+
+  try {
+    const { stdout } = await execAsync(
+      `osascript -e 'POSIX path of (choose folder with prompt ${JSON.stringify(prompt)})'`,
+      { timeout: 60000, env: SUBPROCESS_ENV }
+    );
+    const p = String(stdout || '').trim();
+    return p ? res.json({ ok: true, path: p }) : res.json({ ok: false, reason: 'cancelled' });
+  } catch (err) {
+    const stderr = String(err.stderr || '');
+    // A REAL cancel is AppleScript -128, and a killed process is a dialog left
+    // open — both `cancelled`, as `pickFolderHandler` classifies them.
+    if (stderr.includes('-128') || err.killed === true) return res.json({ ok: false, reason: 'cancelled' });
+    // NO `osascript` AT ALL is not a failure of this feature, it is the
+    // absence of the feature — and it is the answer that makes the button
+    // disappear with a reason instead of failing on every press. A shell
+    // reports it as ENOENT or exit 127.
+    if (err.code === 'ENOENT' || err.code === 127 || /not found/i.test(stderr)) {
+      return noDialog('no folder picker on this system');
+    }
+    if (err.code === 1 && !stderr.trim()) return res.json({ ok: false, reason: 'cancelled', inferred: true });
+    return res.status(500).json({
+      ok: false, reason: 'failed',
+      message: stderr.trim() || err.message,
+      hint: 'If The Curator was recently installed or moved, macOS may be blocking folder access — '
+        + 'check System Settings > Privacy & Security > Files and Folders. You can type the path instead.',
+    });
+  }
+}
+
+router.post('/pick-path', (req, res) => pickPathHandler(req, res));
+
 // ── API Keys ────────────────────────────────────────────────────────────────
 
 /** Mask an API key: show only last 4 chars */

@@ -3407,6 +3407,15 @@ function foundationsField(f, busy) {
       '<span>Canonical documents</span>' + info.btn +
     '</div>' +
     info.panel +
+    // ── THE FIELD'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ────────
+    // The same 0px gaps the Agent-memory host had, from the same cause: a
+    // `<p>` in a form body carries no bottom margin and a `.tx-note` carries
+    // no bottom margin either, so the description touched the note and the
+    // note touched the option cards. One flex column with one gap, for the
+    // reason design-system §2 gives the Settings block — and a wrapper class
+    // rather than `.tx-note + .fnd-init`, because shared/text.css owns the
+    // `tx-` prefix outright and this stylesheet may not declare a rule on one.
+    '<div class="dm-proj-fnd-stack">' +
     renderDescription('Where this project keeps the documents agents read first.') +
     // IRREVERSIBILITY NEVER FOLDS. The same sentence the Agent-memory chooser
     // carries above itself, in the same treatment and for the same reason: the
@@ -3417,7 +3426,8 @@ function foundationsField(f, busy) {
     '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
       escapeHtml('Set once — a project is mirrored or kept here, never both.') +
       '</span></div>' +
-    renderFoundationsChooser({ id: 'dm-proj-fnd', choice, busy: !!busy })
+    renderFoundationsChooser({ id: 'dm-proj-fnd', choice, busy: !!busy }) +
+    '</div>'
   );
 }
 

@@ -5637,6 +5637,19 @@ const REPO_SCAN_HEADING_BYTES = 4096;
  * `tooLarge` marks a file over MAX_FOUNDATION_BYTES: it is SHOWN with the
  * reason rather than hidden, because a missing row reads as "we did not find
  * your architecture document" while a disabled one says why.
+ *
+ * ── `modifiedAt` — THE SOURCE FILE'S OWN AGE (v3.61.1) ──────────────────
+ * The `mtime` of the file that would be copied, as an ISO string, from the
+ * `stat` this scan ALREADY does for its size — no second syscall. It is here
+ * because a picker that lists twelve paths, twelve titles and twelve sizes
+ * still cannot answer the one question somebody onboarding a real repository
+ * asks about each of them: is this document still maintained. `null` when the
+ * timestamp is missing or not a real date, and `null` on a `tooLarge` row too
+ * — UNIFORMLY, from the same expression, so the field means one thing on
+ * every row rather than "absent = refused" on some and "absent = unknown" on
+ * others. It is INFORMATION and never an order: the sort stays role rank then
+ * path, because the maintainer asked to see the age, not to have the rows
+ * rearranged by it.
  */
 export async function scanRepoForFoundations(root) {
   if (typeof root !== 'string' || !root.trim() || root.includes('\0') || !path.isAbsolute(root)) {
@@ -5705,6 +5718,14 @@ export async function scanRepoForFoundations(root) {
         suggestedSlug: deriveSlugFromPath(rel),
         tooLarge: st.size > MAX_FOUNDATION_BYTES,
         matchedBy: rule,
+        // ── THE SOURCE'S OWN mtime (v3.61.1) ────────────────────────────
+        // Off the `st` this loop already has. `getTime()` is checked rather
+        // than the Date object's truthiness: an invalid Date IS truthy and
+        // `toISOString()` on one THROWS, which inside this loop would abort
+        // a scan for one unreadable timestamp. null is the honest answer and
+        // every surface already renders an absent age as "unknown".
+        modifiedAt: st.mtime && Number.isFinite(st.mtime.getTime())
+          ? st.mtime.toISOString() : null,
         readAbs,
       });
     }
@@ -5733,7 +5754,7 @@ export async function scanRepoForFoundations(root) {
     candidates.push({
       path: c.path, bytes: c.bytes, suggestedRole: c.suggestedRole,
       suggestedSlug: c.suggestedSlug, tooLarge: c.tooLarge,
-      matchedBy: c.matchedBy, firstHeading,
+      matchedBy: c.matchedBy, firstHeading, modifiedAt: c.modifiedAt,
     });
   }
 

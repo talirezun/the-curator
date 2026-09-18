@@ -1755,8 +1755,47 @@
 .mem-fnd-delete { margin-left: auto; }
 
 /* The chooser's commit, under the chooser it commits. Its own row so the
-   button is not the last item of a flex list of option cards. */
-.mem-fnd-init-actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+   button is not the last item of a flex list of option cards. NO margin of
+   its own any more: `.mem-fnd-init-body` below is a flex column whose gap
+   sets every distance in this card, and a margin here would ADD to that gap
+   rather than replace it. */
+.mem-fnd-init-actions { display: flex; gap: var(--space-3); }
+
+/* ── THE NO-MANIFEST STATE'S RHYTHM (v3.61.1) ────────────────────────────
+   THE REPORTED DEFECT: "very cramped together", with a screenshot of exactly
+   this state. Measured at 1370px before the change: the "Set once" note and
+   the card below it sat **0px** apart, the card's question line and the
+   option cards **0px**, the arm and the action row **4px**.
+
+   Two stacks, one gap each, rather than a margin per element — the reason
+   design-system §2 gives for the Settings block's own rhythm: a rhythm is a
+   property of the stack, and a margin on a child is a property of the child,
+   which is how six elements come to have six unrelated spacings.
+
+   16px (`--space-8`) is the kit's GROUP step, one rung under the 24px block
+   step, which is the right reading here: the note, the card and the action
+   row are parts of one decision, not separate blocks.
+
+   NOTE WHAT THESE SELECTORS AVOID. The obvious rule is
+   `.tx-note + .mem-fnd-row`, and it is not written because shared/text.css
+   owns the `tx-` prefix outright — scripts/test-next-text-system.js fails any
+   other stylesheet that declares a rule on one. The wrapper class is how a
+   view asks for a gap above a kit component without naming it. */
+.mem-fnd-init-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.mem-fnd-init-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  /* `.mem-fold-flat > .mem-fold-body` reserves 46px on the right for the
+     brief card's pencil. THIS card has no control in that corner, and the
+     reserve was 32px of the chooser's own width spent on nothing — measured:
+     the chooser rendered 908px wide inside a 970px card. */
+  padding-right: 14px;
+}
 
 /* The Edit column of the foundations table. Right-aligned and no wider than
    the control, so the columns before it keep the width. */

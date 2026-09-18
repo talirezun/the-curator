@@ -114,7 +114,7 @@
  *    → 409 — are driven above.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, realpathSync, symlinkSync , statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -1741,6 +1741,31 @@ const REPO = join(TMP, 'repo');
     arch.firstHeading, 'The Architecture');
   eq('...which rule admitted it (D20)', arch.matchedBy, 'docs-folder');
   eq('...and how big it is', arch.bytes, readFileSync(join(REPO, 'docs', 'architecture.md')).length);
+  // ── `modifiedAt` CROSSES THE ROUTE (v3.61.1) ──────────────────────────
+  //
+  // The picker puts an age on every candidate row, on the app's shared
+  // freshness scale, because a list of paths and sizes cannot say whether a
+  // document is still maintained. The store reads it off the `stat` it
+  // already does; this is the assertion that it reaches a client — the route
+  // forwards its candidate fields one by one (never a spread), so a field the
+  // store grows is invisible until somebody adds it here, and a field the
+  // route drops is invisible everywhere.
+  //
+  // Compared against the FILE'S OWN mtime, not merely "is a string": a value
+  // read from the wrong stat would still parse as a date.
+  eq('...and when the source file was last touched, as an ISO string',
+    arch.modifiedAt,
+    statSync(join(REPO, 'docs', 'architecture.md')).mtime.toISOString());
+  ok('...on EVERY row, a string or null and never absent — the field means one thing '
+    + 'per row rather than "absent = refused" on some and "absent = unknown" on others',
+  (scan.body.candidates || []).every((c) => Object.hasOwn(c, 'modifiedAt')
+    && (c.modifiedAt === null || typeof c.modifiedAt === 'string')),
+  JSON.stringify((scan.body.candidates || []).map((c) => c.modifiedAt)));
+  ok('...including the row over the per-document wall, which is still a real file',
+    typeof obj((scan.body.candidates || [])
+      .find((c) => c.path === 'docs/api-dump.md')).modifiedAt === 'string',
+    JSON.stringify(obj((scan.body.candidates || [])
+      .find((c) => c.path === 'docs/api-dump.md')).modifiedAt));
   eq('the decision record says it came from its folder', obj((scan.body.candidates || [])
     .find((c) => c.path === 'decisions/0001-use-markdown.md')).matchedBy, 'doc-folder');
   eq('the README says it came from its name', obj((scan.body.candidates || [])

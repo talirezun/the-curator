@@ -187,9 +187,9 @@ import { renderBlock } from '../src/public/next/shared/block.js';
 // let the two drift into agreement.
 import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instructions.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
-// shared/foundations-init.js takes NO imports (the same contract shared/text.js
-// carries), so the real module runs in Node and is imported rather than
-// stubbed. That matters twice: the four STORE MIRRORS it exports are what
+// shared/foundations-init.js imports only from the DOM-free kit (shared/age.js,
+// since v3.61.1 — the contract shared/text.js carries, stated as what it always
+// meant), so the real module runs in Node and is imported rather than stubbed. That matters twice: the four STORE MIRRORS it exports are what
 // memory.js's editor measures against, and a stub would let this suite agree
 // with itself about a wall the shipped page enforced at a different number.
 // scripts/test-next-foundations-editor.js pins all four against
@@ -198,6 +198,12 @@ import {
   FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
   renderRoleOptions, renderRefusedList, formatBytes,
+  // ── THE COMMIT'S OWN PREDICATE (v3.61.1) ────────────────────────────────
+  // `renderFoundationsInit` asks the shared module whether its primary can be
+  // pressed and paints the reason when it cannot. The REAL one, because a stub
+  // returning '' would leave the button armed in exactly the state the
+  // sentence exists for, with every assertion here green.
+  commitBlockedReason,
 } from '../src/public/next/shared/foundations-init.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1265,6 +1271,7 @@ function makeRenderers(stateObj) {
     'FOUNDATION_SLUG_RE', 'FOUNDATION_ROLES', 'MAX_FOUNDATION_BYTES',
     'FOUNDATIONS_BUDGET_BYTES', 'freshChooser', 'chooserBody', 'chooserOutcomeWords',
     'renderFoundationsChooser', 'renderRoleOptions', 'renderRefusedList', 'formatBytes',
+    'commitBlockedReason',
     // The real shared text renderers, so §6's escaping battery runs through
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
@@ -1290,6 +1297,7 @@ function makeRenderers(stateObj) {
     FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES,
     FOUNDATIONS_BUDGET_BYTES, freshChooser, chooserBody, chooserOutcomeWords,
     renderFoundationsChooser, renderRoleOptions, renderRefusedList, formatBytes,
+    commitBlockedReason,
     renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
     renderInfoMark,
     COPY_SUCCESS_BANNER,
@@ -6655,6 +6663,93 @@ const fndRead = (payload) => ({
     unchosen.includes('id="mem-fnd-init-go"')
     && (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(0, 900));
   ok('...and emits no table at all', !unchosen.includes('fnd-table'));
+
+  // ── v3.61.1: "VERY CRAMPED TOGETHER" — THE STRUCTURE THE RHYTHM NEEDS ──
+  //
+  // The maintainer's words, with a screenshot of THIS state. Measured in a
+  // browser at 1370px before the change: the "Set once" note and the card
+  // below it were 0px apart, the card's question line and the option cards
+  // 0px, the arm and the action row 4px. Six elements, six unrelated
+  // spacings, none of them anybody's decision — because none of a `.tx-note`,
+  // a `<p>` in a block body or an option grid carries a bottom margin.
+  //
+  // The px are CSS and are measured in the browser pass. What this suite
+  // holds is the STRUCTURE those rules need, which is the part a future edit
+  // can silently remove: two named stacks, each with one gap.
+  ok('the no-manifest state is ONE stack, so the note and the card have a decided gap',
+    /<div class="mem-fnd-init-wrap">/.test(unchosen), unchosen.slice(0, 200));
+  ok('...with the never-folded "Set once" note as its first child and the card second',
+    unchosen.indexOf('mem-fnd-init-wrap') < unchosen.indexOf('Set once')
+      && unchosen.indexOf('Set once') < unchosen.indexOf('mem-fnd-row'), unchosen.slice(0, 600));
+  ok('...and the card’s own contents are a second stack, so the question line, the '
+    + 'chooser and the action row are spaced by one rule rather than three',
+  /class="mem-fold-body mem-fnd-init-body"/.test(unchosen), unchosen.slice(0, 700));
+  // The 46px right reserve `.mem-fold-flat` keeps for the brief's pencil is
+  // dropped here BY CLASS, because this card has no control in that corner —
+  // it was 32px of the chooser's own width spent on nothing (measured: the
+  // chooser rendered 908px inside a 970px card).
+  ok('...and that class is what drops the pencil reserve this card has no pencil for',
+    /mem-fnd-init-body/.test(unchosen));
+
+  // ── v3.61.1: THE COMMIT CARRIES ITS OWN REASON ────────────────────────
+  //
+  // A mirror that has been SCANNED with nothing ticked would set the ownership
+  // and copy no documents, because `chooserBody` omits an empty `files` — a
+  // decision nobody made, reaching the wire. The button is off in that state
+  // and says why, and the note is EMITTED AND HIDDEN rather than
+  // conditionally emitted, because a tick patches this node in place (a
+  // re-render would throw a reader of a 44-row list back to its top).
+  ok('the commit’s reason note is always in the DOM, ready to be patched',
+    /id="mem-fnd-init-why"/.test(unchosen), unchosen.slice(-500));
+  ok('...and `hidden` while the commit is live, never omitted',
+    /id="mem-fnd-init-why" hidden/.test(unchosen), unchosen.slice(-500));
+  ok('...carrying the `.fnd-init-why` class that brings the `[hidden]` counter-rule '
+    + '`.tx-note`’s own `display: flex` would otherwise defeat (design-system §9)',
+  /class="tx-note fnd-init-why" id="mem-fnd-init-why"/.test(unchosen), unchosen.slice(-500));
+  {
+    // THE STATE THE SENTENCE EXISTS FOR, driven through the real renderer: a
+    // scan with candidates and nothing ticked.
+    const R = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fnd: null,
+      fndInit: { domain: 'acme', project: 'lumina', busy: false,
+        choice: { ...freshChooser({ allowLater: false }), ownership: 'repo', repoRoot: '/r',
+          candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' }],
+          picks: {} } } });
+    const blocked = R.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+    ok('with a scan on screen and nothing ticked, the commit is DISABLED',
+      /id="mem-fnd-init-go" disabled/.test(blocked), blocked.slice(-700));
+    ok('...and the reason is visible, not hidden',
+      /id="mem-fnd-init-why"><span>Tick at least one document\./.test(blocked),
+      blocked.slice(-700));
+    // CONTROL: one tick and both come back. Same renderer, same state shape.
+    const R2 = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fnd: null,
+      fndInit: { domain: 'acme', project: 'lumina', busy: false,
+        choice: { ...freshChooser({ allowLater: false }), ownership: 'repo', repoRoot: '/r',
+          candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' }],
+          picks: { 'docs/a.md': true } } } });
+    const live = R2.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+    ok('CONTROL: one tick arms the commit again',
+      !/id="mem-fnd-init-go" disabled/.test(live), live.slice(-700));
+    ok('...and hides the reason', /id="mem-fnd-init-why" hidden/.test(live), live.slice(-700));
+  }
+
+  // ── v3.61.1: THE MECHANICS THE FILE HINT GAVE UP ARE IN THE ⓘ ──────────
+  // The chooser's 22-word hint became a 9-word note; "each file you choose
+  // becomes one document" and "read in this browser, never uploaded" are
+  // mechanism and belong behind the mark (design-system §3). Asserted on the
+  // BLOCK, because a clause that was dropped from one surface and not added to
+  // the other is how a fact leaves the app entirely.
+  {
+    const whole = F.renderProject();
+    ok('the block’s ⓘ says what a chosen file becomes',
+      /each file[^<]*becomes one document/i.test(whole)
+        || /<b>each file you choose becomes one document<\/b>/i.test(whole), 'memory.js ⓘ');
+    ok('...and that nothing is uploaded, which is the question the control raises',
+      /read in this browser[\s\S]{0,80}never uploaded/i.test(whole), 'memory.js ⓘ');
+    ok('...and where a MIRRORED document is edited instead, which the option card no '
+      + 'longer says', /changed THERE and re-copied here/.test(whole), 'memory.js ⓘ');
+  }
 
   // (b) REPO-OWNED WITH NOTHING MIRRORED: the ownership is settled, so the
   //     two-way choice is WITHHELD (it cannot be made) and the scan arm is

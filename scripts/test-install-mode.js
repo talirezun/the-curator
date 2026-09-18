@@ -654,8 +654,50 @@ const OSASCRIPT_COMMAND =
   `      \`osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'\`,`;
 ok(headConfigSrc.includes(OSASCRIPT_COMMAND), '§5b-a HEAD contains the transcribed osascript command line');
 ok(workConfigSrc.includes(OSASCRIPT_COMMAND), '§5b-a the working tree contains it too, BYTE-IDENTICALLY');
-eq((workConfigSrc.match(/osascript -e 'POSIX path of/g) || []).length, 1,
-  '§5b-a exactly ONE osascript folder-picker command survives (a second copy is drift)');
+// ── WHAT THIS COUNT IS FOR, AND WHY IT IS TWO SINCE v3.61.1 ────────────────
+//
+// The guard's subject is DRIFT: two copies of one command, free to be fixed in
+// one place and not the other. v3.61.1 adds a SECOND, deliberately different
+// folder picker — `POST /pick-path`, which shows a dialog and returns the path
+// WITHOUT calling setDomainsDir, for the Foundations chooser (the route header
+// carries the argument for why that is a second route rather than a flag on
+// this one). Two routes that ask for different things with different prompts
+// are not two copies of one command.
+//
+// So the count moves to two AND the property that actually matters is now
+// asserted directly: the knowledge-base prompt — the string whose wording is
+// the thing a user reads on their first run — appears exactly ONCE, and the two
+// commands do not share a prompt. A third copy of either, or a second route
+// borrowing the knowledge-base wording, still reddens this.
+eq((workConfigSrc.match(/osascript -e 'POSIX path of/g) || []).length, 2,
+  '§5b-a exactly TWO osascript folder-picker commands survive — /pick-folder (mutates) and ' +
+  '/pick-path (reads); a third is drift');
+// SCOPED, not counted: the knowledge-base prompt legitimately appears TWICE
+// inside `pickFolderHandler` — once per arm of the folderPickerStyle fork —
+// and the property worth asserting is that it appears in NO OTHER handler. A
+// second route adopting the wording "Select your Knowledge Base folder" would
+// be telling a user it is about to repoint their knowledge base while doing
+// something else, which is the drift that matters here.
+{
+  const pfAt = workConfigSrc.indexOf('export async function pickFolderHandler');
+  const ppAt = workConfigSrc.indexOf('export async function pickPathHandler');
+  ok(pfAt > 0 && ppAt > pfAt, '§5b-a PRECONDITION: both handlers found, in source order');
+  // Bounded at the REGISTRATION that follows the handler, not at the next
+  // handler: `PICK_PATH_PROMPTS` and pick-path's docblock sit between the two
+  // functions, so a slice to `ppAt` would swallow the other route's prompt
+  // table and the cross-over check below would fail on its own setup.
+  const regAt = workConfigSrc.indexOf("router.post('/pick-folder'", pfAt);
+  ok(regAt > pfAt && regAt < ppAt, '§5b-a PRECONDITION: pick-folder\'s registration bounds its handler');
+  const pickFolderBody = workConfigSrc.slice(pfAt, regAt);
+  const rest = workConfigSrc.slice(0, pfAt) + workConfigSrc.slice(regAt);
+  eq((pickFolderBody.match(/Select your Knowledge Base folder:/g) || []).length, 2,
+    '§5b-a ...the KNOWLEDGE-BASE prompt sits in pickFolderHandler, once per arm of the fork');
+  eq((rest.match(/Select your Knowledge Base folder:/g) || []).length, 0,
+    '§5b-a ...and NOWHERE else in the file — a second route wearing that wording would tell a ' +
+    'user it is repointing their knowledge base while doing something else');
+  ok(!/Choose the folder that holds/.test(pickFolderBody),
+    '§5b-a ...and the two prompts have not been crossed over between the handlers');
+}
 ok(!OSASCRIPT_COMMAND.includes('${'),
   '§5b-a CONTROL: the pinned command is a fixed literal, not built by interpolation from a variable');
 

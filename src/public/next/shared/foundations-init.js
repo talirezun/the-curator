@@ -19,13 +19,28 @@
 // act on. So the markup, the state shape, the request body and the outcome
 // words are all here, and both views call them.
 //
-// ── IT TAKES NO IMPORTS, AND THAT IS DELIBERATE ──────────────────────────
-// Same contract as shared/text.js: no imports, so the module stays executable
-// in a plain Node suite (scripts/test-next-foundations-editor.js imports it
-// directly rather than lifting it by brace-matching) and it can never reach a
-// DOM at import time. The two consequences are that it carries its own
-// `escapeHtml` — a four-line copy, pinned against the shell's by the suite —
-// and that every DOM it touches is PASSED IN.
+// ── IT IMPORTS ONLY FROM THE DOM-FREE KIT, AND THAT IS DELIBERATE ────────
+// The rule this module was written under is shared/text.js's: nothing that
+// reaches a DOM at import time, so the module stays executable in a plain Node
+// suite (scripts/test-next-foundations-editor.js imports it directly rather
+// than lifting it by brace-matching) and every DOM it touches is PASSED IN.
+// Until v3.61.1 that was enforced as "no imports at all", which is the same
+// thing only while no DOM-free kit module exists.
+//
+// `shared/age.js` is one: its own header says "Nothing here touches
+// `document`, so a suite can import this module in plain Node", and it is the
+// app's SINGLE age ladder — `formatAge`'s body is deliberately byte-identical
+// in three places and pinned three ways precisely because copying it is the
+// failure mode. A fourth hand-kept copy in this file, to put an age on a
+// candidate row, would have needed a fourth pin. So the import is taken and
+// the CONTRACT is now stated as what it always meant: this module may import
+// from the DOM-free kit (`age.js`) and from nothing else — asserted as an
+// allow-list by the suite rather than as the absence of the word `import`.
+//
+// It still carries its own `escapeHtml` — a four-line copy, pinned against the
+// shell's by the suite — because the shell's lives in `app.js`, which IS
+// DOM-bound at import time.
+import { formatAge, freshnessTier } from './age.js';
 //
 // ── NO NATIVE <select>, AND NO LISTBOX EITHER ────────────────────────────
 // /next purged the native `<select>` in v3.18.0 (shell.css records why: the
@@ -214,6 +229,16 @@ export function freshChooser(opts) {
     // The scan (GET /api/memory/repo-scan), and its three states.
     scanning: false,
     scanError: null,
+    // ── THE NATIVE FOLDER PICKER (v3.61.1) ────────────────────────────────
+    // `picking` is the dialog being open — it blocks for as long as the person
+    // browses, so the control has to say so. `pickUnavailable` is the SENTENCE
+    // the server gave when there is no picker on this build at all: a fact,
+    // held so the button can be WITHHELD with its reason rather than offered
+    // and failed on every press (v3.16.1). `pickError` is a picker that should
+    // have worked and did not, painted in flow like every other refusal here.
+    picking: false,
+    pickError: null,
+    pickUnavailable: null,
     candidates: null,          // null = never scanned; [] = scanned, nothing found
     truncated: false,
     // Which candidate paths are ticked, and the role each one carries. Two
@@ -426,6 +451,182 @@ export function renderRoleOptions(cfg) {
 // THE CHOOSER, RENDERED
 // ═════════════════════════════════════════════════════════════════════════
 
+// ═════════════════════════════════════════════════════════════════════════
+// WHAT IS TICKED, WHAT IT COSTS, AND WHY A CONTROL IS OFF
+// ═════════════════════════════════════════════════════════════════════════
+
+/**
+ * THE ROLES A SCAN TICKS BY ITSELF (v3.61.1).
+ *
+ * ── THE DEFECT THIS CLOSES, MEASURED ON THE MAINTAINER'S OWN REPOSITORY ──
+ * v3.61.0 ticked EVERY usable candidate, on the argument that somebody who
+ * pressed "Find documents" wants what is there. On a real repository that
+ * came out as **25 documents · 1,875 KB** mirrored against a 200 KB project
+ * budget — nine times over it — including `README (6).md` out of a gitignored
+ * source folder. The argument was right about the gesture and wrong about the
+ * set: what the person wants is the documents an agent must not act without,
+ * and the scan already knows which those are, because it assigns every
+ * candidate a role.
+ *
+ * So the default is the FOUR canonical roles and nothing else. `api`, `guide`
+ * and `other` — the roles a README, a changelog and a handbook land on — are
+ * listed, sized, aged and one tick away, and they start unticked. The count
+ * line says "4 of 25 ticked" so the untouched twenty-one are a visible
+ * decision rather than an omission.
+ *
+ * The first four of `FOUNDATION_ROLES` by definition, sliced from it rather
+ * than re-typed: the store's order IS the reading order, and a second literal
+ * list here would be free to disagree with it.
+ */
+export const DEFAULT_TICK_ROLES = Object.freeze(FOUNDATION_ROLES.slice(0, 4));
+
+/** Would the scan tick this candidate by itself? Pure, and the only rule. */
+export function ticksByDefault(cand) {
+  if (!cand || cand.tooLarge) return false;
+  if (!cand.path) return false;
+  return DEFAULT_TICK_ROLES.includes(cand.suggestedRole);
+}
+
+/** The `picks` map a fresh scan result starts with. */
+export function defaultPicks(candidates) {
+  const out = {};
+  const list = Array.isArray(candidates) ? candidates : [];
+  for (const cand of list) if (ticksByDefault(cand)) out[String(cand.path)] = true;
+  return out;
+}
+
+/**
+ * THE BYTES THE TICKED CANDIDATES WOULD ADD UP TO.
+ *
+ * Candidates only. A typed extra has no size — the browser has never seen
+ * that file — so it is EXCLUDED from the figure and DISCLOSED beside it by
+ * `countLineText`, rather than being counted as zero, which would make the
+ * total read as a measurement when it is a lower bound.
+ */
+export function tickedBytes(choice) {
+  const c = choice && typeof choice === 'object' ? choice : null;
+  const list = c && Array.isArray(c.candidates) ? c.candidates : [];
+  let total = 0;
+  for (const cand of list) {
+    if (!cand || cand.tooLarge) continue;
+    const p = String(cand.path || '');
+    if (!p || !c.picks || c.picks[p] !== true) continue;
+    total += Number.isFinite(cand.bytes) && cand.bytes > 0 ? cand.bytes : 0;
+  }
+  return total;
+}
+
+/**
+ * THE RUNNING TOTAL, AS ONE LINE — recomputed on every tick, in place.
+ *
+ * "4 of 25 ticked · 186 KB of a 200 KB budget". The second clause is why this
+ * line exists: the tick count alone cannot tell somebody they are about to
+ * blow the budget, and the budget is the figure that decides how much of what
+ * they mirror an agent will actually receive.
+ */
+export function countLineText(choice) {
+  const c = choice && typeof choice === 'object' ? choice : null;
+  const list = c && Array.isArray(c.candidates) ? c.candidates : [];
+  const usable = list.filter((cand) => cand && cand.path && !cand.tooLarge).length;
+  const ticked = pickedFiles(c || {}).filter((f) => {
+    // `pickedFiles` returns candidates AND extras; the count of TICKED rows is
+    // the candidate half, so the extras are counted in their own clause.
+    return list.some((cand) => cand && cand.path === f.path && !cand.tooLarge);
+  }).length;
+  const extras = c && Array.isArray(c.extras) ? c.extras.length : 0;
+  let out = ticked + ' of ' + usable + ' ticked · ' + formatBytes(tickedBytes(c))
+    + ' of a ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' budget';
+  if (extras) out += ' · ' + extras + ' added by path, size not known yet';
+  return out;
+}
+
+/**
+ * OVER THE BUDGET — a WARNING, and it names the consequence.
+ *
+ * The 200 KB project budget is a DISCLOSURE and never a wall (D6): the store
+ * accepts the write. What it does not accept is sending all of it — the
+ * session bootstrap has its own 120 KB budget and drops document BODIES
+ * last-first when it is exceeded. So the sentence says what happens rather
+ * than "too big": a person who reads "over budget" and shrugs is right to,
+ * and a person who reads "and the rest is dropped" ticks fewer boxes.
+ *
+ * Never folded (v3.16.1). Returns '' when there is nothing to warn about, so
+ * the caller can concatenate it unconditionally.
+ */
+export function budgetWarning(choice) {
+  const bytes = tickedBytes(choice);
+  if (bytes <= FOUNDATIONS_BUDGET_BYTES) return '';
+  return 'Over the ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' budget: agents receive '
+    + formatBytes(120 * 1024) + ' per session and the rest is dropped, last in reading order first.';
+}
+
+/**
+ * WHY "Find documents" IS OFF — the reason, as the sentence under it.
+ *
+ * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────
+ * The maintainer, on v3.61.0, with the Mirror arm open: *"I don't see any scan
+ * feature anywhere."* It was there — disabled, because the path field was
+ * empty, and nothing on the screen said so. A greyed control with no reason
+ * does not read as "not yet", it reads as "not for you", and the candidate
+ * list that only exists after a scan was therefore unreachable.
+ *
+ * Returns '' when the control is live, so the note is emitted only in the
+ * state it explains.
+ */
+export function scanBlockedReason(choice) {
+  const c = choice && typeof choice === 'object' ? choice : {};
+  if (c.scanning === true) return '';
+  if (!String(c.repoRoot || '').trim()) return 'Type or choose the folder first.';
+  return '';
+}
+
+/**
+ * WHY THE COMMIT IS OFF — the same rule for both hosts.
+ *
+ * A mirror that has been SCANNED and has nothing ticked would set the
+ * ownership and copy no documents: `chooserBody` omits an empty `files`, so
+ * the wire carries a decision nobody made. Before a scan there is nothing to
+ * tick and pointing at the folder is a complete answer (documents can be
+ * added later), which is why the rule keys on `candidates` being a non-empty
+ * ARRAY rather than on the picks alone — the two states are different asks
+ * and a single "nothing ticked" test would refuse the legitimate one.
+ */
+export function commitBlockedReason(choice) {
+  const c = choice && typeof choice === 'object' ? choice : {};
+  if (c.ownership !== 'repo') return '';
+  if (!Array.isArray(c.candidates) || !c.candidates.length) return '';
+  if (pickedFiles(c).length) return '';
+  return 'Tick at least one document.';
+}
+
+/**
+ * HOW OLD THE SOURCE FILE IS — the shared dot, and the word beside it.
+ *
+ * The app's ONE freshness scale (shared/freshness.css, `shared/age.js`'s
+ * bands) and the `data-mem-age-at` hook `tickAges` walks once a second, so a
+ * picker left open does not drift. No `.fresh-` rule is declared by this
+ * component's stylesheet — that prefix belongs to shared/freshness.css
+ * outright and scripts/test-freshness-scale.js fails a second declarer — and
+ * no text here is painted with a `--fresh-*` token: the dot is the graphic,
+ * the word is the fact, and the word carries it on its own for anyone who
+ * cannot see the colour.
+ *
+ * '' when there is no timestamp: an unknown age has nothing to tick and a
+ * dashed ring beside the word "unknown" on every row of a folder the scan
+ * could not stat is noise rather than information.
+ */
+export function candidateAgeHtml(iso) {
+  const t = typeof iso === 'string' && iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return '';
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  const words = formatAge(secs);
+  if (!words) return '';
+  return '<span class="fnd-init-cand-age" data-mem-age-at="' + escapeHtml(iso) + '">' +
+    '<span class="fresh-dot fresh-' + freshnessTier(secs) + '" aria-hidden="true"></span>' +
+    '<span class="mem-age-words">' + escapeHtml(words) + '</span>' +
+  '</span>';
+}
+
 /**
  * A HUMAN-SIZED BYTE COUNT. Two call sites in this file and two more in the
  * hosts, and a figure that reads "512000 bytes" in one place and "500 KB" in
@@ -490,10 +691,20 @@ export function renderFoundationsChooser(cfg) {
       // documents live in `~/Documents/lumina-docs`. That a git checkout
       // additionally records the commit is MECHANISM, and it is in the host's
       // ⓘ where the rest of the mechanism is.
+      // ── EACH LINE SAYS WHAT YOU WILL DO NEXT (v3.61.1) ──────────────────
+      // Both lines were a CONSEQUENCE and neither said what the arm asks of
+      // you, which is how the maintainer read the whole Mirror arm as having
+      // no scan in it: "Copied byte for byte. You edit them in the folder,
+      // never here." describes the end state of a decision whose first step —
+      // picking which files — was invisible until the card was pressed. The
+      // line now names that step. Where a document is EDITED afterwards is
+      // mechanism and is in the host's ⓘ, which says it in more words than a
+      // card can.
+      // Both stay within the 13-word ceiling: 13 and 11.
       opt('curator', 'The Curator keeps them',
-        'Four skeletons with prompts to answer — by you, or by an agent.') +
+        'Four skeletons to fill — by you or an agent. Or your own files.') +
       opt('repo', 'Mirror a folder on this Mac',
-        'Copied byte for byte. You edit them in the folder, never here.') +
+        'Copied byte for byte from a folder. You pick which files.') +
       (choice.allowLater
         ? opt('later', 'Decide later',
           'Nothing is written now. Foundations asks again when you are ready.')
@@ -509,12 +720,47 @@ export function renderFoundationsChooser(cfg) {
   );
 }
 
-/** The MIRROR arm: a path, a scan, and the candidate rows it found. */
+/**
+ * The MIRROR arm: a path, a scan, and the candidate rows it found.
+ *
+ * ── WHAT v3.61.1 CHANGED HERE, AND WHY ──────────────────────────────────
+ * The maintainer, on the shipped v3.61.0 arm: *"I don't see any scan feature
+ * anywhere."* Three things were true at once — the only way to name a folder
+ * was to TYPE an absolute path, "Find documents" was disabled with no reason
+ * given, and the candidate list (the whole point of the arm) does not exist
+ * until a scan runs. Each one alone is a small friction; together they make
+ * the feature unreachable, and the screen still looks finished.
+ *
+ * So: an INSTRUCTION line above the controls naming the three steps in order,
+ * a native "Choose folder…" beside the field (withheld WITH its reason where
+ * there is no picker), the disabled scan control carrying the sentence that
+ * arms it, and the list under a one-line instruction saying what a tick means.
+ */
 function repoArm(id, choice, busy) {
   const dis = busy ? ' disabled' : '';
   const scanning = choice.scanning === true;
+  const picking = choice.picking === true;
   const cands = Array.isArray(choice.candidates) ? choice.candidates : null;
-  const picked = pickedFiles(choice).length;
+
+  // ── THE ARM'S OWN INSTRUCTION (≤ 13 words: 10) ─────────────────────────
+  // An INSTRUCTION, which is one of the three things design-system §3 admits
+  // in a lede. It names the order of the two steps, because the second one
+  // does not exist on screen until the first has run.
+  const armLede =
+    '<p class="fnd-init-armhd">Point at the folder, then tick the documents to copy.</p>';
+
+  // ── THE NATIVE PICKER, OR THE REASON THERE IS NONE ─────────────────────
+  // `POST /api/config/pick-path` — a read, deliberately NOT `pick-folder`,
+  // which repoints the whole knowledge base. When the server answers
+  // `no-dialog` the button is WITHHELD and its reason printed: a control whose
+  // only outcome is a refusal is worse than no control, and the field beside
+  // it is the answer in that state (v3.16.1).
+  const pickBtn = choice.pickUnavailable
+    ? ''
+    : '<button type="button" class="btn btn-secondary btn-xs fnd-init-pick"' +
+      ' id="' + escapeHtml(id) + '-pick"' + (busy || picking ? ' disabled' : '') + '>' +
+      (picking ? 'Choosing…' : 'Choose folder…') +
+    '</button>';
 
   const field =
     '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-root">' +
@@ -523,12 +769,31 @@ function repoArm(id, choice, busy) {
       '<input class="fnd-init-path" id="' + escapeHtml(id) + '-root" type="text"' +
         ' autocomplete="off" spellcheck="false" placeholder="/Users/you/code/your-project"' +
         ' value="' + escapeHtml(choice.repoRoot || '') + '"' + dis + ' />' +
+      pickBtn +
       '<button type="button" class="btn btn-secondary btn-xs fnd-init-scan"' +
         ' id="' + escapeHtml(id) + '-scan"' +
         (busy || scanning || !String(choice.repoRoot || '').trim() ? ' disabled' : '') + '>' +
         (scanning ? 'Looking…' : 'Find documents') +
       '</button>' +
-    '</div>';
+    '</div>' +
+    // ── WHY THE CONTROL IS OFF, UNDER THE CONTROL ───────────────────────
+    // Emitted ALWAYS and merely `hidden`, because the path field writes into
+    // state WITHOUT a render (a render rebuilds the input and takes the caret
+    // with it) — so the only way this sentence can appear and disappear as
+    // the field fills is for the live node to be toggled. `.fnd-init-why` has
+    // its own `[hidden]` counter-rule in the stylesheet: `.tx-note` declares
+    // `display: flex`, which defeats the attribute (design-system §9).
+    reasonNote(id + '-why', scanBlockedReason(choice)) +
+    // The picker's own two outcomes, both in flow: a build with no dialog, and
+    // a dialog that failed.
+    (choice.pickUnavailable
+      ? '<div class="fnd-init-note"><span>' + escapeHtml(String(choice.pickUnavailable)) +
+        '</span></div>'
+      : '') +
+    (choice.pickError
+      ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
+        escapeHtml(String(choice.pickError)) + '</span></div>'
+      : '');
 
   // NEVER FOLDED, AND NEVER AN ALERT. The two refusals this can legitimately
   // get — a path that is not absolute, a folder that is not on this computer —
@@ -545,6 +810,11 @@ function repoArm(id, choice, busy) {
       'added by path below.</span></div>';
   } else if (cands) {
     list =
+      // ── WHAT A TICK MEANS, ABOVE THE LIST (8 words) ──────────────────────
+      // The list is the arm's main content once it exists, and the rows carry
+      // a checkbox whose meaning — "an agent reads this first" — is the whole
+      // subject of the tier. One line, in flow, never folded.
+      '<p class="fnd-init-listhd">Tick the documents an agent must read first.</p>' +
       '<div class="fnd-init-cands">' +
         cands.map((cand) => candidateRow(id, choice, cand, busy)).join('') +
       '</div>' +
@@ -552,9 +822,19 @@ function repoArm(id, choice, busy) {
         ? '<div class="fnd-init-note"><span>Only the first ' + cands.length +
           ' files are listed. Mirror these now and refresh later for the rest.</span></div>'
         : '') +
-      '<div class="fnd-init-count">' +
-        escapeHtml(picked + ' of ' + cands.length + ' found, ' +
-          (Array.isArray(choice.extras) ? choice.extras.length : 0) + ' added by path') +
+      // ── THE RUNNING TOTAL (v3.61.1) ──────────────────────────────────────
+      // Ticks and BYTES, against the project budget. Patched in place on every
+      // tick by the binder — never re-rendered, because a re-render of a
+      // 44-row list throws the reader back to the top of it.
+      '<div class="fnd-init-count" id="' + escapeHtml(id) + '-count">' +
+        escapeHtml(countLineText(choice)) +
+      '</div>' +
+      // OVER BUDGET IS A WARNING AND NEVER FOLDS. Emitted always and `hidden`
+      // under the budget, for the same reason the scan's reason note is: the
+      // tick that crosses the line does not re-render.
+      '<div class="fnd-init-note fnd-init-note-loud fnd-init-budget"' +
+        ' id="' + escapeHtml(id) + '-budget"' + (budgetWarning(choice) ? '' : ' hidden') + '>' +
+        '<span>' + escapeHtml(budgetWarning(choice)) + '</span>' +
       '</div>';
   }
 
@@ -579,8 +859,27 @@ function repoArm(id, choice, busy) {
           'Add' +
         '</button>' +
       '</div>' +
-      renderRoleOptions({ value: extraRole, hook: 'fnd-extra-role', disabled: busy,
-        label: 'Role for the file you are adding' }) +
+      // ── THE ROLE CHIPS BELONG TO THIS FIELD, AND SAY SO (v3.61.1) ──────
+      //
+      // THE DEFECT: on the shipped arm these seven buttons sat at the level of
+      // the arm, under the typed-path row, with no label of their own — and
+      // the maintainer read them as an unexplained row of chips, which is what
+      // they were. Nothing said they governed the path in the field above, and
+      // nothing said they did NOT govern the ticked rows in the list (whose
+      // roles have their own per-row control).
+      //
+      // So they are INSIDE the field's own group, behind the word "as", and
+      // they appear only while the field has text — there is no file to give a
+      // role to until then. Emitted ALWAYS and toggled by `hidden` on the live
+      // node, because the field writes into state without a render; the
+      // `[hidden]` counter-rule is in the stylesheet beside the rule that
+      // makes this a flex row (design-system §9).
+      '<div class="fnd-init-extra-as" id="' + escapeHtml(id) + '-extra-as"' +
+        (extraDraft ? '' : ' hidden') + '>' +
+        '<span class="fnd-init-as-word">as</span>' +
+        renderRoleOptions({ value: extraRole, hook: 'fnd-extra-role', disabled: busy,
+          label: 'Role for the file you are adding' }) +
+      '</div>' +
       (extras.length
         ? '<div class="fnd-init-extras">' + extras.map((e, i) => (
           '<div class="fnd-init-import">' +
@@ -595,7 +894,31 @@ function repoArm(id, choice, busy) {
         : '') +
     '</div>';
 
-  return '<div class="fnd-init-arm">' + field + err + list + extraBlock + '</div>';
+  // THE ARM'S CONTROLS AS ONE GROUP, under the card that opened them. The
+  // instruction is the group's first line; the stylesheet gives the group its
+  // own indent and rule so the controls read as belonging to the pressed
+  // option rather than floating at the level of the two option cards.
+  return '<div class="fnd-init-arm">' + armLede + field + err + list + extraBlock + '</div>';
+}
+
+/**
+ * THE SENTENCE UNDER A CONTROL THAT IS OFF.
+ *
+ * Emitted ALWAYS and `hidden` when there is no reason, never omitted: both
+ * call sites sit beside a field that writes into state WITHOUT a render, so
+ * the only way the note can appear as the condition changes is for the binder
+ * to toggle a node that is already there. A `.tx-note` — the kit's one-line
+ * qualifier for the control directly above it — with the `[hidden]`
+ * counter-rule it needs because `.tx-note` sets `display: flex`.
+ *
+ * NO ICON. `.tx-note` renders one when given one, and this repo's own rule is
+ * that an icon repeating the sentence beside it is not a second fact; the
+ * loud refusals in this arm carry the attention treatment, and this is not a
+ * refusal — it is the condition that arms a control.
+ */
+function reasonNote(domId, reason) {
+  return '<div class="tx-note fnd-init-why" id="' + escapeHtml(domId) + '"' +
+    (reason ? '' : ' hidden') + '><span>' + escapeHtml(reason || '') + '</span></div>';
 }
 
 /**
@@ -632,7 +955,11 @@ function candidateRow(id, choice, cand, busy) {
   const open = choice.roleOpenFor === path;
   const dis = busy || tooLarge ? ' disabled' : '';
   return (
-    '<div class="fnd-init-cand' + (tooLarge ? ' is-refused' : '') + '">' +
+    // `data-fnd-cand-row` is how the binder finds this row from the checkbox
+    // inside it WITHOUT `closest()`: one lookup by path, which works the same
+    // in the browser and in the suite's DOM model.
+    '<div class="fnd-init-cand' + (tooLarge ? ' is-refused' : '') + '"' +
+      ' data-fnd-cand-row="' + escapeHtml(path) + '">' +
       '<label class="fnd-init-cand-main">' +
         '<input type="checkbox" class="cur-check" data-fnd-cand="' + escapeHtml(path) + '"' +
           (on ? ' checked' : '') + dis + ' />' +
@@ -647,6 +974,14 @@ function candidateRow(id, choice, cand, busy) {
           : '') +
       '</label>' +
       '<span class="fnd-init-cand-size">' + escapeHtml(formatBytes(cand && cand.bytes)) + '</span>' +
+      // ── HOW OLD THE SOURCE FILE IS (v3.61.1) ────────────────────────────
+      // The maintainer's fourth finding: a picker listing a repository's
+      // documents cannot answer "is this one still maintained", which is the
+      // question that decides whether it belongs in tier 0 at all. The shared
+      // dot and the shared words, on the shared hook, so it ticks with every
+      // other age on the page. UNIFORM across rows including refused ones:
+      // the age is a fact about the file, not a property of being usable.
+      candidateAgeHtml(cand && cand.modifiedAt) +
       // THE REFUSAL IS ON THE ROW, not in a summary at the bottom: the reason
       // this one file cannot be mirrored is a fact about this one file.
       (tooLarge
@@ -657,10 +992,22 @@ function candidateRow(id, choice, cand, busy) {
           ' aria-expanded="' + (open ? 'true' : 'false') + '"' +
           ' aria-label="' + escapeHtml('Change the role of ' + path) + '"' + dis + '>' +
           escapeHtml(role) + '</button>') +
-      (open && !tooLarge
-        ? renderRoleOptions({ value: role, hook: 'fnd-role', scope: path, disabled: busy,
-          label: 'Role for ' + path })
-        : '') +
+      // ── A SLOT THAT IS ALWAYS THERE, FILLED ON DEMAND (v3.61.1) ─────────
+      // The seven options are still painted for ONE row at a time — seven
+      // buttons over forty rows is a wall, which is why `roleOpenFor` exists.
+      // What changed is WHERE they are written: into a slot that is part of
+      // every row, by the binder, rather than by re-rendering the arm. A
+      // re-render rebuilt the scroll container and threw a reader of a 44-row
+      // list back to the top of it, which is the defect the maintainer
+      // reported; the slot is what lets the same state change be one
+      // `innerHTML` write inside the row being pressed. `:empty` hides it, so
+      // a closed slot occupies nothing.
+      '<div class="fnd-init-roleslot" data-fnd-roleslot="' + escapeHtml(path) + '">' +
+        (open && !tooLarge
+          ? renderRoleOptions({ value: role, hook: 'fnd-role', scope: path, disabled: busy,
+            label: 'Role for ' + path })
+          : '') +
+      '</div>' +
     '</div>'
   );
 }
@@ -705,8 +1052,27 @@ function curatorArm(id, choice, busy, existingProject) {
         ' accept=".md,.txt,text/markdown,text/plain" multiple hidden' + dis + ' />' +
       '<button type="button" class="btn btn-secondary btn-xs fnd-init-file"' +
         ' id="' + escapeHtml(id) + '-files-btn"' + dis + '>Choose files…</button>' +
-      '<span class="fnd-init-file-hint">Optional. Each file becomes one document, read on this ' +
-        'computer — nothing is uploaded until you ' +
+    '</div>' +
+    // ── THE HINT IS A ONE-LINE NOTE NOW (v3.61.1) ───────────────────────
+    //
+    // It was 22 words wrapped beside the button — "Optional. Each file becomes
+    // one document, read on this computer — nothing is uploaded until you set
+    // up documents." — and it was the longest run of text in the card,
+    // directly under a checkbox and above a primary. Two of its three clauses
+    // are MECHANISM (what a chosen file becomes, and that it is read in this
+    // browser), which design-system §3 puts behind the ⓘ; both hosts' panels
+    // now say it in the room they have for it.
+    //
+    // WHAT STAYS VISIBLE is the privacy claim, because "nothing is uploaded"
+    // answers a question somebody has BEFORE pressing a control that reads
+    // their files, and because its second half is the one clause in this
+    // module whose truth depends on which host is showing: on the create form
+    // the project does not exist yet, so "until you create the project" is
+    // literally true; in Agent memory it already does, and what has not
+    // happened is the documents. 9 words either way, one line at both hosts'
+    // widths.
+    '<div class="tx-note fnd-init-why">' +
+      '<span>Optional — nothing is uploaded until you ' +
         (existingProject ? 'set up documents' : 'create the project') + '.</span>' +
     '</div>';
 
@@ -891,9 +1257,80 @@ export async function scanRepo(root, fetchImpl) {
   }
 }
 
+/**
+ * ASK FOR A FOLDER — `POST /api/config/pick-path`, which MUTATES NOTHING.
+ *
+ * Deliberately not `pick-folder`: that route repoints the whole knowledge
+ * base (its own docblock calls `setDomainsDir` "the ONE set of post-pick
+ * rules"), and what this arm needs is a string for a text field. The route
+ * header carries the full argument for why that is a second route rather than
+ * a flag on the first.
+ *
+ * Never throws. The four answers are distinguished by `reason` alone, so a
+ * caller never reads a status code:
+ *   {ok:true, path}            a folder was chosen
+ *   {reason:'cancelled'}       the dialog was dismissed — say nothing
+ *   {reason:'no-dialog', …}    there is no picker here; withhold the button
+ *   {reason:'failed', …}       a picker that should work did not; say so
+ */
+export async function pickFolder(fetchImpl) {
+  const f = typeof fetchImpl === 'function' ? fetchImpl
+    : (typeof fetch === 'function' ? fetch : null);
+  if (!f) return { ok: false, reason: 'no-dialog', message: 'This browser cannot make requests.' };
+  try {
+    const res = await f('/api/config/pick-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // A KEY, not a sentence: the route looks it up in a frozen table of
+      // literals, because its repo arm builds a shell command.
+      body: JSON.stringify({ prompt: 'foundations' }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (data && data.ok === true && typeof data.path === 'string' && data.path.trim()) {
+      return { ok: true, path: data.path.trim() };
+    }
+    const reason = data && typeof data.reason === 'string' ? data.reason : null;
+    if (reason === 'cancelled') return { ok: false, reason: 'cancelled' };
+    const message = [data && data.message, data && data.hint].filter(Boolean).join(' ')
+      || ('The folder picker did not answer (HTTP ' + res.status + ').');
+    // A 501 IS THE ONLY ANSWER THAT WITHHOLDS THE BUTTON. Anything else — a
+    // 500, an unparseable body, a route that is not there on an older server —
+    // is a failure of this attempt, not a statement about the build, and a
+    // failure must not silently delete a control that works for other people.
+    if (reason === 'no-dialog' || res.status === 501) return { ok: false, reason: 'no-dialog', message };
+    return { ok: false, reason: 'failed', message };
+  } catch (err) {
+    return { ok: false, reason: 'failed', message: (err && err.message) || 'the request failed' };
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // WIRING
 // ═════════════════════════════════════════════════════════════════════════
+
+/**
+ * A PATH, SAFE INSIDE AN ATTRIBUTE SELECTOR.
+ *
+ * `[data-fnd-cand-row="…"]` is built from a filesystem path, and a path may
+ * legally contain a double quote or a backslash — either of which would end
+ * the selector's string early and throw a SyntaxError out of
+ * `querySelector`, taking the tick with it. `CSS.escape` is the wrong tool
+ * (it escapes an IDENT, not a string body), so the two characters that can
+ * terminate a quoted string are the two that are escaped.
+ */
+function cssEscapeAttr(p) {
+  return String(p == null ? '' : p).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** The role one candidate carries: the owner's override, else the scan's. */
+function roleOfCandidate(choice, p) {
+  if (choice && choice.roles && FOUNDATION_ROLES.includes(choice.roles[p])) return choice.roles[p];
+  const list = choice && Array.isArray(choice.candidates) ? choice.candidates : [];
+  const cand = list.find((x) => x && x.path === p);
+  const suggested = cand && cand.suggestedRole;
+  return FOUNDATION_ROLES.includes(suggested) ? suggested : 'other';
+}
 
 /**
  * BIND ONE CHOOSER.
@@ -952,6 +1389,18 @@ export function bindFoundationsChooser(cfg) {
       choice.repoRoot = pathEl.value;
       const scan = doc.getElementById(id + '-scan');
       if (scan) scan.disabled = !String(choice.repoRoot || '').trim() || choice.scanning === true;
+      // ── AND THE SENTENCE THAT SAYS WHY IT WAS OFF ─────────────────────
+      // Patched on the live node beside the disabled flag it explains, from
+      // the SAME predicate the renderer used (`scanBlockedReason`), so the
+      // control and its reason cannot come apart. A render here would rebuild
+      // the field and take the caret with it.
+      const why = doc.getElementById(id + '-why');
+      if (why) {
+        const reason = scanBlockedReason(choice);
+        const span = typeof why.querySelector === 'function' ? why.querySelector('span') : null;
+        if (span) span.textContent = reason;
+        why.hidden = !reason;
+      }
     });
     pathEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
@@ -961,9 +1410,7 @@ export function bindFoundationsChooser(cfg) {
     });
   }
 
-  const scanBtn = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-scan') : null;
-  if (scanBtn) {
-    scanBtn.addEventListener('click', () => {
+  const runScan = () => {
       const root2 = String(choice.repoRoot || '').trim();
       if (!root2 || choice.scanning) return;
       choice.scanning = true;
@@ -982,50 +1429,184 @@ export function bindFoundationsChooser(cfg) {
           choice.scanError = null;
           choice.candidates = got.candidates;
           choice.truncated = got.truncated;
-          // EVERYTHING USABLE IS TICKED. The person pressed "Find documents"
-          // in order to mirror what is there; making them tick eight boxes
-          // afterwards is the friction, not the safety. The refused ones are
-          // never ticked, and the count line says how many are selected.
-          choice.picks = {};
-          for (const cand of got.candidates) {
-            if (cand && cand.path && !cand.tooLarge) choice.picks[cand.path] = true;
-          }
+          // ── THE FOUR CANONICAL ROLES ARE TICKED, NOT EVERYTHING ────────
+          // v3.61.0 ticked every usable candidate and, on the maintainer's own
+          // repository, that came out as 25 documents / 1,875 KB against a
+          // 200 KB budget. `defaultPicks` holds the rule and the argument.
+          choice.picks = defaultPicks(got.candidates);
+        }
+        rerender();
+      }).catch((err) => fail(err));
+  };
+
+  const scanBtn = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-scan') : null;
+  if (scanBtn) scanBtn.addEventListener('click', runScan);
+
+  // ── THE NATIVE FOLDER PICKER (v3.61.1) ──────────────────────────────────
+  //
+  // Picking FILLS THE FIELD AND SCANS, in one gesture: somebody who has just
+  // chosen the folder in a dialog has answered the question "which folder",
+  // and making them press a second button to find out what is in it is the
+  // step that made this arm read as having no scan at all.
+  //
+  // `no-dialog` is recorded as a FACT on the choice, which withholds the
+  // button and prints the reason. Every other outcome leaves the button where
+  // it is: a cancel is not an error and says nothing on screen, and a failure
+  // is painted in flow.
+  const pickBtn = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-pick') : null;
+  if (pickBtn) {
+    pickBtn.addEventListener('click', () => {
+      if (choice.picking) return;
+      choice.picking = true;
+      choice.pickError = null;
+      rerender();
+      pickFolder(c.fetchImpl).then((got) => {
+        choice.picking = false;
+        if (got.reason === 'no-dialog') {
+          choice.pickUnavailable = got.message;
+        } else if (got.reason === 'failed') {
+          choice.pickError = got.message;
+        } else if (got.ok && got.path) {
+          choice.repoRoot = got.path;
+          // The scan needs the field's own repaint first — `runScan` reads
+          // `choice.repoRoot`, which is already set, and rerender() inside it
+          // paints the new path into the input.
+          runScan();
+          return;
         }
         rerender();
       }).catch((err) => fail(err));
     });
   }
 
-  all('[data-fnd-cand]').forEach((box) => {
-    box.addEventListener('change', () => {
-      const p = box.dataset ? box.dataset.fndCand : box.getAttribute('data-fnd-cand');
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE CANDIDATE LIST: DELEGATED, AND PATCHED IN PLACE
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // ── THE DEFECT, AND WHY IT WAS STRUCTURAL ────────────────────────────────
+  // The maintainer, mirroring a real repository: *"when I select or deselect a
+  // document I'm always thrown at the top — confusing with 50 documents."*
+  // Measured before the fix, on a folder of 44 candidates at a 1370px window:
+  // ticking the second-from-last row left the list's own `scrollTop` at 0,
+  // having been 1105, with the container a DIFFERENT NODE and the focused
+  // checkbox no longer focused. Every tick called the host's `onChange`, which
+  // in Agent memory is `render(token)` — a full view render. The state change
+  // was one boolean in a map; the repaint was the whole screen.
+  //
+  // ── THE RULE THIS FOLLOWS ────────────────────────────────────────────────
+  // The same one the create form's keystroke handling and the brief editor's
+  // counter already follow in this tree: a change that does not alter WHICH
+  // CONTROLS EXIST writes state and patches the nodes that read it. Only a
+  // scan result and an arm switch repaint, because both genuinely replace the
+  // arm's contents.
+  //
+  // What a tick patches, and the full list of it: the row's own checkbox (the
+  // browser already did that), the running count and budget line, the
+  // over-budget warning, and — through `onSelect` — the host's commit control
+  // and its reason note. Nothing else on the screen reads `picks`.
+  //
+  // DELEGATION rather than per-node listeners, for two reasons: the role
+  // options are written into a row AFTER binding (so a listener bound at
+  // render time would never see them), and one listener over a 200-row list is
+  // 200 fewer.
+  const attr = (el, key) => (el && el.dataset
+    ? el.dataset[key]
+    : (el && typeof el.getAttribute === 'function' ? el.getAttribute('data-' + key) : null));
+  // The nearest ancestor (or the node itself) carrying `data-<key>`. Written
+  // as a parent walk rather than `closest()` so it behaves identically in the
+  // browser and in a suite's DOM model, where a node has no `closest`.
+  const hostOf = (el, key) => {
+    let n = el;
+    for (let i = 0; n && i < 8; i++) {
+      if (attr(n, key) != null) return n;
+      n = n.parentElement || null;
+    }
+    return null;
+  };
+  const rowFor = (p) => (typeof scope.querySelector === 'function'
+    ? scope.querySelector('[data-fnd-cand-row="' + cssEscapeAttr(p) + '"]') : null);
+  const byId = (suffix) => (typeof doc.getElementById === 'function'
+    ? doc.getElementById(id + suffix) : null);
+
+  /** Everything on screen that reads `picks`, and nothing more. */
+  const patchSelection = () => {
+    const countEl = byId('-count');
+    if (countEl) countEl.textContent = countLineText(choice);
+    const budgetEl = byId('-budget');
+    if (budgetEl) {
+      const warn = budgetWarning(choice);
+      const span = typeof budgetEl.querySelector === 'function'
+        ? budgetEl.querySelector('span') : null;
+      if (span) span.textContent = warn;
+      budgetEl.hidden = !warn;
+    }
+    // The host owns its own commit control — this module emits none — so the
+    // reason is handed over rather than written from here.
+    if (typeof c.onSelect === 'function') c.onSelect(commitBlockedReason(choice));
+  };
+
+  /** Fill or empty ONE row's role slot. Never touches another row's DOM. */
+  const paintRoleSlot = (p) => {
+    const row = rowFor(p);
+    const slot = row && typeof row.querySelector === 'function'
+      ? row.querySelector('[data-fnd-roleslot]') : null;
+    const btn = row && typeof row.querySelector === 'function'
+      ? row.querySelector('[data-fnd-role-open]') : null;
+    const open = choice.roleOpenFor === p;
+    if (slot) {
+      slot.innerHTML = open
+        ? renderRoleOptions({ value: choice.roles[p] || roleOfCandidate(choice, p), hook: 'fnd-role',
+          scope: p, disabled: false, label: 'Role for ' + p })
+        : '';
+    }
+    if (btn && typeof btn.setAttribute === 'function') {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  };
+
+  if (typeof scope.addEventListener === 'function') {
+    scope.addEventListener('change', (ev) => {
+      const box = hostOf(ev && ev.target, 'fndCand');
+      if (!box) return;
+      const p = attr(box, 'fndCand');
       if (!p) return;
       if (box.checked) choice.picks[p] = true; else delete choice.picks[p];
-      rerender();
+      patchSelection();
     });
-  });
-
-  all('[data-fnd-role-open]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const p = btn.dataset ? btn.dataset.fndRoleOpen : btn.getAttribute('data-fnd-role-open');
-      if (!p) return;
-      choice.roleOpenFor = choice.roleOpenFor === p ? null : p;
-      rerender();
+    scope.addEventListener('click', (ev) => {
+      const openBtn = hostOf(ev && ev.target, 'fndRoleOpen');
+      if (openBtn) {
+        const p = attr(openBtn, 'fndRoleOpen');
+        if (!p) return;
+        const was = choice.roleOpenFor;
+        choice.roleOpenFor = was === p ? null : p;
+        // ONE ROW AT A TIME, and closing the other one is a patch of that row
+        // rather than a repaint of the list.
+        if (was && was !== p) paintRoleSlot(was);
+        paintRoleSlot(p);
+        return;
+      }
+      const roleBtn = hostOf(ev && ev.target, 'fndRole');
+      if (roleBtn) {
+        const role = attr(roleBtn, 'fndRole');
+        const p = attr(roleBtn, 'fndRoleScope');
+        if (!role || !p || !FOUNDATION_ROLES.includes(role)) return;
+        choice.roles[p] = role;
+        choice.roleOpenFor = null;
+        // Picking a role is also a statement that this file is wanted.
+        choice.picks[p] = true;
+        const row = rowFor(p);
+        const label = row && typeof row.querySelector === 'function'
+          ? row.querySelector('[data-fnd-role-open]') : null;
+        if (label) label.textContent = role;
+        const box = row && typeof row.querySelector === 'function'
+          ? row.querySelector('[data-fnd-cand]') : null;
+        if (box) box.checked = true;
+        paintRoleSlot(p);
+        patchSelection();
+      }
     });
-  });
-
-  all('[data-fnd-role]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const role = btn.dataset ? btn.dataset.fndRole : btn.getAttribute('data-fnd-role');
-      const p = btn.dataset ? btn.dataset.fndRoleScope : btn.getAttribute('data-fnd-role-scope');
-      if (!role || !p || !FOUNDATION_ROLES.includes(role)) return;
-      choice.roles[p] = role;
-      choice.roleOpenFor = null;
-      // Picking a role is also a statement that this file is wanted.
-      choice.picks[p] = true;
-      rerender();
-    });
-  });
+  }
 
   // ── THE TYPED PATH (D21) ────────────────────────────────────────────────
   // The field writes straight into state with no repaint, for the reason the
@@ -1050,8 +1631,15 @@ export function bindFoundationsChooser(cfg) {
   if (extraEl) {
     extraEl.addEventListener('input', () => {
       choice.extraPath = extraEl.value;
+      const draft = normaliseRelPath(choice.extraPath);
       const add = doc.getElementById(id + '-extra-add');
-      if (add) add.disabled = !normaliseRelPath(choice.extraPath);
+      if (add) add.disabled = !draft;
+      // ── THE ROLE CHIPS APPEAR WITH THE FILE THEY BELONG TO ────────────
+      // There is nothing to give a role to until something is typed. Toggled
+      // on the live node for the same reason the Add button's flag is: this
+      // field must not be re-rendered under the caret.
+      const as = doc.getElementById(id + '-extra-as');
+      if (as) as.hidden = !draft;
     });
     extraEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;

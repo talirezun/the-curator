@@ -1057,6 +1057,14 @@ router.get('/repo-scan', async (req, res) => {
         // called `adr/` has to be able to say why it is there.
         matchedBy: c.matchedBy ?? null,
         firstHeading: c.firstHeading ?? null,
+        // ── WHEN THE SOURCE FILE WAS LAST TOUCHED (v3.61.1) ────────────
+        // The store's ISO `mtime`, forwarded FIELD BY FIELD like every
+        // other key here rather than by a spread, so a field the store
+        // grows does not reach a client until somebody decides it should.
+        // `?? null` and not a truthiness test: the store already answers
+        // null for an unreadable timestamp, and the picker renders an
+        // absent age as "unknown" rather than inventing one.
+        modifiedAt: typeof c.modifiedAt === 'string' ? c.modifiedAt : null,
       })),
       truncated: out.truncated === true,
       // THE CAP, THE DEPTH AND THE WALL, named rather than left for a view
