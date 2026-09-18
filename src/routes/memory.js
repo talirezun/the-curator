@@ -39,8 +39,15 @@
  *     'human'`, which is exactly what `classifyBriefAuthority` already reads
  *     to decide that a brief carries the OWNER's standing instructions.
  *
- * So the write surface here is: create / rename / delete a project, and
- * replace a project's brief. Four operations, all tier 1, all on files an
+ *   · TIER 0 (`<project>/foundations/`) splits on OWNERSHIP rather than on
+ *     tier, and since v3.61.0 the CURATOR-OWNED side is the human's too.
+ *     The full four-part argument — one writer per FILE with provenance that
+ *     matches, not one writer per process — is at the tier-0 block further
+ *     down, beside the code it governs.
+ *
+ * So the write surface here is: create / rename / delete a project, replace
+ * a project's brief, and — on a curator-owned project only — set, write or
+ * remove one canonical document. All tier 1 and tier 0, all on files an
  * agent does not race for.
  *
  * ── THE ONE PROPERTY THIS DOES COST, STATED RATHER THAN IMPLIED AWAY ─────
@@ -62,23 +69,45 @@
  * than a heuristic:
  *
  *   GET    /                                 the index, every project
+ *   GET    /repo-scan?root=<abs>             candidate documents in a folder
  *   GET    /:domain/projects                 one domain's projects
- *   POST   /:domain/projects                 create        {project, brief?}
+ *   POST   /:domain/projects                 create        {project, brief?,
+ *                                                           foundations?}
  *   PATCH  /:domain/projects/:project        rename/brief  {rename?, brief?}
  *   DELETE /:domain/projects/:project        delete        {confirm}
+ *   GET    /:domain/:project/foundations/:slug   one document (`?raw=1`)
+ *   PUT    /:domain/:project/foundations/:slug   write one  {text, title?, role?}
+ *   DELETE /:domain/:project/foundations/:slug   remove one {confirm}
+ *   POST   /:domain/:project/foundations/init    set ownership ONCE
+ *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?}
  *   GET    /:domain/:project                 one project's brief + state
  *   GET    /:project                         DEPRECATED alias (see below)
  *
- * ONE literal collides with a legal project slug: `projects` itself, which
- * would shadow `GET /:domain/:project` for a project of that name. Rather
- * than leave that to chance, `projects` is REFUSED as a project name by the
- * create and rename routes (RESERVED_PROJECT_NAMES), so the app cannot
- * produce the collision. A project directory named `projects` created out of
- * band — by hand, or by an MCP client — is still listed by
+ * TWO literals collide with a legal project slug: `projects`, which would
+ * shadow `GET /:domain/:project` for a project of that name, and — since
+ * v3.61.0 — `repo-scan`, which is the shape the one-segment deprecated alias
+ * matches. Rather than leave either to chance, both are REFUSED as a project
+ * name by the create and rename routes (RESERVED_PROJECT_NAMES), so the app
+ * cannot produce the collision. A project directory of either name created
+ * out of band — by hand, or by an MCP client — is still listed by
  * `GET /:domain/projects` and is still readable by every MCP tool; only its
  * own detail URL on this router is unreachable. That is stated here because
  * it is a real, small, permanent hole and hiding it would be worse than the
  * hole.
+ *
+ * ── AND ONE COLLISION THAT IS NOT CLOSED, BECAUSE IT CANNOT BE ───────────
+ * `GET /:domain/projects` matches before `GET /:domain/:project`, so a
+ * project literally named after its DOMAIN — the domain's OWN project, whose
+ * slug IS the domain name — is reachable on the two-segment detail read
+ * (`/alpha/alpha` has two segments and the literal is `projects`, not
+ * `alpha`), while a project someone named `projects` is not. Recorded in
+ * v3.57.0 as a reserved-name collision. The FOUR-segment foundations routes
+ * are unaffected in both directions: `/:domain/projects` matches exactly two
+ * segments and cannot shadow four, so `…/alpha/alpha/foundations/init` and
+ * every sibling reach the domain's own project — asserted, not assumed, in
+ * scripts/test-next-memory-projects.js §S10g. `PATCH`/`DELETE
+ * /:domain/projects/:project` shadow nothing: they are the only routes on
+ * their (method, segment-count) pair.
  *
  * ── THE DEPRECATED ALIAS ─────────────────────────────────────────────────
  * `GET /api/memory/:project` was the v3.17.0–v3.47 detail route, where
@@ -131,6 +160,16 @@ export const MAX_PROJECTS = 200;
  * Project names this router refuses to CREATE or RENAME to.
  *
  *   · `projects` — collides with the `/:domain/projects` literal above.
+ *   · `repo-scan` — v3.61.0. A one-segment literal on this router, exactly
+ *     the shape the deprecated `GET /:project` alias matches. Registration
+ *     order keeps the scan reachable, so this is the OTHER end of the same
+ *     hole `projects` closes: a project of that name would have an
+ *     unreachable detail URL on the alias. The STORE does not reserve it
+ *     (`RESERVED_PROJECT_NAMES` in working-state.js holds the four names
+ *     that collide with a file or directory it addresses, and this is not
+ *     one), so a project directory of that name made out of band is still
+ *     listed and still readable by every MCP tool — the app simply never
+ *     mints one.
  *   · `project.md` / `journal.jsonl` — the store's own reserved filenames;
  *     a directory with either name would sit exactly where those files go.
  *   · `foundations` — the DIRECTORY tier 0 lives in, `<project>/foundations/`.
@@ -145,7 +184,7 @@ export const MAX_PROJECTS = 200;
  * reliably repeated defect).
  */
 export const RESERVED_PROJECT_NAMES = new Set([
-  'projects', 'project.md', 'journal.jsonl', 'foundations',
+  'projects', 'repo-scan', 'project.md', 'journal.jsonl', 'foundations',
 ]);
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -558,35 +597,59 @@ async function readState(store, domain, project, opts) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TIER 0 — FOUNDATIONS, AND WHY A ROUTE MAY WRITE ONE
+// TIER 0 — FOUNDATIONS, AND WHY A ROUTE MAY WRITE ONE (rewritten v3.61.0)
 // ═════════════════════════════════════════════════════════════════════════
 //
 // The header block above states this router's tier boundary: tiers 2 and 3
 // are agent-only, tier 1 is the human's. Tier 0 — the canonical documents a
 // project carries VERBATIM (architecture, decisions, conventions, roadmap) —
-// splits along a different line, and the line is OWNERSHIP rather than tier:
+// splits along a different line, and the line is OWNERSHIP rather than tier.
 //
-//   · A CURATOR-OWNED document was authored through `save_foundation`, on the
-//     owner's explicit instruction, and carries an agent's provenance. This
-//     router does not write one and there is no route that can. A human edit
-//     surface for those is a later release; until then the single-writer
-//     property holds exactly as it does for a handoff.
+// v3.59.0 read this file's own argument too narrowly and concluded that NO
+// route may write a curator-owned document. v3.61.0 adds `init`, `PUT` and
+// `DELETE` under `…/foundations/`, and does so WITHOUT weakening anything,
+// because the property was never "one PROCESS may write". It is:
 //
-//   · A REPO-OWNED document is a MIRROR. Its source of truth is a file in a
-//     code repository, and a refresh is a deterministic BYTE COPY of that file
-//     — `sha256` compared, copied when it differs, `commit` stamped. Running
-//     it does not make this app a second AUTHOR: it makes it a second COPIER
-//     of a document whose author is the repository, and two copiers of one
-//     byte string converge rather than conflict. That is why
-//     `POST …/foundations/refresh` is a legitimate route and
-//     `PUT …/foundations/:slug` is not.
+//        ONE WRITER PER FILE, AND PROVENANCE THAT MATCHES.
 //
-// The one property it does cost is the same one `project.md` costs, stated in
-// the header: tier 0 has no `<machine>` segment, so two machines refreshing
-// from checkouts at different commits converge on whichever SAVED LAST under
-// `git pull -X theirs`. It is not silent — the stored `commit` is shown beside
-// the document — and any machine re-asserts its own checkout with one refresh,
-// which is cheap and idempotent. docs/sync.md carries the paragraph.
+// Four parts, each of which has to hold on its own:
+//
+//   (i)  ONE OWNERSHIP PER PROJECT, enforced in the STORE before any write
+//        reaches disk — `saveFoundation` refuses a `curator`-sourced save
+//        into a `repo`-owned project (`ownership-mismatch`), and
+//        `refreshFoundationsFromRepo` refuses a curator-owned one. A write
+//        from this router is always `source: {kind:'curator'}`, so it is
+//        STRUCTURALLY incapable of landing on a mirror: not "we check", but
+//        "there is no shape of request that could". `initFoundations` is the
+//        SETTER for that one decision and refuses to re-make it
+//        (`ownership-set`) — the routes here add a front door to an invariant
+//        that already existed, not a new invariant.
+//
+//   (ii) THE HUMAN'S EDIT CARRIES THE HUMAN'S STAMP. Every write on this
+//        router passes `authoredBy: {kind:'human'}`, exactly as the standing
+//        brief does, which reads back with no harness and no model. An agent
+//        writes this tier only through `save_foundation`, only when
+//        commissioned, and carries its own line. The dishonesty the v3.17.0
+//        block described — a human edit arriving under the last agent's
+//        provenance — is what the stamp prevents, and it is why the stamp is
+//        stated at the call site rather than left to a default.
+//
+//  (iii) THE COST, STATED. Tier 0 has NO `<machine>` segment (the same
+//        carve-out `project.md` has), so two machines editing one
+//        curator-owned document converge on whichever SAVED LAST under
+//        Personal Sync's `git pull --no-rebase -X theirs` — and unlike a
+//        mirror there is no upstream to re-assert it from and no journal
+//        behind it. Edit rarely, sync after. docs/sync.md carries the
+//        paragraph; this is not made worse by being in a browser rather than
+//        in Obsidian — both are the human — but it is real.
+//
+//   (iv) WHAT THIS ROUTER IS, ON EACH SIDE. On a MIRROR it is a second
+//        COPIER: a refresh compares `sha256` against a file the repository
+//        already authors and copies the bytes when they differ, and two
+//        copiers of one byte string converge rather than conflict. On a
+//        CURATOR-OWNED document it is the OWNER'S PEN. It is NEITHER on
+//        tiers 2 and 3, which stay agent-only, and nothing in this file can
+//        reach them — the store functions it calls do not.
 
 /**
  * The stored slug rule, at the trust boundary.
@@ -603,12 +666,12 @@ const FOUNDATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
 /**
  * The store that answers the tier-0 calls.
  *
- * Identical to `ws()` in production; the fenced lines are the temporary
- * stand-in described above and are removed when the store ships.
+ * The SAME store `ws()` returns — one name, so that a suite installing the
+ * test seam gets the tier-0 calls too, and so that a grep for the tier's
+ * store calls finds one function rather than a scattering of `ws()` sites.
  */
 function fstore() {
-  const s = ws();
-    return s;
+  return ws();
 }
 
 /**
@@ -625,6 +688,35 @@ function fstore() {
  * a read whose job is "what is here" would make the cheapest screen in the app
  * the most expensive one. `GET …/foundations/:slug` is the body.
  */
+/**
+ * ONE document's row, allow-listed. Extracted in v3.61.0 so the index and
+ * the `PUT` response cannot describe the same document differently.
+ */
+function foundationDocRow(d) {
+  return {
+    slug: d.slug ?? null,
+    role: d.role ?? null,
+    title: d.title ?? null,
+    bytes: Number.isInteger(d.bytes) ? d.bytes : 0,
+    sha256: d.sha256 ?? null,
+    updatedAt: d.updatedAt ?? null,
+    commit: d.commit ?? null,
+    source: d.source && typeof d.source === 'object'
+      ? { kind: d.source.kind ?? null, path: d.source.path ?? null } : null,
+    authoredBy: d.authoredBy ?? null,
+    // COMPUTED, NEVER REMEMBERED (the spec's own invariant 3). Forwarded
+    // exactly as the store answered it — including `unreachable`, which is
+    // a FACT about this machine and not a failure to be smoothed into
+    // `stale`.
+    freshness: d.freshness ?? null,
+    // v3.61.0. ALWAYS PRESENT, never omitted when false: a block reading "N
+    // skeletons to fill" needs a positive AND a negative answer from every
+    // row, not an absence to interpret. A store that does not know the field
+    // answers `false`, which is what an unfilled skeleton is not.
+    skeleton: d.skeleton === true,
+  };
+}
+
 function foundationsWire(out) {
   if (!out || typeof out !== 'object') return null;
   const docs = Array.isArray(out.documents) ? out.documents : [];
@@ -639,23 +731,13 @@ function foundationsWire(out) {
     } : null,
     budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
     totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
-    documents: docs.filter(Boolean).map((d) => ({
-      slug: d.slug ?? null,
-      role: d.role ?? null,
-      title: d.title ?? null,
-      bytes: Number.isInteger(d.bytes) ? d.bytes : 0,
-      sha256: d.sha256 ?? null,
-      updatedAt: d.updatedAt ?? null,
-      commit: d.commit ?? null,
-      source: d.source && typeof d.source === 'object'
-        ? { kind: d.source.kind ?? null, path: d.source.path ?? null } : null,
-      authoredBy: d.authoredBy ?? null,
-      // COMPUTED, NEVER REMEMBERED (the spec's own invariant 3). Forwarded
-      // exactly as the store answered it — including `unreachable`, which is
-      // a FACT about this machine and not a failure to be smoothed into
-      // `stale`.
-      freshness: d.freshness ?? null,
-    })),
+    // HOW MANY DOCUMENTS ARE STILL PROMPTS (v3.61.0). Derived from the rows
+    // below rather than trusted from the store's own tally, so the summary
+    // line and the table can never disagree — and computed here rather than
+    // left to the view, because two surfaces counting the same array is the
+    // shape this file's neighbours keep re-learning.
+    skeletonCount: docs.filter((d) => d && d.skeleton === true).length,
+    documents: docs.filter(Boolean).map(foundationDocRow),
     // A `.md` file in the directory with no manifest entry. The manifest is
     // written LAST on every save, so a crash leaves a document without an
     // entry rather than an entry without a document — and this count is the
@@ -684,6 +766,149 @@ async function foundationsIndexFor(domain, project) {
   } catch (err) {
     return { ...foundationsWire({}), manifestError: err.message };
   }
+}
+
+/**
+ * The store's refusal reason, in this router's own spelling — for the tier-0
+ * WRITE routes only.
+ *
+ * ── WHY TRANSLATE AT ALL, GIVEN `statusForStoreRefusal`'s RULE ───────────
+ * That function lists both spellings rather than normalising, precisely so a
+ * caller matching on the string the store handed it goes on matching. That
+ * rule protects EXISTING callers of existing routes. These routes are new in
+ * v3.61.0: nothing has ever matched on their reasons, the contract and
+ * docs/api-reference.md name them underscored, and the views are built to
+ * that table. The precedent is in this file already — `POST …/refresh`
+ * answers `curator_owned`, which is the ROUTE's word for the store's
+ * `ownership-mismatch`.
+ *
+ * AN EXPLICIT TABLE, AND PASS-THROUGH OTHERWISE. A reason this table does
+ * not name crosses the wire in the STORE's own spelling, so a refusal the
+ * store grows next is never silently relabelled into something a client
+ * would mis-read — it arrives unrecognised, which is honest, and
+ * `statusForStoreRefusal` still decides its status.
+ */
+const TIER0_WIRE_REASON = new Map([
+  ['invalid-ownership', 'invalid_ownership'],
+  ['root-not-allowed', 'root_not_allowed'],
+  ['ownership-set', 'ownership_set'],
+  ['manifest-unreadable', 'manifest_unreadable'],
+  ['repo-unreachable', 'repo_unreachable'],
+  ['invalid-root', 'invalid_root'],
+  ['ownership-mismatch', 'repo_owned'],
+  ['too-large', 'too_large'],
+  ['invalid-slug', 'invalid_slug'],
+  ['invalid-role', 'invalid_role'],
+  ['empty-foundation', 'empty'],
+  ['not-found', 'foundation_not_found'],
+]);
+function tier0Reason(reason) {
+  return TIER0_WIRE_REASON.get(String(reason || '')) || reason || 'io';
+}
+
+/**
+ * A store refusal from a tier-0 write, as an HTTP answer.
+ *
+ * The status comes from the STORE's own spelling (that is what
+ * `statusForStoreRefusal` knows), and the wire `reason` from the table above;
+ * every other field the store returned rides along — `ownership` and
+ * `documentCount` on `ownership-set`, `bytes` and `cap` on `too-large`,
+ * `manifestError` — because a refusal that names its numbers is the only one
+ * a person can act on, and dropping a fact the store computed honestly is
+ * this module's own recorded defect class.
+ */
+function tier0Refusal(res, out, extra) {
+  const storeReason = (out && out.reason) || 'io';
+  const status = statusForStoreRefusal({ reason: storeReason });
+  return res.status(status).json(withErrorProse({
+    ...(out || {}),
+    ...extra,
+    ok: false,
+    reason: tier0Reason(storeReason),
+  }));
+}
+
+/**
+ * The mirror step's report, allow-listed.
+ *
+ * `refused` is the field this exists for: a file somebody ticked in the
+ * picker and did NOT get is exactly the kind of fact that vanishes when a
+ * response is projected by hand, and the view renders it un-folded beside the
+ * outcome (v3.16.1 — refusals never fold).
+ */
+function refreshWire(out) {
+  if (!out || typeof out !== 'object') return null;
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 200) : []);
+  return {
+    ok: out.ok !== false,
+    refreshed: list(out.refreshed),
+    unchanged: list(out.unchanged),
+    added: list(out.added),
+    // NEVER DELETED, ONLY REPORTED: a source that has vanished from the
+    // folder leaves its copy in place, and this list is what says the two
+    // have parted.
+    missing: list(out.missing),
+    refused: (Array.isArray(out.refused) ? out.refused : []).slice(0, 50).map((r) => ({
+      path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
+      reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
+    })),
+    commit: out.commit ?? null,
+    notes: Array.isArray(out.notes) ? out.notes.slice(0, 20).filter((n) => typeof n === 'string') : [],
+  };
+}
+
+/**
+ * Read the tier-0 index for a WRITE route, and decide whether the write may
+ * proceed at all.
+ *
+ * THREE ANSWERS, AND EACH IS A DIFFERENT SENTENCE TO A PERSON:
+ *   · `manifest_unreadable` — there IS a manifest and this store cannot read
+ *     it. Rewriting it could drop entries for documents nobody can see, so
+ *     nothing is written; the store refuses this too, and refusing here as
+ *     well means the message names the file rather than the operation.
+ *   · `no_manifest` — ownership has never been chosen. `init` is the call.
+ *   · `repo_owned` — the documents are MIRRORED, so the edit belongs in the
+ *     folder they are mirrored from. Checked HERE rather than left to the
+ *     store's `ownership-mismatch` only because the sentence a person needs
+ *     ("edit it there and refresh") is about the app's own two controls.
+ *
+ * Returns `{ok: true, index}` or sends the refusal and returns `{ok: false}`.
+ */
+async function requireCuratorOwned(res, domain, project) {
+  let index;
+  try { index = await fstore().listFoundations(domain, project); }
+  catch (err) {
+    res.status(500).json({ ok: false, reason: 'io', error: err.message });
+    return { ok: false };
+  }
+  if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
+  if (index && index.manifestError) {
+    res.status(400).json({
+      ok: false, reason: 'manifest_unreadable', domain, project, manifestError: index.manifestError,
+      error: `This project's foundations/manifest.json could not be read (${index.manifestError}). `
+        + 'Nothing was written: rewriting a manifest this app cannot read could drop entries for '
+        + 'documents it cannot see. Fix or remove that file first.',
+    });
+    return { ok: false };
+  }
+  if (!index || index.present !== true) {
+    res.status(400).json({
+      ok: false, reason: 'no_manifest', domain, project,
+      error: 'This project has not chosen where its canonical documents live yet. Choose that first '
+        + '— keep them here, or mirror them from a folder on this computer — and then edit them.',
+    });
+    return { ok: false };
+  }
+  if (index.ownership === 'repo') {
+    res.status(400).json({
+      ok: false, reason: 'repo_owned', domain, project, ownership: 'repo',
+      error: 'This document is mirrored from the repository — edit it there and refresh. '
+        + 'A mirror is a byte copy of a file whose author is the folder it came from, so an edit '
+        + 'made here would be overwritten by the next refresh.',
+    });
+    return { ok: false };
+  }
+  return { ok: true, index };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -780,6 +1005,74 @@ router.get('/', async (_req, res) => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
+// GET /api/memory/repo-scan?root=<abs> — what a folder has that could be a
+// foundation. READ-ONLY, and PROJECT-FREE.
+//
+// REGISTERED SECOND, AND THAT IS CORRECTNESS. `repo-scan` is one segment
+// past `/api/memory/`, which is exactly what the deprecated `GET /:project`
+// alias matches — so registered after it, this route would never be reached
+// and a scan would come back as a 404 about a domain called `repo-scan`.
+// Express matches in registration order within a segment count; this row
+// therefore has to precede `/:project`, and sitting immediately after the
+// index makes the reason visible instead of implied. `repo-scan` is a
+// reserved project name for the other half of the same hole.
+//
+// NO DOMAIN, NO PROJECT, NO WRITE. The scan answers "what is in this folder
+// that could become a canonical document" — a question about the user's own
+// disk, asked before a project has chosen anything. It is therefore not
+// guarded by `requireDomain`/`refuseMirror` (there is no domain to guard and
+// nothing to write); the containment that matters is the store's, which
+// requires an ABSOLUTE path, resolves it through `realpath`, descends no
+// symlinked directory and offers no symlinked file whose target leaves the
+// root. This route adds no second opinion about any of that.
+// ═════════════════════════════════════════════════════════════════════════
+router.get('/repo-scan', async (req, res) => {
+  try {
+    const root = typeof req.query.root === 'string' ? req.query.root.trim() : '';
+    const out = await fstore().scanRepoForFoundations(root);
+    if (!out || out.ok === false) {
+      // TWO DIFFERENT FACTS, TWO DIFFERENT STATUSES, and the store already
+      // separates them: `invalid-root` means the text is not a usable
+      // absolute path (400 — fix what you typed), `repo-unreachable` means
+      // it is a fine path that is not on this computer (409 — nothing is
+      // malformed, the folder is simply not here).
+      return tier0Refusal(res, out || { reason: 'invalid-root' }, { root: root || null });
+    }
+    res.json({
+      ok: true,
+      // THE RESOLVED root, not the one that was typed: a symlinked or
+      // `..`-shaped path is answered with where it actually landed, so the
+      // caller mirrors from the same folder the scan read.
+      root: out.root,
+      candidates: (Array.isArray(out.candidates) ? out.candidates : []).map((c) => ({
+        path: c.path ?? null,
+        bytes: Number.isInteger(c.bytes) ? c.bytes : 0,
+        suggestedRole: c.suggestedRole ?? null,
+        // The slug the store WOULD derive from this path, so the picker and
+        // the mirror agree about what a ticked row becomes — the view
+        // deriving its own would be a second copy of a rule.
+        suggestedSlug: c.suggestedSlug ?? null,
+        tooLarge: c.tooLarge === true,
+        // WHICH RULE ADMITTED IT. A picker showing a file from a folder
+        // called `adr/` has to be able to say why it is there.
+        matchedBy: c.matchedBy ?? null,
+        firstHeading: c.firstHeading ?? null,
+      })),
+      truncated: out.truncated === true,
+      // THE CAP, THE DEPTH AND THE WALL, named rather than left for a view
+      // to hard-code: "200 of them, and we looked 4 levels down" is what
+      // makes a short list readable as a measurement instead of a failure.
+      cap: Number.isInteger(out.cap) ? out.cap : null,
+      maxDepth: Number.isInteger(out.maxDepth) ? out.maxDepth : null,
+      maxDocumentBytes: Number.isInteger(out.maxDocumentBytes) ? out.maxDocumentBytes : null,
+    });
+  } catch (err) {
+    console.error('Memory repo-scan error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
 // GET /api/memory/:domain/projects — one domain's projects
 //
 // REGISTERED BEFORE `/:domain/:project`. Express matches in registration
@@ -871,12 +1164,73 @@ router.post('/:domain/projects', async (req, res) => {
     // it out loud is better than inheriting it: an agent-written brief is
     // stamped, so an UNSTAMPED file would otherwise be indistinguishable from
     // one written before v3.48.0, and this way the file says which it is.
+    // ── TIER 0 IN THE SAME GESTURE (v3.61.0), OPT-IN ─────────────────────
+    // `foundations` is the start-a-project ownership choice. The STORE
+    // validates `ownership`, refuses a `repoRoot` on the curator arm and
+    // resolves the folder; a second opinion here would be a second thing to
+    // keep in step. The SHAPE is checked (an object, not an array, not a
+    // string) because anything else would reach the store as
+    // `opts.foundations.ownership` on a string and read `undefined` — the
+    // silent-mismatch shape this file's store-adapter block was written
+    // about.
+    //
+    // AN ALLOW-LIST, NOT THE OBJECT AS SENT, and this one is a trust
+    // boundary rather than tidiness: `createProject` reads
+    // `foundations.authoredBy` and prefers it over the caller's own, so a
+    // body carrying `{authoredBy: {kind: 'agent', harness: 'x'}}` would have
+    // stamped the owner's seeded skeletons with an agent's provenance —
+    // exactly the dishonesty part (ii) of the tier-0 argument forbids, and
+    // reachable from any loopback client. Four fields cross; the stamp is
+    // this router's to set and nobody else's.
+    const f = body.foundations && typeof body.foundations === 'object'
+      && !Array.isArray(body.foundations) ? body.foundations : null;
+    const wantsFoundations = !!f;
+
     const out = await store.createProject(domain, project, {
       ...(brief ? { brief } : {}),
       authoredBy: { kind: 'human' },
+      ...(wantsFoundations ? {
+        foundations: {
+          ownership: f.ownership,
+          ...(typeof f.repoRoot === 'string' ? { repoRoot: f.repoRoot } : {}),
+          ...(Array.isArray(f.files) ? { files: f.files } : {}),
+          ...(f.seed === false ? { seed: false } : {}),
+          authoredBy: { kind: 'human' },
+        },
+      } : {}),
     });
     if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(withErrorProse(out));
-    res.status(201).json({ ok: true, domain, project, created: true });
+
+    // ── A TIER-0 FAILURE IS DISCLOSED, NEVER A 5xx AND NEVER A ROLLBACK ──
+    // The project EXISTS at this point: it has a brief, a marker line and a
+    // place for handoffs. Deleting it to report a tidier failure would throw
+    // away the thing that succeeded, and the owner can re-make the choice
+    // from the Foundations block — which is the same call.
+    const init = out && out.foundations && typeof out.foundations === 'object' ? out.foundations : null;
+    const initOk = !!(init && init.ok !== false);
+    res.status(201).json({
+      ok: true, domain, project, created: true,
+      // WHAT GOES IN `.curator-project` at the root of the code folder, so a
+      // coding agent knows which project to resume. The store composes it;
+      // the fallback is the same string and exists only so an older store
+      // cannot make this field absent, which a view would read as "this
+      // server does not know about marker lines".
+      markerLine: (out && typeof out.markerLine === 'string' && out.markerLine)
+        || `${domain}/${project}`,
+      foundations: initOk ? foundationsWire(init.foundations || init) : null,
+      // The mirror step's own report, when there was one. `refused[]` is the
+      // reason this rides along rather than being left to the wire index: a
+      // file the owner ticked and did NOT get is invisible in a document
+      // list, and the create banner is the only place it can still be said.
+      refresh: initOk && init.refresh ? refreshWire(init.refresh) : null,
+      foundationsError: out && out.foundationsError
+        ? {
+          reason: tier0Reason(out.foundationsError.reason),
+          message: out.foundationsError.message
+            || 'The canonical documents could not be set up. The project itself was created.',
+        }
+        : null,
+    });
   } catch (err) {
     console.error('Memory create-project error:', err);
     res.status(500).json({ ok: false, error: err.message });
@@ -1052,7 +1406,17 @@ router.get('/:domain/:project/foundations/:slug', async (req, res) => {
           + '"-", up to 64 characters, ending in ".md".',
       });
     }
-    const out = await store.readFoundation(domain, project, slug);
+    // ── `?raw=1` — THE BYTES, FOR AN EDITOR (v3.61.0) ───────────────────
+    // The write path is verbatim and the DEFAULT read path defangs, so a
+    // surface that loaded a document through the default read and then saved
+    // it back would store `https[:]//` where the document says `https://` —
+    // corrupting a canonical document on its first edit, with no edit having
+    // been made, and breaking the sha equality a mirror's freshness claim
+    // rests on. So an EDITOR reads raw and every display path keeps the
+    // default. The flag is OPT-IN and the default is untouched: a caller
+    // that does not ask gets exactly what v3.59.0 answered.
+    const raw = req.query.raw === '1' || req.query.raw === 'true';
+    const out = await store.readFoundation(domain, project, slug, raw ? { raw: true } : {});
     // ABSENT IS A 404, not a 200 describing an empty document. The store
     // distinguishes "there is no such entry" from "the file would not read",
     // and both are forwarded with their own reason; what is never done is
@@ -1061,8 +1425,15 @@ router.get('/:domain/:project/foundations/:slug', async (req, res) => {
     if (!out || out.ok === false) {
       const reason = (out && out.reason) || 'foundation_not_found';
       const body = withErrorProse({
-        ok: false, reason, domain, project, slug,
+        ok: false, domain, project, slug,
         ...(out || {}),
+        // THE STORE SAYS `not-found`; THIS ROUTER SAYS `foundation_not_found`.
+        // Until v3.61.0 the store's spelling crossed the wire un-translated
+        // and fell through `statusForStoreRefusal`'s table to the default
+        // 400, so a document that simply is not there answered "bad request"
+        // — and every guard in the suite was driven against a STUB that
+        // happened to use the router's spelling, which is why nothing saw it.
+        reason: tier0Reason(reason),
         error: (out && (out.error || out.message))
           || `"${slug}" is not a foundation document in "${project}".`,
       });
@@ -1071,6 +1442,225 @@ router.get('/:domain/:project/foundations/:slug', async (req, res) => {
     res.json({ ...out, ok: true, domain, project });
   } catch (err) {
     console.error('Memory foundation read error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// PUT /api/memory/:domain/:project/foundations/:slug — the owner's pen
+//
+// CURATOR-OWNED ONLY, and the refusal on a mirror is not an error condition:
+// it is a statement about what the document IS. See the tier-0 block above
+// for the four-part single-writer argument this route rests on.
+// ═════════════════════════════════════════════════════════════════════════
+/**
+ * Create or replace ONE document, whole.
+ *
+ * ── `replace: true`, AND THE ONE THING IT GIVES UP ──────────────────────
+ * The store refuses a write that shrinks a document to under 10 % of the
+ * bytes on disk, because tier 0 is replaced in place with no journal behind
+ * it. That guard is right for an AGENT composing a document it cannot see.
+ * It is wrong here, and worse than wrong: the app's editor is SEEDED WITH
+ * THE DOCUMENT'S CURRENT TEXT (through `?raw=1`), so a shrink is something a
+ * person did to text on their own screen and then pressed Save on — and the
+ * refusal's own advice ("repeat the call with replace: true") is advice a
+ * person in a browser cannot take. Advice that cannot be followed is worse
+ * than none. Exactly the reasoning `saveBrief` records one tier up, and the
+ * honesty moves to the VIEW, which shows a confirm strip naming both sizes
+ * when a draft is under 90 % of what was loaded.
+ *
+ * An EMPTY document is still refused, by the store, ahead of the shrink
+ * guard and regardless of this flag. So is one over the 512 KB per-document
+ * cap — and that message names BOTH numbers and is forwarded verbatim rather
+ * than restated here, because a wall a person can measure is a wall they can
+ * act on.
+ */
+router.put('/:domain/:project/foundations/:slug', async (req, res) => {
+  try {
+    const { domain, project, slug } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    if (!FOUNDATION_SLUG_RE.test(String(slug || ''))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_slug',
+        error: `"${slug}" is not a usable document name. Use lowercase letters, digits and `
+          + '"-", up to 64 characters, ending in ".md".',
+      });
+    }
+    const body = req.body || {};
+    if (typeof body.text !== 'string') {
+      return res.status(400).json({
+        ok: false, reason: 'empty',
+        error: 'Send `text` — the COMPLETE document. A save replaces the whole file.',
+      });
+    }
+
+    const gate = await requireCuratorOwned(res, domain, project);
+    if (!gate.ok) return;
+
+    // CREATED OR REPLACED, decided BEFORE the write off the manifest this
+    // route already read. The store answers `replaced`, which is the same
+    // fact inverted; taking it from the pre-write index means the response
+    // says "created" for exactly the rows the block did not have.
+    const had = (gate.index.documents || []).some((d) => d && d.slug === slug);
+
+    const store = fstore();
+    const out = await store.saveFoundation(domain, project, {
+      slug,
+      text: body.text,
+      ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title } : {}),
+      ...(body.role !== undefined && body.role !== null && body.role !== '' ? { role: body.role } : {}),
+      // THE HUMAN'S STAMP, part (ii) of the tier-0 argument. Never an agent
+      // line, and never left to a default: `save_foundation` over MCP stamps
+      // the agent, so an unstamped file would be ambiguous.
+      authoredBy: { kind: 'human' },
+      replace: true,
+    });
+    if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
+
+    // THE ROW, FROM THE INDEX THAT NOW EXISTS. Re-read so `freshness` — which
+    // is COMPUTED and which `saveFoundation` does not return — is the same
+    // value the table beside the editor will show; the save result is the
+    // fallback so a re-read that fails cannot cost the response.
+    const after = await foundationsIndexFor(domain, project);
+    const row = (after && Array.isArray(after.documents)
+      ? after.documents.find((d) => d && d.slug === slug) : null) || foundationDocRow(out);
+
+    res.json({
+      ok: true, domain, project,
+      created: !had,
+      document: row,
+      totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
+      budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
+      // A DISCLOSURE, NEVER A WALL (the per-document cap is the wall). The
+      // store accepts an over-budget project and says so; a UI that refused
+      // what the store accepted would be inventing a limit.
+      budgetExceeded: out.budgetExceeded === true,
+      // WHETHER THIS SAVE FILLED A SKELETON. The store computes it and it is
+      // the one fact that lets a banner say "Architecture is written now"
+      // rather than just "saved" — dropping a fact the store computed
+      // honestly is this module's own recorded defect class.
+      wasSkeleton: out.wasSkeleton === true,
+      notes: Array.isArray(out.notes) ? out.notes : [],
+    });
+  } catch (err) {
+    console.error('Memory foundation write error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// DELETE /api/memory/:domain/:project/foundations/:slug — remove one
+//
+// TYPED CONFIRMATION AT THE ROUTE, for the same reason
+// `DELETE …/projects/:project` has one: a confirmation that lives only in a
+// view is a confirmation any other client skips. A canonical document has no
+// journal behind it, so this is not recoverable from the app.
+// ═════════════════════════════════════════════════════════════════════════
+router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
+  try {
+    const { domain, project, slug } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    if (!FOUNDATION_SLUG_RE.test(String(slug || ''))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_slug',
+        error: `"${slug}" is not a usable document name. Use lowercase letters, digits and `
+          + '"-", up to 64 characters, ending in ".md".',
+      });
+    }
+    const confirm = req.body && typeof req.body.confirm === 'string' ? req.body.confirm : '';
+    if (confirm !== slug) {
+      return res.status(400).json({
+        ok: false, reason: 'confirm_required',
+        error: `Type the document's name to confirm. Expected "${slug}".`,
+      });
+    }
+
+    // OWNERSHIP IS CHECKED AFTER THE CONFIRMATION and before anything is
+    // removed. A mirrored document is dropped by no longer listing it on the
+    // next refresh, never by deleting the copy — which the next refresh
+    // would simply put back.
+    const gate = await requireCuratorOwned(res, domain, project);
+    if (!gate.ok) return;
+
+    const out = await fstore().removeFoundation(domain, project, slug);
+    if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
+    res.json({
+      ok: true, domain, project,
+      removed: out.slug || slug,
+      // WHAT IT WAS. An orphan is a file on disk the manifest never listed —
+      // the shape a crash between a document write and the manifest write
+      // leaves behind — and removing one is a legitimate cleanup, reported
+      // as what it was rather than as an ordinary delete.
+      wasOrphan: out.wasOrphan === true,
+    });
+  } catch (err) {
+    console.error('Memory foundation delete error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /api/memory/:domain/:project/foundations/init — the ownership setter
+//
+// ONE DECISION, MADE ONCE. Part (i) of the tier-0 argument above: the store
+// has refused a mismatch since v3.59.0 and had no way to RECORD the choice
+// before a document existed, so a new project's tier 0 was empty and nothing
+// told the owner what belongs in it. This is that setter, and it refuses to
+// re-make the decision (`ownership_set`) — changing it would mean either
+// overwriting documents written here with a mirror, or stranding the copies
+// of a folder.
+// ═════════════════════════════════════════════════════════════════════════
+router.post('/:domain/:project/foundations/init', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    const body = req.body || {};
+    // EVERY FIELD IS THE STORE'S TO VALIDATE. `ownership` has no default
+    // here on purpose: guessing one would record a decision the owner did
+    // not make, and it is the one decision this tier will not re-make.
+    const out = await fstore().initFoundations(domain, project, {
+      ownership: body.ownership,
+      ...(typeof body.repoRoot === 'string' ? { repoRoot: body.repoRoot } : {}),
+      ...(Array.isArray(body.files) ? { files: body.files } : {}),
+      ...(body.seed === false ? { seed: false } : {}),
+      authoredBy: { kind: 'human' },
+    });
+    if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project });
+
+    res.status(201).json({
+      ok: true, domain, project,
+      ownership: out.ownership || null,
+      foundations: foundationsWire(out.foundations) || foundationsWire({ documents: out.documents || [] }),
+      // WHICH SKELETONS WERE WRITTEN — empty on the repo arm and on
+      // `seed: false`, which is a fact and not an omission.
+      seeded: Array.isArray(out.seeded) ? out.seeded : [],
+      // The mirror step's report when `files` were named, `null` otherwise.
+      // `refused[]` is why this is forwarded rather than left to the index: a
+      // file the owner ticked and did not get is invisible in a list of the
+      // documents that DID arrive.
+      refresh: out.refresh ? refreshWire(out.refresh) : null,
+      notes: Array.isArray(out.notes) ? out.notes : [],
+    });
+  } catch (err) {
+    console.error('Memory foundations init error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -1107,8 +1697,8 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     if (index && index.ownership === 'curator') {
       return res.status(400).json({
         ok: false, reason: 'curator_owned',
-        error: 'These documents were written for this project, not mirrored from a repository, '
-          + 'so there is nothing to refresh from. Ask your agent to rewrite one instead.',
+        error: 'These documents were written for this project, not mirrored from a folder on this '
+          + 'computer, so there is nothing to refresh from. Edit one here, or ask your agent to.',
       });
     }
 
@@ -1123,13 +1713,24 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     if (!root) {
       return res.status(409).json({
         ok: false, reason: 'repo_unreachable',
-        error: 'This project has no repository path recorded on this computer, so there is '
+        error: 'This project has no folder path recorded on this computer, so there is '
           + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
           + 'or pass the path.',
       });
     }
 
-    const out = await store.refreshFoundationsFromRepo(domain, project, root, {});
+    // ── `files` (v3.61.0) — ADDING to the mirror, not only re-copying ────
+    // Before this release the route passed no file list, so a mirror could
+    // only ever be created from a test: the store's `opts.files` existed and
+    // nothing reached it. That is the whole gap the repo-scan picker closes.
+    // The list is passed through UNVALIDATED here on purpose — the store
+    // validates every entry with the same `sourceDigest` rules any mirrored
+    // path already follows (inside the root, `.md`/`.txt`, under the cap)
+    // and names each refusal in `refused[]`, which this route forwards. A
+    // second copy of those rules here would be a second thing to keep in
+    // step, and it would decide refusals the store then decides again.
+    const files = Array.isArray(body.files) ? body.files : [];
+    const out = await store.refreshFoundationsFromRepo(domain, project, root, { files });
     if (!out || out.ok === false) {
       const reason = (out && out.reason) || 'repo_unreachable';
       const status = (reason === 'curator_owned' || reason === 'curator-owned') ? 400
@@ -1147,6 +1748,14 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
       // repository leaves its copy in place — the copy is the only remaining
       // record of it — and this list is what says the two have parted.
       missing: Array.isArray(out.missing) ? out.missing : [],
+      // EVERY `files` ENTRY THAT DID NOT MAKE IT, with its reason (v3.61.0).
+      // Forwarded rather than dropped: a file somebody ticked in the picker
+      // and did not get is exactly the fact a projected response loses, and
+      // the view renders these un-folded beside the outcome.
+      refused: (Array.isArray(out.refused) ? out.refused : []).slice(0, 50).map((r) => ({
+        path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
+        reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
+      })),
       commit: out.commit ?? null,
     });
   } catch (err) {
@@ -1460,7 +2069,27 @@ function statusForStoreRefusal(out) {
   // this router's underscored one — listed rather than normalised, for the
   // reason this function's docblock gives.
   if (reason === 'foundation_not_found' || reason === 'unknown-foundation'
-    || reason === 'unknown_foundation') return 404;
+    || reason === 'unknown_foundation'
+    // THE STORE'S OWN SPELLING, added in v3.61.0. `readFoundation` and
+    // `removeFoundation` both answer `not-found`, which fell through this
+    // table to the default 400 — so a document that is simply not there
+    // answered "bad request". Every guard on that route had been driven
+    // against a stub using the ROUTER's spelling, which is why nothing saw
+    // it until the real store was driven through the same handler.
+    || reason === 'not-found') return 404;
+  // ── TIER 0's WRITE REFUSALS (v3.61.0), BOTH SPELLINGS, EXPLICIT ───────
+  // Each of these is a 400 by the default arm below already. They are named
+  // anyway, because the default is "an unrecognised refusal is input, not a
+  // server error" — a catch-all whose correctness for these reasons would be
+  // a coincidence. Named, they are a decision; unnamed, they are luck.
+  if (reason === 'invalid-ownership' || reason === 'invalid_ownership'
+    || reason === 'root-not-allowed' || reason === 'root_not_allowed'
+    || reason === 'ownership-set' || reason === 'ownership_set'
+    || reason === 'manifest-unreadable' || reason === 'manifest_unreadable'
+    || reason === 'invalid-root' || reason === 'invalid_root'
+    || reason === 'ownership-mismatch' || reason === 'repo_owned'
+    || reason === 'too-many-documents' || reason === 'too_many_documents'
+    || reason === 'would-replace-larger-foundation') return 400;
   // NOT A 500 AND NOT A 400: the checkout this mirror is copied from is not on
   // this computer. Nothing is malformed and nothing is broken — the server's
   // own state is simply not one the request can act on, which is 409's
