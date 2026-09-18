@@ -59,7 +59,7 @@ import { createHash } from 'node:crypto';
 import { functionSource } from './test-helpers/source-scan.js';
 import {
   composeAgentInstructions, COPY_SUCCESS_BANNER, HEADING, TEMPLATE,
-  composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS,
+  composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS, TEMPLATE_SEED,
 } from '../src/public/next/shared/agent-instructions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -823,14 +823,19 @@ section('S7 -- v3.59.0: the foundations addendum, pinned the same way TEMPLATE i
     createHash('sha256').update(nudgedNew, 'utf8').digest('hex') !== FOUNDATIONS_SHA256);
 
   // `composeAgentInstructionsFull` composes the pinned block FIRST, unmodified,
-  // then the new paragraph -- never the reverse, and never merged into one.
+  // then the foundations paragraph -- never the reverse, and never merged into
+  // one. v3.61.0 note (WP-D): a THIRD paragraph, TEMPLATE_SEED, now follows
+  // this one -- see section S8 below, which is where "ends with the new
+  // paragraph" and the full byte-for-byte composition are re-pinned against
+  // the v3.61.0 shape. The two assertions here are kept, unaltered in what
+  // they check, as the v3.59.0-era proof that TEMPLATE_FOUNDATIONS itself
+  // still sits directly after the original block with one blank line.
   const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
   const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
   ok('composeAgentInstructionsFull begins with the ORIGINAL composed block, byte for byte',
     full.startsWith(original));
-  ok('...and ends with the new paragraph', full.endsWith(TEMPLATE_FOUNDATIONS));
-  eq('...with exactly one blank line joining them (no merge, no run-together)',
-    full, original + '\n' + TEMPLATE_FOUNDATIONS);
+  ok('...and the foundations paragraph follows it with one blank line, unmodified',
+    full.includes(original + '\n' + TEMPLATE_FOUNDATIONS));
 
   // The pin this whole section exists to protect: S1's original facts about
   // TEMPLATE itself must still hold, proving this addition did not touch it.
@@ -840,6 +845,83 @@ section('S7 -- v3.59.0: the foundations addendum, pinned the same way TEMPLATE i
     Buffer.byteLength(original, 'utf8'), 501);
   eq('...and still hashes to 85dc8f97... -- the pin still bites',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// TEMPLATE_SEED teaches an agent what a SKELETON foundation is (v3.61.0's
+// "start a project" flow, foundation-skeletons.js, WP-S) and what it may do
+// about one: fill it in, but only under the owner's commission, and export
+// the filled result to docs/ on the first commit. Like TEMPLATE_FOUNDATIONS
+// before it, it is new prose rather than a measured artefact -- it names no
+// experiment and protects no numbers of its own -- and it still gets S1's
+// exact discipline: a hand-written literal AND an independent sha256, because
+// a silent reword of model-read instruction text is exactly the defect class
+// S1's own header names. And because a THIRD frozen constant is only worth
+// having if the first two are still frozen, this section re-asserts BOTH of
+// their pinned facts -- proof that adding this constant disturbed neither.
+
+{
+  // A second, hand-written copy -- same reasoning as MEASURED_EXP_WIDGET and
+  // HAND_WRITTEN_FOUNDATIONS above: deriving the expectation from
+  // TEMPLATE_SEED would make this a tautology that passes for any text,
+  // including an edited one.
+  const HAND_WRITTEN_SEED =
+    'Some foundations may be skeletons — prompts, not facts; the document says so\n' +
+    'at the top. As you learn the project, fill each one and save it with\n' +
+    '`save_foundation` (`commissioned_by_owner: true` — this block is the owner\'s\n' +
+    'commission). On the first commit, export the filled foundations into the\n' +
+    'repository\'s `docs/` folder.\n';
+  const SEED_SHA256 =
+    'f28cc8c1a30a5ef17266bd466660f4f5ff93117e548c3d6793af473a7ff89180';
+
+  eq('TEMPLATE_SEED matches the hand-written second copy', TEMPLATE_SEED, HAND_WRITTEN_SEED);
+  eq('...and hashes to the pinned sha256',
+    createHash('sha256').update(TEMPLATE_SEED, 'utf8').digest('hex'), SEED_SHA256);
+  ok('...at most 60 words (harness-neutral addendum, not a second playbook)',
+    TEMPLATE_SEED.trim().split(/\s+/).length <= 60,
+    TEMPLATE_SEED.trim().split(/\s+/).length + ' words');
+
+  // The three phrases the addendum exists to carry (D10).
+  for (const phrase of ['save_foundation', 'commissioned_by_owner', 'docs/']) {
+    ok('the seed addendum names ' + JSON.stringify(phrase), TEMPLATE_SEED.includes(phrase));
+  }
+
+  // CONTROL -- a one-word change to the NEW paragraph must fail its own pin.
+  const nudgedSeed = TEMPLATE_SEED.replace('skeletons', 'templates');
+  ok('CONTROL -- a one-word change to the seed paragraph fails the literal',
+    nudgedSeed !== HAND_WRITTEN_SEED);
+  ok('CONTROL -- ...and the hash',
+    createHash('sha256').update(nudgedSeed, 'utf8').digest('hex') !== SEED_SHA256);
+
+  // `composeAgentInstructionsFull` composes: original block, then
+  // TEMPLATE_FOUNDATIONS, then TEMPLATE_SEED -- in that order, each joined by
+  // exactly one blank line, never merged, never reversed.
+  const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
+  const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
+  eq('composeAgentInstructionsFull is the ORIGINAL block, then TEMPLATE_FOUNDATIONS, ' +
+    'then TEMPLATE_SEED, joined by single blank lines -- the exact v3.61.0 composition',
+    full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED);
+  ok('...ending with the seed paragraph', full.endsWith(TEMPLATE_SEED));
+  ok('...and TEMPLATE_SEED does not itself end with a second trailing blank line',
+    !TEMPLATE_SEED.endsWith('\n\n'));
+
+  // The pins this whole section exists to protect: S1's original 501-byte/
+  // sha256 facts about TEMPLATE, and S7's facts about TEMPLATE_FOUNDATIONS,
+  // must both still hold -- proof that adding a third constant touched
+  // neither of the first two.
+  const ORIGINAL_SHA256 =
+    '85dc8f9738e783e3c909133fd899c84978aa48b7c4e2c9ab922d927305244f5b';
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 501 bytes',
+    Buffer.byteLength(original, 'utf8'), 501);
+  eq('...and still hashes to 85dc8f97...',
+    createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
+  const FOUNDATIONS_SHA256 =
+    '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b';
+  eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 0c522294...',
+    createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
 }
 
 console.log('\n' + '─'.repeat(60));

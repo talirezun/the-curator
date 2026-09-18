@@ -2408,14 +2408,23 @@ project — which is why the deprecated alias below exists and why index rows no
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
+| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0.** Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
+| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
+| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole |
+| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Remove one curator-owned document, behind a name confirmation |
+| `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
+| `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
 
 A domain slug and a project slug are drawn from the same alphabet, so `/api/memory/lumina` is
 genuinely ambiguous on its face. Express matches by **segment count**, which is what makes the
-disambiguation structural rather than a heuristic. Exactly one literal collides with a legal
-project slug — `projects` itself, which would shadow `GET /:domain/:project` for a project of that
-name — so `projects` (along with `project.md` and `journal.jsonl`) is **refused as a project
-name** by the create and rename routes. A project directory named `projects` created out of band
-is still listed and still readable by every MCP tool; only its own detail URL on this router is
+disambiguation structural rather than a heuristic. Two literals collide with a legal project slug:
+`projects` itself, which would shadow `GET /:domain/:project` for a project of that name, and — new
+in v3.61.0 — `repo-scan`, which has the same one-segment-past-`/api/memory/` shape as the deprecated
+`GET /:project` alias. Both are **refused as a project name** by the create and rename routes
+(alongside `project.md` and `journal.jsonl`), and `repo-scan` additionally joins the store's own
+reserved-name set so a project directory of that name created out of band cannot be minted by
+`initFoundations` either. A project directory named `projects` or `repo-scan` created out of band is
+still listed and still readable by every MCP tool; only its own detail URL on this router is
 unreachable. That is a real, small, permanent hole, and hiding it would be worse than the hole.
 
 ### Which tiers the app may write
@@ -2434,10 +2443,23 @@ Obsidian; editing it in the app is the same edit through a nicer door, stamped
 `authoredBy.kind: 'human'`. So the write surface here is: create / rename / delete a project, and
 replace a project's brief. Four operations, all tier 1.
 
+**Tier 0's curator-owned documents joined the human's write surface in v3.61.0 — `init`, `PUT` and
+`DELETE` under `…/foundations/`** — for exactly the same reason and under exactly the same stamp:
+one ownership per project, enforced by the store before any write reaches disk (so an app edit is
+*structurally* incapable of landing on a repo-owned mirror), and a write from here always carries
+`authoredBy.kind: 'human'`, never an agent's harness and model. `POST …/foundations/refresh` is the
+one exception that predates this release and stays one: it is a **byte copy** driven by comparing
+sha256 against a file on a named checkout, never a second author composing content, which is the
+distinction the read-only rule everywhere else in this file protects — see
+[working-state.md's human-edit-surface argument](working-state.md#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file)
+for the full four-part statement of why none of this reopens a second writer.
+
 **The one property this costs, stated rather than implied away:** `project.md` has no `<machine>`
 segment, so it is the one file in the store where two machines *can* produce a conflicting hunk
 under Personal Sync. That was already true before v3.48.0 (working-state.md § 2 carves it out);
-a second, easier writer makes it easier to reach.
+a second, easier writer makes it easier to reach. Curator-owned foundations share the exact same
+property, for the exact same reason (no `<machine>` segment either) — see
+[sync.md](sync.md#foundations-and-the-no-machine-segment-bargain-again).
 
 Consequences, all deliberate: the GET routes carry no `guardConcurrent` and register no write
 (there is nothing to refuse), while a **rename or delete** — which moves or removes a directory —
@@ -2656,10 +2678,16 @@ domain's `state/` tree, counted rather than silently skipped.
 
 ### POST /api/memory/:domain/projects
 
-Create a project. Body: `{ project, brief? }`. Tier 1 only — it creates the project's directory
-and, if a brief was supplied, its `project.md`. It never touches a work-stream or a journal.
+Create a project. Body: `{ project, brief?, foundations? }`. Tier 1 only by default — it creates
+the project's directory and, if a brief was supplied, its `project.md`. It never touches a
+work-stream or a journal.
 
-**Success response** `201 Created` — `{ok: true, domain, project, created: true}`.
+**Success response** `201 Created`
+
+```json
+{ "ok": true, "domain": "acme", "project": "lumina", "created": true,
+  "foundations": { "…": "…the wire shape, or null…" }, "foundationsError": null }
+```
 
 | Status | Condition |
 |--------|-----------|
@@ -2682,6 +2710,176 @@ The store adds refusals of its own, forwarded with their `reason` intact and the
 is already a work-stream of the domain's own project, or the domain's own name, is
 `reserved-project`; an existing name is `project-exists`; a write lock held by something else is
 `locked` and answers `409`.
+
+**New in v3.61.0: `foundations`** — `{ ownership, repoRoot?, files?, seed? }`, run **after** the
+brief write succeeds. This is the start-a-project ownership choice ([user-guide.md](user-guide.md#start-a-project)),
+folded into project creation as one gesture rather than a second request. **The project always
+exists after this call, even when `foundations` fails** — a foundations-tier problem (an
+unreachable checkout, say) is disclosed in `foundationsError: { reason, message }`, never a `5xx`
+and never a rollback of the project that was just created; `foundations` is `null` in that case, and
+both the project's brief and its existence are unaffected. When `foundations` is omitted entirely,
+both response fields are `null` and nothing about tier 0 is touched — a caller that does not opt in
+sees no new behaviour at all.
+
+### GET /api/memory/repo-scan?root=`<abs>`
+
+**New in v3.61.0.** Read-only. `scanRepoForFoundations(root)` over HTTP — proposes candidate
+foundation documents from a checkout (or a plain folder; it does not need to be a git repository),
+it never decides anything. Backs the **Find documents** picker on both the create form and an
+existing project's Foundations block.
+
+**Query parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `root` | Absolute path to the checkout or folder to scan. Resolved and validated **before** any directory is read — a relative path, or one that does not exist, is refused rather than resolved against the server's own working directory |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "root": "/Users/you/code/your-project",
+  "candidates": [
+    { "path": "docs/architecture.md", "bytes": 8120, "suggestedRole": "architecture", "tooLarge": false, "firstHeading": "Architecture" }
+  ],
+  "truncated": false
+}
+```
+
+Candidates are found under three rules, unioned: **(a)** every `.md`/`.txt` under a `docs/` or
+`doc/` folder, three levels deep; **(b)** every `.md`/`.txt` anywhere in the tree, four levels deep,
+whose basename matches the same role words the suggestion heuristic uses; **(c)** every `.md`
+inside a folder literally named `adr`, `adrs`, `decisions`, `architecture` or `rfcs`, four levels
+deep. `.git`, `node_modules`, `vendor`, `dist`, `build`, `target` and dotfolders are skipped
+throughout, symlinks are not followed **out of** the named root, and the list is capped at 200
+entries (`truncated: true` beyond that) sorted by suggested-role rank then path. `path` is always
+**relative to `root`**, forward-slash, never an absolute path a client could round-trip into
+reading somewhere else. `firstHeading` is the file's first `# ` line (≤ 120 characters, read from
+the first 4 KB only) so a picker can show a title beside a path; a file with no such line omits it
+rather than inventing one. `tooLarge: true` marks a candidate over the 512 KB per-document cap —
+still listed, so the person choosing sees *why* it is unavailable rather than wondering where it
+went, but disabled at the picker.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_root` — `root` missing, not absolute, or resolves outside itself (a `..`-shaped escape) |
+| `409` | `repo_unreachable` — the path does not exist, or is not readable, from this machine |
+
+### POST /api/memory/:domain/:project/foundations/init
+
+**New in v3.61.0.** Sets a project's foundations **ownership**, once — `initFoundations` over HTTP.
+The setter behind both halves of [Start a project](user-guide.md#start-a-project): the create
+form's ownership choice, and the same choice re-offered from an existing, ownerless project's
+Foundations block.
+
+**Body**
+
+```json
+{ "ownership": "curator", "seed": true }
+```
+```json
+{ "ownership": "repo", "repoRoot": "/Users/you/code/your-project", "files": [{ "path": "docs/architecture.md", "role": "architecture" }] }
+```
+
+| Field | Meaning |
+|---|---|
+| `ownership` | `'repo'` or `'curator'` — no third value, and no default: an omitted or unrecognised value is refused rather than guessed |
+| `repoRoot` | **`repo` only.** The checkout (or plain folder) to mirror from. Refused on the `curator` arm — `root_not_allowed` — because a curator-owned project has no checkout to name |
+| `files` | **`repo` only.** Candidates to mirror in the same call, typically the ticked rows from a `repo-scan` response — `[{ path, role? }]`. May be empty; the manifest is still written (see below) |
+| `seed` | **`curator` only**, default `true`. `false` sets ownership without writing the four skeleton documents — an empty curator-owned project, ready for **Add document** or **Choose a file…** instead |
+
+**Success response** `201 Created`
+
+```json
+{
+  "ok": true, "domain": "acme", "project": "lumina",
+  "foundations": { "…": "…the wire shape…" },
+  "seeded": ["architecture.md", "decisions.md", "conventions.md", "roadmap.md"],
+  "refresh": null
+}
+```
+
+`seeded` lists the skeleton slugs actually written (empty on the `repo` arm, or on `curator` with
+`seed: false`). `refresh` carries the mirror step's own result (`{ refreshed, added, missing,
+refused }`, the same shape `…/foundations/refresh` returns below) when `files` was non-empty on the
+`repo` arm, `null` otherwise. **A `repo`-ownership call always writes the manifest, even with an
+empty `files` list** — naming a project repo-owned with nothing to mirror yet still records the
+choice; the pre-v3.61.0 refresh route's "empty work list is a no-op" behaviour is right for a
+*refresh* and would be wrong here, so `init` does not inherit it.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_ownership` (missing or unrecognised value), `ownership_set` (a manifest already exists for this project — **even one with zero documents in it** — ownership is decided once), `root_not_allowed` (`repoRoot` supplied on the `curator` arm) |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain or project |
+| `409` | `repo_unreachable` — neither `repoRoot` nor a reachable checkout can be read from this machine |
+
+### PUT /api/memory/:domain/:project/foundations/:slug
+
+**New in v3.61.0.** Create or replace **one curator-owned document, whole** — `saveFoundation` over
+HTTP, `authoredBy.kind: 'human'` always (never an agent's provenance; that is what `save_foundation`
+over MCP is for). Backs the Foundations block's editor — **Edit** on an existing row, or **Add
+document** (empty editor or **Choose a file…**) for a new one.
+
+**Body**
+
+```json
+{ "text": "# Architecture\n…", "title": "Architecture", "role": "architecture" }
+```
+
+`title` and `role` are required when **creating** a document (there is nothing to default them
+from) and optional when replacing one (an omitted field keeps the manifest's existing value). The
+route passes `replace: true` to the store — the store's own 10% destructive-shrink guard is waived
+here for the same reason it is waived on the standing-brief route: the editor is seeded with the
+document's current text, so a shrink is something a person did to text on their own screen, and the
+guard's own remedy ("repeat the call with `replace: true`") is advice a person in a browser cannot
+act on.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true, "domain": "acme", "project": "lumina", "created": false,
+  "document": { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
+    "bytes": 41200, "sha256": "…", "skeleton": false, "…": "…" },
+  "totalBytes": 148230, "budgetBytes": 200000, "budgetExceeded": false, "notes": []
+}
+```
+
+Saving a document that was a skeleton **clears its `skeleton` mark** — reflected in `document`
+above and in the very next `GET` of the same document or of the project's Foundations index; a
+skeleton is only ever *filled*, never quietly re-marked.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `repo_owned` — this project mirrors from a repository; edit the source and **Refresh from repo** instead. `no_manifest` — no ownership has been set yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `too_large` — over the 512 KB per-document wall; both the document's size and the wall are named. `invalid_slug`, `invalid_role`, `empty` |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain or project |
+| `409` | `locked` — another write to this project's foundations is in flight (the cross-process `.write-lock`, the one tier-0 exception to "no lock is taken" — see [working-state.md § 2](working-state.md#concurrency-this-tier-is-the-one-exception-to-no-lock-is-taken)) |
+
+### DELETE /api/memory/:domain/:project/foundations/:slug
+
+**New in v3.61.0.** Remove one curator-owned document. **Body: `{ confirm }`, and it must equal the
+document's slug exactly** — the same enforced-at-the-route rule `DELETE …/projects/:project`
+already follows, so the confirmation cannot be skipped by a client that does not render it.
+
+**Success response** `200 OK` — `{ ok: true, domain, project, removed: "architecture.md", wasOrphan: false }`.
+
+`wasOrphan` is `true` when the file existed on disk with no matching manifest entry (a document
+`listFoundations` would already have disclosed as `orphanFiles`) — deleting one of those still
+succeeds, and is reported as what it was.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `confirm_required` (missing, empty, or not an exact match), `repo_owned` — a mirrored document is removed by no longer scanning it into `files` on the next refresh, never by this route |
+| `403` | `readonly` |
+| `404` | `foundation_not_found` — no document at that slug (and no orphan file either); or unknown domain/project |
+| `409` | `locked` — the same cross-process lock `PUT` takes |
 
 ### PATCH /api/memory/:domain/projects/:project
 
@@ -2825,14 +3023,18 @@ directory entries the store will not address, counted rather than silently skipp
 "foundations": {
   "present": true,
   "ownership": "repo",
-  "count": 6,
+  "repo": { "root": "/Users/you/code/your-project", "remote": null,
+    "lastRefreshAt": "2026-09-10T08:00:00.000Z", "lastRefreshCommit": "9623343" },
+  "budgetBytes": 200000,
   "totalBytes": 148230,
+  "skeletonCount": 0,
+  "count": 6,
   "staleCount": 1,
   "documents": [
     { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
       "bytes": 41200, "sha256": "…", "updatedAt": "2026-09-10T08:00:00.000Z",
       "commit": "9623343", "source": { "kind": "repo", "path": "docs/architecture.md" },
-      "freshness": "fresh" }
+      "authoredBy": { "kind": "human" }, "freshness": "fresh", "skeleton": false }
   ],
   "manifestError": null,
   "orphanFiles": []
@@ -2841,7 +3043,14 @@ directory entries the store will not address, counted rather than silently skipp
 
 See [The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
 for what each field means and the two ownership modes; a project with no foundations yet reports
-`present: false` and an empty `documents` array, never an omitted key.
+`present: false` and an empty `documents` array, never an omitted key. `repo` is `null` on a
+curator-owned project — there is no checkout to name. **`skeletonCount` and `documents[].skeleton`
+are new in v3.61.0**: `skeleton` is `true` on a document seeded by
+[project creation or `…/foundations/init`](#post-apimemorydomainprojectfoundationsinit) that has
+never been saved since, and `false` on every other document, **always present** rather than omitted
+when false — a Foundations block reading "N skeletons to fill" needs both a positive and a negative
+answer from every row, not an absence to interpret. Filling a skeleton in and saving it (from the
+app or through `save_foundation`) clears the mark on the very next read.
 
 #### `?open=newest` — the index and one handoff in a single answer
 
@@ -3006,6 +3215,12 @@ HTTP.
 | `project` | Project slug, validated the same way as the detail route above |
 | `slug` | The document's slug, validated at the boundary against `^[a-z0-9][a-z0-9-]{0,63}\.md$` before it reaches `resolveInsideState` — an unusable slug is a `400`, never a path build attempt |
 
+**Query parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `raw` | **New in v3.61.0.** `?raw=1` returns the **verbatim** stored bytes (`sanitisedOnRead: false`, unconditionally) instead of the defanged default. This is what the Foundations editor loads FROM — an editor seeded from the defanged read would silently strip a live URL or shell command out of a document on its very first save, with no edit having been made at all (D3). Round-tripping the raw text through the editor and saving it again reproduces the identical `sha256` |
+
 **Success response** `200 OK`
 
 ```json
@@ -3021,14 +3236,18 @@ HTTP.
   "commit": "9623343",
   "source": { "kind": "repo", "path": "docs/architecture.md" },
   "authoredBy": { "kind": "human" },
+  "skeleton": false,
   "sanitisedOnRead": false
 }
 ```
 
-`text` is the stored document, sanitised on read the same way a handoff is (control characters
-stripped, protocol-shaped markers neutralised, URLs and shell pipes defanged) — never deleted,
-only defanged, and `sanitisedOnRead` says whether anything fired. This route never returns a body
-for more than one document; the index above is what a listing needs.
+`text` is, **by default**, the stored document sanitised on read the same way a handoff is (control
+characters stripped, protocol-shaped markers neutralised, URLs and shell pipes defanged) — never
+deleted, only defanged, and `sanitisedOnRead` says whether anything fired; with `?raw=1` it is the
+stored bytes unchanged and `sanitisedOnRead` is always `false`. This route never returns a body for
+more than one document; the index above is what a listing needs. `skeleton` (v3.61.0) is `true` when
+this document is still an unfilled skeleton — cleared the moment it is saved through `PUT` or
+`save_foundation`, by either a human or an agent.
 
 **Error responses**
 
@@ -3048,7 +3267,7 @@ distinction the read-only rule in this file protects.
 **Body**
 
 ```json
-{ "repoRoot": "/Users/you/code/your-project" }
+{ "repoRoot": "/Users/you/code/your-project", "files": [{ "path": "docs/roadmap.md", "role": "roadmap" }] }
 ```
 
 `repoRoot` is optional — when omitted, the manifest's own `repo.root` (the checkout that last
@@ -3056,16 +3275,29 @@ refreshed, on whichever machine that was) is tried instead. Both are resolved an
 against the manifest's recorded source paths before anything is read; a path pointing outside the
 named root, or a source whose extension is not `.md`/`.txt`, is refused rather than followed.
 
+**`files` (new in v3.61.0)** adds documents to the mirror rather than only re-copying ones the
+manifest already names — the gap the [repo-scan picker](#get-apimemoryrepo-scanrootabs) exists to
+close: before this release a repo-owned project's *first* documents could only be mirrored by
+naming them at `init`, and nothing could add a second wave later short of asking an agent to write
+a fresh document by hand. Each entry is validated with the same `sourceDigest` rules any mirrored
+path already follows (must resolve inside `repoRoot`, must be `.md`/`.txt`, must not exceed 512 KB)
+before it is read.
+
 **Success response** `200 OK`
 
 ```json
 { "ok": true, "refreshed": ["architecture.md"], "unchanged": ["decisions.md", "roadmap.md"],
-  "missing": [], "added": [] }
+  "missing": [], "added": ["conventions.md"], "refused": [] }
 ```
 
 A document whose source path no longer exists at the checkout is reported in `missing` — the
 stored copy is **left in place**, never deleted, because the checkout being unreachable from this
-machine right now is not evidence the document should disappear.
+machine right now is not evidence the document should disappear. `added` lists documents that
+entered the mirror for the first time this call, via `files`. **`refused` (new in v3.61.0)** lists
+any `files` entry that failed its own validation — `{ path, reason }` — forwarded rather than
+silently dropped, and rendered **un-folded** beside the outcome rather than tucked behind a
+disclosure, because a document someone asked to mirror and did not get is the kind of fact a fold
+successfully hides.
 
 **Error responses**
 

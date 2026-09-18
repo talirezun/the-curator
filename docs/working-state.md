@@ -642,14 +642,73 @@ project's foundations sets it — `curator` when its `source.kind` is `curator`,
 `repo` — and a save that would mix the two is **refused**, with the reason named, rather than
 silently accepted. That is the single-writer rule from tiers 2–3, carried one tier further down:
 a repo-owned document has exactly one legitimate writer (the checkout, mirrored byte-for-byte,
-never edited in place), and a curator-owned one has exactly one (an agent, and only on your
-explicit instruction). The app itself never edits either kind directly in this release — see
-[what this tier cannot do](#what-this-tier-cannot-do-yet), below.
+never edited in place), and a curator-owned one has exactly one (an agent, and — as of v3.61.0 —
+*or you, directly, in the app*). **The app never edits a repo-owned document** — see
+[the human edit surface](#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file),
+below, for what changed and why it does not add a second writer to either mode.
 
 | Mode | Who writes | How it stays fresh | A "stale" mark means |
 |---|---|---|---|
 | **Repo-owned** | The repository. The app/MCP **mirrors** — `refreshFoundationsFromRepo` reads `repoRoot/source.path`, compares its sha256 against the stored copy, and copies over anything changed — never an edit in place | A refresh, run by naming a reachable checkout | The stored sha256 no longer matches the file at the recorded path, or that path is not reachable from this machine |
-| **Curator-owned** | An agent, on your explicit instruction — `save_foundation`, the same commissioned-only rule `save_project_brief` already follows | Whoever you next ask to update it | Not applicable — there is no second copy to compare against |
+| **Curator-owned** | An agent, on your explicit instruction — `save_foundation`, the same commissioned-only rule `save_project_brief` already follows — or you, directly, through the app's own editor (v3.61.0) | Whoever you next ask to update it, or you, whenever you next edit it | Not applicable — there is no second copy to compare against |
+
+### Starting a project: choosing ownership once, and the four skeletons
+
+**New in v3.61.0.** Ownership was always set by the *first* document saved into an empty project —
+that has not changed — but until this release there was no way to set it except by already having a
+document to save, and the app itself wrote **nothing** on this tier: `POST …/foundations/refresh`
+took no file list, so it could only re-copy documents a manifest already named, never mirror a
+project's first ones; there was no MCP refresh tool either; and a curator-owned project's only
+writer, before this release, was `save_foundation` — an agent, commissioned, and nothing else. A
+user with existing architecture docs, decision logs or a checkout full of them had exactly one way
+in: ask an agent to paste them, one document at a time. `initFoundations(domain, project,
+{ownership, repoRoot?, files?, seed?})` is the setter this release adds, reached from project
+creation (`POST /api/memory/:domain/projects` gains an optional `foundations` body) and from an
+existing, ownerless project's Foundations block:
+
+- **`ownership: 'curator'`** writes the manifest and, unless `seed === false`, four skeleton
+  documents in one atomic step — `architecture.md`, `decisions.md`, `conventions.md`,
+  `roadmap.md` — each **≤ 2 KB**, each stamped `skeleton: true` and `authoredBy: {kind: 'human'}`
+  (you chose to seed them; that is a human act even though an agent will likely fill them). A
+  skeleton is a real document, not a placeholder outside the store's normal shape: it has the same
+  `##` headings any foundation has, under which sit **prompts, not facts** — "what would surprise a
+  new contributor?" rather than an invented answer — and its first line is a fixed, visible banner:
+  `> **Skeleton — not yet written.** Answer the prompts below and delete this line. An agent fills
+  it only when the owner asks.` `SKELETON_BANNER` and the four documents live in ONE place,
+  `src/brain/foundation-skeletons.js` — this repository's most-repeated defect class is a template
+  copied per surface, and three separate brief templates already exist with no drift guard between
+  them; the skeletons do not add a fourth copy of that problem.
+- **`ownership: 'repo'`** always writes the manifest, even when `files` is empty — the pre-v3.61.0
+  `refreshFoundationsFromRepo` treats an empty work list as a no-op that writes nothing at all,
+  which is the right behaviour for a *refresh* and the wrong one for an *init*: naming a project
+  repo-owned with nothing to mirror yet must still record the choice, or the project looks
+  ownerless again the moment you check. When `files` names candidates (from a repository scan, see
+  below), the mirror step runs in the same call.
+- **A repository scan is read-only and proposes, never decides — and, since v3.61.0, looks well
+  beyond `docs/`,** because the narrower v3.59.0 rule (root + `docs/`, two levels) could not find a
+  project's *existing* canonical documents wherever a real repository actually keeps them.
+  `scanRepoForFoundations(root)` unions three rules: **(a)** every `.md`/`.txt` under a `docs/` or
+  `doc/` folder, three levels deep; **(b)** every `.md`/`.txt` **anywhere** in the tree, four levels
+  deep, whose basename matches the same role words the heuristic already used (`architecture*`,
+  `decision*`/`adr*`, `convention*`/`contributing*`/`style*`, `roadmap*`/`plan*`, `api*`,
+  `readme*`/`guide*`/`handbook*`, case-insensitive); **(c)** every `.md` inside a folder literally
+  named `adr`, `adrs`, `decisions`, `architecture` or `rfcs`, four levels deep. `.git`,
+  `node_modules`, `vendor`, `dist`, `build`, `target` and dotfolders are skipped throughout; results
+  are sorted by suggested-role rank then path, capped at 200 entries (`truncated` beyond that). Each
+  entry also carries `firstHeading` — the file's first `# ` line, read from the first 4 KB only, so
+  a picker can show a real title beside a path rather than a filename alone. A file over the 512 KB
+  per-document cap is flagged `tooLarge` rather than silently omitted, so the person choosing what to
+  mirror sees why a candidate is greyed out instead of wondering where it went. **The named root does
+  not need to be a git checkout at all** — an ordinary folder works exactly as well as a source for a
+  mirror; the only difference is that `repo.lastRefreshCommit` has nothing to record, so the manifest
+  and the Foundations block show the source path with no commit rather than a fabricated one.
+- **A project already committed to one ownership mode cannot be re-decided through this call** —
+  `initFoundations` refuses (`ownership-set`) the moment **any** manifest already exists, even one
+  with zero documents in it, for the same reason the one-writer rule refuses a mixed save: ownership
+  is a property of the *project*, decided once, not a per-document setting that can quietly drift.
+- **A project can also legitimately decide nothing yet.** The create form's third option, "decide
+  later", writes no manifest at all — the project exists, its foundations do not, and the same
+  choice is offered again the first time its Foundations block is opened and finds none.
 
 ### Freshness is computed, never remembered
 
@@ -729,14 +788,72 @@ writer, edit rarely, sync after.
   foundation on its own.
 - **No LLM summarisation on the way in or out.** A foundation is stored and returned verbatim, the
   same trust as the brief — never distilled, never paraphrased.
-- **The app does not edit a curator-owned foundation in this release.** A human edit surface for it
-  — mirroring the standing brief's own editor — is **PLANNED for v3.61.0**, alongside a
-  start-a-project flow that offers commissioning one on creation.
 - **The menu bar widget marks stale foundations (v3.60.0).** When a project's mirrored documents
   are behind their source, the project header's sublabel gains `· N docs stale`, clipped to the
   same label budget as the rest of the line; nothing is added when they are fresh, and no
   `notices` entry is raised. v3.59.0 shipped the read and write paths and the in-app Foundations
   block; the mark followed one release later.
+- **A human edit surface for a curator-owned foundation, and a start-a-project flow that offers
+  commissioning one on creation, shipped in v3.61.0** — see the two sections below. What the app
+  still does not do: edit a **repo-owned** document (mirrored only, on purpose), or select what
+  belongs in a project, or summarise anything on the way in or out.
+
+### The human edit surface: a second reader and writer, and why it is still one writer per file
+
+**New in v3.61.0.** A curator-owned foundation can now be created, edited and deleted from the
+**Foundations** block on the Agent memory screen — the standing brief's own pattern, reused rather
+than reinvented: pressing **Edit** on a row, or **Add document** on the block itself, replaces the
+table with an editor *inside the same fold*, one document at a time. **Add document** offers a
+second way in beside the empty editor: **Choose a file…**, which reads a `.md`/`.txt` file off your
+disk client-side and drops its text into the same editor for you to review before saving — nothing
+is uploaded, the write is still the ordinary `PUT` with the reviewed text, and a file over the
+512 KB wall is refused before it is read at all. A chosen file whose guessed slug collides with an
+existing skeleton **replaces that skeleton** and clears its mark, which the app discloses rather
+than doing quietly.
+
+**Why this is not a second writer, stated precisely (the argument the route header itself
+carries).** The single-writer property this store has always claimed was never "exactly one
+*process* may write" — a browser and an MCP server are always two processes — it was **one writer
+per FILE, with provenance that matches**:
+
+1. **One ownership per project, enforced in the store before any write reaches disk.** A human
+   write is stamped `source: {kind: 'curator'}` at the route, so it is *structurally impossible*
+   for an app edit to land on a repo-owned mirror — the same refusal that already stops
+   `save_foundation` from writing into one fires here too, for the same reason.
+2. **The human's edit carries the human's stamp** (`authoredBy: {kind: 'human'}`, exactly as
+   `saveBrief` has stamped tier 1 since v3.48.0), **and the agent's carries its own.** Nobody reading
+   a foundation's provenance is told a human wrote what an agent actually wrote, or the reverse.
+3. **The cost, stated rather than implied away.** Tier 0 has no `<machine>` segment — the same
+   carve-out `project.md` already has, for the same reason: two machines editing one curator-owned
+   document between syncs converge to **whichever saved last** under `pull -X theirs`, and unlike a
+   repo-owned mirror there is no upstream to re-assert itself and no journal behind the file to
+   recover from. This is `project.md`'s own bargain, extended one tier down: edit rarely, sync
+   after. [sync.md](sync.md#foundations-and-the-no-machine-segment-bargain-again) has the full
+   honesty statement.
+4. **On a mirror, the app is a second COPIER, never a second author; on a curator-owned project, the
+   app is the OWNER'S OWN PEN — and it is neither of those on tiers 2–3**, which stay agent-only
+   over MCP for the reason stated since v3.17.0: a browser write there would stamp a human edit with
+   the last agent's harness and model, which is simply false.
+
+**The editor loads RAW bytes, not the defanged read.** Every other reader of a foundation —
+`get_project_context`, `readFoundation` over HTTP, the reader overlay — gets the **defanged**
+default: control characters stripped, protocol-shaped markers neutralised, URLs and shell pipes
+declawed, the same treatment a handoff already gets on every read. That is right for text an agent
+consumes and *wrong* for text a person is about to re-save: an editor seeded from a defanged read
+would silently strip a live URL or a shell command out of a document on its very first save, with no
+edit having been made to it at all. So the editor's load calls `readFoundation(domain, project,
+slug, {raw: true})` — `?raw=1` on the route — which returns the **verbatim** stored bytes with
+`sanitisedOnRead: false`; the write path was always verbatim (a foundation is a canonical document,
+never merged, never rewritten); round-tripping raw text through the textarea and saving it again
+reproduces the identical `sha256`, checked in the offline suite rather than merely asserted here.
+
+**One reader-note correction, found on the way.** Before v3.61.0 the reader overlay captioned
+*every* foundation "Read-only Shared Brain mirror" — copy written for the one case that existed at
+the time (a repo-owned mirror) and never revisited when a second, editable case arrived. The caption
+is now driven by what actually applies: a repo-owned document still reads "Mirrored from the
+repository — edit it there and refresh", and a curator-owned one now reads "Edit it from the
+Foundations table" — true in both cases, and no longer a Shared Brain sentence sitting under a
+document that was never a Shared Brain mirror at all.
 
 ### The MCP surfaces
 

@@ -43,6 +43,7 @@ Each row links straight to that section.
 | 13. Three ways to talk to your knowledge | Chat, Obsidian and MCP compared | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp |
 | 13b. Working state — carrying context between sessions | Agent handoffs between sessions and machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13b-working-state--carrying-context-between-sessions |
 | 13b. Foundations — canonical documents that travel | A project's architecture and decisions, held verbatim | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#foundations--canonical-documents-that-travel |
+| 13b. Start a project | Choosing where a new project's foundations live, and editing them | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#start-a-project |
 | 14. Daily workflow | A suggested routine for regulars | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#14-daily-workflow |
 | 15. Sync across computers | GitHub backup across your own machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15-sync-across-computers |
 | 15b. Shared Brain | Building a wiki with others | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15b-shared-brain |
@@ -69,6 +70,8 @@ Related pages:
 | Working state, layout on disk | How projects and scopes are stored | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#2-layout-on-disk |
 | Working state, the MCP tools | The tools an agent calls | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#3-the-six-mcp-tools |
 | Working state, foundations | Canonical documents that travel with a project | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#the-foundations-tier--canonical-documents-that-travel |
+| Working state, starting a project | Choosing ownership and the four skeletons | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#starting-a-project-choosing-ownership-once-and-the-four-skeletons |
+| Working state, the human edit surface | Editing a curator-owned foundation, and why it is still one writer | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file |
 | Working state, activation | Making an agent actually save | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it |
 | Working state, limits | What the store will not do | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#5-limits |
 | Standing brief template | A copyable project brief file | https://github.com/talirezun/the-curator/blob/main/docs/project-brief-template.md |

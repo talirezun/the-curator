@@ -267,6 +267,20 @@ Four rules that hold whatever you are fixing:
 
 **A project's foundations have one owner, and `save_foundation` cannot change that.** A project mirroring documents from a repository is `repo`-owned; a save into it is refused — the checkout, not an agent, is the source of truth there, and the fix is a refresh (`repo_root` on a `save_working_state` call, or **Refresh from repo** in the app), never a write through this tool. `save_foundation` is how a project with **no** repository gets its architecture, decisions and conventions written down at all — the first successful save marks the project `curator`-owned, and stays that way.
 
+**A document may arrive marked `skeleton: true` (v3.61.0) — a prompt to answer, not a fact.** A
+skeleton is seeded when the user chooses "Curator keeps them" at project creation: real headings,
+under which sit questions ("what are the three or four decisions that would surprise a new
+contributor?"), not invented answers, with a fixed banner at the top saying so. **Fill one in only
+under the owner's commission — never on your own initiative, and never by inventing a fact to
+answer a prompt you have no basis for.** The pasted agent-instructions block a user adds to
+`CLAUDE.md`/`AGENTS.md` (see below) IS that commission for the project it names — its own paragraph
+says so — but a general "help me get set up" from the user is not, and neither is noticing an
+unfilled skeleton while doing something else. When you genuinely do not know the answer to a
+skeleton's prompt, **ask the user, or leave the prompt as it is** — a plausible-sounding invention
+saved into a document every future session is told to treat as canonical is worse than an
+unanswered question with its banner still attached. Saving through `save_foundation` clears the
+`skeleton` mark; there is no way to re-mark a document, so save only once you actually mean it.
+
 > **The six working-state tools have their own playbook.** This skill covers the WIKI —
 > what knowledge to write and how to ground it. Carrying build state between sessions is a
 > different discipline (which project, when to save, what a handoff must contain, the writing
