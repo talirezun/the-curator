@@ -314,9 +314,25 @@ section('§2 — A FILENAME IN: the slug, the role and the title');
 section('§3 — THE CHOICE, AS A REQUEST BODY');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  const c = FI.freshChooser({ allowLater: true });
-  eq('a fresh choice defaults to the answer that works with no preconditions',
-    c.ownership, 'curator');
+  // ── THE DEFAULT IS THE ARM THAT WRITES NOTHING, WHERE THERE IS ONE
+  //    (v3.61.0, maintainer's call on Q1) ─────────────────────────────────
+  // The fail-safe direction decides it. On the CREATE FORM the documents
+  // choice is one field of a bigger form, and the arm that writes four
+  // documents is not the safe answer on a form somebody has not read —
+  // `later` is: nothing is written, and the Foundations block asks the same
+  // question again in the place the answer is missing. Where there is NO third
+  // answer (the Memory block, which IS the later) the default stays `curator`,
+  // because it is the only arm that works with no preconditions: mirroring
+  // needs a folder on THIS computer at a path the owner can type, and a
+  // first-time user has neither to hand.
+  const later = FI.freshChooser({ allowLater: true });
+  eq('on the create form, where postponing is an answer, the default POSTPONES',
+    later.ownership, 'later');
+  eq('...and postponing sends no `foundations` key at all', FI.chooserBody(later), null);
+  const c = FI.freshChooser({});
+  eq('where there is no third answer, the default is the arm that needs nothing '
+    + 'set up first', c.ownership, 'curator');
+  eq('...and that host offers no "decide later" to reach', c.allowLater, false);
   eq('...with the four skeletons ticked', c.seed, true);
   eq('the curator arm sends the ownership and nothing else',
     JSON.stringify(FI.chooserBody(c)), '{"ownership":"curator"}');
@@ -453,9 +469,72 @@ section('§4 — A FILE FROM DISK: the wall before the read (D18)');
       && read === 1);
   }
   {
-    const got = await FI.readPickedFile(file('.hidden', 'x'), reader);
+    // `.hidden.md` rather than `.hidden`: the KIND check runs first now
+    // (v3.61.0, contract §10) and a bare `.hidden` is refused for not being
+    // markdown, which is a true refusal but not the one this assertion is
+    // about. A dotfile's stem is still the thing under test — the store's
+    // grammar needs a leading alphanumeric, so `.hidden.md` would become the
+    // slug `hidden.md`, a name the owner never chose.
+    const got = await FI.readPickedFile(file('.hidden.md', 'x'), reader);
     ok('a file whose name yields no legal slug is refused with a reason, not renamed for the '
       + 'owner', /no usable file name/.test(got.error), got.error);
+  }
+
+  // ── A PDF IS REFUSED, AND IS NEVER READ (v3.61.0, contract §10) ─────────
+  //
+  // The store mirrors `.md` and `.txt` only, and a foundation is text an agent
+  // reads VERBATIM — so extracting a PDF would be a transformation, which is
+  // the one thing this tier exists not to do. The refusal is checked BEFORE
+  // the size (kind is the more specific fact: a 40 MB PDF is not "too large",
+  // it is the wrong kind) and before any read, and it is checked at all rather
+  // than left to the `accept` attribute because every file dialog on every
+  // platform offers an "All files" escape from it.
+  {
+    let read = 0;
+    const counting = async () => { read++; return 'x'; };
+    const got = await FI.readPickedFile(file('notes.pdf', 'x', 4096), counting);
+    eq('a PDF is never read', read, 0);
+    eq('...and carries no text', got.text, '');
+    // A COMPLETE SENTENCE, not a fragment: the hosts render `error` inside a
+    // row as "<name> <error>." and `refusal` unfolded where the picker is, and
+    // a file refused on kind never becomes a row at all.
+    eq('...and the refusal is the maintainer\u2019s exact sentence, naming both '
+      + 'ways forward rather than only the rule',
+    got.refusal,
+    'Documents are kept word for word; a PDF needs converting. Ingest it into the wiki, '
+      + 'or export it as Markdown first.');
+    ok('...and a row fragment as well, for a host that lists it',
+      /is a PDF/.test(got.error), got.error);
+    // A 40 MB PDF is refused for its KIND, not its size — the specific fact.
+    const huge = await FI.readPickedFile(file('big.pdf', 'x', FI.MAX_FOUNDATION_BYTES + 1), counting);
+    ok('an oversized PDF is refused for being a PDF, not for being large',
+      /a PDF needs converting/.test(huge.refusal || ''), huge.refusal);
+    eq('...and is still never read', read, 0);
+  }
+  {
+    let read = 0;
+    const counting = async () => { read++; return 'x'; };
+    const got = await FI.readPickedFile(file('notes.docx', 'x', 4096), counting);
+    eq('any other non-text kind is refused too, unread', read, 0);
+    ok('...with the file named in the sentence', /notes\.docx is neither/.test(got.refusal || ''),
+      got.refusal);
+    // A 4 KB FILENAME MUST NOT BECOME THE WHOLE PANEL.
+    const long = await FI.readPickedFile(file('x'.repeat(4000) + '.docx', 'y', 10), counting);
+    ok('...and a pathological filename is bounded rather than printed whole',
+      String(long.refusal).length < 300, String(long.refusal).length);
+  }
+  {
+    // CONTROL: the four kinds the store accepts are read.
+    for (const name of ['a.md', 'a.txt', 'a.markdown', 'a.mdown']) {
+      const got = await FI.readPickedFile(file(name, 'body'), reader);
+      eq(name + ' is read, not refused on kind', got.refusal, null);
+    }
+    // AND `refusal` IS AN EXPLICIT null ON EVERY OTHER ARM, so a consumer
+    // tests the FIELD rather than its absence.
+    eq('a size refusal carries refusal: null, so the host lists it as a row',
+      (await FI.readPickedFile(file('big.md', 'x', FI.MAX_FOUNDATION_BYTES + 1), reader)).refusal, null);
+    eq('...and so does a read that succeeded',
+      (await FI.readPickedFile(file('a.md', 'x'), reader)).refusal, null);
   }
   {
     const boom = async () => { throw new Error('the disk said no'); };
@@ -481,9 +560,24 @@ section('§5 — THE CHOOSER, RENDERED, IN BOTH HOSTS');
   ok('THREE answers on the create form', full.includes('data-fnd-own="curator"')
     && full.includes('data-fnd-own="repo"') && full.includes('data-fnd-own="later"'));
   ok('the chosen one carries aria-pressed, so the selection is in the accessibility tree and '
-    + 'not only in a colour', /data-fnd-own="curator" aria-pressed="true"/.test(full));
+    + 'not only in a colour', /data-fnd-own="later" aria-pressed="true"/.test(full));
   ok('each answer carries its CONSEQUENCE — the reading a person needs before pressing',
-    /Seeds four skeleton documents/.test(full) && /byte for byte/.test(full), full.slice(0, 900));
+    /Four skeletons with prompts to answer/.test(full)
+    && /Copied byte for byte/.test(full)
+    && /Nothing is written now/.test(full), full.slice(0, 900));
+  // ── THE OWNER IS NAMED FIRST, AND THE WORD IS FOLDER ──────────────────
+  // P1-12: a person can start a project here with NO agent and no repository
+  // and write the first document by hand, so no line may presume an agent; and
+  // where both ways in are named the owner's comes first.
+  // P1-9: `resolveRepoRoot` requires only an absolute, reachable DIRECTORY, so
+  // a label saying "repository" turns away everybody whose documents live in
+  // ~/Documents/lumina-docs. That a git checkout additionally records the
+  // commit is mechanism, and it belongs in the host's ⓘ.
+  ok('the curator arm names the owner before the agent',
+    full.indexOf('by you') < full.indexOf('or by an agent'), full.slice(0, 900));
+  ok('...and no arm says "repository" anywhere',
+    !/repositor/i.test(full), full.slice(0, 1200));
+  ok('...and the mirror arm says "folder"', /Mirror a folder on this Mac/.test(full));
   ok('no ⓘ of its own: both hosts already carry one on the block that contains it, and a '
     + 'third mark beside them would be a third voice', !/tx-vh-info/.test(full));
   ok('and NO native <select> anywhere — v3.18.0 purged those from /next because the popup a '
@@ -536,10 +630,26 @@ section('§5 — THE CHOOSER, RENDERED, IN BOTH HOSTS');
 
   // THE FILE PICKER WEARS THE KIT'S BUTTON.
   const cur = FI.renderFoundationsChooser({ id: 'x', choice: FI.freshChooser({}) });
-  ok('the file input is visually hidden inside a <label> carrying the kit\'s button classes — '
-    + 'a native file button is the one control a browser will not let you style',
-  /<label class="btn btn-secondary btn-xs fnd-init-file">/.test(cur)
-    && /class="visually-hidden" id="x-files"/.test(cur), cur.slice(0, 1800));
+  // ── A REAL BUTTON, AND AN INPUT THAT IS `hidden` (v3.61.0, P1-7) ──────
+  //
+  // The first cut wrapped a `.visually-hidden` input in a <label> wearing the
+  // button classes. A visually-hidden input is STILL FOCUSABLE: a keyboard
+  // user's focus lands on something invisible while the thing that looks like
+  // a button cannot be focused at all and can never paint `--ring-focus` — the
+  // token that exists precisely because the one state that must be findable
+  // was the hardest thing on the page to find. `hidden` takes the input out of
+  // the tab order entirely and a `<button>` clicks it, which is the pattern
+  // views/ingest.js's drop zone has shipped for releases.
+  ok('the control is a real <button> wearing the kit\'s classes',
+    /<button type="button" class="btn btn-secondary btn-xs fnd-init-file" id="x-files-btn">/.test(cur),
+    cur.slice(0, 1800));
+  ok('...and the input is `hidden`, so it is out of the tab order rather than '
+    + 'merely invisible and still focusable',
+  /<input type="file" id="x-files"[^>]* hidden/.test(cur), cur.slice(0, 1800));
+  ok('...and NOT visually-hidden inside a label, which is the shape that put '
+    + 'focus on something nobody can see',
+  !/class="visually-hidden" id="x-files"/.test(cur)
+    && !/<label class="btn[^"]*fnd-init-file"/.test(cur), cur.slice(0, 1800));
   ok('...accepting markdown and text only', /accept="\.md,\.txt,text\/markdown,text\/plain"/.test(cur));
   ok('...MULTIPLE on the create form, where each file becomes one document',
     /id="x-files"[^>]*multiple/.test(cur));
@@ -773,6 +883,14 @@ const stateBox = { value: null };
 const renderers = (() => {
   const body =
     extractFunction(viewSrc, 'foundationsFacts') + '\n' +
+    // ── THE SKELETON PREDICATE, LIFTED (v3.61.0, P1-2) ──────────────────
+    // `foundationsFacts` and `foundationReaderContent` both ask it whether a
+    // document is still a set of PROMPTS, and it reads the store's `skeleton`
+    // FLAG and nothing else — never the banner's own sentence, which the owner
+    // is invited to delete the moment they answer the prompts. Lifted rather
+    // than stubbed: a stub would let the reader's most consequential note go
+    // missing with every assertion here green.
+    extractFunction(viewSrc, 'skeletonOf') + '\n' +
     extractFunction(viewSrc, 'fndStats') + '\n' +
     extractFunction(viewSrc, 'fndSlugError') + '\n' +
     extractFunction(viewSrc, 'fndShrinkWarn') + '\n' +
@@ -781,8 +899,9 @@ const renderers = (() => {
     extractFunction(viewSrc, 'renderFoundationsInit') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent') + '\n' +
     extractFunction(viewSrc, 'formatAge') + '\n' +
-    'return { foundationsFacts, fndStats, fndSlugError, fndShrinkWarn, briefDismissDecision, '
-    + 'renderFoundationEditor, renderFoundationsInit, foundationReaderContent };';
+    'return { foundationsFacts, skeletonOf, fndStats, fndSlugError, fndShrinkWarn, '
+    + 'briefDismissDecision, renderFoundationEditor, renderFoundationsInit, '
+    + 'foundationReaderContent };';
   // eslint-disable-next-line no-new-func
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'renderStatus',
     'renderDescription', 'renderReadout',
@@ -880,9 +999,18 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   ok('Preview only changes what is displayed, so it is secondary',
     /id="mem-fnd-preview"[^>]*/.test(html) && /btn-secondary btn-xs" id="mem-fnd-preview"/.test(html));
   ok('Cancel is quiet', /btn-ghost" id="mem-fnd-cancel"/.test(html));
-  ok('Delete is a GHOST in the footer rather than beside Save — it destroys a document and '
-    + 'must not be one mis-click from the commit',
-  /btn-ghost btn-xs mem-fnd-delete" id="mem-fnd-delete"/.test(html));
+  // ── THE OPENER IS `btn-danger`, NOT `btn-ghost` (v3.61.0, P1-5) ───────
+  // The taxonomy is explicit: `.btn-danger` = DESTROYS DATA, tinted, never
+  // filled. A ghost face on the one control in this editor that removes a
+  // document makes it read as quiet-and-harmless, which is the opposite of
+  // what it is — and `domains.js`'s surviving `.dm-delete-btn { color:
+  // var(--danger-text) }` is the last hand-built override of exactly this
+  // kind, which this release does not extend.
+  ok('Delete wears the DANGER face, and sits in the footer rather than beside '
+    + 'Save — it destroys a document and must not be one mis-click from the commit',
+  /btn-danger btn-xs mem-fnd-delete" id="mem-fnd-delete"/.test(html), html.slice(-700));
+  ok('...tinted, never filled — the filled face is reserved for the confirm',
+    !/btn-danger-solid[^>]*id="mem-fnd-delete"/.test(html));
   ok('the write is stated where the button is, not behind a click: saving REPLACES',
     /Saving replaces the whole document, byte for byte/.test(html));
   ok('...and that sentence is not inside a <details>', !html.includes('<details'));
@@ -928,21 +1056,52 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
     fndEdit: anEdit({ loaded: 'x'.repeat(4096), text: 'x'.repeat(1000), confirmShrink: true }) });
   const shrink = renderers.renderFoundationEditor(facts);
   ok('the shrink strip names BOTH sizes', /4 KB/.test(shrink) && /1000 bytes/.test(shrink), shrink.slice(0, 200));
-  ok('...says the save replaces the WHOLE document', /the whole document, not an addition/.test(shrink));
+  ok('...and how much shorter, as the figure a person actually weighs',
+    /% shorter/.test(shrink), shrink.slice(0, 400));
+  ok('...says the save replaces rather than adds', /Saving replaces it/.test(shrink));
   ok('...and offers both ways out', /id="mem-fnd-shrink-go"/.test(shrink)
     && /id="mem-fnd-shrink-no"/.test(shrink));
   ok('...in flow, not in a dialog — the text the owner would lose stays on screen while they '
     + 'decide', !shrink.includes('<dialog'));
+  // ── EXACTLY ONE PRIMARY, AND IT IS ALWAYS THE CONTROL THAT COMMITS
+  //    (v3.61.0, P1-6) ──────────────────────────────────────────────────
+  // The first cut left Save in place beside this strip, which gives the card
+  // either two primaries or a DISABLED primary next to a live secondary that
+  // actually writes — the tier-1 slot lying about itself. Save is WITHHELD
+  // while the strip is up, not disabled: a disabled control still claims the
+  // slot.
+  ok('the strip\u2019s confirm is the card\u2019s ONE primary',
+    (shrink.match(/btn-primary/g) || []).length === 1
+    && /btn-primary btn-xs" id="mem-fnd-shrink-go"/.test(shrink), shrink.slice(0, 900));
+  ok('...and Save is WITHHELD while it stands, not merely disabled',
+    !/id="mem-fnd-save"/.test(shrink), shrink.slice(-800));
+  ok('...and the confirm is labelled for what it does, not "Save anyway"',
+    /Replace with the shorter version/.test(shrink));
 
   // ── THE DELETE STRIP ──────────────────────────────────────────────────
   setState({ activeDomain: 'acme', activeProject: 'lumina', fndEdit: anEdit({ confirmDelete: true }) });
   const del = renderers.renderFoundationEditor(facts);
   ok('the delete strip NAMES the document — "are you sure?" over six rows is a question about '
     + 'none of them', /architecture\.md/.test(del) && /Delete <b>/.test(del));
-  ok('...says what it costs, in the model\'s own words', /agents stop reading it/.test(del));
-  ok('...uses the DANGER variant, tinted and never filled (the taxonomy reserves the filled '
-    + 'one for a confirm DIALOG)', /btn-danger btn-xs" id="mem-fnd-delete-go"/.test(del)
-    && !/btn-danger-solid/.test(del));
+  ok('...says what it costs, in words',
+    /removed from this project and from your agents\u2019 next session/.test(del), del.slice(0, 900));
+  // ── AND WHAT RECOVERY THERE IS, BOTH HALVES ──────────────────────────
+  // "It cannot be undone" alone is FALSE for a user with Personal Sync
+  // configured and TRUE for everyone else, so both are stated rather than one
+  // of them guessed at — the v3.9.1 finding, where a false safety promise
+  // shipped at 14 sites on a page that DELETES.
+  ok('...and that The Curator has no undo, while a git client may still have one',
+    /cannot be undone from inside The Curator/.test(del) && /git client/.test(del), del.slice(0, 900));
+  // ── THE ONE SANCTIONED USE OF THE FILLED DANGER FACE (v3.61.0, P1-5) ──
+  // `.btn-danger-solid` is reserved by the taxonomy for a confirm whose
+  // PRIMARY ACTION IS THE DELETION, which is exactly this strip: the question
+  // has been asked, the document is named, and this is the control that
+  // answers yes. The opener in the footer stays tinted.
+  ok('the confirm uses the FILLED danger face, which is what a confirm whose '
+    + 'primary action is the deletion is for',
+  /btn-danger-solid btn-xs" id="mem-fnd-delete-go"/.test(del), del.slice(0, 900));
+  ok('...labelled permanently, so the word matches the consequence',
+    /Delete permanently<\/button>/.test(del), del.slice(0, 900));
   ok('...and Save is disabled while it stands, so one stray press cannot commit instead',
     /id="mem-fnd-save" disabled/.test(del));
 
@@ -955,8 +1114,26 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   ok('...with Save disabled until it is legal', /id="mem-fnd-save" disabled/.test(add));
   ok('...offers "Choose a file…" beside the empty box (D18)',
     /id="mem-fnd-file"/.test(add) && /Choose a file…/.test(add));
+  // ── A REAL BUTTON AND A `hidden` INPUT (v3.61.0, P1-7) ───────────────
+  // A `.visually-hidden` input inside a `<label class="btn">` is focusable
+  // while the thing that looks like a button is not, so focus lands on
+  // something invisible and `--ring-focus` never paints.
+  ok('...through a real <button> that clicks a `hidden` input',
+    /<button type="button" class="btn btn-secondary btn-xs fnd-init-file" id="mem-fnd-file-btn"/.test(add)
+    && /<input type="file" id="mem-fnd-file"[^>]* hidden/.test(add), add.slice(0, 1800));
+  ok('...and NOT a label around a visually-hidden input',
+    !/class="visually-hidden" id="mem-fnd-file"/.test(add));
+  // ── AND THE OWNER'S WAY IN COMES FIRST (v3.61.0, P1-12) ──────────────
+  // For the person who started a project here with no agent and no
+  // repository, WRITING the document is the primary way in — and the order of
+  // two equal-looking affordances is the only thing on screen that says so.
+  ok('...and the sentence leads with the box rather than with the file',
+    add.indexOf('Write the document in the box below') > 0
+    && add.indexOf('Write the document in the box below') < add.indexOf('Choose a file'),
+    add.slice(0, 1800));
   ok('...saying out loud that nothing is sent until the owner saves',
-    /nothing is sent until you save/.test(add));
+    /Nothing is sent until you\s+save|nothing is sent until you save/i.test(add.replace(/\s+/g, ' ')),
+    add.slice(0, 1800));
   ok('...and offers NO Delete, because there is nothing to delete yet',
     !/id="mem-fnd-delete"/.test(add));
   setState({ activeDomain: 'acme', activeProject: 'lumina',
@@ -991,8 +1168,22 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   ok('a project that has never answered gets the chooser, painted from NOTHING — the block '
     + 'renders its own first frame without a click',
   unchosen.includes('data-fnd-init="mem-fnd-init"'), unchosen.slice(0, 200));
-  ok('...with the commit labelled for the DEFAULT answer rather than generically',
-    /Seed the skeletons<\/button>/.test(unchosen), unchosen.slice(-500));
+  // ── THE PRIMARY IS THE HOST'S, AND IT NAMES THE STEP (v3.61.0, P2-6) ─
+  // The shared chooser emits NO primary of its own, because the other host —
+  // the "New project" form — already has one ("Create project") and a card
+  // with two primaries has not decided what it is asking for. Here the commit
+  // belongs to this block, so this block emits it, and it is labelled for the
+  // STEP rather than for whichever arm happens to be selected: a label that
+  // changes as the form is answered moves the control the person is aiming at.
+  ok('...with the block\u2019s own commit, labelled for the step',
+    /Set up documents<\/button>/.test(unchosen), unchosen.slice(-500));
+  ok('...and exactly one primary on the card',
+    (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(-700));
+  // IRREVERSIBILITY NEVER FOLDS (§3.10): the store refuses a mismatch on every
+  // later write, so the set-once clause is painted in flow above the chooser.
+  ok('...and the set-once cost is stated unfolded, above the choice',
+    /Set once — a project is mirrored or kept here, never both/.test(unchosen)
+    && unchosen.indexOf('Set once') < unchosen.indexOf('data-fnd-own='), unchosen.slice(0, 500));
   ok('...enabled, because the curator arm needs nothing typed',
     !/id="mem-fnd-init-go" disabled/.test(unchosen));
 
@@ -1010,9 +1201,18 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   const armOnly = renderers.renderFoundationsInit(mirrorFacts);
   ok('an already-owned mirror shows the arm and NOT the question',
     !armOnly.includes('data-fnd-own=') && armOnly.includes('id="mem-fnd-init-root"'));
-  ok('...labelled for what it does', /Add from repository<\/button>/.test(armOnly), armOnly.slice(-400));
+  // P1-9: the word is FOLDER. `resolveRepoRoot` requires only an absolute,
+  // reachable DIRECTORY, so "repository" turns away everybody whose documents
+  // live in ~/Documents/lumina-docs.
+  ok('...labelled for what it does', /Add from folder<\/button>/.test(armOnly), armOnly.slice(-400));
   ok('...and its lede is an instruction, not a definition',
-    /Point at the checkout/.test(armOnly));
+    /Point at the folder/.test(armOnly));
+  ok('...and nothing in this arm says "repository"', !/repositor/i.test(armOnly), armOnly.slice(0, 900));
+  // AND THE SET-ONCE CLAUSE IS WITHHELD HERE: the ownership is already
+  // settled, so restating that it cannot be changed is a warning about a
+  // decision nobody is about to take.
+  ok('...and the set-once note is withheld, because the answer is already given',
+    !/Set once/.test(armOnly));
 
   setState({ activeDomain: 'acme', activeProject: 'lumina', fndInit: {
     domain: 'acme', project: 'lumina', busy: true, error: null, refused: [],
@@ -1044,13 +1244,40 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
     source: { kind: 'repo', path: 'docs/architecture.md' } }, 'lumina');
   eq('READONLY, ALWAYS — the reader is not the editor', repo.readonly, true);
   eq('a MIRRORED document says where it IS edited', repo.readonlyNote,
-    'Mirrored from the repository — edit it there and refresh');
+    'Mirrored from the folder — edit it there, then refresh.');
+  // ── THE OWNERSHIP FIELD THE ROUTE ACTUALLY SENDS (found in the BROWSER) ─
+  // `GET …/foundations/:slug` does NOT send `ownership` — that is a property
+  // of the MANIFEST — and the per-document fact it DOES send is
+  // `source.kind`. Reading `doc.ownership` alone made the reader print the
+  // MIRROR sentence over every curator-owned document in the app, and every
+  // assertion here stayed green because the payloads written below carry a
+  // field the real server never sends. So the REAL shape is driven first, and
+  // the explicit form is driven after it as the thing that still wins.
+  {
+    const asRouteSends = renderers.foundationReaderContent({
+      slug: 'architecture.md', title: 'Architecture', role: 'architecture',
+      text: '# A', freshness: 'n/a', skeleton: true,
+      source: { kind: 'curator' } }, 'lumina');
+    eq('a payload in the ROUTE\'s real shape — source.kind and no ownership field — '
+      + 'says where it IS edited, not that it is mirrored',
+    asRouteSends.readonlyNote, 'Edit this in the Foundations table behind this panel.');
+    ok('...and its ownership chip agrees',
+      asRouteSends.tags.includes('Curator-authored')
+      && !asRouteSends.tags.includes('mirrored from a folder'),
+    JSON.stringify(asRouteSends.tags));
+    const repoShape = renderers.foundationReaderContent({
+      slug: 'architecture.md', title: 'Architecture', role: 'architecture',
+      text: '# A', freshness: 'fresh',
+      source: { kind: 'repo', path: 'docs/architecture.md' } }, 'lumina');
+    ok('CONTROL: the same shape with source.kind repo takes the mirror sentence',
+      /Mirrored from the folder/.test(repoShape.readonlyNote), repoShape.readonlyNote);
+  }
   const cur = renderers.foundationReaderContent({
     slug: 'architecture.md', title: 'Architecture', role: 'architecture',
     text: '# A', ownership: 'curator', freshness: 'n/a',
     source: { kind: 'curator', path: null } }, 'lumina');
   eq('a CURATOR-owned one points at the table it came from', cur.readonlyNote,
-    'Edit it from the Foundations table');
+    'Edit this in the Foundations table behind this panel.');
   ok('neither of them mentions Shared Brain, which is a different feature',
     !/Shared Brain/.test(String(repo.readonlyNote)) && !/Shared Brain/.test(String(cur.readonlyNote)));
 
@@ -1417,6 +1644,187 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   eq('FOLD_KEYS is still exactly the three it was — the editor reuses the foundations fold '
     + 'rather than inventing a key, so the localStorage registry does not move',
   foldKeys && foldKeys[1].replace(/\s+/g, ''), "['brief','journal','foundations']");
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── WHAT THIS SECTION IS FOR ────────────────────────────────────────────
+// A curator-owned project with four skeletons is a project with four questions
+// and no obvious way to get them answered. The owner can write them by hand
+// (the editor above) or tell an agent to — and the second needs a sentence
+// naming the tool, the project and the approval gate, which a user who has to
+// compose it usually does not.
+//
+// The sentence has ONE source: `composeDraftingAsk` in
+// shared/agent-instructions.js, sha-pinned there beside its three siblings and
+// IMPORTED here rather than stubbed. A stub would let this suite agree that
+// something was copied while the shipped control put the wrong text — or a
+// second copy of the text — on the clipboard, which is this repository's most
+// reliably recurring defect with model-read prose.
+{
+  const { composeDraftingAsk } = await import('../src/public/next/shared/agent-instructions.js');
+  const rig = (clipboardOk, docs, over) => {
+    const calls = { render: 0, clipboard: [] };
+    const st = {
+      activeDomain: 'acme', activeProject: 'lumina', copied: null,
+      projectRead: { scopes: [], brief: { present: false }, foundations: {
+        present: true, ownership: 'curator', budgetBytes: FI.FOUNDATIONS_BUDGET_BYTES,
+        totalBytes: 0, documents: docs, orphanFiles: [], manifestError: null, ...(over || {}) } },
+    };
+    const body =
+      extractFunction(viewSrc, 'skeletonOf') + '\n' +
+      extractFunction(viewSrc, 'foundationsFacts') + '\n' +
+      extractFunction(viewSrc, 'copyDraftingAsk') + '\n' +
+      'return { copyDraftingAsk };';
+    // eslint-disable-next-line no-new-func
+    const api = new Function('state', 'render', 'isCurrentMount', 'navigator',
+      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', body)(
+      st,
+      () => { calls.render++; },
+      () => true,
+      { clipboard: { writeText: async (t) => {
+        if (!clipboardOk) throw new Error('denied');
+        calls.clipboard.push(t);
+      } } },
+      composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES);
+    return { api, st, calls };
+  };
+  const skel = (slug, role) => ({ slug, role, title: role, bytes: 100, skeleton: true,
+    freshness: 'n/a', source: { kind: 'curator', path: null } });
+  const done = (slug, role) => ({ ...skel(slug, role), skeleton: false });
+
+  {
+    // ── THE DOCUMENTS IT NAMES ARE THE PROJECT'S OWN (Q8) ───────────────
+    // Three skeletons, so the sentence asks for three. A fixed guess at four
+    // would send an agent looking for a document that does not exist, and the
+    // whole point of composing from the manifest is that it cannot.
+    const { api, st, calls } = rig(true, [
+      skel('architecture.md', 'architecture'),
+      skel('decisions.md', 'decisions'),
+      skel('roadmap.md', 'roadmap'),
+      done('conventions.md', 'conventions'),
+    ]);
+    await api.copyDraftingAsk(1);
+    eq('one thing reached the clipboard', calls.clipboard.length, 1);
+    eq('...and it is EXACTLY what the one shared composer produces for the '
+      + 'project\u2019s UNFILLED documents — never a second copy of the sentence',
+    calls.clipboard[0], composeDraftingAsk({ domain: 'acme', project: 'lumina', documents: [
+      { slug: 'architecture.md', role: 'architecture', title: 'architecture' },
+      { slug: 'decisions.md', role: 'decisions', title: 'decisions' },
+      { slug: 'roadmap.md', role: 'roadmap', title: 'roadmap' },
+    ] }));
+    ok('...naming the three unfilled ones and NOT the written one',
+      /architecture, decisions and roadmap/.test(calls.clipboard[0])
+      && !/conventions/.test(calls.clipboard[0]), calls.clipboard[0]);
+    ok('...and the tool, so an agent knows what to call', /save_foundation/.test(calls.clipboard[0]));
+    ok('...and the approval gate', /Show me each document before saving/.test(calls.clipboard[0]));
+    // STAMPED with the pair it was pressed on, and with the KIND, so the
+    // confirmation cannot describe the other copy control's text.
+    eq('the outcome is stamped with the domain', st.copied.domain, 'acme');
+    eq('...and the project', st.copied.project, 'lumina');
+    eq('...and the KIND, so one confirmation cannot describe two different texts',
+      st.copied.kind, 'draft');
+    eq('...and records that it worked', st.copied.ok, true);
+    ok('...and the page repainted to show it', calls.render >= 1);
+  }
+  {
+    // EVERY DOCUMENT WRITTEN: asking for a rewrite of a NAMED set is
+    // legitimate, and asking for a rewrite of "the foundations" is not
+    // actionable — so the written ones are named rather than nothing.
+    const { api, calls } = rig(true, [done('architecture.md', 'architecture')]);
+    await api.copyDraftingAsk(1);
+    ok('with everything written, the named set is the written documents',
+      /architecture/.test(calls.clipboard[0]), calls.clipboard[0]);
+  }
+  {
+    // NO DOCUMENTS AT ALL: the composer's own fallback names the four default
+    // roles a seeded project carries, which is the right answer for a project
+    // whose owner unticked the seeding — and it is the COMPOSER's decision,
+    // not a second one taken here.
+    const { api, calls } = rig(true, []);
+    await api.copyDraftingAsk(1);
+    eq('an empty project defers to the composer\u2019s own fallback',
+      calls.clipboard[0], composeDraftingAsk({ domain: 'acme', project: 'lumina', documents: [] }));
+  }
+  {
+    // ── A CLIPBOARD REFUSAL PRINTS THE TEXT (never a button that silently
+    //    did nothing) ──────────────────────────────────────────────────────
+    const { api, st, calls } = rig(false, [skel('architecture.md', 'architecture')]);
+    await api.copyDraftingAsk(1);
+    eq('nothing reached the clipboard', calls.clipboard.length, 0);
+    eq('...the outcome records the refusal rather than swallowing it', st.copied.ok, false);
+    ok('...and KEEPS the text, so the refusal can hand it over to be selected by hand',
+      typeof st.copied.text === 'string' && /save_foundation/.test(st.copied.text),
+      String(st.copied.text).slice(0, 120));
+    eq('...still stamped as the drafting request', st.copied.kind, 'draft');
+  }
+  {
+    // ── THE COMPOSER REFUSES AN EMPTY PROJECT, AND NOTHING IS CLAIMED ────
+    // `composeDraftingAsk` THROWS rather than composing a sentence telling an
+    // agent to save into a project that cannot exist. Reaching that means the
+    // view is painting a project it has no name for, which is a bug
+    // elsewhere — so nothing is copied and no outcome is recorded.
+    const { api, st, calls } = rig(true, [skel('architecture.md', 'architecture')]);
+    st.activeProject = '';
+    await api.copyDraftingAsk(1);
+    eq('nothing is copied', calls.clipboard.length, 0);
+    eq('...and no outcome is invented', st.copied, null);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11 — THE FILE BUTTON REALLY OPENS THE HIDDEN INPUT (P1-7)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// A `hidden` input is out of the tab order AND unclickable by the user, so the
+// whole arrangement rests on ONE line: the button's handler calling `.click()`
+// on it. Asserting the markup proves the input is hidden; only DRIVING the
+// handler proves it can still be reached — and a lost click there is a picker
+// that is simply gone, with every markup assertion above it green.
+//
+// A DOM MODEL, not jsdom (this repo ships zero devDeps): `bindFoundationsChooser`
+// takes its `doc` as an argument precisely so it can be driven against one.
+{
+  const clicks = [];
+  const mk = (id, extra) => ({
+    id, _l: {}, dataset: {}, files: null, disabled: false, value: '',
+    addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); },
+    fire(t, ev) { (this._l[t] || []).forEach((fn) => fn(ev || {})); },
+    click() { clicks.push(id); this.fire('click', {}); },
+    getAttribute() { return null; },
+    ...extra,
+  });
+  const byId = {};
+  const doc = {
+    getElementById: (i) => byId[i] || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  byId['fnd-init-files'] = mk('fnd-init-files');
+  byId['fnd-init-files-btn'] = mk('fnd-init-files-btn');
+  const choice = FI.freshChooser({});
+  FI.bindFoundationsChooser({ doc, id: 'fnd-init', choice, onChange: () => {} });
+  ok('SETUP: the button\u2019s click handler was bound at all',
+    (byId['fnd-init-files-btn']._l.click || []).length === 1,
+    JSON.stringify(Object.keys(byId['fnd-init-files-btn']._l)));
+  byId['fnd-init-files-btn'].fire('click');
+  ok('pressing the button clicks the hidden input — the one line the whole '
+    + '`hidden`-plus-<button> arrangement rests on',
+  clicks.includes('fnd-init-files'), JSON.stringify(clicks));
+  // AND IT IS DEFENSIVE about a host that has no `.click`: the same binder
+  // runs against a DOM model in a suite and a real document in a browser.
+  const clicks2 = [];
+  const byId2 = { 'fnd-init-files': { addEventListener() {} },
+    'fnd-init-files-btn': mk('fnd-init-files-btn') };
+  FI.bindFoundationsChooser({ doc: { getElementById: (i) => byId2[i] || null,
+    querySelector: () => null, querySelectorAll: () => [] },
+  id: 'fnd-init', choice, onChange: () => {} });
+  let threw = null;
+  try { byId2['fnd-init-files-btn'].fire('click'); } catch (err) { threw = err; }
+  ok('...and an input with no `.click` is a no-op rather than a throw',
+    !threw, threw ? threw.message : 'ok');
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

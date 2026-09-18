@@ -304,7 +304,15 @@ const FONT_SCALE_KEY = 'curator-next-font-scale';
 // NAV_VIEWS moves the line with the item it follows, and a divider naming a
 // view that is not in NAV_VIEWS simply never renders (renderRail() asks
 // per item, so there is no index to fall out of range).
-const NAV_VIEWS = ['chat', 'ingest', 'domains', 'shared', 'memory'];
+// ── THE RAIL IS A FREQUENCY ORDER, NOT AN ONTOLOGY (v3.61.0, UX §8(e)) ──
+// `memory` moves above `shared`. v3.49.0's own reasoning for the order was
+// how often a person reaches for each surface, and on that measure the two
+// were the wrong way round: Agent memory is where a project's brief, its
+// handoffs and — since v3.59.0 — its canonical documents live, which is a
+// place somebody opens every working session, while Shared Brain is opt-in
+// and entered rarely. Both stay in the advanced group; the divider is
+// unchanged, because it follows `domains` by name rather than by index.
+const NAV_VIEWS = ['chat', 'ingest', 'domains', 'memory', 'shared'];
 const FOOTER_VIEWS = ['sync', 'settings'];
 const ALL_VIEWS = [...NAV_VIEWS, ...FOOTER_VIEWS];
 

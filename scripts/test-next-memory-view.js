@@ -144,6 +144,10 @@ import {
   // renderViewHeader, and asserting that memory.js PASSES it proves nothing
   // about whether the component honours it.
   renderViewHeader,
+  // The REAL ⓘ mark. `renderFoundations` composes one beside the drafting-ask
+  // control, and a stubbed mark would let the button ship with no explanation
+  // beside it and still pass every assertion here.
+  renderInfoMark,
 } from '../src/public/next/shared/text.js';
 // The docs-link table, imported for the same reason: it takes no imports and
 // THROWS on an unknown key, so lifting the real one is what proves the About
@@ -177,6 +181,10 @@ function docsLinkHtml(key, label) {
 // framed by it since v3.55.0, so a stub would let the escaping battery and the
 // placement assertions run past the thing that frames them.
 import { renderBlock } from '../src/public/next/shared/block.js';
+// The post-copy banner, imported rather than typed: §21c3 asserts that the
+// DRAFTING request's confirmation is NOT this sentence, and a copy here would
+// let the two drift into agreement.
+import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instructions.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
 // shared/foundations-init.js takes NO imports (the same contract shared/text.js
 // carries), so the real module runs in Node and is imported rather than
@@ -436,15 +444,24 @@ section('§1 — The route is registered READ-ONLY');
 // pair; it is not invisible to this.
 const EXPECTED_ROUTES = [
   ['get', '/'],
+  // THE REPO SCAN IS A LITERAL FIRST SEGMENT (v3.61.0), so it must precede
+  // `/:project` — the one-segment alias at the bottom — or `GET /repo-scan`
+  // would be read as "the project called repo-scan". It is registered second,
+  // which is where the file puts it and where this table pins it.
+  ['get', '/repo-scan'],
   ['get', '/:domain/projects'],
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
-  // TIER 0 (v3.59.0). Four segments, so neither can shadow — or be shadowed by
-  // — the two-segment reads below; the ordering here is readability, not
-  // correctness, and the comment at the route says so. What IS load-bearing is
-  // that both still precede the one-segment alias.
+  // TIER 0 (v3.59.0, extended v3.61.0). Four segments, so none can shadow — or
+  // be shadowed by — the two-segment reads below; the ordering WITHIN this
+  // group is readability, not correctness, and the comment at the route says
+  // so. What IS load-bearing is that every one of them still precedes the
+  // one-segment alias.
   ['get', '/:domain/:project/foundations/:slug'],
+  ['put', '/:domain/:project/foundations/:slug'],
+  ['delete', '/:domain/:project/foundations/:slug'],
+  ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
   ['get', '/:domain/:project'],
   ['get', '/:project'],
@@ -1023,6 +1040,14 @@ const numConst = (name) => {
 const WS_WINDOW_SRC = numConst('WS_WINDOW');
 const WS_STEP_SRC = numConst('WS_STEP');
 const WS_STEP_ALL_MAX_SRC = numConst('WS_STEP_ALL_MAX');
+// The drafting-ask ⓘ's own words, off LIVE SOURCE. Typed here they would be a
+// second copy of the sentence that makes this control's privacy claim, which
+// is the one sentence on it a user has to be able to trust.
+const DRAFT_ASK_INFO_SRC = (() => {
+  const m = /const DRAFT_ASK_INFO_HTML =\n([\s\S]*?);\n/.exec(viewSrc);
+  if (!m) throw new Error('DRAFT_ASK_INFO_HTML not found in memory.js — §21 would be a paraphrase');
+  return new Function('return (' + m[1] + ');')();
+})();
 // It is the STORE's wall, not a number of this view's choosing, and it is
 // compared against the real exported constant rather than against a copy typed
 // here. A view refusing at a DIFFERENT figure from the server would either
@@ -1124,8 +1149,22 @@ function makeRenderers(stateObj) {
     // reader payload, driven in §21.
     extractFunction(viewSrc, 'foundationsFacts', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsWord', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'foundationsRefreshOffer', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsControlOffer', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsOwnershipWord', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsSummaryMeta', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fndSize', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
+    // ── "COPY THE DRAFTING REQUEST" AND ITS ⓘ (v3.61.0, P2-8) ───────────
+    // `foundationsDraftAsk` decides whether the control is offered, withheld
+    // with a reason, or absent, and `renderFoundations` composes it — so it is
+    // LIFTED. `DRAFT_ASK_INFO_HTML` is the panel's words and is injected as
+    // the shipped constant, and `renderInfoMark` is the REAL shared renderer,
+    // imported at the top of this file: a stubbed mark would let the control
+    // ship with no explanation beside it and still pass every assertion here
+    // (the §S6-shaped lesson from test-agent-instructions.js).
+    'const DRAFT_ASK_INFO_HTML = ' + JSON.stringify(DRAFT_ASK_INFO_SRC) + ';\n' +
+    extractFunction(viewSrc, 'foundationsDraftAsk', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderFoundations', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderFoundationsStatus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
@@ -1197,12 +1236,13 @@ function makeRenderers(stateObj) {
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
-    'foundationsFacts, foundationsWord, foundationsRefreshOffer, fndRowHtml, ' +
+    'foundationsFacts, foundationsWord, foundationsControlOffer, foundationsDraftAsk, '
+    + 'foundationsOwnershipWord, foundationsSummaryMeta, fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, renderFoundationsStatus, foundationReaderContent, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
-    'unlistedCount, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
+    'unlistedCount, renderCopyOutcome, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
     'effectiveSave, briefStats, briefDismissDecision, ' +
     'renderBriefEditor, renderProjectGroups };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
@@ -1219,6 +1259,14 @@ function makeRenderers(stateObj) {
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
     'renderBadge', 'renderExplainer',
+    // The REAL ⓘ mark (v3.61.0): `renderFoundations` composes one beside the
+    // drafting-ask control, and a stub would let the button ship with no
+    // explanation beside it and still pass every assertion in §21c2.
+    'renderInfoMark',
+    // The REAL post-copy banner from shared/agent-instructions.js — the
+    // sentence a user reads seconds after pressing "Copy agent instructions",
+    // and the one §21c3 proves the DRAFTING request does not borrow.
+    'COPY_SUCCESS_BANNER',
     // The REAL docs-link helper, imported rather than stubbed: aboutInfoHtml
     // ends with one, and a stub would let §6's escaping battery run past the
     // only <a> this page emits.
@@ -1233,6 +1281,8 @@ function makeRenderers(stateObj) {
     FOUNDATIONS_BUDGET_BYTES, freshChooser, chooserBody, chooserOutcomeWords,
     renderFoundationsChooser, renderRoleOptions, renderRefusedList, formatBytes,
     renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
+    renderInfoMark,
+    COPY_SUCCESS_BANNER,
     docsLinkHtml);
 }
 
@@ -6243,38 +6293,178 @@ const fndRead = (payload) => ({
   w([fndDoc({ freshness: 'stale' }), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]), '1 stale');
   eq('...and an unreachable source is said in words rather than left blank',
     w([fndDoc({ freshness: 'unreachable' })]), 'source unreachable');
-  eq('a curator-authored project says who wrote them rather than claiming freshness',
-    w([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }), 'Curator-authored');
+  // ── OWNERSHIP LEFT THIS LADDER (v3.61.0, P1-11) ─────────────────────
+  // It used to end `Curator-authored`, which meant the ownership fact
+  // DISAPPEARED the moment anything else in the ladder applied — on a
+  // curator-owned project with two skeletons the line read "2 skeletons to
+  // fill" and never said who owned them, which is the one fact that decides
+  // whether Refresh or Edit is the control to reach for. Ownership is now its
+  // own clause and this word answers only "does anything need attention".
+  eq('a curator-owned project with everything written reads `written`, not an '
+    + 'ownership word — ownership is a separate clause now',
+  w([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }), 'written');
   eq('all fresh is the quiet case', w([fndDoc(), fndDoc({ slug: 'b.md' })]), 'fresh');
   eq('none at all', w([]), 'none yet');
+  ok('the word `Curator-authored` is gone from the ladder entirely',
+    !['written', 'fresh', 'none yet'].some((x) => x === 'Curator-authored')
+    && w([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }) !== 'Curator-authored');
 }
 
-// ── §21c — the Refresh control is WITHHELD with a reason, never dead ────
+// ── §21b2 — the SUMMARY LINE: four clauses, and three readings of zero ──
+// (v3.61.0, P1-11 + P2-3)
 {
   const F = makeRenderers({});
-  const offer = (docs, over) => F.foundationsRefreshOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))));
-  ok('a repo-owned project with at least one reachable source is offered the control',
-    offer([fndDoc({ freshness: 'stale' }), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]).show === true);
+  const meta = (docs, over) =>
+    F.foundationsSummaryMeta(F.foundationsFacts(fndRead(fndPayload(docs, over))));
+
+  // FOUR CLAUSES: count, size, ownership, state.
+  eq('a mirror reads count, size, ownership and state, in that order',
+    meta([fndDoc({ bytes: 4096 }), fndDoc({ slug: 'b.md', bytes: 8192, freshness: 'stale' })]),
+    '2 documents · 12 KB · mirrored · 1 stale');
+  eq('...and a curator-owned project says `kept here` in the same slot',
+    meta([fndDoc({ bytes: 3072, freshness: 'n/a', skeleton: true })], { ownership: 'curator' }),
+    '1 document · 3 KB · kept here · 1 skeleton to fill');
+  // THE OWNERSHIP CLAUSE IS UNCONDITIONAL — which is the whole delta. A
+  // skeleton count in the state slot must NOT cost the reader the mode.
+  ok('a skeleton in the state clause does not take the ownership clause with it',
+    /kept here/.test(meta([fndDoc({ skeleton: true, freshness: 'n/a' })], { ownership: 'curator' })));
+
+  // THREE READINGS OF ZERO. One "none yet" for three different situations was
+  // the defect: no mode chosen, a mirror with nothing copied, and a project
+  // kept here with nothing written are three things a person acts on
+  // differently.
+  eq('no manifest at all', meta([], { present: false, ownership: null }),
+    'not set up · choose how documents arrive');
+  eq('a mirror with nothing copied', meta([], { ownership: 'repo' }),
+    'mirrored · no documents copied yet');
+  eq('a project kept here with nothing written', meta([], { ownership: 'curator' }),
+    'kept here · no documents yet');
+  ok('...and the three are genuinely different strings',
+    new Set([
+      meta([], { present: false, ownership: null }),
+      meta([], { ownership: 'repo' }),
+      meta([], { ownership: 'curator' }),
+    ]).size === 3);
+  eq('a manifest that will not parse says so and quotes no figure',
+    meta([fndDoc()], { manifestError: 'Unexpected token' }), 'manifest unreadable');
+
+  // THE BUDGET IS A READING ON THE BLOCK (P2-3), not only inside an editor the
+  // owner has just closed — the size clause carries it when it is exceeded.
+  const over = meta([fndDoc({ bytes: 220 * 1024 })], { ownership: 'curator' });
+  ok('over budget, the size clause names the budget it crossed',
+    /^1 document \u00b7 220 KB of a \d+ KB budget \u00b7 kept here \u00b7 /.test(over), over);
+  ok('...and under budget it does not', !/budget/.test(meta([fndDoc({ bytes: 4096 })])));
+
+  // OWNERSHIP AS ITS OWN FUNCTION: `null` for an absent mode, because an
+  // absent mode is not a third mode.
+  eq('an absent mode is null, never a word',
+    F.foundationsOwnershipWord(F.foundationsFacts(fndRead(fndPayload([], { present: false, ownership: null })))),
+    null);
+}
+
+// ── §21c — the HEAD CONTROL ROW: Refresh and Add coexist (P1-4) ────────
+{
+  const F = makeRenderers({});
+  const offer = (docs, over, ro) =>
+    F.foundationsControlOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))), ro === true);
+
+  // ── THE DELTA THIS SECTION EXISTS FOR ────────────────────────────────
+  // The first cut gave the head ONE slot filled by ownership, "never both",
+  // which made a mirror UN-EXTENDABLE after its first document: the only way
+  // to add a fourth was an agent's `save_working_state({repo_root})`, which is
+  // exactly the "the app writes nothing on this tier" complaint the release
+  // was written to fix.
+  {
+    const o = offer([fndDoc({ freshness: 'fresh' }), fndDoc({ slug: 'b.md', freshness: 'stale' })]);
+    ok('a populated, reachable mirror is offered Refresh', o.refresh === true);
+    ok('...AND Add from folder, at the same time', o.add === true);
+    eq('...and nothing is withheld, so nothing is explained away', o.reason, null);
+  }
+  {
+    const o = offer([], { ownership: 'repo' });
+    ok('a mirror with NOTHING copied is offered Add', o.add === true);
+    ok('...and not Refresh, which has nothing to re-copy', o.refresh === false);
+  }
   {
     const o = offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' });
-    ok('a CURATOR-owned project is not offered it', o.show === false);
-    ok('...and is told why, in words — a control that is simply absent is worse '
-      + 'than one that says it cannot work', typeof o.reason === 'string' && o.reason.length > 30, o.reason);
+    ok('a curator-owned project is offered Add document', o.add === true);
+    ok('...and never Refresh — there is no upstream to refresh from', o.refresh === false);
   }
   {
     const o = offer([fndDoc({ freshness: 'unreachable' })]);
-    ok('a project whose every source is unreachable is not offered it', o.show === false);
-    ok('...and is told that the checkout is not on this computer',
-      /this computer/.test(o.reason || ''), o.reason);
+    ok('a mirror whose every source is unreachable is offered neither',
+      o.refresh === false && o.add === false);
+    ok('...and is TOLD, in words, that the folder is not on this computer — a '
+      + 'control that is simply absent is worse than one that says it cannot work',
+    typeof o.reason === 'string' && /not on this computer/.test(o.reason), o.reason);
+    // P1-9: the word is FOLDER. `resolveRepoRoot` requires only an absolute,
+    // reachable directory, and "repository" turns away everybody whose
+    // documents live in ~/Documents/lumina-docs.
+    ok('...saying "folder", never "repository"',
+      /folder/.test(o.reason) && !/repositor/i.test(o.reason), o.reason);
   }
-  eq('a project with no documents offers nothing and explains nothing — there is '
-    + 'no claim to make', offer([]).reason, null);
   // REACHABILITY IS READ OFF THE DOCUMENTS, not off `repo.root`: the manifest
   // records the path on the machine that LAST REFRESHED, which on any other
   // machine is a hint. The store's own per-document measurement is the fact.
-  ok('a recorded repo.root does NOT by itself offer the control when every '
+  ok('a recorded repo.root does NOT by itself offer Refresh when every '
     + 'document measured unreachable',
-  offer([fndDoc({ freshness: 'unreachable' })], { repo: { root: '/somewhere/repo' } }).show === false);
+  offer([fndDoc({ freshness: 'unreachable' })], { repo: { root: '/somewhere/repo' } }).refresh === false);
+
+  // ── P1-3: A READ-ONLY MIRROR GETS NOTHING, AND IS TOLD WHY ───────────
+  {
+    const o = offer([fndDoc({ freshness: 'fresh' })], {}, true);
+    ok('a read-only Shared Brain mirror is offered neither control',
+      o.refresh === false && o.add === false);
+    ok('...and carries the mirror reason', /read-only mirror/.test(o.reason || ''), o.reason);
+  }
+  // AND ON A PROJECT WITH NOTHING CHOSEN there is nothing to offer and nothing
+  // to explain: the chooser IS the answer there, one branch down.
+  eq('a project with no manifest offers nothing and explains nothing',
+    offer([], { present: false, ownership: null }).reason, null);
+  eq('...and an unreadable manifest the same, because the error note above it '
+    + 'is the reading', offer([fndDoc()], { manifestError: 'x' }).reason, null);
+}
+
+// ── §21c2 — "Copy the drafting request": offered, withheld, absent (P2-8) ──
+{
+  const F = makeRenderers({});
+  const ask = (docs, over, ro) =>
+    F.foundationsDraftAsk(F.foundationsFacts(fndRead(fndPayload(docs, over))), ro === true);
+
+  {
+    const a = ask([fndDoc({ skeleton: true, freshness: 'n/a' })], { ownership: 'curator' });
+    ok('a curator-owned project with a skeleton is offered it',
+      /id="mem-fnd-ask"/.test(a.btn), a.btn);
+    ok('...at the QUIET tier — it copies, it does not commit',
+      /btn-ghost/.test(a.btn) && !/btn-primary/.test(a.btn), a.btn);
+    ok('...with its own ⓘ beside it, so the button is never a bare "Copy"',
+      /mem-fnd-ask-info-btn/.test(a.btn) && /tx-vh-panel/.test(a.panel));
+    ok('...and the panel makes the privacy claim: the drafting model is the '
+      + 'harness\u2019s, and The Curator sends nothing to a model',
+    /sends nothing to a model/.test(a.panel), a.panel.slice(0, 200));
+    ok('...and the approval gate is named', /until you approve/.test(a.panel));
+    ok('...and the panel ships CLOSED', /<div class="tx-vh-panel"[^>]*hidden>/.test(a.panel), a.panel.slice(0, 160));
+  }
+  ok('a curator-owned project with everything WRITTEN still gets it — asking '
+    + 'for a rewrite of a named set is legitimate',
+  /id="mem-fnd-ask"/.test(ask([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }).btn));
+  ok('a curator-owned project with NO documents gets it — this is the state '
+    + 'where it is the most useful control on the screen',
+  /id="mem-fnd-ask"/.test(ask([], { ownership: 'curator' }).btn));
+  {
+    const a = ask([fndDoc({ freshness: 'fresh' })]);
+    eq('a MIRROR is not offered it', a.btn, '');
+    ok('...and is told why: an agent\u2019s save there is an ownership mismatch',
+      /refused/.test(a.panel) && /mirrored from a folder/.test(a.panel), a.panel);
+  }
+  {
+    const a = ask([fndDoc({ freshness: 'fresh' })], {}, true);
+    eq('a READ-ONLY mirror is offered nothing at all', a.btn, '');
+    eq('...and gets no second reason either — the mirror note above already '
+      + 'says nothing here may be written', a.panel, '');
+  }
+  eq('a project with no manifest gets neither the control nor a reason',
+    ask([], { present: false, ownership: null }).btn, '');
 }
 
 // ── §21d — the block body: closed, summarised, and warnings outside it ──
@@ -6288,8 +6478,9 @@ const fndRead = (payload) => ({
   ok('...and CLOSED on first paint — this page answers "where does the project '
     + 'stand", and a table of reference documents is not that answer',
   !/data-mem-fold="foundations"[^>]*\sopen/.test(html), html.slice(0, 260));
-  ok('the summary carries the decision to open it: how many, how big, and the word',
-    /2 documents · 24 KB · 1 stale/.test(html), html.slice(0, 700));
+  ok('the summary carries the decision to open it: how many, how big, WHO OWNS '
+    + 'THEM, and the word (v3.61.0, P1-11)',
+  /2 documents · 24 KB · mirrored · 1 stale/.test(html), html.slice(0, 700));
   ok('the summary is focusable by a stable id, so a render cannot drop a keyboard user',
     html.includes('id="mem-fold-foundations"'));
   ok('both documents are rows', (html.match(/class="fnd-row"/g) || []).length === 2);
@@ -6341,16 +6532,30 @@ const fndRead = (payload) => ({
   // WHAT MAY NEVER FOLD (v3.16.1). A manifest that will not parse, and files on
   // disk the manifest does not list, are both warnings — so they are asserted
   // to sit OUTSIDE the <details>, by position rather than by reading source.
+  // ── AN UNREADABLE MANIFEST WITHHOLDS THE CHOOSER TOO (v3.61.0, P1-3) ──
+  // It is a PRESENT manifest: `…/foundations/init` answers `ownership_set`, so
+  // offering a two-way choice there would offer a decision that cannot be
+  // taken. The error and the orphan note are still unfolded and still first,
+  // and what follows them is a flat card saying why nothing is offered — never
+  // a table over figures nothing can stand behind.
   const warned = F.renderFoundations(fndRead(fndPayload(
     [fndDoc()], { manifestError: 'Unexpected token }', orphanFiles: ['stray.md'] })));
-  const detailsAt = warned.indexOf('<details');
-  ok('the manifest error is a WARNING and is painted before the fold, never inside it',
+  const bodyAt = warned.indexOf('mem-fnd-row');
+  ok('the manifest error is a WARNING and is painted before the body, never inside it',
     warned.indexOf('manifest could not be read') >= 0
-    && warned.indexOf('manifest could not be read') < detailsAt, String(detailsAt));
+    && warned.indexOf('manifest could not be read') < bodyAt, String(bodyAt));
   ok('...and so is the orphan-file note, which is the only thing that says a save '
-    + 'was interrupted', warned.indexOf('no manifest entry') < detailsAt);
-  ok('CONTROL: the position check is not vacuous — there IS a <details> after them',
-    detailsAt > 0);
+    + 'was interrupted', warned.indexOf('no manifest entry') < bodyAt);
+  ok('CONTROL: the position check is not vacuous — there IS a body after them',
+    bodyAt > 0);
+  ok('...and the CHOOSER is withheld, because an unreadable manifest is a '
+    + 'PRESENT one and init would answer `ownership_set`',
+  !warned.includes('data-fnd-own='), warned.slice(0, 400));
+  ok('...and no table is painted over figures nothing can stand behind',
+    !warned.includes('fnd-table'));
+  ok('...and the flat card says why, rather than leaving a blank',
+    /no choice is\s+offered here|no choice is offered here/.test(warned.replace(/\s+/g, ' ')),
+    warned.slice(0, 700));
 
   // ── NO DOCUMENTS, AND WHAT REPLACED THE DEAD END (v3.61.0) ────────────
   //
@@ -6374,6 +6579,46 @@ const fndRead = (payload) => ({
     unchosen.slice(0, 600));
   ok('...and NO "decide later" — this screen IS the later',
     !unchosen.includes('data-fnd-own="later"'));
+  // ── §8(e): THE MISSING THING HAS TO BE MISSING WHERE YOU LOOKED FOR IT ─
+  // Somebody who reaches this state may equally be somebody who has not
+  // created the project they MEANT, and the create form is one view away with
+  // no route from here. A POINTER at the quietest tier, and BELOW the chooser
+  // rather than above it: painted first it would sit between the block's lede
+  // and the decision the person came to make.
+  ok('...and a pointer to where a project IS created',
+    unchosen.includes('id="mem-fnd-to-domains"')
+    && /Create a project in Domains/.test(unchosen), unchosen.slice(-400));
+  ok('...below the chooser, not between the lede and the decision',
+    unchosen.indexOf('id="mem-fnd-to-domains"') > unchosen.indexOf('data-fnd-own='));
+  ok('...and it is a POINTER, never a second create path — no form, no write',
+    !/dm-proj|method: .POST/.test(unchosen));
+
+  // ── (P1-3) A READ-ONLY SHARED BRAIN MIRROR GETS NO CHOOSER AT ALL ──────
+  // Every init this chooser could POST answers 403 there (`refuseMirror`), so
+  // the choice is not the user's to make — and a control whose only outcome is
+  // a refusal is worse than none (v3.16.1), while an absence with no reason is
+  // worse than one with a reason (v3.17.1).
+  {
+    const ro = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina',
+      openFolds: {}, fnd: null, detail: { readonly: true } })
+      .renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+    ok('a read-only mirror is offered NO ownership choice',
+      !ro.includes('data-fnd-own=') && !ro.includes('id="mem-fnd-init-go"'), ro.slice(0, 500));
+    ok('...and is told why, unfolded', /read-only mirror/.test(ro) && !ro.includes('<details'), ro.slice(0, 400));
+    ok('...and is NOT pointed at the create form either — it cannot create one here',
+      !ro.includes('id="mem-fnd-to-domains"'), ro.slice(0, 500));
+    // AND ON A POPULATED read-only mirror: the table, and nothing that writes.
+    const roFull = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina',
+      openFolds: { foundations: true }, fnd: null, read: { readonly: true } })
+      .renderFoundations({ ...fndRead(fndPayload([fndDoc()])), readonly: true });
+    ok('a populated read-only mirror still shows its documents',
+      roFull.includes('fnd-table'), roFull.slice(0, 300));
+    ok('...and offers neither Refresh nor Add nor the drafting ask',
+      !roFull.includes('id="mem-fnd-refresh"') && !roFull.includes('id="mem-fnd-addrepo"')
+      && !roFull.includes('id="mem-fnd-add"') && !roFull.includes('id="mem-fnd-ask"'),
+    roFull.slice(-700));
+    ok('...and no row carries an Edit control', !/data-fnd-edit/.test(roFull));
+  }
   ok('...and the commit that sets the ownership, which is the block\'s one primary',
     unchosen.includes('id="mem-fnd-init-go"')
     && (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(0, 900));
@@ -6388,17 +6633,29 @@ const fndRead = (payload) => ({
     mirrorEmpty.includes('id="mem-fnd-init-root"'), mirrorEmpty.slice(0, 400));
   ok('...and NOT a choice it is no longer allowed to make',
     !mirrorEmpty.includes('data-fnd-own='), mirrorEmpty.slice(0, 400));
-  ok('...labelled for what it does rather than for what it decides',
-    mirrorEmpty.includes('Add from repository'), mirrorEmpty.slice(0, 1200));
+  ok('...labelled for what it does rather than for what it decides — and the '
+    + 'word is FOLDER, because `resolveRepoRoot` needs only a reachable '
+    + 'directory (P1-9)',
+  mirrorEmpty.includes('Add from folder') && !/repositor/i.test(mirrorEmpty),
+  mirrorEmpty.slice(0, 1200));
 
   // (c) CURATOR-OWNED WITH NOTHING IN IT — the owner unticked the seeding.
   //     The one action that puts a document in must be reachable here too.
   const curatorEmpty = F.renderFoundations(fndRead(fndPayload([], { ownership: 'curator' })));
   ok('a curator-owned project with no documents still offers "Add document"',
     curatorEmpty.includes('id="mem-fnd-add"'), curatorEmpty.slice(0, 600));
-  ok('...and names the three ways one arrives, the third being this screen',
-    /an agent you ask/i.test(curatorEmpty) && /refresh copies them/i.test(curatorEmpty)
-    && /you add one here/i.test(curatorEmpty), curatorEmpty.slice(0, 600));
+  // ── THE OWNER IS NAMED FIRST (v3.61.0, P1-12) ───────────────────────
+  // A person can start a project here with no agent and no repository and
+  // write the first document by hand — a first-class path, not a fallback — so
+  // no string may presume an agent, and where both ways in are named the
+  // owner's comes first.
+  ok('...and names BOTH ways in, the owner\u2019s first',
+    /Write the first one yourself, or ask an agent to draft them/.test(curatorEmpty),
+    curatorEmpty.slice(0, 600));
+  ok('...and does not presume an agent exists',
+    !/an agent you ask/i.test(curatorEmpty), curatorEmpty.slice(0, 600));
+  ok('...and offers the drafting request, which is the other way in (P2-8)',
+    curatorEmpty.includes('id="mem-fnd-ask"'), curatorEmpty.slice(0, 900));
   ok('...and emits no table at all', !curatorEmpty.includes('fnd-table'));
 }
 
@@ -6424,8 +6681,9 @@ const fndRead = (payload) => ({
     w([skel(), fndDoc({ slug: 'b.md', freshness: 'stale' })]), '1 stale');
   eq('...and so does a source that is not on this computer',
     w([skel(), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]), 'source unreachable');
-  eq('a project whose skeletons have all been filled reads "Curator-authored" again',
-    w([fndDoc({ skeleton: false, freshness: 'n/a' })], { ownership: 'curator' }), 'Curator-authored');
+  eq('a project whose skeletons have all been filled reads `written` — the '
+    + 'ownership word left this ladder in v3.61.0 and is its own clause now',
+  w([fndDoc({ skeleton: false, freshness: 'n/a' })], { ownership: 'curator' }), 'written');
   eq('a manifest that will not parse still outranks everything',
     w([skel()], { manifestError: 'Unexpected token', ownership: 'curator' }), 'manifest unreadable');
 
@@ -6435,10 +6693,48 @@ const fndRead = (payload) => ({
   // fill" is the one fact on the row somebody needs.
   const row = F.fndRowHtml(skel(), true);
   ok('a skeleton row reads "skeleton · to fill"', row.includes('skeleton · to fill'), row);
+  // ── THE IDENTITY IS THE FLAG, NEVER THE BANNER'S TEXT (v3.61.0, P1-2) ─
+  // The store writes a skeleton whose first line names itself in bold, and the
+  // owner is invited to DELETE that line the moment they answer the prompts. A
+  // view that recognised a skeleton by matching the sentence would call a
+  // filled document a skeleton for ever, and a half-filled one a skeleton too.
+  // So: flag true with no banner anywhere in the payload still reads skeleton,
+  // and flag false with the banner's own words in the title does not.
+  ok('the flag alone is enough — no banner text is needed',
+    F.fndRowHtml(skel({ title: 'Architecture' }), true).includes('skeleton · to fill'));
+  ok('...and the banner\u2019s own words in a title do NOT make a written '
+    + 'document read as a skeleton',
+  !F.fndRowHtml(fndDoc({
+    skeleton: false, freshness: 'n/a',
+    title: 'Skeleton — not yet written. Answer the prompts below',
+  }), true).includes('skeleton · to fill'));
+  eq('...and `skeletonOf` is `=== true`, so an ABSENT flag is false rather than '
+    + 'undefined-as-maybe', F.skeletonOf({ slug: 'x.md' }), false);
+  eq('...and a truthy non-boolean is refused too', F.skeletonOf({ skeleton: 1 }), false);
   ok('...and carries no freshness dot, because there is nothing to compare it against',
     !/fresh-dot/.test(row), row);
   ok('CONTROL: a mirrored row in the same renderer DOES carry one',
     /fresh-dot/.test(F.fndRowHtml(fndDoc(), false)));
+  // ── THE FRESHNESS CELL TOO, ON THE MIRRORED ARM (P1-2) ───────────────
+  // The State column is the curator arm's; on a mirror the skeleton word
+  // lands in the freshness cell instead, and it must come from the same FLAG.
+  // Driven with a title that carries the banner's own first words, so a
+  // renderer that matched the TEXT rather than the flag would answer the same
+  // thing here for the wrong reason — and with a written document under the
+  // banner's title, where the two answers finally differ.
+  {
+    const mirroredSkel = F.fndRowHtml(skel({ title: 'Architecture' }), false);
+    ok('a MIRRORED skeleton row reads the word from the flag',
+      /fnd-fresh-word">skeleton · to fill</.test(mirroredSkel), mirroredSkel);
+    ok('...and takes no dot there either', !/fresh-dot/.test(mirroredSkel));
+    const bannerTitled = F.fndRowHtml(fndDoc({
+      skeleton: false, freshness: 'fresh',
+      title: 'Skeleton — not yet written. Answer the prompts below' }), false);
+    ok('...while a WRITTEN document whose title quotes the banner is not a '
+      + 'skeleton — the flag decides, never the prose',
+    /fnd-fresh-word">fresh</.test(bannerTitled)
+      && !/skeleton · to fill/.test(bannerTitled), bannerTitled);
+  }
   eq('a curator-owned row carries an Edit control',
     /data-fnd-edit="architecture\.md"/.test(row), true);
   ok('...labelled by the document it edits, with no hover-only title=',
@@ -6446,6 +6742,50 @@ const fndRead = (payload) => ({
   ok('a MIRRORED row carries none — the route refuses a PUT to one, and a control '
     + 'whose only outcome is a refusal is worse than no control',
   !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false)));
+
+  // ── THE TABLE IS COLUMN-VARIANT BY OWNERSHIP (v3.61.0, P2-1) ──────────
+  // On a curator-owned project `Source` is always "Curator-authored" and
+  // `Copy` is always "—": two columns with one value each, which is the table
+  // equivalent of a flag on 100 % of a list. They collapse into one State
+  // column carrying the row's real variable — and that takes the curator-owned
+  // table from six columns to five, which is what brings it under the 568 px
+  // overflow v3.59.0 recorded. The REPO-owned table keeps its six and keeps
+  // that overflow; this release does not claim to have fixed it.
+  {
+    const curRow = F.fndRowHtml(fndDoc({
+      skeleton: false, freshness: 'n/a', source: { kind: 'curator', path: null },
+      commit: null, authoredBy: { kind: 'human' },
+    }), true);
+    ok('a curator-owned row has a State cell', /class="fnd-cell-state"/.test(curRow), curRow);
+    ok('...and NO Source cell repeating "Curator-authored" on every row',
+      !/fnd-cell-source/.test(curRow) && !/Curator-authored/.test(curRow), curRow);
+    ok('...and the state says who wrote it', /written by you/.test(curRow), curRow);
+    const byAgent = F.fndRowHtml(fndDoc({
+      skeleton: false, freshness: 'n/a', authoredBy: { kind: 'agent', tool: 'save_foundation' },
+    }), true);
+    ok('...or that an agent did', /written by an agent/.test(byAgent), byAgent);
+    ok('CONTROL: a MIRRORED row still has Source and no State cell',
+      /fnd-cell-source/.test(F.fndRowHtml(fndDoc(), false))
+      && !/fnd-cell-state/.test(F.fndRowHtml(fndDoc(), false)));
+    // FIVE CELLS vs SIX (plus the actions cell on the curator arm only).
+    const cells = (h) => (h.match(/<td /g) || []).length;
+    eq('a curator-owned row is five cells plus the actions cell', cells(curRow), 6);
+    eq('...and a mirrored row is six, with no actions cell', cells(F.fndRowHtml(fndDoc(), false)), 6);
+    // AND THE HEAD AGREES WITH THE BODY, from ONE condition.
+    const curTable = F.renderFoundations(fndRead(fndPayload(
+      [fndDoc({ skeleton: false, freshness: 'n/a' })],
+      { ownership: 'curator', openFolds: {} })));
+    ok('the curator-owned table head says State', />State</.test(curTable), curTable.slice(0, 1400));
+    ok('...and names neither Source nor Copy',
+      !/>Source</.test(curTable) && !/>Copy</.test(curTable), curTable.slice(0, 1400));
+    ok('...and its actions column is named for a screen reader rather than left blank',
+      /visually-hidden">Actions</.test(curTable), curTable.slice(0, 1400));
+    const repoTable = F.renderFoundations(fndRead(fndPayload([fndDoc()])));
+    ok('CONTROL: the mirrored table still has Source AND Copy',
+      />Source</.test(repoTable) && />Copy</.test(repoTable), repoTable.slice(0, 1400));
+    ok('...and no actions column at all, because no row there has a control',
+      !/visually-hidden">Actions</.test(repoTable));
+  }
 
   // THE COUNT RIDES INTO THE STATUS LINE AND THE SUMMARY, from ONE derivation.
   const html = F.renderFoundations(fndRead(fndPayload(
@@ -6472,6 +6812,47 @@ const fndRead = (payload) => ({
     + 'on screen', rowsWin.skeletons, 0);
 }
 
+// ── §21c3 — the copy OUTCOME tells two controls apart (v3.61.0, P2-8) ──
+//
+// Two controls now write `state.copied` and they put DIFFERENT texts on the
+// clipboard for DIFFERENT files: the header's "Copy agent instructions" (into
+// CLAUDE.md) and the Foundations block's "Copy the drafting request" (into a
+// chat). One confirmation cannot describe both — an owner who pressed the
+// drafting ask and read "paste it into CLAUDE.md" has been told the wrong
+// thing about the thing they are holding.
+{
+  const st = { activeDomain: 'acme', activeProject: 'lumina' };
+  const F = makeRenderers(st);
+  const out = (over) => {
+    st.copied = { domain: 'acme', project: 'lumina', ok: true, text: 'THE TEXT', ...over };
+    return F.renderCopyOutcome();
+  };
+  ok('the DRAFTING request\u2019s success names itself',
+    /Drafting request copied/.test(out({ kind: 'draft' })), out({ kind: 'draft' }));
+  ok('...and says where it goes, which is a CHAT, not a file',
+    /any assistant with the my-curator bridge/.test(out({ kind: 'draft' })));
+  ok('an ABSENT kind is the header\u2019s control — the pre-v3.61.0 record shape, '
+    + 'unchanged', /Agent instructions copied/.test(out({})), out({}));
+  ok('...and the two successes are different sentences',
+    out({ kind: 'draft' }) !== out({}));
+  // ── A REFUSAL HANDS THE TEXT OVER (never a button that silently did
+  //    nothing) ─────────────────────────────────────────────────────────
+  const refused = out({ kind: 'draft', ok: false });
+  ok('a clipboard refusal says the browser refused', /Could not copy/.test(refused), refused);
+  ok('...and PRINTS the text to be selected by hand',
+    /mem-copy-fallback/.test(refused) && /THE TEXT/.test(refused), refused);
+  ok('...telling the owner to select it, in the words of the thing they are '
+    + 'holding — "the text below", not "the block below"',
+  /Select the text below and copy it by hand/.test(refused), refused);
+  ok('CONTROL: the header control\u2019s refusal still says "the block below"',
+    /Select the block below/.test(out({ ok: false })), out({ ok: false }));
+  ok('neither outcome folds', !refused.includes('<details'));
+  // STAMPED: an outcome belonging to another project is not painted here.
+  st.copied = { domain: 'acme', project: 'OTHER', ok: true, text: 'x', kind: 'draft' };
+  eq('an outcome stamped with a different project is withheld entirely',
+    F.renderCopyOutcome(), '');
+}
+
 // ── §21e — the control's three states, painted ──────────────────────────
 {
   const base = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
@@ -6481,9 +6862,16 @@ const fndRead = (payload) => ({
 
   const withheld = makeRenderers(base).renderFoundations(
     fndRead(fndPayload([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
-  ok('it is WITHHELD on a curator-owned project', !withheld.includes('id="mem-fnd-refresh"'));
-  ok('...and a note takes its place, on the shared one-line role',
-    withheld.includes('class="tx-note"'), withheld.slice(-400));
+  ok('Refresh is WITHHELD on a curator-owned project', !withheld.includes('id="mem-fnd-refresh"'));
+  // ── AND "Add document" TAKES ITS PLACE, rather than a reason (P1-4) ────
+  // The head is a control ROW now, and on a curator-owned project the right
+  // answer is not "here is why you cannot refresh" but the control that DOES
+  // work: `foundationsControlOffer` returns `reason: null` there, because
+  // there is nothing to explain away when something is offered instead.
+  ok('...and the control that DOES work is offered', withheld.includes('id="mem-fnd-add"'),
+    withheld.slice(-600));
+  ok('...so no reason is manufactured for a control nobody is missing',
+    !/nothing to refresh them from/.test(withheld));
 
   const busy = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: true, error: null, result: null } })
     .renderFoundations(fndRead(fndPayload([fndDoc()])));
@@ -6501,7 +6889,7 @@ const fndRead = (payload) => ({
     .renderFoundations(fndRead(fndPayload([fndDoc()])));
   ok('a result names what happened to every class of document',
     done.includes('1 re-copied') && done.includes('1 already current')
-    && done.includes('no longer in the repository (the copy is kept)'), done.slice(0, 400));
+    && done.includes('no longer in that folder (the copy is kept)'), done.slice(0, 400));
 
   // STAMPED. A result belonging to another project must not sit under this
   // one's header claiming its documents were re-copied.
@@ -6630,12 +7018,22 @@ const fndRead = (payload) => ({
     'foundationsFacts', 'freshChooser', 'bindFoundationsChooser', 'initFoundations',
     'loadFoundationDraft', 'readPickedFile', 'saveFoundation', 'deleteFoundation',
     'fndShrinkWarn', 'fndStats', 'briefDismissDecision',
+    // v3.61.0: the binder also reaches the drafting-ask copy and the Domains
+    // pointer. Both are STUBBED here for the reason the block above states —
+    // this section's subject is the row press — and the shipped drafting ask
+    // is driven in §21c2 and by scripts/test-next-foundations-editor.js.
+    'copyDraftingAsk', 'navigate',
     'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
     // Named one by one rather than mapped over a list: §17's census requires
     // every function it claims is EXECUTED to appear in a real
     // `extractFunction(viewSrc, '<name>')` call somewhere in this file, which is
     // what stops the census being a claim rather than a measurement.
     extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    // `foundationReaderContent` asks `skeletonOf` whether the body below is a
+    // set of PROMPTS rather than facts (P2-4), so the predicate is LIFTED
+    // here: stubbing it would let the reader's most consequential note go
+    // missing with this section fully green.
+    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'openFoundation', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\n'
@@ -6660,7 +7058,9 @@ const fndRead = (payload) => ({
     freshChooser, () => {}, async () => {}, async () => {}, async () => ({}),
     async () => {}, async () => {}, () => null,
     (t) => ({ bytes: String(t || '').length, words: 0, over: false }),
-    () => 'close', MAX_FOUNDATION_BYTES, FOUNDATION_ROLES,
+    () => 'close',
+    async () => {}, () => {},
+    MAX_FOUNDATION_BYTES, FOUNDATION_ROLES,
     { getItem: () => null, setItem: () => {} });
   api.bindFoundationRows(doc, 1);
   ok('SETUP: the row\'s click handler was bound', typeof btn._click === 'function');
@@ -6683,13 +7083,39 @@ const fndRead = (payload) => ({
   eq('the title is the document\'s own', c.title, 'Architecture');
   eq('it is labelled as what it is', c.typeLabel, 'foundation');
   eq('READONLY, ALWAYS — the app writes neither ownership mode', c.readonly, true);
+  // P1-9: the chip says FOLDER, because `resolveRepoRoot` requires only a
+  // reachable directory and half the people this tier is for keep their
+  // documents in one that is not a checkout.
   ok('the chips are role · source · commit · ownership, in that order',
     JSON.stringify(c.tags.slice(0, 4)) === JSON.stringify([
       'role: architecture', 'source: docs/architecture.md', 'commit 9623343',
-      'mirrored from a repository']), JSON.stringify(c.tags));
+      'mirrored from a folder']), JSON.stringify(c.tags));
   ok('...and a stale copy says so on the document itself', c.tags.includes('out of date'));
   ok('the body goes through the shared markdown renderer (escape-first)',
     c.bodyHtml.includes('chat-md-h'), c.bodyHtml.slice(0, 200));
+  // ── A SKELETON SAYS SO IN THE READER (v3.61.0, P2-4) ────────────────
+  // The most consequential note on this panel: the body below is a set of
+  // QUESTIONS, and a reader who takes the prompts for facts has been misled by
+  // the one surface tier 0 exists to make trustworthy. From the FLAG (P1-2).
+  {
+    // Built through `makeRenderers` rather than through §21i's row-press
+    // sandbox: the subject here is the PAYLOAD, and the payload composer is
+    // what that helper lifts.
+    const RC = makeRenderers({});
+    const withFlag = RC.foundationReaderContent({
+      slug: 'architecture.md', title: 'Architecture', role: 'architecture',
+      text: '# A', skeleton: true, freshness: 'n/a', source: { kind: 'curator' } }, 'lumina');
+    ok('a skeleton says so, in the body where the prompts are',
+      /A skeleton — the prompts below are questions, not facts\./.test(withFlag.bodyHtml),
+      withFlag.bodyHtml.slice(0, 400));
+    ok('...and carries a `skeleton` chip beside the other four facts',
+      withFlag.tags.includes('skeleton'), JSON.stringify(withFlag.tags));
+    const written = RC.foundationReaderContent({
+      slug: 'architecture.md', title: 'Architecture', role: 'architecture',
+      text: '# A', skeleton: false, freshness: 'n/a', source: { kind: 'curator' } }, 'lumina');
+    ok('CONTROL: a written document says neither', !/A skeleton —/.test(written.bodyHtml)
+      && !written.tags.includes('skeleton'), JSON.stringify(written.tags));
+  }
   ok('a stale copy carries the warning IN the document, not behind a click',
     /no longer matches the file it was copied from/.test(c.bodyHtml));
   ok('...and the read-time sanitisation is disclosed', /neutralised on read/.test(c.bodyHtml));
@@ -6872,7 +7298,8 @@ const EXECUTED = new Set([
   // A stub anywhere in that list would let this suite agree with itself that
   // the summary line, the Status reading and the Refresh control all describe
   // one project while the shipped page described three.
-  'foundationsFacts', 'foundationsWord', 'foundationsRefreshOffer', 'fndRowHtml',
+  'foundationsFacts', 'foundationsWord', 'foundationsControlOffer',
+  'foundationsOwnershipWord', 'foundationsSummaryMeta', 'fndSize', 'skeletonOf', 'fndRowHtml',
   'renderFoundations', 'renderFoundationsStatus', 'foundationReaderContent',
   'openFoundation', 'refreshFoundations', 'bindFoundationRows',
   // v3.61.0 — tier 0 became editable. Five more LIFTED here and driven in §21:
@@ -6885,6 +7312,9 @@ const EXECUTED = new Set([
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',
+  // v3.61.0: whether "Copy the drafting request" is offered, withheld with a
+  // reason, or absent \u2014 driven over all five states in \u00a721c2.
+  'foundationsDraftAsk',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on
@@ -6923,6 +7353,10 @@ const NOT_EXECUTED = {
   loadFoundationDraft: 'async orchestration over the `?raw=1` read; EXECUTED in test-next-foundations-editor.js, which asserts the RAW query, the byte-exact draft and that a second Edit press wins the race',
   saveFoundation: 'async orchestration over the PUT plus a re-read; EXECUTED in test-next-foundations-editor.js, which asserts the three fields, the stamp, the late-reply drop and that a failure keeps the draft',
   deleteFoundation: 'async orchestration over the DELETE; EXECUTED in test-next-foundations-editor.js, which asserts the slug travels as its own confirmation and that a refusal closes the strip rather than the editor',
+  // ── v3.61.0's THREE ────────────────────────────────────────────────────
+  requestProject: 'the one-shot handoff from the OTHER view (P1-10): a module variable set by views/domains.js and cleared on read here, so driving it needs both halves. EXECUTED in test-next-memory-switch.js, which sets it and then runs the arrival decision',
+  takePendingProject: 'the read half of that handoff, and the half that makes staleness impossible \u2014 EXECUTED beside it in test-next-memory-switch.js',
+  copyDraftingAsk: 'async orchestration over the clipboard: composes through the REAL composeDraftingAsk and stamps the outcome with the pair it was pressed on. EXECUTED in test-next-foundations-editor.js, which drives the success and the refusal and asserts the text names this project\u2019s own unfilled slugs',
 };
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',

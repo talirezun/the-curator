@@ -1379,26 +1379,66 @@
 
 /* ── TIER 0 — FOUNDATIONS ────────────────────────────────────────────────
 
-   The block's body is the SAME shape the standing brief's is: a `.mem-fold`
-   with one control anchored at the top-right of its own row. That is why
-   `.mem-fnd-row` copies `.mem-brief-row`'s `position: relative` rather than
-   inventing a layout — the pencil and "Refresh from repo" occupy the same
-   corner of the same card, so a reader moving between the two blocks finds
-   the control in the place they just left it.
-
-   The control is a LABELLED button rather than an icon, and that difference is
+   The controls are LABELLED buttons rather than icons, and that difference is
    deliberate: a pencil on a document is unambiguous, "copy six files across
-   from a repository" is not, and a glyph for it would be a guess. */
-.mem-fnd-row { position: relative; }
-.mem-fnd-refresh {
-  position: absolute;
-  top: 6px;
-  right: 10px;
-  flex: none;
+   from a folder" is not, and a glyph for it would be a guess.
+
+   ── THE HEAD IS A CONTROL ROW, NOT ONE ABSOLUTE SLOT (v3.61.0, P1-8) ──────
+   It was `position: absolute` on a single `.mem-fnd-refresh` plus a
+   `padding-right: 150px` reserve on the summary line. That works for exactly
+   one control of one width. This release puts up to THREE there — Refresh,
+   Add, and "Copy the drafting request" with its ⓘ — and a px reserve for a
+   variable number of them is a literal that goes wrong SILENTLY: the summary
+   text runs under the buttons, and nothing in any suite can see it. (The class
+   is the one the design doc records at `--ing-col`: five hand-copied `480px`
+   that became one derived token.)
+
+   So `.mem-fnd-row` is a flex row, the `<details>` takes the space that is
+   left, and the controls sit in flow AFTER it — which is where they already
+   were in the markup. At a narrow container the row WRAPS, putting the
+   controls under the summary rather than on top of it; that is the behaviour a
+   reserve was approximating and getting wrong. */
+.mem-fnd-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
-/* Room for the button, so a long summary line cannot run under it. The brief's
-   own rule reserves 46px for an icon; a labelled button needs more. */
-.mem-fnd-row > .mem-fold > .mem-fold-summary { padding-right: 150px; }
+/* `min-width: 0` is load-bearing: a flex item's automatic minimum is its
+   content, so without it a long summary line refuses to wrap and pushes the
+   controls off the card.
+
+   ── THE 480px BASIS IS A MEASUREMENT, NOT A ROUND NUMBER ─────────────────
+   It started at 320px and that was wrong in a way only the browser showed: at
+   a 589px block the controls (285px of Refresh + Add) still fitted beside the
+   fold, squeezing it to 328px — and the SIX-column mirrored table inside it
+   then overflowed by 139px, scrolling horizontally where it had not before.
+   The fold shrinking to its stated floor is the flexbox contract working
+   exactly as written; the floor was the mistake.
+
+   480px is the width below which this fold's own content stops being
+   comfortable, so the row now wraps whenever 480 + 6 + 285 > the container —
+   that is, under ~771px, where the controls take their own line and the fold
+   takes the whole width. Measured at the two widths that matter: at a 959px
+   block (a 1370px window) fold 668 / controls 285 side by side, mirrored table
+   overflow 0; at a 589px block (a 1000px window) the controls wrap and the
+   table's overflow goes 139 -> 0. */
+.mem-fnd-row > .mem-fold { flex: 1 1 480px; min-width: 0; }
+.mem-fnd-head-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  flex: none;
+  /* Optically level with the summary's own text, which sits 6px inside the
+     fold's padding box. */
+  padding-top: 6px;
+}
+.mem-fnd-head-controls:empty { display: none; }
+/* The Domains pointer, on a project with no documents chosen. Its own row
+   under the notes rather than beside the chooser: it leaves this view, and a
+   control that leaves must not sit where the commit is. */
+.mem-fnd-elsewhere { display: flex; margin-top: var(--space-2); }
 
 /* THE TABLE. Same chrome as the work-streams table above it — it is the same
    KIND of thing, a list of rows you press to read one — so the type, the
@@ -1671,12 +1711,19 @@
 }
 .mem-fnd-text:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
-/* "Choose a file…" and the sentence beside it. The button chrome comes from
-   shared/foundations-init.css (`.fnd-init-file`, the visually-hidden input
-   inside a label carrying `.btn`), so this owns only the row. */
+/* The sentence and "Choose a file…", IN THAT ORDER (v3.61.0, P1-12): for the
+   person who started a project here with no agent and no repository, writing
+   the document in the box is the primary way in, and the order of two
+   equal-looking affordances is the only thing on screen that says so. The
+   button chrome comes from shared/foundations-init.css (`.fnd-init-file`),
+   which since this release dresses a real `<button>` beside a `hidden` input
+   rather than a label around a visually-hidden one — so this owns only the
+   row. `align-items: baseline` rather than `center` because the sentence is
+   now two or three lines and centring a button against a paragraph puts it
+   halfway down the text. */
 .mem-fnd-pick {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   flex-wrap: wrap;
   gap: var(--space-3);
 }
@@ -1712,8 +1759,17 @@
 .mem-fnd-init-actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
 
 /* The Edit column of the foundations table. Right-aligned and no wider than
-   the control, so the six columns before it keep the width. */
+   the control, so the columns before it keep the width. */
 .fnd-cell-edit { width: 1%; white-space: nowrap; text-align: right; }
+/* ── THE STATE COLUMN, CURATOR-OWNED ONLY (v3.61.0, P2-1) ────────────────
+   It REPLACES Source and Copy, which on a curator-owned project always read
+   "Curator-authored" and "—" — two columns with one value each, which is the
+   table equivalent of a flag on 100 % of a list (v3.53.1). Plain text, no dot:
+   a skeleton has no upstream to be fresh against, and a grey mark beside
+   "skeleton · to fill" would read as a stale reading at a glance. `nowrap`
+   because all three values are short and a two-line cell in a five-column
+   table is a wrap nobody needs. */
+.fnd-cell-state { white-space: nowrap; }
 .fnd-table th:last-child,
 .fnd-table td:last-child { padding-right: 10px; }
 

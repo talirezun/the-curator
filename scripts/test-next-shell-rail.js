@@ -306,8 +306,16 @@ const renderedNav = buttons
   .filter((b) => R.api.NAV_VIEWS.includes(b.attrs['data-view']))
   .sort((a, b) => a.index - b.index)
   .map((b) => b.attrs['data-view']);
-ok(JSON.stringify(renderedNav) === JSON.stringify(['chat', 'ingest', 'domains', 'shared', 'memory']),
-  `the rendered nav order is chat, ingest, domains, shared, memory (got ${renderedNav.join(', ')})`);
+// ── MEMORY MOVED ABOVE SHARED (v3.61.0) ──────────────────────────────────
+// v3.49.0's own reasoning for this array is that the rail is a FREQUENCY
+// ORDER, not an ontology — and on that measure the last two were the wrong way
+// round. Agent memory holds a project's standing brief, its handoffs and,
+// since v3.59.0, its canonical documents: a screen somebody opens every
+// working session. Shared Brain is opt-in and entered rarely. Both stay in the
+// advanced group and the divider is unchanged, because it follows `domains` by
+// NAME rather than by index.
+ok(JSON.stringify(renderedNav) === JSON.stringify(['chat', 'ingest', 'domains', 'memory', 'shared']),
+  `the rendered nav order is chat, ingest, domains, memory, shared (got ${renderedNav.join(', ')})`);
 eq(renderedNav[1], 'ingest', 'Ingest is SECOND — it was fifth, behind two surfaces a new user has not set up');
 ok(JSON.stringify(renderedNav) === JSON.stringify(R.api.NAV_VIEWS),
   'the rendered order is NAV_VIEWS in NAV_VIEWS order — renderRail adds no ordering of its own');
@@ -324,7 +332,7 @@ if (dividers.length === 1) {
   const after = buttons.filter((b) => b.index > d.index).sort((a, b) => a.index - b.index)[0];
   eq(before.attrs['data-view'], R.api.RAIL_DIVIDER_AFTER, 'the divider follows RAIL_DIVIDER_AFTER');
   eq(before.attrs['data-view'], 'domains', 'the everyday group ends at Domains');
-  eq(after.attrs['data-view'], 'shared', 'the advanced group starts at Shared Brain');
+  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Agent memory (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely)');
   eq(d.attrs['aria-hidden'], 'true', 'the divider is hidden from assistive technology');
   eq(d.attrs.role, 'presentation', 'the divider carries role="presentation" — grouping, not a landmark');
 }

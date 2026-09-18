@@ -1292,7 +1292,29 @@
   display: flex;
   gap: 8px;
   margin-top: 16px;
+  /* The create outcome's copy row carries four controls (two buttons and two
+     marks) and at a narrow group row they must stack rather than overflow the
+     card. Wrapping is free on every other consumer, which never has more than
+     two. */
+  flex-wrap: wrap;
+  align-items: center;
 }
+/* ── THE CREATE CARD'S HEADING TAKES A MARK (v3.61.0, P2-2) ──────────────
+   Three sentences of folder mechanics and save semantics between the title and
+   the first field became one <= 13-word lede plus the mark, which is the
+   design system's own split. The heading is a ROW now, and the split is
+   exactly the one `.dm-proj-fnd-head` above records: the class in the markup
+   owns the type, the placement rule owns nothing else. */
+.dm-proj-new-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* ── THE OUTCOME'S COPY ROW ──────────────────────────────────────────────
+   Its own class so the two ⓘ marks sit tight against the buttons they explain
+   rather than at the row's own 8px rhythm: a mark four pixels from the wrong
+   button explains the wrong button. */
+.dm-proj-done-copies { gap: var(--space-2); }
 /* ── `.dm-lc-danger-btn` IS GONE, AND IT WAS AN AA FAILURE ───────────────
    It was applied ON TOP of `btn btn-primary` at two sites — the "Delete
    permanently" button on the delete-domain card and on the delete-project

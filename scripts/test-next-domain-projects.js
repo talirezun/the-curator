@@ -148,6 +148,16 @@ const FNS = [
   // the code rather than the code.
   'copyProjectAgentInstructions',
   'copyForProject',
+  // ── v3.61.0 ──────────────────────────────────────────────────────────────
+  // `createConsequence` is the sentence above the primary saying what pressing
+  // it will WRITE (P2-5), derived from the chosen arm; `renderProjectCreated`
+  // is phase 2, the outcome in the slot the form was in (P1-10). Both LIFTED:
+  // the first is the only thing on the card that makes the commit
+  // self-describing, and the second carries the two copy controls and the
+  // navigation, which is the whole reason the outcome is not a banner.
+  'createConsequence',
+  'createdOutcomeDetail',
+  'renderProjectCreated',
   'renderCopyOutcome',
   // v3.61.0. The create form asks where a project's canonical documents come
   // from, and this is the field that asks it — LIFTED rather than stubbed
@@ -213,15 +223,31 @@ const { composeAgentInstructions, COPY_SUCCESS_BANNER } =
 // let this suite assert a shape the browser never sends.
 const {
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
-  bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS,
+  bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, pickedFiles,
 } = await import('../src/public/next/shared/foundations-init.js');
+
+// The two spies the handoff needs. Module-scoped so the assertions below read
+// them directly: what is under test is that the control records the pair
+// BEFORE it navigates, and an ordering claim needs both recorded in one place.
+const handoff = [];
+const navigations = [];
 
 let sandbox;
 try {
   sandbox = new Function(
     'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
     'freshChooser', 'chooserBody', 'chooserOutcomeWords', 'renderFoundationsChooser',
-    'bindFoundationsChooser', 'renderRefusedList', 'SKELETON_SLUGS', 'infoMark2',
+    'bindFoundationsChooser', 'renderRefusedList', 'SKELETON_SLUGS', 'pickedFiles',
+    // ── THE HANDOFF INTO AGENT MEMORY (v3.61.0, P1-10) ──────────────────
+    // views/memory.js exports a one-shot request that this view WRITES before
+    // navigating: a module variable the destination clears on read, because
+    // `navigate()` takes no parameters and the memory view's arrival picks the
+    // domain by SAVE RECENCY — so a project created a second ago, which has no
+    // saves, is not reached even with the remembered map written. It is a spy
+    // here rather than the real export: what this suite can prove is that the
+    // control RECORDS the pair before it navigates, and the consuming half is
+    // driven in test-next-memory-switch.js.
+    'requestProject', 'shell', 'infoMark2',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -236,9 +262,15 @@ try {
     // copy. It is the one place the "a plain folder works as a mirror source"
     // fact is stated in the app.
     extractConst(SRC, 'FOUNDATIONS_INFO_HTML') + '\n' +
+    // v3.61.0 (P2-2) — the create card's own ⓘ. Its three sentences used to
+    // sit loose between the title and the first field; the mark holds the
+    // mechanism and the lede holds the one condition. LIFTED for the reason
+    // the four above are: S5c asserts the words a user reads.
+    extractConst(SRC, 'CREATE_INFO_HTML') + '\n' +
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, PROJECT_BRIEF_TEMPLATE,
        MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML, FOUNDATIONS_INFO_HTML,
+       CREATE_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gates.length = 0;
@@ -250,7 +282,10 @@ try {
        __setMounted: (v) => { mounted = v; } };`
   )(composeAgentInstructions, COPY_SUCCESS_BANNER,
     freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
-    bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, null);
+    bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, pickedFiles,
+    (d, p2) => { handoff.push([d, p2]); },
+    { navigate: (v) => { navigations.push(v); } },
+    null);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -261,12 +296,42 @@ const {
   renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
   copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
-  foundationsField,
+  foundationsField, createConsequence, createdOutcomeDetail, renderProjectCreated,
   PROJECT_BRIEF_TEMPLATE, MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
-  FOUNDATIONS_INFO_HTML,
+  FOUNDATIONS_INFO_HTML, CREATE_INFO_HTML,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
   __setDocument, __setRenderImpl,
 } = sandbox;
+
+{
+  // ── THE SECOND AUDIENCE IS NOT "CODING" (maintainer's correction) ──────
+  // They run EXTENDED, MULTI-SESSION work through agent harnesses — across
+  // sessions, harnesses, models and machines. Building code is the commonest
+  // case and NOT the definition: research programmes, design work and digital
+  // products are the same shape, and a string that says "your coding agent"
+  // tells every one of them this feature is not for them.
+  //
+  // The marker mark may keep it as an EXAMPLE ("most often a coding agent"),
+  // because naming a familiar case is how a definition lands. Asserting that
+  // ONE mark is the exception is what stops the exception spreading.
+  ok('the instructions ⓘ says "your agent", not "your coding agent"',
+    /whichever file your agent loads/.test(AGENT_INFO_TEXT)
+    && !/coding/.test(AGENT_INFO_TEXT), AGENT_INFO_TEXT);
+  ok('the marker ⓘ keeps a coding agent only as an EXAMPLE, never as the '
+    + 'definition of who this is for',
+  /an agent that starts there — most often a coding agent —/.test(MARKER_INFO_TEXT),
+  MARKER_INFO_TEXT);
+  ok('...and it is the ONLY place in this view that says "coding"',
+    (SRC.match(/coding agent/g) || []).length === 1,
+    JSON.stringify((SRC.match(/.{0,50}coding agent.{0,30}/g) || [])));
+  // AND THE SECTION ⓘ AND THE CREATE ⓘ speak of agents in the plural, with no
+  // trade named.
+  for (const [name, text] of [['the section ⓘ', PROJECTS_INFO_HTML],
+    ['the create-card ⓘ', CREATE_INFO_HTML],
+    ['the documents ⓘ', FOUNDATIONS_INFO_HTML]]) {
+    ok(name + ' names no trade', !/coding/.test(text), text.slice(0, 200));
+  }
+}
 
 const ROW = (over) => ({
   domain: 'alpha', project: 'lumina', isDefaultProject: false, hasBrief: true,
@@ -546,6 +611,30 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   openProjectLifecycle('create');
   const create = renderProjectLifecycleCard();
 
+  // ── THE CARD'S OWN THREE SENTENCES BECAME A LEDE AND A MARK (P2-2) ───
+  // It carried three sentences between the title and the first field: where
+  // the folder goes, which characters are legal, and how the brief's save
+  // semantics work. Two of those are MECHANISM and one is a CONDITION, and the
+  // design system's §3 rule splits them — the eyebrow names the block, the
+  // lede carries at most one instruction or condition a reader needs BEFORE
+  // acting, and the definitions go behind the mark.
+  {
+    const head = create.slice(0, create.indexOf('dm-proj-fnd-head'));
+    const lede = /<p class="tx-desc">([^<]*)<\/p>/.exec(head);
+    ok('the card carries a lede at all', !!lede, head.slice(0, 400));
+    const words = lede ? lede[1].trim().split(/\s+/).filter(Boolean).length : 99;
+    ok('...of 13 visible words or fewer (design-system §3)', words <= 13,
+      words + ' words: ' + (lede ? lede[1] : ''));
+    ok('...and it is a CONDITION and an instruction, never the folder mechanics',
+      lede && /lowercase name/.test(lede[1]) && !/state\//.test(lede[1]), lede ? lede[1] : '');
+    ok('...and the old three-sentence body is gone from the card',
+      !/The name becomes a folder under/.test(create), head.slice(0, 500));
+    ok('the card carries its own ⓘ, whose panel ships CLOSED',
+      /id="dm-proj-new-info-btn"/.test(create)
+      && /id="dm-proj-new-info"[^>]*hidden/.test(create), head.slice(0, 900));
+    ok('...and the mechanics are IN it', /becomes a folder inside/.test(CREATE_INFO_HTML)
+      && /replaces the whole document/.test(CREATE_INFO_HTML), CREATE_INFO_HTML.slice(0, 400));
+  }
   ok('CREATE asks where the documents live', create.includes('data-fnd-init="dm-proj-fnd"'),
     create.slice(0, 400));
   ok('...with both answers on screen at once rather than in a dropdown — you want to '
@@ -553,8 +642,16 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   create.includes('data-fnd-own="curator"') && create.includes('data-fnd-own="repo"'));
   ok('...plus "decide later", which only makes sense HERE: the Foundations block in '
     + 'Agent memory IS the later', create.includes('data-fnd-own="later"'));
-  ok('...defaulting to the answer that works with no preconditions',
-    /data-fnd-own="curator" aria-pressed="true"/.test(create), create.slice(0, 1400));
+  // ── THE DEFAULT POSTPONES (v3.61.0, maintainer's call on Q1) ──────────
+  // The fail-safe direction decides it: on a form somebody has not read, the
+  // arm that WRITES FOUR DOCUMENTS is not the safe answer and "decide later"
+  // is — nothing is written, and the Foundations block asks the same question
+  // again in the place the answer is missing. The cost is one more click on
+  // the headline scenario, taken knowingly.
+  ok('...defaulting to the answer that writes NOTHING',
+    /data-fnd-own="later" aria-pressed="true"/.test(create), create.slice(0, 1400));
+  ok('...and NOT to the arm that seeds four documents',
+    !/data-fnd-own="curator" aria-pressed="true"/.test(create));
   ok('...BELOW the brief, because the brief is what YOU tell an agent and these are what '
     + 'the PROJECT tells it',
   create.indexOf('dm-proj-brief') < create.indexOf('data-fnd-init='));
@@ -571,6 +668,27 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     ok('...and it is an INSTRUCTION, never a definition',
       lede && !/is a |are the |means /.test(lede[1]), lede ? lede[1] : '');
   }
+  // ── IRREVERSIBILITY NEVER FOLDS (§3.10) ───────────────────────────────
+  // The store refuses a mismatch on every later write, so the choice is made
+  // once — and a cost that lives only inside the mark is a cost the person who
+  // did not open the mark was never told. The MECHANISM stays behind it; this
+  // one clause has to be read before pressing.
+  ok('the set-once cost is stated UNFOLDED, above the choice',
+    /Set once — a project is mirrored or kept here, never both/.test(create)
+    && create.indexOf('Set once') < create.indexOf('data-fnd-own='), create.slice(0, 900));
+  ok('...in flow, not behind the mark', !/tx-vh-panel[^>]*>[^<]*Set once/.test(create));
+  // ── THE CONSEQUENCE OF THE PRIMARY, ABOVE THE ACTION ROW (P2-5) ───────
+  // Derived from the chosen arm rather than folded into the button's own
+  // label: a label that changes width as the form is answered moves the
+  // control the person is aiming at, and a consequence is a reading, not a
+  // name.
+  ok('the card states what pressing Create will WRITE, above the action row',
+    /Creates the project\./.test(create)
+    && create.indexOf('Creates the project') < create.indexOf('id="dm-proj-submit"'),
+  create.slice(-900));
+  ok('...unfolded, on the shared one-line role', /class="tx-note"/.test(create));
+  ok('...and the primary\u2019s own label does NOT move with the answer',
+    /id="dm-proj-submit"[^>]*>Create project</.test(create), create.slice(-500));
   ok('the field carries an ⓘ mark', create.includes('dm-proj-fnd-info'), create.slice(0, 600));
   ok('...whose panel ships CLOSED', /id="dm-proj-fnd-info"[^>]*hidden/.test(create), create.slice(0, 2000));
 
@@ -581,10 +699,28 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   ok('the ⓘ defines what a canonical document is', /architecture, the decisions/i.test(FOUNDATIONS_INFO_HTML));
   ok('...says a mirror is a BYTE copy with a recorded commit and a compared checksum',
     /byte-for-byte/i.test(FOUNDATIONS_INFO_HTML) && /checksum/i.test(FOUNDATIONS_INFO_HTML));
-  ok('...says a plain folder with no version control works as a source, and that the source '
-    + 'line then shows no commit (D21)',
-  /NOT have to be a git repository/i.test(FOUNDATIONS_INFO_HTML)
-    && /no commit beside it/i.test(FOUNDATIONS_INFO_HTML), FOUNDATIONS_INFO_HTML.slice(0, 400));
+  // ── ANY FOLDER WORKS, AND A CHECKOUT ADDS THE COMMIT (P1-9) ──────────
+  // `resolveRepoRoot` requires only an absolute, reachable DIRECTORY, so every
+  // user-visible LABEL says "folder". What a git checkout adds — the commit
+  // each file came from, recorded and shown — is MECHANISM, which is why it is
+  // here rather than in a label: a person with ~/Documents/lumina-docs reads
+  // the label, not the fold.
+  ok('...says any folder works and that a checkout ADDITIONALLY records the commit (D21)',
+    /Any folder works/i.test(FOUNDATIONS_INFO_HTML)
+    && /does NOT have to be a git checkout/i.test(FOUNDATIONS_INFO_HTML)
+    && /commit each file came from is additionally recorded/i.test(FOUNDATIONS_INFO_HTML),
+  FOUNDATIONS_INFO_HTML.slice(0, 600));
+  ok('...and the ⓘ leads with the word FOLDER, not "repository"',
+    /Mirrored from a folder/.test(FOUNDATIONS_INFO_HTML)
+    && !/Mirrored from a repository/.test(FOUNDATIONS_INFO_HTML));
+  // ── AND IT NAMES THE OWNER BEFORE THE AGENT (P1-12) ──────────────────
+  ok('...and says the OWNER fills a skeleton, with the agent as the second way',
+    FOUNDATIONS_INFO_HTML.indexOf('You fill one in on the Agent memory page')
+      < FOUNDATIONS_INFO_HTML.indexOf('or ask an agent to'),
+    FOUNDATIONS_INFO_HTML.slice(0, 900));
+  ok('...and that Decide later is the DEFAULT as well as a real answer',
+    /the\s+default one/.test(FOUNDATIONS_INFO_HTML.replace(/\s+/g, ' ')),
+    FOUNDATIONS_INFO_HTML.slice(-400));
   ok('...says what a SKELETON is — a prompt, not prose', /prompts instead of prose/i.test(FOUNDATIONS_INFO_HTML));
   ok('...says nothing is uploaded when a file is chosen from disk',
     /Nothing is uploaded/i.test(FOUNDATIONS_INFO_HTML));
@@ -630,6 +766,42 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   // THE CURATOR ARM: the seed tick and the optional files from disk (D18).
   __state().projectLc.foundations.ownership = 'curator';
   const cur = renderProjectLifecycleCard();
+  // ── THE CONSEQUENCE COUNTS WHAT THE REQUEST WILL SEND (P2-5) ──────────
+  // Derived through `pickedFiles` — the same function that builds the wire's
+  // own file list — because a sentence that counted anything else is how a
+  // card comes to promise four and send three.
+  {
+    const c = { ...freshChooser({ allowLater: true }), ownership: 'repo', repoRoot: '/r',
+      candidates: [
+        { path: 'a.md', bytes: 10, suggestedRole: 'other' },
+        { path: 'b.md', bytes: 10, suggestedRole: 'other' },
+        { path: 'big.md', bytes: 9e5, suggestedRole: 'other', tooLarge: true }],
+      picks: { 'a.md': true, 'b.md': true, 'big.md': true } };
+    eq('two ticked files read as two', createConsequence({ foundations: c }),
+      'Creates the project and copies 2 documents from that folder.');
+    c.picks = { 'a.md': true };
+    eq('...one reads as one, singular', createConsequence({ foundations: c }),
+      'Creates the project and copies 1 document from that folder.');
+    c.picks = {};
+    eq('...and none says so rather than claiming zero documents will be copied',
+      createConsequence({ foundations: c }),
+      'Creates the project. Nothing is copied until you choose files.');
+    const cur = { ...freshChooser({}), ownership: 'curator' };
+    eq('the curator arm counts the skeletons it will write',
+      createConsequence({ foundations: cur }),
+      'Creates the project and writes 4 skeleton documents.');
+    cur.seed = false;
+    eq('...and unticking them says the project arrives empty',
+      createConsequence({ foundations: cur }),
+      'Creates the project with no documents yet.');
+    cur.imports = [{ slug: 'a.md', error: null }, { slug: 'b.md', error: 'refused' }];
+    ok('...and a REFUSED import is not counted among the files that will be saved',
+      /saves 1 file you chose/.test(createConsequence({ foundations: cur })),
+      createConsequence({ foundations: cur }));
+    eq('postponing claims nothing at all',
+      createConsequence({ foundations: { ...freshChooser({ allowLater: true }) } }),
+      'Creates the project. You can add documents any time.');
+  }
   ok('the curator arm offers the four skeletons, ticked',
     /id="dm-proj-fnd-seed"[^>]* checked/.test(cur), cur.slice(0, 2400));
   ok('...naming all four so the owner knows what lands',
@@ -637,9 +809,17 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   ok('...and a MULTI file picker wearing the kit\'s button, never a native file control',
     /class="btn btn-secondary btn-xs fnd-init-file"/.test(cur)
     && /id="dm-proj-fnd-files"[^>]*multiple/.test(cur), cur.slice(0, 2600));
-  ok('...with the input visually hidden rather than styled, because a native file button '
-    + 'cannot be styled at all', /id="dm-proj-fnd-files"/.test(cur)
-    && /class="visually-hidden" id="dm-proj-fnd-files"/.test(cur));
+  // ── A REAL BUTTON, AND AN INPUT THAT IS `hidden` (v3.61.0, P1-7) ──────
+  // A `.visually-hidden` input is STILL FOCUSABLE: keyboard focus lands on
+  // something invisible while the thing that looks like a button cannot be
+  // focused at all and can never paint `--ring-focus`.
+  ok('...through a real <button> beside a `hidden` input, so focus lands on the '
+    + 'thing that looks like the control',
+  /<button type="button" class="btn btn-secondary btn-xs fnd-init-file" id="dm-proj-fnd-files-btn"/.test(cur)
+    && /<input type="file" id="dm-proj-fnd-files"[^>]* hidden/.test(cur), cur.slice(0, 2600));
+  ok('...and NOT a label around a visually-hidden input',
+    !/class="visually-hidden" id="dm-proj-fnd-files"/.test(cur)
+    && !/<label class="btn[^"]*fnd-init-file"/.test(cur));
   ok('...and it says out loud that nothing is uploaded until the project is created',
     /nothing is uploaded until you create the project/i.test(cur));
 }
@@ -712,12 +892,72 @@ section('S6 -- The actions: what the view actually sends');
   eq('...as a POST', req.opts.method, 'POST');
   eq('...carrying the name', JSON.parse(req.opts.body).project, 'newthing');
   eq('...and the brief', JSON.parse(req.opts.body).brief, '## Standing brief\n\nhello');
-  eq('the form closes on success', __state().projectLc, null);
-  ok('...a banner names what happened', /Created project/.test(__state().banner.text));
+  // ── PHASE 2 TAKES THE SLOT, and the banner is NOT the create outcome
+  //    (v3.61.0, P1-10) ────────────────────────────────────────────────────
+  // Rename and delete produce a FACT and nothing to do about it, which is what
+  // a view-level banner is for. A create produces a fact AND two pieces of
+  // work that happen elsewhere — a marker line to save in a folder, an
+  // instructions block to paste into the file the harness loads — plus a
+  // navigation to the screen where documents are added. A banner cannot hold a
+  // control, so the form is replaced by its own outcome in the same slot.
+  {
+    const lc = __state().projectLc;
+    ok('the form becomes its own OUTCOME rather than closing', !!lc && lc.mode === 'created', JSON.stringify(lc));
+    eq('...stamped with the project it created', lc.project, 'newthing');
+    eq('...and its domain', lc.slug, 'alpha');
+    eq('...and no banner competes with it', __state().banner, null);
+    const done = renderProjectCreated(lc);
+    ok('the outcome NAMES the project', /Created newthing/.test(done), done.slice(0, 400));
+    ok('...unfolded, because an outcome is never behind a chevron',
+      !done.includes('<details'));
+    ok('...and offers BOTH copy controls, on the row\u2019s own hooks so there is '
+      + 'no second implementation of either',
+    done.includes('data-proj-marker="newthing"') && done.includes('data-proj-agent="newthing"'),
+    done.slice(0, 900));
+    // Two marks, two panels, both shipping closed. Counted on the PANEL's own
+    // id rather than on the class, because the class appears in the button's
+    // `aria-controls` too and a class count would be four.
+    const panels = done.match(/<div class="tx-vh-panel" id="[^"]+"[^>]*hidden>/g) || [];
+    ok('...each with its own ⓘ, and both panels ship CLOSED', panels.length === 2,
+      JSON.stringify(panels));
+    ok('...and the handoff into Agent memory', done.includes('id="dm-proj-open-memory"'));
+    ok('...and a way out that commits nothing', /id="dm-proj-cancel"[^>]*>Done</.test(done), done.slice(-500));
+    // NO PRIMARY. Nothing on this panel commits anything — two copies, one
+    // navigation, one dismissal — and inventing a primary would be the tier-1
+    // slot used dishonestly.
+    ok('...and NO primary at all, because the step is complete',
+      !/btn-primary/.test(done), done.slice(0, 900));
+  }
   ok('...and the list is RE-READ rather than patched in place',
     __calls().fetch.some((c) => !c.opts && c.url === '/api/memory/alpha/projects'));
   ok('the shell-wide write gate was taken and released',
     __calls().gates.length === 1 && __calls().gates[0].released === true);
+  // ── PHASE 2 OCCUPIES THE SLOT THE FORM WAS IN (P1-10) ─────────────────
+  // This card's home is the group's FOOTER ROW — a measured decision: v3.48.0
+  // shipped the create control as a `.btn` below the card, the maintainer's
+  // report was "just thrown somewhere", and v3.48.1's fix was that the create
+  // action is the last row of the list and the form opens IN ITS PLACE.
+  // Letting the OUTCOME fall through to the below-the-group slot would
+  // re-create that orphan one step later in the flow, where it is if anything
+  // more visible. Asserted over a parsed TREE, because a substring cannot
+  // express containment — which is exactly how it shipped floating the first
+  // time.
+  {
+    __setState({ ...freshState(), projects: { slug: 'alpha', rows: [], total: 0 } });
+    __state().projectLc = { mode: 'created', slug: 'alpha', project: 'newthing',
+      outcomeDetail: 'x', outcomeRefusal: null, outcomeRefused: [], foundations: null };
+    const panel = renderProjectsPanel(true);
+    const groupAt = panel.indexOf('class="cur-group"');
+    const groupEnd = panel.lastIndexOf('</div>');
+    const cardAt = panel.indexOf('dm-lc-card');
+    ok('the outcome renders INSIDE the group', groupAt >= 0 && cardAt > groupAt
+      && cardAt < groupEnd, 'group at ' + groupAt + ', card at ' + cardAt);
+    ok('...in the form row the create control opened in',
+      /dm-proj-form-row[\s\S]{0,200}dm-lc-card/.test(panel), panel.slice(cardAt - 300, cardAt + 60));
+    ok('...and the "New project" footer row is NOT painted beside it',
+      !panel.includes('id="dm-proj-new-btn"'), panel.slice(0, 400));
+    ok('...and there is exactly ONE card', (panel.match(/dm-lc-card/g) || []).length === 1);
+  }
 }
 {
   // ── THE CREATE BODY, FIELD BY FIELD, WITH THE DOCUMENTS CHOICE ─────────
@@ -731,6 +971,11 @@ section('S6 -- The actions: what the view actually sends');
   __reset();
   openProjectLifecycle('create');
   __state().projectLc.name = 'curated';
+  // THE ARM IS CHOSEN EXPLICITLY. The create form's default POSTPONES since
+  // v3.61.0 (the fail-safe direction: the arm that writes four documents is
+  // not the safe answer on a form nobody has read), so a body test for the
+  // curator arm has to press it — which is what a user does.
+  __state().projectLc.foundations.ownership = 'curator';
   __setFetch(() => ({ ok: true, seeded: ['architecture.md', 'decisions.md', 'conventions.md', 'roadmap.md'] }));
   await runProjectAction();
   {
@@ -739,15 +984,28 @@ section('S6 -- The actions: what the view actually sends');
     // the first assertion rather than crashing on a property of undefined — a crash reads
     // like a pass in a summary line, which is the v3.11.0 shape this repo has recorded twice.
     const fnd = body.foundations || {};
-    eq('the default arm sends the CURATOR ownership', fnd.ownership, 'curator');
+    eq('the curator arm sends the CURATOR ownership', fnd.ownership, 'curator');
     ok('...and NOT a seed flag, because true is the server\'s own default and re-stating '
       + 'a default is one more thing to disagree about',
     'foundations' in body && !('seed' in fnd), JSON.stringify(body.foundations));
     ok('...and no repoRoot, which the route refuses on the curator arm',
       'foundations' in body && !('repoRoot' in fnd));
-    ok('the banner reports what the SERVER did, not what was asked',
-      /4 skeletons seeded/.test(String((__state().banner || {}).text)),
-      String((__state().banner || {}).text));
+    // ── THE OUTCOME REPORTS WHAT THE SERVER DID (v3.61.0, P1-10) ────────
+    // Never what was ASKED: a create that requested four skeletons and got
+    // three is a fact the owner needs, and a sentence built from the request
+    // would report the ask as the outcome. The outcome now lives in the create
+    // slot rather than in a banner, because it carries controls.
+    const lc = __state().projectLc;
+    ok('the outcome names what the server seeded',
+      /4 skeleton documents seeded/.test(String((lc || {}).outcomeDetail)),
+      String((lc || {}).outcomeDetail));
+    // P1-12: the owner's way in comes first.
+    ok('...and names the owner before the agent',
+      /Fill them here, or ask an agent to/.test(String((lc || {}).outcomeDetail)));
+    // A THREE-OF-FOUR ANSWER IS REPORTED AS THREE.
+    eq('a server that seeded three reports three, not the four that were asked for',
+      createdOutcomeDetail({ ok: true, seeded: ['a.md', 'b.md', 'c.md'] }, []),
+      '3 skeleton documents seeded. Fill them here, or ask an agent to.');
   }
 }
 {
@@ -757,6 +1015,7 @@ section('S6 -- The actions: what the view actually sends');
   __reset();
   openProjectLifecycle('create');
   __state().projectLc.name = 'bare';
+  __state().projectLc.foundations.ownership = 'curator';
   __state().projectLc.foundations.seed = false;
   __setFetch(() => ({ ok: true, seeded: [] }));
   await runProjectAction();
@@ -791,9 +1050,43 @@ section('S6 -- The actions: what the view actually sends');
   JSON.stringify((body.foundations || {}).files),
   JSON.stringify([{ path: 'docs/architecture.md', role: 'guide' },
     { path: 'notes/decisions.md', role: 'decisions' }]));
-  ok('the banner reports the mirror',
-    /2 documents mirrored/.test(String((__state().banner || {}).text)),
-    String((__state().banner || {}).text));
+  ok('the outcome reports the mirror, in the words a byte copy deserves',
+    /2 documents copied from that folder, byte for byte/
+      .test(String((__state().projectLc || {}).outcomeDetail)),
+    String((__state().projectLc || {}).outcomeDetail));
+}
+{
+  // ── WHAT THE STORE WOULD NOT COPY (found in the BROWSER) ───────────────
+  // A create that asked for six documents and copied five reported "5
+  // documents copied from that folder" — the right number and half the
+  // answer. The sixth was refused with a reason the store had already
+  // computed and handed back in `refresh.refused`, and nothing on screen said
+  // so. A count that silently drops one is the shape this whole flow is
+  // written against, and this is the only surface the reason exists on.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  const f2 = __state().projectLc;
+  f2.name = 'partial';
+  f2.foundations.ownership = 'repo';
+  f2.foundations.repoRoot = '/r';
+  f2.foundations.extras = [{ path: 'docs/nope.md', role: 'other' }];
+  __setFetch(() => ({ ok: true, refresh: { added: ['a.md'], refreshed: [], missing: [],
+    refused: [{ path: 'docs/nope.md', reason: 'not found under the root' }] } }));
+  await runProjectAction();
+  const lc2 = __state().projectLc;
+  eq('the refusal is carried through from the SERVER', JSON.stringify(lc2.outcomeRefused),
+    JSON.stringify([{ path: 'docs/nope.md', reason: 'not found under the root' }]));
+  const done2 = renderProjectCreated(lc2);
+  ok('...and painted, naming the path AND the store\u2019s own reason',
+    /docs\/nope\.md/.test(done2) && /not found under the root/.test(done2), done2.slice(0, 900));
+  ok('...unfolded, beside the count that does not include it', !done2.includes('<details'));
+  ok('...through the SAME shared component the Agent-memory block uses, so a '
+    + 'refusal reads identically wherever it lands',
+  /fnd-init-note-loud/.test(done2), done2.slice(0, 900));
+  ok('CONTROL: a create with nothing refused paints no such list',
+    !/was not copied|were not copied/.test(renderProjectCreated({
+      ...lc2, outcomeRefused: [] })));
 }
 {
   // DECIDE LATER SENDS NO KEY AT ALL, not `{ownership: 'later'}`: the route's
@@ -810,8 +1103,14 @@ section('S6 -- The actions: what the view actually sends');
   const body = JSON.parse(__calls().fetch.find((c) => c.opts).opts.body);
   ok('"decide later" sends no `foundations` key whatsoever', !('foundations' in body),
     JSON.stringify(body));
-  eq('...and the banner says so rather than claiming something was set up',
-    /decide later/.test(String((__state().banner || {}).text)), true);
+  // ── POSTPONING IS REPORTED AS WHAT IT IS ──────────────────────────────
+  // Nothing was written, so there is nothing to claim: the outcome says the
+  // project and its brief are saved and stops there. The Foundations block on
+  // the Agent memory page is where the question is asked again, and "Open in
+  // Agent memory" beside this sentence is how you get there.
+  eq('...and the outcome claims nothing about documents',
+    String((__state().projectLc || {}).outcomeDetail),
+    'The project and its brief are saved.');
 }
 {
   // A TIER-0 FAILURE IS DISCLOSED ON ITS OWN LINE, never appended to the
@@ -824,15 +1123,22 @@ section('S6 -- The actions: what the view actually sends');
   __setFetch(() => ({ ok: true, seeded: [],
     foundationsError: { reason: 'repo-unreachable', message: 'that folder is not on this computer' } }));
   await runProjectAction();
-  ok('the create still SUCCEEDS — the form closes and the project exists',
-    __state().projectLc === null);
-  ok('...the banner drops out of the success tone', (__state().banner || {}).tone === 'info',
-    String((__state().banner || {}).tone));
+  ok('the create still SUCCEEDS — the project exists and the outcome shows it',
+    (__state().projectLc || {}).mode === 'created', JSON.stringify(__state().projectLc));
   {
-    const d = String((__state().banner || {}).detail);
-    ok('...and carries the reason on a SECOND line rather than in the sentence',
+    const lc = __state().projectLc;
+    const d = String(lc.outcomeRefusal);
+    // TWO FACTS, SO TWO BOXES. The project and its brief are saved AND the
+    // documents were not set up; neither is a suffix to the other (v3.16.1).
+    ok('...and the refusal is a SECOND fact, not a suffix to the first',
       /not set up/.test(d) && /not on this computer/.test(d), d);
     ok('...naming where to finish the job', /Agent memory/.test(d));
+    eq('...while the success half still says what DID happen',
+      lc.outcomeDetail, 'The project and its brief are saved.');
+    const done = renderProjectCreated(lc);
+    ok('...and both are painted, unfolded, one above the other',
+      done.indexOf('tx-status-success') < done.indexOf('tx-status-attention')
+      && !done.includes('<details'), done.slice(0, 700));
   }
 }
 {
@@ -868,14 +1174,18 @@ section('S6 -- The actions: what the view actually sends');
   ok('the PUTs come AFTER the create, because they are documents IN a project that has to exist',
     __calls().fetch.findIndex((c) => c.opts && c.opts.method === 'POST')
       < __calls().fetch.findIndex((c) => c.opts && c.opts.method === 'PUT'));
-  ok('the banner reports the import',
-    /2 documents imported/.test(String((__state().banner || {}).text)),
-    String((__state().banner || {}).text));
-  // AN IMPORT THAT LANDS ON A SEEDED SLUG REPLACES THE SEED, and the banner
-  // says which — otherwise the owner is left to work out which of the two won.
-  ok('...and says which skeleton an import replaced',
-    /1 skeleton replaced by an imported file \(architecture\.md\)/
-      .test(String((__state().banner || {}).text)),
+  ok('the outcome reports the import',
+    /2 files you chose was saved|2 files you chose were saved/
+      .test(String((__state().projectLc || {}).outcomeDetail)),
+    String((__state().projectLc || {}).outcomeDetail));
+  // AN IMPORT THAT LANDS ON A SEEDED SLUG REPLACES THE SEED. The BANNER used
+  // to say which; the create outcome is a card now, and what it reports is
+  // what the server did plus what this view PUT. Which skeleton an import
+  // replaced is a fact the Foundations table itself shows — every row carries
+  // its own state word — and is recorded here as deliberately NOT restated.
+  ok('...and the seeded count is the server\u2019s own, so a replacement cannot '
+    + 'inflate it',
+  /4 skeleton documents seeded/.test(String((__state().projectLc || {}).outcomeDetail)),
     String((__state().banner || {}).text));
 }
 {
@@ -895,9 +1205,10 @@ section('S6 -- The actions: what the view actually sends');
     ? { throwStatus: 400, message: 'no_manifest' }
     : { ok: true, seeded: [] }));
   await runProjectAction();
-  ok('the create still succeeded', __state().projectLc === null && !!__state().banner);
+  ok('the create still succeeded', (__state().projectLc || {}).mode === 'created',
+    JSON.stringify(__state().projectLc));
   {
-    const d = String((__state().banner || {}).detail);
+    const d = String((__state().projectLc || {}).outcomeRefusal);
     ok('...and the failed document is named on the second line',
       /a\.md/.test(d) && /could not be saved/.test(d), d);
   }

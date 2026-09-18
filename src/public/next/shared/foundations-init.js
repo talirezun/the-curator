@@ -193,7 +193,17 @@ export function freshChooser(opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
   return {
     // 'curator' | 'repo' | 'later'
-    ownership: o.allowLater === true ? 'curator' : 'curator',
+    //
+    // ── THE DEFAULT IS THE ARM THAT WRITES NOTHING (maintainer's call, Q1) ──
+    // On the create form the fail-safe direction decides it: the arm that
+    // seeds four documents is not the safe answer on a form somebody has not
+    // read, and `later` is — nothing is written, and the Foundations block
+    // asks the same question again in the place the answer is missing. Where
+    // there IS no third answer (the Memory block, which IS the later), the
+    // default is `curator`: it is the only arm that works with no
+    // preconditions, because mirroring needs a folder on THIS computer at a
+    // path the owner can type.
+    ownership: o.allowLater === true ? 'later' : 'curator',
     allowLater: o.allowLater === true,
     // The repository root, typed. Written straight into state on every
     // keystroke WITHOUT a re-render (the house rule: a render rebuilds the
@@ -470,13 +480,23 @@ export function renderFoundationsChooser(cfg) {
   // arm — two renderers would be the two copies this module exists to avoid.
   const options = c.optionsHidden === true ? '' :
     '<div class="fnd-init-opts" role="group" aria-label="Where this project’s documents live">' +
+      // ── THE OWNER IS NAMED FIRST, AND THE WORD IS "FOLDER" ──────────────
+      // P1-12: a person can start a project here with no agent and no
+      // repository and write the first document by hand — that is a
+      // first-class path, so no line may assume an agent exists, and where
+      // both ways in are named the owner comes first.
+      // P1-9: `resolveRepoRoot` requires only an absolute, reachable
+      // DIRECTORY, so "repository" is a label that turns away everybody whose
+      // documents live in `~/Documents/lumina-docs`. That a git checkout
+      // additionally records the commit is MECHANISM, and it is in the host's
+      // ⓘ where the rest of the mechanism is.
       opt('curator', 'The Curator keeps them',
-        'Seeds four skeleton documents — prompts an agent you ask can fill.') +
-      opt('repo', 'Mirror a repository on this Mac',
-        'Copies chosen files byte for byte and re-checks them against the checkout.') +
+        'Four skeletons with prompts to answer — by you, or by an agent.') +
+      opt('repo', 'Mirror a folder on this Mac',
+        'Copied byte for byte. You edit them in the folder, never here.') +
       (choice.allowLater
         ? opt('later', 'Decide later',
-          'Creates the project with no documents. You can choose from Agent memory.')
+          'Nothing is written now. Foundations asks again when you are ready.')
         : '') +
     '</div>';
 
@@ -498,7 +518,7 @@ function repoArm(id, choice, busy) {
 
   const field =
     '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-root">' +
-      'Repository root on this computer</label>' +
+      'Folder on this Mac</label>' +
     '<div class="fnd-init-row">' +
       '<input class="fnd-init-path" id="' + escapeHtml(id) + '-root" type="text"' +
         ' autocomplete="off" spellcheck="false" placeholder="/Users/you/code/your-project"' +
@@ -520,7 +540,7 @@ function repoArm(id, choice, busy) {
 
   let list = '';
   if (cands && !cands.length) {
-    list = '<div class="fnd-init-note"><span>Nothing matched at that root. The scan looks in ' +
+    list = '<div class="fnd-init-note"><span>Nothing matched in that folder. The scan looks in ' +
       'docs folders and for documents named after a role; a file kept somewhere else can be ' +
       'added by path below.</span></div>';
   } else if (cands) {
@@ -656,18 +676,27 @@ function curatorArm(id, choice, busy) {
       '<span>Seed the four skeletons — Architecture, Decisions, Conventions, Roadmap</span>' +
     '</label>';
 
-  // THE FILE INPUT WEARS THE KIT'S CHROME. A native file button is the one
-  // control in a browser that cannot be styled at all, so it is visually
-  // hidden inside a <label> carrying the button classes — the label IS the
-  // control, keyboard-reachable because a focused input inside a label is
-  // what the browser gives focus to.
+  // ── A REAL BUTTON, AND AN INPUT THAT IS `hidden` (P1-7) ─────────────────
+  //
+  // The first cut wrapped a `.visually-hidden` file input in a <label> wearing
+  // the button classes. That is the pattern this app's own focus work rules
+  // out: a visually-hidden input is STILL FOCUSABLE, so a keyboard user's
+  // focus lands on something invisible while the thing that looks like a
+  // button cannot be focused at all and can never paint `--ring-focus` — the
+  // token that exists precisely because the one state that must be findable
+  // was the hardest thing on the page to find.
+  //
+  // The app's shipped pattern is already correct and is reused verbatim:
+  // `<input type="file" … hidden>` (`hidden`, so it is out of the tab order
+  // entirely) plus a `<button>` whose handler calls `.click()` on it —
+  // views/ingest.js's drop zone. The button carries an id so the host can put
+  // it in its focus-restore table.
   const chooser =
     '<div class="fnd-init-row">' +
-      '<label class="btn btn-secondary btn-xs fnd-init-file">' +
-        '<input type="file" class="visually-hidden" id="' + escapeHtml(id) + '-files"' +
-          ' accept=".md,.txt,text/markdown,text/plain" multiple' + dis + ' />' +
-        '<span>Start from files…</span>' +
-      '</label>' +
+      '<input type="file" id="' + escapeHtml(id) + '-files"' +
+        ' accept=".md,.txt,text/markdown,text/plain" multiple hidden' + dis + ' />' +
+      '<button type="button" class="btn btn-secondary btn-xs fnd-init-file"' +
+        ' id="' + escapeHtml(id) + '-files-btn"' + dis + '>Choose files…</button>' +
       '<span class="fnd-init-file-hint">Optional. Each file becomes one document, read on this ' +
         'computer — nothing is uploaded until you create the project.</span>' +
     '</div>';
@@ -722,6 +751,42 @@ export async function readPickedFile(file, readerImpl) {
   const name = (file && file.name) || 'document.md';
   const size = Number.isFinite(file && file.size) ? file.size : 0;
   const base = { name, size, slug: slugForFilename(name), role: roleForBasename(name) };
+  // ── WHAT KIND OF FILE IT IS, CHECKED BEFORE ANYTHING ELSE (contract §10) ─
+  //
+  // The store mirrors `.md` and `.txt` only, and a foundation is text an agent
+  // reads verbatim — so extracting a PDF would be a TRANSFORMATION, which is
+  // the one thing this tier exists not to do. The refusal therefore names the
+  // two ways forward rather than only the rule: ingest transforms on purpose
+  // and is the right tool for a PDF, and an export is the right tool when the
+  // document itself is what must travel.
+  //
+  // It is checked FIRST, before the size, because kind is the more specific
+  // fact — a 40 MB PDF is not "too large", it is the wrong kind — and it is
+  // checked at all, rather than left to the `accept` attribute, because every
+  // file dialog on every platform offers an "All files" escape from it.
+  //
+  // `refusal` is a COMPLETE SENTENCE and `error` is a fragment, and the
+  // difference is not stylistic: the hosts render `error` inside a row (as
+  // "<name> <error>.") and `refusal` unfolded where the picker is. A file
+  // refused on kind never becomes a row at all.
+  const ext = /\.([a-z0-9]+)$/i.exec(String(name));
+  const kind = ext ? ext[1].toLowerCase() : '';
+  if (kind === 'pdf') {
+    return {
+      ...base, title: titleFromText('', name), text: '', error: 'is a PDF — not read',
+      refusal: 'Documents are kept word for word; a PDF needs converting. Ingest it into the '
+        + 'wiki, or export it as Markdown first.',
+    };
+  }
+  if (kind !== 'md' && kind !== 'txt' && kind !== 'markdown' && kind !== 'mdown') {
+    return {
+      ...base, title: titleFromText('', name), text: '',
+      error: 'is not Markdown or text — not read',
+      refusal: 'Documents are kept word for word, so they have to be Markdown or text. '
+        + shortFileName(name) + ' is neither. Ingest it into the wiki instead, or export it '
+        + 'as Markdown first.',
+    };
+  }
   if (size > MAX_FOUNDATION_BYTES) {
     // ── BOTH NUMBERS, AND IN BYTES ────────────────────────────────────────
     // The KB figures alone are useless at the boundary: a file one byte over
@@ -735,6 +800,7 @@ export async function readPickedFile(file, readerImpl) {
       error: 'is ' + size.toLocaleString('en-US') + ' bytes (' + formatBytes(size)
         + '), over the ' + MAX_FOUNDATION_BYTES.toLocaleString('en-US') + '-byte ('
         + formatBytes(MAX_FOUNDATION_BYTES) + ') per-document cap — not read',
+      refusal: null,
     };
   }
   if (!base.slug) {
@@ -743,15 +809,36 @@ export async function readPickedFile(file, readerImpl) {
       title: titleFromText('', name),
       text: '',
       error: 'has no usable file name — rename it to lowercase letters, digits and hyphens',
+      refusal: null,
     };
   }
   let text = '';
   try {
     text = await (typeof readerImpl === 'function' ? readerImpl(file) : readFileAsText(file));
   } catch (err) {
-    return { ...base, title: titleFromText('', name), text: '', error: (err && err.message) || 'could not be read' };
+    return {
+      ...base, title: titleFromText('', name), text: '',
+      error: (err && err.message) || 'could not be read', refusal: null,
+    };
   }
-  return { ...base, title: titleFromText(text, name), text: String(text == null ? '' : text), error: null };
+  return {
+    ...base, title: titleFromText(text, name), text: String(text == null ? '' : text),
+    error: null, refusal: null,
+  };
+}
+
+/**
+ * A FILENAME, SHORT ENOUGH TO PUT IN A SENTENCE.
+ *
+ * The name is the owner's own and every host escapes it on its way into
+ * markup, so this is not an escaping function — it is a LENGTH bound, because
+ * a 4 KB filename pasted into a file dialog would otherwise become the whole
+ * refusal panel.
+ */
+function shortFileName(name) {
+  const s = String(name == null ? '' : name);
+  const base = s.slice(s.lastIndexOf('/') + 1);
+  return base.length > 60 ? base.slice(0, 57) + '…' : (base || 'That file');
 }
 
 /** UTF-8, through the browser's own reader. Wrapped so the caller sees a Promise. */
@@ -991,6 +1078,15 @@ export function bindFoundationsChooser(cfg) {
   }
 
   const fileEl = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-files') : null;
+  // THE BUTTON OPENS THE HIDDEN INPUT (P1-7). One line, and it is the whole
+  // reason the input may be `hidden` rather than merely invisible.
+  const fileBtn = typeof doc.getElementById === 'function'
+    ? doc.getElementById(id + '-files-btn') : null;
+  if (fileBtn && fileEl) {
+    fileBtn.addEventListener('click', () => {
+      if (typeof fileEl.click === 'function') fileEl.click();
+    });
+  }
   if (fileEl) {
     fileEl.addEventListener('change', () => {
       const files = fileEl.files ? Array.prototype.slice.call(fileEl.files) : [];
@@ -998,6 +1094,14 @@ export function bindFoundationsChooser(cfg) {
       choice.importError = null;
       Promise.all(files.map((f) => readPickedFile(f, c.readerImpl))).then((read) => {
         for (const r of read) {
+          // ── A KIND REFUSAL IS A SENTENCE, NOT A ROW (contract §10) ──────
+          // A PDF was never a candidate document, so listing it beside four
+          // real ones as a row with a reason in a narrow cell says the wrong
+          // thing about what happened: nothing was read, and the sentence
+          // that says why belongs where the picker is. A SIZE refusal is
+          // still a row — that file WAS the right kind, and one fact about
+          // it disqualified it.
+          if (r.refusal) { choice.importError = r.refusal; continue; }
           // A REFUSED FILE IS STILL LISTED, with its reason on its own row:
           // a file that silently did not arrive is the worst outcome for
           // somebody who picked six and got five.

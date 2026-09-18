@@ -1749,6 +1749,7 @@ function renderIngestForm() {
       renderDropZoneHtml({ disabled: state.submitting, multiHint: true }) +
       (state.file ? renderSelectedFileHtml(state.file) : '') +
       (state.fileError ? '<div class="ing-field-error">' + escapeHtml(state.fileError) + '</div>' : '') +
+      verbatimPointerHtml(state.file) +
     '</div>' +
     // sparkles marks a token-spending action (design rule) — ingest always
     // calls an LLM. The design pairs sparkles with a cost figure in the
@@ -1856,6 +1857,53 @@ function renderSelectedFileHtml(file) {
     '<div class="ing-file-selected">' +
       '<span class="ing-file-name">' + name + '</span>' +
       removeBtn +
+    '</div>'
+  );
+}
+
+/**
+ * INGEST versus ADD — the fork this screen has never asked about (P2-7).
+ *
+ * ── THE SILENT WRONG OUTCOME ────────────────────────────────────────────
+ * *Ingest* sends a source through the LLM, writes entity / concept / summary
+ * pages, CHARGES for it, and files the original in gitignored `raw/` — the
+ * original is never the product. *Add as a project document* keeps a file
+ * verbatim, replaces it whole, never transforms it — the original IS the
+ * product. This drop zone accepts `.txt`, `.md` and `.pdf` and asks only which
+ * domain, so a coding user who drops `architecture.md` here gets the first
+ * behaviour when they wanted the second, pays for it, and ends with no
+ * verbatim copy anywhere an agent can read.
+ *
+ * ── WHAT THIS IS, AND WHAT IT IS NOT ────────────────────────────────────
+ * ONE POINTER, and deliberately not the fork itself. The full fork — a
+ * segmented control in the right column, the estimate and the `.btn-ai` chrome
+ * suppressed on the arm that spends nothing, a project picker, N writes — is a
+ * work package of its own on this file, which is the app's MONEY surface and
+ * the one where the suite pins the cost path hardest. Bolting it onto a
+ * release whose tier-0 write routes are still new is how a money screen gets a
+ * regression. So this release converts the silent billed wrong outcome into a
+ * VISIBLE CHOICE and leaves the choice's other arm one navigation away.
+ *
+ * ── THE CONDITION ───────────────────────────────────────────────────────
+ * Only when a file is chosen AND its name ends `.md` or `.txt`: those are the
+ * two extensions tier 0 will keep verbatim (the store's own `SOURCE_EXT_RE`),
+ * so on a PDF the pointer would be advice that cannot be taken — a control
+ * whose only outcome is a refusal, one tier down (v3.16.1). The extension is
+ * read off the NAME, which is all this form has before a read.
+ *
+ * It is a `.tx-note` in flow, never folded: the consequence of ignoring it is
+ * a charge, and a cost behind a chevron is not a cost that was disclosed.
+ *
+ * Pure over the file, so the suite drives both arms without a DOM.
+ */
+function verbatimPointerHtml(file) {
+  const name = file && file.name != null ? String(file.name) : '';
+  if (!/\.(md|txt)$/i.test(name)) return '';
+  return (
+    '<div class="tx-note ing-verbatim-note">' + icon('alertCircle', 13) +
+      '<span>Wanted this kept word for word? Add it as a project document instead.</span>' +
+      '<button type="button" class="btn btn-ghost btn-xs" id="ing-open-memory">' +
+        'Open Agent memory</button>' +
     '</div>'
   );
 }
@@ -2781,6 +2829,14 @@ function wireListeners() {
   // like every other button here, not a second disabled-state check.
   const fileRemoveBtn = document.getElementById('ing-file-remove-btn');
   if (fileRemoveBtn) fileRemoveBtn.addEventListener('click', () => clearSelectedFile(myMountToken));
+
+  // ── THE VERBATIM POINTER (v3.61.0, P2-7) ────────────────────────────────
+  // A POINTER, never a second write path: it leaves for the screen where a
+  // project document is added, and nothing about the paid path moves. Present
+  // only while a `.md`/`.txt` file is chosen, so a plain query-and-wire is
+  // right here for the reason the control above states.
+  const openMemoryBtn = document.getElementById('ing-open-memory');
+  if (openMemoryBtn) openMemoryBtn.addEventListener('click', () => navigate('memory'));
 
   const submitBtn = document.getElementById('ing-submit-btn');
   if (submitBtn) submitBtn.addEventListener('click', () => runIngest(myMountToken, false));

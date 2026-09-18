@@ -832,9 +832,75 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // the text, its title, its role. `authoredBy` is ABSENT — the route stamps
   // it — so there is no field here through which a browser could forge an
   // agent's provenance.
+  // ── THE FOUNDATIONS HEAD IS A FLEX ROW, AND ITS FLOOR IS MEASURED ───────
+//
+// v3.61.0 replaced an absolutely-positioned control slot plus a
+// `padding-right: 150px` reserve on the summary line with a wrapping flex row:
+// the block needs up to THREE controls there now, and a px reserve for a
+// variable number of them goes wrong SILENTLY — the summary text runs under
+// the buttons and nothing in any suite can see it.
+//
+// THE FLOOR IS THE PART THAT WAS WRONG THE FIRST TIME, and it was found in the
+// browser, not here: at `flex: 1 1 320px` the controls still fitted beside the
+// fold at a 589px block, squeezing it to 328px — and the six-column mirrored
+// table inside it then overflowed by 139px, scrolling horizontally where it
+// had not before. The fold shrinking to its stated floor is the flexbox
+// contract working as written; the floor was the mistake. 480px is the width
+// below which this fold's own content stops being comfortable, so the row
+// wraps under ~771px and the fold takes the whole width there.
+{
+  const head = /\.mem-fnd-row\s*\{([^}]*)\}/.exec(memCss);
+  ok('memory.css: `.mem-fnd-row` is a flex row', !!head && /display:\s*flex/.test(head[1]),
+    head ? head[1] : 'rule not found');
+  ok('...that WRAPS, so the controls take their own line rather than sitting on '
+    + 'top of the summary at a narrow container',
+  !!head && /flex-wrap:\s*wrap/.test(head[1]), head ? head[1] : '');
+  ok('...and the 150px reserve on the summary line is GONE — a px reserve for a '
+    + 'variable control count is a literal that fails silently',
+  !/\.mem-fnd-row\s*>\s*\.mem-fold\s*>\s*\.mem-fold-summary\s*\{[^}]*padding-right:\s*150px/
+    .test(memCss));
+  ok('...and so is the absolutely-positioned single slot',
+    !/\.mem-fnd-refresh\s*\{[^}]*position:\s*absolute/.test(memCss));
+  {
+    const fold = /\.mem-fnd-row\s*>\s*\.mem-fold\s*\{([^}]*)\}/.exec(memCss);
+    ok('the fold is the flexible half', !!fold && /flex:/.test(fold[1]), fold ? fold[1] : 'no rule');
+    const basis = fold && /flex:\s*1\s+1\s+(\d+)px/.exec(fold[1]);
+    ok('...with a measured floor, not the 320px one that let a 589px block '
+      + 'squeeze the fold to 328 and overflow the mirrored table by 139px',
+    !!basis && Number(basis[1]) >= 480, basis ? basis[1] + 'px' : 'no basis');
+    ok('...and `min-width: 0`, without which a long summary refuses to wrap and '
+      + 'pushes the controls off the card',
+    !!fold && /min-width:\s*0/.test(fold[1]), fold ? fold[1] : '');
+  }
+  ok('the control row collapses when it is empty, so a state with no controls '
+    + 'pays no gap for them',
+  /\.mem-fnd-head-controls:empty\s*\{[^}]*display:\s*none/.test(memCss));
+}
+
+// ── SCANNED IN THE REQUEST BODIES, NOT IN THE WHOLE FILE ──────────────
+  // The original form of this assertion forbade `authoredBy` ANYWHERE in the
+  // view, which went red the moment the curator-owned table started READING
+  // that field to say "written by you" / "written by an agent" — a read of a
+  // fact the server computed, which is the opposite of the hazard. A guard
+  // that fires on the right word in the wrong place is a guard that gets
+  // relaxed, so it is narrowed to the thing it is actually about: nothing this
+  // view SENDS may carry a provenance field.
   ok('...the PUT sending exactly text, title and role, and no provenance field',
-    /body: JSON\.stringify\(\{ text: e\.text \|\| '', title: e\.title \|\| '', role: e\.role \|\| 'other' \}\)/.test(memCode)
-    && !/authoredBy|commissioned_by_owner|instructedBy/.test(memCode));
+    /body: JSON\.stringify\(\{ text: e\.text \|\| '', title: e\.title \|\| '', role: e\.role \|\| 'other' \}\)/.test(memCode));
+  {
+    const bodies = memCode.match(/body:\s*JSON\.stringify\(([\s\S]*?)\)\,?\n/g) || [];
+    ok('CONTROL: the body scan found every write this view makes', bodies.length >= 4,
+      bodies.length + ' request bodies');
+    const forged = bodies.filter((b) => /authoredBy|commissioned_by_owner|instructedBy/.test(b));
+    ok('...and NONE of them carries a provenance field a browser could forge',
+      forged.length === 0, JSON.stringify(forged));
+    // AND THE READ SIDE IS ALLOWED, explicitly: the State column asks
+    // `authoredBy.kind` whether a curator-owned document was written by the
+    // owner or by an agent they commissioned, which is a fact the STORE
+    // stamped and the row's only variable.
+    ok('CONTROL: the view does read the stamped provenance, which is why the '
+      + 'scan above is scoped to bodies', /d\.authoredBy && d\.authoredBy\.kind/.test(memCode));
+  }
   ok('...and the DELETE sending the slug as its own typed confirmation, which the route re-checks',
     /body: JSON\.stringify\(\{ confirm: slug \}\)/.test(memCode));
   ok('...and NOT ONE of the five names a scope, a machine or a journal',
