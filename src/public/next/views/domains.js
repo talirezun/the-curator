@@ -50,7 +50,7 @@ import * as shell from '../app.js';
 // measured. The view's job here is the button and the clipboard, nothing else:
 // composing the words in two places is how two model-read instruction sets
 // start disagreeing.
-import { composeAgentInstructions, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
 
 // The ONE /next Markdown renderer (next/shared/markdown.js). This view and
 // views/chat.js are both callers of the same copy — see that module's header
@@ -4171,7 +4171,7 @@ async function copyProjectAgentInstructions(project) {
 async function copyForProject(project, kind) {
   const domain = state.activeSlug;
   const text = kind === 'agent'
-    ? composeAgentInstructions({ domain, project })
+    ? composeAgentInstructionsFull({ domain, project })
     : domain + '/' + project;
   const token = myMountToken;
   let ok = false;

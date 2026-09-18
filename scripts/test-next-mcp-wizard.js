@@ -87,7 +87,7 @@ function assertStrippedSane(stripped, label, mustContain) {
 const wizCode = assertStrippedSane(stripComments(wiz), 'mcp-wizard.js',
   ["async function getJson(url, init)", "export function openMcpWizard(opts)", "role=\"dialog\""]);
 const settingsCode = assertStrippedSane(stripComments(settings), 'settings.js',
-  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty-two tools"]);
+  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty-four tools"]);
 // The second canary was `rgba(5,5,10,0.68)` — the scrim darkness, inlined
 // here because `--scrim` was an undefined name baselined at exactly one
 // reference. All five /next overlays now read `--modal-scrim`, a real
@@ -776,10 +776,10 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   // earlier edit changed the label to "twenty" while the regex still tested
   // "eighteen", so the assertion reported a number it was not checking — a
   // guard that lies about what it verified is worse than no guard.
-  for (const phrase of ['twenty-two tools', 'sixteen that read', 'six that write']) {
+  for (const phrase of ['twenty-four tools', 'seventeen that read', 'seven that write']) {
     ok(new RegExp(phrase, 'i').test(settingsCode), `settings.js says "${phrase}"`);
   }
-  ok(!/seventeen tools/i.test(settingsCode), 'the old, wrong "seventeen tools" claim is gone');
+  ok(!/twenty-two tools/i.test(settingsCode), 'the old, wrong "twenty-two tools" claim is gone');
 
   // REMOVED in v3.41.0, on this block's own instruction. Three assertions
   // pinned the same tool count in src/public/index.html, which stated it

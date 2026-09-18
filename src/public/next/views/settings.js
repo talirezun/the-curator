@@ -272,8 +272,8 @@ const SECTION_INFO = {
   },
   mcp: {
     html: true,
-    text: 'Exposes your graph to any MCP client — twenty-two tools: sixteen that read your wiki, '
-        + 'and six that write to it (compiling a conversation into pages, saving an agent\u2019s '
+    text: 'Exposes your graph to any MCP client — twenty-four tools: seventeen that read your wiki, '
+        + 'and seven that write to it (compiling a conversation into pages, saving an agent\u2019s '
         + 'working state or a project\u2019s standing brief, and fixing health issues) without leaving Claude. Write tools refuse '
         + 'on <code class="mono">shared-*</code> mirrors by design. The Curator does not need '
         + 'to be running: the bridge is a separate process the client launches on demand.',

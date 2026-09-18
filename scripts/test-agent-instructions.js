@@ -258,7 +258,7 @@ const navigator = { clipboard: { writeText: async (t) => {
 } } };
 `;
   return new Function(
-    'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
+    'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER',
     PREAMBLE +
     constSource(DOMAINS_SRC, 'MARKER_INFO_TEXT') + '\n' +
     constSource(DOMAINS_SRC, 'AGENT_INFO_TEXT') + '\n' +
@@ -274,7 +274,7 @@ const navigator = { clipboard: { writeText: async (t) => {
        __setDocument: (d) => { document = d; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, COPY_SUCCESS_BANNER);
+  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER);
 })();
 
 const ROW = (over) => ({
@@ -334,9 +334,16 @@ function btn(datasetKey, value) {
 
   agentBtn.click();
   await new Promise((r) => setTimeout(r, 0));
-  eq('clicking it puts EXACTLY the helper\'s text on the clipboard',
+  eq('clicking it puts EXACTLY the helper\'s FULL text on the clipboard',
     domBox.__calls().clipboard[0],
-    composeAgentInstructions({ domain: 'alpha', project: 'lumina' }));
+    composeAgentInstructionsFull({ domain: 'alpha', project: 'lumina' }));
+  // v3.59.0: the pinned block must still be what a user pastes FIRST -- the
+  // foundations paragraph is an addendum, never a replacement.
+  ok('...starting with the pinned block, byte for byte',
+    domBox.__calls().clipboard[0].startsWith(
+      composeAgentInstructions({ domain: 'alpha', project: 'lumina' })));
+  ok('...and carrying the foundations paragraph too',
+    domBox.__calls().clipboard[0].includes(TEMPLATE_FOUNDATIONS));
   eq('...the outcome is recorded as an agent copy', domBox.__state().copied.kind, 'agent');
   eq('...for the project that was clicked', domBox.__state().copied.project, 'lumina');
   eq('...and succeeded', domBox.__state().copied.ok, true);
@@ -364,8 +371,11 @@ function btn(datasetKey, value) {
   domBox.__setClipboard(false);
   await domBox.copyProjectAgentInstructions('lumina');
   eq('a refusal is recorded as a failure', domBox.__state().copied.ok, false);
-  eq('...and keeps the whole block', domBox.__state().copied.text,
-    composeAgentInstructions({ domain: 'alpha', project: 'lumina' }));
+  eq('...and keeps the whole FULL block', domBox.__state().copied.text,
+    composeAgentInstructionsFull({ domain: 'alpha', project: 'lumina' }));
+  ok('...still starting with the pinned block, byte for byte',
+    domBox.__state().copied.text.startsWith(
+      composeAgentInstructions({ domain: 'alpha', project: 'lumina' })));
   const painted = domBox.renderCopyOutcome();
   ok('...which is printed for the user to select', painted.includes('dm-proj-copy-fallback'));
   ok('...containing the real text', painted.includes('save_working_state'));
@@ -505,7 +515,7 @@ const navigator = { clipboard: { writeText: async (t) => {
 } } };
 `;
   return new Function(
-    'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
+    'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER',
     PREAMBLE +
     MEM_FNS.map((n) => {
       const src = functionSource(MEMORY_SRC, n);
@@ -520,7 +530,7 @@ const navigator = { clipboard: { writeText: async (t) => {
        __main: () => mainHtml,
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, COPY_SUCCESS_BANNER);
+  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER);
 })();
 
 const memState = (over) => ({
@@ -580,9 +590,14 @@ const memState = (over) => ({
   memBox.wire(1);
   b.click();
   await new Promise((r) => setTimeout(r, 0));
-  eq('clicking it copies the helper\'s text for the project on screen',
+  eq('clicking it copies the helper\'s FULL text for the project on screen',
     memBox.__calls().clipboard[0],
-    composeAgentInstructions({ domain: 'acme', project: 'lumina' }));
+    composeAgentInstructionsFull({ domain: 'acme', project: 'lumina' }));
+  ok('...starting with the pinned block, byte for byte',
+    memBox.__calls().clipboard[0].startsWith(
+      composeAgentInstructions({ domain: 'acme', project: 'lumina' })));
+  ok('...and carrying the foundations paragraph too',
+    memBox.__calls().clipboard[0].includes(TEMPLATE_FOUNDATIONS));
   eq('...stamped with the domain it was pressed on', memBox.__state().copied.domain, 'acme');
   eq('...and the project', memBox.__state().copied.project, 'lumina');
   ok('...and the view repainted', memBox.__calls().render >= 1);

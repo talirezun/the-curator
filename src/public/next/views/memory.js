@@ -184,7 +184,7 @@ import { freshnessStep, freshnessTier } from '../shared/age.js';
 // is frozen. This screen offers it because this screen is where someone ends
 // up when they are wondering why a project has no state: the answer is often
 // that the agent's harness never activated the skill, and this is the fix.
-import { composeAgentInstructions, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -2600,7 +2600,7 @@ function renderCopyOutcome() {
 async function copyAgentInstructions(token) {
   const domain = state.activeDomain;
   const project = state.activeProject;
-  const text = composeAgentInstructions({ domain, project });
+  const text = composeAgentInstructionsFull({ domain, project });
   let ok = false;
   try {
     await navigator.clipboard.writeText(text);

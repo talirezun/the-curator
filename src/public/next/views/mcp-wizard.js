@@ -129,9 +129,9 @@ export const MCP_GUIDE_URL = docsUrl('settings.mcp-bridge');
 // creates is covered by scripts/test-next-mcp-wizard.js, which imports the
 // real tool table and the real refuseIfReadonly call sites and fails if
 // either number moves without this constant moving with it.
-const TOOL_TOTAL = 22;
-const TOOL_WRITE = 6;
-const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 16
+const TOOL_TOTAL = 24;
+const TOOL_WRITE = 7;
+const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 17
 
 // ── State ────────────────────────────────────────────────────────────────
 
