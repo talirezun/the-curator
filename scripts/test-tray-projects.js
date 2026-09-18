@@ -1022,5 +1022,112 @@ section('§9 cross-file pins — duplicated on purpose, asserted against the ori
     'a store that does not report a total says so with null — "the store did not say" is a different fact from a number');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§10 the stale-foundations mark on the project header (v3.60.0)');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Tier 0 is the set of canonical documents that travel with a project. The one
+// thing that can go wrong with a MIRROR is that the repository has moved on —
+// the copy an agent will read is no longer the document in the checkout — and
+// that is a fact about the project the menu's header names, so it rides on the
+// header's own second line.
+//
+// THREE PROPERTIES, and they are the whole feature: the word appears ONCE, it
+// is clipped inside the line's existing budget, and it is ABSENT when nothing
+// is stale. A `notices` entry is NOT added: the widget's standing rule is that
+// it must never become a quarter of the screen (v3.37.0, v3.51.0), and a
+// notice is a whole line that pushes every row down.
+{
+  const base = (foundations) => ({
+    ok: true,
+    scopes: [{
+      domain: 'workshop', project: 'lumina', projectLabel: 'lumina', projectsInDomain: 1,
+      scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3',
+      writtenAt: ago(720), ageSource: 'agent',
+      harness: 'claude-code', model: 'opus-4-6', headline: 'grouped the tray rows by project',
+      foundations,
+    }],
+    lastSave: {
+      domain: 'workshop', project: 'lumina', projectLabel: 'lumina', projectsInDomain: 1,
+      scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3',
+      writtenAt: ago(720), ageSource: 'agent',
+      harness: 'claude-code', model: 'opus-4-6',
+      foundations,
+    },
+  });
+  const lineOf = (model) => {
+    const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(model, NOOPS));
+    const item = flat.find((i) => i.id === MENU.ID_HEADLINE_WHERE);
+    return item ? item.label.trim() : null;
+  };
+
+  // FRESH — and the control that matters, because a mark that is always there
+  // is not a mark. Run FIRST so the assertions below are a difference.
+  const fresh = M.buildTrayModel(base({ present: true, count: 4, staleCount: 0, unreachableCount: 0 }), { now: NOW });
+  const freshLine = lineOf(fresh);
+  ok(freshLine === 'claude-code · opus-4', `CONTROL: fresh foundations leave the line untouched (${freshLine})`);
+  // Over the RENDERED strings only. The row still carries its `foundations`
+  // object (whose field is called `staleCount`), and it should: a later surface
+  // that wants to draw stale and unreachable apart needs it. What must be
+  // absent is the WORD, on anything a person reads.
+  const freshText = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(fresh, NOOPS))
+    .map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join(' ')).join(' ');
+  ok(!/stale/i.test(freshText), '…and the word "stale" appears on nothing a person reads');
+
+  // THREE STALE.
+  const stale = M.buildTrayModel(base({ present: true, count: 4, staleCount: 3, unreachableCount: 0 }), { now: NOW });
+  const staleLine = lineOf(stale);
+  ok(/3 docs stale$/.test(staleLine), `the mark lands on the header's second line (${staleLine})`);
+  ok((staleLine.match(/docs stale/g) || []).length === 1, '…exactly once');
+  ok(staleLine.startsWith('claude-code'), '…after the harness, which keeps its place');
+  ok(stale.notices.every((n) => !/stale/.test(String(n && n.message || n))),
+    '…and NOT as a notice: a widget never spends a whole line on three words');
+
+  // ONE is singular. A count that reads "1 docs stale" is the tell that nobody
+  // rendered it.
+  const one = M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 0 }), { now: NOW });
+  ok(/· 1 doc stale$/.test(lineOf(one)), `one stale document is "1 doc stale" (${lineOf(one)})`);
+
+  // UNREACHABLE COUNTS TOO. "the source has changed" and "the source could not
+  // be read" are different facts; what they share is the one this line has room
+  // for — the stored copy is NOT KNOWN to be current.
+  const unreachable = M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 2 }), { now: NOW });
+  ok(/· 3 docs stale$/.test(lineOf(unreachable)),
+    `a stale one and two unreachable ones read as 3 (${lineOf(unreachable)})`);
+
+  // THE SECOND ARM. The headline is built from `lastSave` when the store
+  // supplies one and from the newest ROW when it does not — and a summary
+  // without a `lastSave` is not hypothetical, it is what an older producer
+  // sends. The mark must survive that path, which it can only do if the counts
+  // are carried onto the row rather than read off `lastSave` alone.
+  const noLastSave = base({ present: true, count: 4, staleCount: 2, unreachableCount: 0 });
+  delete noLastSave.lastSave;
+  ok(/· 2 docs stale$/.test(lineOf(M.buildTrayModel(noLastSave, { now: NOW }))),
+    `the mark survives the rows[0] fallback arm (${lineOf(M.buildTrayModel(noLastSave, { now: NOW }))})`);
+
+  // NO FOUNDATIONS AT ALL — a project with no tier 0, and a producer too old to
+  // report one. Both must be silent rather than "0 docs stale".
+  ok(lineOf(M.buildTrayModel(base(null), { now: NOW })) === 'claude-code · opus-4',
+    'a project with no foundations says nothing');
+  ok(lineOf(M.buildTrayModel(base(undefined), { now: NOW })) === 'claude-code · opus-4',
+    '…and so does a summary from a producer that does not report them');
+
+  // THE BUDGET. A long harness plus a long model plus the mark must still fit
+  // the line's own cap, and the MARK is what survives — it is the tail, and the
+  // tail is never the thing cut (the ordering `headlineTextFor` settled for the
+  // age, for the same reason).
+  const long = base({ present: true, count: 9, staleCount: 9, unreachableCount: 0 });
+  long.scopes[0].harness = 'a-harness-with-an-extremely-long-name-indeed';
+  long.lastSave.harness = long.scopes[0].harness;
+  long.scopes[0].model = 'some-vendor/an-extremely-long-model-name-4-turbo';
+  long.lastSave.model = long.scopes[0].model;
+  const longLine = lineOf(M.buildTrayModel(long, { now: NOW }));
+  ok(longLine.length <= M.WHERE_LABEL_CHARS,
+    `the composed line stays inside its budget (${longLine.length} <= ${M.WHERE_LABEL_CHARS})`);
+  ok(/9 docs stale$/.test(longLine), `…and the MARK is what survives the clip (${longLine})`);
+  ok(!/stale…|stal…|doc…|docs…/.test(longLine),
+    '…never a half-cut mark, which would read as a different fact');
+}
+
 console.log(`\n${failed === 0 ? '✓' : '✗'} test-tray-projects: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

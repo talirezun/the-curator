@@ -177,13 +177,23 @@ import { formatModelSummary } from '../shared/model-summary.js';
 // carrier of the defect renderViewHeader removes: ~3,620 characters of static
 // prose, a paragraph of it directly under the <h1> of four of the five
 // sections. The header component has no parameter that can put it back.
-import { renderViewHeader } from '../shared/text.js';
+// `renderReadout` joins it for the tool map's two session readings: they are
+// INSTRUMENTS (a label and a figure), which is the one role that component
+// exists for, and its `.tx-readout-value` is the element the age clock writes
+// into — the same target views/memory.js's own clock uses.
+import { renderViewHeader, renderReadout } from '../shared/text.js';
 // Every link out of this screen into the user documentation. A key, never a
 // path: `docsUrl`/`docsLinkHtml` THROW on an unknown key, and
 // scripts/test-docs-links.js reads the real markdown in docs/ and reds on a
 // heading that no longer matches — so a fold's "Read more in the guide"
 // cannot quietly start landing at the top of a page.
 import { docsLinkHtml } from '../shared/docs-links.js';
+// The ONE age vocabulary and the ONE freshness scale (shared/age.js +
+// shared/freshness.css). The tool map paints a dot and a WORD beside it, and
+// the reason both come from here rather than from a table of this view's own
+// is written at the top of age.js: a second threshold table is how a mark
+// comes to say "today" while the words next to it say "1 week ago".
+import { formatAge, freshnessTier } from '../shared/age.js';
 // The design system's own progress component. REUSED rather than replaced by a
 // new linear bar: it refuses to fill a phase that reports nothing, it carries
 // the liveness cue during a long download, and its reduced-motion behaviour is
@@ -1017,6 +1027,19 @@ function freshState() {
     defaultDomainInfo: null, // { defaultDomain, domains }
     defaultDomainSaving: false,
 
+    // ── The tool map (block ③) ───────────────────────────────────────────
+    // GET /api/mcp/usage. A SEPARATE field from `state.mcp` and a separately
+    // tolerated failure: the bridge's own status must still render when the
+    // call log cannot be read, because "which client is connected" is the
+    // question this section exists for and the map is an observation about it.
+    mcpUsage: null,
+    mcpUsageError: null,
+    // What the last payload PAINTS, as one comparable string. The 30s
+    // revalidate repaints the block body only when this moves — see
+    // usageSignature, which names the fields rather than stringifying the
+    // whole envelope, so a field nobody draws cannot cost a repaint.
+    mcpUsageSig: null,
+
     // Health & scan limits
     aiHealth: null,          // { costCeilingTokens, semanticDupeMaxPairs }
     aiHealthError: null,     // section FAILED TO LOAD — renderHealthLimits shows this INSTEAD of the form
@@ -1052,6 +1075,15 @@ let state = freshState();
 // that line running); captured as a local BEFORE any await in every async
 // function, and threaded through rather than re-derived afterward.
 let myMountToken = 0;
+
+// ── THE TOOL MAP'S AGE CLOCK ──────────────────────────────────────────────
+// One second, because the map's freshest reading is "just now" and a widget
+// that says "just now" for five minutes is not a widget. It costs one
+// `Date.parse` per painted reading per second and asks the server nothing —
+// the NETWORK cost is the separate, thirty-second revalidate. Conflating the
+// two is how views/memory.js records the age clock nearly being lost.
+const MCP_AGE_TICK_MS = 1000;
+let ageTimer = null;
 
 // Delay-gated loading indicator for this view's section loads. Built in
 // onEnter, cancelled in the teardown. See shared/loading-gate.js.
@@ -1151,6 +1183,14 @@ registerView('settings', {
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });
+    // ── THE TOOL MAP'S TWO TIMERS, ARMED HERE AND DISARMED IN THE TEARDOWN ──
+    // ONE arm site and one disarm site each, which is the only shape a reader
+    // can check at a glance (views/memory.js states the same rule about its
+    // own clock). The age clock writes `textContent` into named nodes and is a
+    // no-op on every section that carries none; the revalidate is a setTimeout
+    // chain that ends itself the moment this mount stops being current.
+    if (typeof setInterval === 'function') ageTimer = setInterval(tickMcpAges, MCP_AGE_TICK_MS);
+    scheduleUsagePoll(mountToken);
     render(mountToken);
     loadVersion(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));       // cheap, always shown in the sidebar footer
     ensureSectionData(SETTINGS_SECTIONS[0][0], mountToken)                                   // default section — fetched immediately
@@ -1204,6 +1244,15 @@ registerView('settings', {
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
+      // The same rule for the tool map's two: an age clock left armed would go
+      // on walking a DOM that belongs to whatever mounted next, once a second,
+      // for the life of the page — and the revalidate would keep FETCHING for
+      // a view nobody is looking at, which is worse than a wasted tick.
+      if (ageTimer !== null) {
+        if (typeof clearInterval === 'function') clearInterval(ageTimer);
+        ageTimer = null;
+      }
+      stopUsagePoll();
       closeConfirmIfOpen();
       closeMcpWizardIfOpen();
     };
@@ -1614,9 +1663,17 @@ async function loadKeys(token) {
 
 async function loadMcp(token) {
   try {
-    const [cfgRes, ddRes] = await Promise.all([
+    // THE THIRD REQUEST CANNOT FAIL THE OTHER TWO. `fetchMcpUsage` resolves to
+    // a verdict and never rejects, so an install whose bridge has never been
+    // called — or one running a server too old to answer this route at all —
+    // still renders blocks ① and ②. The alternative (a third `fetch` in this
+    // array) would put the whole section behind `state.mcpError` the first
+    // time the route 404s, which is the v3.0.17 "one consumer drops the
+    // section" shape with the blast radius pointed at the wrong block.
+    const [cfgRes, ddRes, usage] = await Promise.all([
       fetch('/api/mcp/config'),
       fetch('/api/config/default-domain'),
+      fetchMcpUsage(),
     ]);
     const cfg = await cfgRes.json();
     const dd = await ddRes.json();
@@ -1624,11 +1681,54 @@ async function loadMcp(token) {
     state.mcp = cfg;
     state.defaultDomainInfo = dd;
     state.mcpError = null;
+    applyUsageVerdict(usage);
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.mcpError = err.message || 'Could not load MCP status.';
   }
   if (isCurrentMount(token)) render(token);
+}
+
+/**
+ * GET /api/mcp/usage, as a VERDICT rather than as a throw.
+ *
+ * `{ok: true, data}` or `{ok: false, error}` — never a rejection, so every
+ * caller (the section load, the 30s revalidate) can be written without a
+ * try/catch and cannot accidentally take the whole section down with it.
+ *
+ * THE SHAPE IS CHECKED, not assumed. A missing route on a server that serves
+ * the SPA fallback answers 200 with `index.html`, which `res.json()` rejects
+ * on — but a future route answering `{}` would not, and `data.tools.map` on
+ * an absent array is the blank-screen class this view's own header warns
+ * about. `Array.isArray(data.tools)` is the whole contract the renderer needs.
+ */
+async function fetchMcpUsage() {
+  try {
+    const res = await fetch('/api/mcp/usage');
+    if (!res.ok) return { ok: false, error: 'The bridge could not read its own call log.' };
+    const data = await res.json();
+    if (!data || typeof data !== 'object' || !Array.isArray(data.tools)) {
+      return { ok: false, error: 'The bridge could not read its own call log.' };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'The bridge could not read its own call log.' };
+  }
+}
+
+/** Commit a verdict to state. Split out so the load path and the revalidate
+ *  path cannot disagree about which fields a failure leaves behind — the
+ *  last good payload is KEPT on a failed refresh (a map that empties itself
+ *  because one poll missed is worse than a map one poll stale). */
+function applyUsageVerdict(verdict) {
+  if (verdict && verdict.ok) {
+    state.mcpUsage = verdict.data;
+    state.mcpUsageSig = usageSignature(verdict.data);
+    state.mcpUsageError = null;
+    return true;
+  }
+  state.mcpUsageError = (verdict && verdict.error) || 'The bridge could not read its own call log.';
+  return false;
 }
 
 async function loadAiHealth(token) {
@@ -8537,7 +8637,13 @@ function renderMcp() {
 
   return (
     settingsBlock(1, 'mcp-connect', 'Connect a client', connectLede, connectBody, connectInfo, '', { html: true }) +
-    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, domainInfo, '', { html: true })
+    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, domainInfo, '', { html: true }) +
+    // ── ③ THE TOOL MAP ─────────────────────────────────────────────────────
+    // THIRD, AND NUMBERED, BECAUSE THE SEQUENCE IS STILL AN ARGUMENT: you
+    // connect a client, you decide where an unqualified write lands, and only
+    // THEN is there anything to observe. A map above either of those would be
+    // an empty grid on every fresh install.
+    renderToolMap()
   );
 }
 
@@ -8557,6 +8663,338 @@ function renderSelfTestResult() {
     '<span class="check-label">Bridge responds</span>' +
     '<span class="check-detail mono">' + escapeHtml(String(r.tool_count)) + ' tools (' + escapeHtml(names) + ') · ' + escapeHtml(domainsNote) + '</span>' +
   '</div></div>';
+}
+
+
+// ══ BLOCK ③ — THE TOOL MAP ═══════════════════════════════════════════════
+//
+// ── WHY A MAP AND NOT A LOG ───────────────────────────────────────────────
+//
+// The bridge is the app's most powerful surface and its least visible: 22-odd
+// tools, all of them used from another window, and until now this screen said
+// nothing whatever about them. A LOG — "get_node 12:04, search_wiki 12:04,
+// save_working_state 12:41" — would answer a question nobody has. What a
+// person actually wants to know is a SHAPE: did the session start by reading
+// the project's context, did it save before it stopped, what has ever written
+// anything, and which of these tools has this install never touched at all.
+// So the surface is a map of the whole catalogue with a freshness reading on
+// each tile, not a tail of the file.
+//
+// ── NEVER SAY "NEVER" ─────────────────────────────────────────────────────
+//
+// A tool with no line in the log has not "never been used". The log began at
+// some point — it is rotated, and it did not exist before this release — so
+// the only true statement is "not used since this log began", with the log's
+// own age printed beside it so the reader can weigh it. This is the same rule
+// working-state.js applies to an absent age: a fact and its ABSENCE must never
+// share a presentation.
+
+/** How often the map re-asks the server while the section is on screen. */
+const USAGE_POLL_MS = 30000;
+
+/**
+ * The revalidate timer's handle, in an OBJECT rather than in a bare `let`.
+ *
+ * Not defensiveness and not style: `scripts/test-next-mcp-tool-map.js` lifts
+ * `scheduleUsagePoll`/`stopUsagePoll` out of this file and EXECUTES them
+ * against a fake clock, and a function extracted on its own cannot carry a
+ * module-level `let` with it. A one-field object can be injected by name, so
+ * the assignments the suite is asserting about are the real ones.
+ */
+const usagePoll = { timer: null };
+
+/**
+ * What the map PAINTS, as one comparable string.
+ *
+ * Named fields rather than `JSON.stringify(data)`: the envelope carries
+ * `logBytes`, which moves on every single call, and a byte count nothing on
+ * screen displays must not be able to cost a repaint. The signature is
+ * therefore exactly the fields a tile, the group counts and the session strip
+ * read — change one of those and the block repaints; change anything else and
+ * it does not.
+ */
+function usageSignature(data) {
+  if (!data || typeof data !== 'object') return 'none';
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const s = data.sessions && typeof data.sessions === 'object' ? data.sessions : {};
+  return JSON.stringify([
+    data.present === true,
+    data.logStartedAt || null,
+    s.lastBootstrapAt || null,
+    s.lastSaveAt || null,
+    tools.map((t) => [t && t.name, t && t.group, t && t.mutates === true,
+      t && t.purpose, t && t.lastUsedAt, t && t.lastOk,
+      t && t.count7d, t && t.countTotal, t && t.refusedTotal]),
+  ]);
+}
+
+/** Whole seconds between an ISO stamp and now, or null when it is not a date.
+ *  Clamped at zero: a stamp from a machine whose clock is ahead is not a
+ *  negative age, and `formatAge` refuses one anyway. */
+function ageSecondsOf(iso, now) {
+  const t = typeof iso === 'string' && iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((now - t) / 1000));
+}
+
+/**
+ * The age of a stamp, as a dot and the words beside it, inside one element
+ * carrying the tick hook.
+ *
+ * THE DOT AND THE WORD ARE CUT ON THE SAME BANDS, because both come from
+ * shared/age.js — `freshnessTier` reads its boundaries off `formatAge`'s own
+ * ladder. That is the whole reason this view does not own a threshold table.
+ *
+ * `data-mcp-age-at` is what `tickMcpAges` walks; `.mcp-age-words` is the one
+ * element it writes into. The dot's CLASS is deliberately not re-derived by
+ * the tick: a tier boundary is exactly where the payload signature moves
+ * anyway on the next revalidate, and a clock that rewrote classes would be one
+ * step away from being a render.
+ */
+function ageMarkHtml(iso, now, extraClass) {
+  const secs = ageSecondsOf(iso, now);
+  const words = secs === null ? null : formatAge(secs);
+  const tier = secs === null ? 'unknown' : freshnessTier(secs);
+  return (
+    '<span class="mcp-age' + (extraClass ? ' ' + extraClass : '') + '"' +
+      (words ? ' data-mcp-age-at="' + escapeHtml(iso) + '"' : '') + '>' +
+      '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
+      '<span class="mcp-age-words">' + escapeHtml(words || 'unknown') + '</span>' +
+    '</span>'
+  );
+}
+
+/**
+ * ONE TILE.
+ *
+ * The chip is on the MUTATORS ONLY, and that is the v3.53.1 rule rather than a
+ * preference: a flag carried by 100% of a list carries nothing. Six or seven
+ * of twenty-four is a minority, and it is the minority a reader deciding what
+ * to let an agent do actually needs.
+ *
+ * A tile is NOT a button and takes no press family: there is nothing to press.
+ * The map is a reading.
+ */
+function renderToolTile(t, logStartedAt, now) {
+  const name = typeof t.name === 'string' ? t.name : '(unnamed)';
+  const purpose = typeof t.purpose === 'string' ? t.purpose : '';
+  const used = typeof t.lastUsedAt === 'string' && t.lastUsedAt;
+  const uses = Number.isFinite(t.count7d) ? t.count7d : 0;
+  const chip = t.mutates === true
+    ? '<span class="mcp-writes-chip">writes</span>' : '';
+  // NOT USED IS NOT NEVER USED. The log's own start age is printed beside the
+  // phrase, because "not used since this log began" means nothing without it —
+  // a log that began four minutes ago says nothing about a user's habits.
+  const meta = used
+    ? ageMarkHtml(t.lastUsedAt, now) +
+      '<span class="mcp-tool-uses">' + escapeHtml(uses + (uses === 1 ? ' use' : ' uses') + ' · 7 days') + '</span>'
+    // ── THE UNUSED READING IS ONE SENTENCE, AND IT WRAPS AS ONE ────────────
+    // FOUND BY LOOKING at the rendered grid: with the phrase and the age as
+    // two siblings the 220px column broke the line after the separator, so a
+    // tile ended with a dangling "·" and opened the next line with a dot and a
+    // date. Built here as the mark followed by ONE text run instead, with the
+    // "· <age>" clause held together by `white-space: nowrap` — so the break,
+    // when it comes, falls inside the sentence where a reader expects one.
+    : '<span class="mcp-age mcp-age-unused"' +
+        (logStartedAt ? ' data-mcp-age-at="' + escapeHtml(logStartedAt) + '"' : '') + '>' +
+        '<span class="fresh-dot fresh-unknown" aria-hidden="true"></span>' +
+        '<span class="mcp-tool-unused-words">not used since this log began' +
+          '<span class="mcp-age-tail"> · <span class="mcp-age-words">' +
+            escapeHtml(formatAge(ageSecondsOf(logStartedAt, now)) || 'unknown') +
+          '</span></span>' +
+        '</span>' +
+      '</span>';
+  return (
+    '<div class="mcp-tool-tile' + (used ? '' : ' mcp-tool-unused') + '">' +
+      '<div class="mcp-tool-hd">' +
+        '<code class="mono mcp-tool-name">' + escapeHtml(name) + '</code>' + chip +
+      '</div>' +
+      (purpose ? '<p class="mcp-tool-purpose">' + escapeHtml(purpose) + '</p>' : '') +
+      '<div class="mcp-tool-meta">' + meta + '</div>' +
+    '</div>'
+  );
+}
+
+/** One group — the caption names it and counts it, the tiles fill the row. */
+function renderToolGroup(label, tools, logStartedAt, now) {
+  if (!tools.length) return '';
+  return (
+    '<div class="mcp-tool-group">' +
+      '<div class="mcp-group-eyebrow">' + escapeHtml(label + ' · ' + tools.length + ' tools') + '</div>' +
+      '<div class="mcp-tool-grid">' +
+        tools.map((t) => renderToolTile(t, logStartedAt, now)).join('') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * The two session readings.
+ *
+ * They are the map's headline and they are not a tile: "when did a session last
+ * bootstrap" and "when did one last save" are the two questions the whole tier
+ * exists to answer, and a reader should not have to find two particular tiles
+ * among twenty-four to answer them. `renderReadout` is the instrument role from
+ * shared/text.js — the same component the Agent-memory screen's own save strip
+ * uses, and its `.tx-readout-value` is the element `tickMcpAges` writes into,
+ * exactly as memory.js's clock does.
+ */
+function renderSessionStrip(sessions, now) {
+  const s = sessions && typeof sessions === 'object' ? sessions : {};
+  const reading = (label, iso) => {
+    const secs = ageSecondsOf(iso, now);
+    const words = secs === null ? null : formatAge(secs);
+    if (!words) {
+      // NOT a blank and not "never": the same rule the tiles keep.
+      return '<div class="mcp-session-reading">' +
+        renderReadout({ label, value: 'none since this log began' }) + '</div>';
+    }
+    return '<div class="mcp-session-reading" data-mcp-age-at="' + escapeHtml(iso) + '">' +
+      renderReadout({ label, value: words }) + '</div>';
+  };
+  return (
+    '<div class="mcp-session-strip">' +
+      reading('Last session start', s.lastBootstrapAt) +
+      reading('Last save', s.lastSaveAt) +
+    '</div>'
+  );
+}
+
+/**
+ * The block's BODY, and it is its own function because the 30s revalidate
+ * repaints exactly this and nothing else. A repaint that had to go through
+ * `render()` would replace the whole column — closing every ⓘ, every
+ * `<details>` and the user's focus — once every thirty seconds, which is the
+ * v3.53.1 defect with a slower clock.
+ */
+function renderToolMapBody(now) {
+  const at = typeof now === 'number' ? now : Date.now();
+  if (state.mcpUsageError && !state.mcpUsage) {
+    return '<div class="settings-inline-error">' + escapeHtml(state.mcpUsageError) + '</div>';
+  }
+  const u = state.mcpUsage;
+  if (!u) return gatedLoader(loadGate, 'Loading the tool map…');
+  const tools = Array.isArray(u.tools) ? u.tools : [];
+  const anyUsed = tools.some((t) => typeof t.lastUsedAt === 'string' && t.lastUsedAt);
+  if (!u.present || !anyUsed) {
+    return '<p class="mcp-map-empty">No calls recorded yet. The map fills as your ' +
+      'agents use the bridge.</p>';
+  }
+  const reads = tools.filter((t) => t.group !== 'write');
+  const writes = tools.filter((t) => t.group === 'write');
+  return (
+    renderSessionStrip(u.sessions, at) +
+    renderToolGroup('READ', reads, u.logStartedAt, at) +
+    renderToolGroup('WRITE', writes, u.logStartedAt, at)
+  );
+}
+
+/** Block ③ itself. */
+function renderToolMap() {
+  const lede = 'What your agents used, and when — kept on this machine only.';
+  // ── THE FILENAME IS PLAIN TEXT, NOT A `<code>` ─────────────────────────
+  // FOUND BY OPENING THE FOLD: `.tx-vh-panel` is a one-column GRID (its own
+  // comment says so — the measure lives on the track so the card can take the
+  // column), and CSS wraps each contiguous run of text in an ANONYMOUS grid
+  // item. An inline element inside it therefore becomes a row of its own: the
+  // filename sat on its own line and the sentence resumed underneath with a
+  // leading comma. So the name is written as text, and the sentence is built
+  // so nothing depends on it being set apart. The trailing link is the one
+  // element here, and it is SUPPOSED to take its own row.
+  const info =
+    'Every call the bridge answers appends one line to .mcp-usage.jsonl — a file beside your ' +
+    'settings, never inside your knowledge folder, so nothing here is ever synced. The line ' +
+    'carries the tool’s name, the domain it touched, whether it succeeded, and how long it ' +
+    'took. Never an argument, never a result, never a file path, never an error message, so a ' +
+    'line stays under 200 bytes however large the call was. The file rotates at 1 MB keeping ' +
+    'one previous copy, and deleting it only restarts the map. ' +
+    docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
+  return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), info, '', { html: true });
+}
+
+/**
+ * THE AGE CLOCK FOR THIS BLOCK, and it is not a render.
+ *
+ * Byte-for-byte the shape views/memory.js uses (see its `tickAges`): walk the
+ * elements carrying the hook, write `textContent` into ONE named child, write
+ * only when the words actually changed. It must never call `render()` —
+ * settings.js shipped a 1s `render()` tick once and v3.53.1 records what it
+ * cost: every ⓘ panel and every `<details>` on the section closed itself while
+ * the user was reading.
+ *
+ * TWO NAMED TARGETS, never `el.textContent`: a readout escapes its own value so
+ * the words live in the component's `.tx-readout-value`, while a tile's meta
+ * line carries a `.mcp-age-words` span this view owns. Writing the wrapper's
+ * own text would delete the label beside it.
+ */
+function tickMcpAges() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  const now = Date.now();
+  const nodes = document.querySelectorAll('[data-mcp-age-at]');
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i];
+    const at = el.getAttribute('data-mcp-age-at');
+    const t = at ? Date.parse(at) : NaN;
+    if (!Number.isFinite(t)) continue;
+    const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
+    if (words === null) continue;
+    const target = el.querySelector('.tx-readout-value') || el.querySelector('.mcp-age-words');
+    if (target && target.textContent !== words) target.textContent = words;
+  }
+}
+
+/**
+ * The 30s revalidate, and what it is allowed to repaint.
+ *
+ * ONE BLOCK BODY, and only when the signature moved. An agent working in
+ * another window is the whole reason this poll exists — the map would
+ * otherwise be as old as the last time the user changed sections — but a
+ * re-render of the column every thirty seconds would shut every fold on the
+ * page for a reading nobody is watching. So the payload is compared first, the
+ * body is replaced second, and `#view-root` is never touched.
+ *
+ * When the block is NOT in the document (the user is on another section) the
+ * state is still updated and nothing is painted: the next `render()` reads the
+ * fresh payload, which is the same answer one frame later.
+ */
+async function refreshMcpUsage(token) {
+  const verdict = await fetchMcpUsage();
+  if (!isCurrentMount(token)) return;
+  const sig = verdict.ok ? usageSignature(verdict.data) : null;
+  // NOTHING MOVED, NOTHING REPAINTS — not even the error, which is unchanged.
+  if (verdict.ok && sig === state.mcpUsageSig) return;
+  applyUsageVerdict(verdict);
+  if (state.section !== 'mcp') return;
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const body = document.querySelector('.settings-block-mcp-tool-map .settings-block-body');
+  if (!body) return;
+  body.innerHTML = renderToolMapBody();
+}
+
+/** Arm the revalidate. A setTimeout CHAIN, not setInterval: a slow answer must
+ *  delay the next request rather than stack one behind it — the rule
+ *  views/memory.js's poll records. */
+function scheduleUsagePoll(token) {
+  stopUsagePoll();
+  if (typeof setTimeout !== 'function') return;
+  usagePoll.timer = setTimeout(() => {
+    usagePoll.timer = null;
+    // A DEAD MOUNT ENDS THE CHAIN. Without this the poll would keep fetching
+    // for a view nobody is looking at, for the life of the page.
+    if (!isCurrentMount(token)) return;
+    refreshMcpUsage(token).catch(() => {}).then(() => {
+      if (isCurrentMount(token)) scheduleUsagePoll(token);
+    });
+  }, USAGE_POLL_MS);
+}
+
+/** Disarm it. Called by the teardown, and by `scheduleUsagePoll` itself so
+ *  there is exactly one armed timer however many times it is called. */
+function stopUsagePoll() {
+  if (usagePoll.timer !== null) {
+    if (typeof clearTimeout === 'function') clearTimeout(usagePoll.timer);
+    usagePoll.timer = null;
+  }
 }
 
 // ── Health & scan limits ──────────────────────────────────────────────────

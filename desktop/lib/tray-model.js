@@ -2169,6 +2169,14 @@ export function buildTrayModel(summary, opts = {}) {
       // the suite needs it to assert the identity rule.
       isThisHost,
       harnessShared: s.harnessShared === true,
+      // TIER 0's COUNTS, CARRIED RATHER THAN RE-DERIVED. `desktop/` may not
+      // read the store, so whatever the producer knows about this project's
+      // canonical documents has to ride on the row. Forwarded whole (a plain
+      // object of integers) rather than flattened to one number, so a later
+      // surface that wants to draw `stale` and `unreachable` apart still can —
+      // the field-drop class this repo guards against is a CONSUMER quietly
+      // narrowing what the store honestly computed.
+      foundations: s && typeof s.foundations === 'object' && s.foundations ? s.foundations : null,
       bucket,
       ageSeconds: age,
       ageSource: source,
@@ -2367,6 +2375,54 @@ export function buildTrayModel(summary, opts = {}) {
     return text ? clip(text, WHERE_LABEL_CHARS) : null;
   };
 
+  /**
+   * ── THE STALE-FOUNDATIONS MARK, ON THE HEADLINE'S SECOND LINE ───────────
+   *
+   * Tier 0 is the set of canonical documents that travel with a project, and
+   * the one thing that can go wrong with a MIRROR is that the repository has
+   * moved on: the copy an agent will read is no longer the document in the
+   * checkout. That is a fact about the project the header names, so it rides
+   * on the header's own second line.
+   *
+   * NOT A `notices` ENTRY, deliberately. The widget's standing rule is that it
+   * must never become a quarter of the screen (v3.37.0 / v3.51.0), and a
+   * notice is a whole line that pushes every row down. Three words on a line
+   * that already exists cost nothing.
+   *
+   * STALE AND UNREACHABLE ARE SUMMED, under the word "stale". They are two
+   * different facts — "the source has changed" and "the source could not be
+   * read" — and the honest thing they have in common is the one this line has
+   * room for: the stored copy is NOT KNOWN to be current. The Agent-memory
+   * screen draws them apart, with the word for each; the menu has one line.
+   */
+  const staleDocsOf = (src) => {
+    const f = src && typeof src === 'object' ? src.foundations : null;
+    if (!f || typeof f !== 'object') return 0;
+    const n = (Number.isInteger(f.staleCount) && f.staleCount > 0 ? f.staleCount : 0) +
+      (Number.isInteger(f.unreachableCount) && f.unreachableCount > 0 ? f.unreachableCount : 0);
+    return n;
+  };
+  const staleDocsNote = (n) => (
+    !Number.isInteger(n) || n < 1 ? null : (n === 1 ? '1 doc stale' : n + ' docs stale')
+  );
+  /**
+   * Fit the mark onto a line that is already budgeted.
+   *
+   * THE MARK IS THE TAIL AND THE TAIL IS NEVER CUT — the same ordering
+   * `headlineTextFor` settled for the age, and for the same reason: composing
+   * the whole string and clipping it would drop the one token that is new.
+   * The HEAD is shortened `clipClauses`-wise so `claude-code · sonnet-5` can
+   * never become `claude-code · son…`, which reads as a different fact.
+   */
+  const withStaleMark = (line, note) => {
+    if (!note) return line;
+    if (!line) return clip(note, WHERE_LABEL_CHARS);
+    const tail = ' · ' + note;
+    const room = WHERE_LABEL_CHARS - tail.length;
+    if (line.length <= room) return line + tail;
+    return (clipClauses(line, room) || clip(line, room) || line) + tail;
+  };
+
   /** The identity fields every non-empty headline carries, from whichever
    *  record it was built from. Named once so the four arms cannot drift. */
   const headlineWho = (src) => ({
@@ -2386,8 +2442,12 @@ export function buildTrayModel(summary, opts = {}) {
       ageSource: lsSource,
       ...headlineWho(ls),
       text: headlineTextFor(ls, lsAge, lsSource),
-      who: whoOfSave(ls.harness, ls.model),
-      where: w.text,
+      // THE MARK GOES ON BOTH, because tray-menu.js draws `who || where` and
+      // only ONE of them is ever rendered — so the stale word appears exactly
+      // once whichever line wins, and never disappears because the save that
+      // produced the headline happened to name no harness.
+      who: withStaleMark(whoOfSave(ls.harness, ls.model), staleDocsNote(staleDocsOf(ls))),
+      where: withStaleMark(w.text, staleDocsNote(staleDocsOf(ls))),
       whereFull: w.full,
       bucket: ageBucket(lsAge),
     };
@@ -2400,8 +2460,8 @@ export function buildTrayModel(summary, opts = {}) {
       ageSource: r.ageSource,
       ...headlineWho(r),
       text: headlineTextFor(r, r.ageSeconds, r.ageSource),
-      who: whoOfSave(r.harness, r.model),
-      where: w.text,
+      who: withStaleMark(whoOfSave(r.harness, r.model), staleDocsNote(staleDocsOf(r))),
+      where: withStaleMark(w.text, staleDocsNote(staleDocsOf(r))),
       whereFull: w.full,
       bucket: r.bucket,
     };
@@ -2416,8 +2476,8 @@ export function buildTrayModel(summary, opts = {}) {
       // when when you last saved it is not, and dropping the identity here
       // would report the absence of one fact as the absence of both.
       text: headlineTextFor(rows[0], null, null),
-      who: whoOfSave(rows[0].harness, rows[0].model),
-      where: w.text,
+      who: withStaleMark(whoOfSave(rows[0].harness, rows[0].model), staleDocsNote(staleDocsOf(rows[0]))),
+      where: withStaleMark(w.text, staleDocsNote(staleDocsOf(rows[0]))),
       whereFull: w.full,
       bucket: 'unknown',
     };
