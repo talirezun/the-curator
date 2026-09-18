@@ -1970,6 +1970,25 @@ the MCP provides conversational read+write from any LLM client. Same
 write pipeline (writePage, syncSummaryEntities, fixIssue), same
 dismissal store (.health-dismissed.jsonl), same idempotency guards.
 
+Usage log (v3.60.0, every tool call, read or write):
+      src/brain/mcp-usage.js — appendUsage({tool, domain, ok, refused, ms})
+      Called from the SAME single dispatch seam every tool call already goes
+      through — the CallToolRequestSchema handler in tools/index.js, above —
+      wrapping tool.handler so it can measure elapsed ms and observe the
+      envelope shape without changing what any tool returns.
+      <user-data>/.mcp-usage.jsonl — NOT under domains/, so it never syncs
+      and is invisible to git, exactly like the credential files paths.js
+      already keeps there. One JSONL line per call: tool name, domain slug
+      (or null), ok, refused, ms — never the arguments, never the result,
+      never any text the model produced or was given. Rotates at 1 MB
+      (renamed to .1, one previous file kept), so the log is bounded at
+      roughly 2 MB regardless of how long the bridge has been in use.
+      Best-effort: append failures are swallowed after one stderr line per
+      process, and never propagate to the caller — a tool call that could
+      not be logged still returns its real result.
+      Read back by GET /api/mcp/usage (src/routes/mcp.js) for Settings →
+      MCP bridge → The tool map; see docs/api-reference.md for the shape.
+
 ---
 
 ## Module reference

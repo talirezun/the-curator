@@ -592,6 +592,23 @@ The bridge itself costs you nothing in API fees. It is a local bridge to your ow
 
 If you move your knowledge folder, re-run the wizard in the browser install — the entry names an absolute path, and the wizard detects a stale one and shows a banner. In the Mac app the bridge starts through a launcher the app writes for itself, so moving the folder no longer makes the entry go stale.
 
+## What does the MCP bridge's tool map show?
+
+**Settings → MCP bridge**, below the setup wizard and the default domain, is a small local log of
+what your agents have actually done over the bridge — kept on your machine only, never synced,
+never uploaded. Each line records a tool's name, the domain it touched, whether the call
+succeeded, and how long it took. It never records what you asked or what came back.
+
+Tools are shown in two groups, read and write, each with a freshness dot and word for when it was
+last called, and a **writes** chip on the tools that can change something on disk. A tool that has
+never been called reads "not used since this log began" with the log's own age, rather than
+"never" — the log rotates once it passes 1 MB, so it always has a start date, and a silent tool
+might simply predate it.
+
+Two readings above the tiles speak to your agent's habits: **Last session start** is the last time
+a session opened by reading where things stood, and **Last save** is the last time one wrote a
+handoff before stopping.
+
 ## What is in Settings?
 
 **Settings** is the gear icon at the bottom of the rail. Its sections are listed in the panel beside it, ordered by how often you come back to them.

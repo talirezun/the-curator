@@ -614,6 +614,19 @@ The one way they can still drift apart is the one described just above, **and it
 
 **Privacy.** Everything stays on your machine. There is no network component. No telemetry.
 
+**The usage log.** Since v3.60.0, My Curator keeps a small local record of which tools your
+agents have actually called — the data behind **Settings → MCP bridge →
+[The tool map](user-guide.md#the-tool-map--what-your-agents-used)**. It is kept **on this
+machine only, never synced, never uploaded**, at `<user-data>/.mcp-usage.jsonl` — a sibling of
+your credential files, not of `domains/`, so it can never travel with a knowledge folder or ride
+along with GitHub sync. Each line is one JSON object: the tool's name, the domain it touched,
+whether the call succeeded, and how long it took, in milliseconds. **It never records your
+prompt, the tool's arguments, or what came back** — a call passing a 10 KB argument still writes
+a line well under 200 bytes, because there was never anything larger to write. It rotates once it
+passes 1 MB: the file is renamed to `.mcp-usage.jsonl.1` and a fresh one starts, so the log is
+bounded at roughly 2 MB and the older file is kept exactly once, not indefinitely. Writing to it
+is best-effort — a tool call still returns its result even if the log can't be written at all.
+
 **Security.** Every tool validates its `domain` and `slug` arguments before touching disk, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The thirteen read tools are strictly read-only, as are three of the nine health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — sixteen of the twenty-two never change anything on disk. Of the six that do (v2.5.2+, plus `save_working_state` and `save_project_brief`), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all six refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
 
 **What a slug is allowed to contain (widened in v3.9.1).** Lowercase letters, digits, hyphens, underscores, and **interior dots** — so `claude-sonnet-3.5`, `gemini-2.5-flash`, `industry-5.0`, `apache-2.0-license` and `express.js` are all addressable. Before v3.9.1 every dot was refused, and the effect was silently self-contradictory: `search_wiki` and `get_index` would happily *show* you those pages, and then `get_node`, `get_backlinks`, `get_connected_nodes`, `get_summary` and `get_raw_source` would all answer *"Invalid slug"* for the exact slug they had just advertised. Across the six real domains it was measured on, that made **73 of 4,751 pages discoverable but unreadable**, and `get_raw_source` unusable for every summary whose source file was actually present.

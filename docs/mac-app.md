@@ -142,6 +142,19 @@ group is a floor, not a ceiling: each group gets two before any gets a third, an
 claimed are handed back out in recency order, so a single project still fills all five. Anything
 past that is counted on the *More in Agent Memory…* line rather than dropped silently.
 
+**A project header can also carry a small `· docs stale` mark, new in v3.60.0.** When that
+project's **foundations** (its mirrored architecture, decisions and conventions — see
+[working-state.md § The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
+and
+[user-guide.md § Foundations](user-guide.md#foundations--canonical-documents-that-travel)) are
+**repo-owned** and one or more no longer match the checkout they were mirrored from, the header's
+sublabel gains `· docs stale` (or `· N docs stale` once there is more than one), clipped by the
+same `labelBudgetChars` every other sublabel respects. Nothing is added when every mirrored
+document is current, and a curator-owned foundation — one an agent wrote rather than mirrored —
+never produces the mark, because there is no second copy to be stale against. It never becomes a
+`notices` line of its own: the widget's own rule is that it must never grow into a second screen,
+so the mark rides on the header that already exists rather than claiming another row.
+
 **Each row has a submenu**, because a menu cannot open a *work-stream* — clicking a row lands on
 the project, and the work-stream picker inside the app has no address the menu can dial. So the
 submenu offers the route the menu does have: **Open in The Curator**, **Copy resume prompt** (an
