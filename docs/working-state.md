@@ -732,9 +732,11 @@ writer, edit rarely, sync after.
 - **The app does not edit a curator-owned foundation in this release.** A human edit surface for it
   — mirroring the standing brief's own editor — is **PLANNED for v3.61.0**, alongside a
   start-a-project flow that offers commissioning one on creation.
-- **The menu bar widget does not surface staleness yet.** A stale mark on the project header's
-  sublabel, or as a `notices` entry, is **PLANNED for v3.60.0**; this release ships the read and
-  write paths and the in-app Foundations block only.
+- **The menu bar widget marks stale foundations (v3.60.0).** When a project's mirrored documents
+  are behind their source, the project header's sublabel gains `· N docs stale`, clipped to the
+  same label budget as the rest of the line; nothing is added when they are fresh, and no
+  `notices` entry is raised. v3.59.0 shipped the read and write paths and the in-app Foundations
+  block; the mark followed one release later.
 
 ### The MCP surfaces
 
