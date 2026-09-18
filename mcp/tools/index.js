@@ -39,11 +39,21 @@ import { saveWorkingStateDefinition,         saveWorkingStateHandler }         f
 import { saveProjectBriefDefinition,         saveProjectBriefHandler }         from './working-state.js';
 import { saveFoundationDefinition,           saveFoundationHandler }           from './working-state.js';
 
+// v3.60.0 — the tool-usage log. Content-free (tool, domain, outcome, duration),
+// local-only, best-effort: it never throws to a caller and is never awaited.
+import { appendUsage } from '../../src/brain/mcp-usage.js';
+
 // THE COUNT, for every place that quotes one at a user: 24 tools as of
 // v3.59.0 (22 in v3.48.0), of which 7 call refuseIfReadonly and so MUTATE
 // (compile_to_wiki, fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue,
 // save_working_state, save_project_brief, save_foundation). Derive the
 // mutator list from the refuseIfReadonly call sites, never from this comment.
+//
+// A tool added here must also get a row in ./catalogue.js (name, capability
+// group, mutates, a ≤ 12-word purpose) — that file is what the app's tool map
+// is labelled from, and scripts/test-mcp-usage.js §6 compares the two lists
+// name by name IN ORDER, with the mutator column taken from an executed
+// refuseIfReadonly census rather than from either comment.
 export const tools = [
   // ── Read tools (v2.3.0+) ────────────────────────────────────────────────────
   { definition: listDomainsDefinition,      handler: listDomainsHandler },
@@ -203,22 +213,76 @@ export function registerTools(server, storage) {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const startedAt = Date.now();
     const tool = tools.find(t => t.definition.name === name);
     if (!tool) {
-      return {
+      const response = {
         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
         isError: true,
       };
+      // `name` here is a string the CLIENT chose and nothing has validated, so
+      // it is never written to the log — see mcp-usage.js on why no user
+      // string goes in that file. The call still happened, so it is recorded.
+      recordUsage({ tool: 'unknown', args, result: null, threw: true, ms: Date.now() - startedAt });
+      return response;
     }
+    let result = null;
+    let threw = false;
+    let response;
     try {
-      const result = await tool.handler(args || {}, storage);
+      result = await tool.handler(args || {}, storage);
       const text = enforceSizeLimit(name, result);
-      return { content: [{ type: 'text', text }] };
+      response = { content: [{ type: 'text', text }] };
     } catch (err) {
-      return {
+      threw = true;
+      response = {
         content: [{ type: 'text', text: `Error running ${name}: ${err.message}` }],
         isError: true,
       };
     }
+    // AFTER the response is fully built, and never awaited. The log must not
+    // be able to delay a tool call, change its answer, or fail it.
+    recordUsage({ tool: name, args, result, threw, ms: Date.now() - startedAt });
+    return response;
   });
+}
+
+/**
+ * The usage-log hook. One call per dispatch, fire-and-forget.
+ *
+ * HOW `ok` AND `refused` ARE DECIDED, measured against what the tools actually
+ * return rather than assumed. A handler never sets `isError` — that is the
+ * dispatch's word for "it threw". What handlers DO return on a refusal is
+ * `{ok: false, error: '<sentence>'}`: `refuseIfReadonly` builds exactly that
+ * shape (mcp/util.js), `resolveDomainArg`'s error is spread into the same
+ * shape, and every argument validation in every tool module follows it. So:
+ *
+ *   ok: false, refused: true   → a structured refusal (read-only mirror, a bad
+ *                                slug, a missing required argument, a guard)
+ *   ok: false, refused: false  → the handler threw
+ *   ok: true,  refused: false  → it answered
+ *
+ * That collapses "you may not" and "you asked wrongly" into one flag, which is
+ * deliberate: the map shows a count of refusals per tool, and the distinction
+ * between the two would need the error TEXT to make — which is precisely what
+ * this log will not store.
+ *
+ * The domain is taken from the RESULT first (the resolved one, after
+ * `resolveDomainArg` has applied the configured default) and only then from
+ * the arguments, and is dropped unless it looks like a slug.
+ */
+function recordUsage({ tool, args, result, threw, ms }) {
+  try {
+    const obj = result && typeof result === 'object' ? result : null;
+    const refused = !threw && obj ? obj.ok === false : false;
+    const domain = (obj && (obj.domain || obj.project?.domain)) || (args && args.domain) || null;
+    // No await, and no .catch() needed: appendUsage's promise always resolves.
+    appendUsage({
+      tool,
+      domain: typeof domain === 'string' ? domain : null,
+      ok: !threw && !refused,
+      refused,
+      ms,
+    });
+  } catch { /* observability may never break a tool call */ }
 }

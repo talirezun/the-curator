@@ -545,6 +545,36 @@ export function getIngestQueueDir() {
 }
 
 /**
+ * The MCP tool-usage log (v3.60.0) — one JSONL line per MCP tool call, holding
+ * only the tool name, the domain slug, the outcome and the duration. Never an
+ * argument, never a result, never a path, never an error string. Written by
+ * `src/brain/mcp-usage.js` from the MCP child process; read by the app for the
+ * Settings → MCP bridge tool map.
+ *
+ * WHY IT IS NOT UNDER `domains/`, and why that is not a style preference:
+ * `getDomainsDir()` is Personal Sync's git WORK-TREE. A per-machine record of
+ * which tools an agent ran on THIS Mac is machine-local operational exhaust; in
+ * the domains tree it would be committed and pushed to the user's GitHub repo
+ * along with their wiki. That is the exact class this repo has shipped seven
+ * times — `.write-lock` (v3.0.15), `.DS_Store` (v3.0.16), the ingest queue
+ * (v3.3.0), the OpenRouter sidecars (v3.16.1), `.curator-install-id` (v3.17.0),
+ * `.curator-machine-id` (v3.23.x), the desktop build output (v3.31.0) — each
+ * time because a new runtime file appeared beside data that travels.
+ *
+ * It deliberately does NOT live beside the per-domain `.mcp-write-log.jsonl`
+ * either: that one records WRITES to one domain and is scoped to it. This log
+ * spans every domain and every READ, so it has no domain to belong to.
+ *
+ * Rotation writes a sibling `<this>.1` (see MAX_LOG_BYTES in mcp-usage.js), so
+ * anything excluding this path must exclude that one too.
+ *
+ * Pure resolver — never creates the file or its directory.
+ */
+export function getMcpUsageLogPath() {
+  return userDataPath('.mcp-usage.jsonl');
+}
+
+/**
  * Files that must be owner-only (0600), as {rel, abs} pairs.
  *
  * Single source of truth for BOTH the startup chmod sweep in server.js and the
