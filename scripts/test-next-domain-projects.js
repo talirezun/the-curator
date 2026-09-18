@@ -149,6 +149,11 @@ const FNS = [
   'copyProjectAgentInstructions',
   'copyForProject',
   'renderCopyOutcome',
+  // v3.61.0. The create form asks where a project's canonical documents come
+  // from, and this is the field that asks it — LIFTED rather than stubbed
+  // because S5b asserts the ⓘ really CARRIES the definition, and a stub would
+  // let an empty field pass that assertion.
+  'foundationsField',
   'bindProjectListeners',
 ];
 
@@ -200,11 +205,23 @@ const navigator = { clipboard: { writeText: async (t) => {
 // a stub here would let a broken import in the view pass unnoticed.
 const { composeAgentInstructions, COPY_SUCCESS_BANNER } =
   await import('../src/public/next/shared/agent-instructions.js');
+// ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
+// shared/foundations-init.js takes NO imports (the same contract shared/text.js
+// carries), so the real module runs in Node and is imported rather than
+// stubbed. That is what makes S6's assertions about the create BODY real: the
+// object that crosses the wire is built by `chooserBody`, and a stub here would
+// let this suite assert a shape the browser never sends.
+const {
+  freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
+  bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS,
+} = await import('../src/public/next/shared/foundations-init.js');
 
 let sandbox;
 try {
   sandbox = new Function(
     'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
+    'freshChooser', 'chooserBody', 'chooserOutcomeWords', 'renderFoundationsChooser',
+    'bindFoundationsChooser', 'renderRefusedList', 'SKELETON_SLUGS', 'infoMark2',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -213,9 +230,15 @@ try {
     extractConst(SRC, 'MARKER_INFO_TEXT') + '\n' +
     extractConst(SRC, 'AGENT_INFO_TEXT') + '\n' +
     extractConst(SRC, 'PROJECTS_INFO_HTML') + '\n' +
+    // v3.61.0 — the documents field's own ⓘ. LIFTED for the same reason the
+    // three above are: S5b asserts the words a user reads about where a
+    // project's canonical documents come from, and a copy here would assert a
+    // copy. It is the one place the "a plain folder works as a mirror source"
+    // fact is stated in the app.
+    extractConst(SRC, 'FOUNDATIONS_INFO_HTML') + '\n' +
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, PROJECT_BRIEF_TEMPLATE,
-       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
+       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML, FOUNDATIONS_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gates.length = 0;
@@ -225,7 +248,9 @@ try {
        __setRenderImpl: (fn) => { renderImpl = fn; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, COPY_SUCCESS_BANNER);
+  )(composeAgentInstructions, COPY_SUCCESS_BANNER,
+    freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
+    bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, null);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -236,7 +261,9 @@ const {
   renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
   copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
+  foundationsField,
   PROJECT_BRIEF_TEMPLATE, MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
+  FOUNDATIONS_INFO_HTML,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
   __setDocument, __setRenderImpl,
 } = sandbox;
@@ -499,6 +526,122 @@ section('S5 -- The lifecycle card, and the typed delete confirmation');
   ok('RENAME is pre-filled with the current name', rename.includes('value="lumina"'));
   ok('...and warns that a marker file has to be updated by hand',
     /\.curator-project/.test(rename));
+  ok('RENAME does NOT restate the documents question — the store sets an ownership ONCE, '
+    + 'so the question has exactly one right moment and a rename is not it',
+  !rename.includes('data-fnd-init='), rename.slice(0, 300));
+  openProjectLifecycle('delete', 'lumina');
+  ok('...and neither does DELETE', !renderProjectLifecycleCard().includes('data-fnd-init='));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The create form asks the question tier 0 can only be asked once: does The
+// Curator keep these documents, or are they mirrored from a folder on this
+// computer? Driven through the SHIPPED `foundationsField` and the SHIPPED
+// shared chooser, so what is asserted here is what a person sees.
+{
+  __setState(freshState());
+  openProjectLifecycle('create');
+  const create = renderProjectLifecycleCard();
+
+  ok('CREATE asks where the documents live', create.includes('data-fnd-init="dm-proj-fnd"'),
+    create.slice(0, 400));
+  ok('...with both answers on screen at once rather than in a dropdown — you want to '
+    + 'read both halves before deciding',
+  create.includes('data-fnd-own="curator"') && create.includes('data-fnd-own="repo"'));
+  ok('...plus "decide later", which only makes sense HERE: the Foundations block in '
+    + 'Agent memory IS the later', create.includes('data-fnd-own="later"'));
+  ok('...defaulting to the answer that works with no preconditions',
+    /data-fnd-own="curator" aria-pressed="true"/.test(create), create.slice(0, 1400));
+  ok('...BELOW the brief, because the brief is what YOU tell an agent and these are what '
+    + 'the PROJECT tells it',
+  create.indexOf('dm-proj-brief') < create.indexOf('data-fnd-init='));
+
+  // THE LEDE IS AN INSTRUCTION AT EIGHT VISIBLE WORDS. The definition of a
+  // canonical document, the mechanism of a mirror and the fact that the answer
+  // is set once are all behind the ⓘ — the design system's §3 rule.
+  {
+    const lede = /<p class="tx-desc">([^<]*)<\/p>/.exec(create.slice(create.indexOf('dm-proj-fnd-head')));
+    ok('the documents field carries a lede at all', !!lede, create.slice(0, 200));
+    const words = lede ? lede[1].trim().split(/\s+/).filter(Boolean).length : 99;
+    ok('...of 13 visible words or fewer (design-system §3)', words <= 13,
+      words + ' words: ' + (lede ? lede[1] : ''));
+    ok('...and it is an INSTRUCTION, never a definition',
+      lede && !/is a |are the |means /.test(lede[1]), lede ? lede[1] : '');
+  }
+  ok('the field carries an ⓘ mark', create.includes('dm-proj-fnd-info'), create.slice(0, 600));
+  ok('...whose panel ships CLOSED', /id="dm-proj-fnd-info"[^>]*hidden/.test(create), create.slice(0, 2000));
+
+  // WHAT THE ⓘ HAS TO CARRY. Each of these is a DEFINITION or a MECHANISM,
+  // which is what puts it behind the mark rather than in the lede — and the
+  // last one is the answer to "will this work on my project?", which is the
+  // question a person with a plain folder and no git actually has.
+  ok('the ⓘ defines what a canonical document is', /architecture, the decisions/i.test(FOUNDATIONS_INFO_HTML));
+  ok('...says a mirror is a BYTE copy with a recorded commit and a compared checksum',
+    /byte-for-byte/i.test(FOUNDATIONS_INFO_HTML) && /checksum/i.test(FOUNDATIONS_INFO_HTML));
+  ok('...says a plain folder with no version control works as a source, and that the source '
+    + 'line then shows no commit (D21)',
+  /NOT have to be a git repository/i.test(FOUNDATIONS_INFO_HTML)
+    && /no commit beside it/i.test(FOUNDATIONS_INFO_HTML), FOUNDATIONS_INFO_HTML.slice(0, 400));
+  ok('...says what a SKELETON is — a prompt, not prose', /prompts instead of prose/i.test(FOUNDATIONS_INFO_HTML));
+  ok('...says nothing is uploaded when a file is chosen from disk',
+    /Nothing is uploaded/i.test(FOUNDATIONS_INFO_HTML));
+  ok('...and says the answer is given ONCE, which is the fact that makes the timing matter',
+    /answered once/i.test(FOUNDATIONS_INFO_HTML) && /refuses a change/i.test(FOUNDATIONS_INFO_HTML));
+  ok('the ⓘ is the ONLY place any of that is said — the card body carries no second copy',
+    !/byte-for-byte/i.test(create.replace(FOUNDATIONS_INFO_HTML, '')),
+    'a definition escaped the fold');
+
+  // THE MIRROR ARM: a path, a scan, and a way to name a file the scan missed.
+  __state().projectLc.foundations.ownership = 'repo';
+  const mirror = renderProjectLifecycleCard();
+  ok('the mirror arm asks for a repository root', mirror.includes('id="dm-proj-fnd-root"'));
+  ok('...with the scan DISABLED until a path is typed — a control that cannot work is worse '
+    + 'than no control', /id="dm-proj-fnd-scan"[^>]* disabled/.test(mirror), mirror.slice(0, 2400));
+  ok('...and a typed path for a file the scan missed (D21)',
+    mirror.includes('id="dm-proj-fnd-extra"'), mirror.slice(0, 3000));
+  ok('...with the seven roles as option buttons, never a native <select> (v3.18.0 purged those)',
+    /data-fnd-extra-role="architecture"/.test(mirror) && !/<select/.test(mirror));
+
+  __state().projectLc.foundations.repoRoot = '/Users/x/code/proj';
+  ok('a typed path ARMS the scan', !/id="dm-proj-fnd-scan"[^>]* disabled/
+    .test(renderProjectLifecycleCard()));
+
+  // THE SCAN'S CANDIDATES, with the document's own first heading beside the
+  // path (D21) and a refused row that says why.
+  __state().projectLc.foundations.candidates = [
+    { path: 'docs/architecture.md', bytes: 4096, suggestedRole: 'architecture',
+      firstHeading: 'How the pieces fit' },
+    { path: 'docs/huge.md', bytes: 900000, suggestedRole: 'other', tooLarge: true },
+  ];
+  __state().projectLc.foundations.picks = { 'docs/architecture.md': true };
+  const scanned = renderProjectLifecycleCard();
+  ok('a candidate row shows the path', scanned.includes('docs/architecture.md'));
+  ok('...and the document\'s OWN first heading beside it, which is what distinguishes '
+    + '01-intro.md from 02-arch.md', scanned.includes('How the pieces fit'), scanned.slice(0, 200));
+  ok('...and its suggested role', /data-fnd-role-open="docs\/architecture\.md"/.test(scanned));
+  ok('a file over the per-document cap is DISABLED with the reason on its own row, '
+    + 'never silently dropped',
+  /data-fnd-cand="docs\/huge\.md"[^>]* disabled/.test(scanned)
+    && /per-document cap/.test(scanned), scanned.slice(0, 200));
+
+  // THE CURATOR ARM: the seed tick and the optional files from disk (D18).
+  __state().projectLc.foundations.ownership = 'curator';
+  const cur = renderProjectLifecycleCard();
+  ok('the curator arm offers the four skeletons, ticked',
+    /id="dm-proj-fnd-seed"[^>]* checked/.test(cur), cur.slice(0, 2400));
+  ok('...naming all four so the owner knows what lands',
+    /Architecture, Decisions, Conventions, Roadmap/.test(cur));
+  ok('...and a MULTI file picker wearing the kit\'s button, never a native file control',
+    /class="btn btn-secondary btn-xs fnd-init-file"/.test(cur)
+    && /id="dm-proj-fnd-files"[^>]*multiple/.test(cur), cur.slice(0, 2600));
+  ok('...with the input visually hidden rather than styled, because a native file button '
+    + 'cannot be styled at all', /id="dm-proj-fnd-files"/.test(cur)
+    && /class="visually-hidden" id="dm-proj-fnd-files"/.test(cur));
+  ok('...and it says out loud that nothing is uploaded until the project is created',
+    /nothing is uploaded until you create the project/i.test(cur));
 }
 {
   // THE TYPED CONFIRMATION. The route enforces it independently, so this is
@@ -575,6 +718,189 @@ section('S6 -- The actions: what the view actually sends');
     __calls().fetch.some((c) => !c.opts && c.url === '/api/memory/alpha/projects'));
   ok('the shell-wide write gate was taken and released',
     __calls().gates.length === 1 && __calls().gates[0].released === true);
+}
+{
+  // ── THE CREATE BODY, FIELD BY FIELD, WITH THE DOCUMENTS CHOICE ─────────
+  //
+  // `foundations` rides with the create rather than going in a second request,
+  // because a project whose brief was written and whose ownership was not is a
+  // half-made project the user has to finish somewhere else. The route answers
+  // `ok: true` with `foundationsError` if tier 0 fails AFTER the brief lands —
+  // never a 5xx and never a rollback.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  __state().projectLc.name = 'curated';
+  __setFetch(() => ({ ok: true, seeded: ['architecture.md', 'decisions.md', 'conventions.md', 'roadmap.md'] }));
+  await runProjectAction();
+  {
+    const body = JSON.parse(__calls().fetch.find((c) => c.opts).opts.body);
+    // READ THROUGH A GUARD. A mutation that drops the `foundations` key entirely must RED on
+    // the first assertion rather than crashing on a property of undefined — a crash reads
+    // like a pass in a summary line, which is the v3.11.0 shape this repo has recorded twice.
+    const fnd = body.foundations || {};
+    eq('the default arm sends the CURATOR ownership', fnd.ownership, 'curator');
+    ok('...and NOT a seed flag, because true is the server\'s own default and re-stating '
+      + 'a default is one more thing to disagree about',
+    'foundations' in body && !('seed' in fnd), JSON.stringify(body.foundations));
+    ok('...and no repoRoot, which the route refuses on the curator arm',
+      'foundations' in body && !('repoRoot' in fnd));
+    ok('the banner reports what the SERVER did, not what was asked',
+      /4 skeletons seeded/.test(String((__state().banner || {}).text)),
+      String((__state().banner || {}).text));
+  }
+}
+{
+  // UNTICKING THE SEED IS THE ONE THING THAT TRAVELS, because it is the one
+  // departure from the server's default.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  __state().projectLc.name = 'bare';
+  __state().projectLc.foundations.seed = false;
+  __setFetch(() => ({ ok: true, seeded: [] }));
+  await runProjectAction();
+  const body = JSON.parse(__calls().fetch.find((c) => c.opts).opts.body);
+  eq('seed: false crosses', (body.foundations || {}).seed, false);
+}
+{
+  // THE MIRROR ARM: the root, trimmed, and the ticked files with their roles.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  const f = __state().projectLc;
+  f.name = 'mirrored';
+  f.foundations.ownership = 'repo';
+  f.foundations.repoRoot = '  /Users/x/code/proj  ';
+  f.foundations.candidates = [
+    { path: 'docs/architecture.md', bytes: 10, suggestedRole: 'architecture' },
+    { path: 'docs/style.md', bytes: 10, suggestedRole: 'conventions' },
+    { path: 'docs/huge.md', bytes: 900000, suggestedRole: 'other', tooLarge: true },
+  ];
+  f.foundations.picks = { 'docs/architecture.md': true, 'docs/huge.md': true };
+  f.foundations.roles = { 'docs/architecture.md': 'guide' };
+  // D21: a path the scan never found, typed by hand, with its own role.
+  f.foundations.extras = [{ path: './notes/decisions.md', role: 'decisions' }];
+  __setFetch(() => ({ ok: true, refresh: { added: ['architecture.md', 'decisions.md'], refreshed: [], missing: [], refused: [] } }));
+  await runProjectAction();
+  const body = JSON.parse(__calls().fetch.find((c) => c.opts).opts.body);
+  eq('the mirror arm sends the REPO ownership', (body.foundations || {}).ownership, 'repo');
+  eq('...the root, trimmed', (body.foundations || {}).repoRoot, '/Users/x/code/proj');
+  eq('...the ticked files with the role the user chose over the one the scan suggested, '
+    + 'PLUS the path typed by hand — and NOT the one over the per-document cap',
+  JSON.stringify((body.foundations || {}).files),
+  JSON.stringify([{ path: 'docs/architecture.md', role: 'guide' },
+    { path: 'notes/decisions.md', role: 'decisions' }]));
+  ok('the banner reports the mirror',
+    /2 documents mirrored/.test(String((__state().banner || {}).text)),
+    String((__state().banner || {}).text));
+}
+{
+  // DECIDE LATER SENDS NO KEY AT ALL, not `{ownership: 'later'}`: the route's
+  // body is an allow-list and "later" is a fourth ownership the store has
+  // never heard of. A project with no manifest is exactly the state the
+  // Agent-memory chooser exists to resolve.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  __state().projectLc.name = 'undecided';
+  __state().projectLc.foundations.ownership = 'later';
+  __setFetch(() => ({ ok: true }));
+  await runProjectAction();
+  const body = JSON.parse(__calls().fetch.find((c) => c.opts).opts.body);
+  ok('"decide later" sends no `foundations` key whatsoever', !('foundations' in body),
+    JSON.stringify(body));
+  eq('...and the banner says so rather than claiming something was set up',
+    /decide later/.test(String((__state().banner || {}).text)), true);
+}
+{
+  // A TIER-0 FAILURE IS DISCLOSED ON ITS OWN LINE, never appended to the
+  // success sentence and never folded (v3.16.1): the project exists, its brief
+  // is written, and the documents were not set up.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  __state().projectLc.name = 'partly';
+  __setFetch(() => ({ ok: true, seeded: [],
+    foundationsError: { reason: 'repo-unreachable', message: 'that folder is not on this computer' } }));
+  await runProjectAction();
+  ok('the create still SUCCEEDS — the form closes and the project exists',
+    __state().projectLc === null);
+  ok('...the banner drops out of the success tone', (__state().banner || {}).tone === 'info',
+    String((__state().banner || {}).tone));
+  {
+    const d = String((__state().banner || {}).detail);
+    ok('...and carries the reason on a SECOND line rather than in the sentence',
+      /not set up/.test(d) && /not on this computer/.test(d), d);
+    ok('...naming where to finish the job', /Agent memory/.test(d));
+  }
+}
+{
+  // ── FILES FROM DISK: ONE PUT EACH, AFTER THE CREATE (D18) ──────────────
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  const f = __state().projectLc;
+  f.name = 'imported';
+  f.foundations.imports = [
+    { name: 'Architecture.md', size: 20, slug: 'architecture.md', role: 'architecture',
+      title: 'Architecture', text: '# Architecture\n\nreal words', error: null },
+    { name: 'notes.md', size: 10, slug: 'notes.md', role: 'other', title: 'Notes',
+      text: 'stuff', error: null },
+    // A refused entry is carried in the list so the owner can see it, and it
+    // must never be PUT.
+    { name: 'giant.md', size: 900000, slug: 'giant.md', role: 'other', title: 'Giant',
+      text: '', error: 'is 879 KB, over the 512 KB per-document cap — not read' },
+  ];
+  __setFetch((url, opts) => (opts && opts.method === 'PUT' ? { ok: true } : { ok: true, seeded: ['architecture.md', 'decisions.md', 'conventions.md', 'roadmap.md'] }));
+  await runProjectAction();
+  const puts = __calls().fetch.filter((c) => c.opts && c.opts.method === 'PUT');
+  eq('each usable file becomes ONE PUT', puts.length, 2);
+  const put0 = puts[0] ? JSON.parse(puts[0].opts.body) : {};
+  ok('...at its own slug under the new project',
+    !!puts[0] && puts[0].url === '/api/memory/alpha/imported/foundations/architecture.md',
+    puts[0] ? puts[0].url : '<no PUT>');
+  eq('...carrying the text byte for byte', put0.text, '# Architecture\n\nreal words');
+  eq('...the title derived from the document\'s own first heading', put0.title, 'Architecture');
+  eq('...and the role derived from the file name', put0.role, 'architecture');
+  ok('a file that was REFUSED before it was read is never PUT',
+    !puts.some((p) => p.url.includes('giant.md')), JSON.stringify(puts.map((p) => p.url)));
+  ok('the PUTs come AFTER the create, because they are documents IN a project that has to exist',
+    __calls().fetch.findIndex((c) => c.opts && c.opts.method === 'POST')
+      < __calls().fetch.findIndex((c) => c.opts && c.opts.method === 'PUT'));
+  ok('the banner reports the import',
+    /2 documents imported/.test(String((__state().banner || {}).text)),
+    String((__state().banner || {}).text));
+  // AN IMPORT THAT LANDS ON A SEEDED SLUG REPLACES THE SEED, and the banner
+  // says which — otherwise the owner is left to work out which of the two won.
+  ok('...and says which skeleton an import replaced',
+    /1 skeleton replaced by an imported file \(architecture\.md\)/
+      .test(String((__state().banner || {}).text)),
+    String((__state().banner || {}).text));
+}
+{
+  // A FAILED IMPORT NEVER FAILS THE CREATE. The project exists and its brief is
+  // written; a document that did not land is reported by name on the second
+  // line, and the owner can add it again from Agent memory. Refusing the whole
+  // outcome for it would be v3.32.0's shape one level up.
+  __setState(freshState());
+  __reset();
+  openProjectLifecycle('create');
+  const f = __state().projectLc;
+  f.name = 'halfway';
+  f.foundations.imports = [
+    { name: 'a.md', size: 10, slug: 'a.md', role: 'other', title: 'A', text: 'x', error: null },
+  ];
+  __setFetch((url, opts) => (opts && opts.method === 'PUT'
+    ? { throwStatus: 400, message: 'no_manifest' }
+    : { ok: true, seeded: [] }));
+  await runProjectAction();
+  ok('the create still succeeded', __state().projectLc === null && !!__state().banner);
+  {
+    const d = String((__state().banner || {}).detail);
+    ok('...and the failed document is named on the second line',
+      /a\.md/.test(d) && /could not be saved/.test(d), d);
+  }
 }
 {
   // AN EMPTY BRIEF IS SENT AS ABSENT, not as an empty string: an empty string

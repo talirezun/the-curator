@@ -126,6 +126,20 @@ import {
 // domains and answer the same question about them, so they say it in the same
 // words rather than in two.
 import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
+// ── THE OWNERSHIP CHOOSER, SHARED WITH THE AGENT-MEMORY VIEW (v3.61.0) ────
+//
+// "Where do this project's canonical documents come from" is asked here, on
+// the create form, and again in Agent memory's Foundations block for a project
+// that has not answered it. The store sets that ownership ONCE and refuses a
+// mismatch on every later write, so two copies of the question would be two
+// descriptions of WHICH WRITER OWNS A FILE — and a project created with one
+// answer and initialised with the other is a refusal the user cannot act on.
+// Imported, never re-implemented: shared/foundations-init.js owns the markup,
+// the state shape, the request body and the outcome words.
+import {
+  freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
+  bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS,
+} from '../shared/foundations-init.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -3095,6 +3109,21 @@ function renderProjectLifecycleCard() {
         '(optional — you can write it later)</span></label>' +
       '<textarea class="dm-lc-textarea mono" id="dm-proj-brief" rows="14"' + (busy ? ' disabled' : '') + '>' +
         escapeHtml(f.brief || '') + '</textarea>' +
+      // ── WHERE THE PROJECT'S CANONICAL DOCUMENTS COME FROM (v3.61.0) ─────
+      //
+      // BELOW THE BRIEF, and the order is the argument: the brief is what YOU
+      // tell an agent, the foundations are what the PROJECT tells it. Reading
+      // top to bottom is then the same order a session start reads in, which
+      // is the order the Agent memory page already puts its blocks in.
+      //
+      // The sentence above the chooser is an INSTRUCTION at eight visible
+      // words. What a canonical document IS, that the answer cannot be
+      // changed afterwards, and that a plain folder with no version control in
+      // it works perfectly well as a mirror source are all DEFINITION or
+      // MECHANISM, so they are behind the ⓘ beside it — the design system's
+      // §3 rule, and the reason this label carries a mark rather than a
+      // second paragraph.
+      foundationsField(f, busy) +
       messages +
       '<div class="dm-lc-actions">' +
         '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
@@ -3102,6 +3131,61 @@ function renderProjectLifecycleCard() {
         '<button class="btn btn-ghost" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
     '</div>'
+  );
+}
+
+// ── THE ⓘ BESIDE THE DOCUMENTS FIELD ─────────────────────────────────────
+//
+// A module constant for the same reason PROJECTS_INFO_HTML is one: the suite
+// lifts it and asserts the words a user reads, and a copy typed in the test
+// would assert a copy. Every character of it is written here, so nothing user-,
+// provider- or store-supplied is interpolated into the `{html: true}` fragment.
+//
+// WHAT IT CARRIES, and why none of it is a lede: the DEFINITION of a canonical
+// document, the MECHANISM of a mirror (a byte copy, a recorded commit, a
+// checksum compared on every read), the fact that a plain folder with no
+// version control works as a source — which is the answer to "will this work
+// on my project?" and therefore a mechanism question — and the COST, that the
+// answer is set once and the store refuses a mix afterwards.
+const FOUNDATIONS_INFO_HTML =
+  '<p><strong>What these are.</strong> The documents an agent must not act without — the ' +
+  'architecture, the decisions, the conventions, the roadmap. The Curator keeps them VERBATIM, ' +
+  'not as a summary, so an agent reads what you would read, and they travel with the project ' +
+  'the way the standing brief does.</p>' +
+  '<p><strong>Mirrored from a repository.</strong> A byte-for-byte copy of files in a folder on ' +
+  'this computer, with the commit each one came from recorded and a checksum compared every time ' +
+  'the project is read — which is how the app can tell you a copy has gone out of date. It does ' +
+  'NOT have to be a git repository: a plain folder works, and the source line then shows the ' +
+  'path with no commit beside it.</p>' +
+  '<p><strong>Kept by The Curator.</strong> The documents live only here. Setting this up seeds ' +
+  'four SKELETONS — documents that carry prompts instead of prose, which an agent is told to ' +
+  'answer rather than to believe — and you can start from files on this computer instead, or as ' +
+  'well. Nothing is uploaded: a file you choose is read in this browser and shown to you before ' +
+  'it is saved.</p>' +
+  '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
+  'mix, and the store refuses a change afterwards. Decide later is a real answer — the ' +
+  'Foundations block on the Agent memory page asks the same question again.</p>';
+
+/**
+ * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
+ *
+ * Pure apart from the form record, and lifted by the suite rather than scanned:
+ * the assertions that matter here are that the choice reaches the request body
+ * and that the ⓘ carries the definition, and a scan of source cannot tell the
+ * difference between a mark that opens something and a mark that opens nothing.
+ */
+function foundationsField(f, busy) {
+  const choice = f.foundations;
+  if (!choice) return '';
+  const info = infoMark('dm-proj-fnd-info', 'About canonical documents',
+    FOUNDATIONS_INFO_HTML, { html: true });
+  return (
+    '<div class="dm-lc-label dm-proj-fnd-head">' +
+      '<span>Canonical documents</span>' + info.btn +
+    '</div>' +
+    info.panel +
+    renderDescription('Where this project keeps the documents agents read first.') +
+    renderFoundationsChooser({ id: 'dm-proj-fnd', choice, busy: !!busy })
   );
 }
 
@@ -4015,6 +4099,21 @@ function openProjectLifecycle(mode, project) {
     busy: false,
     error: null,
     refusal: null,
+    // ── WHERE THIS PROJECT'S CANONICAL DOCUMENTS WILL LIVE (v3.61.0) ─────
+    //
+    // Asked on CREATE and nowhere else, because the store sets an ownership
+    // ONCE and refuses a mismatch on every later write — so the question has
+    // exactly one right moment, and this is it. A rename or a delete has no
+    // business restating it.
+    //
+    // The state shape is shared/foundations-init.js's own; this view never
+    // reads inside it except to hand it back to that module, so the Memory
+    // view's copy of this question and this one cannot describe two different
+    // choices. `allowLater: true` adds the third answer that only makes sense
+    // here: on the create form the choice is one field of a bigger form and
+    // postponing it costs nothing, while the Foundations block in Agent memory
+    // IS the surface somebody opened in order to answer it.
+    foundations: mode === 'create' ? freshChooser({ allowLater: true }) : null,
   };
   render(myMountToken);
 }
@@ -4054,15 +4153,30 @@ async function runProjectAction() {
   if (f.mode === 'create') {
     const name = (f.name || '').trim();
     if (!name) { f.error = 'Give the project a name.'; render(token); return; }
+    // An empty brief is sent as ABSENT, not as an empty string: an empty
+    // string is a brief the user wrote nothing in, and the store would
+    // create the file.
+    const payload = (f.brief || '').trim() ? { project: name, brief: f.brief } : { project: name };
+    // ── THE DOCUMENTS CHOICE RIDES WITH THE CREATE (v3.61.0) ─────────────
+    //
+    // `chooserBody` returns NULL for "decide later", and the key is then
+    // absent from the body rather than present saying "later": the route's
+    // body is an allow-list, a project with no manifest is the state the
+    // Agent-memory chooser exists to resolve, and `{ownership: 'later'}` would
+    // be a fourth ownership the store has never heard of.
+    //
+    // A tier-0 failure AFTER the brief is written is DISCLOSED, never a 5xx
+    // and never a rollback — the project exists and half-deleting it would
+    // lose a brief the person just wrote. The route answers `ok: true` with
+    // `foundationsError`, and the banner below carries it on its own line.
+    const fndBody = chooserBody(f.foundations);
+    if (fndBody) payload.foundations = fndBody;
     opts = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // An empty brief is sent as ABSENT, not as an empty string: an empty
-      // string is a brief the user wrote nothing in, and the store would
-      // create the file.
-      body: JSON.stringify((f.brief || '').trim() ? { project: name, brief: f.brief } : { project: name }),
+      body: JSON.stringify(payload),
     };
-    successText = 'Created project “' + name + '”.';
+    successText = 'Created project “' + name + '”';
   } else if (f.mode === 'rename') {
     const name = (f.name || '').trim();
     if (!name) { f.error = 'Give the project a name.'; render(token); return; }
@@ -4097,10 +4211,75 @@ async function runProjectAction() {
   // handing the user a raw 409.
   const releaseGate = beginDomainWrite(slug, 'project-' + f.mode);
   try {
-    await fetchJSON(url, opts);
+    const body = await fetchJSON(url, opts);
     if (!isCurrentMount(token)) return;
+    // ── THE FILES THE OWNER PICKED, ONE PUT EACH (D18) ──────────────────
+    //
+    // AFTER the create, because they are documents IN a project that has to
+    // exist first, and one at a time rather than in one request because each
+    // is a whole-document write the store performs atomically and reports on
+    // separately. Nothing was uploaded until now: the text has been sitting in
+    // this form since the owner picked the file, which is what let them see it
+    // before agreeing to save it.
+    //
+    // A FAILED IMPORT NEVER FAILS THE CREATE. The project exists and its brief
+    // is written; a document that did not land is reported by name on the
+    // banner's second line, and the owner can add it again from Agent memory.
+    // Refusing the whole outcome for it would be the v3.32.0 shape — a guard
+    // routed around by its own error handler — one level up.
+    const imported = [];
+    const failed = [];
+    const replaced = [];
+    if (f.mode === 'create' && f.foundations && Array.isArray(f.foundations.imports)) {
+      const seeded = f.foundations.ownership === 'curator' && f.foundations.seed !== false;
+      for (const file of f.foundations.imports) {
+        if (!file || file.error || !file.slug) continue;
+        try {
+          await fetchJSON('/api/memory/' + encodeURIComponent(slug) + '/' +
+            encodeURIComponent((f.name || '').trim()) + '/foundations/' +
+            encodeURIComponent(file.slug), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: file.text, title: file.title, role: file.role }),
+          });
+          imported.push(file.slug);
+          if (seeded && SKELETON_SLUGS.includes(file.slug)) replaced.push(file.slug);
+        } catch (err) {
+          failed.push(file.slug + ' — ' + ((err && err.message) || 'refused'));
+        }
+      }
+    }
     state.projectLc = null;
-    state.banner = { tone: 'success', text: successText };
+    // ── WHAT HAPPENED, FROM THE SERVER'S ANSWER ─────────────────────────
+    // Never from the choice that was SENT: a create that asked for four
+    // skeletons and got three is a fact the owner needs, and a sentence built
+    // from the request would report the ask as the outcome.
+    const words = chooserOutcomeWords({
+      ...(body && typeof body === 'object' ? body : {}),
+      imported, replacedSkeletons: replaced,
+    }, f.foundations);
+    const fndErr = body && body.foundationsError && typeof body.foundationsError === 'object'
+      ? body.foundationsError : null;
+    const detailParts = [];
+    if (fndErr) {
+      detailParts.push('The project was created, but its canonical documents were not set up: ' +
+        (fndErr.message || fndErr.reason || 'the server refused it') +
+        '. Choose again from Agent memory → Foundations.');
+    }
+    if (failed.length) {
+      detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +
+        ' could not be saved: ' + failed.join(' · '));
+    }
+    state.banner = {
+      tone: (fndErr || failed.length) ? 'info' : 'success',
+      // The trailing stop is added ONCE, here, after the outcome clause: the
+      // three `successText` literals above are sentences, and appending a
+      // clause to a finished sentence is how "Renamed “a” to “b”.." ships.
+      text: successText.replace(/\.$/, '') + words + '.',
+      // NEVER FOLDED, and on its own line rather than appended to the
+      // sentence: a refusal is not a suffix to a success (v3.16.1).
+      detail: detailParts.length ? detailParts.join(' ') : null,
+    };
     succeeded = true;
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -4239,6 +4418,21 @@ function bindProjectListeners() {
     // any other cause agrees with what this handler last painted.
     if (gated) gated.disabled = !!f.busy || f.confirmText !== f.project;
   });
+
+  // ── THE DOCUMENTS CHOOSER (v3.61.0) ─────────────────────────────────────
+  // The shared module owns the markup and every control's behaviour; this view
+  // owns only WHERE the state lives and WHEN to repaint. `f.foundations` is
+  // the same object `chooserBody` reads at submit time, so what is on screen
+  // and what crosses the wire cannot describe two different choices.
+  if (f.foundations) {
+    bindFoundationsChooser({
+      doc: document,
+      id: 'dm-proj-fnd',
+      choice: f.foundations,
+      onChange: () => render(myMountToken),
+      onFailure: reportAsyncActionFailure,
+    });
+  }
 
   const submit = document.getElementById('dm-proj-submit');
   submit?.addEventListener('click', () => {
@@ -4716,7 +4910,18 @@ function renderBanner() {
   const b = state.banner;
   const cls = b.tone === 'error' ? 'dm-banner-error' : (b.tone === 'info' ? 'dm-banner-info' : 'dm-banner-success');
   const ic = b.tone === 'error' ? icon('alertCircle', 14) : icon('check', 14);
-  return '<div class="dm-banner ' + cls + '">' + ic + '<span>' + escapeHtml(b.text) + '</span></div>';
+  // ── A SECOND LINE, FOR WHAT PARTLY DID NOT HAPPEN (v3.61.0) ────────────
+  // Optional and absent on every existing caller. It exists because a project
+  // create can now SUCCEED while its canonical documents were refused — the
+  // route discloses that in `foundationsError` rather than failing the whole
+  // request, and a refusal appended to the success sentence would read as part
+  // of the good news. Its own line, never folded (v3.16.1), inside the same
+  // banner because it is the same outcome.
+  const detail = typeof b.detail === 'string' && b.detail.trim()
+    ? '<span class="dm-banner-detail">' + escapeHtml(b.detail.trim()) + '</span>'
+    : '';
+  return '<div class="dm-banner ' + cls + '">' + ic +
+    '<span>' + escapeHtml(b.text) + detail + '</span></div>';
 }
 
 // This sits where the Quick maintenance bar would be, i.e. in the place the

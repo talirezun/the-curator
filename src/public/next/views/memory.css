@@ -1581,7 +1581,141 @@
    from the kit; a literal opacity here is what scripts/test-next-disabled-state.js
    counts, and it counted five distinct values before that pass. */
 .mem-brief-text:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
-.mem-brief-buttons { display: flex; gap: var(--space-3); }
+.mem-brief-buttons { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
+
+/* ── TIER 0's OWN EDITOR (v3.61.0) ─────────────────────────────────────────
+   The same field, counter and button rhythm the standing-brief editor above
+   uses, because it is the same KIND of surface: one markdown document, one
+   Save, one Cancel, a counter that has to count. What differs is the wall it
+   counts against (512 KB rather than 32 KB — the store enforces them
+   separately) and the three extra fields a document has that a brief does not:
+   a file name, a title and a role.
+
+   IT BORROWS RATHER THAN RE-DECLARES where the shape is identical:
+   `.mem-brief-stats`, `.mem-brief-stats-over`, `.mem-brief-discard`,
+   `.mem-brief-preview` and `.mem-brief-buttons` are carried in the MARKUP, so
+   a change to the brief editor's rhythm moves this one with it. Two copies of
+   a counter's type is exactly the drift this file keeps recording. */
+.mem-fnd-editor { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* The document being edited, named, with its role beside it — so the owner can
+   see WHICH of six documents is in the box. Not a heading element: the block's
+   own head is the heading, and a second <h2> inside its body would be a second
+   section claiming to be one. */
+.mem-fnd-editor-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.mem-fnd-editor-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mem-fnd-label { display: block; }
+
+/* A FIELD IS SUNKEN — the kit's inversion of the gloss recipe, the same recipe
+   `.mem-brief-text` below carries and for the same reason: an inset well on
+   `--control-edge`, no specular. The file name and the title are single-line,
+   so they take `--control-md` and the code face only where the content IS code
+   — a slug is typed character by character and is the case
+   tokens/typography.css reserves the mono family for; a TITLE is prose. */
+.mem-fnd-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: var(--control-md);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-edge);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-family: inherit;
+}
+#mem-fnd-slug { font: var(--type-mono); font-size: var(--text-xs); }
+.mem-fnd-input:focus,
+.mem-fnd-input:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.mem-fnd-input:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+/* The document itself. 420px rather than the brief's 320: a canonical
+   architecture note is several screens, and the shipped brief field opened
+   SHORTER than the document it was editing — the defect `.mem-brief-text`
+   records. Still `resize: vertical`, so the drag is available where a longer
+   document needs it. The face is the CODE face: this is Markdown SOURCE, saved
+   verbatim, and the owner is editing it character by character. */
+.mem-fnd-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 420px;
+  resize: vertical;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-edge);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-mono);
+  line-height: 1.6;
+}
+.mem-fnd-text:focus,
+.mem-fnd-text:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.mem-fnd-text:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+/* "Choose a file…" and the sentence beside it. The button chrome comes from
+   shared/foundations-init.css (`.fnd-init-file`, the visually-hidden input
+   inside a label carrying `.btn`), so this owns only the row. */
+.mem-fnd-pick {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* ── THE DELETE STRIP ─────────────────────────────────────────────────────
+   DANGER, not accent, and that is the difference between it and the two bars
+   above it: `.mem-brief-discard` takes the accent because nothing is wrong
+   there — a draft exists and the owner pressed Escape. This one destroys a
+   document, so it takes the danger ring and tint, and the control inside it is
+   `.btn-danger` — tinted, never filled, never glossed, per the taxonomy (the
+   filled `.btn-danger-solid` is reserved for a confirm DIALOG whose primary
+   action is the deletion, and this is a strip in flow, not a dialog). */
+.mem-fnd-delete-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-tint);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+.mem-fnd-delete-bar > span { flex: 1; min-width: 0; }
+/* Pushed away from Save and Cancel rather than sitting beside them: a control
+   that destroys a document must not be one mis-click from the commit. */
+.mem-fnd-delete { margin-left: auto; }
+
+/* The chooser's commit, under the chooser it commits. Its own row so the
+   button is not the last item of a flex list of option cards. */
+.mem-fnd-init-actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+
+/* The Edit column of the foundations table. Right-aligned and no wider than
+   the control, so the six columns before it keep the width. */
+.fnd-cell-edit { width: 1%; white-space: nowrap; text-align: right; }
+.fnd-table th:last-child,
+.fnd-table td:last-child { padding-right: 10px; }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press travel off; both background steps stay. Last in the file: a media

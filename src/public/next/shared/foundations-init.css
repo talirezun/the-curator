@@ -1,0 +1,362 @@
+/* shared/foundations-init.css — THE OWNERSHIP CHOOSER, ONE STYLESHEET.
+   ─────────────────────────────────────────────────────────────────────────
+   The chooser (shared/foundations-init.js) is rendered by TWO hosts — the
+   "New project" form in views/domains.js and the Foundations block in
+   views/memory.js — so its rules can live in neither of their stylesheets
+   without one view depending on the other's, or without two copies of every
+   declaration. It owns the whole `fnd-init-` prefix and nothing else touches
+   it, the same contract shared/text.css, shared/checkbox.css,
+   shared/listbox.css and shared/freshness.css all carry.
+
+   LINKED FROM index.html, beside the other shared kits and ABOVE the views,
+   so a host may still add PLACEMENT at equal specificity afterwards. That
+   <link> is load-bearing twice over, as those four record: without it the
+   chooser is unstyled in the browser AND the file is invisible to
+   scripts/test-css-tokens.js §5, which discovers /next stylesheets only from
+   index.html's <link> tags.
+
+   EVERY COLOUR, SIZE AND GAP IS A TOKEN. There are two px literals and both
+   are amplitudes rather than sizes — the same position views/domains.css takes
+   on `.dm-lc-template`'s `min-width`, and the same reason
+   docs/design-system-source.md gives for keeping motion amplitudes at the rule
+   that uses them: a distance on a 620px form is not the same gesture as the
+   same number on a 1,100px column.
+
+   NOTHING HERE DECLARES A `.fresh-` RULE. shared/freshness.css owns that
+   prefix outright (scripts/test-freshness-scale.js fails a second declarer),
+   and this surface has no freshness reading to paint anyway: a document that
+   has not been mirrored yet cannot be fresh or stale against anything. */
+
+.fnd-init {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── THE TWO (OR THREE) ANSWERS ───────────────────────────────────────────
+   A row of option BUTTONS carrying `aria-pressed`, which is the shape
+   views/domains.js's New-domain form already uses for "pick one of N"
+   (`.dm-lc-template`). Deliberately NOT the shared listbox: a choice between
+   two things whose consequences differ is a choice you want to READ both
+   halves of before deciding, and a dropdown shows one at a time. The same
+   argument v3.55.0 made when Agent memory's two pickers became a table. */
+/* ── A GRID, AND NOT A WRAPPING FLEX ROW ────────────────────────────────
+   MEASURED IN THE BROWSER, on the create form at a 1370px window: with
+   `display: flex; flex-wrap: wrap` and `flex: 1 1 240px`, the 565px column fit
+   two options at 280px each and WRAPPED the third — which then stretched to the
+   full 565. So "Decide later", the fallback answer, rendered as the largest and
+   most prominent card on the screen, twice the width of the two real choices.
+   That is flexbox's documented behaviour for a wrapped final line and it is
+   exactly wrong here.
+
+   `auto-fit` + `minmax` puts the wrapped option in ONE CELL of the next row
+   instead: three equal cards, two per row at 565px, one per row below 460px,
+   and nothing stretches to fill a gap it did not earn. */
+.fnd-init-opts {
+  display: grid;
+  /* 220px is the shortest width at which the consequence line below the title
+     fits on two lines rather than four — and `min(220px, 100%)` rather than a
+     bare 220px because a grid track has NO automatic minimum the way a flex
+     item does, so a container narrower than the floor OVERFLOWS instead of
+     shrinking. Measured in the browser: at an 800px window with the first-run
+     panel open this card is 171px wide, and a bare `minmax(220px, 1fr)` pushed
+     the chooser 49px past its own card. `min(…, 100%)` caps the track at the
+     container, so the layout degrades to one column and 0px of overflow. */
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--space-3);
+}
+.fnd-init-opt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-4) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-2);
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: inherit;
+  transition: border-color var(--t-state), background var(--t-state);
+}
+.fnd-init-opt:hover:not([disabled]) { background: var(--surface-hover); }
+.fnd-init-opt:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+/* THE SELECTED ANSWER TAKES THE ACCENT RING AND TINT, never a fill: this is a
+   statement about which of the options is chosen, and a filled option would
+   read as the commit control the form's own Create button is. */
+.fnd-init-opt[aria-pressed="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.fnd-init-opt[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+.fnd-init-opt-title { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.fnd-init-opt-line {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+
+/* ── THE ARM THE ANSWER OPENS ─────────────────────────────────────────── */
+.fnd-init-arm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.fnd-init-label { display: block; }
+.fnd-init-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* A FIELD IS SUNKEN — the kit's inversion of the gloss recipe, copied from
+   views/memory.css's `.mem-brief-text` rather than invented: an inset well on
+   `--control-edge`, no specular. The face is the CODE face because the content
+   is a filesystem path, which is the case tokens/typography.css reserves the
+   mono family for. It takes that face through this named rule rather than
+   through the `mono` utility class, for the reason views/memory.css records on
+   `.fnd-src-path`: this is DATA with a role, not prose that happens to be
+   monospaced, and scripts/test-next-views-kit.js §7 ratchets the utility
+   precisely so a form of them cannot accumulate. */
+.fnd-init-path {
+  flex: 1 1 260px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-edge);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-mono);
+  font-size: var(--text-xs);
+  height: var(--control-md);
+}
+.fnd-init-path:focus,
+.fnd-init-path:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.fnd-init-path:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+/* ── A NOTE, AND A LOUD ONE ───────────────────────────────────────────────
+   Both are in FLOW and neither is ever inside a fold: a scan that refused a
+   path, a file over the per-document cap and a file the browser could not read
+   are refusals, and v3.16.1's rule is that a warning behind a click is not a
+   warning. The loud variant takes the attention ring and tint; the word
+   "not" does the carrying, so colour is never the only signal. */
+.fnd-init-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+/* `--attention` is the family's own border ink; there is no
+   `--attention-border` (the accent and danger families have one, this one does
+   not, and inventing it here would be a token file's decision taken in a
+   component's stylesheet). The word "not" does the carrying in every sentence
+   this variant holds, so colour is never the only signal. */
+.fnd-init-note-loud {
+  border-color: var(--attention);
+  background: var(--attention-tint);
+  color: var(--text);
+}
+
+/* ── THE SCAN'S CANDIDATES ────────────────────────────────────────────────
+   A list, not a table: every row carries the same four things and a table's
+   column rules would fight the role row that opens INSIDE a row. Scrolls at
+   its own height rather than growing the form — a repository with 40 markdown
+   files is an ordinary repository, and the Create button must stay reachable. */
+.fnd-init-cands {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.fnd-init-cand,
+.fnd-init-import {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.fnd-init-cand + .fnd-init-cand,
+.fnd-init-import + .fnd-init-import { border-top: 1px solid var(--border); }
+.fnd-init-cand-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 200px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.fnd-init-cand-path {
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The document's own first heading, beside its path. The TEXT face, because
+   this one is prose the file wrote about itself rather than a literal anyone
+   retypes — the distinction tokens/typography.css draws and the reason the
+   path above it is mono and this is not. */
+.fnd-init-cand-head {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fnd-init-cand-size {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
+}
+.fnd-init-cand-why {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  flex: 1 1 100%;
+}
+.fnd-init-cand.is-refused .fnd-init-cand-path,
+.fnd-init-import.is-refused .fnd-init-cand-path { color: var(--text-3); }
+
+/* The role, as a control on the row and as a word on an import line. The
+   button says which role the file will carry and opens the seven options
+   below it; the flat span says the same thing where there is nothing to
+   change (an imported file's role is derived from its name and is edited in
+   the document's own editor afterwards). */
+.fnd-init-cand-role,
+.fnd-init-cand-role-flat {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.fnd-init-cand-role {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: default;
+  font-family: inherit;
+  transition: border-color var(--t-state), background var(--t-state);
+}
+.fnd-init-cand-role:hover:not([disabled]) { background: var(--surface-hover); }
+.fnd-init-cand-role:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.fnd-init-cand-role[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+.fnd-init-cand-role[aria-expanded="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+
+.fnd-init-count {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── THE SEVEN ROLES ──────────────────────────────────────────────────────
+   One pressed. `flex: 0 0 auto` so a role never stretches: these are seven
+   short words and a stretched one reads as a wider, more important choice. */
+.fnd-init-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 1 1 100%;
+}
+.fnd-init-role {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--text-2xs);
+  font-family: inherit;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color var(--t-state), background var(--t-state);
+}
+.fnd-init-role:hover:not([disabled]) { background: var(--surface-hover); }
+.fnd-init-role:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.fnd-init-role[aria-pressed="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.fnd-init-role[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+/* ── THE CURATOR ARM: the seed tick, and files from disk ─────────────────── */
+.fnd-init-seed,
+.fnd-init-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.fnd-init-seed {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+/* THE FILE INPUT WEARS THE KIT'S BUTTON. The native file control is the one
+   thing in a browser that cannot be restyled at all, so the <input> is
+   visually hidden inside a <label> carrying `btn btn-secondary btn-xs` and the
+   label IS the control. `cursor: default` matches the rest of this app's
+   chrome. Nothing else is needed: shell.css's `.btn` owns the face, and a
+   focused input inside a label is what the browser focuses, so the control is
+   keyboard-reachable without a tabindex. */
+.fnd-init-file { cursor: default; }
+.fnd-init-file-hint {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+.fnd-init-imports,
+.fnd-init-extras {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+.fnd-init-extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.fnd-init-drop {
+  margin-left: auto;
+  padding: 0 var(--space-3);
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: default;
+  transition: color var(--t-state);
+}
+.fnd-init-drop:hover { color: var(--text); }
+.fnd-init-drop:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+  border-radius: var(--radius-xs);
+}

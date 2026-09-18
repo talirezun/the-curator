@@ -186,6 +186,31 @@ import { freshnessStep, freshnessTier } from '../shared/age.js';
 // that the agent's harness never activated the skill, and this is the fix.
 import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
 
+// ── THE OWNERSHIP CHOOSER, SHARED WITH THE DOMAINS VIEW ──────────────────
+//
+// Where a project's canonical documents come from is asked in TWO places: on
+// the "New project" form (views/domains.js) and here, on a project that has no
+// manifest yet. The store sets that ownership ONCE and refuses a mismatch on
+// every later write, so two copies of the question would be two descriptions
+// of WHICH WRITER OWNS A FILE — and a project created with one answer and
+// initialised with the other is a refusal the user cannot act on. Imported,
+// never re-implemented: shared/foundations-init.js owns the markup, the state
+// shape, the request body and the outcome words.
+//
+// The four store mirrors — the slug grammar, the seven role names, the
+// per-document byte wall and the project budget — come from there for the same
+// reason `BRIEF_MAX_BYTES` is a constant in this file rather than a literal at
+// its call sites: they are numbers the SERVER enforces, and a copy that drifts
+// either blocks a save the server would accept or offers one it refuses with a
+// 400 the user cannot act on. scripts/test-next-foundations-editor.js pins
+// every one of them against src/brain/working-state.js.
+import {
+  FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
+  freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
+  bindFoundationsChooser, renderRoleOptions, renderRefusedList,
+  readPickedFile, slugForFilename, roleForBasename, titleFromText, formatBytes,
+} from '../shared/foundations-init.js';
+
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
 // `renderScopeControls` built a scope listbox and a machine listbox, and a
@@ -338,6 +363,30 @@ function freshState() {
     // is what withholds it — so a switch back to the project that was actually
     // refreshed still shows its own result.
     fnd: null,
+    // ── THE OWNERSHIP CHOICE, WHILE IT IS BEING MADE (v3.61.0) ───────────
+    //   { domain, project, choice, busy, error, refused }
+    // `choice` is shared/foundations-init.js's own state shape — this view
+    // never reads inside it except to hand it back to that module. STAMPED
+    // for the reason every other record here is: this view switches project
+    // without unmounting, and an ownership choice half-made for one project
+    // must not be posted against the next.
+    fndInit: null,
+    // ── THE FOUNDATION EDITOR, or null when nothing is being edited ──────
+    //   { domain, project, slug, isNew, loading, loaded, text, title, role,
+    //     busy, error, preview, confirmDiscard, confirmShrink, confirmDelete,
+    //     deleting, importError, notes, budgetExceeded }
+    //
+    // ONE DOCUMENT AT A TIME, and it REPLACES the table inside the fold while
+    // it is open — the standing brief's own precedent one block up. Two
+    // editors on one screen would each carry a Save, and the block's taxonomy
+    // allows one primary per card.
+    //
+    // `loaded` is the RAW document the editor opened on and never moves after
+    // that: it is what "is this dirty?" and the shrink confirm are measured
+    // against, and re-reading it would make both answers depend on whether a
+    // poll happened to land mid-edit. It is the verbatim bytes (`?raw=1`),
+    // never the defanged read the reader shows — see `loadFoundationDraft`.
+    fndEdit: null,
     // The standing-brief editor, or null when nothing is being edited.
     //   { domain, project, loaded, text, busy, error, preview, confirmDiscard }
     // `loaded` is the document the editor OPENED on and never changes; `text`
@@ -485,6 +534,20 @@ const FOCUSABLE_IDS = [
   // copy runs and comes back enabled), so it needs no fallback below — but it
   // DOES need to be captured, because the click causes two renders.
   'mem-fnd-refresh',
+  // ── TIER 0'S OWN EDITOR (v3.61.0) ─────────────────────────────────────
+  // Every control here that REMOVES itself on click also has an entry in
+  // FOCUS_FALLBACK below; the ones that survive their own click are captured
+  // only because the click causes a render that would otherwise drop focus to
+  // <body>. `mem-fnd-add` and `mem-fnd-addrepo` open something in their own
+  // place; the three confirm strips replace themselves with an outcome.
+  'mem-fnd-add', 'mem-fnd-addrepo',
+  'mem-fnd-slug', 'mem-fnd-title', 'mem-fnd-text',
+  'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-preview',
+  'mem-fnd-discard', 'mem-fnd-keep',
+  'mem-fnd-delete', 'mem-fnd-delete-go', 'mem-fnd-delete-no',
+  'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
+  // The ownership chooser's own commit, on a project that has no manifest.
+  'mem-fnd-init-go',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -537,6 +600,29 @@ const FOCUS_FALLBACK = {
   // asked to stay in is where they should land.
   'mem-brief-discard': '#mem-brief-edit',
   'mem-brief-keep': '#mem-brief-text',
+  // ── TIER 0'S EDITOR (v3.61.0) ─────────────────────────────────────────
+  // "Add document" and "Add from repository" are both replaced by what they
+  // open, so restoring by id would drop focus every time they WORKED. The
+  // field the person asked for is where they should land.
+  'mem-fnd-add': '#mem-fnd-text',
+  'mem-fnd-addrepo': '.fnd-init-path',
+  // Save and Cancel both dismiss the editor; the row's own Edit control is
+  // gone with the row that is about to be re-read, so the nearest stable
+  // thing that does the same KIND of thing is the fold the table sits in.
+  'mem-fnd-save': '#mem-fold-foundations',
+  'mem-fnd-cancel': '#mem-fold-foundations',
+  // Discard closes the editor; Keep editing dismisses only the bar.
+  'mem-fnd-discard': '#mem-fold-foundations',
+  'mem-fnd-keep': '#mem-fnd-text',
+  // The three confirm strips. Each replaces itself: a taken confirm performs
+  // the action and the strip goes with it, a declined one just closes.
+  'mem-fnd-delete': '#mem-fnd-text',
+  'mem-fnd-delete-go': '#mem-fold-foundations',
+  'mem-fnd-delete-no': '#mem-fnd-text',
+  'mem-fnd-shrink-go': '#mem-fold-foundations',
+  'mem-fnd-shrink-no': '#mem-fnd-text',
+  // Choosing an ownership replaces the whole block body with a table.
+  'mem-fnd-init-go': '#mem-fold-foundations',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -1157,6 +1243,47 @@ function screenSignature() {
     ? [state.fnd.domain, state.fnd.project, !!state.fnd.busy, state.fnd.error || null,
       state.fnd.result ? Object.keys(state.fnd.result).map((k) => [k, state.fnd.result[k].length]) : null]
     : null;
+  // ── TIER 0'S EDITOR AND ITS CHOOSER ARE PANES TOO (v3.61.0) ────────────
+  //
+  // Same rule as the brief editor below: only the fields that CHANGE PIXELS
+  // are folded in — notably NOT the draft text, which moves on every keystroke
+  // and is written straight into state without a render so the caret survives.
+  // The TITLE and the SLUG are the same case and are excluded for the same
+  // reason; what IS folded in is whether the slug is currently VALID, because
+  // that flips Save's disabled state, and the draft's byte count, because that
+  // crosses the wall.
+  //
+  // PLAIN EXPRESSIONS, naming no collaborator this function does not already
+  // use. `screenSignature` is LIFTED and EXECUTED against a fixed set of
+  // injected functions (scripts/test-memory-truth.js §8b), so a call to
+  // `fndStats` or to the chooser's own helpers here would be a ReferenceError
+  // — a CRASH rather than a failing assertion, the v3.11.0 shape this file
+  // warns about three times. `.length` on the draft stands in for the byte
+  // count for the same reason `briefMark` uses it: strictly more sensitive
+  // than the figure it stands for, and one extra repaint is the fail-safe
+  // direction.
+  const fe = state.fndEdit;
+  const fndEditMark = fe
+    ? [fe.domain, fe.project, fe.slug || null, !!fe.isNew, !!fe.loading, !!fe.busy,
+      fe.error || null, !!fe.preview, !!fe.confirmDiscard, !!fe.confirmShrink,
+      !!fe.confirmDelete, !!fe.deleting, fe.importError || null,
+      fe.role || null, (fe.text || '').length, (fe.title || '').length, (fe.slug || '').length]
+    : null;
+  const fi = state.fndInit;
+  const fndInitMark = fi
+    ? [fi.domain, fi.project, !!fi.busy, fi.error || null,
+      fi.choice ? [fi.choice.ownership, !!fi.choice.seed, !!fi.choice.scanning,
+        fi.choice.scanError || null,
+        Array.isArray(fi.choice.candidates) ? fi.choice.candidates.length : null,
+        Object.keys(fi.choice.picks || {}).length,
+        Object.keys(fi.choice.roles || {}).map((k) => [k, fi.choice.roles[k]]),
+        fi.choice.roleOpenFor || null,
+        (fi.choice.extras || []).map((e) => [e.path, e.role]),
+        fi.choice.extraRole || null,
+        (fi.choice.imports || []).map((f) => [f.slug || f.name, f.role || null, f.error || null]),
+        fi.choice.importError || null] : null,
+      Array.isArray(fi.refused) ? fi.refused.map((r) => [r.path, r.reason]) : null]
+    : null;
 
   // THE EDITOR IS A PANE TOO, and the same rule applies to it as to the
   // picker and the save strip: a no-op guard that cannot see a pane is not a
@@ -1188,6 +1315,8 @@ function screenSignature() {
     briefMark,
     fndMark,
     fndActionMark,
+    fndEditMark,
+    fndInitMark,
     editMark,
     // The DOMAIN rides in each row, because the rail groups by it: two
     // projects with the same name in two domains are two different rows, and
@@ -2847,14 +2976,27 @@ function renderProject() {
       + '<p>Until now those lived only inside a code repository, which meant an agent without a '
       + 'checkout could not see them, and an ingested copy did not travel because source files are '
       + 'not synced. These do travel, beside the brief and the handoffs.</p>'
-      + '<p>They arrive one of <b>two ways</b>, and a project uses one or the other, never both. '
-      + 'An <b>agent you ask</b> writes one — it is a commissioned write, the same permission the '
-      + 'standing brief needs, and nothing writes one on its own. Or a <b>refresh from this '
-      + 'project’s repository</b> copies the file across byte for byte, records the commit it came '
-      + 'from and compares a checksum afterwards, which is what the freshness column reports.</p>'
-      + '<p>This screen never EDITS one. A mirrored document belongs to its repository and a '
-      + 'commissioned one to the agent that wrote it; what the app does is copy and show.</p>'
-      + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + '</p>',
+      + '<p>Every project answers <b>one question once</b>: does The Curator keep these documents, '
+      + 'or are they <b>mirrored</b> from a repository on this computer? The store refuses a mix, '
+      + 'and the answer cannot be changed afterwards — so a project that has not answered it yet '
+      + 'shows the choice here rather than an empty table.</p>'
+      + '<p><b>Mirrored</b> means a byte-for-byte copy of a file in a checkout, with the commit it '
+      + 'came from recorded and a checksum compared on every read — that is what the freshness '
+      + 'column reports. A plain folder with no version control in it works perfectly well as a '
+      + 'source; the source line then shows the path with no commit beside it. A mirrored document '
+      + 'belongs to its repository, so it is changed THERE and re-copied here.</p>'
+      + '<p><b>Kept by The Curator</b> means the document lives only here, and there are three ways '
+      + 'one arrives: you write or paste it, you import a file from this computer, or an '
+      + '<b>agent you ask</b> writes it — a commissioned write, the same permission the standing '
+      + 'brief needs, and nothing writes one on its own. Setting this up seeds four '
+      + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
+      + 'to answer rather than to believe.</p>'
+      + '<p>An edit here is <b>yours</b>, stamped as a human write and never as an agent’s — the '
+      + 'same rule the standing brief follows. One cost comes with it: this tier has no per-machine '
+      + 'copy, so two computers editing one document converge to whichever saved last. Edit rarely, '
+      + 'then sync.</p>'
+      + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + ' · '
+      + docsLinkHtml('memory.foundations-edit', 'Starting a project') + '</p>',
     infoHtml: true,
     bodyHtml: renderFoundations(read),
   });
@@ -4389,7 +4531,15 @@ function foundationsFacts(read) {
   let stale = 0;
   let unreachable = 0;
   let unrated = 0;
+  // HOW MANY ARE STILL PROMPTS RATHER THAN DOCUMENTS (v3.61.0). Counted here
+  // rather than taken from the payload's `skeletonCount` when the rows are
+  // present, for the reason `bytes` prefers `totalBytes`: the figure and the
+  // rows on screen must be one reading, and a server count over a capped row
+  // list would report a number the table cannot show. The payload's own count
+  // is the fallback for a build that sends no `skeleton` flag per row.
+  let skeletons = 0;
   for (const d of docs) {
+    if (d.skeleton === true) skeletons++;
     if (d.freshness === 'stale') stale++;
     else if (d.freshness === 'unreachable') unreachable++;
     else if (d.freshness === 'fresh') fresh++;
@@ -4397,6 +4547,10 @@ function foundationsFacts(read) {
     // A reading that was never taken is not a passing reading, and rounding it
     // up is how a screen ends up claiming a comparison nobody made.
     else unrated++;
+  }
+  if (!skeletons && f && Number.isInteger(f.skeletonCount) && f.skeletonCount > 0
+      && !docs.some((d) => typeof d.skeleton === 'boolean')) {
+    skeletons = Math.min(f.skeletonCount, docs.length);
   }
   return {
     present: !!(f && f.present),
@@ -4411,6 +4565,13 @@ function foundationsFacts(read) {
     stale,
     unreachable,
     unrated,
+    skeletons,
+    // The project budget is a DISCLOSURE, never a wall (D6): the store accepts
+    // a save that crosses it and says so, and a UI that refused what the store
+    // accepts would be the only thing standing between the owner and their
+    // own document. `budgetBytes` is the server's figure where it sent one.
+    budgetBytes: f && Number.isInteger(f.budgetBytes) && f.budgetBytes > 0
+      ? f.budgetBytes : FOUNDATIONS_BUDGET_BYTES,
     manifestError: (f && f.manifestError) || null,
     orphanFiles: f && Array.isArray(f.orphanFiles) ? f.orphanFiles : [],
   };
@@ -4430,6 +4591,19 @@ function foundationsWord(facts) {
   if (!facts.count) return 'none yet';
   if (facts.stale) return facts.stale + ' stale';
   if (facts.unreachable) return 'source unreachable';
+  // ── SKELETONS RANK BELOW A BROKEN COMPARISON AND ABOVE "Curator-authored"
+  //    (v3.61.0) ───────────────────────────────────────────────────────────
+  // A skeleton is not a fault and it is not a document either: it is a set of
+  // prompts nobody has answered, which an agent reading this project will be
+  // told to treat as questions rather than facts. So it outranks the two words
+  // that merely describe where a document came from — "Curator-authored" over
+  // four unfilled prompts is confident nonsense of the same shape as "6
+  // documents · fresh" over an unreadable manifest — and it ranks BELOW a
+  // stale copy or a checkout that is not here, because those are comparisons
+  // the store tried to make and could not.
+  if (facts.skeletons) {
+    return facts.skeletons + ' skeleton' + (facts.skeletons === 1 ? '' : 's') + ' to fill';
+  }
   if (facts.ownership === 'curator') return 'Curator-authored';
   if (facts.fresh) return 'fresh';
   return 'no freshness reading';
@@ -4451,14 +4625,27 @@ function foundationsWord(facts) {
  * to be compared.
  */
 function foundationsRefreshOffer(facts) {
-  if (!facts.present || !facts.count) return { show: false, reason: null };
+  // ── A REPO-OWNED PROJECT WITH NOTHING MIRRORED YET IS NOT "NOTHING TO
+  //    REFRESH" (v3.61.0) ──────────────────────────────────────────────────
+  // Until this release the control was hidden at count 0, which is exactly the
+  // state a project is in the moment its ownership is set — so the ONE action
+  // that would put documents in it was withheld at the only moment it was
+  // needed. The block body now offers "Add from repository" in that state (a
+  // scan picker, then the same POST with a file list), and the plain Refresh
+  // control is still what a project with documents already gets.
+  if (!facts.present) return { show: false, reason: null };
   if (facts.ownership === 'curator') {
+    // CURATOR-OWNED: refreshing is inexpressible, but EDITING is not any more.
+    // The reason therefore says what to do instead rather than only what
+    // cannot be done — v3.17.1's rule that the missing thing has to be missing
+    // where you looked for it.
     return {
       show: false,
-      reason: 'These documents were written for this project rather than copied from a '
-        + 'repository, so there is nothing to refresh them from. Ask an agent to rewrite one instead.',
+      reason: 'These documents were written for this project rather than copied from a repository, '
+        + 'so there is nothing to refresh them from. Edit one from the table, or ask an agent to write it.',
     };
   }
+  if (!facts.count) return { show: false, reason: null, addFromRepo: true };
   const reachable = facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
   if (!reachable) {
     return {
@@ -4485,7 +4672,7 @@ function foundationsRefreshOffer(facts) {
  * that can have come over sync from another machine, and a validation done at
  * the boundary is not a reason for the renderer to trust the value.
  */
-function fndRowHtml(d) {
+function fndRowHtml(d, editable) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -4503,12 +4690,23 @@ function fndRowHtml(d) {
   // everywhere else in the app. A curator-authored document gets NO dot: there
   // is no upstream to be fresh against, and a grey dot beside "—" would read
   // as a stale one at a glance.
-  const tier = d.freshness === 'fresh' ? 'recent'
-    : d.freshness === 'stale' ? 'week'
-      : d.freshness === 'unreachable' ? 'unknown' : null;
-  const word = d.freshness === 'fresh' ? 'fresh'
-    : d.freshness === 'stale' ? 'stale'
-      : d.freshness === 'unreachable' ? 'source not here' : '—';
+  //
+  // ── A SKELETON READS "skeleton · to fill", AND IT TAKES NO DOT (v3.61.0)
+  // A skeleton is a curator-owned document, so it has no upstream and would
+  // have got the em dash. The dash is right for a written one and wrong here:
+  // an unfilled prompt IS the one fact on this row somebody needs, and "—"
+  // says nothing. It stays dotless for the reason a written curator document
+  // is: the scale paints a COMPARISON, and there is nothing to compare this
+  // against. The word carries it instead.
+  const skeleton = d.skeleton === true;
+  const tier = skeleton ? null
+    : d.freshness === 'fresh' ? 'recent'
+      : d.freshness === 'stale' ? 'week'
+        : d.freshness === 'unreachable' ? 'unknown' : null;
+  const word = skeleton ? 'skeleton · to fill'
+    : d.freshness === 'fresh' ? 'fresh'
+      : d.freshness === 'stale' ? 'stale'
+        : d.freshness === 'unreachable' ? 'source not here' : '—';
   const ageSecs = d.updatedAt
     ? Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000)) : null;
   const age = Number.isFinite(ageSecs) ? formatAge(ageSecs) : null;
@@ -4542,8 +4740,141 @@ function fndRowHtml(d) {
         (age && d.updatedAt ? ' data-mem-age-at="' + escapeHtml(d.updatedAt) + '"' : '') + '>' +
         '<span class="mem-age-words">' + escapeHtml(age || 'unknown') + '</span>' +
       '</td>' +
+      // ── THE EDIT CONTROL, ON CURATOR-OWNED ROWS ONLY (v3.61.0) ─────────
+      //
+      // VISIBLE AT REST, never hover-only: touch has no hover, and v3.58.0
+      // recorded a guard that went green while a later `opacity: 0` made a
+      // copy control hover-only. `aria-label` carries the meaning because the
+      // glyph carries none, and there is NO `title=` — this view's tooltip
+      // budget is 1 and may not grow (scripts/test-next-header-adoption.js).
+      //
+      // A MIRRORED ROW GETS NO CONTROL AT ALL. The route answers 400
+      // `repo_owned` on a PUT to one, and a control whose only outcome is a
+      // refusal is worse than no control (v3.16.1) — the reader's own note
+      // says where that document IS edited instead.
+      '<td class="fnd-cell-edit">' +
+        (editable
+          ? '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
+            ' data-fnd-edit="' + escapeHtml(slug) + '"' +
+            ' aria-label="' + escapeHtml('Edit ' + (d.title || slug)) + '">' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
+            '</button>'
+          : '') +
+      '</td>' +
     '</tr>'
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// THE FOUNDATION EDITOR — the OWNER's pen on a curator-owned document
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── WHY THE APP MAY WRITE THIS AT ALL, WHEN IT MAY NOT WRITE A HANDOFF ───
+//
+// The property tiers 2 and 3 rest on was never "one process": it is ONE
+// WRITER PER FILE and PROVENANCE THAT MATCHES. A handoff has exactly one
+// writer — the agent that owns that (work-stream, machine) folder — and a
+// browser write there would be a SECOND writer stamping a human edit with the
+// last agent's provenance line.
+//
+// Tier 0 splits on OWNERSHIP instead, and the store enforces it before any
+// write: a project's documents are all curator-owned or all repo-owned, and a
+// mismatch is refused. So
+//
+//   · on a MIRROR the app is a COPIER, never an author — "Refresh from repo"
+//     re-copies bytes the repository already wrote, and two copiers of one
+//     byte string converge rather than conflict (the v3.59.0 argument);
+//   · on a CURATOR-OWNED document the app is the OWNER'S PEN, exactly as it
+//     is on the standing brief: the write carries `authoredBy.kind: 'human'`,
+//     so it can never be mistaken for a commissioned agent's, and it is
+//     structurally impossible for it to land on a mirror because the store
+//     refuses the ownership mismatch;
+//   · on tiers 2 and 3 it is NEITHER, and those stay agent-only.
+//
+// THE COST, STATED. Tier 0 has no `<machine>` segment, so two machines editing
+// one curator-owned document converge to whichever SAVED LAST under Personal
+// Sync's `pull -X theirs` — and unlike a mirror there is no upstream to
+// re-assert it on the next save and no journal behind it. That is the same
+// carve-out `state/project.md` has carried since v3.48.0: edit rarely, sync
+// after. docs/sync.md records it.
+//
+// ── IT LOADS RAW BYTES, AND THAT IS A CORRECTNESS PROPERTY ───────────────
+//
+// The read path DEFANGS protocol-shaped text (a URL, a `<tool_use>` tag, a
+// role marker) because these bytes arrive over sync from other machines and,
+// in a shared mirror, from other people. The WRITE path is verbatim, because a
+// canonical document cannot be trimmed or rewritten honestly. Load the defanged
+// read into an editor and the first save writes the defanged text back — the
+// document is corrupted by opening it. So the editor asks for `?raw=1`, which
+// answers the verbatim file with `sanitisedOnRead: false`, and the round trip
+// is byte-exact. The READER keeps the defanged default: it renders markdown
+// into the page, which is where the escaping duty belongs.
+
+/**
+ * HOW BIG THE DRAFT IS, in the two units that matter — tier 0's own wall.
+ *
+ * The same shape as `briefStats` one block down and NOT the same function,
+ * because they measure against two different walls the SERVER enforces
+ * separately: 32 KB for a standing brief, 512 KB for a canonical document.
+ * One function taking a limit would be tidier and would put the two numbers
+ * one argument apart at every call site; the value here is that a call site
+ * cannot pass the wrong wall at all.
+ */
+function fndStats(text) {
+  const s = typeof text === 'string' ? text : '';
+  const bytes = new TextEncoder().encode(s).length;
+  const words = s.trim() ? s.trim().split(/\s+/).length : 0;
+  return { bytes, words, over: bytes > MAX_FOUNDATION_BYTES };
+}
+
+/**
+ * IS THIS SLUG ONE THE STORE WILL TAKE — and if not, why, in words.
+ *
+ * Only asked on "Add document": an existing document's slug is the file's own
+ * name and is not editable, because a rename is a delete plus a create and
+ * neither the store nor this editor pretends otherwise.
+ *
+ * `FOUNDATION_SLUG_RE` is the store's own pattern, mirrored in
+ * shared/foundations-init.js and pinned equal to it. A view refusing at a
+ * DIFFERENT grammar from the server would either block a name the server
+ * accepts or offer one it refuses with a 400 the owner cannot act on.
+ */
+function fndSlugError(slug, taken) {
+  const s = String(slug == null ? '' : slug).trim();
+  if (!s) return 'Give the document a file name, ending in .md.';
+  if (!FOUNDATION_SLUG_RE.test(s)) {
+    return 'A file name is lowercase letters, digits and hyphens, and ends in .md — '
+      + 'for example architecture.md.';
+  }
+  if (Array.isArray(taken) && taken.indexOf(s) >= 0) {
+    return 'This project already has a document called ' + s + '. Edit that one, or pick another name.';
+  }
+  return null;
+}
+
+/**
+ * IS THIS SAVE A SHRINK THE OWNER SHOULD CONFIRM — D5.
+ *
+ * The store carries a 10 % shrink guard that needs `replace: true`, and the
+ * route passes it: the guard is advice a person in a browser cannot take, and
+ * a 400 that says "pass replace: true" is a refusal an owner cannot act on.
+ * So the HONESTY moves here, where the two sizes are both in hand and a
+ * sentence can name them.
+ *
+ * TWO CONDITIONS, and the second is what stops this firing constantly: the
+ * draft is under 90 % of what was loaded AND the loaded document was at least
+ * 1 KB. Cutting a 200-byte stub in half is ordinary editing; cutting a
+ * 40 KB architecture note in half is a thing to be sure about.
+ */
+function fndShrinkWarn(e) {
+  if (!e) return null;
+  const before = new TextEncoder().encode(String(e.loaded || '')).length;
+  const after = new TextEncoder().encode(String(e.text || '')).length;
+  if (before < 1024) return null;
+  if (after >= before * 0.9) return null;
+  return { before, after };
 }
 
 /**
@@ -4600,30 +4931,84 @@ function renderFoundations(read) {
       '<span>' + escapeHtml(said.length ? said.join(' · ') : 'Nothing to copy.') + '</span></div>';
   }
 
+  // ── THE OWNERSHIP CHOICE'S OWN OUTCOME (v3.61.0) ──────────────────────
+  // Stamped like every other outcome on this screen, and never folded: a
+  // refusal from `…/foundations/init` is the reason nothing happened, and the
+  // `refused[]` a mirror comes back with names the files that were NOT copied.
+  const ini = state.fndInit && state.fndInit.domain === state.activeDomain
+    && state.fndInit.project === state.activeProject ? state.fndInit : null;
+  if (ini && ini.error) {
+    notes += renderStatus({ state: 'danger', title: 'Nothing was set up', detail: ini.error });
+  }
+  if (ini && Array.isArray(ini.refused) && ini.refused.length) {
+    notes += renderRefusedList(ini.refused);
+  }
+
   // ── THE CONTROL ───────────────────────────────────────────────────────
+  //
+  // ONE SLOT, FILLED BY OWNERSHIP, NEVER BOTH. A mirror gets "Refresh from
+  // repo"; a curator-owned project gets "Add document". They are mutually
+  // exclusive because the ownership is, and a screen offering both would be
+  // offering one action that must refuse.
   const busy = !!(fnd && fnd.busy);
-  const action = offer.show
-    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
-      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
-      escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
-    : '';
+  const editing = !!(state.fndEdit && state.fndEdit.domain === state.activeDomain
+    && state.fndEdit.project === state.activeProject);
+  const curator = facts.ownership === 'curator';
+  const action = editing ? ''
+    : offer.show
+      ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
+        (busy ? ' disabled aria-disabled="true"' : '') + '>' +
+        escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
+      // OFFERED AT COUNT 0 TOO. A curator-owned project whose owner unticked
+      // the seeding has a manifest and no documents, and that is exactly the
+      // state in which the one action that puts a document in it must be
+      // reachable — the mistake v3.59.0 made with Refresh, one arm over.
+      : (curator
+        ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-add">' +
+          'Add document</button>'
+        : '');
   const withheld = (!offer.show && offer.reason)
     ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(offer.reason) + '</span></div>'
     : '';
+
+  // ── NOTHING CHOSEN YET: THE CHOOSER, WHERE THE ANSWER IS MISSING ───────
+  //
+  // Until this release this state showed one sentence naming the two ways a
+  // document arrives — and neither of them was reachable from the app: the
+  // refresh route passed no file list, so a mirror could only be created from
+  // a test, and only the `save_foundation` MCP tool wrote a curator document.
+  // So the sentence was true and the screen was a dead end.
+  //
+  // The chooser replaces it. It is the SAME control the "New project" form
+  // renders (shared/foundations-init.js) because the choice is the same choice,
+  // and it is made ONCE — the store refuses a mismatch on every later write,
+  // which is why the commit below is the one primary in this block.
+  if (!facts.present && !facts.manifestError) {
+    return notes + renderFoundationsInit(facts);
+  }
+
+  // ── CHOSEN, REPO-OWNED, NOTHING MIRRORED YET ──────────────────────────
+  // The scan picker on its own: the ownership is settled, so the two-way
+  // choice is withheld (it cannot be made) and what is left is the one action
+  // that puts documents in — "Add from repository".
+  if (!facts.count && !facts.manifestError && facts.ownership === 'repo') {
+    return notes + renderFoundationsInit(facts);
+  }
 
   // ── NO DOCUMENTS, NO FOLD ─────────────────────────────────────────────
   // The same shape `renderBrief` uses for a project with no brief, and for the
   // same reason: there is one sentence to show, and hiding the sentence that
   // explains what is missing behind a chevron is "the missing thing has to be
-  // missing where you looked for it" read backwards. The two ways a document
-  // arrives are in the block's ⓘ, which is one press away and always there.
+  // missing where you looked for it" read backwards.
   if (!facts.count) {
     return notes +
       '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
-          renderDescription('No canonical documents yet. They arrive one of two ways: an agent you '
-            + 'ask writes one, or a refresh copies them from this project’s repository.') +
+          (editing ? renderFoundationEditor(facts) :
+            renderDescription('No canonical documents yet. They arrive one of three ways: an agent you '
+              + 'ask writes one, a refresh copies them from this project’s repository, or you add one here.')) +
         '</div></div>' +
+        action +
       '</div>' + withheld;
   }
 
@@ -4639,28 +5024,310 @@ function renderFoundations(read) {
       '</span>' +
     '</summary>';
 
-  const rows = facts.docs.map((d) => fndRowHtml(d)).join('');
-  const open = (state.openFolds && state.openFolds.foundations) ? ' open' : '';
+  const rows = facts.docs.map((d) => fndRowHtml(d, curator)).join('');
+  // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
+  // The standing brief's own precedent one block up, and the same reason: two
+  // views of one set of documents on screen at once, one of them describing a
+  // size that is no longer true the moment a key is pressed. The fold is
+  // FORCED OPEN while an editor is up — not from a transient, from the
+  // explicit decision the Edit press recorded in `state.openFolds`, which is
+  // what the brief's pencil does too.
+  const body = editing
+    ? renderFoundationEditor(facts)
+    : '<div class="fnd-wrap"><table class="fnd-table">' +
+        '<thead><tr>' +
+          '<th scope="col">Role</th>' +
+          '<th scope="col">Document</th>' +
+          '<th scope="col">Size</th>' +
+          '<th scope="col">Source</th>' +
+          '<th scope="col">Copy</th>' +
+          '<th scope="col">Updated</th>' +
+          // A COLUMN WITH A BLANK HEADER WOULD BE A COLUMN NOBODY NAMED. It
+          // holds an icon-only control, so the heading is visually hidden
+          // rather than absent: a screen reader reading the row still hears
+          // which column the button is in.
+          '<th scope="col"><span class="visually-hidden">Edit</span></th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div>';
+  const open = (editing || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
   return notes +
     '<div class="mem-fnd-row">' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
-        '<div class="mem-fold-body">' +
-          '<div class="fnd-wrap"><table class="fnd-table">' +
-            '<thead><tr>' +
-              '<th scope="col">Role</th>' +
-              '<th scope="col">Document</th>' +
-              '<th scope="col">Size</th>' +
-              '<th scope="col">Source</th>' +
-              '<th scope="col">Copy</th>' +
-              '<th scope="col">Updated</th>' +
-            '</tr></thead>' +
-            '<tbody>' + rows + '</tbody>' +
-          '</table></div>' +
-        '</div>' +
+        '<div class="mem-fold-body">' + body + '</div>' +
       '</details>' +
       action +
     '</div>' + withheld;
+}
+
+/**
+ * THE OWNERSHIP CHOICE, IN THE PLACE THE ANSWER IS MISSING.
+ *
+ * Two shapes, one renderer: a project with no manifest gets the full two-way
+ * (plus nothing — "decide later" is the create form's third answer and is
+ * meaningless here, because this screen IS the later), and a repo-owned
+ * project with nothing mirrored gets the scan arm alone under a heading that
+ * says what is being added rather than what is being decided.
+ *
+ * ── WHAT IS A LEDE AND WHAT IS AN ⓘ HERE ────────────────────────────────
+ * The sentence above the chooser is an INSTRUCTION at ten words. What a
+ * canonical document IS, that the choice cannot be changed afterwards, and
+ * that a plain folder with no git in it works perfectly well as a mirror
+ * source are all DEFINITIONS or MECHANISM, and they are in the block's ⓘ —
+ * which this function does not emit, because the block above it already has
+ * one and a second mark beside it would be a second voice.
+ */
+function renderFoundationsInit(facts) {
+  const ini = state.fndInit && state.fndInit.domain === state.activeDomain
+    && state.fndInit.project === state.activeProject ? state.fndInit : null;
+  const repoOnly = facts.ownership === 'repo';
+  const choice = ini && ini.choice
+    ? ini.choice
+    // A FRESH CHOICE PAINTED FROM NOTHING, so the block renders its own first
+    // frame without a click: `state.fndInit` is written by the first
+    // interaction, and until then this is a pure function of the payload.
+    : freshChooser({ allowLater: false });
+  if (repoOnly) choice.ownership = 'repo';
+  const busy = !!(ini && ini.busy);
+  const ready = repoOnly
+    ? !!String(choice.repoRoot || '').trim()
+    : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim());
+
+  return (
+    '<div class="mem-fnd-row">' +
+      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+        renderDescription(repoOnly
+          ? 'Nothing mirrored yet. Point at the checkout and choose which files to copy.'
+          : 'No canonical documents yet. Choose where this project keeps them.') +
+        renderFoundationsChooser({
+          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
+        }) +
+        '<div class="mem-fnd-init-actions">' +
+          // THE BLOCK'S ONE COMMIT. The editor is never open at the same time
+          // as this (a project with no documents has nothing to edit, and the
+          // moment it has one this branch is gone), so the taxonomy's "at most
+          // one primary per card" holds by construction rather than by care.
+          '<button type="button" class="btn btn-primary" id="mem-fnd-init-go"' +
+            (busy || !ready ? ' disabled' : '') + '>' +
+            escapeHtml(busy
+              ? (repoOnly ? 'Copying…' : 'Setting up…')
+              : (repoOnly ? 'Add from repository'
+                : choice.ownership === 'repo' ? 'Mirror these documents' : 'Seed the skeletons')) +
+          '</button>' +
+        '</div>' +
+      '</div></div>' +
+    '</div>'
+  );
+}
+
+/**
+ * ONE DOCUMENT, OPEN FOR EDITING.
+ *
+ * ── THE FOUR CONFIRMS, AND WHY NONE OF THEM IS A MODAL ──────────────────
+ * The unsaved-draft bar, the shrink strip and the delete strip are all IN
+ * FLOW, under the field, for the reason the standing brief's own bar records:
+ * the text under discussion has to stay on screen while the owner decides
+ * whether to lose it. A dialog would cover it.
+ *
+ * ── WHAT IS NEVER FOLDED (v3.16.1, and this file's header) ──────────────
+ * The 512 KB wall, the project-budget disclosure, every refusal and every
+ * confirm. All four are painted in the editor's own flow, and the wall is
+ * emitted ALWAYS and merely `hidden`, because the input handler flips it
+ * WITHOUT a render — a render here would rebuild the textarea and take the
+ * caret and the selection with it (the brief editor's own rule, and
+ * views/domains.js's lifecycle form before it).
+ *
+ * ── THE WALL IS A WALL; THE BUDGET IS A DISCLOSURE ──────────────────────
+ * D6, and the asymmetry is the store's rather than a choice made here: a
+ * document over `MAX_FOUNDATION_BYTES` is REFUSED with the size named,
+ * because a verbatim document cannot be trimmed honestly, so Save is disabled
+ * before the request. The 200 KB project budget is ACCEPTED and disclosed —
+ * so this screen must NOT refuse what the store accepts, and says the figure
+ * instead.
+ */
+function renderFoundationEditor(facts) {
+  const e = state.fndEdit;
+  if (!e) return '';
+  if (e.loading) {
+    return '<div class="mem-fnd-editor" aria-busy="true">' +
+      renderDescription('Reading the document…') + '</div>';
+  }
+  const stats = fndStats(e.text || '');
+  const dirty = (e.text || '') !== (e.loaded || '');
+  const taken = e.isNew ? facts.docs.map((d) => String(d.slug || '')) : [];
+  const slugErr = e.isNew ? fndSlugError(e.slug, taken) : null;
+  const shrink = fndShrinkWarn(e);
+  const role = FOUNDATION_ROLES.includes(e.role) ? e.role : 'other';
+
+  // ── THE HEADING ───────────────────────────────────────────────────────
+  // The document's own title with its role beside it, so the owner can see at
+  // a glance WHICH of six documents is in the box. On "Add" there is no title
+  // yet, so the heading says what is being done instead of quoting an empty
+  // field back at them.
+  const head =
+    '<div class="mem-fnd-editor-head">' +
+      '<span class="mem-fnd-editor-title">' +
+        escapeHtml(e.isNew ? 'New document' : (e.title || e.slug || 'Document')) + '</span>' +
+      '<span class="fnd-role">' + escapeHtml(role) + '</span>' +
+    '</div>';
+
+  // The slug, the title and the role are asked for ONLY on "Add": an existing
+  // document's file name is the file's own name, and a rename is a delete plus
+  // a create — which neither the store nor this editor pretends otherwise
+  // about. The TITLE and the ROLE of an existing document ARE editable,
+  // because both are manifest fields the PUT carries.
+  const fields =
+    (e.isNew
+      ? '<label class="mem-fnd-label cur-eyebrow" for="mem-fnd-slug">File name</label>' +
+        '<input class="mem-fnd-input" id="mem-fnd-slug" type="text" autocomplete="off"' +
+          ' spellcheck="false" placeholder="architecture.md" value="' + escapeHtml(e.slug || '') + '"' +
+          (e.busy ? ' disabled' : '') + ' />' +
+        (slugErr
+          ? '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
+            '<span>' + escapeHtml(slugErr) + '</span></div>'
+          : '')
+      : '') +
+    '<label class="mem-fnd-label cur-eyebrow" for="mem-fnd-title">Title</label>' +
+    '<input class="mem-fnd-input" id="mem-fnd-title" type="text" autocomplete="off"' +
+      ' placeholder="Architecture" value="' + escapeHtml(e.title || '') + '"' +
+      (e.busy ? ' disabled' : '') + ' />' +
+    '<div class="mem-fnd-label cur-eyebrow">Role</div>' +
+    renderRoleOptions({ value: role, hook: 'fnd-edit-role', disabled: !!e.busy,
+      label: 'Role for this document' });
+
+  // ── FILES FROM DISK (D18) ─────────────────────────────────────────────
+  // Offered on "Add" only, and the text lands in the FIELD rather than on the
+  // server: the owner sees exactly what will be saved before anything is
+  // written, and the save is the ordinary PUT. Nothing is uploaded.
+  const picker = e.isNew
+    ? '<div class="mem-fnd-pick">' +
+        '<label class="btn btn-secondary btn-xs fnd-init-file">' +
+          '<input type="file" class="visually-hidden" id="mem-fnd-file"' +
+            ' accept=".md,.txt,text/markdown,text/plain"' + (e.busy ? ' disabled' : '') + ' />' +
+          '<span>Choose a file…</span>' +
+        '</label>' +
+        '<span class="fnd-init-file-hint">Or paste the text below. A file is read on this ' +
+          'computer and dropped into the box — nothing is sent until you save.</span>' +
+      '</div>' +
+      (e.importError
+        ? '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
+          '<span>' + escapeHtml(e.importError) + '</span></div>'
+        : '')
+    : '';
+
+  // ── THE COUNTER, THE WALL AND THE BUDGET ──────────────────────────────
+  const budget = facts.budgetBytes;
+  const projected = Math.max(0, facts.bytes -
+    (e.isNew ? 0 : new TextEncoder().encode(String(e.loaded || '')).length)) + stats.bytes;
+  const statusLine =
+    '<div class="mem-brief-stats' + (stats.over ? ' mem-brief-stats-over' : '') + '" id="mem-fnd-stats">' +
+      '<span data-fnd-stat="dirty">' + (dirty ? 'modified' : 'unchanged') + '</span>' +
+      '<span data-fnd-stat="words">' + escapeHtml(String(stats.words)) +
+        ' word' + (stats.words === 1 ? '' : 's') + '</span>' +
+      '<span data-fnd-stat="bytes">' + escapeHtml(String(stats.bytes)) + ' of ' +
+        escapeHtml(String(MAX_FOUNDATION_BYTES)) + ' bytes</span>' +
+    '</div>' +
+    '<div class="mem-note mem-note-loud" id="mem-fnd-over"' + (stats.over ? '' : ' hidden') + '>' +
+      icon('alertTriangle', 13) +
+      '<span><b>Too long to save.</b> A single document is capped at ' +
+      escapeHtml(String(MAX_FOUNDATION_BYTES)) + ' bytes (' +
+      escapeHtml(formatBytes(MAX_FOUNDATION_BYTES)) + ') — this draft is ' +
+      escapeHtml(String(stats.bytes)) + '. A canonical document cannot be trimmed for you, so ' +
+      'split it or point at the part that matters.</span></div>' +
+    // THE BUDGET IS SAID, NEVER ENFORCED. The store accepts the save and
+    // discloses the overrun; refusing here would be the app standing between
+    // the owner and a write the server would have taken.
+    (projected > budget
+      ? '<div class="mem-note">' + icon('alertCircle', 13) +
+        '<span>Saving this takes the project to about ' + escapeHtml(formatBytes(projected)) +
+        ' of canonical documents, over the ' + escapeHtml(formatBytes(budget)) +
+        ' an agent reads in one call. It will still be saved — the read is what gets ' +
+        'trimmed, oldest-listed last.</span></div>'
+      : '');
+
+  const discardBar = e.confirmDiscard
+    ? '<div class="mem-brief-discard" role="alertdialog" aria-label="Unsaved changes">' +
+        '<span>You have unsaved changes to this document.</span>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-discard">Discard</button>' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-keep">Keep editing</button>' +
+      '</div>'
+    : '';
+
+  // ── THE SHRINK CONFIRM (D5) ───────────────────────────────────────────
+  // Raised by the SAVE press, never by a timer and never by the poll, and it
+  // names both sizes: the store's own 10 % guard is bypassed by the route
+  // (`replace: true`), because "pass replace: true" is not advice a person in
+  // a browser can act on — so the question is asked here, where both figures
+  // are in hand and a sentence can carry them.
+  const shrinkBar = (e.confirmShrink && shrink)
+    ? '<div class="mem-brief-discard" role="alertdialog" aria-label="Much shorter than before">' +
+        '<span>This save replaces ' + escapeHtml(formatBytes(shrink.before)) + ' with ' +
+        escapeHtml(formatBytes(shrink.after)) + ' — the whole document, not an addition. ' +
+        'Save it anyway?</span>' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-shrink-go">Save anyway</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-shrink-no">Keep editing</button>' +
+      '</div>'
+    : '';
+
+  // ── DELETE, NAMED, BEHIND A CONFIRM STRIP ─────────────────────────────
+  // A ghost control in the footer rather than beside Save: it destroys a
+  // document and must not sit where the commit is. The strip NAMES the
+  // document, because "are you sure?" over six rows is a question about none
+  // of them, and the request carries the slug as its own confirmation so a
+  // client that skipped the strip still deletes nothing.
+  const deleteBar = e.confirmDelete
+    ? '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Delete this document">' +
+        '<span>Delete <b>' + escapeHtml(e.slug || '') + '</b>? Your agents stop reading it. ' +
+        'The file is removed from this project’s foundations; nothing else is touched.</span>' +
+        '<button type="button" class="btn btn-danger btn-xs" id="mem-fnd-delete-go"' +
+          (e.deleting ? ' disabled' : '') + '>' +
+          escapeHtml(e.deleting ? 'Deleting…' : 'Delete it') + '</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-delete-no"' +
+          (e.deleting ? ' disabled' : '') + '>Keep it</button>' +
+      '</div>'
+    : '';
+
+  const field = e.preview
+    ? '<div class="mem-doc mem-brief-preview" aria-label="Document preview">' +
+        renderMarkdown(e.text || '') + '</div>'
+    : '<textarea class="mem-fnd-text" id="mem-fnd-text" rows="20" spellcheck="true"' +
+        (e.busy ? ' disabled' : '') + '>' + escapeHtml(e.text || '') + '</textarea>';
+
+  return (
+    '<div class="mem-fnd-editor">' +
+      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error }) : '') +
+      head +
+      fields +
+      picker +
+      '<label class="mem-fnd-label cur-eyebrow" for="mem-fnd-text">Document (Markdown, saved verbatim)</label>' +
+      field +
+      statusLine +
+      discardBar +
+      shrinkBar +
+      '<div class="mem-brief-buttons">' +
+        '<button type="button" class="btn btn-primary" id="mem-fnd-save"' +
+          (e.busy || stats.over || !!slugErr || !!e.confirmDelete ? ' disabled' : '') + '>' +
+          escapeHtml(e.busy ? 'Saving…' : (e.isNew ? 'Save document' : 'Save changes')) + '</button>' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-preview"' +
+          (e.busy ? ' disabled' : '') + '>' +
+          (e.preview ? 'Back to editing' : 'Preview') + '</button>' +
+        '<button type="button" class="btn btn-ghost" id="mem-fnd-cancel"' +
+          (e.busy ? ' disabled' : '') + '>Cancel</button>' +
+        (e.isNew ? '' :
+          '<button type="button" class="btn btn-ghost btn-xs mem-fnd-delete" id="mem-fnd-delete"' +
+            (e.busy || e.confirmDelete ? ' disabled' : '') + '>Delete…</button>') +
+      '</div>' +
+      deleteBar +
+      // ONE SENTENCE, AND IT IS THE ONE ABOUT THE WRITE. Not a definition —
+      // a condition on the button above it, whose consequence if missed is an
+      // owner sending a fragment and losing the rest of their own document.
+      // The brief editor carries the same sentence for the same reason, and
+      // this file's header states that a warning never folds.
+      renderDescription('Saving replaces the whole document, byte for byte — send the complete '
+        + 'text, not an addition.') +
+    '</div>'
+  );
 }
 
 /**
@@ -4695,10 +5362,20 @@ function renderFoundationsStatus(read) {
  * the deliberate absence of `domain`, which would switch on the reader's
  * raw-source bar and buy a request that can only answer "no".
  *
- * `readonly: true` ALWAYS, on both ownership modes. The app does not write a
- * foundation: a curator-owned one is the commissioned agent's, a repo-owned
- * one is the repository's, and the reader must not imply an edit that no route
- * would accept.
+ * `readonly: true` ALWAYS, on both ownership modes — and STILL true now that
+ * a curator-owned document IS editable, because the READER is not where it is
+ * edited (D2): it patches `.reader-body.innerHTML` without rebinding and has
+ * no dirty guard, so a field inside it would lose its listeners on the next
+ * patch and its draft on the next Escape. The editor lives in the Foundations
+ * table, and the note below says so.
+ *
+ * ── THE NOTE THE READER PAINTED WAS WRONG ON EVERY FOUNDATION ───────────
+ * `readonly: true` made app.js print "Read-only Shared Brain mirror" — a
+ * sentence about a completely different feature, on a document that is
+ * usually neither shared nor a mirror. The flag stays; the COPY is now the
+ * payload's, through `readonlyNote`, and app.js falls back to the Shared Brain
+ * sentence byte-for-byte when a caller sends none. So the two ownerships each
+ * say what is true of them, and no other caller of `openReader` changes.
  *
  * The body goes through `renderMarkdown`, which escapes the whole string
  * before emitting any markup. These bytes arrive over sync from other machines
@@ -4756,6 +5433,15 @@ function foundationReaderContent(doc, project) {
       doc.freshness === 'unreachable' ? 'source not on this computer' : null,
     ].filter(Boolean),
     readonly: true,
+    // WHICH WRITER OWNS THIS FILE, in one sentence, where the read-only mark
+    // is. A mirrored document belongs to its repository and is changed THERE;
+    // a curator-owned one is the owner's and is changed in the table this
+    // reader was opened from. Either way the answer is "not here", which is
+    // what `readonly` says — but "not here, and there instead" is the half a
+    // person actually needs.
+    readonlyNote: doc.ownership === 'curator'
+      ? 'Edit it from the Foundations table'
+      : 'Mirrored from the repository — edit it there and refresh',
     bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
       renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
     backlinks: [],
@@ -4835,7 +5521,7 @@ async function openFoundation(slug, token) {
  * front of the user, and they belong on it. `alert()` would put a fact about a
  * project into a modal the user must dismiss before they can look at it.
  */
-async function refreshFoundations(token) {
+async function refreshFoundations(token, files) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   if (!domain || !project) return;
@@ -4851,7 +5537,18 @@ async function refreshFoundations(token) {
       encodeURIComponent(project) + '/foundations/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      // ── THE ONE FIELD THAT MAY CROSS, AND ONLY WHEN THE OWNER PICKED ────
+      // Until v3.61.0 this body was the literal '{}' and the guard on it was
+      // that NOTHING crossed at all. `files` is the one field the mirror needs
+      // in order to be created or extended from the app: an ARRAY OF PATHS
+      // INSIDE THE REPOSITORY the manifest already names, which the store
+      // validates with its own `sourceDigest` rules (inside the root, no
+      // symlink out, markdown, under the per-document cap) and reports back in
+      // `refused[]`. No document BODY crosses on this route in either
+      // direction — that is what keeps "the app is a copier, never an author"
+      // true of it. A curator document's bytes go through the PUT, which is a
+      // different route with a different ownership.
+      body: JSON.stringify(Array.isArray(files) && files.length ? { files } : {}),
     });
     const body = await res.json();
     if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
@@ -4878,6 +5575,25 @@ async function refreshFoundations(token) {
       missing: Array.isArray(data.missing) ? data.missing : [],
     },
   };
+  // WHAT THE STORE WOULD NOT COPY, KEPT SEPARATE FROM WHAT IT DID (v3.61.0).
+  // A refusal is not a result: a path the owner typed that turned out to be
+  // outside the root, a symlink pointing out of it, or a file over the
+  // per-document cap each come back with the store's own reason, and they are
+  // rendered unfolded beside the outcome rather than counted into it. Held on
+  // `fndInit` because that is where the picker's own state lives, so a typed
+  // path and the refusal it earned are on one record.
+  {
+    const refused = Array.isArray(data.refused) ? data.refused : [];
+    if (refused.length) {
+      state.fndInit = state.fndInit && state.fndInit.domain === domain
+        && state.fndInit.project === project
+        ? { ...state.fndInit, busy: false, refused }
+        : { domain, project, choice: null, busy: false, error: null, refused };
+    } else if (state.fndInit && state.fndInit.domain === domain
+        && state.fndInit.project === project) {
+      state.fndInit = { ...state.fndInit, busy: false, refused: [] };
+    }
+  }
   // THE CACHED READ IS NOW WRONG — bytes on disk changed — so it goes before
   // the request rather than after it, exactly as `reloadActive` drops it.
   forgetProject(domain, project);
@@ -4888,9 +5604,317 @@ async function refreshFoundations(token) {
 }
 
 /**
- * One listener per row button, the same shape the work-stream rows use and for
- * the same reason: `wire` runs after every paint and the whole pane is
- * replaced each time, so there is nothing to accumulate on and a per-row
+ * SET THE OWNERSHIP, OR EXTEND A MIRROR THAT HAS NOTHING IN IT YET.
+ *
+ * ── ONE CONTROL, TWO ROUTES, AND THE FACTS DECIDE WHICH ─────────────────
+ * A project with NO manifest is being given one: `POST …/foundations/init`,
+ * which is the only route that sets an ownership and the only one the store
+ * lets run once. A project that is already repo-owned and has nothing
+ * mirrored has its ownership settled, so the same press is a `refresh` with a
+ * file list. Rendering two controls for that would put a decision on screen
+ * that the store has already made.
+ *
+ * ── STAMPED, AND DROPPED IF THE USER MOVED ON ───────────────────────────
+ * The reply is applied only when the selection is still the one it was asked
+ * for. A project switch mid-flight is ordinary: an init that seeds four
+ * documents is four atomic writes plus a manifest.
+ *
+ * ── THE REFUSAL IS INLINE, NEVER AN ALERT ───────────────────────────────
+ * Every refusal this can get — an ownership already set, a root that is not
+ * on this computer, a curator arm carrying a repoRoot — is a fact about the
+ * project in front of the owner, and it belongs on it.
+ */
+async function initFoundations(token, facts) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project) return;
+  const cur = state.fndInit && state.fndInit.domain === domain
+    && state.fndInit.project === project ? state.fndInit : null;
+  if (cur && cur.busy) return;
+  const choice = (cur && cur.choice) || freshChooser({ allowLater: false });
+  const body = chooserBody(choice);
+  if (!body) return;
+  const key = keyOf(domain, project);
+  const mirrorOnly = !!(facts && facts.present && facts.ownership === 'repo');
+  state.fndInit = { domain, project, choice, busy: true, error: null, refused: [] };
+  render(token);
+
+  // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own
+  // outcome rendering and its own stamped record — so this hands off rather
+  // than duplicating it.
+  if (mirrorOnly) {
+    state.fndInit = { domain, project, choice, busy: false, error: null, refused: [] };
+    await refreshFoundations(token, body.files || []);
+    return;
+  }
+
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/foundations/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const got = await res.json();
+    if (!res.ok || !got.ok) error = got.message || got.error || ('HTTP ' + res.status);
+    else data = got;
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || activeKey() !== key) return;
+
+  if (error) {
+    // THE CHOICE SURVIVES THE REFUSAL. A path typed, a scan read and eight
+    // boxes ticked are not thrown away because the server said no — that is
+    // the same rule the project lifecycle form follows on a 4xx.
+    state.fndInit = { domain, project, choice, busy: false, error, refused: [] };
+    render(token);
+    return;
+  }
+  const refresh = data.refresh && typeof data.refresh === 'object' ? data.refresh : null;
+  state.fndInit = {
+    domain, project, choice: null, busy: false, error: null,
+    refused: refresh && Array.isArray(refresh.refused) ? refresh.refused : [],
+  };
+  // The cached read is now wrong — a manifest and up to four documents exist
+  // that did not a moment ago — so it goes before the re-read, exactly as
+  // `refreshFoundations` and `reloadActive` drop it.
+  forgetProject(domain, project);
+  const read = await fetchState(domain, project, {}, token);
+  if (!isCurrentMount(token) || activeKey() !== key) return;
+  if (read.data) state.projectRead = read.data;
+  render(token);
+}
+
+/**
+ * OPEN ONE DOCUMENT FOR EDITING — the RAW bytes, never the defanged read.
+ *
+ * `?raw=1` is the whole correctness argument of this function. The ordinary
+ * read defangs protocol-shaped text (a URL, a `<tool_use>` tag, a role
+ * marker) because these bytes arrive over sync from other machines and, in a
+ * shared mirror, from other people. The write path is verbatim. Load the
+ * DEFANGED text into an editor and the first save writes it back: the document
+ * is corrupted by the act of opening it, silently, in a way nothing else on
+ * this screen would reveal. So the editor asks for the file and the round trip
+ * is byte-exact — scripts/test-next-foundations-editor.js pins it by sha256.
+ *
+ * The reader keeps the default: it renders markdown INTO the page, which is
+ * where the escaping duty belongs.
+ *
+ * A BUSY FIRST PAINT, not an empty one. The editor opens with `loading: true`
+ * in the frame the press happened in (v3.27.0's finding: a press acknowledged
+ * a round trip later reads as a press that did nothing), and the draft lands
+ * in it.
+ */
+async function loadFoundationDraft(slug, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || !slug) return;
+  const key = keyOf(domain, project);
+  if (!state.openFolds) state.openFolds = {};
+  state.openFolds.foundations = true;
+  try {
+    localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+  } catch { /* private window, blocked site data, quota — the app forgets */ }
+  state.fndEdit = {
+    domain, project, slug: String(slug), isNew: false, loading: true,
+    loaded: '', text: '', title: '', role: 'other',
+    busy: false, error: null, preview: false,
+    confirmDiscard: false, confirmShrink: false, confirmDelete: false,
+    deleting: false, importError: null,
+  };
+  render(token);
+
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug) + '?raw=1');
+    const got = await res.json();
+    if (!res.ok || !got.ok) error = got.message || got.error || ('HTTP ' + res.status);
+    else data = got;
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token)) return;
+  // The reply belongs to the document it was asked for. A second Edit press
+  // on another row while this was in flight must win.
+  if (!state.fndEdit || keyOf(state.fndEdit.domain, state.fndEdit.project) !== key
+      || state.fndEdit.slug !== String(slug)) return;
+
+  if (error || !data) {
+    state.fndEdit.loading = false;
+    state.fndEdit.error = error || 'That document could not be read.';
+    render(token);
+    return;
+  }
+  const text = typeof data.text === 'string' ? data.text : '';
+  state.fndEdit.loading = false;
+  state.fndEdit.loaded = text;
+  state.fndEdit.text = text;
+  state.fndEdit.title = typeof data.title === 'string' ? data.title : String(slug);
+  state.fndEdit.role = FOUNDATION_ROLES.includes(data.role) ? data.role : 'other';
+  render(token);
+}
+
+/**
+ * WRITE ONE CURATOR-OWNED DOCUMENT. The PUT, and nothing else.
+ *
+ * FIVE PROPERTIES, each of which had to be deliberate — the same five
+ * `saveBrief` above records, because this is the same kind of write:
+ *
+ *   · STAMPED with (domain, project, slug). A reply that lands after the
+ *     owner has moved on is DROPPED, so a slow save cannot report success
+ *     over a document nobody is looking at.
+ *   · ONE AT A TIME. `busy` disables the field and every button; a second
+ *     press is a second whole-document write and the last to arrive wins,
+ *     which is not what pressing twice means.
+ *   · REPLACE, NOT MERGE, and the copy says so under the button.
+ *   · A FAILURE KEEPS THE DRAFT. `state.fndEdit` is not cleared on error —
+ *     the text stays in the box with the reason above it, because it is the
+ *     only copy.
+ *   · THE HUMAN'S STAMP. The route sets `authoredBy: {kind: 'human'}`; this
+ *     sends only the text, the title and the role, so there is no field here
+ *     through which an agent line could be forged.
+ */
+async function saveFoundation(token) {
+  const e = state.fndEdit;
+  if (!e || e.busy || e.loading) return;
+  const stats = fndStats(e.text || '');
+  if (stats.over) return;
+  const slug = String(e.slug || '').trim();
+  if (e.isNew && fndSlugError(slug, null)) return;
+  const key = keyOf(e.domain, e.project) + '/' + slug;
+  e.busy = true;
+  e.error = null;
+  e.confirmShrink = false;
+  render(token);
+
+  let ok = false;
+  let error = null;
+  let data = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(e.domain) + '/' +
+      encodeURIComponent(e.project) + '/foundations/' + encodeURIComponent(slug), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: e.text || '', title: e.title || '', role: e.role || 'other' }),
+    });
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    ok = res.ok && !!(data && data.ok);
+    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+
+  if (!isCurrentMount(token)) return;
+  if (!state.fndEdit
+      || keyOf(state.fndEdit.domain, state.fndEdit.project) + '/' + String(state.fndEdit.slug || '').trim() !== key) return;
+
+  state.fndEdit.busy = false;
+  if (!ok) {
+    state.fndEdit.error = error;
+    render(token);
+    return;
+  }
+  const domain = state.fndEdit.domain;
+  const project = state.fndEdit.project;
+  // THE CACHE GOES FIRST, unconditionally — including when the owner has
+  // already moved on, which is the branch that does NOT re-read. This is the
+  // one moment this view knows its own copy is wrong before any server says
+  // so, and a stale entry would paint the pre-save document the next time they
+  // came back.
+  forgetProject(domain, project);
+  state.fndEdit = null;
+  if (activeKey() === keyOf(domain, project)) {
+    await reloadActive(token);
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  } else {
+    render(token);
+  }
+}
+
+/**
+ * REMOVE ONE CURATOR-OWNED DOCUMENT.
+ *
+ * The slug is sent as its own confirmation (`{confirm: slug}`) and the route
+ * refuses without it, so a client that skipped the strip deletes nothing —
+ * the same discipline the project delete has carried since v3.48.0, and for
+ * the same reason: a confirmation that lives only in a view is a confirmation
+ * every other client skips.
+ *
+ * WHAT IT COSTS, stated on the strip rather than here: your agents stop
+ * reading that document. There is no in-app undo; with Personal Sync
+ * configured a git client recovers it, and without it nothing does.
+ */
+async function deleteFoundation(token) {
+  const e = state.fndEdit;
+  if (!e || e.busy || e.deleting || e.isNew) return;
+  const slug = String(e.slug || '');
+  const key = keyOf(e.domain, e.project) + '/' + slug;
+  e.deleting = true;
+  e.error = null;
+  render(token);
+
+  let ok = false;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(e.domain) + '/' +
+      encodeURIComponent(e.project) + '/foundations/' + encodeURIComponent(slug), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: slug }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    ok = res.ok && !!(data && data.ok);
+    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+
+  if (!isCurrentMount(token)) return;
+  if (!state.fndEdit
+      || keyOf(state.fndEdit.domain, state.fndEdit.project) + '/' + String(state.fndEdit.slug || '') !== key) return;
+
+  state.fndEdit.deleting = false;
+  if (!ok) {
+    state.fndEdit.confirmDelete = false;
+    state.fndEdit.error = error;
+    render(token);
+    return;
+  }
+  const domain = state.fndEdit.domain;
+  const project = state.fndEdit.project;
+  forgetProject(domain, project);
+  state.fndEdit = null;
+  if (activeKey() === keyOf(domain, project)) {
+    await reloadActive(token);
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  } else {
+    render(token);
+  }
+}
+
+/**
+ * EVERY TIER-0 LISTENER, BOUND FROM ONE PLACE.
+ *
+ * ── WHY THIS FUNCTION CARRIES THE WHOLE TIER AND wire() DOES NOT ────────
+ * `wire()` is LIFTED by brace-matching and EXECUTED against a hand-written set
+ * of stubs in scripts/test-agent-instructions.js, so any module-level helper
+ * NAMED inside it that the stub set does not carry is a ReferenceError there —
+ * a CRASH rather than a failing assertion, which is the v3.11.0 shape this
+ * file warns about four times. That suite is not this package's to change.
+ *
+ * `bindFoundationRows` is already in its stub set and is already the tier's
+ * binder, so everything v3.61.0 adds is bound HERE and `wire()` grows no new
+ * identifier at all. The trade is that this function is longer than a binder
+ * usually is; the alternative was a crash in somebody else's suite.
+ *
+ * One listener per control, re-attached after every paint: the whole pane is
+ * replaced each time, so there is nothing to accumulate on and a per-element
  * handler keeps the data it needs on its own element.
  */
 function bindFoundationRows(root, token) {
@@ -4899,6 +5923,255 @@ function bindFoundationRows(root, token) {
       openFoundation(btn.dataset.fndSlug, token)
         .catch((err) => reportAsyncMountFailure(token, err));
     });
+  });
+
+  // ── THE OWNERSHIP CHOOSER ──────────────────────────────────────────────
+  // The shared module owns the markup and the per-control behaviour; this
+  // view owns only WHEN to repaint and WHERE the state lives. The choice
+  // object is created on first interaction and stamped, so a project switch
+  // cannot post one project's answer against another.
+  const facts = foundationsFacts(state.projectRead);
+  const initBox = root.querySelector
+    ? root.querySelector('[data-fnd-init="mem-fnd-init"]') : null;
+  if (initBox) {
+    if (!state.fndInit || state.fndInit.domain !== state.activeDomain
+        || state.fndInit.project !== state.activeProject) {
+      state.fndInit = {
+        domain: state.activeDomain, project: state.activeProject,
+        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
+      };
+    }
+    if (!state.fndInit.choice) state.fndInit.choice = freshChooser({ allowLater: false });
+    if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
+    bindFoundationsChooser({
+      doc: root,
+      id: 'mem-fnd-init',
+      choice: state.fndInit.choice,
+      onChange: () => render(token),
+      onFailure: (err) => reportAsyncMountFailure(token, err),
+    });
+  }
+  const initGo = root.getElementById ? root.getElementById('mem-fnd-init-go') : null;
+  if (initGo) {
+    initGo.addEventListener('click', () => {
+      initFoundations(token, facts).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+
+  // ── "Add from repository" on a mirror with nothing in it ───────────────
+  // The same chooser, arm-only, so there is no second control here — the
+  // commit above serves both. This id exists only in FOCUSABLE_IDS' fallback
+  // table, for the case a future paint offers it separately.
+
+  // ── THE ROW EDIT CONTROLS ──────────────────────────────────────────────
+  root.querySelectorAll('[data-fnd-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const slug = btn.dataset ? btn.dataset.fndEdit : btn.getAttribute('data-fnd-edit');
+      if (!slug) return;
+      loadFoundationDraft(slug, token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+
+  // ── "Add document" ─────────────────────────────────────────────────────
+  // An EMPTY editor, opened in the frame of the press with no request at all:
+  // there is nothing to read. The fold is forced open through the same field a
+  // real toggle writes, because opening an editor inside a collapsed section
+  // is a press that visibly does nothing (v3.58.0's finding on the brief).
+  const addBtn = root.getElementById ? root.getElementById('mem-fnd-add') : null;
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      if (!state.openFolds) state.openFolds = {};
+      state.openFolds.foundations = true;
+      try {
+        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+      } catch { /* private window, blocked site data, quota — the app forgets */ }
+      state.fndEdit = {
+        domain: state.activeDomain, project: state.activeProject,
+        slug: '', isNew: true, loading: false,
+        loaded: '', text: '', title: '', role: 'other',
+        busy: false, error: null, preview: false,
+        confirmDiscard: false, confirmShrink: false, confirmDelete: false,
+        deleting: false, importError: null,
+      };
+      render(token);
+    });
+  }
+
+  const e = state.fndEdit;
+  if (!e) return;
+
+  // ── THE THREE FIELDS: straight into state, no repaint ──────────────────
+  // A render would rebuild the input and take the caret and the selection with
+  // it — the rule the brief editor and views/domains.js's lifecycle form both
+  // follow. The ONLY things on screen these change are the counter, the wall
+  // and Save's disabled state, and each is set on the LIVE node with the SAME
+  // predicate the renderer uses.
+  const slugEl = root.getElementById ? root.getElementById('mem-fnd-slug') : null;
+  if (slugEl) {
+    slugEl.addEventListener('input', () => {
+      if (!state.fndEdit) return;
+      state.fndEdit.slug = slugEl.value;
+      render(token);
+    });
+  }
+  const titleEl = root.getElementById ? root.getElementById('mem-fnd-title') : null;
+  if (titleEl) {
+    titleEl.addEventListener('input', () => {
+      if (state.fndEdit) state.fndEdit.title = titleEl.value;
+    });
+  }
+  const textEl = root.getElementById ? root.getElementById('mem-fnd-text') : null;
+  if (textEl) {
+    textEl.addEventListener('input', () => {
+      if (!state.fndEdit) return;
+      state.fndEdit.text = textEl.value;
+      const stats = fndStats(textEl.value);
+      const box = root.getElementById ? root.getElementById('mem-fnd-stats') : null;
+      if (box) {
+        const set = (k, t) => {
+          const el = box.querySelector('[data-fnd-stat="' + k + '"]');
+          if (el && el.textContent !== t) el.textContent = t;
+        };
+        set('dirty', textEl.value !== (state.fndEdit.loaded || '') ? 'modified' : 'unchanged');
+        set('words', stats.words + ' word' + (stats.words === 1 ? '' : 's'));
+        set('bytes', stats.bytes + ' of ' + MAX_FOUNDATION_BYTES + ' bytes');
+        if (box.classList) box.classList.toggle('mem-brief-stats-over', stats.over);
+      }
+      const over = root.getElementById ? root.getElementById('mem-fnd-over') : null;
+      if (over) over.hidden = !stats.over;
+      const save = root.getElementById ? root.getElementById('mem-fnd-save') : null;
+      if (save) save.disabled = stats.over;
+    });
+
+    // THE KEYBOARD CONTRACT, ON THE FIELD ITSELF. ⌘S and ⌘↵ both save, for
+    // the two kinds of writer the brief editor's own block names, and Escape
+    // asks `briefDismissDecision` — the SAME function, parametrised over the
+    // record rather than copied, because a draft is a draft whichever tier it
+    // belongs to and two answers to "may I close this?" is how a draft gets
+    // destroyed by the safer-looking control.
+    textEl.addEventListener('keydown', (ev) => {
+      const mod = ev.metaKey || ev.ctrlKey;
+      if (mod && (ev.key === 's' || ev.key === 'S' || ev.key === 'Enter')) {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        const warn = fndShrinkWarn(state.fndEdit);
+        if (warn && state.fndEdit && !state.fndEdit.confirmShrink) {
+          state.fndEdit.confirmShrink = true;
+          render(token);
+          return;
+        }
+        saveFoundation(token).catch((err) => reportAsyncMountFailure(token, err));
+        return;
+      }
+      if (ev.key === 'Escape') {
+        const decision = briefDismissDecision(state.fndEdit);
+        if (decision === 'blocked') return;
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        if (decision === 'confirm') {
+          state.fndEdit.confirmDiscard = true;
+          render(token);
+          return;
+        }
+        state.fndEdit = null;
+        render(token);
+      }
+    });
+  }
+
+  root.querySelectorAll('[data-fnd-edit-role]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const role = btn.dataset ? btn.dataset.fndEditRole : btn.getAttribute('data-fnd-edit-role');
+      if (!role || !state.fndEdit || !FOUNDATION_ROLES.includes(role)) return;
+      state.fndEdit.role = role;
+      render(token);
+    });
+  });
+
+  // ── A FILE FROM DISK (D18) ─────────────────────────────────────────────
+  // Read in the browser, dropped into the FIELD, and saved by the ordinary
+  // PUT. The wall is checked on `file.size` before the read, so a 40 MB file
+  // is refused with both numbers and never read into memory — that decision
+  // lives in shared/foundations-init.js's `readPickedFile`, which returns the
+  // refusal as data rather than throwing.
+  const fileEl = root.getElementById ? root.getElementById('mem-fnd-file') : null;
+  if (fileEl) {
+    fileEl.addEventListener('change', () => {
+      const files = fileEl.files ? Array.prototype.slice.call(fileEl.files) : [];
+      if (!files.length) return;
+      readPickedFile(files[0]).then((got) => {
+        if (!isCurrentMount(token) || !state.fndEdit || !state.fndEdit.isNew) return;
+        if (got.error) {
+          state.fndEdit.importError = (got.name || 'That file') + ' ' + got.error + '.';
+          render(token);
+          return;
+        }
+        state.fndEdit.importError = null;
+        state.fndEdit.text = got.text;
+        // THE DRAFT IS DIRTY THE MOMENT A FILE LANDS, and `loaded` stays
+        // empty: this is a NEW document, so there is nothing it was loaded
+        // from, and the Escape decision must ask rather than close silently.
+        if (!String(state.fndEdit.slug || '').trim() && got.slug) state.fndEdit.slug = got.slug;
+        if (!String(state.fndEdit.title || '').trim()) state.fndEdit.title = got.title;
+        if (state.fndEdit.role === 'other' && got.role) state.fndEdit.role = got.role;
+        render(token);
+      }).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+
+  const on = (id, fn) => {
+    const el = root.getElementById ? root.getElementById(id) : null;
+    if (el) el.addEventListener('click', fn);
+  };
+
+  on('mem-fnd-preview', () => {
+    if (!state.fndEdit) return;
+    state.fndEdit.preview = !state.fndEdit.preview;
+    render(token);
+  });
+  on('mem-fnd-save', () => {
+    const warn = fndShrinkWarn(state.fndEdit);
+    if (warn && state.fndEdit && !state.fndEdit.confirmShrink) {
+      state.fndEdit.confirmShrink = true;
+      render(token);
+      return;
+    }
+    saveFoundation(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+  on('mem-fnd-shrink-go', () => {
+    saveFoundation(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+  on('mem-fnd-shrink-no', () => {
+    if (state.fndEdit) state.fndEdit.confirmShrink = false;
+    render(token);
+  });
+  // Cancel goes through the SAME decision as Escape. Two ways out of one
+  // editor that answer differently about an unsaved draft is how a draft gets
+  // destroyed by the safer-looking control.
+  on('mem-fnd-cancel', () => {
+    const decision = briefDismissDecision(state.fndEdit);
+    if (decision === 'blocked') return;
+    if (decision === 'confirm') {
+      state.fndEdit.confirmDiscard = true;
+      render(token);
+      return;
+    }
+    state.fndEdit = null;
+    render(token);
+  });
+  on('mem-fnd-discard', () => { state.fndEdit = null; render(token); });
+  on('mem-fnd-keep', () => {
+    if (state.fndEdit) state.fndEdit.confirmDiscard = false;
+    render(token);
+  });
+  on('mem-fnd-delete', () => {
+    if (state.fndEdit) state.fndEdit.confirmDelete = true;
+    render(token);
+  });
+  on('mem-fnd-delete-no', () => {
+    if (state.fndEdit) state.fndEdit.confirmDelete = false;
+    render(token);
+  });
+  on('mem-fnd-delete-go', () => {
+    deleteFoundation(token).catch((err) => reportAsyncMountFailure(token, err));
   });
 }
 

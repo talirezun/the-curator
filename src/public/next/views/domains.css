@@ -718,7 +718,23 @@
   font-size: var(--text-sm);
   margin-bottom: 14px;
 }
+/* `align-items: center` is right for a one-line banner and wrong for one that
+   carries a second line, so the cross-axis start is taken when the detail span
+   exists. `:has()` is acceptable here by this file's own recorded position —
+   it is a COSMETIC alignment, not layout that content depends on — and the
+   one-line case is byte-identical to what shipped. */
+.dm-banner:has(.dm-banner-detail) { align-items: flex-start; }
 .dm-banner span { line-height: var(--leading-normal); }
+/* THE SECOND LINE: what partly did not happen. A block inside the sentence's
+   own span, so it wraps at the banner's width and inherits the tone's colour
+   rather than declaring a second one — the tone is the outcome's, and a
+   detail line in a different ink would read as a different outcome. */
+.dm-banner-detail {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  opacity: 0.85;
+}
 .dm-banner-success { background: var(--success-tint); color: var(--success-text); }
 .dm-banner-error    { background: var(--danger-tint);  color: var(--danger-text); }
 .dm-banner-info     { background: var(--info-tint);    color: var(--accent-text); }
@@ -1021,6 +1037,19 @@
   color: var(--text-2);
 }
 .dm-lc-optional { text-transform: none; letter-spacing: 0; }
+/* The documents field's label carries an ⓘ mark, so the label becomes a ROW
+   rather than a block — the eyebrow's own type and colour are untouched
+   (`.dm-lc-label` above still owns them) and this adds only the axis, which is
+   the same split `.mem-brief-label` and `.mem-group-head` record in
+   views/memory.css: the class in the markup owns the type, the placement rule
+   owns nothing else. `display: flex` overrides the `block` above it at equal
+   specificity by source order, which is why this rule sits here and not
+   earlier in the file. */
+.dm-proj-fnd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
 .dm-lc-input {
   width: 100%;
   max-width: 420px;
