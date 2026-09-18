@@ -297,7 +297,7 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 ---
 ## Git History of Major Fixes
 
-**This table is this project's memory.** The **5 newest releases** are below in full. Every earlier release — **172 rows**, back
+**This table is this project's memory.** The **6 newest releases** are below in full. Every earlier release — **172 rows**, back
 to `v2.4.2` — is preserved
 **byte-for-byte** in **[CHANGELOG-ARCHIVE.md](CHANGELOG-ARCHIVE.md)**, and
 indexed one line each at the end of this section. Nothing has been deleted or
