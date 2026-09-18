@@ -702,6 +702,14 @@ existing, ownerless project's Foundations block:
   not need to be a git checkout at all** — an ordinary folder works exactly as well as a source for a
   mirror; the only difference is that `repo.lastRefreshCommit` has nothing to record, so the manifest
   and the Foundations block show the source path with no commit rather than a fabricated one.
+- **Since v3.61.1, each candidate also carries `modifiedAt`** — the source file's own `mtime`, as an
+  ISO string, read off the `stat` call the scan already makes for `bytes` (no second syscall). A
+  picker listing a dozen paths, titles and sizes still could not answer the one question somebody
+  onboarding a real repository asks about each of them: is this document still maintained.
+  `null` when the timestamp is missing or is not a real date, computed uniformly whether or not the
+  row is `tooLarge` — the field means one thing on every row rather than "absent = refused" on some
+  and "absent = unknown" on others. It is **information, never an order**: the picker renders it as
+  an age on the app's one freshness scale, but the sort stays role rank then path.
 - **A project already committed to one ownership mode cannot be re-decided through this call** —
   `initFoundations` refuses (`ownership-set`) the moment **any** manifest already exists, even one
   with zero documents in it, for the same reason the one-writer rule refuses a mixed save: ownership
@@ -862,6 +870,25 @@ is now driven by what actually applies: a repo-owned document still reads "Mirro
 repository — edit it there and refresh", and a curator-owned one now reads "Edit it from the
 Foundations table" — true in both cases, and no longer a Shared Brain sentence sitting under a
 document that was never a Shared Brain mirror at all.
+
+**Removal was curator-owned only in v3.61.0, and that was wrong — corrected in v3.61.2.** The
+original `DELETE …/foundations/:slug` refused a mirror (`repo_owned`) on the reasoning, recorded in
+the route at the time, that a mirrored document is dropped by no longer listing it on the next
+refresh, never by deleting the copy, "which the next refresh would simply put back." The second half
+of that sentence is false — `refreshFoundationsFromRepo` builds its work list from
+`manifest.documents`, so an entry that is gone **stays gone** — and the first half describes a
+control the app did not have: there was no way to stop mirroring one document out of many without
+editing `manifest.json` by hand. Reported by the maintainer on his own repository (25 mirrored rows,
+several he never meant to mirror), the fix moves the DELETE gate from **ownership** to the
+**manifest existing at all** (`requireManifest`, a `requireCuratorOwned` sibling that drops only the
+ownership refusal): removing an entry is a decision to stop mirroring or keep a document, not a
+claim about its content, so it does not touch the single-writer property the ownership gate exists
+to protect. `PUT` is unchanged — editing a mirrored document's *content* still refuses outright,
+because that *would* create two writers of one file. `removeFoundation`'s response now names which
+outcome it was (`ownership`, `sourceKept`): on a mirror the copy is gone and the source file is
+untouched, and the picker's confirm strip says so — *"Stop mirroring **decisions.md**? … the file in
+your folder is untouched, and you can mirror it again from the same picker."* — deliberately not
+"cannot be undone", which would be false for that case.
 
 ### The MCP surfaces
 
