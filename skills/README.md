@@ -42,7 +42,7 @@ playbooks into a form Codex, opencode, Cursor or Gemini CLI will load.
 ## Why this exists
 
 The MCP server is already harness-neutral: it speaks stdio JSON-RPC, so any local MCP
-client can call all 22 tools. The skills were not. Three things tied them to one vendor:
+client can call all 24 tools. The skills were not. Three things tied them to one vendor:
 
 | | Portable? |
 |---|---|
@@ -120,14 +120,14 @@ mismatch.
 Two things about that check are worth knowing, because both were weaker before:
 
 - **It runs for every target.** It used to run only when the targets included `my-curator`, so
-  building `curator-continuity` on its own verified nothing — and that skill names nine tools
+  building `curator-continuity` on its own verified nothing — and that skill names ten tools
   which rot exactly like any other.
 - **It compares NAMES, not a count.** A count cannot see a rename, which is precisely the
   drift that makes an `allowed-tools` line wrong while the number stays right. The names are
   read by walking the `tools` array, mapping each `xDefinition` identifier back to the module
   it was imported from, and reading that module's `name:` field.
 
-`curator-continuity` declares a deliberate 9-tool subset, so "registered but not declared" is
+`curator-continuity` declares a deliberate 10-tool subset, so "registered but not declared" is
 expected there and is not reported; `my-curator` documents the whole surface, so it is
 reported for that skill. Declared-but-not-registered is a defect for either and is always
 reported.
@@ -237,18 +237,27 @@ every turn of every session, including the ones with nothing to do with the wiki
 
 | Built with | Bytes | Rough tokens (bytes ÷ 4 — an estimate, not a measurement) |
 |---|---|---|
-| `my-curator` | 45.1 KB | ~11,600 |
-| `my-curator --core` | 31.3 KB | ~8,000 |
-| `curator-continuity` | 55.8 KB | ~14,300 |
-| `curator-continuity --core` | 45.7 KB | ~11,700 |
-| both | 100.9 KB | ~25,900 |
-| both, `--core` | 77.0 KB | ~19,700 |
-| either, `--examples` | +20–24 KB | +~5,100–6,100 |
+| `my-curator` | 47.0 KB | ~12,000 |
+| `my-curator --core` | 33.2 KB | ~8,500 |
+| `curator-continuity` | 60.0 KB | ~15,400 |
+| `curator-continuity --core` | 49.9 KB | ~12,800 |
+| both | 107.0 KB | ~27,400 |
+| both, `--core` | 83.1 KB | ~21,300 |
+| either, `--examples` | +19.6–23.2 KB | +~5,000–5,900 |
 
 Measured with `wc -c` on the generated files at the time of writing, not estimated — but they
 move whenever a playbook does, so re-measure rather than quoting this table back. The `--core`
 rows are what a host loading this on **every turn** should probably install; the companions
 are reference material for a case that may never arise in a given session.
+
+**Session start is one call now, not two (v3.59.0).** `curator-continuity` used to read a
+project's state in two steps — an index read, then a second call naming a scope. It is now a
+single `get_project_context` call: the standing brief, the latest handoff, **and** the
+project's canonical documents (its architecture, firm decisions, conventions — "foundations",
+a new tier 0 alongside the three tiers of state this directory already documented) that have
+not already been read, in one response. A returning session gets only what changed since its
+last save; a first session gets everything. The size tables above already reflect the bigger
+playbook this adds — there is no separate on/off switch for it.
 
 **Do not put `--examples` in always-on context.** The worked dialogues are for a human
 reading the playbook, or for a host that loads a document on demand. In a permanent system
@@ -286,6 +295,7 @@ applies.
 | `get_raw_source` and the compiled-first / verbatim-on-escalation rule | v3.5.0+ |
 | `get_working_state` / `save_working_state` — the whole `curator-continuity` skill | v3.17.0+ (below it there is no working-state store at all, and the tool count is 18) |
 | The `clipped` save verdict (metadata shortened, body stored in full) | v3.39.0+ (below it a clipped headline was reported as content loss) |
+| `get_project_context`, `save_foundation` — the foundations tier (tier 0: canonical documents) | v3.59.0+ (below it the tool count is 22 and `get_project_context` calls simply fail; fall back to `get_working_state`) |
 
 Earlier Curator versions did not have Shared Brain at all. The mirror-domain logic still
 works — there simply will not be any `shared-*` domains to dispatch on.

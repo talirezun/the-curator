@@ -59,6 +59,7 @@ import { createHash } from 'node:crypto';
 import { functionSource } from './test-helpers/source-scan.js';
 import {
   composeAgentInstructions, COPY_SUCCESS_BANNER, HEADING, TEMPLATE,
+  composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS,
 } from '../src/public/next/shared/agent-instructions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -758,6 +759,72 @@ section('S6 -- ONE text: nothing composes it a second time');
     ok(name + ' does not carry a second copy of the banner wording',
       !src.includes('paste into CLAUDE.md, AGENTS.md'));
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('S7 -- v3.59.0: the foundations addendum, pinned the same way TEMPLATE is');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// TEMPLATE_FOUNDATIONS is new prose, not a measured artefact -- it names no
+// experiment and protects no numbers of its own. It still gets S1's exact
+// discipline (a hand-written literal AND an independent sha256), because a
+// silent reword of model-read instruction text is exactly the defect class
+// S1's own header names. And because a SECOND frozen constant is only worth
+// having if the FIRST one is still frozen, this section re-asserts the
+// original 501-byte / sha256 85dc8f97... facts S1 already pins -- proof that
+// adding this constant did not, itself, disturb the one it sits beside.
+
+{
+  // A second, hand-written copy -- same reasoning as MEASURED_EXP_WIDGET above:
+  // deriving the expectation from TEMPLATE_FOUNDATIONS would make this a
+  // tautology that passes for any text, including an edited one.
+  const HAND_WRITTEN_FOUNDATIONS =
+    'This project also keeps foundations — canonical documents such as its architecture and firm\n' +
+    'decisions — that travel with it. At session start, call `get_project_context` instead of\n' +
+    '`get_working_state` to receive them alongside the brief and handoff. On every\n' +
+    '`save_working_state` call, include `foundations_read` (the hashes you were given) so the next\n' +
+    'session knows what changed.\n';
+  const FOUNDATIONS_SHA256 =
+    '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b';
+
+  eq('TEMPLATE_FOUNDATIONS matches the hand-written second copy',
+    TEMPLATE_FOUNDATIONS, HAND_WRITTEN_FOUNDATIONS);
+  eq('...and hashes to the pinned sha256',
+    createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
+  ok('...at most 60 words (harness-neutral addendum, not a second playbook)',
+    TEMPLATE_FOUNDATIONS.trim().split(/\s+/).length <= 60,
+    TEMPLATE_FOUNDATIONS.trim().split(/\s+/).length + ' words');
+
+  // The two phrases the addendum exists to carry.
+  for (const phrase of ['get_project_context', 'foundations_read']) {
+    ok('the addendum names ' + JSON.stringify(phrase), TEMPLATE_FOUNDATIONS.includes(phrase));
+  }
+
+  // CONTROL -- a one-word change to the NEW paragraph must fail its own pin.
+  const nudgedNew = TEMPLATE_FOUNDATIONS.replace('foundations', 'foundation');
+  ok('CONTROL -- a one-word change to the new paragraph fails the literal',
+    nudgedNew !== HAND_WRITTEN_FOUNDATIONS);
+  ok('CONTROL -- ...and the hash',
+    createHash('sha256').update(nudgedNew, 'utf8').digest('hex') !== FOUNDATIONS_SHA256);
+
+  // `composeAgentInstructionsFull` composes the pinned block FIRST, unmodified,
+  // then the new paragraph -- never the reverse, and never merged into one.
+  const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
+  const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
+  ok('composeAgentInstructionsFull begins with the ORIGINAL composed block, byte for byte',
+    full.startsWith(original));
+  ok('...and ends with the new paragraph', full.endsWith(TEMPLATE_FOUNDATIONS));
+  eq('...with exactly one blank line joining them (no merge, no run-together)',
+    full, original + '\n' + TEMPLATE_FOUNDATIONS);
+
+  // The pin this whole section exists to protect: S1's original facts about
+  // TEMPLATE itself must still hold, proving this addition did not touch it.
+  const ORIGINAL_SHA256 =
+    '85dc8f9738e783e3c909133fd899c84978aa48b7c4e2c9ab922d927305244f5b';
+  eq('the ORIGINAL measured block is still exactly 501 bytes',
+    Buffer.byteLength(original, 'utf8'), 501);
+  eq('...and still hashes to 85dc8f97... -- the pin still bites',
+    createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
 }
 
 console.log('\n' + '─'.repeat(60));

@@ -1,9 +1,16 @@
 # Working state — carrying build context between sessions
 
-**Status: shipped in v3.17.0; projects added in v3.48.0.** The store
-(`src/brain/working-state.js`) and the MCP tool layer are live. The app's **Memory** rail item
-opens **Agent memory**, which renders the store, backed by `/api/memory` — and it is read and
+**Status: shipped in v3.17.0; projects added in v3.48.0; the foundations tier added in v3.59.0.**
+The store (`src/brain/working-state.js`) and the MCP tool layer are live. The app's **Memory** rail
+item opens **Agent memory**, which renders the store, backed by `/api/memory` — and it is read and
 *written* by an agent over MCP, and readable by you in a text editor.
+
+**Canonical documents now travel with a project too.** Architecture, firm decisions, conventions
+and a roadmap have always lived in a code repository, invisible to an agent that had not checked
+one out; [the foundations tier](#the-foundations-tier--canonical-documents-that-travel) mirrors
+them — or, for a project with no repository, holds ones an agent wrote on your instruction — so any
+agent, on any machine, reads them in the same one-call session start that already fetches the brief
+and the latest handoff.
 
 **A domain can now hold many projects.** Until v3.48.0 a domain held one project's state, so
 two things built against the same body of knowledge shared one standing brief and one set of
@@ -539,7 +546,227 @@ Stated here so that nothing above is read as a promise:
 
 ---
 
-## 3. The four MCP tools
+## The foundations tier — canonical documents that travel
+
+**Shipped in v3.59.0.** Everything above this section is tiers 1–3: state that a session writes
+and a later one reads, overwritten or appended rather than accumulated. This section adds a tier
+**below** that numbering rather than after it — tier **0** — for a different kind of context
+entirely: documents that are canonical *of the project itself* rather than of any one session.
+
+### Three kinds of context, not two
+
+Until this release The Curator carried two kinds of context for you, and both already travelled:
+
+| Kind | Example | Where it lives | How it behaves |
+|---|---|---|---|
+| **Volatile state** (tiers 1–3, above) | The standing brief, the handoff, the journal | `state/<project>/…` | **Supersedes** — a save overwrites; already one MCP call away |
+| **Compounded knowledge** | The wiki — entities, concepts, summaries | `wiki/` | **Accumulates** — every ingest adds; searchable, cross-linked |
+| **Canonical documents** (tier 0, new) | Architecture, firm decisions, conventions, roadmap, API surface, a user guide | `state/<project>/foundations/` | **Replaced whole** — mirrored byte-for-byte from a repository, or written verbatim by an agent you asked |
+
+The third row is what was missing. A project's architecture document, its decision log, its
+conventions — the things a competent contributor reads *before* touching anything — have always
+lived as plain files in a code repository, and a repository is invisible to an agent that has not
+personally run a checkout in the folder it happens to be sitting in. An agent on a different
+machine, in a different harness, or simply started from the wrong working directory had no way to
+reach them at all; it had the wiki (which is for *knowledge*, not for *this project's own rules*)
+and it had the brief (which is deliberately short — a pointer to depth, not the depth itself).
+
+### Why `raw/` cannot serve this
+
+The obvious shortcut — ingest the architecture doc like any other source — does not work, for two
+reasons specific to this use. First, `raw/` is **gitignored**: it is where uploaded sources land on
+the machine that ingested them, and it deliberately never syncs, so a copy ingested on one computer
+is invisible on every other one. Second, ingest **compiles**: it reads a document and writes wiki
+pages distilled from it, which is exactly right for a source you want folded into compounded
+knowledge and exactly wrong for a document whose entire value is being read **verbatim** — a
+compiled paraphrase of your own architecture doc is not your architecture doc. Foundations therefore
+get their own store, their own write path, and their own place in the on-disk layout — never routed
+through `writePage`, for the same reason tiers 1–3 are not: a foundation must be **replaced whole**,
+never merged, and `writePage`'s merge model unions bullets, which would slowly corrupt prose it was
+never designed to carry.
+
+### Layout on disk
+
+No machine segment — the same carve-out `project.md` already has, and for the same reason: these
+files are meant to be identical on every machine, so there is nothing for two machines to disagree
+about inside one file.
+
+```
+domains/<domain>/state/<project>/
+  project.md                 ← tier 1, unchanged
+  foundations/                ← NEW, tier 0
+    manifest.json             ← the manifest (below)
+    <slug>.md                 ← verbatim documents, one file per document
+  <scope>/<machine>/…          ← tiers 2–3, unchanged
+```
+
+A slug is `^[a-z0-9][a-z0-9-]{0,63}\.md$` — the same shape as any other safe path segment this
+store validates, refused rather than coerced when it does not match. Every path into this folder
+resolves through **`resolveInsideState`**, the one chokepoint tiers 1–3 already use — there is no
+second resolver for tier 0.
+
+### The manifest
+
+`manifest.json` is rewritten **whole** on every change (never a partial edit), atomically, and
+validated on read — a malformed manifest yields `foundations.present: false` with the parse error
+disclosed in `manifestError`, never a crash and never a silent empty result.
+
+```json
+{
+  "version": 1,
+  "ownership": "repo" | "curator",
+  "repo": { "root": "…", "remote": "…", "lastRefreshAt": "ISO", "lastRefreshCommit": "sha or null" } | null,
+  "budgetBytes": 200000,
+  "order": ["architecture", "decisions", "conventions", "roadmap", "api", "guide", "other"],
+  "documents": [ { "slug": "…", "role": "…", "title": "…", "source": {…}, "sha256": "…",
+                   "bytes": 0, "updatedAt": "ISO", "commit": "sha or null", "authoredBy": {…} } ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `ownership` | `repo` or `curator` — see [the two ownership modes](#the-two-ownership-modes-and-the-one-writer-rule) below. Set by the *first* document saved into an empty project |
+| `repo.root` | The checkout path on whichever machine last refreshed. **Advisory and machine-specific** — a hint for *this* machine's refresh action, never an error when it does not resolve here |
+| `repo.remote` | The repository's remote URL, if known — for a human reading the manifest, not consulted by any refresh logic |
+| `repo.lastRefreshAt` / `repo.lastRefreshCommit` | When the mirror was last refreshed, and the commit it was refreshed from (`git -C <root> rev-parse HEAD`, or `null` when git is not available) |
+| `budgetBytes` | The project's total foundations budget — `200000` (200 KB) by default |
+| `order` | The reading order a bootstrap call uses when it has to stop partway through a budget — architecture first, an uncategorised `other` document last |
+| `documents[].sha256` | Over the **stored bytes** — the identity a freshness check compares against, never a remembered flag |
+| `documents[].source` | `{ kind: 'repo', path: 'docs/architecture.md' }` for a mirrored document, or `{ kind: 'curator' }` for one an agent wrote |
+| `documents[].authoredBy` | `{ kind: 'human' \| 'agent', harness, model, commissionedBy }` — the same provenance shape the standing brief already records |
+
+### The two ownership modes, and the one-writer rule
+
+A project holds documents of **one** ownership only. The first document saved into an empty
+project's foundations sets it — `curator` when its `source.kind` is `curator`, `repo` when it is
+`repo` — and a save that would mix the two is **refused**, with the reason named, rather than
+silently accepted. That is the single-writer rule from tiers 2–3, carried one tier further down:
+a repo-owned document has exactly one legitimate writer (the checkout, mirrored byte-for-byte,
+never edited in place), and a curator-owned one has exactly one (an agent, and only on your
+explicit instruction). The app itself never edits either kind directly in this release — see
+[what this tier cannot do](#what-this-tier-cannot-do-yet), below.
+
+| Mode | Who writes | How it stays fresh | A "stale" mark means |
+|---|---|---|---|
+| **Repo-owned** | The repository. The app/MCP **mirrors** — `refreshFoundationsFromRepo` reads `repoRoot/source.path`, compares its sha256 against the stored copy, and copies over anything changed — never an edit in place | A refresh, run by naming a reachable checkout | The stored sha256 no longer matches the file at the recorded path, or that path is not reachable from this machine |
+| **Curator-owned** | An agent, on your explicit instruction — `save_foundation`, the same commissioned-only rule `save_project_brief` already follows | Whoever you next ask to update it | Not applicable — there is no second copy to compare against |
+
+### Freshness is computed, never remembered
+
+There is no "fresh" flag stored anywhere. A repo-owned document's freshness is answered fresh, at
+read time, by comparing the stored `sha256` against the sha256 of the file at `repo.root/source.path`
+on **this** machine — `fresh` when they match, `stale` when they do not, `unreachable` when the path
+cannot be read from here at all (a different machine, a moved checkout, a repository nobody has
+cloned on this computer). A curator-owned document reports `n/a`: there is no second copy to be
+stale against.
+
+### The bootstrap call, and the reading plan
+
+**`get_project_context`** is the one call a session opens with. It returns the brief, the latest
+handoff (exactly as `get_working_state` would), and the foundations you have not already seen —
+in one response, so a cold session on any harness gets everything it needs to start without a
+second round trip. The reading plan it implements:
+
+- **First session** (no `seen_hashes` supplied): `include` defaults to `all` — every foundation,
+  in `manifest.order`, up to the budget.
+- **A returning session** (its previous save's `foundations_read` map supplied, directly or via
+  `seen_hashes`): `include` defaults to `changed` — only documents whose `sha256` differs from
+  what this caller already recorded having read. A document nothing has touched since is not
+  resent.
+- **On demand, by role**: a caller can still ask for everything regardless of what it has seen,
+  or read one document by slug through `readFoundation` outside the bootstrap entirely — the
+  bootstrap's own budget is a *session-start* default, not a ceiling on what the store can answer.
+
+### The handoff's "Foundations read" section, and why reads never write
+
+`save_working_state` accepts `foundations_read: { "<slug>": "<sha256>" }` (camelCase
+`foundationsRead` also accepted) and writes it into `current.md` as a real, bulleted store
+section — `## Foundations read`, one `- <slug> · <sha256>` line per entry, parsed back the same
+way every other list section is. It counts toward the same 48 KB handoff budget and the same
+40-items-per-list cap as any other section, with the same disclosure when it is trimmed.
+
+**The bootstrap never writes.** `get_project_context` is a read; it does not touch the handoff,
+and it does not mark anything as seen on your behalf. The caller — the agent — is the one that
+records what it read, on its **next save**, by sending back `foundations_read`. That is
+deliberate: a session that reads a document and then crashes before saving has recorded nothing,
+so the next bootstrap correctly treats that document as unseen and sends it again. Recording on
+read would risk the opposite failure — a document marked "seen" that was never actually acted on.
+
+### Budgets
+
+| Limit | Value | What happens over it |
+|---|---|---|
+| Per document | 512 KB | **Refused** — a canonical document cannot be honestly trimmed, so `saveFoundation` refuses rather than truncating one |
+| Project total | 200 KB | **Accepted and disclosed** (`budgetExceeded: true`, in `notes`) — the same rule a handoff follows: a refused save loses the document outright, so an over-budget save is never refused, only flagged |
+| Bootstrap document text, by default | 120 KB | Applied in reading order; the first document is never cut mid-way except when it is the only one included, in which case it is cut with `truncated: true` disclosed |
+| MCP response, overall | 400 KB (~100k tokens) | The existing `enforceSizeLimit` guard, unchanged — a bootstrap that would exceed it degrades by dropping document **bodies**, last in reading order first, never by collapsing to a bare fallback object |
+
+### Sync honesty, for a tier with no machine segment
+
+`project.md` already carries the carve-out this section extends: with no machine segment, two
+machines that both edit it between syncs produce a genuinely conflicting hunk, and `pull -X theirs`
+resolves that by discarding the local side silently — mitigated, for the brief, by the fact that it
+changes rarely and has one human writer. That mitigation does not hold as cleanly for an automated
+mirror refreshed independently on several machines at different commits: repo-owned foundations are
+not a document one person edits a few times a year, they are a **byte-for-byte copy** any machine
+can regenerate at will.
+
+The rule this release ships: a repo-owned mirror **converges to whichever machine saved last** — the
+same last-writer-wins outcome any file with no machine segment gets from sync — and that is an
+acceptable answer *because the repository, not the mirror, is the source of truth*. Any machine can
+re-assert its own checkout's state on its next save by passing `repo_root`: the refresh is a cheap,
+idempotent byte comparison, not an expensive recomputation, so "just refresh again" is a real
+remedy rather than a workaround. The Foundations block shows the stored `commit` beside the local
+checkout's `HEAD` when the checkout is reachable, so a machine that has drifted behind — or a mirror
+that regressed to an older commit through exactly this sync race — is **visible**, never silent.
+Curator-owned documents share `project.md`'s carve-out exactly: no machine segment, one human-level
+writer, edit rarely, sync after.
+
+### What this tier cannot do, yet
+
+- **Nothing selects what belongs in a project automatically.** You, or an agent you have asked,
+  decide what is canonical. There is no heuristic that promotes a wiki page or a raw source into a
+  foundation on its own.
+- **No LLM summarisation on the way in or out.** A foundation is stored and returned verbatim, the
+  same trust as the brief — never distilled, never paraphrased.
+- **The app does not edit a curator-owned foundation in this release.** A human edit surface for it
+  — mirroring the standing brief's own editor — is **PLANNED for v3.61.0**, alongside a
+  start-a-project flow that offers commissioning one on creation.
+- **The menu bar widget does not surface staleness yet.** A stale mark on the project header's
+  sublabel, or as a `notices` entry, is **PLANNED for v3.60.0**; this release ships the read and
+  write paths and the in-app Foundations block only.
+
+### The MCP surfaces
+
+Two new tools join [the tools below](#3-the-six-mcp-tools), and two existing surfaces gain fields:
+
+| Surface | What is new |
+|---|---|
+| **`get_project_context`** *(read)* | The bootstrap described above — `{ domain?, project?, scope?, include?, max_bytes?, seen_hashes? }` in, `{ brief, current, foundations: { index, documents, includeMode, budget, readingOrder }, seen }` out. `content_is_data` and `brief.authority_note` are labelled exactly as `get_working_state` already labels them |
+| **`save_foundation`** *(write)* | `{ domain?, project, slug, role, title?, text, commissioned_by_owner: true }` — refused without that last flag, exactly as `save_project_brief` is refused without an explicit instruction. Calls `refuseIfReadonly()` only — foundations sit outside the wiki's graph cache, so no MCP mutator here calls `invalidateGraph` |
+| **`save_working_state`** | Gains `foundations_read` and `repo_root` (both described above) |
+| **`get_working_state`** | Gains a `foundations` summary: `{ present, count, totalBytes, staleCount }` — the same disclosure guarantee every other field on this response already carries |
+
+`save_foundation` is the **seventh** tool whose write is gated by `refuseIfReadonly()` — this file's
+own standing instruction is to derive that census from the call sites across `mcp/tools/**` rather
+than trust a number in prose, and this sentence is the pointer to re-run it, not the count itself.
+
+### Concurrency: this tier is the one exception to "no lock is taken"
+
+[§7](#7-concurrency) states, correctly, that tiers 1–3 take no lock, because their per-machine path
+means two processes on one machine are the only possible racers and a `rename(2)` write is already
+atomic. Foundations have **no machine segment**, so two processes on the *same* machine — an app
+and an MCP server, or two MCP clients — can legitimately target the same document at once.
+`saveFoundation`, `removeFoundation` and `refreshFoundationsFromRepo` therefore **do** take the
+cross-process `.write-lock` (`write-registry.js`, the same lock Shared Brain operations use) around
+an atomic write of both the document and the manifest — the manifest written **last**, so a crash
+mid-write leaves a document with no manifest entry rather than a manifest entry with no document.
+`listFoundations` discloses any `.md` file under `foundations/` that has no manifest entry as
+`orphanFiles`, the same shape as tiers 1–3's `unlistedEntries`.
+
+---
+
+## 3. The six MCP tools
 
 Working state is reached through the **My Curator MCP**, from any *local* MCP client —
 Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio.
@@ -551,9 +778,10 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 
 | Tool | What it does |
 |---|---|
+| `get_project_context` | **New in v3.59.0.** The session-start bootstrap: brief + latest handoff + the foundations you have not already seen, in one call. See [The foundations tier § The bootstrap call](#the-bootstrap-call-and-the-reading-plan) |
 | `list_projects` | Every project that has state — in one domain, or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief. Newest first, capped, and the cap is disclosed |
-| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60 |
-| `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line |
+| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}` |
+| `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line. **New in v3.59.0:** accepts `foundations_read` (the sha256 of every foundation this session read) and `repo_root` (advisory; triggers a mirror refresh when the checkout is reachable) |
 | `save_project_brief` | Replaces one project's standing brief and records who wrote it. **For use on your explicit instruction only** — see [§4](#the-brief-can-be-commissioned-and-it-says-so) |
 | `get_project_context` | The one-call session start (v3.59.0): the brief, the latest handoff (or the `scope` named) and the project's **foundations** — an index of every canonical document with its role, size, source, content hash and freshness, plus the document text in reading order within `max_bytes` (default 120 KB). On a first session every document is included; afterwards only those whose hash differs from `seen_hashes`, which defaults to what the latest handoff recorded. Returns `seen`, the map to record as `foundations_read` on the next save. Never writes. Arguments: `project`, `domain`, `scope`, `include` (`index` / `changed` / `all`), `max_bytes`, `seen_hashes`, `journal_limit` |
 | `save_foundation` | Writes or replaces ONE canonical document (tier 0), whole, verbatim, up to 512 KB, and records that an agent wrote it on the owner's instruction. **Refused without `commissioned_by_owner: true`**, refused for a project whose foundations are mirrored from a repository, and refused when it would shrink a stored document under 10 % without `replace: true`. Arguments: `project`, `domain`, `slug`, `role` (`architecture` / `decisions` / `conventions` / `roadmap` / `api` / `guide` / `other`), `title`, `text`, `commissioned_by_owner`, `replace`, `harness`, `model` |
@@ -1053,7 +1281,7 @@ domain with its latest work-stream first. The **Domains** view carries the other
 typed confirmation, given a standing brief, and where **Copy marker line** hands you the
 `.curator-project` line for a repository, with **Copy agent instructions** beside it.
 
-![The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS row with a Refresh link, then a second PROJECTS heading over four rows, each carrying the project name, a one-line headline and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago"; "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago" with a hollow dot; "lumina / LUMINA 09-11 CLOSED ~21:20Z: everythi… / 22 scopes · 6 days ago"; and "curator / main e18f740: all five builders merged (W… / 15 scopes · 8 min ago" with a green dot, selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The page is FOUR blocks. The first is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ; its card holds, on one line, a green square pip, the small label WORKING ON, the sentence "main e18f740: all five builders merged (WP-A/B/C/E + follow-ups), orchestrator browser-verified every item; npm test running; WP-F (docs screenshots, Sonnet) building; then row v3.58.0 + release" and, at the right edge, "8 min ago"; under it a second green pip beside "Last saved" over "8 min ago" in large monospace, with "session-2026-09-18-community-feedback · Claude Code" beneath; then one qualifying line, "Written on talis-macbook-pro-acb035 and synced here — local paths and processes may differ from what the handoff describes."; and below a hairline inside the same card, "Standing brief — 7 min ago". The second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. FIVE rows are painted, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-18-community-feedback" with a filled green dot at "8 min ago", its row tinted and carrying an accent bar down its left edge because its handoff is the one open; "session-2026-09-17-transitions-polish", amber, "11 hr ago"; "session-2026-09-17-settings-design-unification", amber, "17 hr ago"; then two filled grey rows, "session-2026-09-13-readme-video-screenshots" at "1 day ago" and "session-2026-09-14-website-seo-perf" at "3 days ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 on every row — and a harness line such as "Claude Code · claude-fable-5-1" or "Claude Code · claude-opus-5[1m]". Under the table, OUTSIDE it, sits a row reading "Show 13 more", and under that the count line "15 work-streams · 18 saved copies · showing 5 of 18". The third block is headed Standing brief over "Read by every agent, written by you." with an ⓘ, then — new in v3.58.0 — a CLOSED disclosure row: a right-pointing chevron, the summary text "The brief", and at the right edge "updated 7 min ago · 1,769 words" beside an icon-only pencil button with no visible "Edit" word and no separate toolbar line above it. The fourth block, Session journal, is reached only by its heading and lede at the very bottom edge of the frame — "One line per save, newest first. History, not the present." with an ⓘ — its own closed disclosure sitting just out of the shot below that point. There is no open handoff document, no multi-paragraph brief printed on the page, and no "Edit" label anywhere in view.](images/curator-agent-memory.png)
+![The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS row with a Refresh link, then a second PROJECTS heading over four rows, each carrying the project name, a one-line headline and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago"; "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago" with a hollow dot; "lumina / LUMINA 09-11 CLOSED ~21:20Z: everythi… / 22 scopes · 6 days ago"; and "curator / main e18f740: all five builders merged (W… / 15 scopes · 8 min ago" with a green dot, selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The page is FIVE blocks. The first is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ; its card holds, on one line, a green square pip, the small label WORKING ON, the sentence "main e18f740: all five builders merged (WP-A/B/C/E + follow-ups), orchestrator browser-verified every item; npm test running; WP-F (docs screenshots, Sonnet) building; then row v3.58.0 + release" and, at the right edge, "8 min ago"; under it a second green pip beside "Last saved" over "8 min ago" in large monospace, with "session-2026-09-18-community-feedback · Claude Code" beneath; then one qualifying line, "Written on talis-macbook-pro-acb035 and synced here — local paths and processes may differ from what the handoff describes."; and below a hairline inside the same card, "Standing brief — 7 min ago". The second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. FIVE rows are painted, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-18-community-feedback" with a filled green dot at "8 min ago", its row tinted and carrying an accent bar down its left edge because its handoff is the one open; "session-2026-09-17-transitions-polish", amber, "11 hr ago"; "session-2026-09-17-settings-design-unification", amber, "17 hr ago"; then two filled grey rows, "session-2026-09-13-readme-video-screenshots" at "1 day ago" and "session-2026-09-14-website-seo-perf" at "3 days ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 on every row — and a harness line such as "Claude Code · claude-fable-5-1" or "Claude Code · claude-opus-5[1m]". Under the table, OUTSIDE it, sits a row reading "Show 13 more", and under that the count line "15 work-streams · 18 saved copies · showing 5 of 18". The third block is headed Standing brief over "Read by every agent, written by you." with an ⓘ, then — new in v3.58.0 — a CLOSED disclosure row: a right-pointing chevron, the summary text "The brief", and at the right edge "updated 7 min ago · 1,769 words" beside an icon-only pencil button with no visible "Edit" word and no separate toolbar line above it. The fourth block, Session journal, is reached only by its heading and lede at the very bottom edge of the frame — "One line per save, newest first. History, not the present." with an ⓘ — its own closed disclosure sitting just out of the shot below that point. There is no open handoff document, no multi-paragraph brief printed on the page, and no "Edit" label anywhere in view. A fifth block, Foundations — not pictured here; this screenshot predates v3.59.0 — sits after Standing brief and before Session journal, its summary line reading like "6 documents · 148 KB · fresh · 1 stale."](images/curator-agent-memory.png)
 
 **What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0).**
 It was three collapsible panels under a row of dropdowns. It is now a dashboard of
@@ -1365,6 +1593,7 @@ false claim: it double-grants, including across processes.
 ## 8. Related reading
 
 - [user-guide.md § 13b](user-guide.md#13b-working-state--carrying-context-between-sessions) — the same ground for someone using the app, including [when to make a new project](user-guide.md#one-domain-one-project-or-one-more-work-stream)
+- [user-guide.md § Foundations](user-guide.md#foundations--canonical-documents-that-travel) — the same ground for canonical documents, with the diagram and the teaching path
 - [mcp-user-guide.md](mcp-user-guide.md) — installing the MCP bridge and the full tool list
 - [domains.md](domains.md) — what a domain is and why state lives inside one
 - [sync.md](sync.md) — how `state/` reaches your other machines

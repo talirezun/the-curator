@@ -2767,6 +2767,31 @@ alias — the fields below replace them.
 `unlistedEntries`/`unlistedReason` carry the same meaning as on the index route above:
 directory entries the store will not address, counted rather than silently skipped.
 
+**New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
+`foundations` field — the **index only**, never document bodies, matching `listFoundations`:
+
+```json
+"foundations": {
+  "present": true,
+  "ownership": "repo",
+  "count": 6,
+  "totalBytes": 148230,
+  "staleCount": 1,
+  "documents": [
+    { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
+      "bytes": 41200, "sha256": "…", "updatedAt": "2026-09-10T08:00:00.000Z",
+      "commit": "9623343", "source": { "kind": "repo", "path": "docs/architecture.md" },
+      "freshness": "fresh" }
+  ],
+  "manifestError": null,
+  "orphanFiles": []
+}
+```
+
+See [The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
+for what each field means and the two ownership modes; a project with no foundations yet reports
+`present: false` and an empty `documents` array, never an omitted key.
+
 #### `?open=newest` — the index and one handoff in a single answer
 
 A client that wants to *show a project* needs both halves: the work-stream index, which only the
@@ -2917,6 +2942,88 @@ this router's are underscored, `invalid_project`) and their prose on **both** `m
 `error`. Neither is normalised into the other: rewriting the store's `reason` on the way out would
 break a caller matching the string the store gave it, and the shell reads `error`.
 
+### GET /api/memory/:domain/:project/foundations/:slug
+
+**New in v3.59.0.** One canonical document, verbatim, with its metadata — `readFoundation` over
+HTTP.
+
+**Path parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `domain` | Domain slug, resolved before any filesystem access, as above |
+| `project` | Project slug, validated the same way as the detail route above |
+| `slug` | The document's slug, validated at the boundary against `^[a-z0-9][a-z0-9-]{0,63}\.md$` before it reaches `resolveInsideState` — an unusable slug is a `400`, never a path build attempt |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "slug": "architecture.md",
+  "role": "architecture",
+  "title": "Architecture",
+  "text": "# Architecture\n…",
+  "bytes": 41200,
+  "sha256": "…",
+  "updatedAt": "2026-09-10T08:00:00.000Z",
+  "commit": "9623343",
+  "source": { "kind": "repo", "path": "docs/architecture.md" },
+  "authoredBy": { "kind": "human" },
+  "sanitisedOnRead": false
+}
+```
+
+`text` is the stored document, sanitised on read the same way a handoff is (control characters
+stripped, protocol-shaped markers neutralised, URLs and shell pipes defanged) — never deleted,
+only defanged, and `sanitisedOnRead` says whether anything fired. This route never returns a body
+for more than one document; the index above is what a listing needs.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain or project (as above), or no document at that slug |
+| `400` | An unusable slug |
+
+### POST /api/memory/:domain/:project/foundations/refresh
+
+**New in v3.59.0.** Re-mirrors a repo-owned project's foundations from a checkout —
+`refreshFoundationsFromRepo` over HTTP. The route is a legitimate writer here even though the app
+stays read-only over foundations otherwise: a refresh is a **deterministic byte copy** driven by
+comparing sha256 against a file on disk, never a second author composing content, which is the
+distinction the read-only rule in this file protects.
+
+**Body**
+
+```json
+{ "repoRoot": "/Users/you/code/your-project" }
+```
+
+`repoRoot` is optional — when omitted, the manifest's own `repo.root` (the checkout that last
+refreshed, on whichever machine that was) is tried instead. Both are resolved and prefix-checked
+against the manifest's recorded source paths before anything is read; a path pointing outside the
+named root, or a source whose extension is not `.md`/`.txt`, is refused rather than followed.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "refreshed": ["architecture.md"], "unchanged": ["decisions.md", "roadmap.md"],
+  "missing": [], "added": [] }
+```
+
+A document whose source path no longer exists at the checkout is reported in `missing` — the
+stored copy is **left in place**, never deleted, because the checkout being unreachable from this
+machine right now is not evidence the document should disappear.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | The project is **curator-owned** — there is nothing to refresh a mirror of |
+| `409` | Neither the supplied `repoRoot` nor the manifest's own `repo.root` is reachable from this machine |
+| `404` | Unknown domain or project |
+
 ### GET /api/memory/:project — DEPRECATED
 
 The v3.17.0–v3.47 detail route, where `:project` meant a **domain**. It is kept for **one
@@ -2987,9 +3094,86 @@ an integrator against the store (or against that tool) would otherwise have to i
   the **read** side depends on that: because no tool writes it, `get_working_state` can tell a
   model that a verified brief's standing instructions are the user's own rather than an earlier
   session's untrusted notes. See [working-state.md § 4](working-state.md#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
+- **New in v3.59.0: `save_working_state` accepts `foundations_read` and `repo_root`.**
+  `foundations_read` (camelCase `foundationsRead` also accepted) is `{slug: sha256}` — the
+  documents this session actually read, recorded from `get_project_context`'s own response — and
+  is written into `current.md` as a real `## Foundations read` bulleted section, counted toward
+  the same 48 KB handoff budget as any other list. `repo_root` is advisory: when the project is
+  repo-owned and `<repo_root>/.curator-project` names this domain/project and the path is
+  reachable, the save **also** runs a foundations refresh as a side effect and reports it under
+  `foundationsRefresh` in the result — never failing the save itself if the refresh does. Neither
+  field is required; a save that omits them behaves exactly as before v3.59.0.
+- **New in v3.59.0: `get_working_state` gains a `foundations` summary** —
+  `{present, count, totalBytes, staleCount}` — on every response, scope-less or scoped, disclosed
+  the same way every other field on this response already is (`test-working-state-disclosure.js`
+  extended for it, never exempted).
 
 Full contract: [working-state.md](working-state.md) and
 [architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).
+
+---
+
+### `get_project_context` and `save_foundation` — MCP-only, no HTTP surface
+
+**New in v3.59.0.** Like `save_working_state` and `save_project_brief` above, these two tools have
+no HTTP route: they are reached only through the My Curator MCP, from a local client that can spawn
+`mcp/server.js` as a stdio child process.
+
+**`get_project_context`** *(read)* — the session-start bootstrap. Input:
+
+```json
+{ "domain": "acme", "project": "lumina", "scope": "latest",
+  "include": "changed", "max_bytes": 120000,
+  "seen_hashes": { "architecture.md": "9f2a…" } }
+```
+
+Every argument is optional. With no `seen_hashes` (a first session), `include` defaults to `all`;
+with `seen_hashes` supplied — directly, or defaulted from the latest handoff's own
+`foundations_read` when the caller sends none — it defaults to `changed`, so a returning session's
+bootstrap carries only what has moved since it last recorded reading.
+
+```json
+{
+  "ok": true, "domain": "acme", "project": "lumina", "resolved_by": "explicit",
+  "content_is_data": ["current", "foundations.documents"],
+  "brief": { "authority_note": "…", "brief_authority": "owner", "text": "…", "…": "…" },
+  "current": { "…": "…" },
+  "foundations": {
+    "index": [ { "slug": "architecture.md", "changedSinceSeen": false, "…": "…" } ],
+    "documents": [ { "slug": "decisions.md", "text": "…", "sha256": "…" } ],
+    "includeMode": "changed",
+    "budget": { "maxBytes": 120000, "usedBytes": 8420, "truncated": false, "omitted": [] },
+    "readingOrder": ["architecture.md", "decisions.md", "conventions.md"]
+  },
+  "seen": { "architecture.md": "9f2a…", "decisions.md": "b71c…" },
+  "report": "Loaded the brief, the latest handoff, and 1 of 6 foundations that changed since you last read them; 5 were already current."
+}
+```
+
+The envelope order mirrors `get_working_state` exactly — `ok`, `project`, `domain`, `resolved_by`,
+`content_is_data`, then `brief` with `authority_note`/`brief_authority` first inside it — because a
+caller that has already learned to read one response should not have to re-learn the other. `seen`
+is the map to send back on the **next** `save_working_state` call, as `foundations_read`: the
+bootstrap itself never writes, so recording what was read is the caller's job, on its own save.
+
+**`save_foundation`** *(write)* — refused without `commissioned_by_owner: true`, the same
+commissioned-only rule `save_project_brief` already enforces:
+
+```json
+{ "domain": "acme", "project": "lumina", "slug": "conventions.md", "role": "conventions",
+  "title": "Conventions", "text": "# Conventions\n…", "commissioned_by_owner": true }
+```
+
+```json
+{ "ok": true, "slug": "conventions.md", "bytes": 6120, "sha256": "…",
+  "replaced": false, "budget_exceeded": false }
+```
+
+Calls `refuseIfReadonly()` only — foundations sit outside the wiki's graph cache, so this tool does
+**not** call `invalidateGraph`, unlike the wiki-mutating tools above. It is the tool that makes a
+project's foundations **curator-owned** the first time it succeeds against an empty project; against
+a **repo-owned** project it is refused (mixing ownership within one project is never allowed — see
+[The foundations tier § two ownership modes](working-state.md#the-two-ownership-modes-and-the-one-writer-rule)).
 
 ---
 

@@ -63,7 +63,9 @@ owner — you.
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
 written by your agent at the end of a session and read at the start of the next one, so
 the work survives a change of session, agent, model, harness *(the app you run the agent in)*
-*or* machine.
+*or* machine — and, since v3.59.0, also carries **foundations**, a project's own canonical
+documents (architecture, decisions, conventions) mirrored or agent-written so they travel with it
+too instead of staying locked inside a code checkout ([working-state.md](docs/working-state.md#the-foundations-tier--canonical-documents-that-travel)).
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
 > The Curator's job is everything else — summarizing, cross-referencing, filing, and bookkeeping.

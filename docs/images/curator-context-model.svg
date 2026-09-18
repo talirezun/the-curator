@@ -1,0 +1,106 @@
+<svg viewBox="0 0 760 520" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-context-model-title curator-context-model-desc">
+  <title id="curator-context-model-title">The three kinds of context, and the one-call session start</title>
+  <desc id="curator-context-model-desc">
+    Three source boxes at the top — Foundations (canonical documents, verbatim), Working state
+    (the standing brief, the handoff and the journal) and The wiki (compounded knowledge) — each
+    with a one-line note on how it behaves, feeding down into a single "get_project_context()"
+    call, which returns one bootstrap payload of brief, latest handoff and the foundations index
+    plus any changed documents. Below that, a note that a returning session passes back the sha256
+    hashes it already has, so only the documents that changed since are sent again.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --accent-2: #8250df;
+      --accent-3: #1a7f37;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --accent-2: #c8a6ff;
+        --accent-3: #4ac26b;
+      }
+    }
+    .bg { fill: var(--bg); }
+    .box { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; rx: 10; }
+    .title { font: 700 15px system-ui, sans-serif; fill: var(--text); }
+    .note { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+    .callbox { fill: var(--panel); stroke: var(--accent); stroke-width: 2; rx: 10; }
+    .calltitle { font: 700 16px ui-monospace, monospace; fill: var(--accent); }
+    .callnote { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+    .outbox { fill: var(--panel); stroke: var(--accent-3); stroke-width: 1.5; rx: 10; }
+    .outtitle { font: 700 13px system-ui, sans-serif; fill: var(--text); }
+    .arrow { stroke: var(--text-2); stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+    .dot { fill: var(--accent-2); }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" style="fill:var(--text-2)"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="760" height="520"/>
+
+  <!-- Source box 1: Foundations -->
+  <rect class="box" x="20" y="30" width="220" height="110" rx="10"/>
+  <text class="title" x="36" y="56">Foundations (tier 0)</text>
+  <text class="note" x="36" y="76">Canonical documents — architecture,</text>
+  <text class="note" x="36" y="92">decisions, conventions, roadmap.</text>
+  <text class="note" x="36" y="112">Verbatim. Mirrored or commissioned.</text>
+  <text class="note" x="36" y="128">Freshness = sha256, never remembered.</text>
+
+  <!-- Source box 2: Working state -->
+  <rect class="box" x="270" y="30" width="220" height="110" rx="10"/>
+  <text class="title" x="286" y="56">Working state (tiers 1–3)</text>
+  <text class="note" x="286" y="76">Standing brief · handoff · journal.</text>
+  <text class="note" x="286" y="92">One MCP call away already.</text>
+  <text class="note" x="286" y="112">Brief supersedes; handoff overwrites;</text>
+  <text class="note" x="286" y="128">journal appends.</text>
+
+  <!-- Source box 3: The wiki -->
+  <rect class="box" x="520" y="30" width="220" height="110" rx="10"/>
+  <text class="title" x="536" y="56">The wiki</text>
+  <text class="note" x="536" y="76">Compounded knowledge — entities,</text>
+  <text class="note" x="536" y="92">concepts, summaries, cross-linked.</text>
+  <text class="note" x="536" y="112">Travels via sync. Searchable — not</text>
+  <text class="note" x="536" y="128">read whole at session start.</text>
+
+  <!-- Converging arrows -->
+  <path class="arrow" d="M130,140 C130,190 330,190 375,230"/>
+  <path class="arrow" d="M380,140 L380,225"/>
+  <path class="arrow" d="M630,140 C630,190 430,190 390,228"/>
+
+  <!-- Bootstrap call -->
+  <rect class="callbox" x="230" y="235" width="300" height="70" rx="10"/>
+  <text class="calltitle" x="250" y="264">get_project_context()</text>
+  <text class="callnote" x="250" y="284">One call. First session = everything; a</text>
+  <text class="callnote" x="250" y="298">returning one = index + what changed.</text>
+
+  <!-- Arrow down to output -->
+  <path class="arrow" d="M380,305 L380,345"/>
+
+  <!-- Output box -->
+  <rect class="outbox" x="180" y="350" width="400" height="90" rx="10"/>
+  <text class="outtitle" x="200" y="376">One bootstrap payload:</text>
+  <text class="note" x="200" y="396">brief · latest handoff · foundations index</text>
+  <text class="note" x="200" y="412">+ any documents changed since last seen</text>
+  <text class="note" x="200" y="428">→ readable from any harness, cold start</text>
+
+  <!-- Loop-back note -->
+  <circle class="dot" cx="595" cy="270" r="4"/>
+  <text class="note" x="608" y="274">seen_hashes</text>
+  <path class="arrow" d="M595,395 C680,395 680,270 601,270" stroke-dasharray="4 3"/>
+  <text class="note" x="180" y="470">A returning session passes back the sha256 hashes it already holds</text>
+  <text class="note" x="180" y="486">(recorded from the previous save's "Foundations read" section), so the</text>
+  <text class="note" x="180" y="502">bootstrap sends only what changed — never the whole set again.</text>
+</svg>
