@@ -114,7 +114,7 @@
  *    → 409 — are driven above.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, realpathSync, symlinkSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -1717,7 +1717,14 @@ const REPO = join(TMP, 'repo');
     + 'is malformed, the folder is simply not here', gone.status, 409);
   eq('...under its own reason', gone.body.reason, 'repo_unreachable');
 
-  const scan = await call('get', '/repo-scan', { query: { root: REPO } });
+  // The scan is asked through a SYMLINK to the fixture folder, so that the
+  // typed path and the resolved path differ on EVERY platform. The first cut
+  // relied on the tempdir itself being a symlink, which is true on macOS
+  // (`/var` -> `/private/var`) and false on Linux, where CI reddened the
+  // precondition below while the product was right (v3.61.0's own gate).
+  const REPO_LINK = join(TMP, 'repo-link');
+  symlinkSync(REPO, REPO_LINK);
+  const scan = await call('get', '/repo-scan', { query: { root: REPO_LINK } });
   eq('a real folder answers 200', scan.status, 200);
   const paths = (scan.body.candidates || []).map((c) => c.path);
   ok('the docs/ folder is scanned whole', paths.includes('docs/architecture.md') && paths.includes('docs/roadmap.md'),
@@ -1748,7 +1755,7 @@ const REPO = join(TMP, 'repo');
   eq('the resolved root is answered back, never the text that was typed',
     scan.body.root, realpathSync(REPO));
   ok('PRECONDITION: those two really are different strings here, or the '
-    + 'assertion above is vacuous', realpathSync(REPO) !== REPO, REPO + ' vs ' + realpathSync(REPO));
+    + 'assertion above is vacuous', realpathSync(REPO_LINK) !== REPO_LINK, REPO_LINK + ' vs ' + realpathSync(REPO_LINK));
   ok('the cap, the depth and the wall are named rather than left to a view',
     scan.body.cap === 200 && scan.body.maxDepth === 4 && scan.body.maxDocumentBytes === 512 * 1024,
     JSON.stringify({ cap: scan.body.cap, d: scan.body.maxDepth, b: scan.body.maxDocumentBytes }));
