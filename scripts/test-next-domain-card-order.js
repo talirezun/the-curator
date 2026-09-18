@@ -189,6 +189,10 @@ function bindProjectListeners() {}
 function bindKnowledgeListeners() {}
 function bindHealthListeners() {}
 function bindBrowseListeners() {}
+// v3.58.0: the OVERVIEW figures became controls over the page-list facet, so
+// renderMain wires one more listener set. Stubbed like its five siblings --
+// this suite measures CARD ORDER, not behaviour.
+function bindStatCardListeners() {}
 const document = { getElementById: () => null, querySelectorAll: () => [] };
 `;
 

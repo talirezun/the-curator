@@ -580,7 +580,49 @@
   font: var(--type-body-sm);
   letter-spacing: var(--track-body);
   color: var(--text-2);
-  max-width: 68ch;
+  /* ── THE BOX TAKES THE COLUMN; THE PROSE KEEPS A MEASURE ────────────────
+     Was `max-width: 68ch` on the BOX, which is the wrong half of the house
+     rule. §4 of docs/design-system-source.md says it plainly — *cap the
+     prose, never the cards* — and this panel is a CARD: it has a border, a
+     leading accent rule, a tinted wash and its own padding. Capping the card
+     is what made the fold end in the middle of the column with the block it
+     explains running past it on both sides. Reported on v3.55.0 against
+     Domains' PROJECTS ⓘ and carried as known-and-unfixed in v3.55.0 and
+     v3.56.0 ("block-level ⓘ panels keep the 68ch cap").
+
+     MEASURED on Domains, `.main-inner` content box 959px at a 1370px window
+     and 1144px at 2000px: the panel was 556.8px in both — 58% of the column
+     at 1370 and 48.7% at 2000 — while the group of project rows under it ran
+     the full width.
+
+     So the box is uncapped and the MEASURE moves inside it. The panel becomes
+     a one-column grid whose track is `minmax(0, 92ch)`: every child — and,
+     because CSS wraps a contiguous run of text in an anonymous grid item,
+     every bare text node too — is laid out in that track. The `0` minimum is
+     what keeps a long unbreakable token from pushing the track past the card
+     (with `overflow-wrap: anywhere` below it as the second layer).
+
+     WHY A GRID AND NOT `max-width` ON A WRAPPER: `renderInfoMark` emits the
+     escaped prose as a bare text node inside the panel — no element — and
+     shipped suites plus views/settings.js's hand copy pin those exact bytes,
+     so a wrapper would have to be added in several places at once. The grid
+     caps the anonymous box that already exists.
+
+     92ch, not 68: the number is set so the cap does NOT bite at the window
+     the maintainer actually uses. At 1370 the panel's own content box is
+     931px = 116ch, so 92ch (739px) is the only thing between a fold and a
+     116-column line; at 2000 it is 739 of 1116. The cap is insurance against
+     an unreadable line on a wide monitor, not the layout.
+
+     `display: grid` is safe against `hidden` ONLY because the
+     `.tx-vh-panel[hidden] { display: none }` rule above it is at (0,2,0) and
+     wins over this (0,1,0) declaration. That counter-rule is load-bearing
+     now rather than belt-and-braces — v3.56.0's `.mem-note` defect was
+     exactly an author `display` beating the UA's `[hidden]`. */
+  max-width: none;
+  display: grid;
+  grid-template-columns: minmax(0, 92ch);
+  row-gap: 8px;
   overflow-wrap: anywhere;
   /* ── PANEL ENTER ───────────────────────────────────────────────────────
      The one disclosure in the app that had no entrance at all. It is toggled
@@ -601,20 +643,25 @@
   animation: curator-panel-in var(--dur-mid) var(--ease-out);
 }
 
-.tx-vh-panel > * + * { margin-top: 8px; }
+/* The gap between two blocks inside a panel is `row-gap: 8px` on the grid
+   above. It was `> * + * { margin-top: 8px }` and had to move with the
+   layout: a margin PLUS a gap is 16px, and the anonymous grid item a bare
+   text node becomes can carry no margin at all, so the two spellings would
+   have disagreed depending on whether the caller passed HTML or text. */
 
-/* ── THE ONE OPT-OUT FROM THE MEASURE CAP ────────────────────────────────
-   `renderViewHeader({ panelWide: true })` appends this class, and it exists
-   for the page whose sections are NOT prose: Agent memory is a dashboard
-   whose every block runs the column's width, and a help panel stopping at
-   68ch beside a full-width table was the last of the four widths v3.55.0
-   removed from that screen.
+/* ── THE OPT-IN THAT IS NOW THE DEFAULT ──────────────────────────────────
+   `renderViewHeader({ panelWide: true })` appends this class. It was the ONE
+   escape from a 68ch cap on the box, taken by views/memory.js in v3.55.0
+   because a help panel stopping at 47% of the column beside a full-width
+   table was the last of that page's four widths.
 
-   DECLARED AFTER `.tx-vh-panel`, deliberately — same specificity, so the
-   cascade decides and the later rule wins. Nothing else about the panel
-   changes: the rule, the wash, the type and the entrance are all inherited
-   from the rule above, so a wide panel is the same component at a different
-   measure rather than a second treatment. */
+   Every ⓘ panel in the app now takes the column (see the rule above), so
+   this class no longer changes anything — it is kept, byte-identical and
+   still DECLARED AFTER `.tx-vh-panel` at the same specificity, because
+   memory.js still passes the option and scripts/test-next-memory-view.js
+   §18h asserts both the class in the emitted markup and this declaration.
+   Retiring the option is a one-line change in two files plus that guard, and
+   it belongs with whoever owns views/memory.js — not here. */
 .tx-vh-panel-wide { max-width: none; }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────

@@ -515,7 +515,7 @@ backdrop filter.
 | Role | Use for | Rule |
 |---|---|---|
 | **The lede** | the one fact the reader needs *before* acting | **optional; ≤ 13 visible words**, capped at `66ch` |
-| **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — capped at `68ch`, ships closed |
+| **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — the BOX takes the column, the prose inside it wraps at `92ch`; ships closed |
 | **`.tx-note`** | the single line that qualifies the control directly above it | **one line by contract** (`align-items: center`); a note that wraps is a `.tx-desc` that has not admitted it yet |
 
 **Thirteen is measured, not chosen** (v3.58.0). v3.53.0 drew the line at twenty
@@ -598,7 +598,7 @@ keeps a sentence readable.** Paragraph roles carry their own `ch` measure.
 | Run | Cap | Where |
 |---|---|---|
 | A Settings block lede | `66ch` | `.settings-job-lede` — uncapped it ran ~163 columns at 1200px |
-| An ⓘ panel | `68ch` | `.tx-vh-panel` |
+| An ⓘ panel’s prose | `92ch`, on the panel’s own one-column grid track — the BOX is uncapped | `.tx-vh-panel` |
 | A `.tx-note` | `--prose-max` (`68ch`) | `shared/text.css` |
 | A kit group-row sentence | `--prose-max` | `.cur-group-label > span` — measured **1118px, ~159 columns** at a 2000px viewport before the cap |
 
@@ -799,17 +799,26 @@ second folded block silently steals the first one's panel. The `num` test is
 `!= null`, never falsy — a numbering scheme that quietly loses its `0` is the
 kind of thing nobody finds twice.
 
-**`panelWide` — one opt-in, for a page that is not prose.** `renderViewHeader`
-caps its ⓘ panel at `68ch` because it is normally a paragraph or two and `68ch`
-is where a *line of text* is comfortable. Agent memory is a dashboard: v3.55.0
-puts every one of its sections at the column's own width, and a help panel
-stopping at 47% of the column while the table under it ran the full width was
-the most visible remnant of the four-widths page v3.54.0 started removing.
-`panelWide: true` appends `.tx-vh-panel-wide`, which `shared/text.css` defines as
-`max-width: none`, declared **after** `.tx-vh-panel` at the same specificity so
-the cascade decides. Nothing else about the panel moves — same rule, wash, type
-and entrance. It is an opt-in and the test is `=== true`, because the cap is
-right for every view whose header panel really is prose.
+**`panelWide` — the opt-in that became the default.** `renderViewHeader` used to
+cap its ⓘ panel's BOX at `68ch`. v3.55.0 added `panelWide: true` as the one
+escape, for Agent memory, a dashboard whose sections all run the column's width
+and where a help panel stopping at 47% of it was the most visible remnant of the
+four-widths page v3.54.0 started removing. The same complaint then arrived for
+the block-level marks — Domains' **PROJECTS** ⓘ measured **556.8px in a 959px
+column** at 1370 and in a 1144px column at 2000 — which made the cap wrong in
+general rather than wrong for one page: §4's house rule is *cap the prose, never
+the cards*, and a panel with a border, a leading rule, a wash and its own
+padding is a card. So `.tx-vh-panel` is `max-width: none` for everyone, and the
+measure moved INSIDE it: the panel is a one-column grid on `minmax(0, 92ch)`, so
+every child — and every bare text node, which CSS wraps in an anonymous grid
+item — keeps a readable line while the card takes the column. A grid rather than
+a capped wrapper because `renderInfoMark` emits its escaped prose as a bare text
+node whose exact bytes are pinned in several places. `.tx-vh-panel-wide` survives
+as a no-op, still declared **after** `.tx-vh-panel`, because memory.js still
+passes the option and `scripts/test-next-memory-view.js` §18h asserts both; the
+`=== true` test stays with it. `display: grid` is only safe here because
+`.tx-vh-panel[hidden] { display: none }` is (0,2,0) and beats it — v3.56.0's
+`.mem-note` defect is that same cascade, unguarded.
 
 ### 8. The Ingest column: controls take the container, notices keep a measure (v3.55.0)
 

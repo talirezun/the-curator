@@ -197,10 +197,38 @@ section('S3 -- Domains -> Projects: the row, the click, the refusal');
 const DOMAINS_SRC = read('src/public/next/views/domains.js');
 
 const DOM_FNS = [
+  // v3.58.0: the row's two copy controls each carry an ⓘ, built through this
+  // view's local infoMark at an id from projInfoId. Both lifted REAL -- a stub
+  // would let the row render its buttons with no explanation beside them and
+  // still pass every assertion below.
+  'infoMark', 'projInfoId',
   'renderProjectRow', 'renderCopyOutcome',
   'copyProjectMarker', 'copyProjectAgentInstructions', 'copyForProject',
   'bindProjectListeners',
 ];
+
+// The two ⓘ texts, lifted whole rather than re-typed. `functionSource` reads
+// functions; these are multi-line string consts, so this scans forward from the
+// `=` for the first `;` outside a string literal.
+function constSource(source, name) {
+  const re = new RegExp(`(?:^|\\n)const ${name} =`);
+  const m = re.exec(source);
+  if (!m) throw new Error(`constSource: "${name}" not found`);
+  const start = m.index + (source[m.index] === '\n' ? 1 : 0);
+  let i = source.indexOf('=', start) + 1;
+  let quote = null;
+  for (; i < source.length; i++) {
+    const c = source[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    if (c === ';') return source.slice(start, i + 1);
+  }
+  throw new Error(`constSource: "${name}" never terminated`);
+}
 
 const domBox = (() => {
   const PREAMBLE = `
@@ -231,12 +259,14 @@ const navigator = { clipboard: { writeText: async (t) => {
   return new Function(
     'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
     PREAMBLE +
+    constSource(DOMAINS_SRC, 'MARKER_INFO_TEXT') + '\n' +
+    constSource(DOMAINS_SRC, 'AGENT_INFO_TEXT') + '\n' +
     DOM_FNS.map((n) => {
       const src = functionSource(DOMAINS_SRC, n);
       if (!src) throw new Error('could not lift ' + n + ' from domains.js');
       return src;
     }).join('\n\n') + '\n' +
-    `return { ${DOM_FNS.join(', ')},
+    `return { ${DOM_FNS.join(', ')}, MARKER_INFO_TEXT, AGENT_INFO_TEXT,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.clipboard.length = 0; calls.asyncFailures = 0; },

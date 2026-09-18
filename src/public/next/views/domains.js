@@ -2580,6 +2580,7 @@ function renderMain(token) {
   bindKnowledgeListeners();
   bindHealthListeners(domain, readonly);
   bindBrowseListeners();
+  bindStatCardListeners();
 }
 
 
@@ -2604,7 +2605,19 @@ function renderMain(token) {
 // irreversibility. v3.16.1's rule — a warning behind a click is not a warning.
 // What goes here is neutral explanation of a visible label, which is exactly
 // what the Projects paragraph is.
-function infoMark(id, label, info) {
+//
+// `opts.html === true` treats `info` as a TRUSTED fragment instead of escaping
+// it — the same option, spelled the same way, that shared/text.js's
+// `renderInfoMark` and `renderViewHeader` already carry, and added here for the
+// same reason they have it: the Projects fold is two labelled paragraphs, and
+// a labelled paragraph needs a `<strong>` and a `<p>`. The test is `=== true`,
+// never truthy, so a stray string cannot switch escaping off — and the licence
+// is for markup written IN THIS FILE. Nothing a user, a provider or the store
+// typed may be interpolated into a fragment passed here without going through
+// escapeHtml first. NO CONTROL may go inside the panel: the delegated listener
+// toggles on the BUTTON, so anything focusable in the fold is unreachable
+// until the fold is open.
+function infoMark(id, label, info, opts) {
   const glyph =
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
     'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -2612,6 +2625,7 @@ function infoMark(id, label, info) {
   const text = typeof info === 'string' ? info.trim() : '';
   if (!id || !text) return { btn: '', panel: '' };
   const name = label || 'More information';
+  const asHtml = !!opts && opts.html === true;
   return {
     btn:
       '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
@@ -2622,9 +2636,68 @@ function infoMark(id, label, info) {
       '</button>',
     panel:
       '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
-        ' aria-label="' + escapeHtml(name) + '" hidden>' + escapeHtml(text) + '</div>',
+        ' aria-label="' + escapeHtml(name) + '" hidden>' +
+        (asHtml ? text : escapeHtml(text)) + '</div>',
   };
 }
+
+// ── WHAT THE TWO COPY CONTROLS ACTUALLY DO, IN THE APP ────────────────────
+//
+// Three strings, one subject, and they are module constants so the suite can
+// lift them and cross-check the FILE NAMES they quote against the two places
+// that define them — `shared/agent-instructions.js` (whose COPY_SUCCESS_BANNER
+// is the post-copy confirmation the user sees seconds later) and
+// `docs/working-state.md` (§"Where it goes" and §"The `.curator-project`
+// marker"). A doc-links-style check: rename a file in the block or the docs
+// and `npm test` goes red on the same commit, rather than the app quietly
+// telling people to paste into a file nothing reads.
+//
+// WHAT EACH ONE IS, verified against those sources rather than from memory:
+//
+//   Copy marker line        -> the literal text `<domain>/<project>`, saved as
+//                              a file named `.curator-project` at a repo root.
+//                              NO server code and NO MCP tool reads that file;
+//                              the continuity SKILL does, as step two of its
+//                              three-step ritual (conversation wins, then the
+//                              marker, then ask). docs/working-state.md calls
+//                              it "a convention, not a mechanism".
+//   Copy agent instructions -> composeAgentInstructions({domain, project}) —
+//                              the heading `## Working state` plus the frozen
+//                              measured paragraph — pasted into the file the
+//                              harness auto-loads: CLAUDE.md (Claude Code),
+//                              AGENTS.md (Codex, opencode), GEMINI.md (Gemini
+//                              CLI), or Cursor rules. It exists because a
+//                              harness can decline to activate the skill at
+//                              all: 0/4 headless runs saved on Claude Code
+//                              with the skill alone, 3/4 with the block.
+//
+// The wording is deliberately the SAME in the fold and in the post-copy
+// banner, because they are read seconds apart and a user comparing them must
+// not have to decide which one is right.
+const MARKER_INFO_TEXT =
+  'Copies this project’s marker line — the text domain/project. Save it as a file called ' +
+  '.curator-project at the root of that project’s repository, and a coding agent that starts ' +
+  'there knows which project to resume instead of asking you.';
+
+const AGENT_INFO_TEXT =
+  'Copies a short paragraph of instructions naming this project. Paste it into CLAUDE.md, ' +
+  'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your coding agent loads every ' +
+  'session — and it will read your working state before it starts and save a handoff before ' +
+  'it stops.';
+
+// The section fold. TWO LABELLED PARAGRAPHS, and the only fragment in this
+// file passed to infoMark with `{html: true}`: every character of it is
+// written here, so nothing user-, provider- or store-supplied is interpolated.
+const PROJECTS_INFO_HTML =
+  '<p><strong>What a project is.</strong> A domain is one compounding wiki; a project is one ' +
+  'thing you build inside it. Each project has a standing brief you write, and work-streams ' +
+  'your agents save handoffs into, so a new session resumes where the last one stopped. Both ' +
+  'are plain markdown under this domain’s state folder and travel with Personal Sync.</p>' +
+  '<p><strong>The two copy buttons.</strong> Copy marker line copies domain/project; save it ' +
+  'as a file named .curator-project at the root of that project’s repository, and an agent ' +
+  'there knows which project to resume. Copy agent instructions copies a short paragraph ' +
+  'instead — paste it into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules, and agents ' +
+  'read and save working state without being asked.</p>';
 
 // ── The Projects sub-section ───────────────────────────────────────────────
 
@@ -2643,11 +2716,23 @@ function infoMark(id, label, info) {
  * click away in Agent memory, and a row that tried to summarise it would be
  * a worse version of that screen.
  *
+ * EACH COPY CONTROL CARRIES ITS OWN ⓘ. Reported by the maintainer — who
+ * builds this app — about his own UI: "I do not know what Copy marker line
+ * is." Two ghost-ghost buttons side by side, both saying "Copy", neither
+ * saying what lands on the clipboard or where it goes. The fold beside each
+ * one answers the three questions in order: what it copies, where you paste
+ * it, what happens then. The section ⓘ above says the same thing in the
+ * plural; these say it at the control, which is where it is asked.
+ *
  * Pure, and exported through __testing: this is what the row assertions
  * drive.
  */
-function renderProjectRow(row, canWrite) {
+function renderProjectRow(row, canWrite, index) {
   const name = String(row.project == null ? '' : row.project);
+  const markerInfo = infoMark(projInfoId('marker', name, index),
+    'About Copy marker line', MARKER_INFO_TEXT);
+  const agentInfo = infoMark(projInfoId('agent', name, index),
+    'About Copy agent instructions', AGENT_INFO_TEXT);
   const brief = row.hasBrief
     ? renderBadge({ label: 'Standing brief', tone: 'success' })
     : renderBadge({ label: 'No brief yet', tone: 'neutral' });
@@ -2678,6 +2763,7 @@ function renderProjectRow(row, canWrite) {
       '<div class="cur-group-control">' +
         '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
           'Copy marker line</button>' +
+        markerInfo.btn +
         // THE SECOND HALF OF THE SAME JOB, and the reason it is a second
         // button rather than more words on the first. The marker line says
         // WHICH project a repository is; this says WHAT AN AGENT SHOULD DO
@@ -2692,6 +2778,7 @@ function renderProjectRow(row, canWrite) {
         // resumed, it just cannot be renamed.
         '<button class="btn btn-ghost dm-proj-btn" data-proj-agent="' + escapeHtml(name) + '">' +
           'Copy agent instructions</button>' +
+        agentInfo.btn +
         // THE DOMAIN'S OWN PROJECT GETS NEITHER CONTROL. Its directory IS the
         // domain's state root, which holds every named project too, so the
         // store refuses both by name (`reason: 'default-project'`) — renaming
@@ -2707,8 +2794,37 @@ function renderProjectRow(row, canWrite) {
               icon('trash', 12) + ' Delete</button>'
           : '') +
       '</div>' +
+      // ── THE TWO FOLDS SIT BELOW THE ROW, AND THAT IS A LAYOUT FACT ───────
+      // `renderInfoMark`'s two fragments are an INLINE mark and a BLOCK
+      // panel; the mark belongs beside its control, and a block panel inside
+      // `.cur-group-control` — a `flex: none` row — would be squeezed into
+      // the control strip. `.cur-group-row` is a flex row, so this wrapper
+      // takes `flex: 0 0 100%` (domains.css) and drops to its own line under
+      // the controls, full row width, where the panel can be read.
+      //
+      // Both panels are emitted for every row and both ship `hidden`; the
+      // shared delegated listener opens at most one at a time, app-wide.
+      '<div class="dm-proj-info-panels">' + markerInfo.panel + agentInfo.panel + '</div>' +
     '</div>'
   );
+}
+
+/**
+ * A DOM id for one project row's ⓘ fold.
+ *
+ * The NAME is slugified so the id says which row it belongs to, and the row
+ * INDEX is appended so two names that slugify alike (`a_b` and `a-b` both
+ * reach `a-b`) cannot ship duplicate ids — which is v3.54.0's
+ * `renderViewHeader` collision, where `getElementById` returned the first
+ * match and one panel became permanently unreachable. The index also keeps
+ * the id stable across a re-render, which is what lets render()'s
+ * capture/restore re-open the fold the user had open.
+ */
+function projInfoId(kind, name, index) {
+  const slug = String(name == null ? '' : name)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const i = Number.isFinite(index) ? index : 0;
+  return 'dm-proj-' + kind + '-info-' + (slug || 'project') + '-' + i;
 }
 
 /**
@@ -2795,7 +2911,9 @@ function renderProjectsPanel(readonly) {
       'working notes per project, so the next session starts knowing what the last one settled.</span>' +
       '</div></div>';
   } else {
-    body = p.rows.map((r) => renderProjectRow(r, canWrite)).join('');
+    // The INDEX goes through so each row's two ⓘ folds get a DOM id nothing
+    // else can collide with — see projInfoId.
+    body = p.rows.map((r, i) => renderProjectRow(r, canWrite, i)).join('');
   }
 
   const truncated = p && p.truncated
@@ -2837,16 +2955,13 @@ function renderProjectsPanel(readonly) {
         '</button>'
       : '');
 
-  // Inline rather than a module const, deliberately: it is used once, and a
-  // const would have to be lifted separately by every suite that executes this
-  // function — a second thing to remember for no reader's benefit.
-  const info = infoMark('dm-proj-info', 'About projects',
-    'A domain is one compounding wiki: everything ingested into it links into one graph. ' +
-    'A project is a thing you build inside that domain — and it is what your agents keep their ' +
-    'working notes against, so a new session can pick up where the last one stopped. ' +
-    'Each project has its own standing brief, which you write, and its own work-streams, which ' +
-    'agents save handoffs into. Both are plain markdown under this domain’s state folder, and ' +
-    'both travel with Personal Sync, so the same project resumes on another machine.');
+  // TWO LABELLED PARAGRAPHS — what a project is, and what the two copy
+  // buttons are for. The text is a module const (PROJECTS_INFO_HTML) rather
+  // than inline, which reverses the earlier note here, and for a reason the
+  // earlier note could not have: the FILE NAMES in the second paragraph are
+  // cross-checked against shared/agent-instructions.js and docs/, so the
+  // suite has to be able to lift the string on its own.
+  const info = infoMark('dm-proj-info', 'About projects', PROJECTS_INFO_HTML, { html: true });
 
   return (
     // A SECTION, and a `.dm-section`, like the three around it. The reported
@@ -2856,35 +2971,28 @@ function renderProjectsPanel(readonly) {
     // 0px. Every gap on this card is now ONE rule (`.dm-section +
     // .dm-section`), which is why they cannot disagree again.
     '<section class="dm-section dm-projects">' +
-      // ── THE EYEBROW AND ITS CAPTION ARE ONE HEADER ──────────────────────
-      // The sentence used to render at x=0, hard against the top of the
-      // card, while the eyebrow above it sat indented to the row padding —
-      // so it read as loose body text that had fallen between the two rather
-      // than as the group's own caption. Wrapped and indented to the SAME
-      // x-axis as the eyebrow and as every row label below it, the three
-      // line up and the header reads as the group's.
+      // ── THE EYEBROW, THE MARK, AND NOTHING BETWEEN THEM AND THE LIST ────
+      // v3.50.0 cut a four-line paragraph here down to one sentence under
+      // the eyebrow: "A domain is one compounding wiki; a project is a thing
+      // you build inside it." The maintainer's verdict on the survivor is
+      // that it still reads as a loose sentence dropped between the heading
+      // and the table — which is the SAME complaint, one size smaller, and
+      // the reason v3.22.0 records for renderViewHeader having no parameter
+      // that puts prose under a title: THE CONTAINER WAS THE PROBLEM, NOT
+      // THE WORDING.
       //
-      // The treatment is the shared DESCRIPTION role, unchanged: static
-      // prose explaining what a thing is, at --type-body-sm / --text-2 —
-      // which IS the kit's secondary text (`.cur-group-label > span` carries
-      // the same pair). This view places it; shared/text.css dresses it, and
-      // domains.css may not name a tx- class to do otherwise.
+      // So the lede goes and the ⓘ carries the definition. That is what the
+      // mark is for — it is the dive-in, it ships closed, and the first words
+      // inside it are still "A domain is one compounding wiki", so nothing a
+      // reader needed has been deleted, only moved behind the control that
+      // exists to hold it. The eyebrow stays: a group that does not name
+      // itself is worse than one with a sentence too many.
       '<div class="dm-proj-head">' +
         '<div class="dm-section-head-row">' +
           '<div class="cur-group-title dm-section-eyebrow">PROJECTS IN THIS DOMAIN</div>' +
           info.btn +
         '</div>' +
         info.panel +
-        // ── ONE LINE, AND THE REST BEHIND THE MARK ───────────────────────
-        // The paragraph that used to live here was four lines of standing
-        // explanation on a screen a person visits to DO something, and the
-        // maintainer asked for it under the ⓘ. What stays visible is the one
-        // sentence that says what a project IS — which is the only part a
-        // reader who already knows needs to skip, and the only part a reader
-        // who does not needs before deciding to open the fold.
-        '<div class="dm-proj-caption">' +
-          renderDescription('A domain is one compounding wiki; a project is a thing you build inside it.') +
-        '</div>' +
       '</div>' +
       copied +
       '<div class="cur-group">' + body + truncated + footer + '</div>' +
@@ -3042,28 +3150,101 @@ function projectCount() {
  * THE FIFTH FIGURE IS PROJECTS, and it was missing. A project is one of the
  * two things a domain HOLDS — pages and projects — and the section for it
  * was on the card while the count for it was nowhere.
+ *
+ * ── A FIGURE IS A SHORTCUT TO THE THING IT COUNTS ──────────────────────────
+ * Reported by a user reviewing the app on video: he wanted to press ENTITIES
+ * and get the list of entities, and said he had not noticed the filter chips
+ * under PAGES · THE WIKI "for a long time". The three chips were doing the
+ * job; the number above them was where he looked for it.
+ *
+ * So the four figures that have a matching chip become controls over the chip
+ * row — PAGES → All, and the three type figures → their own facet — and
+ * PROJECTS, which has no chip, scrolls to the Projects section instead. The
+ * chips stay exactly as they were.
+ *
+ * ONE SOURCE OF TRUTH, AND IT IS THE FILTER STATE. `state.browse.folder`
+ * decides both the chip's `.active` and the tile's `aria-pressed`; the tile
+ * writes that field and re-renders, which is precisely what the chip already
+ * does. A tile that kept its own "selected" flag would be a second state free
+ * to disagree with the list under it — the shape `activeBrowse()` and
+ * `activeProjects()` both exist to prevent one layer down.
+ *
+ * A TILE IS A CONTROL ONLY WHILE THERE IS A LIST FOR IT TO ACT ON. With the
+ * page list still loading, or failed, the four facet tiles render as the
+ * plain `<div>`s they have always been: a button whose only possible outcome
+ * is nothing is worse than no button, and the geometry is identical either
+ * way (same class, same padding, same grid track), so nothing moves when the
+ * list lands. PROJECTS is always a button — it only scrolls, and the section
+ * it scrolls to renders in every state.
+ *
+ * NO `title=`. The tile's accessible name carries the count and what pressing
+ * it does, on a real focusable control — views/domains.js's `title=` ceiling
+ * in scripts/test-next-title-affordances.js is 0 and stays 0.
  */
 function renderStatCards(counts, pages, projects) {
   const otherCount = counts.other || 0;
+  const b = activeBrowse();
+  const live = !!(b && !b.loading && !b.error);
+
+  const body = (label, value, cls) =>
+    '<div class="cur-eyebrow">' + label + '</div>' +
+    '<div class="dm-stat-value' + (cls ? ' ' + cls : '') + '">' + value + '</div>';
+
+  // A figure with no chip behind it (OTHER) and every figure rendered before
+  // the list has landed.
   const card = (label, value, cls) =>
-    '<div class="dm-stat-card"><div class="cur-eyebrow">' + label + '</div>' +
-    '<div class="dm-stat-value' + (cls ? ' ' + cls : '') + '">' + value + '</div></div>';
+    '<div class="dm-stat-card">' + body(label, value, cls) + '</div>';
+
+  // A figure that SELECTS a chip. `aria-pressed` is read straight off the
+  // filter state, never off a local flag.
+  const facetCard = (label, value, cls, facet, name) => {
+    if (!live) return card(label, value, cls);
+    return '<button type="button" class="dm-stat-card"' +
+      ' data-stat-facet="' + escapeHtml(facet) + '"' +
+      ' aria-pressed="' + (b.folder === facet ? 'true' : 'false') + '"' +
+      ' aria-label="' + escapeHtml(name) + '">' + body(label, value, cls) + '</button>';
+  };
+
+  // A figure that JUMPS. Not a toggle, so it carries no `aria-pressed` —
+  // aria-pressed on a control that does not stay pressed is a lie told to a
+  // screen reader only.
+  const jumpCard = (label, value, cls, name) =>
+    '<button type="button" class="dm-stat-card"' +
+      ' data-stat-jump="projects"' +
+      ' aria-label="' + escapeHtml(name) + '">' + body(label, value, cls) + '</button>';
+
+  const pagesText = pages.toLocaleString();
+  const entText = (counts.entities || 0).toLocaleString();
+  const conText = (counts.concepts || 0).toLocaleString();
+  const sumText = (counts.summaries || 0).toLocaleString();
+  const projText = projects === null || projects === undefined ? '—' : projects.toLocaleString();
+
   return (
     '<section class="dm-section dm-overview">' +
       '<div class="cur-group-title dm-section-eyebrow">OVERVIEW</div>' +
       '<div class="cur-group dm-stats-group">' +
         '<div class="dm-stats-grid">' +
-          card('PAGES', pages.toLocaleString(), '') +
-          card('ENTITIES', (counts.entities || 0).toLocaleString(), 'dm-stat-entity') +
-          card('CONCEPTS', (counts.concepts || 0).toLocaleString(), 'dm-stat-concept') +
-          card('SUMMARIES', (counts.summaries || 0).toLocaleString(), 'dm-stat-summary') +
+          // PAGES is the RESET, not a narrowing, so its name says so rather
+          // than reading "Pages, 3,445 pages — filter the list".
+          facetCard('PAGES', pagesText, '', 'all',
+            'Pages, ' + pagesText + ' — show every page in the list') +
+          facetCard('ENTITIES', entText, 'dm-stat-entity', 'entities',
+            'Entities, ' + entText + ' pages — filter the list') +
+          facetCard('CONCEPTS', conText, 'dm-stat-concept', 'concepts',
+            'Concepts, ' + conText + ' pages — filter the list') +
+          facetCard('SUMMARIES', sumText, 'dm-stat-summary', 'summaries',
+            'Summaries, ' + sumText + ' pages — filter the list') +
           // An em dash, not a zero. See projectCount().
-          card('PROJECTS', projects === null || projects === undefined ? '—' : projects.toLocaleString(), 'dm-stat-project') +
+          jumpCard('PROJECTS', projText, 'dm-stat-project',
+            'Projects, ' + projText + ' — go to the projects list') +
           // MEDIUM-2 fix: shown only when non-zero, so the common case (every
           // page fits entities/concepts/summaries) renders identically to
           // before — but when `other` IS non-zero it is never just dropped
           // (see the caller's comment): a sixth stat card, same shape as the
           // other five, not a footnote.
+          //
+          // It is NOT a control: there is no "Other" chip, and `all`
+          // deliberately does not equal it either (see BROWSE_FOLDERS).
           (otherCount > 0 ? card('OTHER', otherCount.toLocaleString(), 'dm-stat-other') : '') +
         '</div>' +
       '</div>' +
@@ -4133,19 +4314,96 @@ function bindBrowseListeners() {
 
   document.querySelectorAll('.dm-browse-tab[data-browse-folder]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const b = activeBrowse();
-      if (!b) return;
-      b.folder = btn.dataset.browseFolder;
-      // Same reason as the filter above, and the same line: a facet change is
-      // a different match set.
-      b.window = BROWSE_RENDER_CAP;
-      render(myMountToken);
+      // The chip is unchanged in behaviour and ONE line better: it goes
+      // through the same helper the OVERVIEW tile uses, so the two controls
+      // over one filter state cannot drift, and it now hands focus back to
+      // itself after the repaint instead of dropping it on <body> (the
+      // v3.17.1 defect, which this row has carried since it shipped). It does
+      // NOT scroll — pressing a chip means you are already looking at the
+      // list it filters.
+      selectBrowseFacet(btn.dataset.browseFolder, {
+        scroll: false,
+        refocus: '.dm-browse-tab[data-browse-folder="' + btn.dataset.browseFolder + '"]',
+      });
     });
   });
 
   bindBrowseRowClicks(document);
 
   document.getElementById('dm-browse-more')?.addEventListener('click', showMoreBrowseRows);
+}
+
+/**
+ * Select a facet of the page list — the ONE write path both controls use.
+ *
+ * The chip row and the OVERVIEW tiles are two affordances over one field
+ * (`state.browse.folder`). They write it here, together, so "what does
+ * pressing this select?" has a single answer in one place: a second copy of
+ * the window reset, or of the mount check, is how the two would come to
+ * disagree about what "Entities" means.
+ *
+ * `opts.scroll` brings the Pages section to the top of the scrolling `.main`
+ * — for the tile, whose list is a screen further down. `opts.refocus` is a
+ * selector re-queried AFTER the repaint, because `render()` replaces the
+ * whole column and the node that was pressed no longer exists; focusing with
+ * `preventScroll` so the two do not fight over the scroll position.
+ */
+function selectBrowseFacet(key, opts) {
+  const b = activeBrowse();
+  if (!b || !key) return;
+  b.folder = key;
+  // A facet change is a different match set, so the window resets with it —
+  // the same rule and the same reason as the filter box above.
+  b.window = BROWSE_RENDER_CAP;
+  render(myMountToken);
+  const o = opts || {};
+  if (o.refocus) {
+    const again = document.querySelector(o.refocus);
+    if (again && typeof again.focus === 'function') {
+      try { again.focus({ preventScroll: true }); } catch { again.focus(); }
+    }
+  }
+  if (o.scroll) scrollSectionIntoView('.dm-pages');
+}
+
+/**
+ * Bring one of this card's sections to the top of the scrolling region.
+ *
+ * `behavior` is chosen rather than left to the browser: `scrollIntoView`'s
+ * smooth scroll does NOT consult `prefers-reduced-motion` on its own, so a
+ * user who has asked for no motion would get a 500px glide anyway. This is
+ * the one place in this file that reads the query directly — it is a
+ * scripted animation, not a CSS one, so tokens/motion.css's zeroed `--dur-*`
+ * cannot reach it.
+ */
+function scrollSectionIntoView(selector) {
+  const el = document.querySelector(selector);
+  if (!el || typeof el.scrollIntoView !== 'function') return;
+  let reduce = false;
+  try {
+    reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch { reduce = false; }
+  el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+}
+
+/**
+ * The OVERVIEW figures, wired. See renderStatCards for why they are controls.
+ */
+function bindStatCardListeners() {
+  document.querySelectorAll('.dm-stat-card[data-stat-facet]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.statFacet;
+      selectBrowseFacet(key, {
+        scroll: true,
+        refocus: '.dm-stat-card[data-stat-facet="' + key + '"]',
+      });
+    });
+  });
+  // PROJECTS only scrolls, so it neither writes state nor re-renders — which
+  // is why it keeps its own focus for free.
+  document.querySelector('.dm-stat-card[data-stat-jump]')
+    ?.addEventListener('click', () => scrollSectionIntoView('.dm-projects'));
 }
 
 /**
@@ -6201,10 +6459,56 @@ function captureCardReserve() {
   };
 }
 
+/**
+ * Keep an OPEN ⓘ fold open across a full repaint.
+ *
+ * shared/text.js keeps a panel's open state in the DOM only — it flips
+ * `hidden` and sets `aria-expanded` on the button and records nothing — so
+ * every `render()` closed every fold on this screen. That is v3.53.1's finding
+ * verbatim ("the redesigned screen closed its own folds while a test ran"),
+ * fixed there for Settings and in v3.54.0 for Agent memory, and it never
+ * reached this view. It matters more now than it did: this card carries FOUR
+ * kinds of fold (the section mark plus two per project row), and the OVERVIEW
+ * tiles added this release re-render the whole column on a click, so an open
+ * explanation would be shut by the very control it explains.
+ *
+ * Captured and restored around the swap, in `render()` rather than
+ * `renderMain()`, for the same reason `captureCardReserve` lives here: it must
+ * read the live DOM BEFORE `setMain()` replaces it, and `renderMain` is lifted
+ * into suite sandboxes with a `document` stand-in that has no
+ * `querySelectorAll`.
+ *
+ * RESTORE ONLY EVER OPENS. It never closes a panel it did not see open, so a
+ * fold a later render has legitimately opened itself is not fought — the same
+ * rule views/settings.js states for its own capture/restore. A mark whose id
+ * is no longer on the page (its project was renamed, or the domain changed) is
+ * skipped rather than resurrected.
+ */
+function captureOpenInfoPanels() {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return [];
+  return Array.prototype.slice
+    .call(document.querySelectorAll('[data-tx-info][aria-expanded="true"]'))
+    .map((btn) => btn.getAttribute('data-tx-info'))
+    .filter(Boolean);
+}
+
+function restoreOpenInfoPanels(ids) {
+  if (!ids || !ids.length || typeof document === 'undefined' || !document.getElementById) return;
+  for (const id of ids) {
+    const btn = document.getElementById(id + '-btn');
+    const panel = document.getElementById(id);
+    if (!btn || !panel) continue;
+    panel.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
 function render(token) {
+  const openInfo = captureOpenInfoPanels();
   captureCardReserve();
   renderSidebar(token);
   renderMain(token);
+  restoreOpenInfoPanels(openInfo);
 }
 
 registerView('domains', {

@@ -112,7 +112,11 @@ function extractFunction(source, name) {
 }
 
 function extractConst(source, name) {
-  const re = new RegExp(`(?:^|\\n)const ${name} = [\\s\\S]*?;[ \\t]*(?://[^\\n]*)?\\n`);
+  // `=\\s` rather than `= `: a long string const puts its first fragment on the
+  // NEXT line, and requiring a space after the `=` made those invisible to
+  // this matcher -- which throws rather than returning a partial, so it was
+  // found immediately and could never have been silent.
+  const re = new RegExp(`(?:^|\\n)const ${name} =\\s[\\s\\S]*?;[ \\t]*(?://[^\\n]*)?\\n`);
   const m = re.exec(source);
   if (!m) throw new Error(`extractConst: "${name}" not found in domains.js`);
   return m[0].trim();
@@ -126,6 +130,10 @@ const FNS = [
   // the fold really CARRIES the paragraph, and a stub would let an empty panel
   // pass that assertion.
   'infoMark',
+  // v3.58.0. Each copy control carries its own ⓘ now, and the DOM id for it
+  // is built here -- slug plus row index, so two names that slugify alike
+  // cannot ship duplicate ids (v3.54.0's renderViewHeader collision).
+  'projInfoId',
   'loadProjects',
   'renderProjectRow',
   'renderProjectsPanel',
@@ -200,8 +208,14 @@ try {
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
+    // The three ⓘ texts. LIFTED, never re-typed: S12b asserts the words a
+    // user reads, and a copy here would assert a copy.
+    extractConst(SRC, 'MARKER_INFO_TEXT') + '\n' +
+    extractConst(SRC, 'AGENT_INFO_TEXT') + '\n' +
+    extractConst(SRC, 'PROJECTS_INFO_HTML') + '\n' +
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, PROJECT_BRIEF_TEMPLATE,
+       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gates.length = 0;
@@ -221,8 +235,8 @@ const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
   renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
-  copyProjectAgentInstructions, renderCopyOutcome,
-  PROJECT_BRIEF_TEMPLATE,
+  copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
+  PROJECT_BRIEF_TEMPLATE, MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
   __setDocument, __setRenderImpl,
 } = sandbox;
@@ -1168,36 +1182,132 @@ const WRITABLE = () => freshState({
     !isInside(d.byId('dm-proj-confirm')[0], d.group));
 }
 {
-  // THE CAPTION IS THE GROUP'S, NOT LOOSE BODY TEXT. It used to render as a
-  // bare sibling between the eyebrow and the card, at x=0 while the eyebrow
-  // sat indented to the row padding -- which is what made it read as text
-  // that had fallen between the two.
+  // ── THE HEADER IS AN EYEBROW AND A MARK, AND NOTHING BETWEEN THEM AND THE
+  //    GROUP (v3.58.0). v3.50.0 moved a four-line paragraph behind the ⓘ and
+  //    kept one sentence visible, indented to the eyebrow's x-axis so it read
+  //    as the group's caption rather than as text that had fallen between the
+  //    two. The maintainer's verdict on that survivor was that it STILL read
+  //    as a loose sentence -- the same complaint, one size smaller -- and
+  //    v3.22.0 already records why rewording never fixes it: THE CONTAINER
+  //    WAS THE PROBLEM, NOT THE WORDING. So the sentence is behind the mark,
+  //    which is the control that exists to hold it.
   __setState(WRITABLE());
   const t = parsePanel(renderProjectsPanel(false));
   const head = t.all.find((n) => hasClass(n, 'dm-proj-head'));
   const eyebrow = t.all.find((n) => hasClass(n, 'cur-group-title'));
-  const caption = t.all.find((n) => hasClass(n, 'dm-proj-caption'));
-  ok('the eyebrow and the caption are wrapped in ONE header block',
-    !!head && !!eyebrow && !!caption && isInside(eyebrow, head) && isInside(caption, head));
+  ok('the eyebrow and the ⓘ mark are wrapped in ONE header block',
+    !!head && !!eyebrow && isInside(eyebrow, head));
+  const mark = head && t.all.find((n) => n.attrs['data-tx-info'] !== undefined && isInside(n, head));
+  ok('...and the mark is in that header, beside the eyebrow', !!mark);
   const section = t.all.find((n) => hasClass(n, 'dm-projects'));
   ok('CONTROL -- the header and the group are siblings under the section',
     !!section && section.children.includes(head) && section.children.includes(t.group));
   ok('...and the header comes first', section
     && section.children.indexOf(head) < section.children.indexOf(t.group));
-  ok('...and the caption is still the shared DESCRIPTION role, not a re-dressed copy',
-    caption && caption.children.some((c) => hasClass(c, 'tx-desc')));
-  ok('...whose sentence is unchanged', /compounding wiki/.test(renderProjectsPanel(false)));
-  // PLACEMENT ONLY. The whole reason the caption keeps the shared role is that
-  // this view must not re-dress it; a font-size or colour on the wrapper is
-  // that happening one edit later.
-  const capRule = /\.dm-proj-caption\s*\{([^}]*)\}/.exec(CSS);
-  ok('CONTROL -- domains.css does place the caption', !!capRule, 'no .dm-proj-caption rule');
-  for (const prop of ['font', 'font-size', 'color', 'border', 'background']) {
-    ok('...and sets no ' + prop + ' on it -- it places the role, it does not dress it',
-      capRule && !new RegExp('(?:^|[;{\\s])' + prop + '\\s*:').test(capRule[1]), capRule && capRule[1]);
+
+  // THE LOOSE SENTENCE IS GONE, from the tree AND from the stylesheet.
+  ok('no caption renders between the eyebrow and the group',
+    !t.all.some((n) => hasClass(n, 'dm-proj-caption')), 'a .dm-proj-caption is still rendered');
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('...and domains.css no longer carries a rule placing one',
+    !/\.dm-proj-caption/.test(stripped), 'a .dm-proj-caption rule survives');
+  ok('CONTROL -- the comment stripper leaves real rules alone, so the check above can fail',
+    /\.dm-proj-head\s*\{/.test(stripped));
+
+  // NOTHING A READER NEEDED WAS DELETED. The definition moved INTO the fold,
+  // and it is the first thing there -- which is the assertion that stops
+  // "remove the lede" turning into "remove the explanation".
+  const panelId = mark && mark.attrs['data-tx-info'];
+  const panel = panelId && t.all.find((n) => n.attrs.id === panelId);
+  // Read off the RAW HTML rather than the node: makeDom() parses TAGS only and
+  // throws text away, so `panel.textContent` does not exist here. The panel's
+  // own markup is sliced out by id, which is still an assertion about where
+  // the sentence went rather than about the string existing somewhere.
+  const rawPanel = (() => {
+    const html = renderProjectsPanel(false);
+    const at = html.indexOf('id="' + panelId + '"');
+    return at === -1 ? '' : html.slice(at, html.indexOf('</div>', at));
+  })();
+  ok('...and the definition survives inside the fold',
+    /A domain is one compounding wiki/.test(rawPanel), rawPanel.slice(0, 80));
+  ok('...which still ships CLOSED, so nothing is on screen that was not before',
+    panel && panel.attrs.hidden !== undefined);
+}
+{
+  // ── EACH COPY CONTROL CARRIES ITS OWN ⓘ (v3.58.0) ──────────────────────
+  // Reported by the maintainer about the app he builds: "I do not know what
+  // Copy marker line is." Two ghost buttons both reading "Copy", with nothing
+  // saying what lands on the clipboard or where it goes.
+  __setState(WRITABLE());
+  const t = parsePanel(renderProjectRow(ROW(), true, 0));
+  const marks = t.all.filter((n) => n.attrs['data-tx-info'] !== undefined);
+  eq('the row carries TWO ⓘ marks, one per copy control', marks.length, 2);
+  const panels = t.all.filter((n) => hasClass(n, 'tx-vh-panel'));
+  eq('...and two panels to match', panels.length, 2);
+  ok('every panel ships hidden', panels.every((q) => q.attrs.hidden !== undefined));
+  ok('...and every mark points at one that exists, with the -btn id convention',
+    marks.every((m) => {
+      const id = m.attrs['data-tx-info'];
+      return m.attrs.id === id + '-btn' && m.attrs['aria-controls'] === id
+        && m.attrs['aria-expanded'] === 'false'
+        && panels.some((q) => q.attrs.id === id);
+    }), marks.map((m) => m.attrs.id).join(', '));
+
+  // THE MARK SITS WITH ITS CONTROL; THE PANEL DROPS BELOW THE ROW. A block
+  // panel inside `.cur-group-control` -- a `flex: none` strip -- would be
+  // squeezed in beside the buttons.
+  const controls = t.all.find((n) => hasClass(n, 'cur-group-control'));
+  ok('CONTROL -- the row has a control strip', !!controls);
+  ok('both marks sit inside it, beside the buttons they explain',
+    marks.every((m) => isInside(m, controls)));
+  const wrap = t.all.find((n) => hasClass(n, 'dm-proj-info-panels'));
+  ok('...and both panels sit in a wrapper OUTSIDE it', !!wrap
+    && panels.every((q) => isInside(q, wrap)) && !isInside(wrap, controls));
+  const wrapRule = /\.dm-proj-info-panels\s*\{([^}]*)\}/.exec(CSS);
+  ok('...which domains.css gives a full-width flex basis, so it takes its own line',
+    wrapRule && /flex:\s*0\s+0\s+100%/.test(wrapRule[1]), wrapRule && wrapRule[1]);
+  ok('...and the row wraps, or that basis would do nothing',
+    /\.dm-proj-row\s*\{[^}]*flex-wrap:\s*wrap/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
+
+  // THE IDS ARE UNIQUE ACROSS ROWS. A duplicate DOM id makes
+  // getElementById return the first match, which is v3.54.0's
+  // renderViewHeader collision -- one panel permanently unreachable.
+  const two = parsePanel(renderProjectRow(ROW({ project: 'a_b' }), true, 0)
+    + renderProjectRow(ROW({ project: 'a-b' }), true, 1));
+  const ids = two.all.filter((n) => hasClass(n, 'tx-vh-panel')).map((n) => n.attrs.id);
+  eq('two rows whose names SLUGIFY ALIKE still emit four panels', ids.length, 4);
+  eq('...with four distinct ids', new Set(ids).size, 4, ids.join(', '));
+  // ANTI-VACUITY: the slug really does collide, so the index is what saved it.
+  eq('CONTROL -- the two names do slugify to the same stem',
+    projInfoId('marker', 'a_b', 0).replace(/-0$/, ''),
+    projInfoId('marker', 'a-b', 1).replace(/-1$/, ''));
+  // AND A HOSTILE NAME CANNOT REACH THE ATTRIBUTE.
+  const hostile = renderProjectRow(ROW({ project: '"><img onerror=x>' }), true, 0);
+  ok('a hostile project name cannot escape through an ⓘ id',
+    !/<img onerror/.test(hostile), hostile.slice(0, 200));
+}
+{
+  // ── THE `{html: true}` LICENCE IS `=== true`, NEVER TRUTHY ──────────────
+  // v3.58.0 gave this view's local infoMark the same opt-out shared/text.js's
+  // renderInfoMark carries, because the PROJECTS fold is two labelled
+  // paragraphs. The licence is for markup written in the view; a stray
+  // string, a 1, or an options object built from a query must not switch
+  // escaping off. Driven through the SHIPPED helper.
+  const FRAG = '<b>bold</b>';
+  const esc = infoMark('x', 'l', FRAG);
+  ok('the DEFAULT escapes -- markup arrives as text',
+    esc.panel.includes('&lt;b&gt;') && !esc.panel.includes('<b>'), esc.panel);
+  const raw = infoMark('x', 'l', FRAG, { html: true });
+  ok('...and `{html: true}` renders it', raw.panel.includes('<b>bold</b>'), raw.panel);
+  for (const truthy of ['yes', 1, {}, [], 'true']) {
+    const out = infoMark('x', 'l', FRAG, { html: truthy });
+    ok('a truthy-but-not-true `html: ' + JSON.stringify(truthy) + '` still ESCAPES',
+      out.panel.includes('&lt;b&gt;') && !out.panel.includes('<b>'), out.panel);
   }
-  ok('...it sets a left offset, so the assertions above are not vacuous',
-    capRule && /margin-left\s*:/.test(capRule[1]));
+  ok('no opts at all escapes too', infoMark('x', 'l', FRAG, undefined).panel.includes('&lt;b&gt;'));
+  // AND THE ONE SITE THAT USES IT PASSES THE LITERAL.
+  ok('renderProjectsPanel opts in with the literal `true`, not a variable',
+    /infoMark\('dm-proj-info',[^)]*\{ html: true \}\)/.test(SRC), 'the call site no longer reads `{ html: true }`');
 }
 {
   // THE ROW'S CSS CONTRACT. The tree says the button is a row; these say the

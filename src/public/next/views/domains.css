@@ -490,6 +490,68 @@
   background: none;
   box-shadow: none;
 }
+
+/* ── THE FIGURE AS A CONTROL ───────────────────────────────────────────────
+   Four of the five tiles are `<button>`s that select the chip of the same
+   name under PAGES · THE WIKI, and PROJECTS scrolls to its section (see
+   renderStatCards for why). The GEOMETRY must not move when a tile changes
+   tag: a `<button>` brings a UA border, background, centred text, its own
+   font and `box-sizing: border-box` — the padding and radius above already
+   apply to it by class, so only the chrome is removed here.
+
+   `cursor: default` is this app's chrome pointer, the same call
+   `.dm-browse-tab` and `.dm-proj-footer` make. */
+.dm-stats-group button.dm-stat-card {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
+}
+.dm-stats-group button.dm-stat-card:hover { background: var(--surface-hover); }
+.dm-stats-group button.dm-stat-card:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+/* SELECTED — the same vocabulary the chip uses (`--accent-tint` fill,
+   `--accent-border` edge), so the two controls over one filter state read as
+   the same state. The edge is an INSET box-shadow rather than a border
+   because a real border on a tile inside a five-track grid would reflow every
+   tile by 2px the moment one became selected. Ink contrast on the composited
+   tint is measured in scripts/test-next-domain-pages.js.
+
+   DECLARED AFTER `:hover`, which it TIES with at (0,3,1) — so hovering a
+   selected figure keeps the selected fill instead of flashing back to the
+   neutral one. That is the chip's behaviour too: `.dm-browse-tab.active` has
+   no hover variant either, and two controls over one state should not
+   disagree about what hovering means. */
+.dm-stats-group button.dm-stat-card[aria-pressed="true"] {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+/* THE PRESS IS LAST, AND IT CARRIES BOTH SELECTORS FOR A MEASURED REASON.
+   A bare `:active` ties with the selected rule above at (0,3,1) and loses on
+   order, so pressing an ALREADY-SELECTED figure would change nothing but the
+   1px nudge. `[aria-pressed]` — attribute PRESENT, true or false — scores
+   (0,3,2) and outranks it; the bare `:active` stays in the list because the
+   PROJECTS figure jumps rather than toggling and carries no aria-pressed at
+   all. One rule, so the press cannot come to mean two things.
+
+   The first cut of this block used `[aria-pressed="true"]:hover` for the
+   selected hover and was correctly refused by
+   scripts/test-next-press-motion.js §6: that rule outranks a bare `:active`,
+   which is the shape where a press silently never paints. */
+.dm-stats-group button.dm-stat-card:active,
+.dm-stats-group button.dm-stat-card[aria-pressed]:active {
+  background: var(--surface-active);
+  transform: translateY(var(--press-shift));
+}
 /* PAGES carries no ink class and takes --text; so does PROJECTS, because both
    are totals rather than one of the three wiki types. Named rather than left
    classless so the suite can address it. */
@@ -996,20 +1058,15 @@
    "glued to Wiki health" the maintainer reported. */
 .dm-projects { margin-top: 0; }
 
-/* ── THE HEADER: EYEBROW + CAPTION, ON ONE X-AXIS ─────────────────────────
-   The kit gives `.cur-group-title` a left margin of --space-6 so the eyebrow
-   starts where the first row's LABEL starts. The caption below it had no such
-   offset and no gap: it began at x=0 and ended hard against the card, which is
-   why the maintainer read it as body text that had fallen between the eyebrow
-   and the group rather than as the group's own caption.
-
-   PLACEMENT ONLY. No font-size, no colour, no border — the sentence is the
-   shared DESCRIPTION role and shared/text.css dresses it. This file may not
-   even NAME that role's class (test-next-text-system.js fails on the prefix
-   anywhere in this file, comments included), so the margin hangs on a wrapper
-   this view owns. */
+/* ── THE HEADER: AN EYEBROW AND ITS MARK, AND NOTHING ELSE ────────────────
+   v3.50.0 indented the caption under this header to the eyebrow's own x-axis,
+   because at x=0 it read as body text that had fallen between the eyebrow and
+   the group. The caption is GONE now — the maintainer's verdict on the
+   surviving one-liner was that it still read as a loose sentence, and the ⓘ
+   fold beside the eyebrow is what carries the definition (see
+   renderProjectsPanel). `.dm-proj-caption` went with it; the header keeps its
+   bottom margin, which is the gap to the group below. */
 .dm-proj-head { margin-bottom: var(--space-4); }
-.dm-proj-caption { margin-left: var(--space-6); }
 
 .dm-proj-row .cur-group-label > b {
   display: flex;
@@ -1018,6 +1075,21 @@
   flex-wrap: wrap;
 }
 .dm-proj-row .cur-group-control { flex-wrap: wrap; justify-content: flex-end; }
+/* ── THE ROW'S ⓘ FOLDS GET THEIR OWN LINE ────────────────────────────────
+   `.cur-group-row` is a flex row (shell.css) and each control's fold is a
+   BLOCK panel, so without this the two panels would be squeezed in beside the
+   buttons. `flex-wrap` plus a 100% basis drops the wrapper below the label
+   and the controls, at the row's full width, which is where a paragraph can
+   be read. A `.cur-group-row-stack` would have worked too and was refused: it
+   stacks the LABEL above the CONTROLS as well, which is a different row.
+
+   The wrapper carries no margin of its own — both panels ship `hidden`, so an
+   unopened row must be exactly as tall as it was before; `.tx-vh-panel`'s own
+   `margin-top` supplies the gap when one opens. This file may not name that
+   class (test-next-text-system.js fails on the `.tx-` prefix anywhere here,
+   comments included), which is why the wrapper exists at all. */
+.dm-proj-row { flex-wrap: wrap; }
+.dm-proj-info-panels { flex: 0 0 100%; min-width: 0; }
 /* Compact, because there are up to three of them per row and the row is a
    list item rather than a call to action. Height only — the kit owns
    everything else about a .btn. */
@@ -1745,5 +1817,7 @@
      travels with the control instead of being restated per view. */
   .dm-browse-row:active,
   .dm-browse-more:active,
+  .dm-stats-group button.dm-stat-card:active,
+  .dm-stats-group button.dm-stat-card[aria-pressed]:active,
   .reader-source-reveal:active:not(:disabled) { transform: none; }
 }
