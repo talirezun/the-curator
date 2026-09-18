@@ -1436,6 +1436,6 @@ seen working end to end" as different claims wherever the docs distinguish them.
 | Provider and model policy | [model-lifecycle.md](model-lifecycle.md) |
 | How ingest works, stage by stage | [ingestion-pipeline.md](ingestion-pipeline.md) |
 | System design | [architecture.md](architecture.md) · [api-reference.md](api-reference.md) |
-| What is designed but not built | [roadmap-chat-modes.md](roadmap-chat-modes.md) · [roadmap-automatic-sync.md](roadmap-automatic-sync.md) · [roadmap-menubar-widget.md](roadmap-menubar-widget.md) |
+| What is designed but not built | [roadmap-chat-modes.md](roadmap-chat-modes.md) · [roadmap-automatic-sync.md](roadmap-automatic-sync.md) · [roadmap-menubar-widget.md](roadmap-menubar-widget.md) · [roadmap-context-engine.md](roadmap-context-engine.md) |
 | An outside reading of the whole project, with its defects named | [audits/2026-09-02-six-area-review.md](audits/2026-09-02-six-area-review.md) — the current audit of record: framework, features, native Mac interface, skills, documentation and README, plus the plan taken from it |
 | Why the code is shaped the way it is | [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) |
