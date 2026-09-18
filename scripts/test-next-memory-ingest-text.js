@@ -774,14 +774,33 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 //
 // So: exactly one mutating method, it is a PATCH, it goes to the projects
 // endpoint, and it carries a brief and nothing else.
+//
+// ── v3.59.0 ADDS A SECOND, AND THE BOUNDARY IS UNMOVED ──────────────────
+// Tier 0 — the canonical documents a project carries verbatim — splits on
+// OWNERSHIP rather than on tier. A CURATOR-owned document is the commissioned
+// agent's and this view cannot touch it; there is no route that could. A
+// REPO-owned one is a MIRROR, and "Refresh from repo" is a deterministic BYTE
+// COPY of a file the repository already authors — a second COPIER, not a
+// second writer, and two copiers of one byte string converge rather than
+// conflict (src/routes/memory.js carries the argument at the route).
+//
+// So the guard is widened by NAMING the second write exactly rather than by
+// loosening the count: two methods, they are PATCH and POST as LITERALS, the
+// POST goes to `…/foundations/refresh`, and it carries an empty body — there
+// is no field for a later edit to smuggle a handoff or a document into.
 {
-  const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []);
-  ok('memory.js issues exactly ONE mutating HTTP method', methods.length === 1, methods.join(','));
-  ok('...and it is a PATCH', methods[0] === "method: 'PATCH'", String(methods[0]));
-  ok('...aimed at the PROJECTS endpoint, which reaches tier 1 only',
+  const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
+  ok('memory.js issues exactly TWO mutating HTTP methods', methods.length === 2, methods.join(','));
+  ok('...and they are PATCH and POST', methods[0] === "method: 'PATCH'"
+    && methods[1] === "method: 'POST'", methods.join(','));
+  ok('...the PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
   ok('...and it never sends a handoff field',
     !/nowState|nextSteps|observations|traps/.test(memCode));
+  ok('...the POST aimed at the foundations REFRESH endpoint, and nothing else under tier 0',
+    /'\/foundations\/refresh'/.test(memCode) && !/'\/foundations\/' \+ [^\n]*method/.test(memCode));
+  ok('...carrying an EMPTY body, so no document, slug or path can cross',
+    /body: '\{\}'/.test(memCode));
   ok('memory.js never calls the tier 2/3 write tool by name',
     !/saveWorkingState/.test(memCode));
 }

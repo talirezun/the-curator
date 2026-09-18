@@ -112,6 +112,14 @@ import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
+// >>> WP-V TEMPORARY — DELETE THESE FOUR IMPORTS AT MERGE >>>
+// Only the read-only tier-0 stand-in at the foot of this file uses them; see
+// the fenced block there for why it exists and what deleting it restores.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { getDomainsDir } from '../brain/config.js';
+// <<< WP-V TEMPORARY <<<
 
 const router = Router();
 
@@ -133,13 +141,20 @@ export const MAX_PROJECTS = 200;
  *   · `projects` — collides with the `/:domain/projects` literal above.
  *   · `project.md` / `journal.jsonl` — the store's own reserved filenames;
  *     a directory with either name would sit exactly where those files go.
+ *   · `foundations` — the DIRECTORY tier 0 lives in, `<project>/foundations/`.
+ *     A project of that name would sit exactly where the domain's OWN
+ *     project's foundations directory goes (that project's tree IS the state
+ *     root), so the two would be addressed by one path. Refused for the same
+ *     reason as the two filenames, with the same message shape.
  *
  * A name outside this set is still checked by `isSafeSegment`, which is the
  * store's rule and is imported rather than restated (a second copy of a
  * validation rule is a second thing that can drift — this repo's most
  * reliably repeated defect).
  */
-export const RESERVED_PROJECT_NAMES = new Set(['projects', 'project.md', 'journal.jsonl']);
+export const RESERVED_PROJECT_NAMES = new Set([
+  'projects', 'project.md', 'journal.jsonl', 'foundations',
+]);
 
 // ═════════════════════════════════════════════════════════════════════════
 // THE STORE ADAPTER
@@ -551,6 +566,138 @@ async function readState(store, domain, project, opts) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// TIER 0 — FOUNDATIONS, AND WHY A ROUTE MAY WRITE ONE
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The header block above states this router's tier boundary: tiers 2 and 3
+// are agent-only, tier 1 is the human's. Tier 0 — the canonical documents a
+// project carries VERBATIM (architecture, decisions, conventions, roadmap) —
+// splits along a different line, and the line is OWNERSHIP rather than tier:
+//
+//   · A CURATOR-OWNED document was authored through `save_foundation`, on the
+//     owner's explicit instruction, and carries an agent's provenance. This
+//     router does not write one and there is no route that can. A human edit
+//     surface for those is a later release; until then the single-writer
+//     property holds exactly as it does for a handoff.
+//
+//   · A REPO-OWNED document is a MIRROR. Its source of truth is a file in a
+//     code repository, and a refresh is a deterministic BYTE COPY of that file
+//     — `sha256` compared, copied when it differs, `commit` stamped. Running
+//     it does not make this app a second AUTHOR: it makes it a second COPIER
+//     of a document whose author is the repository, and two copiers of one
+//     byte string converge rather than conflict. That is why
+//     `POST …/foundations/refresh` is a legitimate route and
+//     `PUT …/foundations/:slug` is not.
+//
+// The one property it does cost is the same one `project.md` costs, stated in
+// the header: tier 0 has no `<machine>` segment, so two machines refreshing
+// from checkouts at different commits converge on whichever SAVED LAST under
+// `git pull -X theirs`. It is not silent — the stored `commit` is shown beside
+// the document — and any machine re-asserts its own checkout with one refresh,
+// which is cheap and idempotent. docs/sync.md carries the paragraph.
+
+/**
+ * The stored slug rule, at the trust boundary.
+ *
+ * A COPY of the store's, and the one place in this file where a validation
+ * rule is restated rather than imported — because the store function that
+ * owns it does not exist yet on every install this router has to run against,
+ * and a boundary check that is skipped when the store is absent is not a
+ * boundary check. It is the spec's rule verbatim: lowercase alphanumerics and
+ * hyphens, a leading alphanumeric, 1–64 characters, `.md`.
+ */
+const FOUNDATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
+
+/**
+ * The store that answers the tier-0 calls.
+ *
+ * Identical to `ws()` in production; the fenced lines are the temporary
+ * stand-in described above and are removed when the store ships.
+ */
+function fstore() {
+  const s = ws();
+  // >>> WP-V TEMPORARY — DELETE THESE TWO LINES AT MERGE >>>
+  if (typeof s.listFoundations !== 'function') return wpvFoundationsFake();
+  // <<< WP-V TEMPORARY <<<
+  return s;
+}
+
+/**
+ * The tier-0 INDEX for one project, normalised for the wire.
+ *
+ * An ALLOW-LIST per document, for the reason `projectRow` records: a spread
+ * forwards whatever the store grows next, including anything a synced
+ * manifest.json put there. Absent facts become `null`/`0`/`[]` rather than
+ * `undefined`, so a consumer can tell "the store looked and there was
+ * nothing" from "this server does not know the field".
+ *
+ * NEVER A BODY. This rides on the detail envelope, which is fetched on every
+ * project switch and on the Reload path; a 200 KB budget of document text on
+ * a read whose job is "what is here" would make the cheapest screen in the app
+ * the most expensive one. `GET …/foundations/:slug` is the body.
+ */
+function foundationsWire(out) {
+  if (!out || typeof out !== 'object') return null;
+  const docs = Array.isArray(out.documents) ? out.documents : [];
+  return {
+    present: out.present === true,
+    ownership: out.ownership || null,
+    repo: out.repo && typeof out.repo === 'object' ? {
+      root: out.repo.root ?? null,
+      remote: out.repo.remote ?? null,
+      lastRefreshAt: out.repo.lastRefreshAt ?? null,
+      lastRefreshCommit: out.repo.lastRefreshCommit ?? null,
+    } : null,
+    budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
+    totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
+    documents: docs.filter(Boolean).map((d) => ({
+      slug: d.slug ?? null,
+      role: d.role ?? null,
+      title: d.title ?? null,
+      bytes: Number.isInteger(d.bytes) ? d.bytes : 0,
+      sha256: d.sha256 ?? null,
+      updatedAt: d.updatedAt ?? null,
+      commit: d.commit ?? null,
+      source: d.source && typeof d.source === 'object'
+        ? { kind: d.source.kind ?? null, path: d.source.path ?? null } : null,
+      authoredBy: d.authoredBy ?? null,
+      // COMPUTED, NEVER REMEMBERED (the spec's own invariant 3). Forwarded
+      // exactly as the store answered it — including `unreachable`, which is
+      // a FACT about this machine and not a failure to be smoothed into
+      // `stale`.
+      freshness: d.freshness ?? null,
+    })),
+    // A `.md` file in the directory with no manifest entry. The manifest is
+    // written LAST on every save, so a crash leaves a document without an
+    // entry rather than an entry without a document — and this count is the
+    // only thing that says so.
+    orphanFiles: Array.isArray(out.orphanFiles) ? out.orphanFiles.slice(0, 20) : [],
+    manifestError: out.manifestError ?? null,
+  };
+}
+
+/**
+ * Read the index, and never let it fail the read it rides on.
+ *
+ * The foundations index is a PASSENGER on `GET /:domain/:project`. That route
+ * answers about the brief, the work-streams and the handoff, and a project
+ * whose manifest is unreadable must still be able to show all three — so a
+ * throw here becomes `manifestError`, which is what the view renders, rather
+ * than a 500 over a screen that is otherwise correct.
+ */
+async function foundationsIndexFor(domain, project) {
+  try {
+    const out = await fstore().listFoundations(domain, project);
+    if (out && out.ok === false) {
+      return { ...foundationsWire({}), manifestError: out.error || out.message || out.reason || 'unreadable' };
+    }
+    return foundationsWire(out);
+  } catch (err) {
+    return { ...foundationsWire({}), manifestError: err.message };
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // GUARDS — every one of them runs BEFORE any path is built.
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -877,6 +1024,149 @@ router.delete('/:domain/projects/:project', async (req, res) => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
+// GET /api/memory/:domain/:project/foundations/:slug — ONE document, verbatim
+//
+// Registered BEFORE the two-segment reads for readability only: four segments
+// and two cannot shadow each other, so unlike `/:domain/projects` this
+// ordering is not load-bearing. What IS load-bearing is that it comes before
+// the one-segment deprecated alias, which would otherwise match nothing here
+// but is kept last on principle.
+// ═════════════════════════════════════════════════════════════════════════
+/**
+ * The bytes as stored, with the provenance that qualifies them.
+ *
+ * VERBATIM IS THE POINT. A foundation is a canonical document — an
+ * architecture note, a decisions log — and the whole reason it is stored
+ * rather than ingested is that a summary of it is not it. So nothing on this
+ * path rewrites the text; the store's read-time defang neutralises
+ * protocol-shaped markup without deleting a word, and says so through
+ * `sanitisedOnRead`, which is forwarded.
+ *
+ * THE SLUG IS VALIDATED HERE, at the boundary, with the same rule the store
+ * uses — see FOUNDATION_SLUG_RE for why this is the one restated rule in the
+ * file. A name that is not a slug is a 400 and never reaches a path builder.
+ */
+router.get('/:domain/:project/foundations/:slug', async (req, res) => {
+  try {
+    const { domain, project, slug } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    const store = fstore();
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    if (!FOUNDATION_SLUG_RE.test(String(slug || ''))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_slug',
+        error: `"${slug}" is not a usable document name. Use lowercase letters, digits and `
+          + '"-", up to 64 characters, ending in ".md".',
+      });
+    }
+    const out = await store.readFoundation(domain, project, slug);
+    // ABSENT IS A 404, not a 200 describing an empty document. The store
+    // distinguishes "there is no such entry" from "the file would not read",
+    // and both are forwarded with their own reason; what is never done is
+    // answering 200 with an empty body, which is how a typo renders as a
+    // working, blank page (the same rule `project_not_found` follows below).
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'foundation_not_found';
+      const body = withErrorProse({
+        ok: false, reason, domain, project, slug,
+        ...(out || {}),
+        error: (out && (out.error || out.message))
+          || `"${slug}" is not a foundation document in "${project}".`,
+      });
+      return res.status(statusForStoreRefusal({ reason })).json(body);
+    }
+    res.json({ ...out, ok: true, domain, project });
+  } catch (err) {
+    console.error('Memory foundation read error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /api/memory/:domain/:project/foundations/refresh — re-copy the mirror
+//
+// THE ONE TIER-0 WRITE THIS APP MAKES, and the header block above this
+// section's helpers records the argument in full: a refresh is a byte copy
+// from a repository that is already the document's author, so running it
+// makes this app a second COPIER rather than a second WRITER. It never
+// composes, never merges, never calls an LLM, and it cannot create a
+// curator-owned document — that is what the 400 below is for.
+// ═════════════════════════════════════════════════════════════════════════
+router.post('/:domain/:project/foundations/refresh', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+
+    const store = fstore();
+    const index = await store.listFoundations(domain, project);
+
+    // ── CURATOR-OWNED IS A 400, AND IT IS NOT AN ERROR CONDITION ────────
+    // It is a statement about what this project's documents ARE: written by an
+    // agent the owner commissioned, with no upstream file to copy from. There
+    // is nothing to refresh and nothing that could be, so the honest answer is
+    // a refusal naming the reason rather than a no-op reporting success.
+    if (index && index.ownership === 'curator') {
+      return res.status(400).json({
+        ok: false, reason: 'curator_owned',
+        error: 'These documents were written for this project, not mirrored from a repository, '
+          + 'so there is nothing to refresh from. Ask your agent to rewrite one instead.',
+      });
+    }
+
+    const body = req.body || {};
+    const asked = typeof body.repoRoot === 'string' && body.repoRoot.trim() ? body.repoRoot.trim() : null;
+    // The manifest's own `repo.root` is the default, and it is ADVISORY: it
+    // records the path on the machine that last refreshed, which on any other
+    // machine is a hint and not a fact. An absent or unreachable one is a 409
+    // — "the state on this server is not one this request can act on" — never
+    // a 500, because nothing is broken: the checkout is simply not here.
+    const root = asked || (index && index.repo && index.repo.root) || null;
+    if (!root) {
+      return res.status(409).json({
+        ok: false, reason: 'repo_unreachable',
+        error: 'This project has no repository path recorded on this computer, so there is '
+          + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
+          + 'or pass the path.',
+      });
+    }
+
+    const out = await store.refreshFoundationsFromRepo(domain, project, root, {});
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'repo_unreachable';
+      const status = (reason === 'curator_owned' || reason === 'curator-owned') ? 400
+        : statusForStoreRefusal({ reason });
+      return res.status(status).json(withErrorProse({
+        ok: false, reason, domain, project, repoRoot: root, ...(out || {}),
+      }));
+    }
+    res.json({
+      ok: true, domain, project, repoRoot: root,
+      refreshed: Array.isArray(out.refreshed) ? out.refreshed : [],
+      unchanged: Array.isArray(out.unchanged) ? out.unchanged : [],
+      added: Array.isArray(out.added) ? out.added : [],
+      // NEVER DELETED, ONLY REPORTED. A source file that has vanished from the
+      // repository leaves its copy in place — the copy is the only remaining
+      // record of it — and this list is what says the two have parted.
+      missing: Array.isArray(out.missing) ? out.missing : [],
+      commit: out.commit ?? null,
+    });
+  } catch (err) {
+    console.error('Memory foundations refresh error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
 // GET /api/memory/:domain/:project — one project's brief + state
 // ═════════════════════════════════════════════════════════════════════════
 /**
@@ -1031,6 +1321,22 @@ async function handleDetail(req, res, domain, project, deprecated) {
     // A FAILED inner read is reported as `null` too, and the outer read still
     // returns 200: the index half is correct and useful, and the client's
     // fallback path re-asks for the detail and surfaces the real error there.
+    // ── TIER 0 RIDES ALONG, INDEX ONLY ──────────────────────────────────
+    //
+    // ONE CALL, TWO PLACES. `open` claims to be byte-for-byte what
+    // `GET …?scope=&machine=` answers, and that request carries this field —
+    // so the same object is attached to both rather than to the outer envelope
+    // alone, or the claim would stop being true the day tier 0 shipped. It is
+    // the SAME reference, not a second read: one manifest, read once.
+    //
+    // ON ORDER: the spec asks for `foundations` between `open` and `journal`,
+    // and the two can never appear at one level — `open` is built only for a
+    // scope-LESS read and `journal` only for a scoped one. It sits directly
+    // after `open` here, and directly after the store's spread inside `open`,
+    // where `journal` has already arrived; re-ordering the store's own fields
+    // to place it earlier would move keys that §3b pins byte-identical.
+    const foundations = await foundationsIndexFor(domain, project);
+
     let open;
     if (wantOpen) {
       const pick = Array.isArray(state.scopes) ? tableFirstPair(state.scopes) : null;
@@ -1043,7 +1349,7 @@ async function handleDetail(req, res, domain, project, deprecated) {
         if (sub && sub.ok) {
           open = {
             ...((typeof sub.scopeCount === 'number') ? { ...sub, savedCopies: sub.scopeCount } : sub),
-            domain, project, readonly,
+            domain, project, readonly, foundations,
           };
         }
       }
@@ -1055,6 +1361,7 @@ async function handleDetail(req, res, domain, project, deprecated) {
       project,
       readonly,
       ...(wantOpen ? { open } : {}),
+      foundations,
       ...(deprecated ? deprecationNote(domain, project) : {}),
     });
   } catch (err) {
@@ -1159,6 +1466,18 @@ function statusForStoreRefusal(out) {
   const reason = out && typeof out.reason === 'string' ? out.reason : '';
   if (reason === 'unknown-project' || reason === 'unknown-state-project'
     || reason === 'project_not_found') return 404;
+  // TIER 0. A named document that is not there is the same answer as a named
+  // project that is not there, in both the store's hyphenated spelling and
+  // this router's underscored one — listed rather than normalised, for the
+  // reason this function's docblock gives.
+  if (reason === 'foundation_not_found' || reason === 'unknown-foundation'
+    || reason === 'unknown_foundation') return 404;
+  // NOT A 500 AND NOT A 400: the checkout this mirror is copied from is not on
+  // this computer. Nothing is malformed and nothing is broken — the server's
+  // own state is simply not one the request can act on, which is 409's
+  // meaning and the same status a held write lock gets below.
+  if (reason === 'repo_unreachable' || reason === 'repo-unreachable'
+    || reason === 'unreachable') return 409;
   if (reason === 'readonly') return 403;
   if (reason === 'project-exists' || reason === 'project_exists') return 409;
   // A write lock held by somebody else, and the same status this router's own
@@ -1183,5 +1502,79 @@ function withErrorProse(out) {
   if (typeof out.message !== 'string' || !out.message) return out;
   return { ...out, error: out.message };
 }
+
+// >>> WP-V TEMPORARY — DELETE THIS FENCED BLOCK AT MERGE >>>
+//
+// WP-S owns `src/brain/working-state.js` and ships `listFoundations`,
+// `readFoundation` and `refreshFoundationsFromRepo` there with the shapes this
+// router is written against. Until that lands, this worktree has no store
+// functions to call at all, and a route that cannot be RUN is a route nothing
+// proves — so the three calls are answered by a READ-ONLY stand-in over the
+// same on-disk layout, which is what let the routes, the view and the browser
+// check be driven for real in this branch.
+//
+// It reads and it hashes; it writes nothing, and it REFUSES the refresh rather
+// than performing a copy the real store owns. `fstore()` reaches it only when
+// the store has no `listFoundations`, so deleting this block and the two fenced
+// lines in `fstore()` is the whole merge.
+function wpvFoundationsFake() {
+  const dirOf = (domain, project) => join(
+    getDomainsDir(), domain, 'state', project === domain ? '' : project, 'foundations');
+  const sha = (buf) => createHash('sha256').update(buf).digest('hex');
+  return {
+    async listFoundations(domain, project) {
+      const dir = dirOf(domain, project);
+      const manifestPath = join(dir, 'manifest.json');
+      if (!existsSync(manifestPath)) return { present: false, documents: [] };
+      let manifest;
+      try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); }
+      catch (err) { return { present: false, documents: [], manifestError: err.message }; }
+      const listed = new Set();
+      const documents = (manifest.documents || []).map((d) => {
+        listed.add(d.slug);
+        let freshness = 'n/a';
+        if (d.source && d.source.kind === 'repo') {
+          const src = manifest.repo && manifest.repo.root
+            ? join(manifest.repo.root, d.source.path) : null;
+          if (!src || !existsSync(src)) freshness = 'unreachable';
+          else freshness = sha(readFileSync(src)) === d.sha256 ? 'fresh' : 'stale';
+        }
+        let bytes = d.bytes;
+        try { bytes = statSync(join(dir, d.slug)).size; } catch { /* keep the manifest's */ }
+        return { ...d, bytes, freshness };
+      });
+      const orphanFiles = readdirSync(dir)
+        .filter((f) => f.endsWith('.md') && !listed.has(f));
+      return {
+        present: true,
+        ownership: manifest.ownership || null,
+        repo: manifest.repo || null,
+        budgetBytes: manifest.budgetBytes || 200000,
+        totalBytes: documents.reduce((a, d) => a + (d.bytes || 0), 0),
+        documents, orphanFiles, manifestError: null,
+      };
+    },
+    async readFoundation(domain, project, slug) {
+      const idx = await this.listFoundations(domain, project);
+      const meta = (idx.documents || []).find((d) => d.slug === slug);
+      if (!meta) return { ok: false, reason: 'foundation_not_found' };
+      const file = join(dirOf(domain, project), slug);
+      if (!existsSync(file)) return { ok: false, reason: 'foundation_not_found' };
+      const text = readFileSync(file, 'utf8');
+      return {
+        ok: true, slug, role: meta.role, title: meta.title, text,
+        bytes: Buffer.byteLength(text, 'utf8'), sha256: meta.sha256,
+        updatedAt: meta.updatedAt, commit: meta.commit ?? null,
+        source: meta.source, authoredBy: meta.authoredBy, ownership: idx.ownership,
+        freshness: meta.freshness, sanitisedOnRead: false, truncated: false,
+      };
+    },
+    async refreshFoundationsFromRepo() {
+      return { ok: false, reason: 'store_pending',
+        message: 'The foundations store has not shipped in this build.' };
+    },
+  };
+}
+// <<< WP-V TEMPORARY <<<
 
 export default router;

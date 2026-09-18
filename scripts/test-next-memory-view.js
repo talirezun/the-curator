@@ -405,6 +405,12 @@ const EXPECTED_ROUTES = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // TIER 0 (v3.59.0). Four segments, so neither can shadow — or be shadowed by
+  // — the two-segment reads below; the ordering here is readability, not
+  // correctness, and the comment at the route says so. What IS load-bearing is
+  // that both still precede the one-segment alias.
+  ['get', '/:domain/:project/foundations/:slug'],
+  ['post', '/:domain/:project/foundations/refresh'],
   ['get', '/:domain/:project'],
   ['get', '/:project'],
 ];
@@ -1074,6 +1080,20 @@ function makeRenderers(stateObj) {
     // the shell's READER overlay, and `handoffReaderContent` composes that
     // payload — so what is lifted is the composer, and §17b drives it.
     extractFunction(viewSrc, 'handoffReaderContent', 'memory.js') + '\n' +
+    // ── TIER 0 (v3.59.0) ────────────────────────────────────────────────
+    // Seven functions, all LIFTED rather than stubbed. `foundationsFacts` in
+    // particular has three consumers — the fold summary, the Status block's
+    // reading and the Refresh control's own decision — and a stub would let
+    // this suite agree with itself that all three say the same thing while the
+    // shipped page said three different ones. `foundationReaderContent` is the
+    // reader payload, driven in §21.
+    extractFunction(viewSrc, 'foundationsFacts', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsWord', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsRefreshOffer', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderFoundations', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderFoundationsStatus', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderJournal', 'memory.js') + '\n' +
     // The v3.48.0 brief editor. Lifted WITH renderBrief, because renderBrief
     // calls it in both of its branches — a stub would leave §6's escaping
@@ -1129,6 +1149,8 @@ function makeRenderers(stateObj) {
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
+    'foundationsFacts, foundationsWord, foundationsRefreshOffer, fndRowHtml, ' +
+    'renderFoundations, renderFoundationsStatus, foundationReaderContent, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
@@ -2060,7 +2082,7 @@ ok('a save with no notes renders no note label at all',
   !/mem-j-rej/.test(journalOf([])));
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§8 — The view writes the STANDING BRIEF and nothing else');
+section('§8 — The view writes the STANDING BRIEF and the MIRROR, and nothing else');
 // ═════════════════════════════════════════════════════════════════════════
 
 // STRUCTURAL, NOT A LIST OF LITERAL STRINGS. The five-string version of this
@@ -2084,6 +2106,23 @@ section('§8 — The view writes the STANDING BRIEF and nothing else');
 // So a planted `fetch(u, { method: M, body: b })` fails on the count; a
 // planted POST fails on the literal; and a PATCH pointed at a scope read
 // fails on the URL.
+//
+// ── v3.59.0 ADDS A SECOND, AND WHY THAT IS STILL THE BOUNDARY ───────────
+// "Refresh from repo" POSTs to `…/foundations/refresh`, which copies bytes
+// from a repository this project already names as its documents' author. The
+// route's own header carries the argument (a copier, not a second writer);
+// what this section has to prove is that the VIEW cannot reach anything else
+// through it — so the assertions are widened by NAMING the second write
+// exactly rather than by loosening the count:
+//
+//   · TWO call sites carry an init, and the set of literal methods is
+//     exactly {PATCH, POST}.
+//   · The POST's URL ends in the refresh path, and its BODY is the literal
+//     '{}' — no field of any kind crosses, so there is nothing for a future
+//     edit to smuggle a handoff into.
+//
+// The `'PO' + 'ST'` evasion is refused exactly as before: the methods are
+// matched as LITERALS, and an assembled one is neither of the two.
 const viewNoComments = stripComments(viewSrc);
 
 /** Every `fetch(` call site's argument list, paren-matched off real source. */
@@ -2123,20 +2162,35 @@ const fetchArgLists = fetchCallArgs(viewNoComments);
 ok('the scan found the view\'s real fetch call sites (it is not vacuous)',
   fetchArgLists.length >= 2, 'found ' + fetchArgLists.length);
 const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
-eq('EXACTLY ONE fetch in the view carries a request init', withInit.length, 1);
+eq('EXACTLY TWO fetches in the view carry a request init', withInit.length, 2);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 1,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 2,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
-  const init = topLevelArgs(withInit[0])[1];
-  const url = topLevelArgs(withInit[0])[0];
-  ok('the one write uses a LITERAL PATCH — never a variable or a concatenation',
-    /\bmethod\s*:\s*'PATCH'/.test(init), init.slice(0, 120));
-  ok('the one write targets the PROJECTS endpoint, which reaches tier 1 only',
-    url.includes("'/projects/'") && url.includes('/api/memory/'), url.slice(0, 160));
-  ok('the one write sends only a brief — never a handoff field',
-    /body:\s*JSON.stringify\(\{\s*brief:/.test(init)
-    && !/nowState|nextSteps|observations|traps|decisions/.test(init), init.slice(0, 200));
+  const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
+  const patch = inits.find((x) => /\bmethod\s*:\s*'PATCH'/.test(x.init));
+  const post = inits.find((x) => /\bmethod\s*:\s*'POST'/.test(x.init));
+  ok('one write uses a LITERAL PATCH — never a variable or a concatenation',
+    !!patch, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
+  ok('the PATCH targets the PROJECTS endpoint, which reaches tier 1 only',
+    patch && patch.url.includes("'/projects/'") && patch.url.includes('/api/memory/'),
+    patch ? patch.url.slice(0, 160) : 'none');
+  ok('the PATCH sends only a brief — never a handoff field',
+    patch && /body:\s*JSON.stringify\(\{\s*brief:/.test(patch.init)
+    && !/nowState|nextSteps|observations|traps|decisions/.test(patch.init),
+    patch ? patch.init.slice(0, 200) : 'none');
+  ok('the other write uses a LITERAL POST — never a variable or a concatenation',
+    !!post, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
+  ok('the POST targets the foundations REFRESH endpoint, and nothing else under tier 0',
+    post && post.url.includes("'/foundations/refresh'"), post ? post.url.slice(0, 200) : 'none');
+  // THE BODY IS AN EMPTY OBJECT LITERAL, and that is the strongest form this
+  // assertion can take: with no field crossing at all there is no place for a
+  // later edit to add a document body, a slug or a path — the server resolves
+  // the repository root from the manifest it already holds.
+  ok('the POST sends NOTHING — a literal empty body, so no document, slug or path can cross',
+    post && /body:\s*'\{\}'/.test(post.init), post ? post.init.slice(0, 200) : 'none');
+  ok('...and neither write mentions a foundation document body at all',
+    !/\btext\s*:/.test((patch ? patch.init : '') + (post ? post.init : '')));
 }
 // Positive control: the detector must SEE an init object, including one whose
 // method is assembled at runtime — the exact mutation the string list missed.
@@ -2150,9 +2204,10 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // explaining the rule cannot satisfy or violate it), and no alternative
 // transport exists at all.
 {
-  const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]);
-  ok('exactly one `method:` property key appears in the view\'s real code, and it is \'PATCH\'',
-    methods.length === 1 && methods[0] === "'PATCH'", JSON.stringify(methods));
+  const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
+  ok('exactly two `method:` property keys appear in the view\'s real code, and they are '
+    + '\'PATCH\' and \'POST\' as LITERALS',
+  methods.length === 2 && methods[0] === "'PATCH'" && methods[1] === "'POST'", JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
   ok('the view never reaches for ' + transport + ' (fetch is not the only way to write)',
@@ -3997,6 +4052,8 @@ section('§16 — Projects inside a domain (v3.48.0)');
       // free identifier inside a lifted function is a CRASH rather than a
       // failing assertion — §17c drives both for real.
       'bindWorkStreamRows', 'showMoreWorkStreams',
+      // v3.59.0: and tier 0's two, for the same reason.
+      'bindFoundationRows', 'refreshFoundations',
       extractFunction(viewSrc, 'briefStats', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
@@ -4009,7 +4066,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
       async () => {}, () => {}, (d, q) => d + '/' + q, () => 'a/b',
       async () => {}, async () => {}, async () => {}, async () => {}, async () => {},
       '', Number(BRIEF_MAX_BYTES_SRC), 10, 50, null,
-      () => {}, () => {});
+      () => {}, () => {}, () => {}, async () => {});
     api.wire(1);
     ok('the input handler was bound', typeof field._input === 'function');
 
@@ -4302,6 +4359,8 @@ section('§16 — Projects inside a domain (v3.48.0)');
     // See the note in §16g: wire() reaches for both of the table's wiring
     // functions, and a free identifier inside a lifted function is a crash.
     'bindWorkStreamRows', 'showMoreWorkStreams',
+    // v3.59.0: and for tier 0's rows and its one control, for the same reason.
+    'bindFoundationRows', 'refreshFoundations',
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire, pending: () => pendingFocusId };')(
@@ -4311,7 +4370,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
     async () => { calls.save++; },
     () => {}, (d, p) => d + '/' + p, () => 'a/b',
     async () => {}, async () => {}, async () => {}, async () => {}, async () => {},
-    '', 10, 50, null, () => {}, () => {});
+    '', 10, 50, null, () => {}, () => {}, () => {}, async () => {});
   api.wire(1);
   ok('the keydown handler was bound to the textarea', typeof el._keydown === 'function');
 
@@ -4365,6 +4424,8 @@ section('§16 — Projects inside a domain (v3.48.0)');
     'keyOf', 'activeKey', 'selectProject', 'copyAgentInstructions', 'loadScope', 'refreshIndex',
     'reloadActive', 'BRIEF_TEMPLATE', 'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingFocusId',
     'bindWorkStreamRows', 'showMoreWorkStreams',
+    // v3.59.0: and for tier 0's rows and its one control, for the same reason.
+    'bindFoundationRows', 'refreshFoundations',
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire };')(
@@ -4375,7 +4436,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
     () => { renders++; },
     async () => {}, () => {}, (d, p) => d + '/' + p, () => 'a/b',
     async () => {}, async () => {}, async () => {}, async () => {}, async () => {},
-    'TEMPLATE', 10, 50, null, () => {}, () => {});
+    'TEMPLATE', 10, 50, null, () => {}, () => {}, () => {}, async () => {});
   api.wire(1);
   ok('the click handler was bound to the pencil', typeof btn._click === 'function');
 
@@ -5088,6 +5149,12 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       'openReader', 'isCurrentReader', 'isCurrentMount',
       'WS_WINDOW', 'WS_STEP', 'WS_STEP_ALL_MAX',
       'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout', 'renderDescription',
+      // TIER 0's two wiring calls. Stubs HERE, and only here: this section's
+      // subject is the work-stream row press, this rig's fake document answers
+      // nothing for `.fnd-open`, and a free identifier inside a lifted `wire`
+      // is a CRASH rather than a failing assertion. The real chain — press →
+      // fetch → reader payload — is driven in §21.
+      'bindFoundationRows', 'refreshFoundations',
       // The freshness tier a row's dot wears — the REAL one from shared/age.js,
       // as §6 lifts it, so an appended row and a painted one cannot be marked
       // on two different scales.
@@ -5125,6 +5192,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       () => true,
       WS_WINDOW_SRC, WS_STEP_SRC, WS_STEP_ALL_MAX_SRC,
       escapeHtml, () => '<svg></svg>', renderMarkdown, renderReadout, renderDescription,
+      () => {}, async () => {},
       makeRenderers({}).freshnessTier);
     api.wire(1);
     return { api, calls, rowButtons, tbody, moreBtn, countEl, st };
@@ -5782,16 +5850,21 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   };
   const page = makeRenderers(full).renderProject();
 
-  // ── FOUR BLOCKS, NAMED ────────────────────────────────────────────────
-  // FIVE until v3.56.0. `memory-handoff` is gone: the Current handoff block
-  // printed the whole document under the table, and a row press opens it in the
-  // shell's reader overlay instead. Its two EMPTY arms — "no handoff saved yet"
-  // and "nothing saved for this project" — moved into `memory-streams`, because
-  // the missing thing has to be missing in the place you looked for it.
+  // ── FIVE BLOCKS, NAMED ────────────────────────────────────────────────
+  // FIVE until v3.56.0, FOUR from it, and five again from v3.59.0 — the count
+  // is not the property, the NAMES and their ORDER are. `memory-handoff` is
+  // still gone: that block printed the whole document under the table, and a
+  // row press opens it in the shell's reader overlay instead; its two EMPTY
+  // arms moved into `memory-streams`, because the missing thing has to be
+  // missing in the place you looked for it. `memory-foundations` is tier 0, and
+  // it sits between the brief and the journal deliberately: the brief is what
+  // YOU tell an agent, the foundations are what the PROJECT tells it, the
+  // journal is history — so reading top to bottom is the order a session start
+  // reads in.
   const ids = [...page.matchAll(/settings-block-(memory-[a-z]+)\b/g)].map((m) => m[1]);
   const uniq = [...new Set(ids)];
-  eq('the page is FOUR blocks, in the order the design names them',
-    uniq.join(','), 'memory-status,memory-streams,memory-brief,memory-journal');
+  eq('the page is FIVE blocks, in the order the design names them',
+    uniq.join(','), 'memory-status,memory-streams,memory-brief,memory-foundations,memory-journal');
   ok('...and the handoff is not one of them, by name',
     !uniq.includes('memory-handoff'), uniq.join(','));
 
@@ -5799,7 +5872,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // shared/block.js's own note: a numeral is an argument for SEQUENCE, and
   // these five are readings about one project rather than steps.
   eq('every one of them is unnumbered — this page is not a sequence of steps',
-    (page.match(/settings-block-unnumbered/g) || []).length, 4);
+    (page.match(/settings-block-unnumbered/g) || []).length, 5);
   ok('...so no numeral is emitted at all', !page.includes('settings-block-num'));
 
   // ── ≤ 20 VISIBLE WORDS PER LEDE ─────────────────────────────────────────
@@ -5811,7 +5884,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       .replace(/<[^>]+>/g, ' ')
       .replace(/&[a-z#0-9]+;/g, 'x')
       .trim());
-  eq('every block carries a lede (the scan is not vacuous)', ledes.length, 4);
+  eq('every block carries a lede (the scan is not vacuous)', ledes.length, 5);
   for (const lede of ledes) {
     const words = lede.split(/\s+/).filter(Boolean).length;
     ok('lede is at most 20 visible words (' + words + '): "' + lede.slice(0, 60) + '…"',
@@ -5820,9 +5893,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 
   // ── THE DEPTH IS BEHIND THE MARK, AND IT IS REALLY THERE ──────────────
   eq('every block carries an ⓘ with a panel of its own',
-    (page.match(/data-tx-info="settings-block-info-memory-/g) || []).length, 4);
+    (page.match(/data-tx-info="settings-block-info-memory-/g) || []).length, 5);
   eq('...and every one of those panels is hidden on first paint',
-    (page.match(/class="tx-vh-panel" id="settings-block-info-memory-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 4);
+    (page.match(/class="tx-vh-panel" id="settings-block-info-memory-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 5);
 
   // ── WHAT MAY NEVER FOLD (v3.16.1) ─────────────────────────────────────
   // A warning behind a click is not a warning. The Reload offer, the save
@@ -5833,7 +5906,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // found by writing it that way first and watching it fail on correct output.
   const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  eq('CONTROL: the four folds were really found (the scan is not vacuous)', panels.length, 4);
+  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   for (const marker of ['id="mem-reload"', 'mem-save-line', 'mem-working', 'mem-note-loud']) {
@@ -5967,6 +6040,509 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§21 — TIER 0: the foundations block, driven');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Everything in this section runs the SHIPPED functions. The block has one
+// property that nothing else on this page has — its figures can change with no
+// clock moving and no byte on this machine changing, because `freshness` is
+// recomputed by the store against a file in a checkout somebody else pulled —
+// so the repaint guard is asserted here rather than assumed.
+
+const fndDoc = (over = {}) => ({
+  slug: 'architecture.md', role: 'architecture', title: 'Architecture',
+  bytes: 12345, sha256: 'a'.repeat(64), updatedAt: '2026-09-17T09:00:00.000Z',
+  commit: '9623343abcdef', source: { kind: 'repo', path: 'docs/architecture.md' },
+  authoredBy: { kind: 'human' }, freshness: 'fresh', ...over,
+});
+const fndPayload = (docs, over = {}) => ({
+  present: true, ownership: 'repo',
+  repo: { root: '/somewhere/repo', remote: null, lastRefreshAt: null, lastRefreshCommit: null },
+  budgetBytes: 200000, totalBytes: docs.reduce((a, d) => a + (d.bytes || 0), 0),
+  documents: docs, orphanFiles: [], manifestError: null, ...over,
+});
+const fndRead = (payload) => ({
+  scopes: [], brief: { present: false }, foundations: payload,
+});
+
+// ── §21a — the facts, derived ONCE for three consumers ──────────────────
+{
+  const F = makeRenderers({});
+  const facts = F.foundationsFacts(fndRead(fndPayload([
+    fndDoc(), fndDoc({ slug: 'decisions.md', freshness: 'stale' }),
+    fndDoc({ slug: 'roadmap.md', freshness: 'unreachable' }),
+  ])));
+  eq('the counts are over the documents the store listed', facts.count, 3);
+  eq('...fresh', facts.fresh, 1);
+  eq('...stale', facts.stale, 1);
+  eq('...unreachable', facts.unreachable, 1);
+  eq('totalBytes is preferred over a sum of the rows — the store takes it before its own cap',
+    facts.bytes, 12345 * 3);
+
+  // THE RULE THAT MATTERS: a reading that was never taken is not a passing
+  // reading. `n/a` (curator-authored) and an unknown word from a newer server
+  // both land in `unrated`, never in `fresh` — rounding them up is how a screen
+  // claims a comparison nobody made.
+  const cur = F.foundationsFacts(fndRead(fndPayload(
+    [fndDoc({ freshness: 'n/a' }), fndDoc({ slug: 'x.md', freshness: 'something-new' })],
+    { ownership: 'curator' })));
+  eq('a curator-authored document is NOT counted as fresh', cur.fresh, 0);
+  eq('...nor is a freshness word this build does not know', cur.unrated, 2);
+
+  // A project with no foundations at all, and a server too old to send the key:
+  // both answer a zeroed shape rather than throwing, because this runs on every
+  // paint of every project.
+  for (const [name, read] of [['no key', { scopes: [] }], ['null', { foundations: null }],
+    ['a string', { foundations: 'nope' }], ['no read at all', null]]) {
+    const f = F.foundationsFacts(read);
+    ok('an absent payload (' + name + ') is a zeroed reading, never a throw',
+      f.count === 0 && f.present === false && Array.isArray(f.docs));
+  }
+}
+
+// ── §21b — the ONE word, worst first ────────────────────────────────────
+{
+  const F = makeRenderers({});
+  const w = (docs, over) => F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(docs, over))));
+  eq('a manifest that will not parse outranks every other reading — every figure '
+    + 'on the block is derived from it',
+  w([fndDoc()], { manifestError: 'Unexpected token' }), 'manifest unreadable');
+  eq('a stale copy outranks an unreachable one: one is a measured mismatch, the '
+    + 'other is a measurement that could not be taken',
+  w([fndDoc({ freshness: 'stale' }), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]), '1 stale');
+  eq('...and an unreachable source is said in words rather than left blank',
+    w([fndDoc({ freshness: 'unreachable' })]), 'source unreachable');
+  eq('a curator-authored project says who wrote them rather than claiming freshness',
+    w([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }), 'Curator-authored');
+  eq('all fresh is the quiet case', w([fndDoc(), fndDoc({ slug: 'b.md' })]), 'fresh');
+  eq('none at all', w([]), 'none yet');
+}
+
+// ── §21c — the Refresh control is WITHHELD with a reason, never dead ────
+{
+  const F = makeRenderers({});
+  const offer = (docs, over) => F.foundationsRefreshOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))));
+  ok('a repo-owned project with at least one reachable source is offered the control',
+    offer([fndDoc({ freshness: 'stale' }), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]).show === true);
+  {
+    const o = offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' });
+    ok('a CURATOR-owned project is not offered it', o.show === false);
+    ok('...and is told why, in words — a control that is simply absent is worse '
+      + 'than one that says it cannot work', typeof o.reason === 'string' && o.reason.length > 30, o.reason);
+  }
+  {
+    const o = offer([fndDoc({ freshness: 'unreachable' })]);
+    ok('a project whose every source is unreachable is not offered it', o.show === false);
+    ok('...and is told that the checkout is not on this computer',
+      /this computer/.test(o.reason || ''), o.reason);
+  }
+  eq('a project with no documents offers nothing and explains nothing — there is '
+    + 'no claim to make', offer([]).reason, null);
+  // REACHABILITY IS READ OFF THE DOCUMENTS, not off `repo.root`: the manifest
+  // records the path on the machine that LAST REFRESHED, which on any other
+  // machine is a hint. The store's own per-document measurement is the fact.
+  ok('a recorded repo.root does NOT by itself offer the control when every '
+    + 'document measured unreachable',
+  offer([fndDoc({ freshness: 'unreachable' })], { repo: { root: '/somewhere/repo' } }).show === false);
+}
+
+// ── §21d — the block body: closed, summarised, and warnings outside it ──
+{
+  const st = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
+  const F = makeRenderers(st);
+  const html = F.renderFoundations(fndRead(fndPayload([
+    fndDoc(), fndDoc({ slug: 'decisions.md', title: 'Decisions', role: 'decisions', freshness: 'stale' }),
+  ])));
+  ok('the fold is emitted with this view\'s own hook', html.includes('data-mem-fold="foundations"'), html.slice(0, 200));
+  ok('...and CLOSED on first paint — this page answers "where does the project '
+    + 'stand", and a table of reference documents is not that answer',
+  !/data-mem-fold="foundations"[^>]*\sopen/.test(html), html.slice(0, 260));
+  ok('the summary carries the decision to open it: how many, how big, and the word',
+    /2 documents · 24 KB · 1 stale/.test(html), html.slice(0, 700));
+  ok('the summary is focusable by a stable id, so a render cannot drop a keyboard user',
+    html.includes('id="mem-fold-foundations"'));
+  ok('both documents are rows', (html.match(/class="fnd-row"/g) || []).length === 2);
+
+  // ── THE FOLD IS REMEMBERED, AND FOCUSABLE ─────────────────────────────
+  // Read off LIVE SOURCE rather than retyped: a copy here could agree with
+  // every assertion in this section while the shipped view forgot the fold on
+  // the walk to the Wiki and back, or dropped a keyboard user to <body> on the
+  // next poll. `FOLDS_KEY` is deliberately NOT extended — the fold joins the
+  // map the other two already use, so `test-ui-state.js`'s registry of
+  // localStorage keys is untouched, which is the point.
+  {
+    const keys = /const FOLD_KEYS = (\[[^\]]*\]);/.exec(viewSrc);
+    ok('FOLD_KEYS was found in live source (the scan is not vacuous)', !!keys, String(keys));
+    ok('...and it carries `foundations`, so the fold survives leaving the view',
+      /'foundations'/.test(keys[1]), keys[1]);
+    ok('...and it still carries the other two, so this was an addition',
+      /'brief'/.test(keys[1]) && /'journal'/.test(keys[1]), keys[1]);
+    const focusable = /const FOCUSABLE_IDS = \[([\s\S]*?)\n\];/.exec(viewSrc);
+    ok('FOCUSABLE_IDS was found in live source', !!focusable);
+    ok('...and knows the fold\'s summary, so a render cannot drop a keyboard user '
+      + 'who has just toggled it', focusable[1].includes("'mem-fold-foundations'"));
+    ok('...and the Refresh control, which survives two renders per press',
+      focusable[1].includes("'mem-fnd-refresh'"));
+    // The ROWS deliberately are NOT there: a row press causes no render at all,
+    // so there is nothing for the capture/restore pass to put back — and an
+    // indexed or slug-derived id could never be listed in a fixed array anyway.
+    ok('...and NOT the rows, which is the difference between this table and the '
+      + 'work-stream one above it', !/mem-fnd-architecture/.test(focusable[1]));
+  }
+  // THE ID IS ON THE ROW, and it is what the reader returns focus to.
+  ok('every row carries a stable id derived from its slug',
+    /<button type="button" class="fnd-open" id="mem-fnd-architecture-md"/.test(html), html.slice(0, 900));
+  ok('the source column names the file AND the commit it came from',
+    html.includes('docs/architecture.md') && html.includes('@ 9623343'), html.slice(0, 900));
+  ok('a fresh copy takes the app-wide scale\'s hot tier, with the WORD beside it',
+    /fresh-dot fresh-recent[\s\S]{0,120}>fresh</.test(html));
+  ok('a stale copy takes the cold tier and says "stale" — never the attention amber, '
+    + 'which in this app means "a human must act"',
+  /fresh-dot fresh-week[\s\S]{0,120}>stale</.test(html) && !html.includes('fresh-today'));
+
+  // OPEN WHEN THE USER SAID SO, and from that field ALONE — never from a
+  // loading transient, which is the v3.54.0 defect this page already carries a
+  // guard for on its other two folds.
+  const opened = makeRenderers({ ...st, openFolds: { foundations: true } })
+    .renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('a fold the user opened comes back open', /data-mem-fold="foundations" open/.test(opened));
+
+  // WHAT MAY NEVER FOLD (v3.16.1). A manifest that will not parse, and files on
+  // disk the manifest does not list, are both warnings — so they are asserted
+  // to sit OUTSIDE the <details>, by position rather than by reading source.
+  const warned = F.renderFoundations(fndRead(fndPayload(
+    [fndDoc()], { manifestError: 'Unexpected token }', orphanFiles: ['stray.md'] })));
+  const detailsAt = warned.indexOf('<details');
+  ok('the manifest error is a WARNING and is painted before the fold, never inside it',
+    warned.indexOf('manifest could not be read') >= 0
+    && warned.indexOf('manifest could not be read') < detailsAt, String(detailsAt));
+  ok('...and so is the orphan-file note, which is the only thing that says a save '
+    + 'was interrupted', warned.indexOf('no manifest entry') < detailsAt);
+  ok('CONTROL: the position check is not vacuous — there IS a <details> after them',
+    detailsAt > 0);
+
+  // NO DOCUMENTS: the flat card, with the two ways one arrives said in the place
+  // somebody looked for them.
+  const empty = F.renderFoundations(fndRead(fndPayload([])));
+  ok('an empty project keeps the card and loses the chevron', empty.includes('mem-fold-flat'));
+  ok('...and says so', empty.includes('No canonical documents yet'), empty.slice(0, 300));
+  ok('...and names the two ways a document arrives', /an agent you ask writes one/i.test(empty)
+    && /refresh copies them from this project/i.test(empty), empty.slice(0, 400));
+  ok('...and emits no table at all', !empty.includes('fnd-table'));
+}
+
+// ── §21e — the control's three states, painted ──────────────────────────
+{
+  const base = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
+  const offered = makeRenderers(base).renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('the control is painted when it can work', offered.includes('id="mem-fnd-refresh"'));
+  ok('...and carries no `title=` — this view\'s ratchet stands', !/id="mem-fnd-refresh"[^>]*title=/.test(offered));
+
+  const withheld = makeRenderers(base).renderFoundations(
+    fndRead(fndPayload([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
+  ok('it is WITHHELD on a curator-owned project', !withheld.includes('id="mem-fnd-refresh"'));
+  ok('...and a note takes its place, on the shared one-line role',
+    withheld.includes('class="tx-note"'), withheld.slice(-400));
+
+  const busy = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: true, error: null, result: null } })
+    .renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('while a copy runs the control is DISABLED rather than removed',
+    /id="mem-fnd-refresh"[^>]*disabled/.test(busy) && busy.includes('Refreshing'), busy.slice(0, 400));
+
+  const failed = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: false, error: 'nope', result: null } })
+    .renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('a failure is painted INLINE, above the fold, and says nothing was copied',
+    failed.includes('Nothing was copied: nope')
+    && failed.indexOf('Nothing was copied') < failed.indexOf('<details'), failed.slice(0, 300));
+
+  const done = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: false, error: null,
+    result: { refreshed: ['a.md'], added: [], unchanged: ['b.md'], missing: ['gone.md'] } } })
+    .renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('a result names what happened to every class of document',
+    done.includes('1 re-copied') && done.includes('1 already current')
+    && done.includes('no longer in the repository (the copy is kept)'), done.slice(0, 400));
+
+  // STAMPED. A result belonging to another project must not sit under this
+  // one's header claiming its documents were re-copied.
+  const elsewhere = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'OTHER', busy: false,
+    error: 'nope', result: null } }).renderFoundations(fndRead(fndPayload([fndDoc()])));
+  ok('an outcome stamped with a DIFFERENT project is withheld entirely',
+    !elsewhere.includes('Nothing was copied'));
+}
+
+// ── §21f — the Status block's one line, and its silence ─────────────────
+{
+  const F = makeRenderers({});
+  eq('a project that has never had a foundation gets NO line at all — a dash in '
+    + 'the status strip is noise on every project that has not adopted the tier',
+  F.renderFoundationsStatus({ scopes: [] }), '');
+  eq('...and so does an empty but present tier', F.renderFoundationsStatus(fndRead(fndPayload([]))), '');
+  const line = F.renderFoundationsStatus(fndRead(fndPayload([fndDoc(), fndDoc({ slug: 'b.md' })])));
+  ok('with documents it reads on the same instrument every other figure in that '
+    + 'block uses', line.includes('tx-readout') && line.includes('Foundations'), line);
+  ok('...and quotes the same word the fold\'s summary does', line.includes('2 documents · fresh'), line);
+  ok('a manifest error is reported here too, because block 1 is where somebody '
+    + 'with no context looks first',
+  F.renderFoundationsStatus(fndRead(fndPayload([], { manifestError: 'boom' }))).includes('manifest unreadable'));
+
+  // AND IT REACHES THE PAGE. A renderer nothing calls is a renderer nothing
+  // proves — this is the same gap §6 records for renderStaleNotice.
+  const page = makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10, projects: [],
+    projectRead: fndRead(fndPayload([fndDoc()])), detail: null, detailLoading: false,
+  }).renderProject();
+  ok('the reading really lands inside the Status block',
+    page.indexOf('Foundations</span>') > page.indexOf('settings-block-memory-status')
+    && page.indexOf('Foundations</span>') < page.indexOf('settings-block-memory-streams'),
+    String(page.indexOf('Foundations</span>')));
+}
+
+// ── §21g — the skeleton's lede is BYTE-IDENTICAL ────────────────────────
+//
+// The skeleton exists so the block chrome does not move between the two
+// paints. Both renderers are executed and their emitted ledes compared, which
+// is the only form of this claim a suite holding one of them could not fake.
+{
+  const st = {
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+    projects: [{ domain: 'acme', project: 'lumina', hasBrief: true, savedCopies: 2 }],
+    projectRead: fndRead(fndPayload([fndDoc()])), detail: null, detailLoading: false,
+  };
+  const R = makeRenderers(st);
+  const ledeOf = (html) => {
+    const i = html.indexOf('settings-block-memory-foundations');
+    const m = /<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/.exec(html.slice(i));
+    return m ? m[1].replace(/<button[\s\S]*?<\/button>/g, '').trim() : null;
+  };
+  const a = ledeOf(R.renderProject());
+  const b = ledeOf(R.renderProjectSkeleton());
+  ok('both renderers really emitted the block', !!a && !!b, JSON.stringify([a, b]));
+  eq('the skeleton\'s lede is byte-identical to the real one', b, a);
+  const words = String(a).split(/\s+/).filter(Boolean).length;
+  ok('...and it is at most 13 visible words (the v3.58.0 rule): "' + a + '"', words <= 13, String(words));
+  ok('...and it is an INSTRUCTION, not a definition — no "is a" clause',
+    !/\bis a\b/.test(String(a)), String(a));
+}
+
+// ── §21h — a freshness change is a repaint, and nothing else has moved ──
+//
+// The property this block has and no other pane on the page does: `freshness`
+// is recomputed by the store on every read against a file in a checkout, so a
+// colleague's `git pull` turns six rows from fresh to stale with not one
+// timestamp, byte count or work-stream moving. A mark that could not see it
+// would leave the block painting "fresh" over documents that had stopped
+// being it.
+{
+  const mk = (over, extra) => ({
+    activeDomain: 'acme', activeProject: 'lumina', staleWrite: false, indexError: null,
+    scope: null, machine: null, projects: [], detail: null, fnd: null, openFolds: {},
+    projectRead: { scopes: [], brief: { present: false }, foundations: fndPayload([fndDoc(over || {})]) },
+    ...(extra || {}),
+  });
+  const sigOf = (s) => makeRevalidator(s, () => {}).screenSignature();
+  const fresh = sigOf(mk({ freshness: 'fresh' }));
+  ok('a document going STALE repaints, although no clock and no byte on this '
+    + 'machine has moved', sigOf(mk({ freshness: 'stale' })) !== fresh);
+  ok('...and so does a source becoming unreachable',
+    sigOf(mk({ freshness: 'unreachable' })) !== fresh);
+  ok('...and a re-copy that changes the size', sigOf(mk({ bytes: 999 })) !== fresh);
+  ok('...and a re-copy that only moves the commit',
+    sigOf(mk({ commit: 'deadbee' })) !== fresh);
+  ok('CONTROL: an identical payload produces an identical signature',
+    sigOf(mk({ freshness: 'fresh' })) === fresh);
+  // The manifest error and the Refresh control's own three states are pixels
+  // too, and each is folded in separately.
+  const withErr = mk({}, { projectRead: { scopes: [], brief: { present: false },
+    foundations: fndPayload([fndDoc()], { manifestError: 'boom' }) } });
+  ok('a manifest becoming unreadable repaints', sigOf(withErr) !== fresh);
+  ok('the Refresh control going busy repaints',
+    sigOf(mk({}, { fnd: { domain: 'acme', project: 'lumina', busy: true, error: null, result: null } })) !== fresh);
+}
+
+// ── §21i — a row press opens the reader and repaints NOTHING ────────────
+//
+// Driven through the SHIPPED `bindFoundationRows` → `openFoundation` →
+// `foundationReaderContent` chain against a fake document and a fake fetch. The
+// no-repaint property is only reachable because every row carries a stable id
+// derived from its slug, so there is no "which row is open" state to write.
+{
+  const calls = { reader: [], render: 0, urls: [] };
+  const btn = { dataset: { fndSlug: 'architecture.md' }, _click: null,
+    addEventListener(t, fn) { if (t === 'click') this._click = fn; } };
+  const doc = { querySelectorAll: (sel) => (sel.includes('fnd-open') ? [btn] : []) };
+  const st = { activeDomain: 'acme', activeProject: 'lumina' };
+  const api = new Function(
+    'state', 'render', 'reportAsyncMountFailure', 'openReader', 'isCurrentReader', 'isCurrentMount',
+    'fetch', 'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout',
+    // Named one by one rather than mapped over a list: §17's census requires
+    // every function it claims is EXECUTED to appear in a real
+    // `extractFunction(viewSrc, '<name>')` call somewhere in this file, which is
+    // what stops the census being a claim rather than a measurement.
+    extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'openFoundation', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\n'
+    + '\nreturn { bindFoundationRows };')(
+    st,
+    () => { calls.render++; },
+    () => {},
+    (c) => { calls.reader.push(c); return calls.reader.length; },
+    (e) => e === calls.reader.length,
+    () => true,
+    async (url) => {
+      calls.urls.push(url);
+      return { ok: true, json: async () => ({
+        ok: true, slug: 'architecture.md', role: 'architecture', title: 'Architecture',
+        text: '# Architecture\n\nThe body.', updatedAt: '2026-09-17T09:00:00.000Z',
+        commit: '9623343abcdef', source: { kind: 'repo', path: 'docs/architecture.md' },
+        ownership: 'repo', freshness: 'stale', sanitisedOnRead: true,
+      }) };
+    },
+    escapeHtml, () => '<svg></svg>', renderMarkdown, renderReadout);
+  api.bindFoundationRows(doc, 1);
+  ok('SETUP: the row\'s click handler was bound', typeof btn._click === 'function');
+
+  btn._click();
+  await new Promise((r) => setImmediate(r));
+
+  eq('the press is acknowledged in its own frame with a LOADING panel, then '
+    + 'replaced — two opens, not one', calls.reader.length, 2);
+  ok('the first is the loading panel', calls.reader[0].loading === true);
+  eq('...and it already names the file, so the path does not appear late',
+    calls.reader[0].slug, 'state/lumina/foundations/architecture.md');
+  eq('THE PRESS REPAINTS THE MAIN COLUMN NOT AT ALL', calls.render, 0);
+  eq('one request, at the document\'s own URL', calls.urls.length, 1);
+  ok('...escaped segment by segment',
+    calls.urls[0] === '/api/memory/acme/lumina/foundations/architecture.md', calls.urls[0]);
+
+  const c = calls.reader[1];
+  eq('the reader\'s path is where the file actually is', c.slug, 'state/lumina/foundations/architecture.md');
+  eq('the title is the document\'s own', c.title, 'Architecture');
+  eq('it is labelled as what it is', c.typeLabel, 'foundation');
+  eq('READONLY, ALWAYS — the app writes neither ownership mode', c.readonly, true);
+  ok('the chips are role · source · commit · ownership, in that order',
+    JSON.stringify(c.tags.slice(0, 4)) === JSON.stringify([
+      'role: architecture', 'source: docs/architecture.md', 'commit 9623343',
+      'mirrored from a repository']), JSON.stringify(c.tags));
+  ok('...and a stale copy says so on the document itself', c.tags.includes('out of date'));
+  ok('the body goes through the shared markdown renderer (escape-first)',
+    c.bodyHtml.includes('chat-md-h'), c.bodyHtml.slice(0, 200));
+  ok('a stale copy carries the warning IN the document, not behind a click',
+    /no longer matches the file it was copied from/.test(c.bodyHtml));
+  ok('...and the read-time sanitisation is disclosed', /neutralised on read/.test(c.bodyHtml));
+  eq('Escape returns focus to the row that was pressed', c.returnFocusTo, 'mem-fnd-architecture-md');
+  ok('the row really carries that id, so the return is not a guess',
+    makeRenderers({}).fndRowHtml(fndDoc()).includes('id="mem-fnd-architecture-md"'));
+  ok('NO `domain` travels with it — that field switches on the reader\'s raw-source '
+    + 'bar, which asks about a wiki page and could only answer "no" here',
+  !('domain' in c));
+}
+
+// ── §21k — the refresh: one busy paint, one result paint, and a re-read ──
+//
+// Driven through the SHIPPED `refreshFoundations` with the SHIPPED `fetchState`
+// behind it. The shape refused here is the obvious one — paint the outcome,
+// then reload and paint again, which puts a note saying the documents changed
+// over the figures that have not been re-read yet.
+{
+  const mkRig = (responder) => {
+    const calls = { render: 0, urls: [], forgot: [], bodies: [] };
+    const st = { activeDomain: 'acme', activeProject: 'lumina', fnd: null, projectRead: null };
+    const api = new Function(
+      'state', 'render', 'isCurrentMount', 'fetch', 'forgetProject', 'URLSearchParams',
+      // Named one by one, for the census's sake — see the note in §21i.
+      extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'refreshFoundations', 'memory.js') + '\n'
+      + '\nreturn { refreshFoundations };')(
+      st,
+      () => { calls.render++; },
+      () => true,
+      async (url, init) => {
+        calls.urls.push(url);
+        if (init) calls.bodies.push(init.body);
+        return responder(String(url), init);
+      },
+      (d, p) => { calls.forgot.push(d + '/' + p); },
+      URLSearchParams);
+    return { api, calls, st };
+  };
+
+  // ── SUCCESS ───────────────────────────────────────────────────────────
+  {
+    const r = mkRig((url, init) => (init
+      ? { ok: true, json: async () => ({ ok: true, refreshed: ['architecture.md'],
+        added: [], unchanged: ['decisions.md'], missing: [] }) }
+      : { ok: true, json: async () => ({ ok: true, scopes: [],
+        foundations: fndPayload([fndDoc()]) }) }));
+    await r.api.refreshFoundations(1);
+    eq('the POST goes to this project\'s refresh endpoint',
+      r.calls.urls[0], '/api/memory/acme/lumina/foundations/refresh');
+    eq('...carrying an empty body, so nothing of the document crosses',
+      r.calls.bodies[0], '{}');
+    eq('the cached read is dropped BEFORE the re-read — bytes on disk changed',
+      r.calls.forgot.join(','), 'acme/lumina');
+    eq('...and the project is re-read', r.calls.urls[1], '/api/memory/acme/lumina');
+    eq('EXACTLY TWO PAINTS: one to say it is working, one carrying BOTH the '
+      + 'outcome and the re-read index', r.calls.render, 2);
+    ok('the fresh index really landed in state',
+      r.st.projectRead && r.st.projectRead.foundations.documents.length === 1);
+    ok('...and the outcome is stamped with the pair it was asked for',
+      r.st.fnd.domain === 'acme' && r.st.fnd.project === 'lumina' && r.st.fnd.busy === false);
+    eq('...and carries the four lists the note reads',
+      JSON.stringify(Object.keys(r.st.fnd.result).sort()),
+      JSON.stringify(['added', 'missing', 'refreshed', 'unchanged']));
+  }
+
+  // ── A REFUSAL ─────────────────────────────────────────────────────────
+  {
+    const r = mkRig(() => ({ ok: false, status: 400,
+      json: async () => ({ ok: false, reason: 'curator_owned',
+        error: 'These documents were written for this project' }) }));
+    await r.api.refreshFoundations(1);
+    eq('a refusal paints twice — busy, then the reason', r.calls.render, 2);
+    eq('...it is the SERVER\'s sentence, not a status code',
+      r.st.fnd.error, 'These documents were written for this project');
+    eq('...and nothing is re-read, because nothing changed', r.calls.urls.length, 1);
+    eq('...and the cache is NOT dropped either', r.calls.forgot.length, 0);
+  }
+
+  // ── A SECOND PRESS WHILE ONE IS IN FLIGHT ─────────────────────────────
+  {
+    const r = mkRig(() => ({ ok: true, json: async () => ({ ok: true }) }));
+    r.st.fnd = { domain: 'acme', project: 'lumina', busy: true, error: null, result: null };
+    await r.api.refreshFoundations(1);
+    eq('a second press while a copy is running does nothing at all — one '
+      + 'operation per project', r.calls.urls.length, 0);
+  }
+}
+
+// ── §21j — hostile text, through the real renderers ─────────────────────
+{
+  const F = makeRenderers({ activeDomain: XSS, activeProject: XSS, openFolds: {}, fnd: null });
+  const hostile = F.renderFoundations(fndRead(fndPayload([fndDoc({
+    slug: XSS, title: XSS, role: ATTR, commit: XSS,
+    source: { kind: 'repo', path: ATTR },
+  })])));
+  ok('the hostile fixture produced markup', hostile.length > 300);
+  ok('no raw <img> survives', !/<img\s/i.test(hostile));
+  ok('no live event handler appears inside any emitted TAG',
+    handlersInTags(hostile).length === 0, JSON.stringify(handlersInTags(hostile).slice(0, 2)));
+  ok('every attribute value is balanced', (() => {
+    for (const tag of hostile.match(/<[^>]*>/g) || []) {
+      if (((tag.match(/"/g) || []).length) % 2 !== 0) return false;
+    }
+    return true;
+  })());
+  // THE ROW ID IS RE-SANITISED, not merely escaped: it is an id, so it must be
+  // a safe fragment as well as safe markup.
+  const id = /id="(mem-fnd-[^"]*)"/.exec(hostile);
+  ok('the row id is reduced to a safe fragment', !!id && /^mem-fnd-[a-z0-9-]*$/.test(id[1]),
+    id ? id[1] : 'none');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('§17 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
 // ═════════════════════════════════════════════════════════════════════════
 //
@@ -6025,6 +6601,17 @@ const EXECUTED = new Set([
   // v3.58.0 — which folds you had open, persisted. Driven in §16c2 against
   // hostile stores, including one that throws and one that is not there at all.
   'readRememberedFolds', 'renderProjectSkeleton',
+  // v3.59.0 — tier 0. All ten are LIFTED rather than stubbed and driven in
+  // §21: the three pure derivations (facts, word, offer) against the shapes a
+  // real store answers with, the two renderers and the row fragment through
+  // §6's `makeRenderers`, the reader payload and the row press through the
+  // shipped bind→open chain, and the refresh through the shipped `fetchState`.
+  // A stub anywhere in that list would let this suite agree with itself that
+  // the summary line, the Status reading and the Refresh control all describe
+  // one project while the shipped page described three.
+  'foundationsFacts', 'foundationsWord', 'foundationsRefreshOffer', 'fndRowHtml',
+  'renderFoundations', 'renderFoundationsStatus', 'foundationReaderContent',
+  'openFoundation', 'refreshFoundations', 'bindFoundationRows',
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',

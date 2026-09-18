@@ -477,6 +477,15 @@ function workStreamOrder(x) { return x || []; }
 const WS_WINDOW = 5;
 function renderJournal() { return '<!--JOURNAL-->'; }
 function renderBrief() { return '<!--BRIEF-->'; }
+// v3.59.0: tier 0. renderProject composes a fifth block from renderFoundations
+// and adds one line to block 1 from renderFoundationsStatus; wire() binds the
+// row handler and the Refresh control. None is exercised here, but BOTH lifted
+// functions would throw on a free identifier, so each is stubbed with a named
+// marker -- an undefined collaborator is a crash, not a failing assertion.
+function renderFoundations() { return '<!--FOUNDATIONS-->'; }
+function renderFoundationsStatus() { return '<!--FNDSTATUS-->'; }
+function bindFoundationRows() {}
+function refreshFoundations() {}
 function keyOf(d, p) { return d + '/' + p; }
 function activeKey() { return keyOf(state.activeDomain, state.activeProject); }
 function selectProject() {}

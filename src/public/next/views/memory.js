@@ -329,6 +329,15 @@ function freshState() {
     // would sit under the next project's header claiming its block had been
     // copied. Cleared whenever the selection changes.
     copied: null,
+    // The last "Refresh from repo" attempt, or null:
+    //   { domain, project, busy, error, result: {refreshed, added, unchanged, missing} }
+    // STAMPED with its pair for the same reason `copied` and `briefEdit` are:
+    // this view switches project without unmounting, and an unstamped outcome
+    // would sit under the next project's header claiming its documents had been
+    // re-copied. Cleared implicitly — the stamp comparison in renderFoundations
+    // is what withholds it — so a switch back to the project that was actually
+    // refreshed still shows its own result.
+    fnd: null,
     // The standing-brief editor, or null when nothing is being edited.
     //   { domain, project, loaded, text, busy, error, preview, confirmDiscard }
     // `loaded` is the document the editor OPENED on and never changes; `text`
@@ -467,7 +476,15 @@ const FOCUSABLE_IDS = [
   // pane it sits in, so without these a keyboard user who has just toggled one
   // is dropped to <body>. `mem-fold-brief` joined when the brief became a fold
   // again in v3.58.0.
-  'mem-fold-journal', 'mem-fold-brief',
+  // `mem-fold-foundations` joined in v3.59.0 with tier 0's own fold. The rows
+  // INSIDE it deliberately do not: each carries a stable id derived from its
+  // slug, and a row press causes no render at all, so there is nothing for the
+  // capture/restore pass to do — see fndRowHtml.
+  'mem-fold-journal', 'mem-fold-brief', 'mem-fold-foundations',
+  // "Refresh from repo". It survives its own click (it is disabled while the
+  // copy runs and comes back enabled), so it needs no fallback below — but it
+  // DOES need to be captured, because the click causes two renders.
+  'mem-fnd-refresh',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -924,7 +941,7 @@ function rememberProject(domain, project) {
 // v3.11.0 shape this file warns about twice). The duplicated key literal is
 // pinned against this constant by scripts/test-next-memory-view.js §19.
 const FOLDS_KEY = 'curator-memory-folds-v1';
-const FOLD_KEYS = ['brief', 'journal'];
+const FOLD_KEYS = ['brief', 'journal', 'foundations'];
 
 export function readRememberedFolds() {
   try {
@@ -1102,6 +1119,45 @@ function screenSignature() {
     ? [formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds),
       (pr.brief.text || '').length] : null;
 
+  // ── TIER 0 IS A PANE, AND ITS FRESHNESS IS A COMPUTED READING ──────────
+  //
+  // The same lesson as the picker and the save strip, one block further down: a
+  // no-op guard that cannot see a pane is not a guard for that pane. And this
+  // pane is the one whose figures can change with NOTHING ELSE on the screen
+  // moving — `freshness` is recomputed by the store on every read against the
+  // file in the checkout, so a colleague's `git pull` turns six rows from
+  // `fresh` to `stale`, the summary line's word changes, the Status block's
+  // reading changes, and not one timestamp, byte count or work-stream has
+  // moved. Without the freshness in this mark the block would go on painting
+  // "fresh" over documents that had stopped being it.
+  //
+  // A PLAIN EXPRESSION, naming no collaborator this function does not already
+  // use. `screenSignature` is LIFTED and EXECUTED against a fixed set of
+  // injected functions (scripts/test-memory-truth.js §8b), so a call to a
+  // foundations helper here would be a ReferenceError — a CRASH rather than a
+  // failing assertion, which is the v3.11.0 shape this file warns about.
+  // `formatAge` + `effectiveSave` are both in that set and are used the same
+  // way `briefMark` uses them, so the age moves the mark exactly when the
+  // painted words do.
+  const fnd = pr && pr.foundations && typeof pr.foundations === 'object' ? pr.foundations : null;
+  const fndMark = fnd
+    ? [fnd.ownership || null, fnd.manifestError || null,
+      (Array.isArray(fnd.orphanFiles) ? fnd.orphanFiles.length : 0),
+      (Array.isArray(fnd.documents) ? fnd.documents : []).map((d) => [
+        d && d.slug, (d && d.title) || null, (d && d.role) || null,
+        (d && d.freshness) || null, (d && d.bytes) || 0,
+        (d && d.commit) || null,
+        d && d.updatedAt ? formatAge(effectiveSave({ savedAt: d.updatedAt }).seconds) : null,
+      ])]
+    : null;
+  // The Refresh control's own three states — absent, offered, working — each of
+  // which is a different set of pixels. Stamped, so a result belonging to
+  // another project cannot hold this one's paint.
+  const fndActionMark = state.fnd
+    ? [state.fnd.domain, state.fnd.project, !!state.fnd.busy, state.fnd.error || null,
+      state.fnd.result ? Object.keys(state.fnd.result).map((k) => [k, state.fnd.result[k].length]) : null]
+    : null;
+
   // THE EDITOR IS A PANE TOO, and the same rule applies to it as to the
   // picker and the save strip: a no-op guard that cannot see a pane is not a
   // guard for that pane. Only the fields that CHANGE PIXELS are folded in —
@@ -1130,6 +1186,8 @@ function screenSignature() {
     newestMark,
     sharedMark,
     briefMark,
+    fndMark,
+    fndActionMark,
     editMark,
     // The DOMAIN rides in each row, because the rail groups by it: two
     // projects with the same name in two domains are two different rows, and
@@ -2658,7 +2716,11 @@ function renderProject() {
   const saveStatus = renderSaveStatus(read, d);
   const staleNote = renderStaleNotice();
   const unlistedNote = renderUnlistedNote(read, d);
-  const statusBody = saveStatus + staleNote + unlistedNote;
+  // TIER 0's ONE LINE, and it is a READING rather than a warning — so it goes
+  // with the save reading above the two notes, which are there to qualify
+  // everything below them. Silent on a project with no foundations: see
+  // renderFoundationsStatus.
+  const statusBody = saveStatus + renderFoundationsStatus(read) + staleNote + unlistedNote;
   const statusBlock = statusBody
     ? renderBlock({
       num: null,
@@ -2764,6 +2826,39 @@ function renderProject() {
     bodyHtml: renderBrief(read),
   });
 
+  // ── BLOCK ④ — FOUNDATIONS ────────────────────────────────────────────────
+  //
+  // AFTER THE BRIEF, BEFORE THE JOURNAL, and the position is the argument: the
+  // brief is what YOU tell an agent, the foundations are what the PROJECT tells
+  // it, and the journal is history. Reading top to bottom is then the same
+  // order a session start reads in.
+  //
+  // THE LEDE IS AN INSTRUCTION, NOT A DEFINITION (the v3.58.0 rule): what a
+  // canonical document IS lives in the ⓘ, along with the two ways one arrives.
+  const foundationsBlock = renderBlock({
+    num: null,
+    id: 'memory-foundations',
+    title: 'Foundations',
+    ledeHtml: 'Read first by every agent, in one call.',
+    infoText:
+      '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
+      + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
+      + 'bytes, so an agent reads what you would read.</p>'
+      + '<p>Until now those lived only inside a code repository, which meant an agent without a '
+      + 'checkout could not see them, and an ingested copy did not travel because source files are '
+      + 'not synced. These do travel, beside the brief and the handoffs.</p>'
+      + '<p>They arrive one of <b>two ways</b>, and a project uses one or the other, never both. '
+      + 'An <b>agent you ask</b> writes one — it is a commissioned write, the same permission the '
+      + 'standing brief needs, and nothing writes one on its own. Or a <b>refresh from this '
+      + 'project’s repository</b> copies the file across byte for byte, records the commit it came '
+      + 'from and compares a checksum afterwards, which is what the freshness column reports.</p>'
+      + '<p>This screen never EDITS one. A mirrored document belongs to its repository and a '
+      + 'commissioned one to the agent that wrote it; what the app does is copy and show.</p>'
+      + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + '</p>',
+    infoHtml: true,
+    bodyHtml: renderFoundations(read),
+  });
+
   // ── BLOCK ⑤ — SESSION JOURNAL ────────────────────────────────────────────
   const journalBody = renderJournal();
   const journalBlock = journalBody
@@ -2788,7 +2883,7 @@ function renderProject() {
     })
     : '';
 
-  return header + statusBlock + streamsBlock + briefBlock + journalBlock;
+  return header + statusBlock + streamsBlock + briefBlock + foundationsBlock + journalBlock;
 }
 
 /**
@@ -2881,7 +2976,28 @@ function renderProjectSkeleton() {
         bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
           + '<div class="mem-ghost mem-ghost-para"></div></div>',
       })
-      : '')
+      : '') +
+    // ── TIER 0, RESERVED UNCONDITIONALLY ─────────────────────────────────
+    //
+    // Unlike the brief above it, this block is painted on EVERY project — and
+    // that is not an inconsistency, it is the same rule applied to different
+    // knowledge. `GET /api/memory` carries `hasBrief` per row, so the skeleton
+    // KNOWS whether a brief is coming and reserves accordingly. It carries
+    // nothing at all about foundations, so the honest options are to reserve
+    // the block or to leave the column to jump by its height on arrival. The
+    // block chrome is one line of heading plus one lede either way — a
+    // project with no documents lands on the flat "none yet" card of almost
+    // exactly this height — so reserving it is the small error and omitting it
+    // is the visible one.
+    //
+    // The lede is BYTE-IDENTICAL to renderProject's, which is the whole point
+    // of a skeleton and is pinned by executing both renderers.
+    renderBlock({
+      num: null, id: 'memory-foundations', title: 'Foundations',
+      ledeHtml: 'Read first by every agent, in one call.',
+      bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
+        + '<div class="mem-ghost mem-ghost-line"></div></div>',
+    })
   );
 }
 
@@ -4215,6 +4331,577 @@ function renderBrief(read) {
   );
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// TIER 0 — FOUNDATIONS, THE CANONICAL DOCUMENTS THAT TRAVEL
+// ═════════════════════════════════════════════════════════════════════════
+//
+// There are three kinds of context a project carries, and until now this
+// screen could show two of them. VOLATILE STATE is the brief, the handoff and
+// the journal — tiers 1 to 3, above. COMPOUNDED KNOWLEDGE is the wiki, one
+// view over. CANONICAL DOCUMENTS — the architecture note, the decisions log,
+// the conventions, the roadmap — lived only inside a code repository, which
+// means they were invisible to any agent without a checkout, and `raw/` is
+// gitignored so an ingested copy never travelled either.
+//
+// Tier 0 stores them VERBATIM beside the state, so they travel with the
+// project and an agent reads them in one call. This block is the window onto
+// that: what is here, how big, where each one came from, and — for a mirror —
+// whether the copy still matches the file it was copied from.
+//
+// ── TWO OWNERSHIP MODES, AND THE APP WRITES NEITHER ──────────────────────
+// A project's documents are all CURATOR-owned or all REPO-owned, never mixed.
+//
+//   · CURATOR-owned — written by an agent the owner commissioned, through the
+//     `save_foundation` MCP tool. Nothing in this view writes one, and there
+//     is no route that could: the single-writer property that protects a
+//     handoff protects these the same way.
+//   · REPO-owned — a MIRROR of a file in a code repository. "Refresh from
+//     repo" re-copies the bytes, compares sha256 and stamps the commit. That
+//     is a copy, not an authorship, which is the whole argument for the one
+//     control on this block that reaches a write route (src/routes/memory.js
+//     records it at the route).
+//
+// ── FRESHNESS IS COMPUTED, NOT REMEMBERED ────────────────────────────────
+// `fresh` / `stale` / `unreachable` come off a sha256 comparison the store
+// makes at read time against the file at `repo.root`. `unreachable` is a fact
+// about THIS computer — the checkout is not here — and it is never smoothed
+// into `stale`, which would claim a comparison that was not made. A
+// curator-authored document has no upstream and gets no reading at all rather
+// than a fabricated one.
+
+/**
+ * EVERY FIGURE THIS BLOCK QUOTES, DERIVED ONCE.
+ *
+ * Three consumers read it — the fold's summary line, the Status block's
+ * one-line reading and the Refresh control's own decision — and they must not
+ * be able to disagree about how many documents are stale. Pure over the
+ * payload, so it is drivable without a DOM.
+ *
+ * COUNTS ARE OVER WHAT THE STORE LISTED. `totalBytes` is preferred over the
+ * sum of the rows because the store takes it before any cap of its own; the
+ * sum is the fallback for a server that does not send it, and the two agree
+ * on every uncapped read.
+ */
+function foundationsFacts(read) {
+  const f = read && read.foundations && typeof read.foundations === 'object' ? read.foundations : null;
+  const docs = f && Array.isArray(f.documents) ? f.documents.filter(Boolean) : [];
+  let fresh = 0;
+  let stale = 0;
+  let unreachable = 0;
+  let unrated = 0;
+  for (const d of docs) {
+    if (d.freshness === 'stale') stale++;
+    else if (d.freshness === 'unreachable') unreachable++;
+    else if (d.freshness === 'fresh') fresh++;
+    // 'n/a', null, or a word this build does not know: NOT counted as fresh.
+    // A reading that was never taken is not a passing reading, and rounding it
+    // up is how a screen ends up claiming a comparison nobody made.
+    else unrated++;
+  }
+  return {
+    present: !!(f && f.present),
+    ownership: (f && f.ownership) || null,
+    repo: (f && f.repo) || null,
+    docs,
+    count: docs.length,
+    bytes: f && Number.isInteger(f.totalBytes) && f.totalBytes > 0
+      ? f.totalBytes
+      : docs.reduce((a, d) => a + (Number.isInteger(d.bytes) ? d.bytes : 0), 0),
+    fresh,
+    stale,
+    unreachable,
+    unrated,
+    manifestError: (f && f.manifestError) || null,
+    orphanFiles: f && Array.isArray(f.orphanFiles) ? f.orphanFiles : [],
+  };
+}
+
+/**
+ * THE ONE WORD AT THE END OF THE SUMMARY LINE.
+ *
+ * Ordered worst-first, because the summary is read at a glance and the glance
+ * has to land on the thing that needs a decision. A manifest that will not
+ * parse outranks everything: every other figure on this block is derived from
+ * it, so saying "6 documents · fresh" over an unreadable manifest would be
+ * confident nonsense.
+ */
+function foundationsWord(facts) {
+  if (facts.manifestError) return 'manifest unreadable';
+  if (!facts.count) return 'none yet';
+  if (facts.stale) return facts.stale + ' stale';
+  if (facts.unreachable) return 'source unreachable';
+  if (facts.ownership === 'curator') return 'Curator-authored';
+  if (facts.fresh) return 'fresh';
+  return 'no freshness reading';
+}
+
+/**
+ * MAY THIS PROJECT BE REFRESHED, AND IF NOT, WHY NOT IN WORDS.
+ *
+ * A control that cannot work is worse than no control, and a control that is
+ * simply absent is worse than one that says why — both are this app's own
+ * recorded rules (v3.16.1 for the first, v3.17.1 for the second). So the
+ * button is WITHHELD in the two cases where pressing it could only produce a
+ * refusal, and a `.tx-note` takes its place.
+ *
+ * REACHABILITY IS READ OFF THE DOCUMENTS, not off `repo.root`. The manifest
+ * records the path on the machine that last refreshed, which on any other
+ * machine is a hint; what the store actually measured is each document's own
+ * `freshness`, and anything other than `unreachable` means the file was there
+ * to be compared.
+ */
+function foundationsRefreshOffer(facts) {
+  if (!facts.present || !facts.count) return { show: false, reason: null };
+  if (facts.ownership === 'curator') {
+    return {
+      show: false,
+      reason: 'These documents were written for this project rather than copied from a '
+        + 'repository, so there is nothing to refresh them from. Ask an agent to rewrite one instead.',
+    };
+  }
+  const reachable = facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
+  if (!reachable) {
+    return {
+      show: false,
+      reason: 'The repository these were copied from is not on this computer, so they cannot '
+        + 'be re-copied here. Open the project on the machine that has the checkout.',
+    };
+  }
+  return { show: true, reason: null };
+}
+
+/**
+ * ONE DOCUMENT'S ROW.
+ *
+ * ── THE ID IS DERIVED FROM THE SLUG, AND THAT IS THE POINT ──────────────
+ * The work-stream table can only put an id on its OPEN row, because a scope
+ * slug is arbitrary text. A foundation slug is not: the store's rule is
+ * lowercase alphanumerics, hyphens and `.md`, so it makes a unique, safe id
+ * fragment. That is what lets a row press open the reader with NO render at
+ * all — there is no "which row is open" state to write and no repaint to pay
+ * for it — and still hand the reader an id to return focus to when it closes.
+ *
+ * It is re-sanitised here anyway. The slug arrives over HTTP from a manifest
+ * that can have come over sync from another machine, and a validation done at
+ * the boundary is not a reason for the renderer to trust the value.
+ */
+function fndRowHtml(d) {
+  const slug = String(d.slug || '');
+  const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
+  // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
+  // one table up takes the code face through a class of its own for the same
+  // reason: this is a piece of DATA with a role, not a fragment of prose that
+  // happens to be monospaced, and scripts/test-next-views-kit.js ratchets this
+  // view's `.mono` spans precisely so a table of them cannot accumulate.
+  const src = d.source && d.source.kind === 'repo' && d.source.path
+    ? '<span class="fnd-src-path">' + escapeHtml(d.source.path) + '</span>'
+      + (d.commit ? '<span class="fnd-commit"> @ ' + escapeHtml(String(d.commit).slice(0, 7)) + '</span>' : '')
+    : 'Curator-authored';
+  // THE SHARED SCALE, AND ONLY ON THE TIERS THAT HAVE A READING. fresh and
+  // stale are the two ends of a comparison that was actually made;
+  // `unreachable` is the dashed unknown ring, which is exactly what it means
+  // everywhere else in the app. A curator-authored document gets NO dot: there
+  // is no upstream to be fresh against, and a grey dot beside "—" would read
+  // as a stale one at a glance.
+  const tier = d.freshness === 'fresh' ? 'recent'
+    : d.freshness === 'stale' ? 'week'
+      : d.freshness === 'unreachable' ? 'unknown' : null;
+  const word = d.freshness === 'fresh' ? 'fresh'
+    : d.freshness === 'stale' ? 'stale'
+      : d.freshness === 'unreachable' ? 'source not here' : '—';
+  const ageSecs = d.updatedAt
+    ? Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000)) : null;
+  const age = Number.isFinite(ageSecs) ? formatAge(ageSecs) : null;
+  const bytes = Number.isInteger(d.bytes) ? d.bytes : 0;
+  const size = bytes < 1024 ? bytes + ' bytes' : Math.round(bytes / 1024).toLocaleString('en-US') + ' KB';
+  return (
+    '<tr class="fnd-row">' +
+      '<td class="fnd-cell-role"><span class="fnd-role">' + escapeHtml(d.role || 'other') + '</span></td>' +
+      '<td class="fnd-cell-title">' +
+        '<button type="button" class="fnd-open" id="' + escapeHtml(rowId) + '"' +
+          ' aria-label="' + escapeHtml('Open ' + (d.title || slug)) + '"' +
+          ' data-fnd-slug="' + escapeHtml(slug) + '">' +
+          escapeHtml(d.title || slug) +
+        '</button>' +
+      '</td>' +
+      '<td class="fnd-cell-size">' + escapeHtml(size) + '</td>' +
+      '<td class="fnd-cell-source">' + src + '</td>' +
+      // THE DOT AND THE WORD IN ONE WRAPPER, and the wrapper is what this view
+      // styles. shared/freshness.css owns the `.fresh-` prefix outright — no
+      // other stylesheet may declare a rule on it (scripts/test-freshness-scale.js
+      // fails one that does) — so the gap between mark and word belongs to a
+      // class of this view's own rather than to a `.fresh-dot` selector here.
+      '<td class="fnd-cell-fresh"><span class="fnd-fresh">' +
+        (tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '') +
+        '<span class="fnd-fresh-word">' + escapeHtml(word) + '</span>' +
+      '</span></td>' +
+      // The same hook every other age on this page carries, so tickAges
+      // rewrites it once a second without a render. No stamp, no hook — an
+      // unknown age has nothing to move.
+      '<td class="fnd-cell-age"' +
+        (age && d.updatedAt ? ' data-mem-age-at="' + escapeHtml(d.updatedAt) + '"' : '') + '>' +
+        '<span class="mem-age-words">' + escapeHtml(age || 'unknown') + '</span>' +
+      '</td>' +
+    '</tr>'
+  );
+}
+
+/**
+ * BLOCK ⑤'s BODY — the fold, the table and the one control.
+ *
+ * CLOSED BY DEFAULT, like the brief above it and the journal below it: this is
+ * a page somebody opens to answer "where does this project stand", and a table
+ * of reference documents is not that answer. The summary line carries the
+ * decision to open it — how many, how big, and the one word that says whether
+ * anything needs attention.
+ *
+ * WHAT IS NEVER INSIDE THE FOLD: the manifest error, the orphan-file note and
+ * the outcome of a refresh. v3.16.1's rule — a warning behind a click is not a
+ * warning — and all three are warnings or the results of an action the user
+ * just took.
+ */
+function renderFoundations(read) {
+  const facts = foundationsFacts(read);
+  const offer = foundationsRefreshOffer(facts);
+
+  // ── THE THINGS THAT NEVER FOLD ────────────────────────────────────────
+  let notes = '';
+  if (facts.manifestError) {
+    notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
+      '<span>This project’s foundations manifest could not be read, so nothing below it can be ' +
+      'trusted: ' + escapeHtml(String(facts.manifestError)) + '</span></div>';
+  }
+  if (facts.orphanFiles.length) {
+    notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml(facts.orphanFiles.length + ' file' +
+        (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the foundations folder with no ' +
+        'manifest entry (' + facts.orphanFiles.slice(0, 3).join(', ') + '). ' +
+        'The manifest is written last, so a save that was interrupted leaves the document behind ' +
+        'rather than an entry pointing at nothing.') + '</span></div>';
+  }
+  // THE REFRESH OUTCOME, STAMPED with the pair it was asked for — the same
+  // discipline `copied` and `briefEdit` use, and for the same reason: this
+  // view switches project without unmounting, and an unstamped result would
+  // sit under the next project's header claiming its documents had been
+  // re-copied.
+  const fnd = state.fnd && state.fnd.domain === state.activeDomain
+    && state.fnd.project === state.activeProject ? state.fnd : null;
+  if (fnd && fnd.error) {
+    notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml('Nothing was copied: ' + fnd.error) + '</span></div>';
+  } else if (fnd && fnd.result) {
+    const r = fnd.result;
+    const said = [];
+    if (r.refreshed.length) said.push(r.refreshed.length + ' re-copied');
+    if (r.added.length) said.push(r.added.length + ' added');
+    if (r.unchanged.length) said.push(r.unchanged.length + ' already current');
+    if (r.missing.length) said.push(r.missing.length + ' no longer in the repository (the copy is kept)');
+    notes += '<div class="mem-note">' + icon('check', 13) +
+      '<span>' + escapeHtml(said.length ? said.join(' · ') : 'Nothing to copy.') + '</span></div>';
+  }
+
+  // ── THE CONTROL ───────────────────────────────────────────────────────
+  const busy = !!(fnd && fnd.busy);
+  const action = offer.show
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
+      escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
+    : '';
+  const withheld = (!offer.show && offer.reason)
+    ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(offer.reason) + '</span></div>'
+    : '';
+
+  // ── NO DOCUMENTS, NO FOLD ─────────────────────────────────────────────
+  // The same shape `renderBrief` uses for a project with no brief, and for the
+  // same reason: there is one sentence to show, and hiding the sentence that
+  // explains what is missing behind a chevron is "the missing thing has to be
+  // missing where you looked for it" read backwards. The two ways a document
+  // arrives are in the block's ⓘ, which is one press away and always there.
+  if (!facts.count) {
+    return notes +
+      '<div class="mem-fnd-row">' +
+        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+          renderDescription('No canonical documents yet. They arrive one of two ways: an agent you '
+            + 'ask writes one, or a refresh copies them from this project’s repository.') +
+        '</div></div>' +
+      '</div>' + withheld;
+  }
+
+  const size = facts.bytes < 1024
+    ? facts.bytes + ' bytes'
+    : Math.round(facts.bytes / 1024).toLocaleString('en-US') + ' KB';
+  const summary =
+    '<summary class="mem-fold-summary" id="mem-fold-foundations">' + icon('chevronRight', 14) +
+      '<span>The documents</span>' +
+      '<span class="mem-fold-meta">' +
+        escapeHtml(facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
+          + ' · ' + size + ' · ' + foundationsWord(facts)) +
+      '</span>' +
+    '</summary>';
+
+  const rows = facts.docs.map((d) => fndRowHtml(d)).join('');
+  const open = (state.openFolds && state.openFolds.foundations) ? ' open' : '';
+  return notes +
+    '<div class="mem-fnd-row">' +
+      '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
+        summary +
+        '<div class="mem-fold-body">' +
+          '<div class="fnd-wrap"><table class="fnd-table">' +
+            '<thead><tr>' +
+              '<th scope="col">Role</th>' +
+              '<th scope="col">Document</th>' +
+              '<th scope="col">Size</th>' +
+              '<th scope="col">Source</th>' +
+              '<th scope="col">Copy</th>' +
+              '<th scope="col">Updated</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table></div>' +
+        '</div>' +
+      '</details>' +
+      action +
+    '</div>' + withheld;
+}
+
+/**
+ * THE STATUS BLOCK'S ONE LINE ABOUT TIER 0.
+ *
+ * Block ① answers "where does this project stand", and from this release that
+ * question includes whether the documents an agent will read at the start of
+ * its next session still match the repository they came from. One line, on the
+ * same readout instrument every other figure in that block uses, so the two
+ * cannot be told apart by their treatment.
+ *
+ * SILENT WHEN THERE IS NOTHING TO SAY. A project that has never had a
+ * foundation gets no line at all rather than "none yet" — block ⑤ below says
+ * that in the place somebody would look for it, and a dash in the status strip
+ * is noise on every project in the app that has not adopted the tier.
+ */
+function renderFoundationsStatus(read) {
+  const facts = foundationsFacts(read);
+  if (!facts.present && !facts.manifestError) return '';
+  if (!facts.count && !facts.manifestError) return '';
+  const value = facts.manifestError
+    ? 'manifest unreadable'
+    : facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
+      + ' · ' + foundationsWord(facts);
+  return renderReadout({ label: 'Foundations', value });
+}
+
+/**
+ * THE READER PAYLOAD FOR ONE DOCUMENT.
+ *
+ * Same shape as `handoffReaderContent` and for the same reasons — including
+ * the deliberate absence of `domain`, which would switch on the reader's
+ * raw-source bar and buy a request that can only answer "no".
+ *
+ * `readonly: true` ALWAYS, on both ownership modes. The app does not write a
+ * foundation: a curator-owned one is the commissioned agent's, a repo-owned
+ * one is the repository's, and the reader must not imply an edit that no route
+ * would accept.
+ *
+ * The body goes through `renderMarkdown`, which escapes the whole string
+ * before emitting any markup. These bytes arrive over sync from other machines
+ * and, in a shared mirror, from other people; the escaping duty is here.
+ */
+function foundationReaderContent(doc, project) {
+  if (!doc || !doc.slug) return null;
+  const slug = String(doc.slug);
+  const readout = doc.updatedAt
+    ? renderReadout({
+      label: 'Updated',
+      value: formatAge(Math.max(0, Math.round((Date.now() - Date.parse(doc.updatedAt)) / 1000)))
+        || doc.updatedAt,
+      provenance: doc.commit ? 'commit ' + String(doc.commit).slice(0, 7) : undefined,
+    })
+    : '';
+  const meta = readout
+    ? '<div class="mem-reader-meta"' +
+      ' data-mem-age-at="' + escapeHtml(doc.updatedAt) + '">' + readout + '</div>'
+    : '';
+  const notes = [];
+  if (doc.freshness === 'stale') {
+    notes.push('This copy no longer matches the file it was copied from. Refresh from the '
+      + 'repository to bring it up to date — what is below is what your agents currently read.');
+  }
+  if (doc.freshness === 'unreachable') {
+    notes.push('The repository this was copied from is not on this computer, so the copy could '
+      + 'not be compared against it. It may or may not still match.');
+  }
+  if (doc.truncated) {
+    notes.push('This document was longer than the read budget — the tail is not shown.');
+  }
+  if (doc.sanitisedOnRead) {
+    notes.push('Protocol-shaped text in this file was neutralised on read. The words are '
+      + 'unchanged; only their markup is.');
+  }
+  const noteHtml = notes.map((n) =>
+    '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>' + escapeHtml(n) + '</span></div>').join('');
+  return {
+    slug: 'state/' + String(project || '') + '/foundations/' + slug,
+    title: doc.title || slug,
+    type: 'memory',
+    typeLabel: 'foundation',
+    // ROLE · SOURCE · COMMIT · OWNERSHIP, in that order — what the document
+    // IS, where it came from, which version of there, and who is allowed to
+    // change it. Every one of them qualifies the text rather than decorating
+    // it, which is the rule this app's reader chips follow.
+    tags: [
+      doc.role ? 'role: ' + doc.role : null,
+      doc.source && doc.source.kind === 'repo' && doc.source.path
+        ? 'source: ' + doc.source.path : 'written for this project',
+      doc.commit ? 'commit ' + String(doc.commit).slice(0, 7) : null,
+      doc.ownership === 'curator' ? 'Curator-authored' : 'mirrored from a repository',
+      doc.freshness === 'stale' ? 'out of date' : null,
+      doc.freshness === 'unreachable' ? 'source not on this computer' : null,
+    ].filter(Boolean),
+    readonly: true,
+    bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
+      renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
+    backlinks: [],
+    returnFocusTo: 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-'),
+  };
+}
+
+/**
+ * A ROW PRESS: fetch the document and open it in the shell's reader.
+ *
+ * ── NO MAIN-COLUMN REPAINT, EVER ────────────────────────────────────────
+ * Nothing here writes a field `render()` paints. The reader opens LOADING in
+ * the frame the press happened in (v3.27.0's finding: a press that is
+ * acknowledged a round trip later reads as a press that did nothing), the
+ * document replaces it when it lands, and the page behind is untouched. That
+ * is only possible because a foundation row carries its own stable id — see
+ * `fndRowHtml` — so there is no "which row is open" state to record.
+ *
+ * `isCurrentReader(epoch)` is the guard `openReader` owes: a user who presses
+ * Escape while the fetch is in flight must not have the document reopened on
+ * top of whatever they went back to. `isCurrentMount(token)` answers the other
+ * question — did they leave the view entirely — and both are asked.
+ */
+async function openFoundation(slug, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || !slug) return;
+  const epoch = openReader({
+    slug: 'state/' + project + '/foundations/' + slug,
+    title: slug,
+    loading: true,
+    returnFocusTo: 'mem-fnd-' + String(slug).replace(/[^a-z0-9]+/gi, '-'),
+  }, token);
+
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug));
+    const body = await res.json();
+    if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
+    else data = body;
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token)) return;
+  if (!isCurrentReader(epoch)) return;
+
+  const content = data ? foundationReaderContent(data, project) : null;
+  if (content) openReader(content, token);
+  else {
+    openReader({
+      slug: 'state/' + project + '/foundations/' + slug,
+      title: slug,
+      error: error || 'That document could not be read.',
+    }, token);
+  }
+}
+
+/**
+ * RE-COPY THE MIRROR, then show what changed.
+ *
+ * ── BUSY IS PAINTED, SUCCESS REPAINTS ONCE ──────────────────────────────
+ * One render to disable the control and say it is working, then — on success —
+ * exactly one more, carrying BOTH the outcome note and the re-read index. The
+ * shape refused here is the obvious one: render the outcome, then reload and
+ * render again, which paints the old figures under a note saying they changed.
+ *
+ * ── STAMPED, AND DROPPED IF THE USER MOVED ON ───────────────────────────
+ * A refresh is a round trip over a filesystem read per document, so a project
+ * switch mid-flight is ordinary rather than exotic. The reply is applied only
+ * when the selection is still the one it was asked for.
+ *
+ * ── THE FAILURE IS INLINE, NEVER AN ALERT ───────────────────────────────
+ * The two refusals this can legitimately get — a curator-owned project, a
+ * checkout that is not on this computer — are both facts about the project in
+ * front of the user, and they belong on it. `alert()` would put a fact about a
+ * project into a modal the user must dismiss before they can look at it.
+ */
+async function refreshFoundations(token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project) return;
+  if (state.fnd && state.fnd.busy) return;
+  const key = keyOf(domain, project);
+  state.fnd = { domain, project, busy: true, error: null, result: null };
+  render(token);
+
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/foundations/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const body = await res.json();
+    if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
+    else data = body;
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || activeKey() !== key) return;
+
+  if (error) {
+    state.fnd = { domain, project, busy: false, error, result: null };
+    render(token);
+    return;
+  }
+  state.fnd = {
+    domain,
+    project,
+    busy: false,
+    error: null,
+    result: {
+      refreshed: Array.isArray(data.refreshed) ? data.refreshed : [],
+      added: Array.isArray(data.added) ? data.added : [],
+      unchanged: Array.isArray(data.unchanged) ? data.unchanged : [],
+      missing: Array.isArray(data.missing) ? data.missing : [],
+    },
+  };
+  // THE CACHED READ IS NOW WRONG — bytes on disk changed — so it goes before
+  // the request rather than after it, exactly as `reloadActive` drops it.
+  forgetProject(domain, project);
+  const read = await fetchState(domain, project, {}, token);
+  if (!isCurrentMount(token) || activeKey() !== key) return;
+  if (read.data) state.projectRead = read.data;
+  render(token);
+}
+
+/**
+ * One listener per row button, the same shape the work-stream rows use and for
+ * the same reason: `wire` runs after every paint and the whole pane is
+ * replaced each time, so there is nothing to accumulate on and a per-row
+ * handler keeps the data it needs on its own element.
+ */
+function bindFoundationRows(root, token) {
+  root.querySelectorAll('.fnd-open[data-fnd-slug]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openFoundation(btn.dataset.fndSlug, token)
+        .catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+}
+
 function renderJournal() {
   const d = state.detail;
   if (!d || !d.journal) return '';
@@ -4668,6 +5355,18 @@ function wire(token) {
   // ── "SHOW N MORE" ─────────────────────────────────────────────────────
   document.getElementById('mem-ws-more')?.addEventListener('click', () => {
     showMoreWorkStreams(token);
+  });
+
+  // ── TIER 0: THE DOCUMENT ROWS AND THE ONE CONTROL ─────────────────────
+  // The rows go through the same per-row binder shape the work-stream table
+  // uses. NO focus id is recorded here, and that is the difference between the
+  // two tables: a foundation row press causes no render at all, because every
+  // row already carries a stable id derived from its slug — so there is
+  // nothing for the capture/restore pass to put back.
+  bindFoundationRows(document, token);
+
+  document.getElementById('mem-fnd-refresh')?.addEventListener('click', () => {
+    refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
   });
 
   document.getElementById('mem-copy-agent')?.addEventListener('click', () => {

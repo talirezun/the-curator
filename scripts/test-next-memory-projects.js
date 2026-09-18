@@ -336,6 +336,50 @@ function makeStubStore(seed) {
     // the pre-v3.48.0 structured form that renders the document from four
     // known section keys — dropping every hand-written heading. The stub
     // deliberately does NOT offer that name, so a router calling it reds here.
+    // ── TIER 0 (v3.59.0) ────────────────────────────────────────────────
+    // The three store functions the router calls for foundations, modelled on
+    // the contract rather than invented: `listFoundations` answers an INDEX
+    // with no bodies, `readFoundation` the bytes, `refreshFoundationsFromRepo`
+    // a copy report. Each is opt-in through `fnd` on the seed, so every project
+    // in the rest of this file keeps answering exactly what it answered before
+    // this tier existed — which is what an ABSENT payload looks like on a real
+    // store too.
+    async listFoundations(domain, project) {
+      record('listFoundations', [domain, project]);
+      const p = (data[domain] || {})[project];
+      const f = p && p.fnd;
+      if (!f) return { present: false, documents: [] };
+      if (f.refuse) return { ok: false, reason: f.refuse, message: 'store said no' };
+      return {
+        present: true,
+        ownership: f.ownership || 'repo',
+        repo: f.repo === undefined ? { root: '/repo' } : f.repo,
+        budgetBytes: 200000,
+        totalBytes: (f.documents || []).reduce((a, d) => a + (d.bytes || 0), 0),
+        documents: f.documents || [],
+        orphanFiles: f.orphanFiles || [],
+        manifestError: f.manifestError || null,
+        // A FIELD THE ROUTER HAS NEVER HEARD OF, for the allow-list assertion
+        // — the same hook `extraRowFields` is on the project row, and for the
+        // same reason: without it a `...out` spread would survive its mutation.
+        ...(f.extraFields || {}),
+      };
+    },
+    async readFoundation(domain, project, slug) {
+      record('readFoundation', [domain, project, slug]);
+      const p = (data[domain] || {})[project];
+      const f = p && p.fnd;
+      const doc = f && (f.documents || []).find((d) => d.slug === slug);
+      if (!doc) return { ok: false, reason: 'foundation_not_found', message: 'no such document' };
+      return { ok: true, ...doc, text: f.bodies ? (f.bodies[slug] || '') : '' };
+    },
+    async refreshFoundationsFromRepo(domain, project, repoRoot, opts) {
+      record('refreshFoundationsFromRepo', [domain, project, repoRoot, opts]);
+      const p = (data[domain] || {})[project];
+      const f = p && p.fnd;
+      if (f && f.refreshRefusal) return { ok: false, ...f.refreshRefusal };
+      return { ok: true, refreshed: ['architecture.md'], unchanged: [], added: [], missing: [], commit: 'abc1234' };
+    },
     async saveProjectBriefText(domain, project, text, opts) {
       record('saveProjectBriefText', [domain, project, text, opts]);
       if (!data[domain] || !data[domain][project]) return { ok: false, reason: 'unknown-state-project', message: 'no such project' };
@@ -377,6 +421,12 @@ const EXPECTED = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // TIER 0 (v3.59.0). Four segments, so neither can shadow — or be shadowed by
+  // — the two-segment reads below; the ordering here is readability, not
+  // correctness, and the comment at the route says so. What IS load-bearing is
+  // that both still precede the one-segment alias.
+  ['get', '/:domain/:project/foundations/:slug'],
+  ['post', '/:domain/:project/foundations/refresh'],
   ['get', '/:domain/:project'],
   ['get', '/:project'],
 ];
@@ -1179,6 +1229,297 @@ section('S9 -- A READ NEVER WRITES');
   // THE TIER BOUNDARY, as a source class guard: tiers 2 and 3 are agent-only.
   ok('the route module never calls saveWorkingState( -- tiers 2 and 3 stay agent-only',
     !routeSrc.includes('saveWorkingState('));
+}
+
+// =========================================================================
+section('S10 -- TIER 0: the foundations index, one document, and the refresh');
+// =========================================================================
+//
+// Three routes and one refusal, driven against the stub store. The property
+// under test is the TIER BOUNDARY as it applies to tier 0, which splits on
+// OWNERSHIP rather than on tier:
+//
+//   * a CURATOR-owned document is the commissioned agent's and the app cannot
+//     touch it -- there is no route, and the refresh refuses with a reason;
+//   * a REPO-owned document is a MIRROR, and a refresh is a deterministic byte
+//     copy of a file the repository already authors, which is why that one
+//     write route exists at all.
+
+const FND_DOC = {
+  slug: 'architecture.md', role: 'architecture', title: 'Architecture',
+  bytes: 1200, sha256: 'a'.repeat(64), updatedAt: '2026-09-17T09:00:00.000Z',
+  commit: '9623343', source: { kind: 'repo', path: 'docs/architecture.md' },
+  authoredBy: { kind: 'human' }, freshness: 'fresh',
+};
+const FND_SEED = {
+  alpha: {
+    lumina: {
+      brief: '## Standing brief\n\nx',
+      scopes: [{ scope: 'main', machine: 'm1', lastWriteAt: '2026-09-06T12:00:00.000Z' }],
+      fnd: {
+        ownership: 'repo',
+        documents: [FND_DOC, { ...FND_DOC, slug: 'decisions.md', title: 'Decisions',
+          role: 'decisions', freshness: 'stale' }],
+        bodies: { 'architecture.md': '# Architecture\n\nThe body.' },
+        orphanFiles: ['stray.md'],
+        extraFields: { somethingNew: 'from a newer store' },
+      },
+    },
+    alpha: { brief: null, scopes: [] },
+    curated: {
+      brief: null, scopes: [],
+      fnd: { ownership: 'curator', repo: null,
+        documents: [{ ...FND_DOC, slug: 'decisions.md', source: { kind: 'curator' },
+          commit: null, freshness: 'n/a' }] },
+    },
+    faraway: {
+      brief: null, scopes: [],
+      fnd: { ownership: 'repo', repo: null,
+        documents: [{ ...FND_DOC, freshness: 'unreachable' }],
+        refreshRefusal: { reason: 'repo_unreachable', message: 'not on this machine' } },
+    },
+    broken: { brief: null, scopes: [], fnd: { ownership: 'repo', documents: [], manifestError: 'Unexpected token }' } },
+  },
+  blank: { blank: { brief: null, scopes: [] } },
+  'shared-cohort': { 'shared-cohort': { brief: null, scopes: [] } },
+};
+
+// ── S10a -- the INDEX rides on the detail envelope, bodies and all left out ──
+{
+  install(FND_SEED);
+  const res = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'lumina' } });
+  eq('the detail read still answers 200', res.status, 200);
+  const f = res.body.foundations;
+  ok('the envelope carries a `foundations` object', !!f && typeof f === 'object', JSON.stringify(Object.keys(res.body)));
+  eq('...listing every document', (f.documents || []).length, 2);
+  ok('NO BODY crosses on this route -- it is fetched on every project switch, '
+    + 'and 200 KB of document text on a read whose job is "what is here" would '
+    + 'make the cheapest screen in the app the most expensive',
+  (f.documents || []).every((d) => !('text' in d)), JSON.stringify(f.documents[0]));
+  eq('the freshness the store COMPUTED is forwarded verbatim', f.documents[0].freshness, 'fresh');
+  eq('...including the one that is a mismatch rather than an absence',
+    f.documents[1].freshness, 'stale');
+  eq('the ownership mode crosses, because it decides what may write',
+    f.ownership, 'repo');
+  eq('the orphan-file disclosure crosses -- it is the only thing that says a '
+    + 'save was interrupted', (f.orphanFiles || []).join(','), 'stray.md');
+  eq('...and so does the manifest error field, as an explicit null when there is none',
+    f.manifestError, null);
+  // AN ALLOW-LIST, NOT A SPREAD -- the same rule `projectRow` records: a spread
+  // forwards whatever the store grows next, including anything a synced
+  // manifest.json put there.
+  ok('a field the router has never heard of does NOT cross',
+    !('somethingNew' in f), JSON.stringify(Object.keys(f)));
+
+  // A PROJECT WITH NO FOUNDATIONS says so as a FACT rather than by omitting the
+  // key: a missing key is what an older server answers, and the view's fallback
+  // depends on telling the two apart.
+  const none = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'alpha' } });
+  ok('a project with no foundations still carries the key', 'foundations' in none.body);
+  eq('...reporting present: false', none.body.foundations.present, false);
+  eq('...with an empty list rather than a missing one', none.body.foundations.documents.length, 0);
+
+  // A MANIFEST THAT WILL NOT PARSE MUST NOT COST THE READ. The foundations
+  // index is a PASSENGER: a project whose manifest is unreadable still has a
+  // brief, work-streams and a handoff, and all three must still paint.
+  const bad = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'broken' } });
+  eq('a malformed manifest still answers 200', bad.status, 200);
+  ok('...and discloses the error rather than swallowing it',
+    /Unexpected token/.test(String(bad.body.foundations.manifestError)), JSON.stringify(bad.body.foundations));
+
+  // ...AND SO MUST A STORE THAT THROWS. Same rule, harder case: the index is a
+  // passenger on a read that answers about the brief, the work-streams and the
+  // handoff, so an exception reading a manifest must become a disclosed
+  // `manifestError` and not a 500 over a screen that is otherwise correct.
+  {
+    const thrower = makeStubStore(FND_SEED);
+    thrower.listFoundations = async () => { throw new Error('EACCES: permission denied'); };
+    routerMod.__setWorkingStateStoreForTest(thrower);
+    const r = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'lumina' } });
+    eq('a THROWING store still answers 200 — the other three tiers are correct '
+      + 'and must still paint', r.status, 200);
+    ok('...with the exception disclosed rather than swallowed',
+      /EACCES/.test(String(r.body.foundations.manifestError)), JSON.stringify(r.body.foundations));
+    ok('...and the rest of the envelope intact', r.body.brief && r.body.brief.present === true);
+    install(FND_SEED);
+  }
+}
+
+// ── S10b -- `open` keeps its byte-identity claim ────────────────────────
+//
+// `?open=newest` promises that `open` is byte-for-byte what the equivalent
+// `?scope=&machine=` request answers. Tier 0 is a property of the PROJECT, so
+// the naive reading would put it on the outer envelope only -- and that would
+// break the promise the moment a client compared the two. The same object is
+// therefore attached to both.
+{
+  install(FND_SEED);
+  const opened = await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'lumina' }, query: { open: 'newest' } });
+  const direct = await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'lumina' }, query: { scope: 'main', machine: 'm1' } });
+  ok('the opened pair carries the foundations index too', !!(opened.body.open && opened.body.open.foundations));
+  eq('...and it is the same answer the second request gives, field for field',
+    JSON.stringify(opened.body.open.foundations), JSON.stringify(direct.body.foundations));
+  // ANTI-VACUITY: the comparison is over a real index, not two empty objects.
+  ok('CONTROL: the compared index is a real one',
+    direct.body.foundations.documents.length === 2);
+}
+
+// ── S10c -- one document, verbatim ──────────────────────────────────────
+{
+  install(FND_SEED);
+  const res = await call('get', '/:domain/:project/foundations/:slug',
+    { params: { domain: 'alpha', project: 'lumina', slug: 'architecture.md' } });
+  eq('a stored document answers 200', res.status, 200);
+  eq('...with the bytes as stored', res.body.text, '# Architecture\n\nThe body.');
+  eq('...and the provenance that qualifies them', res.body.source.path, 'docs/architecture.md');
+  eq('...and the commit it came from', res.body.commit, '9623343');
+  eq('...and the pair it belongs to, so a client need not re-derive it', res.body.project, 'lumina');
+
+  const missing = await call('get', '/:domain/:project/foundations/:slug',
+    { params: { domain: 'alpha', project: 'lumina', slug: 'nope.md' } });
+  eq('a document that is not there is a 404 -- never a 200 describing an empty '
+    + 'one, which is how a typo renders as a working, blank page', missing.status, 404);
+  eq('...naming the document it could not find, as a FIELD rather than only in prose',
+    missing.body.slug, 'nope.md');
+  ok('...and forwarding the STORE\'s own sentence rather than restating it -- the '
+    + 'rule `withErrorProse` records: a caller matching on the string the store '
+    + 'gave it must go on matching',
+  String(missing.body.error) === 'no such document', JSON.stringify(missing.body));
+  // ...and when the store gives no prose at all, the route supplies a sentence
+  // that NAMES the document, rather than leaving the user a status code. Driven
+  // against a store whose refusal carries a reason and nothing else.
+  {
+    const silent = makeStubStore(FND_SEED);
+    silent.readFoundation = async () => ({ ok: false, reason: 'foundation_not_found' });
+    routerMod.__setWorkingStateStoreForTest(silent);
+    const r = await call('get', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'alpha', project: 'lumina', slug: 'nope.md' } });
+    eq('a prose-less store refusal is still a 404', r.status, 404);
+    ok('...and the route\'s own fallback sentence names the document',
+      /nope\.md/.test(String(r.body.error)), JSON.stringify(r.body));
+    install(FND_SEED);
+  }
+
+  // THE SLUG IS VALIDATED AT THE BOUNDARY, with the store's own rule, and
+  // nothing that fails it reaches a path builder.
+  for (const evil of ['../../etc/passwd', '..', 'a/b.md', '', 'NOPE.MD', 'no-extension',
+    'x'.repeat(80) + '.md', '-leading.md', 'sp ace.md']) {
+    const r = await call('get', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'alpha', project: 'lumina', slug: evil } });
+    eq('"' + evil.slice(0, 24) + '" is refused as a document name (400)', r.status, 400);
+    eq('...with the reason named', r.body.reason, 'invalid_slug');
+  }
+  // CONTROL: the validator is not refusing everything.
+  eq('CONTROL: a legal slug is NOT refused as invalid',
+    (await call('get', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'alpha', project: 'lumina', slug: 'a1-b2.md' } })).body.reason,
+    'foundation_not_found');
+  // ...and the project name is checked too, on the same route.
+  eq('an unusable PROJECT name is refused before anything is read',
+    (await call('get', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'alpha', project: '../x', slug: 'a.md' } })).status, 400);
+  eq('an unknown DOMAIN is a 404, as on every other read',
+    (await call('get', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'nosuch', project: 'lumina', slug: 'a.md' } })).status, 404);
+}
+
+// ── S10d -- the refresh: what it copies, and the two refusals ───────────
+{
+  install(FND_SEED);
+  const ok200 = await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'lumina' }, body: {} });
+  eq('a repo-owned project may be refreshed', ok200.status, 200);
+  eq('...and is told what was copied', (ok200.body.refreshed || []).join(','), 'architecture.md');
+  eq('...and what was NOT deleted, only lost from the repository',
+    Array.isArray(ok200.body.missing), true);
+  eq('the repository root it used is named back, so a wrong one is visible',
+    ok200.body.repoRoot, '/repo');
+
+  // THE MANIFEST'S ROOT IS THE DEFAULT, and a caller may name another.
+  const asked = await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'lumina' }, body: { repoRoot: '/elsewhere' } });
+  eq('an explicitly named root wins over the manifest\'s hint', asked.body.repoRoot, '/elsewhere');
+
+  // CURATOR-OWNED: a 400, and it is a STATEMENT about the documents rather than
+  // an error condition -- there is no upstream file to copy from.
+  const curated = await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'curated' }, body: {} });
+  eq('a curator-owned project is refused with 400', curated.status, 400);
+  eq('...under a reason a client can match on', curated.body.reason, 'curator_owned');
+  ok('...and a sentence a person can act on', /written for this project/.test(String(curated.body.error)),
+    JSON.stringify(curated.body));
+
+  // UNREACHABLE: a 409. Nothing is malformed and nothing is broken -- the
+  // server's own state is simply not one the request can act on.
+  const far = await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'faraway' }, body: {} });
+  eq('a project with no repository path on this computer is a 409', far.status, 409);
+  eq('...under its own reason', far.body.reason, 'repo_unreachable');
+  ok('...and says what to do about it', /pass the path|checkout|repo_root/i.test(String(far.body.error)),
+    JSON.stringify(far.body));
+  // ...and the STORE's own unreachable refusal maps to the same status, so the
+  // two paths to that answer cannot disagree.
+  {
+    const seeded = JSON.parse(JSON.stringify(FND_SEED));
+    seeded.alpha.faraway.fnd.repo = { root: '/repo' };
+    install(seeded);
+    const r = await call('post', '/:domain/:project/foundations/refresh',
+      { params: { domain: 'alpha', project: 'faraway' }, body: {} });
+    eq('a store-side unreachable is the same 409 as a missing root', r.status, 409);
+    install(FND_SEED);
+  }
+
+  // A READ-ONLY SHARED MIRROR refuses this exactly as it refuses every other
+  // write on this router.
+  eq('a shared-* mirror refuses the refresh (403)',
+    (await call('post', '/:domain/:project/foundations/refresh',
+      { params: { domain: 'shared-cohort', project: 'shared-cohort' }, body: {} })).status, 403);
+}
+
+// ── S10e -- `foundations` is a RESERVED project name ────────────────────
+//
+// It is the directory tier 0 lives in, `<project>/foundations/`. A project of
+// that name would sit exactly where the domain's own project's foundations
+// directory goes -- that project's tree IS the state root -- so the two would
+// be addressed by one path.
+{
+  install(FND_SEED);
+  ok('the router declares it reserved', routerMod.RESERVED_PROJECT_NAMES.has('foundations'));
+  const created = await call('post', '/:domain/projects',
+    { params: { domain: 'alpha' }, body: { project: 'foundations' } });
+  eq('creating a project called `foundations` is refused', created.status, 400);
+  eq('...with the same reason shape the other reserved names use',
+    created.body.reason, 'reserved_project');
+  const renamed = await call('patch', '/:domain/projects/:project',
+    { params: { domain: 'alpha', project: 'lumina' }, body: { rename: 'foundations' } });
+  eq('and so is renaming to it', renamed.status, 400);
+  eq('...under the same reason', renamed.body.reason, 'reserved_project');
+  // CONTROL: an ordinary name still goes through, so the guard is not refusing
+  // everything.
+  eq('CONTROL: an ordinary project name is still accepted',
+    (await call('post', '/:domain/projects',
+      { params: { domain: 'alpha' }, body: { project: 'ordinary' } })).status, 201);
+}
+
+// ── S10f -- every tier-0 READ still writes nothing ──────────────────────
+{
+  install(FND_SEED);
+  const before = fingerprint(DOMAINS);
+  await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'lumina' } });
+  await call('get', '/:domain/:project/foundations/:slug',
+    { params: { domain: 'alpha', project: 'lumina', slug: 'architecture.md' } });
+  await call('get', '/:domain/:project/foundations/:slug',
+    { params: { domain: 'alpha', project: 'lumina', slug: '../../etc/passwd' } });
+  // ...and so does every REFUSED write.
+  await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'curated' }, body: {} });
+  await call('post', '/:domain/:project/foundations/refresh',
+    { params: { domain: 'alpha', project: 'faraway' }, body: {} });
+  const after = fingerprint(DOMAINS);
+  ok('a recursive sha256 of the whole domains tree is identical afterwards',
+    before.hash === after.hash && before.count === after.count, before.hash + ' vs ' + after.hash);
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────
