@@ -2139,7 +2139,7 @@ The chat adapts its answer shape to your question: a **decision** question ("whi
 Chat is the first item in the rail. (It is no longer the screen a fresh install opens on — that is **Domains**; after your first visit the app returns you to whichever view you left. See [Which screen you land on](#which-screen-you-land-on).) It has three parts:
 
 - **The panel beside the rail** — a **New chat** button, a **Filter conversations** box that reads the *contents* of your conversations rather than only their titles, a **Select all** tick, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
-- **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation (4 messages) as wiki pages"*.
+- **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation — 2 questions and 2 answers — as wiki pages"*. The caption counts the bubbles in front of you and updates with every turn, so it and the *"N messages"* on the sidebar row are always two readings of the same thread.
 - **The thread and the composer** below it.
 
 An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation chip (named for the page, since v3.46.0) to open it.
@@ -2148,7 +2148,7 @@ An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page c
 
 *The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the SCOPE pills, and **Compile to Wiki** stands apart from it.*
 
-> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose message count the caption states, as wiki pages. (In the shot above the window edge clips that caption.) What it will **cost** is still the confirmation dialog's job, not the toolbar's.
+> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose questions and answers the caption counts, as wiki pages. (In the shot above the window edge clips that caption.) The caption used to say *"N messages"* and, worse, was painted once and never repainted — so after a few turns it could read *"(2 messages)"* beside a sidebar row saying *"6 messages"* for the same thread. Both numbers had always meant the same thing; only one of them was keeping up. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
 
 > Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
@@ -2236,6 +2236,23 @@ stateDiagram-v2
 | **Thinking** | *Thinking…* | The last few lines of the model's notes, updating in place. **Show all** opens the full text; **Show less** returns to the tail. |
 | **Answering** | *Thought for 57s* | The notes fold themselves away and the answer streams in underneath. **Show reasoning** brings the notes back; **Hide reasoning** puts them away again. |
 | **Done** | *Thought for 57s* | The finished answer, now with headings, bold, lists and `[source: …]` citation chips, plus the model that produced it and what it cost. |
+
+#### Copying a question or an answer
+
+Every finished message carries a small **copy icon** at the right-hand end of its label line — beside *YOU* on your questions, beside *THE CURATOR · &lt;model&gt; · &lt;cost&gt;* on the answers. It is there at rest rather than appearing on hover, so it works on a touch screen and can be reached by keyboard.
+
+What it copies is the **Markdown** — the text the model actually wrote, `**bold**`, lists, `[source: …]` citations and all — not the formatted version you see on screen. That is what you want when the destination is Obsidian, a document or another chat. The icon turns into a tick for a moment to confirm; if your browser refuses the clipboard (some do, on an insecure connection or when the window is not focused) it shows an alert mark instead and says *"Could not copy"* rather than pretending it worked. An answer that is still streaming has no copy icon — it appears when the answer is finished.
+
+#### What the cost figure means
+
+The figure in an answer's label line — *"THE CURATOR · Sonnet 5 · $0.10"* — is the cost of **that one answer**, not a running total for the conversation. Click it and a short breakdown opens under it:
+
+> *This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show*
+
+Two things in that sentence are worth knowing:
+
+- **"out" includes reasoning you never saw.** On models that reason by default — `claude-sonnet-5` is one — the model thinks before it answers, and the provider bills that thinking at the output rate inside the same "out" number. It is why the same question can cost far more on one model than the price table alone suggests. Where the provider tells us how much of the output was reasoning, the breakdown says so; where it does not, the clause is simply absent rather than guessed at.
+- **Later answers in a long thread cost more than earlier ones.** Every previous turn is sent again as input so the model can follow the conversation, so the "in" figure climbs as the thread grows. Starting a **New chat** for a new subject is the cheapest habit in the app.
 
 Three details worth knowing:
 

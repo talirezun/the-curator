@@ -2897,6 +2897,41 @@ function compileMessageCount() {
 }
 
 /**
+ * The same input, SPLIT into the two things a reader can actually point at on
+ * screen: their own questions, and the answers that came back.
+ *
+ * "2 messages" was a true count of a quantity nobody counts. The reported
+ * symptom was a caption reading "(2 messages)" beside a sidebar row reading
+ * "6 messages" for the same thread — see compileCaptionText for that cause,
+ * which is separate — but the wording is its own defect: even once the number
+ * is right, "6 messages" is a unit the user has to reconstruct from three
+ * bubbles plus three bubbles. Questions and answers are the units on screen.
+ *
+ * Counted from the same `state.thread` and the same roles as
+ * compileMessageCount, so `questions + answers` is that function's value by
+ * construction and the caption can never claim a different total from the one
+ * the compile takes as input. Synthetic `role: 'compile'` outcome cards are
+ * excluded here exactly as they are there.
+ *
+ * An errored assistant turn is NOT stored in the conversation file (the server
+ * persists a turn only on success), so a thread loaded from disk has one
+ * answer per question. A LIVE thread can briefly hold an `error` entry, which
+ * IS role 'assistant' and IS counted — deliberately: it is a bubble on screen,
+ * and a caption that silently skipped it would go back to naming a number the
+ * reader cannot verify.
+ */
+function compileTurnCounts() {
+  let questions = 0;
+  let answers = 0;
+  for (const m of state.thread) {
+    if (!m) continue;
+    if (m.role === 'user') questions++;
+    else if (m.role === 'assistant') answers++;
+  }
+  return { questions, answers };
+}
+
+/**
  * The Compile control's own caption — the sentence that has to be true whether
  * or not the reader has understood anything else on this bar.
  *
@@ -2923,8 +2958,45 @@ function compileMessageCount() {
  * user is about to be shown, not as a second, competing description.
  */
 function compileCaptionText() {
-  const n = compileMessageCount();
-  return 'Saves this conversation (' + n + ' message' + (n === 1 ? '' : 's') + ') as wiki pages';
+  const { questions, answers } = compileTurnCounts();
+  const q = questions + ' question' + (questions === 1 ? '' : 's');
+  // "0 answers" is grammatical and unhelpful; "no answers yet" says the same
+  // fact and says why it is not a mistake. Reachable in one real state: a
+  // stopped first turn whose answer never arrived.
+  const a = answers === 0 ? 'no answers yet' : (answers + ' answer' + (answers === 1 ? '' : 's'));
+  return 'Saves this conversation — ' + q + ' and ' + a + ' — as wiki pages';
+}
+
+/**
+ * Re-state the caption's counts in place, without repainting the scope bar.
+ *
+ * THIS IS THE REPORTED DEFECT, not the wording. The caption is built by
+ * `renderMain`, which runs on a MOUNT, a domain switch or a conversation
+ * switch. An ordinary turn does not go through it: `sendCurrentMessage`'s
+ * not-new branch calls `renderThreadOnly` + `renderSidebarConversationsOnly`
+ * and patches the sidebar row's count with `bumpMessageCountForTurn`, so the
+ * sidebar ticked 2 -> 4 -> 6 while the caption kept the number it was painted
+ * with. That is exactly the reported "(2 messages)" beside "6 messages" — the
+ * two counters agreed about WHAT to count all along and disagreed about WHEN.
+ *
+ * A TARGETED `textContent` WRITE, never a re-render, for the reason
+ * `updateCompileButtonBusy` directly above states about itself: rebuilding
+ * this bar mid-thread would tear down and re-focus the composer, and the
+ * v3.53.1 defect this repo records was a section re-rendering itself from a
+ * tick. Nothing here reads state that a repaint would refresh — the counts
+ * come from `state.thread`, which the caller has just changed.
+ *
+ * ABSENT ELEMENT IS A NO-OP, AND THAT IS COMPLETE, not lazy: the caption
+ * exists only where the button exists (compileControlHtml is one builder for
+ * both), and the button APPEARS only when a conversation gains its first user
+ * turn — which is `sendCurrentMessage`'s wasNew branch, and that branch calls
+ * `renderShell`. So every transition that can create the caption already
+ * repaints the bar; this covers every transition that can only change it.
+ */
+function refreshCompileCaption() {
+  const el = document.querySelector('.chat-compile-caption');
+  if (!el) return;
+  el.textContent = compileCaptionText();
 }
 
 /**
@@ -4369,6 +4441,13 @@ function messageUsageTokens(m) {
   // hand-edited or synced conversation file cannot make a paid answer render as
   // exactly $0.00. See normalizeReportedUsage in src/brain/chat.js.
   if (out.inputTokens === 0 && out.outputTokens === 0) return null;
+  // The fifth field, OPTIONAL by the same rule the store applies (see
+  // normalizeReportedUsage in src/brain/chat.js): only OpenRouter reports it,
+  // so requiring it would erase every cost figure on Anthropic and Gemini.
+  // Omitted rather than defaulted to 0, so "not reported" and "no reasoning"
+  // stay two different facts and the breakdown can decline to claim either.
+  const r = u.reasoningTokens;
+  if (typeof r === 'number' && Number.isFinite(r) && r >= 0) out.reasoningTokens = r;
   return out;
 }
 
@@ -4710,14 +4789,65 @@ function costMarkHtml(panelId, title, text) {
  *   makes the panel id unique. Defaults to 0 so a two-argument call — which
  *   every offline suite makes — still produces a well-formed pair.
  */
+/*
+ * ── THE SENTENCE BEHIND THE DOLLAR FIGURE ────────────────────────────────
+ * Built INLINE inside assistantCostHtml below rather than factored into its
+ * own function, and that is deliberate rather than lazy: several suites
+ * extract `assistantCostHtml` by name into a sandbox with an enumerated
+ * binding list, and a helper it called would have to be added to each of
+ * those lists — files this change does not own. The behaviour is asserted
+ * through assistantCostHtml's real output, which is the surface anyway.
+ *
+ * ── WHY IT NAMES REASONING, AND WHY IT NAMES "THIS ANSWER" ───────────────
+ * Reported by a user comparing two answers to the same question: Sonnet 5
+ * "$0.10" beside Flash Lite 2.5 "$0.0024" — 41.7x — where the price table
+ * (llm.js MODEL_PRICES_USD_PER_MTOK: $0.10/$0.40 against $2/$10 per Mtok)
+ * implies about 21x. The gap is ADAPTIVE THINKING: this app sends no
+ * `thinking` parameter, which on Sonnet 5 means the model reasons by default
+ * and the provider bills that reasoning inside `output_tokens`. The old
+ * breakdown read "19250 in / 6150 out tokens" — every number correct, and
+ * none of them able to explain the figure above them, because roughly 4,900
+ * of that output was deliberation nobody was shown.
+ *
+ * "This answer:" is the second half of the same complaint. A thread's later
+ * turns cost more than its earlier ones because every previous turn is re-sent
+ * as input, so a per-answer figure with no stated scope reads as a running
+ * total that is climbing for no reason. Naming the scope costs two words.
+ *
+ * ── WHAT IT WILL NOT DO ──────────────────────────────────────────────────
+ * Say "0 reasoning". `reasoningTokens` is absent on every provider except
+ * OpenRouter (Anthropic reports no separate count; Gemini's
+ * `thoughtsTokenCount` is not surfaced by its normalizer), and "not reported"
+ * is not "none". A missing field produces no clause at all, so this sentence
+ * is never the reason someone believes a thinking model did not think.
+ * A reported ZERO is equally not printed — there is nothing hidden to
+ * disclose — which is why the test is truthiness here and `Number.isFinite`
+ * at the two gates that decide whether the field EXISTS.
+ *
+ * ONE string, used for both the panel body and the `title=` on the control
+ * that opens it — the property assistantCostHtml's own docblock already
+ * claims ("Both strings come from the same `title` variable, so they cannot
+ * disagree").
+ */
 function assistantCostHtml(m, ctx, index) {
   const usd = messageCostUsd(m, ctx);
   const u = messageUsageTokens(m);
+  // See the block comment above this function for why this is inline and what
+  // each clause is for. `.toLocaleString()` is spelled out at each of the five
+  // counts rather than wrapped in a local `tok()` helper — even a local arrow
+  // is a call, and test-next-composer-model.js §0's extraction manifest (a
+  // static call-graph scan over the functions it sandboxes) would have to name
+  // it. Repetition here, in a file this change owns, is cheaper than an entry
+  // in a suite it does not.
   const title = u
-    ? u.inputTokens + ' in / ' + u.outputTokens + ' out' +
-      (u.cachedReadTokens ? ' / ' + u.cachedReadTokens + ' cached' : '') +
-      (u.cacheWriteTokens ? ' / ' + u.cacheWriteTokens + ' cache write' : '') +
-      ' tokens'
+    ? 'This answer: ' + Number(u.inputTokens).toLocaleString() +
+      ' in / ' + Number(u.outputTokens).toLocaleString() + ' out' +
+      (u.cachedReadTokens ? ' / ' + Number(u.cachedReadTokens).toLocaleString() + ' cached' : '') +
+      (u.cacheWriteTokens ? ' / ' + Number(u.cacheWriteTokens).toLocaleString() + ' cache write' : '') +
+      ' tokens' +
+      (u.reasoningTokens
+        ? ', of which ' + Number(u.reasoningTokens).toLocaleString() + ' reasoning the model did not show'
+        : '')
     : '';
   // `renderThreadOnly` rebuilds the whole thread with one innerHTML write, so
   // an id only has to be unique WITHIN one paint of one conversation — the
@@ -5942,6 +6072,145 @@ function questionForAnswerIndex(index) {
   return null;
 }
 
+// ── COPY A MESSAGE ────────────────────────────────────────────────────────
+//
+// Asked for by a user (Robin Good) and specified by the maintainer as an ICON,
+// with no word beside it. One per message, on both sides of the thread: an
+// answer copies as the MARKDOWN the model wrote — the same string the compile
+// path stores and the same one `renderMarkdown` renders — never the rendered
+// HTML, and never the citation chips as this view drew them. A question copies
+// the question.
+//
+// VISIBLE AT REST, at reduced emphasis. Not hover-only: a hover-only control
+// does not exist on a touch screen and cannot be found by keyboard, and this
+// repo's v3.16.1 rule is that a control that matters is not behind a hover.
+// `--text-3` is the eyebrow's own ink, so it reads as part of the meta line
+// rather than as a second call to action beside "Ask again with another
+// model" — which spends money, where this does not.
+//
+// NO `title=`. The tooltip would be the only carrier of a fact for mouse users
+// and nothing for anyone else; `aria-label` plus a `.visually-hidden` label
+// carry it instead, with the SAME string from the same variable so the two
+// cannot disagree. chat.js is not in test-next-header-adoption.js §6's
+// per-file `title=` ratchet, so nothing here was forced — this is the house
+// rule that ratchet exists to hold, applied where it is not yet enforced.
+//
+// THE TEXT IS NOT IN THE MARKUP. `data-copy-msg` carries the message's INDEX
+// and the handler reads `state.thread[i].content` at click time — the same
+// shape `data-reask` already uses. An answer is routinely kilobytes; putting
+// it in an attribute would be a second, escaped copy of every message in the
+// DOM for the sake of a control almost nobody presses.
+const COPY_FEEDBACK_MS = 1500;
+
+/**
+ * The copy control for one message, or '' when there is nothing to copy.
+ *
+ * Returns '' for an empty or whitespace-only `content`, which is what an
+ * ERRORED assistant turn carries (the error text lives in `m.error` and is the
+ * provider's sentence, not an answer) and what a stopped turn leaves behind. A
+ * control that would write an empty string to the clipboard is an inert
+ * control, and this repo has shipped two of those and recorded both.
+ *
+ * NOTHING IS EMITTED FOR THE STREAMING BUBBLE, and that needs no check here:
+ * the in-flight bubble is painted from `sendStream` and is deliberately never
+ * pushed into `state.thread` (see sendStream's declaration), so this function
+ * is never called for it. The answer becomes copyable at the moment it becomes
+ * a thread entry, which is the moment it is final.
+ *
+ * @param {number} index the message's index in `state.thread` — the handle the
+ *   click handler resolves the text through.
+ * @param {'answer'|'question'} kind which word the accessible name uses.
+ * @param {object} m the message itself, read ONLY to decide whether there is
+ *   anything to copy.
+ */
+function copyControlHtml(index, kind, m) {
+  if (!Number.isInteger(index) || index < 0) return '';
+  if (!m || typeof m.content !== 'string' || !m.content.trim()) return '';
+  const label = kind === 'question' ? 'Copy question' : 'Copy answer';
+  return (
+    '<button type="button" class="chat-copy-btn" data-copy-msg="' + index + '"' +
+      ' aria-label="' + label + '">' +
+      '<span class="chat-copy-glyph">' + icon('copy', 13) + '</span>' +
+      '<span class="visually-hidden">' + label + '</span>' +
+    '</button>' +
+    // The confirmation, for a reader who cannot see the glyph change. OUTSIDE
+    // the button on purpose: a live region inside a control is inside that
+    // control's own subtree, and the button already has an `aria-label`, so
+    // the region's text would be both ignored for the name and announced from
+    // an odd place. It is `.visually-hidden`, which is absolutely positioned,
+    // so filling it moves nothing on screen.
+    '<span class="visually-hidden" role="status" aria-live="polite" data-copy-status></span>'
+  );
+}
+
+// Per-button reset timers. A WeakMap rather than a property on the element:
+// `renderThreadOnly` replaces the whole thread with one `innerHTML` write, so
+// these buttons are discarded constantly and a WeakMap lets the entry go with
+// them. A timer that fires against a detached button writes into a node nobody
+// is looking at — harmless, and cheaper than tracking mounts for a 1.5 s
+// cosmetic reset.
+const copyResetTimers = new WeakMap();
+
+/**
+ * Paint the outcome of one copy attempt, then undo it.
+ *
+ * The glyph is swapped IN PLACE (same `icon()` call, same 13px box) rather
+ * than a word being added beside it, so nothing on the line moves — the
+ * requirement that made this an icon in the first place.
+ *
+ * A FAILURE IS SHOWN, not swallowed. `navigator.clipboard` is absent in an
+ * insecure context and `writeText` rejects when the document is not focused or
+ * permission is refused; in both cases the user pressed a control and must be
+ * told it did not do the thing. Same glyph geometry, different mark and
+ * different sentence.
+ */
+function markCopyOutcome(btn, okFlag) {
+  const glyph = btn.querySelector('.chat-copy-glyph');
+  const status = btn.nextElementSibling;
+  const prev = copyResetTimers.get(btn);
+  if (prev) clearTimeout(prev);
+  btn.classList.remove('is-copied', 'is-failed');
+  btn.classList.add(okFlag ? 'is-copied' : 'is-failed');
+  if (glyph) glyph.innerHTML = icon(okFlag ? 'check' : 'alertCircle', 13);
+  if (status && status.hasAttribute && status.hasAttribute('data-copy-status')) {
+    status.textContent = okFlag ? 'Copied' : 'Could not copy';
+  }
+  copyResetTimers.set(btn, setTimeout(() => {
+    copyResetTimers.delete(btn);
+    btn.classList.remove('is-copied', 'is-failed');
+    if (glyph) glyph.innerHTML = icon('copy', 13);
+    // Cleared, not left standing: a live region that still says "Copied" is a
+    // stale claim the next screen-reader pass can read back.
+    if (status && status.hasAttribute && status.hasAttribute('data-copy-status')) status.textContent = '';
+  }, COPY_FEEDBACK_MS));
+}
+
+/**
+ * Put one message's own text on the clipboard.
+ *
+ * Reads the text from `state.thread` at CLICK time rather than from anything
+ * captured at render time: the thread is rebuilt on every turn, and the index
+ * is the only handle that survives the rebuild intact.
+ *
+ * Exported shape is a promise-free void — the caller is a click handler, and a
+ * rejected promise escaping into one is an unhandled rejection. Both arms of
+ * `writeText` are handled here, and a host with no Clipboard API at all takes
+ * the failure arm rather than throwing.
+ */
+function copyMessageText(btn) {
+  const i = Number(btn.getAttribute('data-copy-msg'));
+  const m = Number.isInteger(i) && i >= 0 ? state.thread[i] : null;
+  const text = m && typeof m.content === 'string' ? m.content : '';
+  if (!text) { markCopyOutcome(btn, false); return; }
+  let p = null;
+  try {
+    const clip = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    if (clip && typeof clip.writeText === 'function') p = clip.writeText(text);
+  } catch { p = null; }
+  if (p && typeof p.then === 'function') p.then(() => markCopyOutcome(btn, true), () => markCopyOutcome(btn, false));
+  else markCopyOutcome(btn, false);
+}
+
 /**
  * The control itself, or '' when there is nothing to re-ask.
  *
@@ -6104,6 +6373,7 @@ function renderThreadOnly(token, opts) {
       return (
         '<div class="chat-msg chat-msg-user">' +
           '<div class="chat-msg-eyebrow mono">YOU</div>' +
+          copyControlHtml(i, 'question', m) +
           '<div class="chat-bubble">' + escapeHtml(m.content).replace(/\n/g, '<br>') + '</div>' +
         '</div>'
       );
@@ -6160,6 +6430,12 @@ function renderThreadOnly(token, opts) {
     return (
       '<div class="chat-msg chat-msg-assistant">' +
         assistantEyebrowHtml(m, eyebrowCtx, i) +
+        // A SIBLING of the eyebrow rather than a child of it, and positioned
+        // into the meta line by chat.css. assistantEyebrowHtml can emit a
+        // SECOND block under the eyebrow (the model-divergence notice), so
+        // wrapping the two in a flex row would put that sentence beside the
+        // button instead of under the line it qualifies.
+        copyControlHtml(i, 'answer', m) +
         '<div class="chat-answer">' + renderMarkdown(m.content || '') + '</div>' +
         (chips ? '<div class="chat-cite-row">' + chips + '</div>' : '') +
         reaskButtonHtml(i) +
@@ -6184,6 +6460,17 @@ function renderThreadOnly(token, opts) {
     '</div>'
   ) : '') + cancelNoticeHtml();
 
+  // The Compile caption counts what is in `state.thread`, which this function
+  // has just repainted from — and it lives in the scope bar, outside this
+  // element, so nothing above touches it. See refreshCompileCaption for why
+  // this is a targeted write rather than a repaint, and why it is safe for it
+  // to find nothing. Placed AFTER the empty-thread early return on purpose: a
+  // caption under a live Compile button and an empty thread is a state this
+  // view cannot reach (every path that empties the thread goes through
+  // renderShell, which rebuilds the bar), and writing "0 questions" here would
+  // be inventing an answer for it.
+  refreshCompileCaption();
+
   // Delegated click for the re-ask control. One handler for the whole thread,
   // not one per message: `renderThreadOnly` replaces this element's entire
   // innerHTML on every send, so per-row listeners would be re-bound (and their
@@ -6204,6 +6491,13 @@ function renderThreadOnly(token, opts) {
         restoreFocusTo: 'chat-model-lb',
       });
     });
+  });
+
+  // Delegated click for the copy controls. Bound here, with every other
+  // listener in this block, for the same reason they are: the `innerHTML`
+  // replacement above dropped the previous buttons and their handlers.
+  el.querySelectorAll('[data-copy-msg]').forEach(btn => {
+    btn.addEventListener('click', () => copyMessageText(btn));
   });
 
   // Delegated click for the citation-chip row below the message. `data-cite`

@@ -335,13 +335,37 @@ export function renderMarkdown(raw) {
   let codeBuf = [];
   let listType = null;
   let listBuf = [];
+  // The number the CURRENT ordered list was opened with. See the `start` note
+  // above the `num` branch below. Meaningless while `listType !== 'ol'`.
+  //
+  // flushList resets it, and that reset is DEFENCE IN DEPTH rather than
+  // load-bearing — measured, not assumed: deleting it leaves every assertion
+  // in scripts/test-next-markdown.js §11 green, because `listType` only ever
+  // becomes 'ol' inside the `num` branch and that branch always assigns
+  // `listStart` when no list is open. It is kept because it states the rule
+  // where the next reader meets it, and a future edit that sets `listType`
+  // from anywhere else would otherwise inherit the previous list's number in
+  // silence. Recorded here rather than claimed as enforced — the same
+  // convention chat.js's `bumpMessageCountForTurn` id gate follows.
+  let listStart = 1;
   let para = [];
 
   const flushPara = () => {
     if (para.length) { out.push('<p>' + para.map(renderInline).join('<br>') + '</p>'); para = []; }
   };
   const flushList = () => {
-    if (listType) { out.push('<' + listType + '>' + listBuf.join('') + '</' + listType + '>'); listBuf = []; listType = null; }
+    if (listType) {
+      // `start` is emitted ONLY when the list did not open at 1, so the
+      // overwhelming majority of lists render byte-identically to before this
+      // change. `listStart` is a Number this function produced from a
+      // `\d{1,9}` capture and then re-stringified — it is a literal of ours by
+      // the time it reaches the attribute, in the same sense
+      // tableAlignClass()'s return value is, so the cardinal rule (never
+      // interpolate INPUT TEXT into an attribute) is intact.
+      const attr = (listType === 'ol' && listStart !== 1) ? ' start="' + listStart + '"' : '';
+      out.push('<' + listType + attr + '>' + listBuf.join('') + '</' + listType + '>');
+      listBuf = []; listType = null; listStart = 1;
+    }
   };
 
   for (let li = 0; li < lines.length; li++) {
@@ -412,12 +436,50 @@ export function renderMarkdown(raw) {
       continue;
     }
 
-    const num = line.match(/^\s*\d+\.\s+(.*)$/);
+    // ── ORDERED LISTS CARRY THE NUMBER THEY WERE OPENED WITH ─────────────
+    // Reported from real use (Robin Good, with screenshots): an answer whose
+    // items were numbered 1. 2. 3. rendered "1." four times, while the same
+    // question to a different model rendered 1, 2, 3. REPRODUCED OFFLINE
+    // against this function, and the cause is NOT that the model repeated
+    // "1." — it is that ANY non-list line between two items ends the list
+    // here, and each following item then opened a FRESH <ol> with no `start`,
+    // which the browser restarts at 1. The model in the screenshot had put
+    // its own `[source: …]` citation on a line of its own after each item
+    // (that line is the model's, not something this app inserts), so every
+    // item became a one-item list.
+    //
+    // Measured on the maintainer's real corpus (5,575 rendered documents —
+    // every wiki page, every raw source, every stored chat message across six
+    // domains): 21 documents (0.38 %) render differently with `start`, and
+    // every one of them was a genuinely mis-numbered list — including one
+    // that restarted at 1 after item 5.
+    //
+    // THE HONEST LIMIT, STATED RATHER THAN IMPLIED: this makes the rendered
+    // numbers agree with the numbers the author WROTE, which is CommonMark's
+    // rule (the first item's number sets `start`; later numbers are ignored).
+    // It does NOT re-join the broken list. A model that writes "1." for every
+    // item AND breaks between them still renders 1, 1, 1 — because that is
+    // what it numbered. The fuller fix is CommonMark's loose-list and lazy-
+    // continuation rules, which WERE built and measured here and are NOT
+    // shipped: they change 108 of the same 5,575 documents, and while 76 of
+    // those are two adjacent lists correctly merging, 23 swallow a following
+    // paragraph into the last list item — including the "Warnings:" heading
+    // in every domain's own wiki/log.md. That is a separate change with its
+    // own evidence to gather, not a rider on this one.
+    //
+    // `\d{1,9}` rather than `\d+`: the value is re-emitted as an attribute, so
+    // it is bounded to something an <ol> can actually count from. A longer run
+    // of digits simply fails to match and renders as ordinary text.
+    const num = line.match(/^\s*(\d{1,9})\.\s+(.*)$/);
     if (num) {
       flushPara();
       if (listType && listType !== 'ol') flushList();
+      // Only the item that OPENS the list sets the number. Once the list is
+      // open, later numbers are ignored — CommonMark's own rule, and what
+      // already made a contiguous "1. 1. 1." render as 1, 2, 3.
+      if (!listType) listStart = Number(num[1]);
       listType = 'ol';
-      listBuf.push('<li>' + renderInline(num[1]) + '</li>');
+      listBuf.push('<li>' + renderInline(num[2]) + '</li>');
       continue;
     }
 

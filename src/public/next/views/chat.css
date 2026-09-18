@@ -555,12 +555,85 @@
 .chat-msg {
   max-width: 780px;
   margin: 0 auto 24px;
+  /* The containing block for .chat-copy-btn below. Nothing else in a message
+     is positioned, so this introduces no new stacking behaviour. */
+  position: relative;
 }
 .chat-msg-eyebrow {
   font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
   letter-spacing: var(--track-eyebrow);
   color: var(--text-3);
   margin-bottom: 6px;
+  /* The copy button's lane, reserved rather than overlapped. The eyebrow can
+     run long (model name + cost) and the button is out of flow, so without
+     this a narrow column would let the two collide. */
+  padding-right: 28px;
+}
+
+/* ── COPY THIS MESSAGE ────────────────────────────────────────────────────
+   ONE ICON, NO WORD — the maintainer's call, and the same icon-only shape the
+   Agent-memory Edit control takes, from the same shared `icon()` table, so the
+   two views read as one app.
+
+   OUT OF FLOW, pinned to the top-right of the message block. That is what puts
+   it on the meta line beside "THE CURATOR · Sonnet 5 · $0.10" without
+   restructuring that line into a flex row — assistantEyebrowHtml can emit a
+   divergence notice underneath it, which a flex row would drag up alongside
+   the button. Being out of flow is also what makes the glyph swap on success
+   cost ZERO layout: the button never participates in the message's height.
+
+   VISIBLE AT REST, at the eyebrow's own ink. `--text-3` on `--canvas`
+   measured 7.55:1 (dark) / 7.02:1 (light) — comfortably over the 4.5 floor
+   that applies to a control a user has to find — and it brightens to `--text`
+   on hover and focus. It is deliberately quieter than `.chat-reask-btn`
+   beneath it, which spends money where this does not.
+
+   The 24x24 box is grown to `--hit-min` by a transparent ::before, the same
+   technique and the same reason as `.chat-conv-delete` above: the drawn
+   affordance stays small while the target clears the platform minimum. */
+.chat-copy-btn {
+  position: absolute;
+  top: -5px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
+}
+.chat-copy-btn::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 24px) / -2);
+}
+.chat-copy-btn:hover { background: var(--surface-hover); color: var(--text); }
+.chat-copy-btn:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+/* No `outline: none` and no box-shadow: base.css's global :focus-visible ring
+   is the whole focus treatment here (v3.24.2 — a local shadow fights it). */
+
+/* The two outcomes, told apart by MARK first and colour second: the glyph is
+   already a tick or an alert by the time these apply, so neither state relies
+   on colour alone. Both are existing semantic tokens — nothing new is minted
+   to say "it worked". */
+.chat-copy-btn.is-copied { color: var(--accent-text); }
+.chat-copy-btn.is-failed { color: var(--danger-text); }
+/* The glyph box is fixed at the icon's own size so swapping copy -> check ->
+   alert cannot change the button's interior. */
+.chat-copy-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
 }
 /* What THIS answer cost, appended to the eyebrow beside the model that
    produced it. It is a fact about the message, not a callout, and the
@@ -2162,6 +2235,7 @@
   .chat-browse-clear:active,
   .chat-browse-close:active,
   .chat-filter-ask:active,
+  .chat-copy-btn:active,
   .chat-cite-chip:active { transform: none; }
   .chat-conv-row::before { transition: none; }
 }
