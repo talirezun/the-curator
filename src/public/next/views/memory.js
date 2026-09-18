@@ -137,6 +137,10 @@ import {
   // user who presses Escape while it is in flight must not have the document
   // reopened on top of whatever they went back to.
   openReader, isCurrentReader,
+  // THE SHELL'S ONE NAVIGATION CHOKEPOINT. Used by the two POINTERS this view
+  // carries — "Create a project in Domains" on a project with no documents
+  // chosen — which are pointers rather than second write paths.
+  navigate,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE text system in /next (shared/text.js). Imported, never re-implemented:
@@ -147,7 +151,7 @@ import { renderMarkdown } from '../shared/markdown.js';
 // asserts these imports are present AND reached, because a component that ships
 // unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadout, renderViewHeader,
+  renderDescription, renderStatus, renderReadout, renderViewHeader, renderInfoMark,
 } from '../shared/text.js';
 // Every link out of the app into docs/ is a key in ONE table, checked offline
 // against the real markdown (shared/docs-links.js). The "How this works" panel
@@ -204,6 +208,15 @@ import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BA
 // either blocks a save the server would accept or offers one it refuses with a
 // 400 the user cannot act on. scripts/test-next-foundations-editor.js pins
 // every one of them against src/brain/working-state.js.
+// ── THE DRAFTING REQUEST'S ONE SOURCE (P2-8) ─────────────────────────────
+// Model-read instruction text, sha-pinned in shared/agent-instructions.js
+// beside its three siblings, and IMPORTED here rather than typed: a second
+// copy of model-read text is this repository's most reliably recurring defect,
+// and scripts/test-agent-instructions.js §S9 scans this file for its sentences
+// and fails on one. It is deliberately NOT part of
+// `composeAgentInstructionsFull` — that output is pasted into CLAUDE.md, where
+// "draft these now" would become a standing instruction to keep re-drafting.
+import { composeDraftingAsk } from '../shared/agent-instructions.js';
 import {
   FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
@@ -548,6 +561,20 @@ const FOCUSABLE_IDS = [
   'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
   // The ownership chooser's own commit, on a project that has no manifest.
   'mem-fnd-init-go',
+  // ── WP-V2's NEW CONTROLS ──────────────────────────────────────────────
+  // `mem-fnd-file-btn` and `mem-fnd-init-files-btn` are the real <button>s
+  // that click a `hidden` file input (P1-7): the input itself is out of the
+  // tab order, so the BUTTON is what focus can be on when the file dialog
+  // returns and a render repaints the pane.
+  'mem-fnd-file-btn', 'mem-fnd-init-files-btn',
+  // The drafting ask and the Domains pointer. Neither removes itself, but each
+  // causes a render (a copy outcome; a view change), and a render replaces the
+  // pane they sit in.
+  'mem-fnd-ask', 'mem-fnd-to-domains',
+  // The ⓘ beside the drafting ask, for the reason the two header marks below
+  // are here: a keyboard user reading the panel is dropped to <body> on the
+  // next poll without it.
+  'mem-fnd-ask-info-btn',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -1619,6 +1646,75 @@ async function saveBrief(token) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// THE HANDOFF FROM ANOTHER VIEW — one project, once (P1-10)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── THE PROBLEM ─────────────────────────────────────────────────────────
+// `navigate()` takes ONE argument — a view name, no parameters — and this
+// view's arrival path picks the domain by SAVE RECENCY and then the project
+// from a remembered-per-domain map. A project created a second ago has no
+// saves, so it loses the recency question outright: "Open in Agent memory"
+// after a create would land on whichever project last had an agent write to
+// it, which is a navigation that works most of the time. That is the worst
+// property a navigation can have, and it is why writing the remembered map
+// was rejected as the cheap fix.
+//
+// ── WHY A MODULE VARIABLE IS THE RIGHT ANSWER, NOT A STOPGAP ────────────
+// Three properties, and each one is the reason a more obvious option was not
+// taken:
+//
+//   · IT CANNOT GO STALE, because it is CLEARED ON READ. A parameter left in
+//     `localStorage` would re-open a project the owner had navigated away from
+//     three days later; this survives exactly one arrival.
+//   · IT NEEDS NO STORAGE. No new key, and nothing to migrate or forget.
+//   · IT LEAVES `initialPick` PURE. The decision function keeps its whole
+//     suite and its whole contract; this is consulted BEFORE it, so the
+//     ordinary arrival is byte-identical to what it was.
+//
+// The alternative — `navigate(name, params)` — is the correct long-term shape
+// and touches the shell's single navigation chokepoint and every call site's
+// assertions. It is not this release's work.
+//
+// ── THE HAZARD THIS SHAPE RESPECTS ──────────────────────────────────────
+// `wire()` in this file is LIFTED by brace-matching and EXECUTED against a
+// hand-written stub set in scripts/test-agent-instructions.js, so a free
+// identifier named inside it is a CRASH there rather than a failing assertion.
+// This function is named inside `loadIndex` only — never `wire()` — and the
+// WRITER is views/domains.js, which calls the export.
+let pendingProject = null;
+
+/**
+ * ASK THIS VIEW TO OPEN ONE PROJECT ON ITS NEXT ARRIVAL.
+ *
+ * Called by views/domains.js immediately before `navigate('memory')`, so the
+ * mount that follows consumes it. Both names are required: a request naming
+ * only a project would have to guess the domain, which is the ambiguity
+ * `list_projects` refuses to guess at one layer down.
+ *
+ * Exported rather than reached for, and consumed rather than read, so there is
+ * exactly one writer, one reader and no lifetime longer than one navigation.
+ */
+export function requestProject(domain, project) {
+  const d = String(domain == null ? '' : domain).trim();
+  const p = String(project == null ? '' : project).trim();
+  if (!d || !p) { pendingProject = null; return; }
+  pendingProject = { domain: d, project: p };
+}
+
+/**
+ * THE REQUEST, IF THERE IS ONE, AND ONLY ONCE.
+ *
+ * Clearing here — at the READ, not at the use — is what makes the staleness
+ * argument hold: whatever `loadIndex` then does with it, including deciding it
+ * names a project this index does not have, the request is spent.
+ */
+function takePendingProject() {
+  const want = pendingProject;
+  pendingProject = null;
+  return want;
+}
+
 async function loadIndex(token) {
   const gate = loadGate;                 // capture: the next mount replaces it
   const got = await fetchIndex(token);
@@ -1629,7 +1725,19 @@ async function loadIndex(token) {
     state.indexError = got.error;
   }
 
-  const pick = initialPick(state.projects, readRememberedProjects());
+  // ── THE HANDOFF IS CONSULTED BEFORE THE ORDINARY DECISION (P1-10) ──────
+  // And it is VERIFIED against the index rather than trusted: a project
+  // created a moment ago should be in this list, but if the create succeeded
+  // and the index read raced it, opening a project that is not there would
+  // paint an error under a name nothing can answer about. When the row is
+  // missing the ordinary arrival takes over — the owner lands somewhere real,
+  // which is a worse answer than the one they asked for and a much better one
+  // than a broken screen.
+  const want = takePendingProject();
+  const asked = want && Array.isArray(state.projects)
+    ? state.projects.find((r) => r && r.domain === want.domain && r.project === want.project)
+    : null;
+  const pick = asked || initialPick(state.projects, readRememberedProjects());
 
   settleGate(gate, () => {
     state.loading = false;
@@ -2704,17 +2812,34 @@ function renderCopyOutcome() {
   // would put a 24px gap between a refusal and the text it is handing over.
   // The empty arms above return before the wrapper, so an outcome that renders
   // nothing never emits an empty box for the rule to space around.
+  // ── TWO CONTROLS NOW WRITE THIS RECORD (P2-8) ──────────────────────────
+  // The header's "Copy agent instructions" and the Foundations block's "Copy
+  // the drafting request" put two DIFFERENT texts on the clipboard for two
+  // different files, so one confirmation cannot describe both: an owner who
+  // pressed the drafting ask and read "paste it into CLAUDE.md" has been told
+  // the wrong thing about the thing they are holding. `kind` is the
+  // discriminator, and an ABSENT kind means the header's control — the
+  // pre-v3.61.0 record shape, so the success and refusal arms it produces stay
+  // byte-identical.
+  const draft = c.kind === 'draft';
   if (c.ok) {
     return '<div class="mem-section">' + renderStatus({
       state: 'success',
-      title: 'Agent instructions copied',
-      detail: COPY_SUCCESS_BANNER,
+      title: draft ? 'Drafting request copied' : 'Agent instructions copied',
+      detail: draft
+        ? 'Paste it into any assistant with the my-curator bridge installed.'
+        : COPY_SUCCESS_BANNER,
     }) + '</div>';
   }
+  // THE TEXT IS PRINTED, not merely lamented. A button that silently did
+  // nothing is the worst outcome here, so the refusal hands over exactly what
+  // would have been on the clipboard, to be selected by hand.
   return '<div class="mem-section">' + renderStatus({
     state: 'attention',
     title: 'Could not copy',
-    detail: 'Your browser refused clipboard access. Select the block below and copy it by hand.',
+    detail: draft
+      ? 'Your browser refused clipboard access. Select the text below and copy it by hand.'
+      : 'Your browser refused clipboard access. Select the block below and copy it by hand.',
   }) + '<pre class="mem-copy-fallback">' + escapeHtml(c.text) + '</pre></div>';
 }
 
@@ -2737,6 +2862,53 @@ async function copyAgentInstructions(token) {
   } catch { ok = false; }
   if (!isCurrentMount(token)) return;
   state.copied = { domain, project, ok, text };
+  render(token);
+}
+
+/**
+ * "COPY THE DRAFTING REQUEST" — the same discipline, a different text (P2-8).
+ *
+ * ── THE DOCUMENTS IT NAMES ARE THE PROJECT'S OWN ────────────────────────
+ * Q8's decision: the sentence lists this project's UNFILLED documents, read off
+ * the payload's `skeleton` flags, so an owner with three skeletons does not
+ * paste a request for four — and when every document is written it lists them
+ * all, because asking for a rewrite of a named set is legitimate and asking
+ * for a rewrite of "the foundations" is not actionable. An empty list is not
+ * passed as empty: `composeDraftingAsk` falls back to the four default roles a
+ * seeded project carries, which is the right answer for a project whose owner
+ * unticked the seeding and has nothing at all.
+ *
+ * The pair is captured BEFORE the await and the outcome is STAMPED with it, so
+ * a project switch during the copy leaves the confirmation belonging to the
+ * project it was pressed on — where `renderCopyOutcome` declines to paint it —
+ * rather than re-labelling it as the new one's. Same rule, same reason, as the
+ * control above.
+ */
+async function copyDraftingAsk(token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const facts = foundationsFacts(state.projectRead);
+  const unfilled = facts.docs.filter((d) => skeletonOf(d));
+  const documents = (unfilled.length ? unfilled : facts.docs).map((d) => ({
+    slug: d.slug, role: d.role, title: d.title,
+  }));
+  let text = '';
+  try {
+    text = composeDraftingAsk({ domain, project, documents });
+  } catch {
+    // IT REFUSES AN EMPTY DOMAIN OR PROJECT rather than composing a sentence
+    // telling an agent to save into a project that cannot exist. Reaching this
+    // means the view is painting a project it does not have a name for, which
+    // is a bug elsewhere — so nothing is copied and nothing is claimed.
+    return;
+  }
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch { ok = false; }
+  if (!isCurrentMount(token)) return;
+  state.copied = { domain, project, ok, text, kind: 'draft' };
   render(token);
 }
 
@@ -4539,7 +4711,8 @@ function foundationsFacts(read) {
   // is the fallback for a build that sends no `skeleton` flag per row.
   let skeletons = 0;
   for (const d of docs) {
-    if (d.skeleton === true) skeletons++;
+    // THE FLAG, THROUGH THE ONE PREDICATE (P1-2). Never the banner's text.
+    if (skeletonOf(d)) skeletons++;
     if (d.freshness === 'stale') stale++;
     else if (d.freshness === 'unreachable') unreachable++;
     else if (d.freshness === 'fresh') fresh++;
@@ -4549,7 +4722,7 @@ function foundationsFacts(read) {
     else unrated++;
   }
   if (!skeletons && f && Number.isInteger(f.skeletonCount) && f.skeletonCount > 0
-      && !docs.some((d) => typeof d.skeleton === 'boolean')) {
+      && !docs.some((d) => d && typeof d.skeleton === 'boolean')) {
     skeletons = Math.min(f.skeletonCount, docs.length);
   }
   return {
@@ -4578,13 +4751,85 @@ function foundationsFacts(read) {
 }
 
 /**
- * THE ONE WORD AT THE END OF THE SUMMARY LINE.
+ * WHO OWNS THESE DOCUMENTS — one clause, and it is UNCONDITIONAL (P1-11).
+ *
+ * ── WHY THIS IS NOT THE LAST CLAUSE OF `foundationsWord` ────────────────
+ * It used to be: `Curator-authored` sat inside the worst-first ladder below,
+ * which means the ownership fact DISAPPEARED exactly when anything else
+ * applied. On a curator-owned project with two skeletons the line read
+ * "2 skeletons to fill" and never said who owned them — and ownership is the
+ * one fact that decides whether *Refresh* or *Edit* is the control to reach
+ * for. Ownership is not a state; splitting the slot costs four characters and
+ * makes the answer always present.
+ *
+ * `null` when there is no manifest: an absent mode is not a third mode, and
+ * the no-manifest summary (`foundationsSummaryMeta`) says so in its own words.
+ */
+function foundationsOwnershipWord(facts) {
+  if (facts.ownership === 'repo') return 'mirrored';
+  if (facts.ownership === 'curator') return 'kept here';
+  return null;
+}
+
+/**
+ * THE WHOLE SUMMARY LINE — four clauses, in one place (P1-11, P2-3).
+ *
+ *   4 documents · 12 KB · kept here · 2 skeletons to fill
+ *   └ count ───┘ └ size ┘ └ ownership ┘ └ state, worst-first ┘
+ *
+ * ── THREE ANSWERS THAT ARE NOT ONE ANSWER ──────────────────────────────
+ * `0 documents` was rendered "none yet" whatever the cause, which collapsed
+ * three different situations a person has to act on differently: no mode
+ * chosen at all, a mirror with nothing copied, and a project kept here with
+ * nothing written. Each gets its own reading, and the ownership clause is what
+ * distinguishes the last two.
+ *
+ * ── THE BUDGET IS A READING ON THE BLOCK, NOT ONLY IN THE EDITOR (P2-3) ─
+ * The 200 KB project budget is a DISCLOSURE the store makes on every save, and
+ * a disclosure the owner only sees inside an editor they have just closed is a
+ * disclosure that expires. When it is exceeded the size clause carries it —
+ * one clause, and the only place the condition survives a closed editor.
+ */
+function foundationsSummaryMeta(facts) {
+  if (facts.manifestError) return 'manifest unreadable';
+  if (!facts.present) return 'not set up · choose how documents arrive';
+  const own = foundationsOwnershipWord(facts);
+  if (!facts.count) {
+    if (facts.ownership === 'repo') return 'mirrored · no documents copied yet';
+    if (facts.ownership === 'curator') return 'kept here · no documents yet';
+    return 'not set up · choose how documents arrive';
+  }
+  const size = facts.bytes > facts.budgetBytes
+    ? fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' budget'
+    : fndSize(facts.bytes);
+  return [
+    facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's'),
+    size,
+    own,
+    foundationsWord(facts),
+  ].filter(Boolean).join(' · ');
+}
+
+/** Bytes, in the two units this block quotes them in. One derivation. */
+function fndSize(bytes) {
+  const b = Number.isInteger(bytes) && bytes > 0 ? bytes : 0;
+  return b < 1024 ? b + ' bytes' : Math.round(b / 1024).toLocaleString('en-US') + ' KB';
+}
+
+/**
+ * THE STATE WORD AT THE END OF THE SUMMARY LINE.
  *
  * Ordered worst-first, because the summary is read at a glance and the glance
  * has to land on the thing that needs a decision. A manifest that will not
  * parse outranks everything: every other figure on this block is derived from
  * it, so saying "6 documents · fresh" over an unreadable manifest would be
  * confident nonsense.
+ *
+ * OWNERSHIP IS NO LONGER IN THIS LADDER (P1-11) — it is its own clause, so
+ * `Curator-authored` is gone from here and `written` takes its place: the
+ * question this word answers is "does anything need attention", and "these
+ * were written rather than copied" is an answer to a different question the
+ * clause before it already gives.
  */
 function foundationsWord(facts) {
   if (facts.manifestError) return 'manifest unreadable';
@@ -4604,74 +4849,89 @@ function foundationsWord(facts) {
   if (facts.skeletons) {
     return facts.skeletons + ' skeleton' + (facts.skeletons === 1 ? '' : 's') + ' to fill';
   }
-  if (facts.ownership === 'curator') return 'Curator-authored';
   if (facts.fresh) return 'fresh';
+  if (facts.ownership === 'curator') return 'written';
   return 'no freshness reading';
 }
 
+// ── `foundationsRefreshOffer` IS GONE (v3.61.0, P1-4) ────────────────────
+// It answered "may this project be refreshed, and if not why not" for ONE head
+// slot. The head now carries up to three controls and the question became
+// "which of them does this state get", which is the function below — and a
+// helper kept alive only because a suite pinned it is worse than no helper:
+// scripts/test-next-memory-view.js drives the successor instead.
+
 /**
- * MAY THIS PROJECT BE REFRESHED, AND IF NOT, WHY NOT IN WORDS.
+ * WHICH HEAD CONTROLS THIS STATE GETS — one table, five rows (P1-4, §3.5).
  *
- * A control that cannot work is worse than no control, and a control that is
- * simply absent is worse than one that says why — both are this app's own
- * recorded rules (v3.16.1 for the first, v3.17.1 for the second). So the
- * button is WITHHELD in the two cases where pressing it could only produce a
- * refusal, and a `.tx-note` takes its place.
+ * ── WHY "NEVER BOTH" WAS WRONG ──────────────────────────────────────────
+ * The first cut gave the head ONE slot filled by ownership: a mirror got
+ * "Refresh from repo", a curator-owned project got "Add document". That closes
+ * the door on the ordinary case: a mirror set up with three documents can be
+ * re-copied for ever and never EXTENDED, so the only way to add a fourth
+ * becomes an agent's `save_working_state({repo_root})` — which is exactly the
+ * "the app writes nothing on this tier" complaint this release exists to fix.
  *
- * REACHABILITY IS READ OFF THE DOCUMENTS, not off `repo.root`. The manifest
- * records the path on the machine that last refreshed, which on any other
- * machine is a hint; what the store actually measured is each document's own
- * `freshness`, and anything other than `unreachable` means the file was there
- * to be compared.
+ * Two secondaries and no primary is the correct taxonomy here: neither
+ * completes a step in front of the owner, and both act.
+ *
+ * | state                                     | controls                    |
+ * |-------------------------------------------|-----------------------------|
+ * | curator-owned                             | Add document                |
+ * | repo-owned, >= 1 document, root reachable | Refresh from repo · Add from folder |
+ * | repo-owned, 0 documents, root reachable   | Add from folder             |
+ * | repo-owned, root unreachable              | none; the withheld reason   |
+ * | read-only mirror                          | none; the mirror note       |
  */
-function foundationsRefreshOffer(facts) {
-  // ── A REPO-OWNED PROJECT WITH NOTHING MIRRORED YET IS NOT "NOTHING TO
-  //    REFRESH" (v3.61.0) ──────────────────────────────────────────────────
-  // Until this release the control was hidden at count 0, which is exactly the
-  // state a project is in the moment its ownership is set — so the ONE action
-  // that would put documents in it was withheld at the only moment it was
-  // needed. The block body now offers "Add from repository" in that state (a
-  // scan picker, then the same POST with a file list), and the plain Refresh
-  // control is still what a project with documents already gets.
-  if (!facts.present) return { show: false, reason: null };
-  if (facts.ownership === 'curator') {
-    // CURATOR-OWNED: refreshing is inexpressible, but EDITING is not any more.
-    // The reason therefore says what to do instead rather than only what
-    // cannot be done — v3.17.1's rule that the missing thing has to be missing
-    // where you looked for it.
+function foundationsControlOffer(facts, readonly) {
+  // A READ-ONLY SHARED BRAIN MIRROR GETS NOTHING (P1-3). Every route this
+  // block can reach answers 403 (`refuseMirror`), and a control whose only
+  // outcome is a refusal is worse than none (v3.16.1). The reason is a note,
+  // not an absence (v3.17.1).
+  if (readonly) {
     return {
-      show: false,
-      reason: 'These documents were written for this project rather than copied from a repository, '
-        + 'so there is nothing to refresh them from. Edit one from the table, or ask an agent to write it.',
+      refresh: false, add: false, mirror: true,
+      reason: 'A read-only mirror — documents here are copied in, never edited.',
     };
   }
-  if (!facts.count) return { show: false, reason: null, addFromRepo: true };
-  const reachable = facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
+  if (facts.manifestError) return { refresh: false, add: false, reason: null };
+  if (!facts.present) return { refresh: false, add: false, reason: null };
+  if (facts.ownership === 'curator') return { refresh: false, add: true, reason: null };
+  // REPO-OWNED. Reachability is read off the DOCUMENTS, never off `repo.root`
+  // — the manifest records a path on the machine that last refreshed, which on
+  // any other machine is a hint, while each document's own `freshness` is what
+  // the store actually measured.
+  const reachable = !facts.count
+    || facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
   if (!reachable) {
     return {
-      show: false,
-      reason: 'The repository these were copied from is not on this computer, so they cannot '
-        + 'be re-copied here. Open the project on the machine that has the checkout.',
+      refresh: false, add: false,
+      reason: 'The folder these were copied from is not on this computer, so they can neither '
+        + 'be re-copied nor added to here. Open the project on the machine that has it.',
     };
   }
-  return { show: true, reason: null };
+  return { refresh: facts.count > 0, add: true, reason: null };
 }
 
 /**
- * ONE DOCUMENT'S ROW.
+ * IS THIS DOCUMENT STILL A SET OF PROMPTS — from the FLAG, never the text (P1-2).
  *
- * ── THE ID IS DERIVED FROM THE SLUG, AND THAT IS THE POINT ──────────────
- * The work-stream table can only put an id on its OPEN row, because a scope
- * slug is arbitrary text. A foundation slug is not: the store's rule is
- * lowercase alphanumerics, hyphens and `.md`, so it makes a unique, safe id
- * fragment. That is what lets a row press open the reader with NO render at
- * all — there is no "which row is open" state to write and no repaint to pay
- * for it — and still hand the reader an id to return focus to when it closes.
+ * The store writes a skeleton whose first line is a bold banner naming itself,
+ * and it would be very easy to recognise one by matching that sentence. That
+ * is the mistake this function exists to make impossible: the banner is COPY,
+ * the owner is invited to delete it the moment they answer the prompts, and a
+ * view that read the identity out of it would call a half-filled document a
+ * skeleton and a filled one whose owner left the line in place a skeleton for
+ * ever. `skeleton` is a boolean the store computes and the wire carries; it is
+ * the only thing this view may read.
  *
- * It is re-sanitised here anyway. The slug arrives over HTTP from a manifest
- * that can have come over sync from another machine, and a validation done at
- * the boundary is not a reason for the renderer to trust the value.
+ * `=== true` rather than truthiness so a build that sends no flag at all reads
+ * FALSE rather than `undefined`-as-maybe — a fact and its absence stay apart.
  */
+function skeletonOf(d) {
+  return !!d && d.skeleton === true;
+}
+
 function fndRowHtml(d, editable) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
@@ -4684,6 +4944,16 @@ function fndRowHtml(d, editable) {
     ? '<span class="fnd-src-path">' + escapeHtml(d.source.path) + '</span>'
       + (d.commit ? '<span class="fnd-commit"> @ ' + escapeHtml(String(d.commit).slice(0, 7)) + '</span>' : '')
     : 'Curator-authored';
+  // ── WHAT A CURATOR-OWNED ROW SAYS INSTEAD (P2-1) ───────────────────────
+  // Not "Curator-authored" and "—" in two columns whose every cell says the
+  // same thing: on a curator-owned project `Source` has one value and `Copy`
+  // has one value, and a column with one value is the table equivalent of a
+  // flag on 100 % of a list (v3.53.1). The two columns collapse into ONE that
+  // carries the row's only variable fact — is this written, and by whom, or is
+  // it still a set of prompts.
+  const stateWord = skeletonOf(d) ? 'skeleton · to fill'
+    : (d.authoredBy && d.authoredBy.kind === 'human') ? 'written by you'
+      : (d.authoredBy && d.authoredBy.kind) ? 'written by an agent' : 'written';
   // THE SHARED SCALE, AND ONLY ON THE TIERS THAT HAVE A READING. fresh and
   // stale are the two ends of a comparison that was actually made;
   // `unreachable` is the dashed unknown ring, which is exactly what it means
@@ -4698,7 +4968,7 @@ function fndRowHtml(d, editable) {
   // says nothing. It stays dotless for the reason a written curator document
   // is: the scale paints a COMPARISON, and there is nothing to compare this
   // against. The word carries it instead.
-  const skeleton = d.skeleton === true;
+  const skeleton = skeletonOf(d);
   const tier = skeleton ? null
     : d.freshness === 'fresh' ? 'recent'
       : d.freshness === 'stale' ? 'week'
@@ -4723,7 +4993,13 @@ function fndRowHtml(d, editable) {
         '</button>' +
       '</td>' +
       '<td class="fnd-cell-size">' + escapeHtml(size) + '</td>' +
-      '<td class="fnd-cell-source">' + src + '</td>' +
+      // THE COLUMN VARIANT (P2-1). `editable` is the curator-owned arm, and it
+      // is the same flag that decides whether this row gets a pencil — one
+      // condition, so the head and the body cannot disagree about which table
+      // this is.
+      (editable
+        ? '<td class="fnd-cell-state">' + escapeHtml(stateWord) + '</td>'
+        : '<td class="fnd-cell-source">' + src + '</td>' +
       // THE DOT AND THE WORD IN ONE WRAPPER, and the wrapper is what this view
       // styles. shared/freshness.css owns the `.fresh-` prefix outright — no
       // other stylesheet may declare a rule on it (scripts/test-freshness-scale.js
@@ -4732,7 +5008,7 @@ function fndRowHtml(d, editable) {
       '<td class="fnd-cell-fresh"><span class="fnd-fresh">' +
         (tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '') +
         '<span class="fnd-fresh-word">' + escapeHtml(word) + '</span>' +
-      '</span></td>' +
+      '</span></td>') +
       // The same hook every other age on this page carries, so tickAges
       // rewrites it once a second without a render. No stamp, no hook — an
       // unknown age has nothing to move.
@@ -4752,17 +5028,22 @@ function fndRowHtml(d, editable) {
       // `repo_owned` on a PUT to one, and a control whose only outcome is a
       // refusal is worse than no control (v3.16.1) — the reader's own note
       // says where that document IS edited instead.
-      '<td class="fnd-cell-edit">' +
-        (editable
-          ? '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
+      // THE CELL ITSELF IS WITHHELD, not merely emptied (v3.61.0, P2-1). The
+      // head emits no `<th>` for it on the mirrored arm, so an empty `<td>`
+      // here would make a six-column head sit over a seven-cell body — the
+      // browser tolerates it and the columns quietly stop lining up, which is
+      // exactly the class of defect only a rendered look finds.
+      (editable
+        ? '<td class="fnd-cell-edit">' +
+          '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
             ' data-fnd-edit="' + escapeHtml(slug) + '"' +
             ' aria-label="' + escapeHtml('Edit ' + (d.title || slug)) + '">' +
             '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
             'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-            '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
-            '</button>'
-          : '') +
-      '</td>' +
+          '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
+          '</button>' +
+        '</td>'
+        : '') +
     '</tr>'
   );
 }
@@ -4893,7 +5174,10 @@ function fndShrinkWarn(e) {
  */
 function renderFoundations(read) {
   const facts = foundationsFacts(read);
-  const offer = foundationsRefreshOffer(facts);
+  // A READ-ONLY SHARED BRAIN MIRROR (P1-3). Read exactly where `renderBrief`
+  // reads it, off the same two fields, so the two blocks cannot disagree about
+  // whether this domain may be written to.
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
 
   // ── THE THINGS THAT NEVER FOLD ────────────────────────────────────────
   let notes = '';
@@ -4926,7 +5210,7 @@ function renderFoundations(read) {
     if (r.refreshed.length) said.push(r.refreshed.length + ' re-copied');
     if (r.added.length) said.push(r.added.length + ' added');
     if (r.unchanged.length) said.push(r.unchanged.length + ' already current');
-    if (r.missing.length) said.push(r.missing.length + ' no longer in the repository (the copy is kept)');
+    if (r.missing.length) said.push(r.missing.length + ' no longer in that folder (the copy is kept)');
     notes += '<div class="mem-note">' + icon('check', 13) +
       '<span>' + escapeHtml(said.length ? said.join(' · ') : 'Nothing to copy.') + '</span></div>';
   }
@@ -4944,31 +5228,46 @@ function renderFoundations(read) {
     notes += renderRefusedList(ini.refused);
   }
 
-  // ── THE CONTROL ───────────────────────────────────────────────────────
+  // ── THE CONTROL ROW (P1-4, P1-8, P2-8) ────────────────────────────────
   //
-  // ONE SLOT, FILLED BY OWNERSHIP, NEVER BOTH. A mirror gets "Refresh from
-  // repo"; a curator-owned project gets "Add document". They are mutually
-  // exclusive because the ownership is, and a screen offering both would be
-  // offering one action that must refuse.
+  // A ROW, not one absolutely-positioned slot. The release needs up to THREE
+  // controls here — Refresh, Add, and the drafting ask — and a `padding-right:
+  // 150px` reserve for a variable number of them is a literal that goes wrong
+  // silently (the class `--ing-col` is recorded against in the design doc).
+  // The controls are in flow after the `<details>` and `.mem-fnd-head` is a
+  // wrapping flex row; see views/memory.css.
   const busy = !!(fnd && fnd.busy);
   const editing = !!(state.fndEdit && state.fndEdit.domain === state.activeDomain
     && state.fndEdit.project === state.activeProject);
   const curator = facts.ownership === 'curator';
-  const action = editing ? ''
-    : offer.show
-      ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
-        (busy ? ' disabled aria-disabled="true"' : '') + '>' +
-        escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
-      // OFFERED AT COUNT 0 TOO. A curator-owned project whose owner unticked
-      // the seeding has a manifest and no documents, and that is exactly the
-      // state in which the one action that puts a document in it must be
-      // reachable — the mistake v3.59.0 made with Refresh, one arm over.
-      : (curator
-        ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-add">' +
-          'Add document</button>'
-        : '');
-  const withheld = (!offer.show && offer.reason)
-    ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(offer.reason) + '</span></div>'
+  const controls = foundationsControlOffer(facts, readonly);
+  const refreshBtn = controls.refresh
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
+      escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
+    : '';
+  // "Add from folder" on a MIRROR and "Add document" on a curator-owned
+  // project are the same control with the reader's own word for what arrives:
+  // one copies a file that is already on disk, the other opens an empty
+  // document. Both are `btn-secondary btn-xs` — neither completes a step.
+  //
+  // OFFERED AT COUNT 0 TOO, on both arms: a curator-owned project whose owner
+  // unticked the seeding, and a mirror whose ownership was set a second ago,
+  // are exactly the two states in which the one action that puts a document in
+  // must be reachable — the mistake v3.59.0 made with Refresh, one arm over.
+  const addBtnId = curator ? 'mem-fnd-add' : 'mem-fnd-addrepo';
+  const addBtn = controls.add
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-action" id="' + addBtnId + '"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
+      (curator ? 'Add document' : 'Add from folder') + '</button>'
+    : '';
+  const askBtn = foundationsDraftAsk(facts, readonly);
+  const action = editing ? '' : (refreshBtn + addBtn + askBtn.btn);
+  // A WITHHELD CONTROL SAYS WHY (v3.17.1). Two reasons can stand here — the
+  // folder is not on this computer, or this is a read-only mirror — and both
+  // are `.tx-note`, unfolded: a reason behind a chevron is not a reason.
+  const withheld = controls.reason
+    ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(controls.reason) + '</span></div>'
     : '';
 
   // ── NOTHING CHOSEN YET: THE CHOOSER, WHERE THE ANSWER IS MISSING ───────
@@ -4984,14 +5283,59 @@ function renderFoundations(read) {
   // and it is made ONCE — the store refuses a mismatch on every later write,
   // which is why the commit below is the one primary in this block.
   if (!facts.present && !facts.manifestError) {
-    return notes + renderFoundationsInit(facts);
+    // ── WITHHELD ON A READ-ONLY MIRROR (P1-3) ──────────────────────────
+    // Every init this chooser could POST answers 403 on a `shared-*` mirror,
+    // so the choice is not the user's to make here. The note takes its place
+    // and the summary line still says what is there.
+    if (readonly) {
+      return notes +
+        '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+          escapeHtml('A read-only mirror — documents here are copied in, never edited.') +
+        '</span></div>' +
+        '<div class="mem-fnd-row"><div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+          renderDescription('No canonical documents in this mirror yet.') +
+        '</div></div></div>';
+    }
+    // ── THE MISSING THING HAS TO BE MISSING WHERE YOU LOOKED FOR IT ──────
+    // §8(e): a person who reaches this block on a project they have not set up
+    // may equally be a person who has not created the project they MEANT, and
+    // the create form is one view away with no route from here. A POINTER, at
+    // the quietest tier — never a second create path, which would be two write
+    // surfaces for one act (the v3.7.0 duplicate-call-site rule).
+    //
+    // BELOW THE CHOOSER, not above it. Painted first — which is where `notes`
+    // puts everything — it sits between the block's lede and the decision the
+    // person came here to make, so the reading order becomes "here is how to
+    // leave, and here is what you came for". A pointer is the LAST thing on a
+    // card, after the thing it is an alternative to; measured in the browser
+    // on this exact state.
+    return notes + renderFoundationsInit(facts) +
+      '<div class="mem-fnd-elsewhere">' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-to-domains">' +
+        'Create a project in Domains</button>' +
+      '</div>';
+  }
+  // ── AND WITHHELD ON AN UNREADABLE MANIFEST (P1-3) ────────────────────
+  // An unreadable manifest is a PRESENT manifest: `…/foundations/init`
+  // answers `ownership_set`, so painting a two-way choice would offer a
+  // decision that cannot be taken. The error note above is already unfolded;
+  // what is withheld here is the chooser, and the summary says
+  // "manifest unreadable" rather than a count nothing can stand behind.
+  if (facts.manifestError) {
+    return notes +
+      '<div class="mem-fnd-row">' +
+        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+          renderDescription('Nothing below the manifest can be trusted, so no choice is '
+            + 'offered here. Fix or remove the manifest file and re-open this project.') +
+        '</div></div>' +
+      '</div>';
   }
 
   // ── CHOSEN, REPO-OWNED, NOTHING MIRRORED YET ──────────────────────────
   // The scan picker on its own: the ownership is settled, so the two-way
   // choice is withheld (it cannot be made) and what is left is the one action
   // that puts documents in — "Add from repository".
-  if (!facts.count && !facts.manifestError && facts.ownership === 'repo') {
+  if (!facts.count && facts.ownership === 'repo' && !readonly) {
     return notes + renderFoundationsInit(facts);
   }
 
@@ -5001,26 +5345,30 @@ function renderFoundations(read) {
   // explains what is missing behind a chevron is "the missing thing has to be
   // missing where you looked for it" read backwards.
   if (!facts.count) {
+    // ── THE OWNER IS NAMED FIRST (P1-12) ──────────────────────────────
+    // A person can start a project here with no agent and no repository and
+    // write the first document by hand — a first-class path, not a fallback —
+    // so the body names BOTH ways in, and the owner's way first. The summary
+    // meta beside it already distinguishes "kept here · no documents yet"
+    // from "mirrored · no documents copied yet" (P1-11).
+    const emptyBody = facts.ownership === 'repo'
+      ? 'Mirrored from ' + ((facts.repo && facts.repo.root) || 'a folder on this Mac')
+        + '. Nothing copied yet.'
+      : 'Kept here. No documents yet. Write the first one yourself, or ask an agent to draft them.';
     return notes +
       '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
-          (editing ? renderFoundationEditor(facts) :
-            renderDescription('No canonical documents yet. They arrive one of three ways: an agent you '
-              + 'ask writes one, a refresh copies them from this project’s repository, or you add one here.')) +
+          (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
         '</div></div>' +
-        action +
-      '</div>' + withheld;
+        '<div class="mem-fnd-head-controls">' + action + '</div>' +
+      '</div>' + askBtn.panel + withheld;
   }
 
-  const size = facts.bytes < 1024
-    ? facts.bytes + ' bytes'
-    : Math.round(facts.bytes / 1024).toLocaleString('en-US') + ' KB';
   const summary =
     '<summary class="mem-fold-summary" id="mem-fold-foundations">' + icon('chevronRight', 14) +
       '<span>The documents</span>' +
       '<span class="mem-fold-meta">' +
-        escapeHtml(facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
-          + ' · ' + size + ' · ' + foundationsWord(facts)) +
+        escapeHtml(foundationsSummaryMeta(facts)) +
       '</span>' +
     '</summary>';
 
@@ -5032,6 +5380,13 @@ function renderFoundations(read) {
   // FORCED OPEN while an editor is up — not from a transient, from the
   // explicit decision the Edit press recorded in `state.openFolds`, which is
   // what the brief's pencil does too.
+  // ── "Add from folder" ON A POPULATED MIRROR (P1-4) ────────────────────
+  // The chooser's repo arm under the table rather than in place of it: a
+  // mirror with six documents that hid them in order to ask about a seventh
+  // would be describing a state the owner is not in. `adding` is set only by
+  // the head control, so the ordinary paint is unaffected.
+  const adding = !!(state.fndInit && state.fndInit.domain === state.activeDomain
+    && state.fndInit.project === state.activeProject && state.fndInit.adding);
   const body = editing
     ? renderFoundationEditor(facts)
     : '<div class="fnd-wrap"><table class="fnd-table">' +
@@ -5039,27 +5394,114 @@ function renderFoundations(read) {
           '<th scope="col">Role</th>' +
           '<th scope="col">Document</th>' +
           '<th scope="col">Size</th>' +
-          '<th scope="col">Source</th>' +
-          '<th scope="col">Copy</th>' +
+          // ── FIVE COLUMNS OR SIX, BY OWNERSHIP (P2-1) ─────────────────
+          // A curator-owned project's `Source` is always "Curator-authored"
+          // and its `Copy` is always "—", so the two collapse into one State
+          // column carrying the row's real variable: written by whom, or
+          // still a prompt. Three things follow at once — two dead columns
+          // go, the pencil gets a cell without a seventh column, and the
+          // curator-owned table comes in UNDER the 568 px overflow v3.59.0
+          // recorded (5 columns, not 6). The REPO-owned table keeps its six
+          // and keeps that overflow; `overflow-x: auto` still carries it and
+          // this release does not claim to have fixed it.
+          (curator
+            ? '<th scope="col">State</th>'
+            : '<th scope="col">Source</th><th scope="col">Copy</th>') +
           '<th scope="col">Updated</th>' +
           // A COLUMN WITH A BLANK HEADER WOULD BE A COLUMN NOBODY NAMED. It
           // holds an icon-only control, so the heading is visually hidden
           // rather than absent: a screen reader reading the row still hears
-          // which column the button is in.
-          '<th scope="col"><span class="visually-hidden">Edit</span></th>' +
+          // which column the button is in. Emitted only on the arm that HAS
+          // a row control — a column reserved for nothing is furniture.
+          (curator ? '<th scope="col"><span class="visually-hidden">Actions</span></th>' : '') +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
-      '</table></div>';
-  const open = (editing || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
+      '</table></div>' + (adding ? renderFoundationsInit(facts) : '');
+  const open = (editing || adding || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
   return notes +
     '<div class="mem-fnd-row">' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
       '</details>' +
-      action +
-    '</div>' + withheld;
+      '<div class="mem-fnd-head-controls">' + action + '</div>' +
+    '</div>' + askBtn.panel + withheld;
 }
+
+/**
+ * "COPY THE DRAFTING REQUEST" — the third member of the copy family (P2-8).
+ *
+ * ── THE GAP IT CLOSES ───────────────────────────────────────────────────
+ * A curator-owned project with four skeletons is a project with four questions
+ * and no obvious way to get them answered. The owner can write them by hand
+ * (the editor, one block down) or tell an agent to — and the second needs a
+ * sentence naming the tool, the project and the approval gate, which a user
+ * who has to compose it usually does not.
+ *
+ * ── WHERE THE TEXT LIVES, AND WHY NOT HERE ──────────────────────────────
+ * `composeDraftingAsk` in shared/agent-instructions.js, sha-pinned beside its
+ * three siblings. It is MODEL-READ instruction text, and a second copy of
+ * model-read text is this repository's most reliably recurring defect —
+ * scripts/test-agent-instructions.js §S9 scans this file for its sentences and
+ * fails on one. So this function composes, never writes; and the documents it
+ * names are the project's REAL unfilled slugs, so an owner with three
+ * skeletons does not paste a sentence asking for four.
+ *
+ * ── AND WHY IT IS NOT IN `composeAgentInstructionsFull` ─────────────────
+ * That output is pasted into CLAUDE.md, which an agent re-reads every session.
+ * "Draft these now" belongs in a chat message once, not in a standing
+ * instruction that would ask for a re-draft for ever.
+ *
+ * ── THE STATES ──────────────────────────────────────────────────────────
+ * Offered on every curator-owned state including zero documents (where it is
+ * the most useful control on the screen) and on all-written (asking for a
+ * rewrite is legitimate). WITHHELD with its reason on a mirror — an agent's
+ * `save_foundation` there is refused as an ownership mismatch — and withheld
+ * silently under the mirror note on a read-only Shared Brain domain, which
+ * already carries one sentence saying nothing here may be written.
+ */
+function foundationsDraftAsk(facts, readonly) {
+  if (readonly) return { btn: '', panel: '' };
+  if (!facts.present) return { btn: '', panel: '' };
+  if (facts.manifestError) return { btn: '', panel: '' };
+  if (facts.ownership !== 'curator') {
+    return {
+      btn: '',
+      panel: '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+        escapeHtml('An agent’s save here is refused — this project is mirrored from a folder.') +
+        '</span></div>',
+    };
+  }
+  const info = renderInfoMark('mem-fnd-ask-info', 'About the drafting request',
+    DRAFT_ASK_INFO_HTML, { html: true });
+  return {
+    btn: '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-ask">' +
+      'Copy the drafting request</button>' + info.btn,
+    panel: info.panel,
+  };
+}
+
+// ── THE ⓘ BESIDE IT ──────────────────────────────────────────────────────
+// Definition, then mechanism, then what is and is not saved — the order this
+// app's ⓘ panels follow. A module constant so the suite can lift the words a
+// user reads rather than asserting a copy typed in a test, and every character
+// of it is written here, so nothing user- or store-supplied is interpolated
+// into a fragment that is emitted as HTML.
+//
+// THE PRIVACY CLAIM IS THE POINT OF THE SECOND PARAGRAPH. The drafting model
+// is the HARNESS'S, because the harness has the code and The Curator does not:
+// it holds markdown under one folder and has no checkout, no build and no
+// repository access. Saying so is what stops a reader assuming this button
+// sends their codebase somewhere.
+const DRAFT_ASK_INFO_HTML =
+  '<p><strong>What it copies.</strong> One sentence for your agent, naming this project ' +
+  'and the <code>save_foundation</code> tool. Paste it into any assistant that has the ' +
+  'my-curator bridge installed — Claude Code, Claude Desktop, Cursor.</p>' +
+  '<p><strong>Your agent’s own model does the drafting</strong>, from the code and documents it ' +
+  'can see. The Curator sends nothing to a model for this and has no access to your code; it ' +
+  'only stores what comes back.</p>' +
+  '<p><strong>Nothing is saved until you approve each document.</strong> The sentence asks the ' +
+  'agent to show you first, and the tool refuses unless it is told the owner commissioned it.</p>';
 
 /**
  * THE OWNERSHIP CHOICE, IN THE PLACE THE ANSWER IS MISSING.
@@ -5095,25 +5537,41 @@ function renderFoundationsInit(facts) {
     : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim());
 
   return (
+    // ── IRREVERSIBILITY NEVER FOLDS (§3.10) ──────────────────────────────
+    // The store refuses a mismatch on every later write, so this choice is
+    // made once. That is on the never-fold list: a cost, a refusal and an
+    // outcome are read at the moment of acting, and a chevron is a decision to
+    // read something later. The MECHANISM — what a mirror actually does, why a
+    // plain folder with no git in it works — is in the block's ⓘ, which this
+    // function does not emit, because a second mark beside the block's own
+    // would be a second voice.
+    (repoOnly ? ''
+      : '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+        escapeHtml('Set once — a project is mirrored or kept here, never both.') +
+        '</span></div>') +
     '<div class="mem-fnd-row">' +
       '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
         renderDescription(repoOnly
-          ? 'Nothing mirrored yet. Point at the checkout and choose which files to copy.'
-          : 'No canonical documents yet. Choose where this project keeps them.') +
+          ? 'Nothing mirrored yet. Point at the folder and choose which files to copy.'
+          : 'No canonical documents yet. Choose how they arrive.') +
         renderFoundationsChooser({
           id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
         }) +
         '<div class="mem-fnd-init-actions">' +
-          // THE BLOCK'S ONE COMMIT. The editor is never open at the same time
-          // as this (a project with no documents has nothing to edit, and the
-          // moment it has one this branch is gone), so the taxonomy's "at most
-          // one primary per card" holds by construction rather than by care.
+          // ── THE PRIMARY IS THE HOST'S DECISION (P2-6) ──────────────────
+          // The shared chooser emits NO primary of its own, because the other
+          // host — the "New project" form — already has one ("Create
+          // project") and a card with two primaries has not decided what it is
+          // asking for. Here the commit is this block's, so this block emits
+          // it. The editor is never open at the same time (a project with no
+          // documents has nothing to edit, and the moment it has one this
+          // branch is gone), so "at most one primary per card" holds by
+          // construction rather than by care.
           '<button type="button" class="btn btn-primary" id="mem-fnd-init-go"' +
             (busy || !ready ? ' disabled' : '') + '>' +
             escapeHtml(busy
               ? (repoOnly ? 'Copying…' : 'Setting up…')
-              : (repoOnly ? 'Add from repository'
-                : choice.ownership === 'repo' ? 'Mirror these documents' : 'Seed the skeletons')) +
+              : (repoOnly ? 'Add from folder' : 'Set up documents')) +
           '</button>' +
         '</div>' +
       '</div></div>' +
@@ -5200,15 +5658,27 @@ function renderFoundationEditor(facts) {
   // Offered on "Add" only, and the text lands in the FIELD rather than on the
   // server: the owner sees exactly what will be saved before anything is
   // written, and the save is the ordinary PUT. Nothing is uploaded.
+  // ── A REAL BUTTON, AND AN INPUT THAT IS `hidden` (P1-7) ───────────────
+  // A `.visually-hidden` input inside a `<label class="btn">` is focusable
+  // while the thing that looks like a button is not, so keyboard focus lands
+  // on something invisible and `--ring-focus` never paints. The app's shipped
+  // pattern — a `hidden` input plus a `<button>` that clicks it — is reused,
+  // and the button is in FOCUSABLE_IDS.
+  //
+  // ── AND THE OWNER'S WAY IN COMES FIRST (P1-12) ────────────────────────
+  // The sentence leads with the box, not with the file: for the person who
+  // started a project here with no agent and no repository, writing it is the
+  // primary way in, and the order of two equal-looking affordances is the only
+  // thing on screen that says so.
   const picker = e.isNew
     ? '<div class="mem-fnd-pick">' +
-        '<label class="btn btn-secondary btn-xs fnd-init-file">' +
-          '<input type="file" class="visually-hidden" id="mem-fnd-file"' +
-            ' accept=".md,.txt,text/markdown,text/plain"' + (e.busy ? ' disabled' : '') + ' />' +
-          '<span>Choose a file…</span>' +
-        '</label>' +
-        '<span class="fnd-init-file-hint">Or paste the text below. A file is read on this ' +
-          'computer and dropped into the box — nothing is sent until you save.</span>' +
+        '<span class="fnd-init-file-hint">Write the document in the box below — or start from a ' +
+          'file on this computer, read here and dropped into the box. Nothing is sent until you ' +
+          'save.</span>' +
+        '<input type="file" id="mem-fnd-file" accept=".md,.txt,text/markdown,text/plain" hidden' +
+          (e.busy ? ' disabled' : '') + ' />' +
+        '<button type="button" class="btn btn-secondary btn-xs fnd-init-file" id="mem-fnd-file-btn"' +
+          (e.busy ? ' disabled' : '') + '>Choose a file…</button>' +
       '</div>' +
       (e.importError
         ? '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
@@ -5260,12 +5730,22 @@ function renderFoundationEditor(facts) {
   // (`replace: true`), because "pass replace: true" is not advice a person in
   // a browser can act on — so the question is asked here, where both figures
   // are in hand and a sentence can carry them.
-  const shrinkBar = (e.confirmShrink && shrink)
+  // ── EXACTLY ONE PRIMARY, AND IT IS ALWAYS THE CONTROL THAT COMMITS
+  //    (P1-6) ──────────────────────────────────────────────────────────────
+  // The first cut left Save in place beside this strip, which gives the card
+  // either two primaries or a DISABLED primary sitting next to a live
+  // secondary that actually writes — the tier-1 slot lying about itself. So
+  // the strip's own confirm takes `btn-primary` and Save is WITHHELD while the
+  // strip is up (not disabled: a disabled control still claims the slot).
+  const shrinking = !!(e.confirmShrink && shrink);
+  const shrinkBar = shrinking
     ? '<div class="mem-brief-discard" role="alertdialog" aria-label="Much shorter than before">' +
-        '<span>This save replaces ' + escapeHtml(formatBytes(shrink.before)) + ' with ' +
-        escapeHtml(formatBytes(shrink.after)) + ' — the whole document, not an addition. ' +
-        'Save it anyway?</span>' +
-        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-shrink-go">Save anyway</button>' +
+        '<span>Unsaved: this draft is ' +
+        escapeHtml(String(Math.round((1 - shrink.after / shrink.before) * 100))) + ' % shorter — ' +
+        escapeHtml(formatBytes(shrink.after)) + ', from the ' +
+        escapeHtml(formatBytes(shrink.before)) + ' on disk. Saving replaces it.</span>' +
+        '<button type="button" class="btn btn-primary btn-xs" id="mem-fnd-shrink-go">' +
+          'Replace with the shorter version</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-shrink-no">Keep editing</button>' +
       '</div>'
     : '';
@@ -5278,11 +5758,25 @@ function renderFoundationEditor(facts) {
   // client that skipped the strip still deletes nothing.
   const deleteBar = e.confirmDelete
     ? '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Delete this document">' +
-        '<span>Delete <b>' + escapeHtml(e.slug || '') + '</b>? Your agents stop reading it. ' +
-        'The file is removed from this project’s foundations; nothing else is touched.</span>' +
-        '<button type="button" class="btn btn-danger btn-xs" id="mem-fnd-delete-go"' +
+        // NOT "are you sure?" — the document is NAMED, because a question
+        // about six rows is a question about none of them. And it says what
+        // recovery there is: "cannot be undone" alone is false for a user with
+        // Personal Sync configured and true for everyone else, so both halves
+        // are stated rather than one of them guessed at.
+        '<span>Delete <b>' + escapeHtml(e.slug || '') + '</b>? The document is removed from this ' +
+        'project and from your agents’ next session. It cannot be undone from inside The ' +
+        'Curator; if you sync, a git client can still recover it.</span>' +
+        // ── THE ONE SANCTIONED USE OF THE FILLED DANGER FACE (P1-5) ─────
+        // `.btn-danger-solid` is reserved by the taxonomy for a confirm whose
+        // PRIMARY ACTION IS THE DELETION, which is exactly this strip: the
+        // question has been asked, the document is named, and this is the
+        // control that answers yes. The opener in the footer stays tinted.
+        // Never a hand-built colour override — `domains.js`'s surviving
+        // `.dm-delete-btn { color: var(--danger-text) }` is the last of that
+        // pattern and this release does not extend it.
+        '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-fnd-delete-go"' +
           (e.deleting ? ' disabled' : '') + '>' +
-          escapeHtml(e.deleting ? 'Deleting…' : 'Delete it') + '</button>' +
+          escapeHtml(e.deleting ? 'Deleting…' : 'Delete permanently') + '</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-delete-no"' +
           (e.deleting ? ' disabled' : '') + '>Keep it</button>' +
       '</div>'
@@ -5306,16 +5800,24 @@ function renderFoundationEditor(facts) {
       discardBar +
       shrinkBar +
       '<div class="mem-brief-buttons">' +
-        '<button type="button" class="btn btn-primary" id="mem-fnd-save"' +
-          (e.busy || stats.over || !!slugErr || !!e.confirmDelete ? ' disabled' : '') + '>' +
-          escapeHtml(e.busy ? 'Saving…' : (e.isNew ? 'Save document' : 'Save changes')) + '</button>' +
+        // WITHHELD, NOT DISABLED, while the shrink strip is up (P1-6).
+        (shrinking ? ''
+          : '<button type="button" class="btn btn-primary" id="mem-fnd-save"' +
+            (e.busy || stats.over || !!slugErr || !!e.confirmDelete ? ' disabled' : '') + '>' +
+            escapeHtml(e.busy ? 'Saving…' : (e.isNew ? 'Save document' : 'Save changes')) + '</button>') +
         '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-preview"' +
           (e.busy ? ' disabled' : '') + '>' +
           (e.preview ? 'Back to editing' : 'Preview') + '</button>' +
         '<button type="button" class="btn btn-ghost" id="mem-fnd-cancel"' +
           (e.busy ? ' disabled' : '') + '>Cancel</button>' +
+        // ── THE OPENER IS `btn-danger`, NOT `btn-ghost` (P1-5) ──────────
+        // The taxonomy is explicit: `.btn-danger` = DESTROYS DATA. A ghost
+        // face on the one control in this editor that removes a document
+        // makes it read as quiet-and-harmless, which is the opposite of what
+        // it is. Tinted, never filled — the filled face belongs to the
+        // confirm below.
         (e.isNew ? '' :
-          '<button type="button" class="btn btn-ghost btn-xs mem-fnd-delete" id="mem-fnd-delete"' +
+          '<button type="button" class="btn btn-danger btn-xs mem-fnd-delete" id="mem-fnd-delete"' +
             (e.busy || e.confirmDelete ? ' disabled' : '') + '>Delete…</button>') +
       '</div>' +
       deleteBar +
@@ -5396,13 +5898,24 @@ function foundationReaderContent(doc, project) {
     ? '<div class="mem-reader-meta"' +
       ' data-mem-age-at="' + escapeHtml(doc.updatedAt) + '">' + readout + '</div>'
     : '';
+  // ── OWNERSHIP, FROM THE FIELD THE ROUTE ACTUALLY SENDS ──────────────────
+  // `ownership` is a property of the MANIFEST and the single-document route
+  // does not send it; `source.kind` is the per-document fact it does. Reading
+  // `doc.ownership` alone made every curator-owned document in the app print
+  // the MIRROR sentence — found in the browser, and invisible offline because
+  // a hand-written payload carries the field the server never sends. An
+  // explicit `ownership` still wins where a build provides one, so the two
+  // payload shapes cannot resolve to two different answers.
+  const curatorOwned = doc.ownership
+    ? doc.ownership === 'curator'
+    : !(doc.source && doc.source.kind === 'repo');
   const notes = [];
   if (doc.freshness === 'stale') {
     notes.push('This copy no longer matches the file it was copied from. Refresh from the '
-      + 'repository to bring it up to date — what is below is what your agents currently read.');
+      + 'folder to bring it up to date — what is below is what your agents currently read.');
   }
   if (doc.freshness === 'unreachable') {
-    notes.push('The repository this was copied from is not on this computer, so the copy could '
+    notes.push('The folder this was copied from is not on this computer, so the copy could '
       + 'not be compared against it. It may or may not still match.');
   }
   if (doc.truncated) {
@@ -5411,6 +5924,14 @@ function foundationReaderContent(doc, project) {
   if (doc.sanitisedOnRead) {
     notes.push('Protocol-shaped text in this file was neutralised on read. The words are '
       + 'unchanged; only their markup is.');
+  }
+  // ── A SKELETON SAYS SO IN THE READER (P2-4) ──────────────────────────
+  // The most consequential note on this panel: the body below is a set of
+  // QUESTIONS, and a reader who takes the prompts for facts has been misled by
+  // the one surface tier 0 exists to make trustworthy. From the FLAG, never
+  // from matching the banner's own sentence (P1-2).
+  if (skeletonOf(doc)) {
+    notes.push('A skeleton — the prompts below are questions, not facts.');
   }
   const noteHtml = notes.map((n) =>
     '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>' + escapeHtml(n) + '</span></div>').join('');
@@ -5428,7 +5949,12 @@ function foundationReaderContent(doc, project) {
       doc.source && doc.source.kind === 'repo' && doc.source.path
         ? 'source: ' + doc.source.path : 'written for this project',
       doc.commit ? 'commit ' + String(doc.commit).slice(0, 7) : null,
-      doc.ownership === 'curator' ? 'Curator-authored' : 'mirrored from a repository',
+      curatorOwned ? 'Curator-authored' : 'mirrored from a folder',
+      // THE FIFTH FACT OF THE SAME KIND (P2-4). role · source · commit ·
+      // ownership already qualify the text rather than decorating it, and
+      // whether it has been WRITTEN is the same kind of fact — arguably the
+      // one that most changes how the body should be read.
+      skeletonOf(doc) ? 'skeleton' : null,
       doc.freshness === 'stale' ? 'out of date' : null,
       doc.freshness === 'unreachable' ? 'source not on this computer' : null,
     ].filter(Boolean),
@@ -5439,9 +5965,9 @@ function foundationReaderContent(doc, project) {
     // reader was opened from. Either way the answer is "not here", which is
     // what `readonly` says — but "not here, and there instead" is the half a
     // person actually needs.
-    readonlyNote: doc.ownership === 'curator'
-      ? 'Edit it from the Foundations table'
-      : 'Mirrored from the repository — edit it there and refresh',
+    readonlyNote: curatorOwned
+      ? 'Edit this in the Foundations table behind this panel.'
+      : 'Mirrored from the folder — edit it there, then refresh.',
     bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
       renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
     backlinks: [],
@@ -5636,14 +6162,29 @@ async function initFoundations(token, facts) {
   if (!body) return;
   const key = keyOf(domain, project);
   const mirrorOnly = !!(facts && facts.present && facts.ownership === 'repo');
-  state.fndInit = { domain, project, choice, busy: true, error: null, refused: [] };
+  // `adding` SURVIVES EVERY WRITE TO THIS RECORD while the request is in
+  // flight and on a refusal: it is the flag that decides whether the picker is
+  // painted at all on a populated mirror, and a refused request that also made
+  // the form vanish would throw away the path the owner typed (the same rule
+  // the project lifecycle form follows on a 4xx).
+  const keepAdding = !!(cur && cur.adding);
+  state.fndInit = {
+    domain, project, choice, busy: true, error: null, refused: [], adding: keepAdding,
+  };
   render(token);
 
   // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own
   // outcome rendering and its own stamped record — so this hands off rather
   // than duplicating it.
   if (mirrorOnly) {
-    state.fndInit = { domain, project, choice, busy: false, error: null, refused: [] };
+    // `adding` IS PRESERVED THROUGH THE COPY. On a populated mirror the picker
+    // sits under the table, and dropping the flag here would take it off
+    // screen the instant the button was pressed — which reads as the press
+    // having cancelled rather than started something (v3.27.0's finding).
+    // `refreshFoundations`'s own stamped outcome is what clears it.
+    state.fndInit = {
+      domain, project, choice, busy: false, error: null, refused: [], adding: keepAdding,
+    };
     await refreshFoundations(token, body.files || []);
     return;
   }
@@ -5669,7 +6210,9 @@ async function initFoundations(token, facts) {
     // THE CHOICE SURVIVES THE REFUSAL. A path typed, a scan read and eight
     // boxes ticked are not thrown away because the server said no — that is
     // the same rule the project lifecycle form follows on a 4xx.
-    state.fndInit = { domain, project, choice, busy: false, error, refused: [] };
+    state.fndInit = {
+      domain, project, choice, busy: false, error, refused: [], adding: keepAdding,
+    };
     render(token);
     return;
   }
@@ -5958,10 +6501,55 @@ function bindFoundationRows(root, token) {
     });
   }
 
-  // ── "Add from repository" on a mirror with nothing in it ───────────────
-  // The same chooser, arm-only, so there is no second control here — the
-  // commit above serves both. This id exists only in FOCUSABLE_IDS' fallback
-  // table, for the case a future paint offers it separately.
+  // ── "Add from folder" ON A MIRROR THAT ALREADY HAS DOCUMENTS (P1-4) ────
+  // Distinct from the chooser's own commit above, which serves a mirror with
+  // NOTHING in it: this control belongs to the table state, where the head now
+  // carries Refresh and Add side by side. Pressing it re-enters the chooser
+  // through the same state field the chooser's own first interaction writes,
+  // with `repo` forced — so there is one state shape, one renderer and one
+  // request body, and the two entrances cannot describe two different asks.
+  const addRepoBtn = root.getElementById ? root.getElementById('mem-fnd-addrepo') : null;
+  if (addRepoBtn) {
+    addRepoBtn.addEventListener('click', () => {
+      state.fndInit = {
+        domain: state.activeDomain, project: state.activeProject,
+        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
+        // THE TABLE STAYS ON SCREEN BEHIND IT. `adding` is what tells
+        // renderFoundations to paint the chooser BESIDE the documents rather
+        // than instead of them: a mirror with six documents that hid them to
+        // ask about a seventh would be answering with a state the owner is not
+        // in (v3.17.1).
+        adding: true,
+      };
+      state.fndInit.choice.ownership = 'repo';
+      if (!state.openFolds) state.openFolds = {};
+      state.openFolds.foundations = true;
+      try {
+        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+      } catch { /* private window, blocked site data, quota — the app forgets */ }
+      render(token);
+    });
+  }
+
+  // ── "Create a project in Domains" (§8(e)) ──────────────────────────────
+  // A POINTER, not a second create path. `navigate` is the shell's single
+  // navigation chokepoint and this is an ordinary use of it.
+  const toDomains = root.getElementById ? root.getElementById('mem-fnd-to-domains') : null;
+  if (toDomains) toDomains.addEventListener('click', () => { navigate('domains'); });
+
+  // ── "Copy the drafting request" (P2-8) ─────────────────────────────────
+  // The text is composed by shared/agent-instructions.js from THIS project's
+  // real unfilled slugs, so an owner with three skeletons does not paste a
+  // sentence asking for four. The outcome — success or a clipboard refusal
+  // that prints the text to be selected by hand — goes through the same
+  // `state.copied` record the header's own copy control uses, with a `kind`
+  // that says which control it belongs to.
+  const askBtn2 = root.getElementById ? root.getElementById('mem-fnd-ask') : null;
+  if (askBtn2) {
+    askBtn2.addEventListener('click', () => {
+      copyDraftingAsk(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
 
   // ── THE ROW EDIT CONTROLS ──────────────────────────────────────────────
   root.querySelectorAll('[data-fnd-edit]').forEach((btn) => {
@@ -6086,6 +6674,11 @@ function bindFoundationRows(root, token) {
     });
   });
 
+  // THE BUTTON OPENS THE HIDDEN INPUT (P1-7). One line, and it is the whole
+  // reason the input may be `hidden` — out of the tab order — rather than
+  // merely invisible and still focusable.
+  const fileBtn = root.getElementById ? root.getElementById('mem-fnd-file-btn') : null;
+
   // ── A FILE FROM DISK (D18) ─────────────────────────────────────────────
   // Read in the browser, dropped into the FIELD, and saved by the ordinary
   // PUT. The wall is checked on `file.size` before the read, so a 40 MB file
@@ -6093,12 +6686,27 @@ function bindFoundationRows(root, token) {
   // lives in shared/foundations-init.js's `readPickedFile`, which returns the
   // refusal as data rather than throwing.
   const fileEl = root.getElementById ? root.getElementById('mem-fnd-file') : null;
+  if (fileBtn && fileEl) {
+    fileBtn.addEventListener('click', () => {
+      if (typeof fileEl.click === 'function') fileEl.click();
+    });
+  }
   if (fileEl) {
     fileEl.addEventListener('change', () => {
       const files = fileEl.files ? Array.prototype.slice.call(fileEl.files) : [];
       if (!files.length) return;
       readPickedFile(files[0]).then((got) => {
         if (!isCurrentMount(token) || !state.fndEdit || !state.fndEdit.isNew) return;
+        // A KIND REFUSAL IS A WHOLE SENTENCE (contract §10): a PDF was never a
+        // candidate document, and "notes.pdf is a PDF — not read." is a worse
+        // answer than the sentence that names the two ways forward. A SIZE
+        // refusal keeps the fragment shape, because that file WAS the right
+        // kind and one fact about it disqualified it.
+        if (got.refusal) {
+          state.fndEdit.importError = got.refusal;
+          render(token);
+          return;
+        }
         if (got.error) {
           state.fndEdit.importError = (got.name || 'That file') + ' ' + got.error + '.';
           render(token);

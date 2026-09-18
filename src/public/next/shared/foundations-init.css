@@ -304,8 +304,7 @@
 .fnd-init-role[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* ── THE CURATOR ARM: the seed tick, and files from disk ─────────────────── */
-.fnd-init-seed,
-.fnd-init-file {
+.fnd-init-seed {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -315,14 +314,19 @@
   color: var(--text-2);
   line-height: var(--leading-normal);
 }
-/* THE FILE INPUT WEARS THE KIT'S BUTTON. The native file control is the one
-   thing in a browser that cannot be restyled at all, so the <input> is
-   visually hidden inside a <label> carrying `btn btn-secondary btn-xs` and the
-   label IS the control. `cursor: default` matches the rest of this app's
-   chrome. Nothing else is needed: shell.css's `.btn` owns the face, and a
-   focused input inside a label is what the browser focuses, so the control is
-   keyboard-reachable without a tabindex. */
-.fnd-init-file { cursor: default; }
+/* A REAL BUTTON BESIDE A `hidden` INPUT (v3.61.0, P1-7).
+
+   The native file control cannot be restyled, and the obvious answer — a
+   `.visually-hidden` <input> inside a <label class="btn"> — is the one this
+   app's own focus work rules out: a visually-hidden input is STILL FOCUSABLE,
+   so a keyboard user's focus lands on something invisible while the thing that
+   looks like a button cannot be focused at all and can never paint
+   `--ring-focus`. So the input is `hidden` (out of the tab order entirely) and
+   the control is a `<button>` whose handler clicks it — views/ingest.js's drop
+   zone, unchanged. shell.css's `.btn` owns the face; this adds nothing but the
+   flex row, and no `cursor` rule, because a <button> already carries the
+   kit's. */
+.fnd-init-file { flex: none; }
 .fnd-init-file-hint {
   flex: 1 1 200px;
   min-width: 0;

@@ -149,6 +149,10 @@ const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain'
   // withholds) the × beside the file name, and the state writer its click
   // calls.
   'renderSelectedFileHtml', 'clearSelectedFile',
+  // v3.61.0 (P2-7): the verbatim pointer. One line under the file row when the
+  // chosen file is `.md` or `.txt`, converting a silent BILLED wrong outcome
+  // into a visible choice. EXECUTED in §16e, both arms.
+  'verbatimPointerHtml',
   // The STATUS-ROW ANATOMY (the release that gave both sidebars one shape).
   // formatDestinationMeta now composes these two rather than building the
   // string itself, because the ROW needs the halves separately — the
@@ -2129,6 +2133,77 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
   'second inline span that could drift from it — there used to be exactly that ' +
   'inline span, with no remove control at all');
 
+// ── 16e  THE VERBATIM POINTER (v3.61.0, P2-7) ───────────────────────────
+//
+// ── THE SILENT WRONG OUTCOME IT ANSWERS ─────────────────────────────────
+// *Ingest* sends a source through the LLM, writes entity / concept / summary
+// pages, CHARGES for it, and files the original in gitignored `raw/` — the
+// original is never the product. *Add as a project document* keeps a file
+// verbatim and never transforms it — the original IS the product. This drop
+// zone accepts `.txt`, `.md` and `.pdf` and asks only which domain, so a user
+// who drops `architecture.md` here gets the first behaviour when they wanted
+// the second, pays for it, and ends with no verbatim copy anywhere an agent
+// can read.
+//
+// This is ONE POINTER, deliberately not the fork itself: the full fork is a
+// work package of its own on this file, which is the app's MONEY surface and
+// the one where this suite pins the cost path hardest. What is under test here
+// is that the condition is right, that the note never folds, and that nothing
+// about the paid path moves.
+//
+// NOTE ON STYLE: this file's `ok(cond, label)` takes the CONDITION FIRST and
+// there is no `eq` — the section below follows that, rather than importing a
+// second convention into one file.
+{
+  const html = bodies.verbatimPointerHtml;
+  ok(!!html, '§16e CONTROL — verbatimPointerHtml extracted');
+  // eslint-disable-next-line no-new-func
+  const pointer = new Function('icon', html + '\nreturn verbatimPointerHtml;')(() => '<svg></svg>');
+
+  for (const name of ['architecture.md', 'NOTES.MD', 'decisions.txt', 'a.TXT']) {
+    ok(pointer({ name }).length > 0, '§16e a ' + name + ' offers the pointer');
+  }
+  // WITHHELD ON A PDF, because tier 0 keeps `.md` and `.txt` only — so on a
+  // PDF the pointer would be advice that cannot be taken, which is a control
+  // whose only outcome is a refusal, one tier down (v3.16.1).
+  for (const name of ['paper.pdf', 'sheet.csv', 'notes.docx', 'noextension']) {
+    ok(pointer({ name }) === '',
+      '§16e a ' + name + ' does NOT, because tier 0 could not keep it verbatim');
+  }
+  ok(pointer(null) === '', '§16e no file chosen means no pointer at all');
+  ok(pointer({}) === '', '§16e …and neither does a file object with no name');
+
+  const note = pointer({ name: 'architecture.md' });
+  ok(/class="tx-note ing-verbatim-note"/.test(note),
+    '§16e it is a `.tx-note`, the shared one-line role, and NOT a second '
+    + 'independently-styled hint');
+  ok(!/<details|hidden/.test(note),
+    '§16e …never folded — the consequence of ignoring it is a CHARGE, and a cost '
+    + 'behind a chevron is not a cost that was disclosed');
+  ok(/Wanted this kept word for word\?/.test(note),
+    '§16e …asking the question in the reader\u2019s own words');
+  ok(/Add it as a project document instead/.test(note),
+    '§16e …and naming the other way in');
+  ok((note.match(/<button/g) || []).length === 1 && /btn-ghost btn-xs/.test(note)
+    && !/btn-ai|btn-primary/.test(note),
+  '§16e …with ONE control, at the quietest tier — it is a pointer, not a write '
+    + 'path, and certainly not a second paid action');
+  ok(!/sparkles/.test(note), '§16e …and it carries no sparkle, because it spends nothing');
+  ok(/id="ing-open-memory"/.test(note), '§16e …at a stable id the wiring can find');
+}
+{
+  // IT REACHES THE FORM, and it is wired to the shell's one navigation
+  // chokepoint — a renderer nothing calls is a renderer nothing proves.
+  ok(/verbatimPointerHtml\(state\.file\)/.test(js),
+    '§16e2 renderIngestForm renders the pointer THROUGH verbatimPointerHtml');
+  const wireBody2 = extractFunction(js, 'wireListeners');
+  ok(/getElementById\('ing-open-memory'\)/.test(wireBody2),
+    '§16e2 …and wireListeners binds it by the SAME id the renderer emits');
+  ok(/navigate\('memory'\)/.test(wireBody2),
+    '§16e2 …to navigate(\'memory\'), the shell\u2019s single navigation chokepoint — '
+    + 'never a second fetch and never a write from this view');
+}
+
 // ── 16b  wireListeners wires the control to clearSelectedFile ───────────
 {
   const wireBody = extractFunction(js, 'wireListeners');
@@ -2398,6 +2473,10 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
       const domainListboxCfg = () => ({});
       const renderDropZoneHtml = () => '<div data-stub="dropzone"></div>';
       const renderSelectedFileHtml = () => '<div data-stub="selected"></div>';
+      // v3.61.0 (P2-7): the verbatim pointer. STUBBED here, where the subject
+      // is the GRID's one-cell / two-cell geometry; it is executed for real in
+      // §16e, both arms.
+      const verbatimPointerHtml = () => '';
       const renderStatus = (o) => '<div data-stub="status">' + o.title + '</div>';
       const isRemoteIngestRunning = () => false;
       const isDomainWriteBusy = () => false;

@@ -984,6 +984,189 @@ section('§10 — The two "Show more" call sites do the same thing');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE PROBLEM IT SOLVES ───────────────────────────────────────────────
+// `navigate()` takes a view name and nothing else, and this view's arrival
+// path picks the DOMAIN by save recency and then the project from a
+// remembered-per-domain map. A project created a second ago has no saves, so
+// it loses the recency question outright: "Open in Agent memory" on the create
+// outcome would land on whichever project last had an agent write to it. That
+// is a navigation that works MOST of the time, which is the worst property a
+// navigation can have — and it is why writing the remembered map was rejected
+// as the cheap fix.
+//
+// ── AND WHAT THE SHAPE HAS TO GUARANTEE ─────────────────────────────────
+// Three properties, each driven below:
+//   · it cannot go stale, because it is CLEARED ON READ;
+//   · it needs no storage, so there is no new localStorage key and nothing to
+//     migrate or forget (scripts/test-ui-state.js's registry does not move);
+//   · `initialPick` stays PURE — the request is consulted BEFORE it, so the
+//     ordinary arrival is byte-identical to what it was.
+{
+  // The two halves, lifted and executed together: they share a module variable
+  // and neither claim is checkable from one of them alone.
+  // eslint-disable-next-line no-new-func
+  const api = new Function(
+    'let pendingProject = null;\n'
+    + lift('requestProject') + '\n'
+    + lift('takePendingProject') + '\n'
+    + 'return { requestProject, takePendingProject, peek: () => pendingProject };')();
+
+  eq('with nothing asked for, the read answers nothing', api.takePendingProject(), null);
+
+  api.requestProject('acme', 'lumina');
+  eq('a request is recorded as the pair', JSON.stringify(api.peek()),
+    JSON.stringify({ domain: 'acme', project: 'lumina' }));
+  const first = api.takePendingProject();
+  eq('...and the read hands it back', JSON.stringify(first),
+    JSON.stringify({ domain: 'acme', project: 'lumina' }));
+  // ── CLEARED AT THE READ, NOT AT THE USE ───────────────────────────────
+  // Whatever the caller then does with it — including deciding it names a
+  // project the index does not have — the request is SPENT. That is the whole
+  // staleness argument: a parameter left in storage would re-open a project
+  // the owner had navigated away from three days later.
+  eq('...and it is spent, so a second arrival is an ORDINARY arrival',
+    api.takePendingProject(), null);
+  eq('...with nothing left behind to go stale', api.peek(), null);
+
+  // BOTH NAMES ARE REQUIRED. A request naming only a project would have to
+  // guess the domain, which is the ambiguity `list_projects` refuses to guess
+  // at one layer down — and a half-request must CLEAR rather than linger.
+  api.requestProject('acme', 'lumina');
+  api.requestProject('acme', '');
+  eq('a request with no project clears rather than lingering', api.peek(), null);
+  api.requestProject('acme', 'lumina');
+  api.requestProject('', 'lumina');
+  eq('...and so does one with no domain', api.peek(), null);
+  api.requestProject(null, undefined);
+  eq('...and a junk request records nothing', api.takePendingProject(), null);
+  // TRIMMED, because the writer passes a name a person typed into a field.
+  api.requestProject('  acme  ', '  lumina  ');
+  eq('the pair is trimmed, because the writer passes what somebody typed',
+    JSON.stringify(api.takePendingProject()),
+    JSON.stringify({ domain: 'acme', project: 'lumina' }));
+
+  // ── AND THE ARRIVAL DECISION HONOURS IT, but VERIFIES it first ─────────
+  // The request is checked against the index rather than trusted: if the
+  // create succeeded and the index read raced it, opening a project that is
+  // not in the list would paint an error under a name nothing can answer
+  // about. When the row is missing the ordinary arrival takes over — a worse
+  // answer than the one asked for, and a much better one than a broken screen.
+  // eslint-disable-next-line no-new-func
+  const pick = new Function(lift('initialPick') + '\nreturn initialPick;')();
+  const rows = [
+    { domain: 'acme', project: 'quiet', lastWriteAt: null },
+    { domain: 'other', project: 'busy', lastWriteAt: '2026-09-18T10:00:00.000Z' },
+  ];
+  const asked = { domain: 'acme', project: 'quiet' };
+  const found = rows.find((r) => r.domain === asked.domain && r.project === asked.project);
+  ok('a brand-new project with NO saves is findable in the index', !!found);
+  ok('CONTROL: and `initialPick` on its own would NOT have reached it — which is '
+    + 'the whole reason the handoff exists',
+  pick(rows, null).project === 'busy', JSON.stringify(pick(rows, null)));
+  const absent = rows.find((r) => r.domain === 'acme' && r.project === 'vanished');
+  ok('a request naming a project the index does not have resolves to nothing, so '
+    + 'the ordinary arrival takes over rather than a broken screen', !absent);
+  // ── `initialPick` IS UNTOUCHED ────────────────────────────────────────
+  ok('...and `initialPick` itself never mentions the handoff, so the ordinary '
+    + 'arrival is byte-identical to what it was',
+  !/pendingProject|takePendingProject/.test(lift('initialPick')));
+  // NO NEW STORAGE KEY. The handoff is a module variable; the alternative
+  // (writing the remembered-project map) is both wrong and persistent.
+  ok('the handoff writes no storage at all',
+    !/localStorage|sessionStorage/.test(lift('requestProject') + lift('takePendingProject')));
+}
+
+// ── §10b — `loadIndex` DRIVEN, because the two halves prove nothing alone ──
+//
+// §10 proves the request records and spends a pair. That is not the claim: the
+// claim is that the ARRIVAL uses it, and verifies it against the index rather
+// than trusting it. A mutation that deleted the consultation left every
+// assertion in §10 green, which is precisely the shape this file exists to
+// catch — so the real `loadIndex` runs here, against a fake index and a spy
+// for `selectProject`.
+{
+  const rig = (rows) => {
+    const picked = [];
+    // eslint-disable-next-line no-new-func
+    const api = new Function(
+      'state', 'fetchIndex', 'isCurrentMount', 'render', 'settleGate', 'selectProject',
+      'readRememberedProjects', 'loadGate',
+      'let pendingProject = null;\n'
+      + lift('requestProject') + '\n'
+      + lift('takePendingProject') + '\n'
+      + lift('initialPick') + '\n'
+      + lift('loadIndex') + '\n'
+      + 'return { loadIndex, requestProject };')(
+      { projects: null, domainsScanned: 0, indexError: null, loading: true },
+      async () => ({ projects: rows, domainsScanned: 1, error: null }),
+      () => true,
+      () => {},
+      (_g, fn) => fn(),
+      async (d, p) => { picked.push(d + '/' + p); },
+      () => null,
+      null);
+    return { api, picked };
+  };
+  const ROWS = [
+    // A brand-new project: NO saves at all, so recency cannot reach it.
+    { domain: 'acme', project: 'lumina', lastWriteAt: null },
+    // The project an agent wrote to most recently, in another domain.
+    { domain: 'other', project: 'busy', lastWriteAt: '2026-09-18T10:00:00.000Z' },
+  ];
+
+  {
+    const { api, picked } = rig(ROWS);
+    await api.loadIndex(1);
+    eq('CONTROL: with no request, the ordinary arrival opens the freshest save '
+      + '— which is NOT the new project', picked.join(), 'other/busy');
+  }
+  {
+    const { api, picked } = rig(ROWS);
+    api.requestProject('acme', 'lumina');
+    await api.loadIndex(1);
+    eq('a requested project is opened, although it has no saves and would lose '
+      + 'the recency question outright', picked.join(), 'acme/lumina');
+  }
+  {
+    // VERIFIED, NOT TRUSTED. If the create succeeded and the index read raced
+    // it, opening a project that is not in the list would paint an error under
+    // a name nothing can answer about. The ordinary arrival takes over — a
+    // worse answer than the one asked for, and a much better one than a
+    // broken screen.
+    const { api, picked } = rig(ROWS);
+    api.requestProject('acme', 'vanished');
+    await api.loadIndex(1);
+    eq('a request naming a project the index does not have falls back to the '
+      + 'ordinary arrival rather than opening nothing', picked.join(), 'other/busy');
+  }
+  {
+    // AND IT IS SPENT. A second arrival is an ordinary arrival, so the handoff
+    // cannot re-open a project the owner navigated away from.
+    const { api, picked } = rig(ROWS);
+    api.requestProject('acme', 'lumina');
+    await api.loadIndex(1);
+    await api.loadIndex(2);
+    eq('the request survives exactly ONE arrival', picked.join(), 'acme/lumina,other/busy');
+  }
+  {
+    // A domain is part of the request for a reason: two domains can hold a
+    // project of the same name, and guessing is the ambiguity `list_projects`
+    // refuses to guess at one layer down.
+    const { api, picked } = rig([
+      { domain: 'acme', project: 'shared-name', lastWriteAt: null },
+      { domain: 'other', project: 'shared-name', lastWriteAt: '2026-09-18T10:00:00.000Z' },
+    ]);
+    api.requestProject('acme', 'shared-name');
+    await api.loadIndex(1);
+    eq('the DOMAIN in the request decides between two projects of one name',
+      picked.join(), 'acme/shared-name');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 console.log('\n' + '─'.repeat(60));
 console.log('Passed: ' + passed + '   Failed: ' + failed);
 if (failed) {

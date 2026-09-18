@@ -51,6 +51,24 @@ import * as shell from '../app.js';
 // composing the words in two places is how two model-read instruction sets
 // start disagreeing.
 import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+// ── THE HANDOFF INTO AGENT MEMORY (P1-10) ────────────────────────────────
+//
+// `navigate()` takes a view name and nothing else, and the memory view's
+// arrival path picks the domain by SAVE RECENCY — so a project created a
+// second ago, which has no saves at all, is not reached even with the
+// remembered-project map written. Rather than ship a control that lands on the
+// right project most of the time (the worst property a navigation can have),
+// the destination view exports a one-shot request: a module variable it clears
+// on read, consulted by `loadIndex` BEFORE `initialPick`, with no storage key
+// and no lifetime past one arrival.
+//
+// A VIEW IMPORTING A PEER VIEW is new here, and it is safe for the reason
+// app.js's own registration block states: this file's import of `../app.js` is
+// already a cycle, and the constraint is only that nothing may CALL a shell
+// function at import time. `requestProject` is a function declaration — so it
+// is hoisted and available whichever of the two views evaluates first — and it
+// is called from a click handler, long after both have finished evaluating.
+import { requestProject } from './memory.js';
 
 // The ONE /next Markdown renderer (next/shared/markdown.js). This view and
 // views/chat.js are both callers of the same copy — see that module's header
@@ -139,6 +157,12 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 import {
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
   bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS,
+  // `pickedFiles` COUNTS THE SAME THING THE REQUEST WILL SEND. The create
+  // card's consequence line (P2-5) quotes how many documents pressing the
+  // primary will copy, and deriving that from anything other than the function
+  // that builds the wire's own file list is how a sentence comes to promise
+  // four and send three.
+  pickedFiles,
 } from '../shared/foundations-init.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
@@ -2690,12 +2714,12 @@ function infoMark(id, label, info, opts) {
 // not have to decide which one is right.
 const MARKER_INFO_TEXT =
   'Copies this project’s marker line — the text domain/project. Save it as a file called ' +
-  '.curator-project at the root of that project’s repository, and a coding agent that starts ' +
-  'there knows which project to resume instead of asking you.';
+  '.curator-project at the root of that project’s folder, and an agent that starts there — most ' +
+  'often a coding agent — knows which project to resume instead of asking you.';
 
 const AGENT_INFO_TEXT =
   'Copies a short paragraph of instructions naming this project. Paste it into CLAUDE.md, ' +
-  'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your coding agent loads every ' +
+  'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your agent loads every ' +
   'session — and it will read your working state before it starts and save a handoff before ' +
   'it stops.';
 
@@ -2959,7 +2983,14 @@ function renderProjectsPanel(readonly) {
   // from a ROW's own controls and keep their card below the group, which is
   // where the row they act on can still be seen.
   const lifecycle = renderProjectLifecycleCard();
-  const createOpen = !!(state.projectLc && state.projectLc.mode === 'create');
+  // ── PHASE 2 OCCUPIES THE SAME SLOT (v3.61.0, P1-10) ────────────────────
+  // `created` is the create form's OUTCOME, and it belongs exactly where the
+  // form was: the whole argument above is that this card's home is the
+  // group's footer row, and letting the outcome fall through to the
+  // below-the-group slot would re-create the orphan v3.48.1 paid to fix — one
+  // step later in the flow, where it is if anything more visible.
+  const createOpen = !!(state.projectLc
+    && (state.projectLc.mode === 'create' || state.projectLc.mode === 'created'));
   const footer = createOpen
     ? '<div class="cur-group-row cur-group-row-stack dm-proj-form-row">' + lifecycle + '</div>'
     : (canWrite
@@ -3095,13 +3126,27 @@ function renderProjectLifecycleCard() {
     );
   }
 
+  if (f.mode === 'created') return renderProjectCreated(f);
+
+  // ── ONE LEDE, AT MOST THIRTEEN WORDS, AND THE REST BEHIND THE ⓘ (P2-2) ──
+  // It was three sentences between the title and the first field: where the
+  // folder goes, which characters are legal, and how the brief's save
+  // semantics work. Two of those are MECHANISM and one is a CONDITION, and the
+  // design system's §3 rule splits them — an eyebrow names the block, a lede
+  // is optional and carries an instruction or a condition the reader needs
+  // BEFORE acting, and a definition or a mechanism goes behind the mark.
+  // "Saving replaces the whole document" is deliberately NOT moved: it
+  // qualifies the control it sits above, which is the one place it earns its
+  // line (the same refusal `renderBriefEditor` records).
+  const cardInfo = infoMark('dm-proj-new-info', 'About creating a project',
+    CREATE_INFO_HTML, { html: true });
   return (
     '<div class="dm-lc-card">' +
-      '<div class="dm-lc-title">New project</div>' +
-      '<div class="dm-lc-body">The name becomes a folder under <span class="mono">' +
-        escapeHtml(f.slug) + '/state/</span>, so use lowercase letters, digits, dots, hyphens or ' +
-        'underscores. The standing brief below is yours to write — every agent read returns it, and ' +
-        'saving replaces the whole document rather than adding to it.</div>' +
+      '<div class="dm-lc-title dm-proj-new-head">' +
+        '<span>New project</span>' + cardInfo.btn +
+      '</div>' +
+      renderDescription('Use a lowercase name. The brief and the documents can wait.') +
+      cardInfo.panel +
       '<label class="dm-lc-label" for="dm-proj-name">Name</label>' +
       '<input class="dm-lc-input mono" id="dm-proj-name" type="text" placeholder="e.g. lumina" value="' +
         escapeHtml(f.name) + '"' + (busy ? ' disabled' : '') + ' />' +
@@ -3125,6 +3170,13 @@ function renderProjectLifecycleCard() {
       // second paragraph.
       foundationsField(f, busy) +
       messages +
+      // ── WHAT THE PRIMARY WILL WRITE, IN ONE LINE (P2-5) ─────────────────
+      // Derived from the chosen arm, ABOVE the action row, rather than folded
+      // into the button's own label. A label that changes width as the form is
+      // answered moves the control the person is aiming at — and a consequence
+      // is a reading, not a name.
+      '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+        escapeHtml(createConsequence(f)) + '</span></div>' +
       '<div class="dm-lc-actions">' +
         '<button class="btn btn-primary" id="dm-proj-submit"' + (busy ? ' disabled' : '') + '>' +
           (busy ? 'Creating…' : 'Create project') + '</button>' +
@@ -3132,6 +3184,177 @@ function renderProjectLifecycleCard() {
       '</div>' +
     '</div>'
   );
+}
+
+/**
+ * PHASE 2 — THE OUTCOME, IN THE SLOT THE FORM WAS IN.
+ *
+ * ── WHY IT IS NOT A BANNER, AND WHY THE OTHER TWO ACTIONS STILL ARE ─────
+ * Rename and delete produce a FACT and nothing to do about it, which is what a
+ * view-level banner is for. A create produces a fact AND two pieces of work
+ * that happen somewhere else: a marker line to save in a repository, and an
+ * instructions block to paste into the file the harness loads. Those controls
+ * belong beside the outcome, and a banner cannot hold controls.
+ *
+ * ── NO PRIMARY, DELIBERATELY ────────────────────────────────────────────
+ * Nothing on this panel commits anything: two copies, one navigation, one
+ * dismissal. Inventing a primary would be the tier-1 slot used dishonestly —
+ * the taxonomy's rule is that the primary is *the one action that completes
+ * the step in front of the user*, and the step is complete.
+ *
+ * ── THE TWO COPY CONTROLS ARE THE ROW'S OWN ─────────────────────────────
+ * Same `data-proj-marker` / `data-proj-agent` hooks the project rows carry, so
+ * `bindProjectListeners` binds them with no new handler, `copyForProject`
+ * composes with no new text, and the two ⓘ panels are the same two constants.
+ * A second implementation of "copy the marker line" is exactly the
+ * template-per-surface defect this release keeps refusing.
+ *
+ * ── AND A TIER-0 FAILURE IS A SECOND FACT, NOT A SUFFIX ─────────────────
+ * The route answers `ok: true` with `foundationsError` when the project and
+ * its brief were written and the documents were not. Two facts, so two boxes:
+ * a success and an attention, both unfolded (v3.16.1).
+ */
+function renderProjectCreated(f) {
+  const name = String(f.project == null ? '' : f.project);
+  const markerInfo = infoMark('dm-proj-done-marker-info',
+    'About Copy marker line', MARKER_INFO_TEXT);
+  const agentInfo = infoMark('dm-proj-done-agent-info',
+    'About Copy agent instructions', AGENT_INFO_TEXT);
+  const outcome = renderStatus({
+    state: 'success',
+    title: 'Created ' + name,
+    detail: f.outcomeDetail || 'The project and its brief are saved.',
+  });
+  const refused = f.outcomeRefusal
+    ? renderStatus({
+      state: 'attention',
+      title: 'No documents were set up',
+      detail: f.outcomeRefusal,
+    })
+    : '';
+  // Rendered through the SAME component the Agent-memory block uses, so a
+  // refusal reads identically wherever it lands, and unfolded, beside the
+  // outcome: the path the person typed and the store's own reason for not
+  // copying it belong next to the count that does not include it.
+  const notCopied = renderRefusedList(f.outcomeRefused);
+  return (
+    '<div class="dm-lc-card">' +
+      outcome +
+      refused +
+      notCopied +
+      '<div class="dm-lc-title">Connect your agent</div>' +
+      renderDescription('Paste these two into that project’s repository, once.') +
+      '<div class="dm-lc-actions dm-proj-done-copies">' +
+        '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
+          'Copy marker line</button>' +
+        markerInfo.btn +
+        '<button class="btn btn-ghost dm-proj-btn" data-proj-agent="' + escapeHtml(name) + '">' +
+          'Copy agent instructions</button>' +
+        agentInfo.btn +
+      '</div>' +
+      markerInfo.panel +
+      agentInfo.panel +
+      '<div class="dm-lc-actions">' +
+        '<button class="btn btn-secondary btn-xs" id="dm-proj-open-memory">' +
+          'Open in Agent memory</button>' +
+        '<button class="btn btn-ghost btn-xs" id="dm-proj-cancel">Done</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// ── WHAT THE CREATE CARD'S ⓘ CARRIES (P2-2) ──────────────────────────────
+//
+// A module constant for the same reason `PROJECTS_INFO_HTML` is one: the suite
+// lifts it and asserts the words a user reads, and a copy typed in a test
+// would assert a copy. Every character is written here, so nothing user-,
+// provider- or store-supplied is interpolated into the `{html: true}`
+// fragment — which is also why the FOLDER PATH is not in it: that would need
+// the domain slug, and a mark whose contents vary is a mark the suite cannot
+// pin. The path is said by the field's own placeholder and by the row that
+// appears afterwards.
+const CREATE_INFO_HTML =
+  '<p><strong>Where it goes.</strong> The name becomes a folder inside this domain’s state ' +
+  'folder, so use lowercase letters, digits, dots, hyphens or underscores. Nothing in the wiki ' +
+  'moves or changes.</p>' +
+  '<p><strong>The standing brief is yours.</strong> Every agent read returns it, and saving ' +
+  'replaces the whole document rather than adding to it — so send the complete text each time. ' +
+  'It is optional here and can be written later from Agent memory.</p>' +
+  '<p><strong>The documents choice is answered once.</strong> A project is all mirrored from a ' +
+  'folder or all kept here, never a mix, and the store refuses a change afterwards. Decide later ' +
+  'is a real answer: the Foundations block on the Agent memory page asks again.</p>';
+
+/**
+ * WHAT WAS WRITTEN, IN ONE SENTENCE — from the SERVER'S answer (P1-10).
+ *
+ * ── WHY NOT `chooserOutcomeWords` ───────────────────────────────────────
+ * That function composes a BANNER SUFFIX — a ` · `-joined clause list that
+ * appends to "Created project “x”" — and phase 2's box already carries the
+ * name in its title, so the suffix would render as a headless fragment
+ * ("· 4 skeletons seeded"). Same source, different shape.
+ *
+ * ── AND WHY NOT THE REQUEST ─────────────────────────────────────────────
+ * A create that asked for four skeletons and got three is a fact the owner
+ * needs. Everything here is read off `body`; the only thing taken from this
+ * side is the import count, because each import is a SEPARATE PUT this view
+ * made itself and the create response cannot know about them.
+ *
+ * ── THE SENTENCE NAMES THE OWNER FIRST (P1-12) ──────────────────────────
+ * "Fill them here, or ask an agent to" — a person can start a project with no
+ * agent and no repository, so the arm that presumes one is the second one.
+ */
+function createdOutcomeDetail(body, imported) {
+  const b = body && typeof body === 'object' ? body : {};
+  const said = [];
+  const seeded = Array.isArray(b.seeded) ? b.seeded.length : 0;
+  if (seeded) {
+    said.push(seeded + ' skeleton document' + (seeded === 1 ? '' : 's')
+      + ' seeded. Fill them here, or ask an agent to.');
+  }
+  const ref = b.refresh && typeof b.refresh === 'object' ? b.refresh : null;
+  const copied = ref
+    ? (Array.isArray(ref.added) ? ref.added.length : 0)
+      + (Array.isArray(ref.refreshed) ? ref.refreshed.length : 0)
+    : 0;
+  if (copied) {
+    said.push(copied + ' document' + (copied === 1 ? '' : 's')
+      + ' copied from that folder, byte for byte.');
+  }
+  const got = Array.isArray(imported) ? imported.length : 0;
+  if (got) said.push(got + ' file' + (got === 1 ? '' : 's') + ' you chose was saved.');
+  if (!said.length) return 'The project and its brief are saved.';
+  return said.join(' ');
+}
+
+/**
+ * THE CONSEQUENCE OF PRESSING CREATE, IN ONE LINE (P2-5).
+ *
+ * Read off the chosen arm, and it counts what the request will ASK FOR — the
+ * skeletons, the ticked files, the imports — never what came back, because
+ * nothing has come back yet. What came BACK is `chooserOutcomeWords`, which
+ * reads the server's answer, and the two are deliberately different functions:
+ * a sentence built from the request and printed as an outcome is how a create
+ * that asked for four and got three reports four.
+ *
+ * Pure over the form record, so the suite drives it rather than scanning for
+ * it.
+ */
+function createConsequence(f) {
+  const c = f && f.foundations;
+  if (!c || c.ownership === 'later') return 'Creates the project. You can add documents any time.';
+  if (c.ownership === 'curator') {
+    const imports = Array.isArray(c.imports) ? c.imports.filter((i) => i && !i.error).length : 0;
+    const seeds = c.seed === false ? 0 : SKELETON_SLUGS.length;
+    if (!seeds && !imports) return 'Creates the project with no documents yet.';
+    const parts = [];
+    if (seeds) parts.push('writes ' + seeds + ' skeleton document' + (seeds === 1 ? '' : 's'));
+    if (imports) parts.push('saves ' + imports + ' file' + (imports === 1 ? '' : 's') + ' you chose');
+    return 'Creates the project and ' + parts.join(' and ') + '.';
+  }
+  const files = pickedFiles(c).length;
+  if (!files) return 'Creates the project. Nothing is copied until you choose files.';
+  return 'Creates the project and copies ' + files + ' document' + (files === 1 ? '' : 's')
+    + ' from that folder.';
 }
 
 // ── THE ⓘ BESIDE THE DOCUMENTS FIELD ─────────────────────────────────────
@@ -3152,19 +3375,19 @@ const FOUNDATIONS_INFO_HTML =
   'architecture, the decisions, the conventions, the roadmap. The Curator keeps them VERBATIM, ' +
   'not as a summary, so an agent reads what you would read, and they travel with the project ' +
   'the way the standing brief does.</p>' +
-  '<p><strong>Mirrored from a repository.</strong> A byte-for-byte copy of files in a folder on ' +
-  'this computer, with the commit each one came from recorded and a checksum compared every time ' +
-  'the project is read — which is how the app can tell you a copy has gone out of date. It does ' +
-  'NOT have to be a git repository: a plain folder works, and the source line then shows the ' +
-  'path with no commit beside it.</p>' +
+  '<p><strong>Mirrored from a folder.</strong> A byte-for-byte copy of files in a folder on ' +
+  'this computer, with a checksum compared every time the project is read — which is how the app ' +
+  'can tell you a copy has gone out of date. Any folder works; it does NOT have to be a git ' +
+  'checkout, and when it is one, the commit each file came from is additionally recorded and ' +
+  'shown beside the path.</p>' +
   '<p><strong>Kept by The Curator.</strong> The documents live only here. Setting this up seeds ' +
   'four SKELETONS — documents that carry prompts instead of prose, which an agent is told to ' +
-  'answer rather than to believe — and you can start from files on this computer instead, or as ' +
-  'well. Nothing is uploaded: a file you choose is read in this browser and shown to you before ' +
-  'it is saved.</p>' +
+  'answer rather than to believe. You fill one in on the Agent memory page, or ask an agent to; ' +
+  'and you can start from files on this computer instead, or as well. Nothing is uploaded: a ' +
+  'file you choose is read in this browser and shown to you before it is saved.</p>' +
   '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
-  'mix, and the store refuses a change afterwards. Decide later is a real answer — the ' +
-  'Foundations block on the Agent memory page asks the same question again.</p>';
+  'mix, and the store refuses a change afterwards. Decide later is a real answer — and the ' +
+  'default one — because the Foundations block on the Agent memory page asks again.</p>';
 
 /**
  * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
@@ -3185,6 +3408,15 @@ function foundationsField(f, busy) {
     '</div>' +
     info.panel +
     renderDescription('Where this project keeps the documents agents read first.') +
+    // IRREVERSIBILITY NEVER FOLDS. The same sentence the Agent-memory chooser
+    // carries above itself, in the same treatment and for the same reason: the
+    // store refuses a mismatch on every later write, and a cost that lives
+    // only inside the mark is a cost the person who did not open the mark was
+    // never told. The MECHANISM stays behind it; this is the one clause that
+    // has to be read before pressing.
+    '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+      escapeHtml('Set once — a project is mirrored or kept here, never both.') +
+      '</span></div>' +
     renderFoundationsChooser({ id: 'dm-proj-fnd', choice, busy: !!busy })
   );
 }
@@ -4249,7 +4481,6 @@ async function runProjectAction() {
         }
       }
     }
-    state.projectLc = null;
     // ── WHAT HAPPENED, FROM THE SERVER'S ANSWER ─────────────────────────
     // Never from the choice that was SENT: a create that asked for four
     // skeletons and got three is a fact the owner needs, and a sentence built
@@ -4270,16 +4501,44 @@ async function runProjectAction() {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +
         ' could not be saved: ' + failed.join(' · '));
     }
-    state.banner = {
-      tone: (fndErr || failed.length) ? 'info' : 'success',
-      // The trailing stop is added ONCE, here, after the outcome clause: the
-      // three `successText` literals above are sentences, and appending a
-      // clause to a finished sentence is how "Renamed “a” to “b”.." ships.
-      text: successText.replace(/\.$/, '') + words + '.',
-      // NEVER FOLDED, and on its own line rather than appended to the
-      // sentence: a refusal is not a suffix to a success (v3.16.1).
-      detail: detailParts.length ? detailParts.join(' ') : null,
-    };
+    if (f.mode === 'create') {
+      // ── PHASE 2 TAKES THE SLOT (P1-10) ──────────────────────────────────
+      // The form is replaced by its own outcome rather than dismissed in
+      // favour of a banner at the top of the page, because the create is the
+      // one action of the three that leaves WORK beside its fact: a marker
+      // line and an instructions block, both pasted somewhere else, and a
+      // navigation to the screen where the documents are added. A banner
+      // cannot hold a control.
+      //
+      // `outcomeDetail` reads the SERVER'S answer (`chooserOutcomeWords`),
+      // never the request, so a create that asked for four skeletons and got
+      // three says three.
+      state.projectLc = {
+        mode: 'created', slug, project: (f.name || '').trim(),
+        outcomeDetail: createdOutcomeDetail(body, imported),
+        outcomeRefusal: detailParts.length ? detailParts.join(' ') : null,
+        // WHAT THE STORE WOULD NOT COPY, carried through verbatim. Read off
+        // the SERVER'S answer — it is the only place the reason exists — and
+        // never assembled here from the request, which knows what was asked
+        // and nothing about why one item was declined.
+        outcomeRefused: body && body.refresh && Array.isArray(body.refresh.refused)
+          ? body.refresh.refused : [],
+        busy: false, error: null, refusal: null, foundations: null,
+      };
+      state.banner = null;
+    } else {
+      state.projectLc = null;
+      state.banner = {
+        tone: (fndErr || failed.length) ? 'info' : 'success',
+        // The trailing stop is added ONCE, here, after the outcome clause: the
+        // three `successText` literals above are sentences, and appending a
+        // clause to a finished sentence is how "Renamed “a” to “b”.." ships.
+        text: successText.replace(/\.$/, '') + words + '.',
+        // NEVER FOLDED, and on its own line rather than appended to the
+        // sentence: a refusal is not a suffix to a success (v3.16.1).
+        detail: detailParts.length ? detailParts.join(' ') : null,
+      };
+    }
     succeeded = true;
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -4387,6 +4646,16 @@ function bindProjectListeners() {
   const f = state.projectLc;
   if (!f) return;
   document.getElementById('dm-proj-cancel')?.addEventListener('click', closeProjectLifecycle);
+
+  // ── "Open in Agent memory" (P1-10) ──────────────────────────────────────
+  // The request is recorded BEFORE the navigation, because the destination
+  // consumes it during its own mount — which `navigate` starts synchronously.
+  // Both are one gesture and neither is a write.
+  document.getElementById('dm-proj-open-memory')?.addEventListener('click', () => {
+    requestProject(f.slug, f.project);
+    state.projectLc = null;
+    shell.navigate('memory');
+  });
 
   // Written straight into state on every keystroke, WITHOUT a re-render, so
   // the caret survives — the same rule bindLifecycleListeners follows. That

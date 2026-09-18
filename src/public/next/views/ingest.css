@@ -1299,6 +1299,20 @@
   gap: var(--space-3);
 }
 
+/* ── THE VERBATIM POINTER (v3.61.0, P2-7) ─────────────────────────────────
+   `.tx-note` is ONE LINE BY CONTRACT and centres its glyph on that basis, and
+   this note carries a control as well as a sentence — so at the widths this
+   form actually takes (970px down to 477px once a result arrives, and 564px at
+   a 2000px window) the sentence wraps and the button has to fall below it
+   rather than push the row past the field above. Wrapping and a top-aligned
+   glyph are the whole of the override; the type, the colour and the measure
+   stay `.tx-note`'s, because it is one. */
+.ing-verbatim-note {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.ing-verbatim-note > span { flex: 1 1 200px; min-width: 0; }
+
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press travel off; the background steps stay.
 
