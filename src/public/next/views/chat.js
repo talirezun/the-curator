@@ -1,4 +1,11 @@
-// View: Chat — the default view.
+// View: Chat — the way in to the wiki.
+//
+// It is NOT "the default view" any more, and this line used to say that it
+// was. v3.49.0 moved HOME_VIEW to 'domains' (app.js), so the phrase became
+// false and stayed in two places: here, and — until v3.61.0 — in the
+// rendered eyebrow of both centre headers, where a user could read it. The
+// header now reads `ask your wiki`; the change is recorded at
+// scripts/test-next-view-header.js's chat.js block.
 //
 // DEVIATION FROM THE DESIGN SPEC (explicit product decision, not an
 // oversight): the spec (README.md screen 1) describes ONE cross-domain
@@ -2741,7 +2748,7 @@ function renderMain(token) {
   // `renderViewHeader(` call: a helper name is not that call.
   if (!state.booted && !state.loadError && state.domains.length === 0) {
     setMain(
-      renderViewHeader({ eyebrow: 'the default view', title: 'Chat' }) +
+      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat' }) +
       gatedLoader(bootGate, 'Loading…'),
       token
     );
@@ -2780,7 +2787,7 @@ function renderMain(token) {
   // wrong half of "prefer cutting".
   if (state.domains.length === 0) {
     setMain(
-      renderViewHeader({ eyebrow: 'the default view', title: 'Chat' }) +
+      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat' }) +
       emptyCard({
         title: 'Nothing to chat with yet',
         body: 'Chat needs at least one domain to talk to. Create one in Domains.',

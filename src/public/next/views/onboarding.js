@@ -38,6 +38,37 @@
 // a success. STEP_ORDER below is the single source of that order and
 // scripts/test-next-onboarding.js pins it.
 //
+// ── TWO DOORS, AND WHY THERE ARE NOW TWO STEP SETS (v3.61.0) ────────────
+// The three steps above are one audience's: somebody who reads a lot and
+// wants a wiki out of it. For the OTHER audience this app has — somebody
+// giving their coding agents memory — the same three steps were actively
+// wrong, measured against the code rather than assumed:
+//
+//   · step 1 claimed "nothing else works without a model". The memory
+//     layer and the MCP bridge need NO key and no running server:
+//     mcp/server.js reads and writes markdown under getDomainsDir()
+//     directly, and src/brain/working-state.js's brief / handoff /
+//     journal / foundations paths are pure filesystem. The app was telling
+//     them to stop and fetch a credential they do not need.
+//   · step 3 (hasAnyPage) can never complete for them — they have no PDFs
+//     — so the panel stayed permanently unfinished and the only fix
+//     available was to dismiss the guidance.
+//   · the two steps that DO matter to them (a project, a connected agent)
+//     were in no step at all.
+//
+// So STEP_SETS holds two ordered sets and the panel picks one. What it
+// must NOT do is store a persona: a stored one goes stale the day the user
+// does the other thing, and this app's rule is that a reading nobody
+// re-took is not a reading. The set is therefore DERIVED — from the same
+// kind of on-disk fact the ticks already come from (deriveDoor below) —
+// and the two doors are shown only while no fact discriminates.
+//
+// The door the user presses writes app.js's EXISTING `curator-next-view`
+// key. No new storage key: scripts/test-ui-state.js's census classifies
+// every curator-* string in this tree, and that key is already classified
+// (per-device, positional). Its honest limit is stated at
+// writeLandingView() — it is a LAST-VIEW key, not a preferred-home key.
+//
 // ── WHAT COUNTS AS "HAS A KEY" (D-A) ────────────────────────────────────
 // hasApiKey() reads hasGeminiKey/hasAnthropicKey from
 // GET /api/config/api-keys, which trace to getApiKeys() in
@@ -76,6 +107,11 @@ import { loadUiState, durableStorage } from '../shared/ui-state.js';
 // Namespaced like every other /next key (curator-next-theme,
 // curator-next-view, curator-next-chat-domain).
 const DISMISS_KEY = 'curator-next-onboarding-dismissed-v1';
+
+// app.js's own landing key, by the same literal — NOT a second key. See
+// writeLandingView() for what writing it does and does not buy, and the
+// two-doors block in the header for why no new key was created.
+const LANDING_VIEW_KEY = 'curator-next-view';
 
 // ── THE DOCK HANDSHAKE ──────────────────────────────────────────────────
 // The panel is `position: fixed`, which takes no space, so on its own it
@@ -177,10 +213,50 @@ const POLL_MAX_MS = 300000;
 // R7. The order is the design, not an implementation detail.
 const STEP_ORDER = ['api-key', 'domain', 'ingest'];
 
+// The other audience's order, and it is a different argument rather than a
+// reshuffle of the same one. Nothing in this set needs a model, so the key
+// is not a precondition and must not be shown as one: somewhere for
+// knowledge to land -> the project an agent resumes -> the bridge that
+// reaches it, and THEN the key, marked optional, because ingest and chat
+// are the halves it really does gate.
+const AGENT_STEP_ORDER = ['domain', 'project', 'bridge', 'api-key'];
+
+// The one place the two orders are named together. Read this rather than
+// either array when you want "the steps for whoever is looking".
+const STEP_SETS = { knowledge: STEP_ORDER, agent: AGENT_STEP_ORDER };
+
+// The two doors. `view` is what the door writes into app.js's landing key;
+// it may only ever be a view the rail actually has (writeLandingView
+// validates against this list, so a door is the only thing that can name
+// one). The bodies are held to the 13-word lede ceiling
+// (docs/design-system-source.md §3) and pinned there.
+const DOORS = [
+  {
+    id: 'knowledge',
+    view: 'domains',
+    title: 'Build a second brain',
+    body: 'Read sources, get a wiki. Ingest and chat need an AI key.',
+  },
+  {
+    id: 'agent',
+    view: 'memory',
+    title: 'Give your coding agents memory',
+    body: 'Your agents read and write project context. No AI key needed.',
+  },
+];
+
 const STEP_COPY = {
+  // ── WHY THIS NO LONGER CLAIMS THAT NOTHING WORKS WITHOUT A KEY ───────
+  // It said "Nothing else works without a model", which is false for half
+  // the people who read it — see the two-doors block in the header. The
+  // replacement names WHICH halves need a key, in the order they matter,
+  // and says what does not. The risk is stated rather than hidden: a user
+  // who reads "work without one" may skip the key and later find Ingest
+  // and Chat refuse, which is why the sentence leads with the two features
+  // that need it instead of with the exemption.
   'api-key': {
     title: 'Add an AI key',
-    todo: 'Nothing else works without a model. Paste a Gemini or Anthropic key in Settings.',
+    todo: 'Needed for ingest and chat. Agent memory and the bridge work without one.',
     done: 'A key is saved, so The Curator can read and write.',
     action: 'Open Settings',
   },
@@ -212,6 +288,43 @@ const STEP_COPY = {
     todo: 'Drop in a PDF, Markdown or text file. The Curator reads it and writes the wiki pages.',
     done: 'Your wiki has pages in it — the loop is running.',
     action: 'Open Ingest',
+  },
+  // The agent set's two new steps. Both POINT, like every other step: the
+  // project is created by views/domains.js's own form (the same rule that
+  // keeps step 2 a navigation), and the bridge snippet is Settings' to
+  // hand out.
+  project: {
+    title: 'Start a project',
+    todo: 'Open Domains and add one under Projects. A project is what an agent resumes.',
+    done: 'A project exists, so an agent has somewhere to save.',
+    action: 'Open Domains',
+  },
+  // ── HARNESS-NEUTRAL, DELIBERATELY ─────────────────────────────────────
+  // Not "connect Claude Desktop". The bridge is a stdio JSON-RPC server, so
+  // it serves any MCP client that can run a local program — Claude Code and
+  // Cursor among them — and naming one product here would tell the other
+  // two thirds of its users that this step is not theirs. The DONE-ness has
+  // the same problem and is solved the same way: it comes from the usage
+  // log, never from `installed` in GET /api/mcp/config, which inspects
+  // Claude Desktop's config file ONLY and would read false for ever for
+  // everyone else — step 3's never-completing defect, rebuilt.
+  bridge: {
+    title: 'Connect your coding agent',
+    todo: 'Settings → MCP bridge hands you the snippet your agent needs. It runs with the app closed.',
+    done: 'Your agent has called the bridge — it can read and save.',
+    action: 'Open Settings',
+  },
+};
+
+// What the AGENT set changes about a shared step. Only the copy differs;
+// the done-ness fact, the action and the destination are the same, because
+// they are the same step. `optional: true` is what puts the flag on it, and
+// it is a flag on ONE of four rows rather than on all of them (v3.16.1: a
+// mark carried by 100% of a list carries nothing).
+const AGENT_STEP_COPY = {
+  'api-key': {
+    todo: 'Needed for ingest and chat.',
+    optional: true,
   },
 };
 
@@ -251,33 +364,148 @@ function hasAnyPage(stats) {
   return stats.domains.some((d) => d && Number(d.pageCount) > 0);
 }
 
-const UNKNOWN_FACTS = { hasKey: false, hasDomain: false, hasPages: false };
+// GET /api/memory -> { ok, projects: [ { domain, project, … } ], total, … }.
+// ONE ROW PER PROJECT since v3.48.0, across every domain, which is exactly
+// the question this step asks. `total` is the store's own count taken
+// BEFORE its cap, so it is read as well as the array: a capped list would
+// otherwise be the only evidence and a cap is not a measurement.
+function hasAnyProject(index) {
+  if (!index || typeof index !== 'object') return false;
+  if (Array.isArray(index.projects) && index.projects.length > 0) return true;
+  return Number(index.total) > 0;
+}
 
-function factsFrom(keys, stats) {
+// GET /api/mcp/usage -> { present, logStartedAt, tools: [ { lastUsedAt,
+// countTotal, … } ], … } (v3.60.0). The step is done when a client has
+// actually CALLED something, which is the thing that matters and the thing
+// that is harness-neutral.
+//
+// `present` alone is not enough and the difference is not pedantry: the log
+// is rotated at 1 MB and can be deleted, so a present-but-empty file means
+// "nothing since this log began", not "a call happened". Requiring a used
+// tool makes the absent case read NOT-DONE, which SHOWS the step — this
+// file's fail-safe direction (see the header) — instead of ticking a step
+// the user never completed.
+function bridgeHasBeenUsed(usage) {
+  if (!usage || typeof usage !== 'object') return false;
+  if (usage.present !== true) return false;
+  if (!Array.isArray(usage.tools)) return false;
+  return usage.tools.some((t) => (
+    !!t && ((typeof t.lastUsedAt === 'string' && t.lastUsedAt.length > 0) || Number(t.countTotal) > 0)
+  ));
+}
+
+const UNKNOWN_FACTS = {
+  hasKey: false, hasDomain: false, hasPages: false, hasProject: false, bridgeUsed: false,
+};
+
+// The two agent-side bodies are TRAILING and DEFAULTED, so every existing
+// two-argument call still means what it meant: absent -> false -> not done,
+// which is the SHOW direction.
+function factsFrom(keys, stats, projects, usage) {
   return {
     hasKey: hasApiKey(keys),
     hasDomain: hasAnyDomain(stats),
     hasPages: hasAnyPage(stats),
+    hasProject: hasAnyProject(projects),
+    bridgeUsed: bridgeHasBeenUsed(usage),
   };
+}
+
+// ── WHICH DOOR IS THE USER BEHIND, AND WHO DECIDES ──────────────────────
+// Returns 'knowledge' | 'agent' | null. NULL IS NOT A FAILURE: it is the
+// answer "no fact discriminates", and it is what puts the two doors on
+// screen. Three rules, in this order:
+//
+//   1. An explicit press this session wins over any fact. The user saying
+//      which audience they are is better evidence than an inference, and
+//      overriding it would make the doors decorative.
+//   2. `hasPages` -> knowledge. Pages are unique to that path, and the tie
+//      goes to it deliberately: the knowledge steps are the SHIPPED ones,
+//      and a maintainer who does both must not lose the path that works.
+//   3. A project, or a bridge that has answered a call -> agent. Both are
+//      unique to that path.
+//
+// `hasKey` and `hasDomain` are NOT consulted, and that is the whole reason
+// this is a three-line function rather than a score: both appear in BOTH
+// paths, so neither carries any signal about which audience is looking. A
+// user who has pasted a key and made an empty domain still gets the doors,
+// because the app genuinely does not know yet.
+function deriveDoor(facts, chosen) {
+  if (chosen === 'knowledge' || chosen === 'agent') return chosen;
+  const f = (facts && typeof facts === 'object') ? facts : UNKNOWN_FACTS;
+  if (f.hasPages === true) return 'knowledge';
+  if (f.hasProject === true || f.bridgeUsed === true) return 'agent';
+  return null;
+}
+
+// ── THE LANDING WRITE, AND EXACTLY WHAT IT BUYS ─────────────────────────
+// This is app.js's OWN key (`VIEW_KEY`, app.js:272), not a new one, and the
+// honest reading of it is narrower than "the door sets your home view":
+//
+//   · app.js reads it ONCE, in boot(), through pickStartView() — which also
+//     validates it against ALL_VIEWS, so a door naming a view a future
+//     build has dropped falls back to HOME_VIEW rather than breaking;
+//   · every navigate() WRITES it. So the next rail click supersedes this,
+//     and the app's existing "restore the view you left" behaviour takes
+//     over — which for somebody who spends the session in Agent memory
+//     lands them there anyway.
+//
+// What the write therefore buys is the first frame of the NEXT launch for a
+// user who chose a door and then quit. That is small, and it is the whole
+// of what the contract asked for; no second key is created to make it
+// bigger (scripts/test-ui-state.js's census is the gate on that, and the
+// design reason is in the header).
+//
+// `storage` is injected rather than reaching for localStorage, so the
+// throwing case (a private window genuinely throws on setItem) is an
+// executed assertion. Best-effort like writeDismissed(): a refused write
+// costs the next launch's first frame and nothing else.
+function writeLandingView(storage, view) {
+  if (!DOORS.some((d) => d.view === view)) return false;
+  try {
+    storage.setItem(LANDING_VIEW_KEY, view);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // The one place a step's done-ness is decided, in the one order that is
 // allowed. Returns a plain array so the test can assert both the order and
 // each step's state without touching the DOM.
-function buildSteps(facts) {
+//
+// `door` is DEFAULTED to the knowledge set, so a one-argument call — which
+// is what every caller made before v3.61.0, and what the suite still makes
+// — returns exactly the three steps it always did, in the same order, with
+// the same done-ness. Anything not 'agent' resolves to 'knowledge': an
+// unknown door must land on the shipped path, never on an empty list.
+function buildSteps(facts, door) {
   const f = (facts && typeof facts === 'object') ? facts : UNKNOWN_FACTS;
   const doneBy = {
     'api-key': f.hasKey === true,
     domain: f.hasDomain === true,
     ingest: f.hasPages === true,
+    project: f.hasProject === true,
+    bridge: f.bridgeUsed === true,
   };
-  return STEP_ORDER.map((id) => ({
-    id,
-    title: STEP_COPY[id].title,
-    body: doneBy[id] ? STEP_COPY[id].done : STEP_COPY[id].todo,
-    action: STEP_COPY[id].action,
-    done: doneBy[id],
-  }));
+  const isAgent = door === 'agent';
+  const order = isAgent ? STEP_SETS.agent : STEP_SETS.knowledge;
+  return order.map((id) => {
+    const base = STEP_COPY[id];
+    // Object.hasOwn, never a bare index: an inherited name must not be able
+    // to supply copy (the same rule hasApiKey() above is written to).
+    const over = (isAgent && Object.hasOwn(AGENT_STEP_COPY, id)) ? AGENT_STEP_COPY[id] : null;
+    const copy = over ? Object.assign({}, base, over) : base;
+    return {
+      id,
+      title: copy.title,
+      body: doneBy[id] ? copy.done : copy.todo,
+      action: copy.action,
+      done: doneBy[id],
+      optional: copy.optional === true,
+    };
+  });
 }
 
 // FAIL-SAFE: SHOW. See the header. `storage` is injected so the throwing
@@ -338,6 +566,12 @@ function targetViewFor(stepId) {
   if (stepId === 'api-key') return 'settings';
   if (stepId === 'domain') return 'domains';
   if (stepId === 'ingest') return 'ingest';
+  // Domains owns the project list (PROJECTS IN THIS DOMAIN) and its create
+  // form — the same view step 2 points at, for the same reason.
+  if (stepId === 'project') return 'domains';
+  // Settings owns the MCP bridge blocks. go() additionally opens that
+  // SECTION, the same way step 2 opens Domains' create form.
+  if (stepId === 'bridge') return 'settings';
   return null;
 }
 
@@ -347,6 +581,29 @@ function targetViewFor(stepId) {
 
 let root = null;
 let steps = buildSteps(UNKNOWN_FACTS);
+// Which door the user PRESSED, this page load, or null. Deliberately NOT
+// persisted: a stored persona is what §8(b) of the design pass argues down,
+// and the cost of not storing it is named rather than hidden — a hard reload
+// before any discriminating fact exists shows the doors again. The panel
+// itself survives navigate() (it lives on document.body), so this outlives
+// every in-app move; only a real page load clears it.
+let chosenDoor = null;
+// The last facts the panel actually read, kept so a door press can rebuild
+// the step list immediately instead of waiting for the next re-check.
+let lastFacts = UNKNOWN_FACTS;
+// The door the CURRENT paint was built for — 'knowledge' | 'agent' | null,
+// where null means the two doors are on screen. Derived, never stored.
+//
+// The INITIAL value is 'knowledge' rather than null, and that is about one
+// specific path: Settings' "Show setup guide" opens the panel SYNCHRONOUSLY
+// from whatever module state exists, and on a page where the automatic
+// check short-circuited (already dismissed) no facts have been read yet. A
+// null start would ask a finished install "what do you want to set up
+// first?" for the ~100 ms until the re-check lands. Starting on the shipped
+// three-step path means that first frame is today's exact behaviour, and
+// the doors arrive a moment later only when the facts really do not
+// discriminate. Every paint after the first is deriveDoor()'s.
+let activeDoor = 'knowledge';
 let refreshTimer = null;
 let prevFocus = null;
 // How long the last re-check actually took, in ms. Feeds nextPollDelay().
@@ -403,6 +660,27 @@ function storage() {
   return durableStorage();
 }
 
+// ── THE LANDING KEY DOES *NOT* GO THROUGH durableStorage() ──────────────
+// It is app.js's key, and app.js reads it from REAL localStorage in boot().
+// shared/ui-state.js's durable store is an allow-list of four fields, and
+// `curator-next-view` is deliberately not one of them: it is per-device by
+// decision (a desktop and a laptop have no business agreeing about which
+// screen was last open), and scripts/test-ui-state.js records that reason.
+// Writing it through the durable wrapper would either be refused or would
+// put a positional preference in the file that holds the API keys — so this
+// one write goes to the same place its only reader reads from.
+//
+// Reaching for `localStorage` can itself THROW (a sandboxed context refuses
+// the property access, not just the call), which is why this is wrapped and
+// why the fallback is an object whose setItem throws: writeLandingView's
+// try/catch then reports the refusal instead of the panel breaking.
+function landingStorage() {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) return localStorage;
+  } catch { /* the access itself is refused — fall through */ }
+  return { setItem() { throw new Error('storage unavailable'); } };
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Data
 // ═════════════════════════════════════════════════════════════════════════
@@ -418,18 +696,43 @@ async function getJson(url) {
   return res.json();
 }
 
-// Both requests are independent and neither is allowed to take the other
-// down: Promise.allSettled, then null for whichever failed. A failure
-// therefore reads as "not done", which SHOWS the panel — the fail-safe
-// direction (see the header).
-async function loadFacts() {
+// Requests are independent and none is allowed to take another down:
+// Promise.allSettled, then null for whichever failed. A failure therefore
+// reads as "not done", which SHOWS the panel — the fail-safe direction (see
+// the header).
+//
+// ── THE SECOND PAIR IS CONDITIONAL, AND THAT IS A COST DECISION ─────────
+// This runs on a timer for as long as the checklist is unfinished, so two
+// more endpoints per tick is not free — and GET /api/memory walks every
+// domain's state tree, which is the most expensive of the four. They are
+// therefore fetched only when they can change the answer:
+//
+//   · door already 'knowledge'  -> never. Neither fact appears in that step
+//     set, and neither can move the door once it is chosen.
+//   · door already 'agent'      -> always. Two of its four ticks are these.
+//   · no door yet               -> only when hasAnyPage(stats) is FALSE.
+//     If pages exist, deriveDoor() returns 'knowledge' on that fact alone
+//     (rule 2), so the pair could not change the outcome.
+//
+// The practical effect is that the install where this panel polls forever —
+// a fully populated wiki whose only key lives in .env, the case this file's
+// header records — pays nothing at all for the new facts.
+async function loadFacts(chosen) {
   const [keysRes, statsRes] = await Promise.allSettled([
     getJson('/api/config/api-keys'),
     getJson('/api/domains/stats'),
   ]);
   const keys = keysRes.status === 'fulfilled' ? keysRes.value : null;
   const stats = statsRes.status === 'fulfilled' ? statsRes.value : null;
-  return factsFrom(keys, stats);
+  const needsAgentFacts = chosen === 'agent' || (chosen !== 'knowledge' && !hasAnyPage(stats));
+  if (!needsAgentFacts) return factsFrom(keys, stats, null, null);
+  const [projRes, usageRes] = await Promise.allSettled([
+    getJson('/api/memory'),
+    getJson('/api/mcp/usage'),
+  ]);
+  const projects = projRes.status === 'fulfilled' ? projRes.value : null;
+  const usage = usageRes.status === 'fulfilled' ? usageRes.value : null;
+  return factsFrom(keys, stats, projects, usage);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -472,9 +775,17 @@ export async function maybeShowOnboarding() {
     // readdir-backed requests to throw the answer away. shouldShowPanel()
     // below is still handed the REAL dismissed value, so there is exactly
     // one place the show/hide verdict is made.
-    const facts = dismissed ? UNKNOWN_FACTS : await loadFacts();
-    const next = buildSteps(facts);
+    const facts = dismissed ? UNKNOWN_FACTS : await loadFacts(chosenDoor);
+    lastFacts = facts;
+    const door = deriveDoor(facts, chosenDoor);
+    // The GATE is always asked about a real step list, even while the doors
+    // are on screen. When no door is derivable the knowledge set stands in,
+    // and that cannot mis-gate: door === null implies hasPages === false
+    // implies the ingest step is not done, so the all-done rule below can
+    // never fire on a list built this way.
+    const next = buildSteps(facts, door || 'knowledge');
     if (!shouldShowPanel(next, dismissed)) return;
+    activeDoor = door;
     openPanel(next, { focus: false });
   } catch (err) {
     // Never fatal. A first-run hint failing is not worth degrading the app
@@ -616,6 +927,12 @@ function focusHeading() {
 function render() {
   if (!root) return;
   const allDone = steps.every((s) => s.done);
+  // No door derivable yet -> the two doors take the body instead of the
+  // step list. Nothing else about the panel changes: same section, same
+  // heading, same dismiss, same foot. It is one card in two states, not a
+  // first page of a flow — there is no Next, and no step is withheld
+  // pending an answer.
+  const askingDoor = activeDoor === null;
 
   const rows = steps.map((s, i) => (
     '<li class="obp-step' + (s.done ? ' obp-step-done' : '') + '" data-step="' + escapeHtml(s.id) + '">' +
@@ -624,6 +941,20 @@ function render() {
       '</span>' +
       '<span class="obp-step-text">' +
         '<span class="obp-step-title">' + escapeHtml(s.title) + '</span>' +
+        // A flag on a MINORITY of the rows, which is the only way a flag
+        // carries anything (v3.16.1 / v3.53.1) — one of the agent set's
+        // four, and none of the knowledge set's three.
+        //
+        // It is a SIBLING of the title rather than nested inside it, and
+        // that is not a layout preference: the escaping guard in
+        // scripts/test-next-onboarding.js §7 finds an interpolation by the
+        // quote-plus-value-plus-quote shape around it, so putting this
+        // ternary between escapeHtml(s.title) and its closing quote would
+        // stop that guard seeing the title site at all — a guard silently
+        // ceasing to reach the thing it protects, which is this project's
+        // named failure shape. Kept outside, every escapeHtml() site in
+        // this function stays scanned, and §7 now counts them.
+        (s.optional ? '<span class="obp-step-optional">Optional</span>' : '') +
         '<span class="obp-step-body">' + escapeHtml(s.body) + '</span>' +
       '</span>' +
       (s.done
@@ -634,6 +965,20 @@ function render() {
     '</li>'
   )).join('');
 
+  // BOTH doors are btn-secondary. Neither is the primary: design-system §1
+  // reserves that tier for the one action that finishes a block, and a door
+  // finishes nothing — it is a choice between two equal paths, and making
+  // one of them look like the answer is the recommendation this card is
+  // specifically not making.
+  const doors = DOORS.map((d) => (
+    '<li class="obp-door">' +
+      '<button type="button" class="btn btn-secondary obp-door-btn" data-door="' + escapeHtml(d.id) + '">' +
+        escapeHtml(d.title) +
+      '</button>' +
+      '<span class="obp-door-body">' + escapeHtml(d.body) + '</span>' +
+    '</li>'
+  )).join('');
+
   root.innerHTML =
     '<section class="obp-panel" role="region" aria-labelledby="obp-title">' +
       '<div class="obp-head">' +
@@ -641,8 +986,19 @@ function render() {
         '<button type="button" class="obp-dismiss" id="obp-dismiss" ' +
           'aria-label="Dismiss the setup guide">' + icon('x', 14) + '</button>' +
       '</div>' +
-      '<p class="obp-progress" aria-live="polite">' + escapeHtml(progressLabel(steps)) + '</p>' +
-      '<ol class="obp-steps">' + rows + '</ol>' +
+      (askingDoor
+        ? '<p class="obp-ask">What do you want to set up first?</p>' +
+          '<ul class="obp-doors">' + doors + '</ul>'
+        : '<p class="obp-progress" aria-live="polite">' + escapeHtml(progressLabel(steps)) + '</p>' +
+          '<ol class="obp-steps">' + rows + '</ol>') +
+      // Offered ONLY when the door was pressed, never when it was derived:
+      // on a derived door this control would flip the panel back to a
+      // question the facts have already answered, and it would answer it
+      // again a moment later. It is the "both doors stay visible"
+      // mitigation the design pass asks for, one click deep.
+      (!askingDoor && chosenDoor !== null
+        ? '<button type="button" class="obp-swap" id="obp-swap">Pick a different start</button>'
+        : '') +
       (allDone
         ? '<p class="obp-foot">Everything here is done — this guide will not come back on its own.</p>'
         : '<p class="obp-foot">You can ignore this and just start typing. ' +
@@ -667,6 +1023,47 @@ function bind() {
   root.querySelectorAll('.obp-go').forEach((btn) => {
     btn.addEventListener('click', () => go(btn.dataset.go));
   });
+  root.querySelectorAll('.obp-door-btn').forEach((btn) => {
+    btn.addEventListener('click', () => chooseDoor(btn.dataset.door));
+  });
+  const swap = root.querySelector('#obp-swap');
+  if (swap) swap.addEventListener('click', () => chooseDoor(null));
+}
+
+// ── Choosing a door ─────────────────────────────────────────────────────
+// The only thing on this panel that writes anything other than the
+// dismissal, and what it writes is app.js's landing key — see
+// writeLandingView() for exactly what that buys. It does NOT navigate: the
+// user is on the view they opened the app on, and re-mounting it under them
+// to make a choice visible would be the panel doing something rather than
+// pointing. The visible effect is the step list it swaps in; the steps' own
+// buttons do the moving, as every step always has.
+//
+// `null` is a real argument, not a miss: it is the "Pick a different start"
+// control handing the decision back, which clears the choice and lets
+// deriveDoor() ask the facts again.
+function chooseDoor(doorId) {
+  if (doorId === null) {
+    chosenDoor = null;
+  } else {
+    const door = DOORS.find((d) => d.id === doorId);
+    if (!door) return;
+    chosenDoor = door.id;
+    writeLandingView(landingStorage(), door.view);
+  }
+  activeDoor = deriveDoor(lastFacts, chosenDoor);
+  steps = buildSteps(lastFacts, activeDoor || 'knowledge');
+  render();
+  // Re-check now: the agent set's two facts may not have been fetched yet
+  // (loadFacts skips them until they can matter), so its ticks would
+  // otherwise all read not-done until the next tick of the timer.
+  const myGen = panelGen;
+  refresh(myGen);
+  // A door press can only ever make the checklist INCOMPLETE again (a set
+  // with more unmet steps), and startRefresh() returns immediately when
+  // there is nothing left to watch — so this is safe to call unconditionally
+  // and is what re-arms a loop that had correctly stopped.
+  startRefresh(myGen);
 }
 
 // ── Pointing, never doing ────────────────────────────────────────────────
@@ -688,6 +1085,11 @@ function go(stepId) {
   // mount has happened, and IMMEDIATELY when nothing is pending, so this is
   // also correct with motion off and on a first navigation.
   if (stepId === 'domain') afterViewMount(goToDomainsCreate);
+  // Same shape, same reason, same degradation contract — see
+  // goToMcpBridge(). Settings lands on its FIRST section (Providers & keys,
+  // from SETTINGS_SECTIONS[0]), so without this the bridge step would send
+  // somebody to the key screen it has just told them they do not need.
+  if (stepId === 'bridge') afterViewMount(goToMcpBridge);
 
   // The panel stays open on purpose: the user is meant to see step 2 next.
   // Re-check now so a step they completed a moment ago ticks over without
@@ -721,6 +1123,20 @@ function go(stepId) {
 // is trying to reach anyway. It can fail to help; it cannot break anything.
 function goToDomainsCreate() {
   document.getElementById('dm-new-domain-btn')?.click();
+}
+
+// Opens Settings' MCP bridge SECTION by clicking Settings' own nav row —
+// the goToDomainsCreate() pattern exactly, for the same three reasons: no
+// second write path, no reach into another view's internals, and a
+// degradation contract where a renamed hook leaves the user on Settings
+// with the section list in front of them rather than throwing.
+//
+// The selector is the row views/settings.js renders from SETTINGS_SECTIONS
+// (`<button class="settings-nav-row" data-section="mcp">`). Queried by the
+// pair, not by the class alone, so a reordering of that array cannot make
+// this click a different section.
+function goToMcpBridge() {
+  document.querySelector('.settings-nav-row[data-section="mcp"]')?.click();
 }
 
 // ── Refresh loop ─────────────────────────────────────────────────────────
@@ -791,8 +1207,15 @@ function stopRefresh() {
 // signature over (id, done) is not an approximation of the screen — it IS
 // the screen, and a re-check that leaves it unchanged can skip render()
 // entirely rather than tearing down the panel's DOM and putting focus back.
+// v3.61.0: the DOOR is part of it, and it has to be. The body is the two
+// doors when activeDoor is null and the step list otherwise, so a signature
+// over the steps alone would let the panel flip from question to checklist
+// (or back) with no repaint — the no-op guard in refresh() reading "nothing
+// changed" about the one thing that changed most. `chosenDoor` is in it too,
+// because it is what decides whether the swap control is drawn.
 function screenSignature() {
-  return steps.map((s) => (s && s.id) + ':' + (s && s.done === true)).join('|');
+  return String(activeDoor) + '/' + String(chosenDoor) + '|' +
+    steps.map((s) => (s && s.id) + ':' + (s && s.done === true) + ':' + (s && s.optional === true)).join('|');
 }
 
 // D-F: myGen is captured by the CALLER, synchronously, and passed in as a
@@ -809,7 +1232,7 @@ async function refresh(myGen) {
   let facts;
   const startedAt = Date.now();
   try {
-    facts = await loadFacts();
+    facts = await loadFacts(chosenDoor);
   } catch {
     return; // leave the panel showing whatever it already had
   } finally {
@@ -819,7 +1242,14 @@ async function refresh(myGen) {
   // Feeds nextPollDelay(). Recorded from the REAL request pair rather than
   // estimated, so the backoff tracks the install this is actually running on.
   lastRefreshMs = Date.now() - startedAt;
-  steps = buildSteps(facts);
+  lastFacts = facts;
+  // Re-DERIVED every re-check, never remembered: this is what lets the doors
+  // resolve themselves while they are on screen. Somebody who presses no
+  // door and goes and makes a project in Domains comes back to the agent
+  // checklist, because the fact appeared — which is the whole argument for
+  // deriving rather than storing.
+  activeDoor = deriveDoor(facts, chosenDoor);
+  steps = buildSteps(facts, activeDoor || 'knowledge');
   // D-D: finishing setup dismisses the panel by itself — but only for a
   // panel that opened itself. See autoCloseOnComplete's own comment.
   if (autoCloseOnComplete && steps.every((s) => s.done)) { closePanel(); return; }

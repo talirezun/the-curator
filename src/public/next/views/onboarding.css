@@ -87,6 +87,23 @@
   width: calc(var(--guide-dock-w) - 28px);
   max-width: 100%;
   box-sizing: border-box;
+  /* ── THE HEIGHT CEILING, ADDED IN v3.61.0 AND MEASURED FIRST ──────────
+     The agent step set has FOUR steps, and at a 1024px-wide window the
+     card narrows (--guide-dock-w's min() scales it with the column) so its
+     copy wraps: measured 699.7px tall, bottom edge at 711.7 of an 800px
+     viewport. One notch shorter — an ordinary laptop window, or the same
+     window with the app's Largest text size — and the last step, the
+     "Pick a different start" control and the dismissal reassurance run off
+     the bottom of a `position: fixed` card with no way to reach them.
+     100vh - 24px is this wrapper's own 12px top and bottom padding, so the
+     ceiling is derived from the padding rather than guessed, and the
+     overflow is contained INSIDE the card instead of clipping.
+
+     This does not make the panel a scroll region in the ordinary case: at
+     1370x900 the four-step card measures 477px, well under the ceiling, so
+     nothing scrolls until the window is genuinely too short for it. */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   /* ── THIS PANEL IS DELIBERATELY NOT A SHEET ─────────────────────────────
      The design pass moves the app's MODAL FLOWS to sheets, and the two
      wizards took that treatment. This did not, and the refusal is the point:
@@ -191,6 +208,87 @@
   color: var(--text-2);
 }
 
+/* ── THE TWO DOORS (v3.61.0) ───────────────────────────────────────────
+   The panel's body in its other state: no door derivable yet, so the card
+   asks instead of listing. Same card, same heading, same dismiss — there is
+   no scrim, no Next, and no step withheld pending an answer, because the
+   question is not a first page of a flow. R7 is untouched by it.
+
+   The ask line takes .obp-progress's SLOT but not its treatment: that
+   element is an uppercase mono READOUT ("2 OF 3 DONE") and this is a
+   sentence somebody reads, so it takes the body face. Held to the 13-word
+   lede ceiling (docs/design-system-source.md §3) at 7 words, and pinned
+   there by scripts/test-next-onboarding.js rather than by eye. */
+.obp-ask {
+  margin: 2px 0 10px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  /* Same reasoning as .obp-step-body: --text-3 measures 4.15 dark / 4.14
+     light on --surface-overlay, under the 4.5 AA floor for text. */
+  color: var(--text-2);
+}
+
+.obp-doors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.obp-door {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* BOTH doors are .btn-secondary and neither is primary — the tier choice is
+   argued at the render site. This rule only sizes them: full width, because
+   a choice between two equal paths reads as two equal targets rather than
+   two buttons of the length of their own labels.
+
+   `height` is a TOKEN, never a px literal, for the same reason .obp-go's is
+   (--control-sm IS --hit-min, so the box is the target and no ::before hit
+   box is needed). */
+.obp-panel .obp-door-btn {
+  width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+}
+
+.obp-door-body {
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+}
+
+/* "Pick a different start" — the way back to the question, drawn only when
+   the door was PRESSED (see render()). Quiet by tier: it is reversible and
+   one of many, which is design-system §1's ghost band, so it carries no
+   face and no border of its own. It still has to reach the 28pt target,
+   and it does it by BOX rather than by ::before — it is a text control with
+   no glyph to preserve. */
+.obp-swap {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--t-state);
+}
+.obp-swap:hover { color: var(--text); }
+
 .obp-steps {
   list-style: none;
   margin: 0;
@@ -252,6 +350,40 @@
   color: var(--text);
 }
 .obp-step-done .obp-step-title { color: var(--text-2); }
+
+/* The "Optional" flag, on the ONE step of four that is optional — a flag a
+   majority carries carries nothing (v3.16.1), which is why it is not on the
+   knowledge set's rows at all. It sits inside the title line so the step
+   keeps its title-over-body shape instead of growing a third line.
+
+   No colour of its own beyond --text-2 and --control-edge for the outline:
+   an optional step is not a status and must not borrow a status tone.
+
+   --border-subtle WAS the outline here and it was MEASURED OUT, in the
+   running app on this exact surface: 1.06 dark, i.e. an outline nobody can
+   see, which is decoration pretending to be a boundary. --control-edge is
+   the system's real, opaque edge (the one .btn-secondary's own note calls
+   out as carrying WCAG 1.4.11 for that variant) and it measures 3.24 dark /
+   3.36 light against --surface-overlay — over the 3:1 floor that governs a
+   non-text graphic. The LABEL is --text-2 at 10.23 dark / 7.26 light, so
+   the word clears the 4.5 text floor on its own and the outline is a
+   boundary rather than the only thing carrying the meaning. */
+.obp-step-optional {
+  /* A sibling of the title, not a child of it — the reason is a test guard
+     and it is recorded at the render site. So it takes its own short line,
+     shrink-wrapped to its label rather than stretched across the column by
+     the flex parent. */
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 1px 5px;
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-2xs)/1.5 var(--font-sans);
+  letter-spacing: var(--track-body);
+  text-transform: none;
+  color: var(--text-2);
+  white-space: nowrap;
+}
 
 .obp-step-body {
   font-size: var(--text-xs);

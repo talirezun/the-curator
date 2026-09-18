@@ -641,15 +641,23 @@ ok('ingest.js: BOTH blocks the report named — centre and sidebar',
   && /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest', info: hint/.test(VIEWS['ingest.js']));
 ok('settings.js: renderMain builds the header, per-section, from SECTION_INFO',
   /const info = SECTION_INFO\[state\.section\];[\s\S]{0,300}renderViewHeader\(\{/.test(VIEWS['settings.js']));
-// chat.js — the app's DEFAULT view, and the one both layers of this suite
-// missed. THREE headers: two in the centre column (pre-boot and zero-domain,
-// the identical two-field literal at both) and one in the sidebar.
+// chat.js — the one both layers of this suite missed. THREE headers: two in
+// the centre column (pre-boot and zero-domain, the identical two-field
+// literal at both) and one in the sidebar.
+//
+// THE EYEBROW MOVED IN v3.61.0, and the old one is worth recording rather
+// than just replacing: it read `the default view`, which had been FALSE
+// since v3.49.0 moved HOME_VIEW to 'domains' (app.js) — a stale fact on a
+// view header, which §3 of docs/design-system-source.md forbids outright
+// (an eyebrow names the block; it does not carry a claim, least of all an
+// expired one). `ask your wiki` is what the view does, in the same voice as
+// 'the way material gets in' and 'your brain'.
 ok('chat.js: both centre branches build the header from the component, identically',
-  (VIEWS['chat.js'].match(/renderViewHeader\(\{ eyebrow: 'the default view', title: 'Chat' \}\)/g) || []).length === 2);
+  (VIEWS['chat.js'].match(/renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat' \}\)/g) || []).length === 2);
 ok('chat.js: the sidebar uses the sidebar DENSITY, so the screen keeps one <h1>',
   /renderViewHeader\(\{ variant: 'sidebar', title: 'Chat' \}\)/.test(VIEWS['chat.js']));
 ok('chat.js: neither centre call passes `info` — there was no prose to fold, only prose to MOVE',
-  !/renderViewHeader\(\{ eyebrow: 'the default view', title: 'Chat', info:/.test(VIEWS['chat.js']));
+  !/renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat', info:/.test(VIEWS['chat.js']));
 ok('settings.js: `general` has NO entry, so that section renders no mark',
   /const SECTION_INFO = \{[\s\S]*?\n\};/.test(VIEWS['settings.js'])
   && !/^\s{2}general:/m.test(VIEWS['settings.js'].match(/const SECTION_INFO = \{[\s\S]*?\n\};/)[0]));
