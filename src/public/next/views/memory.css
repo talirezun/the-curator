@@ -66,23 +66,24 @@
    One declaration, so the three cannot drift apart. */
 .mem-status-stack { display: flex; flex-direction: column; gap: var(--space-5); }
 
-/* ── A BLOCK'S OWN TOOLBAR ROW ────────────────────────────────────────────
-   Block ④ needs a control beside its title and `renderBlock` has no slot for
-   one — deliberately: its head is a numeral, a heading and nothing else, and
-   giving it an actions slot would invite every adopter to put something there.
-   So the toolbar is the first row of the BODY, right-aligned, carrying the
-   brief's age on the left and the pencil on the right.
+/* ── `.mem-block-toolbar` IS GONE (v3.58.0) ───────────────────────────────
+   It was a `justify-content: space-between` row holding the brief's age at one
+   end and the pencil at the other, and on a 1,015px column that put roughly
+   800px of nothing between them. The maintainer's report was that the pencil
+   "reads as unattached", and a control alone at the far end of an otherwise
+   empty row is exactly that.
 
-   `align-items: center` rather than baseline: the pencil is a 28px control and
-   the age is a 10px line, so a baseline would hang the button below the text
-   it sits beside. */
-.mem-block-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
+   Both of its contents moved rather than being deleted: the age is in the
+   brief fold's own `<summary>` (where it is one of the two facts you decide to
+   open on), and the pencil is anchored over that summary row by
+   `.mem-brief-row` below — inside the card it edits, at the block's right
+   edge. `renderBlock` still has no actions slot and still should not grow one;
+   what changed is that this block's body now HAS a head of its own to hang a
+   control on.
+
+   Deleted rather than left standing: a rule nothing can match is a claim about
+   the screen that is no longer true — the same call this file made for
+   `.mem-fold-lead`, `.mem-doc-head` and `.mem-doc-who`. */
 
 /* ── Sidebar: project list ───────────────────────────────────────────── */
 
@@ -1318,26 +1319,63 @@
 
 /* `.mem-brief-actions` IS GONE. It was the column that held the "Edit brief"
    button and its explanation BELOW the rendered brief — the maintainer's
-   "buried" — and both of its contents moved: the control is the pencil in
-   `.mem-block-toolbar` beside the block's title, and the sentence about
+   "buried" — and both of its contents moved: the control is the pencil
+   anchored on the brief fold's own head, and the sentence about
    replace-not-merge is inside the editor, where it is read at the moment it
    matters rather than before anyone has decided to edit.
 
-   The pencil takes the kit's quiet rung (`btn btn-ghost btn-xs`) and declares
-   only what the kit cannot know: that it holds a glyph and a word on one line.
-   It is NOT icon-only — a glyph alone would need its accessible name to do all
-   the work, and "Edit" next to a pencil costs 28px and removes the guess. */
-.mem-brief-edit { display: inline-flex; align-items: center; gap: var(--space-3); flex: none; }
-.mem-brief-edit svg { flex: none; }
-.mem-brief-age {
-  min-width: 0;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  font-variant-numeric: var(--numeric-tabular);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+   ── THE PENCIL IS ANCHORED, NOT LAID OUT (v3.58.0) ─────────────────────
+   It has to sit ON the fold's summary row — that is what makes it read as
+   belonging to the brief rather than floating near it — and it may NOT be a
+   child of the `<summary>`, because an interactive control there toggles its
+   own section when clicked (the v3.0.1-beta.18 hazard, which views/memory.js's
+   header and v3.54.0 both record). Those two together leave exactly one shape:
+   a positioned ancestor around the <details>, and the button placed over the
+   summary's right end. It is then a SIBLING of the <details> in the DOM, so
+   there is no propagation path to suppress and no stopPropagation for a later
+   edit to drop — the hazard stays inexpressible rather than guarded.
+
+   THE OFFSETS ARE MEASURED, not chosen. `.mem-fold-summary` is `11px 14px`
+   around a --text-sm line box; measured in Chrome at the default text setting
+   the summary is 39px tall and `.mem-fold`'s 1px border puts its top 1px below
+   this row's. The button is --control-sm (28px), so `top: 7px` sits its centre
+   0.5px under the summary's — measured at a rounded offset of 0. The px
+   literals match the padding rule they are derived from, which is this file's
+   idiom on this component.
+
+   `padding-right` on the summary is what keeps the meta out from under the
+   button: the meta rides on `margin-left: auto`, so without it a long "updated
+   … · 1,309 words" would run under the pencil at narrow widths. 46px = 10
+   (inset) + 28 (button) + 8 (breathing room).
+
+   IT IS ICON-ONLY NOW. It carried the word "Edit" beside the glyph, and the
+   argument for that was that "a glyph alone would need its accessible name to
+   do all the work". On a toolbar row of its own that was true; on the head of
+   the card it edits it is not — the target is unambiguous from where it sits,
+   and the accessible name is a real `aria-label` rather than a tooltip. */
+.mem-brief-row { position: relative; }
+.mem-brief-edit {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* SQUARE, because there is no label to pad around any more. --control-sm on
+     both axes keeps the hit box at the kit's own minimum rather than shrinking
+     it to the 14px glyph. */
+  width: var(--control-sm);
+  padding: 0;
 }
+.mem-brief-edit svg { flex: none; }
+.mem-brief-row > .mem-fold > .mem-fold-summary { padding-right: 46px; }
+/* THE NO-BRIEF STATE KEEPS THE CARD AND LOSES THE CHEVRON. There is one
+   sentence to show and it is the one that argues for writing a brief, so it is
+   not folded (v3.17.1: the missing thing has to be missing where you looked
+   for it) — but it keeps the same chrome so the pencil is anchored identically
+   in both states rather than jumping when the first brief lands. */
+.mem-fold-flat > .mem-fold-body { padding: 11px 14px; padding-right: 46px; }
 
 .mem-brief-editor { display: flex; flex-direction: column; gap: var(--space-3); }
 

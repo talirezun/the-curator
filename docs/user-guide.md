@@ -1373,8 +1373,17 @@ deliberately **not numbered**: they are sections, not steps.
 |---|---|---|
 | **Status** | *Am I saved, and is it any good?* | The **Working on** headline with a freshness pip and an age that ticks while you watch; the **Last saved** reading with the work-stream and harness that wrote it; which clock the reading came from; every qualifying line — see [the save-status strip](#the-save-status-strip) below; and the standing brief's age |
 | **Work-streams** | *What else is going on in this project, and where?* | One row per saved copy, newest first — see [the table below](#the-work-stream-table). Press a row to read its handoff in the [reader](#reading-a-handoff) |
-| **Standing brief** | *What standing instructions does every agent read?* | Your document, with a **pencil** to edit it — see [Editing the standing brief](#editing-the-standing-brief) |
-| **Session journal** | *What has happened here over time?* | One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. History, not the present |
+| **Standing brief** | *What standing instructions does every agent read?* | Your document, **folded shut** behind a line reading *"The brief · updated `<age>` · N words"*, with a **pencil** beside it — see [Editing the standing brief](#editing-the-standing-brief) |
+| **Session journal** | *What has happened here over time?* | One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. **Folded shut** behind *"Recent saves · N saves · latest `<age>`"*. History, not the present |
+
+**The bottom two blocks start closed, and stay how you leave them** (*v3.58.0*). A standing brief
+is usually a page or more and a journal runs to fifty rows, so on a real project those two sections
+were most of the page: measured on this repo's own `curator` project at a 1370px window, the page
+was **3,241px** and the brief alone was **2,100px** of it. Both are `<details>` now, both start
+shut, and each fold's head carries enough to decide whether to open it — the brief's age and word
+count, the journal's save count and the age of the newest one. The same page measures **1,278px**
+closed. Whichever you open stays open for the next visit, per browser; a private window simply
+forgets, and both come back closed.
 
 **Status is first, above everything that could qualify it.** It is the block someone with almost
 no context left actually arrives for, so it must not sit under two conditional notes and a table
@@ -1480,9 +1489,17 @@ which is a different claim.
 
 #### Editing the standing brief
 
-The **pencil** sits in the Standing brief block's own toolbar, beside the brief's age — not under
-the document, where the old **Edit brief** button was buried at the bottom of a long brief. A
-read-only Shared Brain mirror gets no pencil at all, because the write would only be refused.
+The **pencil** sits at the right-hand end of the brief fold's own head — on the card it edits, not
+under the document, where the old **Edit brief** button was buried at the bottom of a long brief,
+and not on a toolbar row of its own, where it floated with nothing beside it. It is **icon only**;
+its name is on the button for a screen reader, and there is no tooltip, because a tooltip is
+unreachable by keyboard and by touch.
+
+**Pressing it opens the fold and the editor together**, so it works the same whether the brief is
+open or shut. While an editor is up the pencil is **withheld** — pressing it would rebuild the
+draft from disk and take your unsaved text with it; **Esc** or **Cancel** is the way out, and both
+ask before discarding. A read-only Shared Brain mirror gets no pencil at all, because the write
+would only be refused.
 
 | Key | What it does |
 |---|---|

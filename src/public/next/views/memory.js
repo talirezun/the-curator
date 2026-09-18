@@ -367,14 +367,24 @@ function freshState() {
     // or machine change.
     //
     // A key is written here only when the user actually toggles one, so
-    // `undefined` still means "no opinion" and the fold keeps its default.
+    // `undefined` still means "no opinion" and the fold keeps its default,
+    // which for both of them is CLOSED.
     //
-    // THERE IS EXACTLY ONE KEY SINCE v3.56.0: `journal`, which stays shut (it
-    // is history, and it is the section that made this page long). The standing
-    // brief stopped being a fold in v3.55.0, and the HANDOFF fold went with the
-    // block it led — the handoff opens in the shell's reader now, which has its
-    // own open state and its own Escape.
-    openFolds: {},
+    // TWO KEYS SINCE v3.58.0: `journal` (history, and the section that first
+    // made this page long) and `brief` (a page or more of the document that
+    // changes least — 65% of the measured page height on this repo's own
+    // project). The HANDOFF fold is still gone with the block it led: that
+    // document opens in the shell's reader, which has its own open state and
+    // its own Escape.
+    //
+    // SEEDED FROM localStorage, not from `{}`: a fold you opened has to still
+    // be open when you come back from the Wiki. The default when storage is
+    // empty, unreadable or hand-mangled is `{}` — closed — and it is NEVER
+    // derived from loading state, which is the v3.54.0 defect (a transient
+    // render made the brief the only content on the page, Chrome queued a
+    // `toggle` for the <details> it had just parsed `open`, and the transient
+    // became permanent).
+    openFolds: readRememberedFolds(),
 
     // ── Revalidation bookkeeping (see the Revalidation block above) ──────
     //
@@ -453,7 +463,11 @@ const FOCUSABLE_IDS = [
   // THE TABLE'S FOOTER. Like "Show more" on the journal it can REMOVE itself
   // (the last press exhausts the list), so it needs the fallback below.
   'mem-ws-more',
-  'mem-fold-journal',
+  // BOTH FOLD SUMMARIES. A <summary> is focusable and a render replaces the
+  // pane it sits in, so without these a keyboard user who has just toggled one
+  // is dropped to <body>. `mem-fold-brief` joined when the brief became a fold
+  // again in v3.58.0.
+  'mem-fold-journal', 'mem-fold-brief',
   // BOTH ⓘ MARKS. They are real <button>s emitted by renderViewHeader, and a
   // render replaces the pane they sit in — so without these two entries a
   // keyboard user reading either panel is dropped to <body> on the next poll.
@@ -464,9 +478,10 @@ const FOCUSABLE_IDS = [
   // REMOVES itself on success (the notice it lives in is gone once the
   // reload lands), so it needs the same fallback treatment as "Show more".
   'mem-refresh', 'mem-reload',
-  // The brief editor. `mem-brief-edit` REMOVES itself when clicked (it is
-  // replaced by the textarea), so it needs the same fallback treatment as
-  // "Show more" below; the textarea is where the user actually is.
+  // The brief editor. `mem-brief-edit` REMOVES itself when clicked (the editor
+  // replaces it — see renderBrief on why it is withheld while one is open), so
+  // it needs the same fallback treatment as "Show more" below; the textarea is
+  // where the user actually is.
   'mem-brief-edit', 'mem-brief-text', 'mem-brief-save', 'mem-brief-cancel',
   // Preview swaps the textarea for rendered markdown and back, so whichever of
   // the two is on screen the toggle itself stays put — it is the one control
@@ -877,6 +892,54 @@ function rememberProject(domain, project) {
   }
 }
 
+// ── Remembering which of the two folds you had open (v3.58.0) ─────────────
+//
+// THE DEFAULT IS CLOSED, AND IT IS A DEFAULT RATHER THAN A STATE. The
+// maintainer's report on the v3.56.0 page was that the standing brief "is
+// usually a page or more and takes a lot of scrolling", and the measurement
+// agreed: on this repo's own `curator` project the brief block was 2,100px of
+// a 3,241px page — 65% of the screen given to the one section that changes
+// least. Both long sections are folds now, both start shut, and the summary
+// line carries enough to decide whether to open.
+//
+// WHY THIS IS PERSISTED AND `openFolds` ALONE IS NOT ENOUGH. `state.openFolds`
+// is rebuilt by `freshState()` on every mount, so a fold opened before a walk
+// to the Wiki and back would be shut again — which is the same "the app forgot
+// what I was doing" complaint one layer up from the one the last-project map
+// already answers. Same key shape, same discipline, same failure mode: this is
+// a convenience, so a browser that refuses storage must make the app FORGET,
+// never break.
+//
+// ONLY `true` IS KEPT ON READ. Closed is the default, so an absent key and a
+// stored `false` mean exactly the same thing, and storing the difference would
+// invent a third state ("deliberately closed") that nothing reads. That also
+// bounds what a hand-edited value can do to `renderBrief`/`renderJournal`: the
+// map they see holds nothing but `true` under a known name.
+//
+// THE WRITE IS NOT HERE. It is inlined in `wire()`'s toggle listener, which may
+// not name a module-level helper — that function is lifted by brace-matching
+// and EXECUTED against a hand-written set of stubs in
+// scripts/test-agent-instructions.js, so a call to `rememberFold(...)` there
+// would be a ReferenceError, i.e. a crash rather than a failing assertion (the
+// v3.11.0 shape this file warns about twice). The duplicated key literal is
+// pinned against this constant by scripts/test-next-memory-view.js §19.
+const FOLDS_KEY = 'curator-memory-folds-v1';
+const FOLD_KEYS = ['brief', 'journal'];
+
+export function readRememberedFolds() {
+  try {
+    const raw = localStorage.getItem(FOLDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const k of FOLD_KEYS) if (parsed[k] === true) out[k] = true;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 // ── Load ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1020,8 +1083,24 @@ function screenSignature() {
     ? pr.scopes.filter((s) => s && s.harnessShared === true)
       .map((s) => [s.scope, (s.harnesses || []).join('|')])
     : null;
+  // THE SIZE RIDES WITH THE AGE (v3.58.0). The brief's fold summary quotes a
+  // word count, and a save that lands inside the same age band as the last one
+  // ("just now" twice) would otherwise move nothing here — the closed summary
+  // would go on quoting the size of a document that is no longer on disk.
+  //
+  // IT IS THE CHARACTER LENGTH, NOT `briefStats(...).words`, and that is
+  // deliberate twice over. It is a plain expression rather than a call, so this
+  // function keeps naming no collaborator beyond the ones every harness that
+  // lifts it already injects (scripts/test-memory-truth.js §8b executes
+  // `screenSignature` against a fixed set, and a free identifier there is a
+  // CRASH rather than a failing assertion — the v3.11.0 shape). And it is
+  // STRICTLY MORE sensitive than the word count it stands in for: every edit
+  // that changes the word count changes the length, and some that do not also
+  // trip it. Erring towards one extra repaint is the fail-safe direction; a
+  // figure that has quietly stopped being true is not.
   const briefMark = pr && pr.brief && pr.brief.present
-    ? formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds) : null;
+    ? [formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds),
+      (pr.brief.text || '').length] : null;
 
   // THE EDITOR IS A PANE TOO, and the same rule applies to it as to the
   // picker and the save strip: a no-op guard that cannot see a pane is not a
@@ -2646,12 +2725,30 @@ function renderProject() {
       : wsEmpty,
   });
 
-  // ── BLOCK ④ — STANDING BRIEF ─────────────────────────────────────────────
+  // ── BLOCK ③ — STANDING BRIEF ─────────────────────────────────────────────
+  //
+  // ── THE LEDE LOST ITS DEFINITION (v3.58.0) ──────────────────────────────
+  // It read "Your goals, firm decisions and working model — read by every
+  // agent, written by you.": fifteen words, of which the first eight DEFINE
+  // what a standing brief is. A definition is what the ⓘ is for, and this
+  // block's ⓘ already carries that exact sentence one paragraph down, so the
+  // lede was paying eight words to say something twice. What is left is the
+  // half that is an instruction — who reads it, who owns it — at seven words.
+  //
+  // IT MUST STAY BYTE-IDENTICAL to the skeleton's copy in
+  // renderProjectSkeleton: the skeleton exists so the block chrome does not
+  // move between the two paints, and a lede that changed on arrival would be
+  // the jump it was built to remove. Pinned by executing BOTH renderers and
+  // comparing the emitted ledes (test-next-memory-view.js §20).
+  //
+  // AND IT MUST NOT REPEAT THE FOLD'S SUMMARY, which now carries the first
+  // glance: "The brief · updated 23 hr ago · 1,309 words" is the age and the
+  // size, the lede is ownership. No word is in both.
   const briefBlock = renderBlock({
     num: null,
     id: 'memory-brief',
     title: 'Standing brief',
-    ledeHtml: 'Your goals, firm decisions and working model — read by every agent, written by you.',
+    ledeHtml: 'Read by every agent, written by you.',
     infoText:
       '<p>This is the one tier a human owns. Agents READ it on every call and, unless you ask one to, '
       + 'never write it; you edit it here with the pencil, or open '
@@ -2778,8 +2875,9 @@ function renderProjectSkeleton() {
     // is the jump this whole function exists to remove, in the other direction.
     (row && row.hasBrief
       ? renderBlock({
+        // BYTE-IDENTICAL to renderProject's, deliberately — see the note there.
         num: null, id: 'memory-brief', title: 'Standing brief',
-        ledeHtml: 'Your goals, firm decisions and working model — read by every agent, written by you.',
+        ledeHtml: 'Read by every agent, written by you.',
         bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
           + '<div class="mem-ghost mem-ghost-para"></div></div>',
       })
@@ -3917,8 +4015,22 @@ function renderBriefEditor(read, readonly) {
         '<button type="button" class="btn btn-ghost" id="mem-brief-cancel"' +
           (e.busy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>' +
-      renderDescription('The standing brief is yours to write — agents read it, they do not own it. '
-        + 'Saving replaces the whole document, so send the complete brief rather than an addition.') +
+      // ── ONE SENTENCE, AND IT IS THE ONE ABOUT THE WRITE (v3.58.0) ────────
+      // This was two. The first — "The standing brief is yours to write —
+      // agents read it, they do not own it." — is a DEFINITION of the tier,
+      // and the block's ⓘ opens with the same claim in more detail, so it was
+      // the same words twice on one screen.
+      //
+      // The second STAYS, and the audit that asked for both to go is refused
+      // here with a reason. "Saving replaces the whole document" is not a
+      // definition: it is a condition on the button six pixels above it, and
+      // the consequence of missing it is a user sending an addition and
+      // deleting their own brief. Moving it into the ⓘ would put it behind a
+      // click, which is v3.16.1's rule about exactly this — and this file's
+      // own header states that a warning never folds. A guard already pinned
+      // it (test-next-memory-view.js §16g asserts the editor "says REPLACE
+      // rather than implying an append"); that guard is right.
+      renderDescription('Saving replaces the whole document — send the complete brief, not an addition.') +
     '</div>'
   );
 }
@@ -3954,28 +4066,82 @@ export const BRIEF_TEMPLATE = [
 ].join('\n');
 
 /**
- * BLOCK ④'s BODY — the standing brief, at the column's width, with a pencil.
+ * BLOCK ③'s BODY — the standing brief, folded shut, with a pencil on its head.
  *
- * ── WHAT CHANGED, AND WHY EVERY PART OF IT WAS ASKED FOR ─────────────────
- * It was a collapsed <details> whose body capped the rendered markdown at the
- * prose measure and whose only way in was an "Edit brief" button BELOW that
- * markdown. Three complaints in one element: the section was a fold competing
- * with two other folds, the document stopped at roughly 47% of the column
- * while the journal beside it ran full width, and the edit affordance was
- * under the thing it edits.
+ * ── IT IS A FOLD AGAIN, AND THAT IS NOT A REVERSAL OF v3.55.0 ────────────
+ * v3.55.0 took the brief OUT of a <details> for one reason and one only: its
+ * `<summary>` had to carry the edit control, and an interactive control inside
+ * a summary toggles its own section when clicked (the v3.0.1-beta.18 hazard).
+ * That argument is about where the PENCIL lives, not about whether the
+ * document is collapsible — and the pencil is not in the summary here. It is a
+ * SIBLING of the <details>, anchored over the summary row by memory.css, so
+ * there is again no propagation path to suppress and no stopPropagation for a
+ * later edit to drop.
  *
- * Now: a block head that is a heading, a toolbar row carrying the pencil and
- * the brief's own age, and the document at the column's width. `.mem-doc`'s
- * measure cap is gone from the stylesheet — see memory.css, where the reversal
- * is recorded against the rule it reverses.
+ * What brought the fold back is a measurement. On this repo's own `curator`
+ * project, at a 1370px window (a 1,015px main column), the page was 3,241px
+ * and this block was 2,100px of it — 65% of everything you scroll past, spent
+ * on the section that changes least. The maintainer's words were that the
+ * brief "is usually a page or more and takes a lot of scrolling".
  *
- * THE PENCIL IS NOT `icon('pencil')`: app.js's ICON_BODY has no such entry and
+ * ── CLOSED BY DEFAULT, REMEMBERED AFTERWARDS ────────────────────────────
+ * `open` is emitted from `state.openFolds.brief` and from NOTHING else — never
+ * from "there is a brief", never from "the editor is open", never from "this
+ * is the only content on the page". That last one is the v3.54.0 defect by
+ * name: a transient loading render made the brief the only section, the code
+ * opened it for that reason, Chrome queued a `toggle` for the <details> it had
+ * just parsed `open`, and the transient was recorded as a user decision.
+ * Deriving `open` from one field that only a real toggle (or the Edit button,
+ * which is a real decision to read it) ever writes makes that inexpressible.
+ *
+ * ── THE SUMMARY HAS TO BE ENOUGH TO DECIDE WITH ─────────────────────────
+ * "The brief · updated 23 hr ago · 1,309 words". Age answers "is this the one
+ * I wrote last week"; the word count answers "is this two lines or four
+ * screens", which is the question a collapsed section creates. It does NOT
+ * repeat the block's own title — the journal's summary says "Recent saves"
+ * under a head reading "Session journal" for the same reason, and a section
+ * that names itself twice is the v3.50.0 finding on Wiki health.
+ *
+ * The word count is `briefStats` over the WHOLE stored document, which is the
+ * same figure the editor's own counter shows, so the closed summary and the
+ * open editor cannot quote two different sizes for one file.
+ *
+ * ── THE AGE, AND DELIBERATELY NO PIP ────────────────────────────────────
+ * The brief changes on the order of weeks; an old brief is not a stale one,
+ * and marking it the way a handoff is marked would state something false. It
+ * carries `data-mem-age-at` + `.mem-age-words` so `tickAges` keeps it moving
+ * without a render, exactly as the table's age cells do.
+ *
+ * ── THE PENCIL IS ICON-ONLY ─────────────────────────────────────────────
+ * It was a glyph plus the word "Edit", and the maintainer's report is that it
+ * "reads as unattached" — floating at the far right of a toolbar row with a
+ * short age phrase at the other end and 800px of nothing between them. The row
+ * is gone; the control sits on the fold's own head, at the block's right edge,
+ * inside the card it edits. A word is no longer paying for itself there: the
+ * button is next to the thing it acts on and the accessible name carries the
+ * meaning.
+ *
+ * `aria-label` is the accessible name and there is NO visually-hidden twin of
+ * it. Both would occupy the same channel — an `aria-label` overrides element
+ * text outright — so a hidden span would be markup that nothing can ever
+ * announce. There is no `title=` either: memory.js's tooltip budget is 1 and
+ * may not grow (scripts/test-next-header-adoption.js), and a tooltip is
+ * unreachable by keyboard and by touch anyway.
+ *
+ * THE GLYPH IS NOT `icon('pencil')`: app.js's ICON_BODY has no such entry and
  * `icon()` renders a loud placeholder for a name it does not know rather than
  * guessing (v3.9.0), so inventing one would ship a broken glyph. It follows
  * the kit's own geometry exactly — 24-unit viewBox, `fill: none`,
  * `currentColor` stroke, width 1.7, round caps — so it reads as a member of
- * the same set, and it carries an `aria-label` because a glyph-only button
- * has no accessible name of its own.
+ * the same set.
+ *
+ * ── IT IS WITHHELD WHILE THE EDITOR IS UP ───────────────────────────────
+ * Not tidiness: the click handler builds a FRESH `state.briefEdit` from the
+ * last read, so pressing it during an edit silently discarded an unsaved
+ * draft. The editor's own Cancel is the way out, and it asks (v3.55.0's
+ * `briefDismissDecision`). A read-only mirror gets no pencil at all — the
+ * backend answers 403, and a control whose only outcome is a refusal is worse
+ * than no control.
  */
 function renderBrief(read) {
   const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
@@ -3986,43 +4152,66 @@ function renderBrief(read) {
     ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)))
     : null;
 
-  const pencil = readonly ? '' :
+  const pencil = (readonly || editing) ? '' :
     '<button type="button" class="btn btn-ghost btn-xs mem-brief-edit" id="mem-brief-edit"' +
       ' aria-label="' + (has ? 'Edit standing brief' : 'Write a standing brief') + '">' +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
       'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
       '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
-      '<span>' + (has ? 'Edit' : 'Write a brief') + '</span>' +
     '</button>';
 
-  // THE AGE, AND DELIBERATELY NO PIP. The brief changes on the order of weeks;
-  // an old brief is not a stale one, and marking it the way a handoff is
-  // marked would state something false. Same call the save strip makes for the
-  // same fact, one block up.
-  const toolbar =
-    '<div class="mem-block-toolbar">' +
-      '<span class="mem-brief-age">' +
-        (has ? escapeHtml(age ? 'Updated ' + age : 'Updated at an unknown time')
-          : 'Not written yet') + '</span>' +
-      pencil +
-    '</div>';
-
-  if (editing) return toolbar + renderBriefEditor(read, readonly);
-
-  if (!has) {
-    return toolbar +
-      renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, '
-        + 'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.');
+  // NO BRIEF, NO FOLD. There is one sentence to show and it is the sentence
+  // that makes the case for writing one — hiding the motivation behind a
+  // chevron while leaving the control beside it is the "the missing thing has
+  // to be missing where you looked for it" rule (v3.17.1) read backwards. It
+  // keeps the SAME card chrome so the pencil is anchored identically in both
+  // states, and the editor branch below is reached from here too.
+  if (!has && !editing) {
+    return (
+      '<div class="mem-brief-row">' +
+        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+          renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, '
+            + 'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.') +
+        '</div></div>' +
+        pencil +
+      '</div>'
+    );
   }
 
+  const words = has ? briefStats(b.text || '').words : 0;
+  const summary =
+    '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
+      '<span>The brief</span>' +
+      '<span class="mem-fold-meta"' +
+        (has && b.updatedAt ? ' data-mem-age-at="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
+        (has
+          ? (age
+            ? 'updated <span class="mem-age-words">' + escapeHtml(age) + '</span>'
+            : 'updated at an unknown time')
+            + ' · ' + escapeHtml(Number(words).toLocaleString('en-US')) +
+            ' word' + (words === 1 ? '' : 's')
+          : 'not written yet') +
+      '</span>' +
+    '</summary>';
+
+  const body = editing
+    ? renderBriefEditor(read, readonly)
+    : ((b && b.truncated ? '<div class="mem-note">' + icon('alertTriangle', 13) +
+        '<span>Longer than the brief budget — the tail is not shown.</span></div>' : '') +
+      // Same preamble strip as the handoff: the block head already says
+      // "Standing brief" and the summary says when it was updated, so the
+      // document's own title and `_Updated: …_` line are duplicate chrome here.
+      '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble((b && b.text) || '').body) + '</div>');
+
+  const open = (state.openFolds && state.openFolds.brief) ? ' open' : '';
   return (
-    toolbar +
-    (b.truncated ? '<div class="mem-note">' + icon('alertTriangle', 13) +
-      '<span>Longer than the brief budget — the tail is not shown.</span></div>' : '') +
-    // Same preamble strip as the handoff: the block head already says
-    // "Standing brief" and the toolbar says when it was updated, so the
-    // document's own title and `_Updated: …_` line are duplicate chrome here.
-    '<div class="mem-doc">' + renderMarkdown(splitHandoffPreamble(b.text || '').body) + '</div>'
+    '<div class="mem-brief-row">' +
+      '<details class="mem-fold" data-mem-fold="brief"' + open + '>' +
+        summary +
+        '<div class="mem-fold-body">' + body + '</div>' +
+      '</details>' +
+      pencil +
+    '</div>'
   );
 }
 
@@ -4186,11 +4375,29 @@ function renderJournal() {
     ? '<button class="btn btn-secondary btn-xs mem-j-more" id="mem-journal-more">Show more</button>'
     : '';
 
+  // ── THE META HAS TO BE ENOUGH TO DECIDE WITH (v3.58.0) ──────────────────
+  // It was the bare figure `31`, which answers "how many" and not "is any of
+  // this recent" — and the second question is the one that decides whether a
+  // closed section is worth opening. The newest entry's age answers it, in the
+  // same words and on the same bands as every other age on this page, and it
+  // rides on `data-mem-age-at` + `.mem-age-words` so `tickAges` keeps it
+  // moving without a render (the summary is not folded into screenSignature,
+  // deliberately — the journal's own rows are not either).
+  const latest = j.entries && j.entries.length && j.entries[0] && j.entries[0].at
+    ? j.entries[0].at : null;
+  const latestAge = latest
+    ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(latest)) / 1000))) : null;
+  const journalMeta =
+    escapeHtml(String(j.returned)) + ' save' + (j.returned === 1 ? '' : 's') +
+    (latestAge ? ' · latest <span class="mem-age-words">' + escapeHtml(latestAge) + '</span>' : '');
+
   return (
     '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
         '<span>Recent saves</span>' +
-        '<span class="mem-fold-meta">' + escapeHtml(String(j.returned)) + '</span></summary>' +
+        '<span class="mem-fold-meta"' +
+          (latest && latestAge ? ' data-mem-age-at="' + escapeHtml(latest) + '"' : '') + '>' +
+          journalMeta + '</span></summary>' +
       '<div class="mem-fold-body">' +
         // The journal is APPEND-ONLY history, newest first, and any entry
         // MAY HAVE BEEN SUPERSEDED — a blocker named in an old headline can
@@ -4478,6 +4685,25 @@ function wire(token) {
       // would save them away on the next write. renderBrief strips them
       // for DISPLAY only.
       const text = present ? (read.brief.text || '') : BRIEF_TEMPLATE;
+      // ── ONE GESTURE OPENS BOTH (v3.58.0) ──────────────────────────────
+      // The brief is a fold and it starts shut, so the pencil is usually
+      // pressed against a collapsed section. Opening the editor INSIDE a
+      // section that stays collapsed would be a press that visibly does
+      // nothing, and asking for a second click on the chevron first is the
+      // "buried" complaint in a new place. So Edit records the same decision a
+      // toggle records — and through the same field, because a second way of
+      // saying "open" is a second thing that can disagree.
+      //
+      // WRITTEN THROUGH, so it survives leaving the view: the toggle listener
+      // persists on a real toggle, and this path fires no toggle (the next
+      // render PARSES the <details> open, and `toggle` does not fire on parse).
+      // Inline and with the literal key for the reason the listener below
+      // states — `wire` may not name a module-level helper.
+      if (!state.openFolds) state.openFolds = {};
+      state.openFolds.brief = true;
+      try {
+        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+      } catch { /* private window, blocked site data, quota — the app forgets */ }
       state.briefEdit = {
         domain: state.activeDomain,
         project: state.activeProject,
@@ -4605,10 +4831,23 @@ function wire(token) {
   // `toggle` fires only on a real change, never on parse, so emitting `open`
   // in the markup above does not feed back into this.
   //
-  // TWO FOLDS NOW, not three: the standing brief is a BLOCK rather than a
-  // <details>, so `data-mem-fold="brief"` no longer exists and the transient
-  // "open because nothing else is on the page" state v3.54.0 had to chase is
-  // not merely fixed but inexpressible.
+  // TWO FOLDS, `brief` and `journal`. The v3.54.0 "open because nothing else
+  // is on the page" state is still inexpressible, for a better reason than the
+  // one v3.56.0 had: `open` is derived from `state.openFolds[key]` alone, and
+  // the only two things that ever write that key are a real `toggle` (below)
+  // and the Edit button (above), both of which are decisions a user made.
+  //
+  // ── THE WRITE-THROUGH IS INLINE, AND SO IS THE KEY ────────────────────
+  // A fold you opened has to still be open when you come back from another
+  // view, so the map is persisted. `readRememberedFolds` reads it; the write
+  // cannot call its sibling `rememberFold` because THERE IS NONE — see the
+  // reason above this block for why `wire` may not name a module-level helper.
+  // The key literal is therefore duplicated from `FOLDS_KEY`, and
+  // scripts/test-next-memory-view.js §19 pins the two against each other so
+  // the copies cannot drift. The try/catch is the same contract the
+  // last-project map has: storage that refuses (private window, blocked site
+  // data, quota) must make the app FORGET, never break — and in a Node harness
+  // with no `localStorage` at all the ReferenceError lands in the same catch.
   //
   // DELIBERATELY INLINE, AND NOT SHARED WITH `patchOpenPair`. That function
   // replaces the journal's contents without a render and has to re-reach the
@@ -4625,7 +4864,11 @@ function wire(token) {
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
       const key = el.dataset.memFold;
-      if (key) state.openFolds[key] = el.open;
+      if (!key) return;
+      state.openFolds[key] = el.open;
+      try {
+        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+      } catch { /* private window, blocked site data, quota — the app forgets */ }
     });
   });
 
