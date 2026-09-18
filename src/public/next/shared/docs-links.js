@@ -77,6 +77,14 @@ export const DOCS_LINKS = {
   // at the numbers rather than at the feature overview.
   'settings.health-limits': { file: 'ai-health.md', anchor: 'scale-caps-baked-into-the-code' },
   'settings.knowledge-base': { file: 'user-guide.md', anchor: 'knowledge-base-folder' },
+  // THE TOOL MAP. The guide's MCP section rather than a section of its own,
+  // because the first thing a reader of the map wants is the PRIVACY claim,
+  // and that claim only means anything beside the description of the bridge
+  // the log belongs to. `mcp-user-guide.md` carries the path and the same
+  // privacy paragraph; this key lands on the part that explains how to READ
+  // the map — the two session readings and what "not used since this log
+  // began" means, which is the one phrase on that block nobody can guess.
+  'settings.mcp-tool-map': { file: 'user-guide.md', anchor: 'the-tool-map--what-your-agents-used' },
 
   // ── Agent memory ───────────────────────────────────────────────────────
   'memory.overview': { file: 'working-state.md', anchor: null },

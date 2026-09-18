@@ -41,6 +41,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { docsUrl, docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// Block ③'s real collaborators — see the deps table in §11(b).
+import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
+import { renderReadout } from '../src/public/next/shared/text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1106,6 +1109,12 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     // `TX_INFO_GLYPH`, which are injected alongside.
     const blockSrc = extractFunction(settingsCode, 'settingsBlock');
     const infoSrc = extractFunction(settingsCode, 'infoMark');
+    // Block ③'s chain, lifted REAL for the same reason: `renderMcp` calls
+    // `renderToolMap` unconditionally, and a stub of it would let this
+    // section go green against a section that had stopped rendering.
+    const mapSrc = ['ageSecondsOf', 'ageMarkHtml', 'renderToolTile', 'renderToolGroup',
+      'renderSessionStrip', 'renderToolMapBody', 'renderToolMap']
+      .map((n) => extractFunction(settingsCode, n)).join('\n');
     const deps = {
       state: { mcpError: null, mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d' },
                selfTest: null, configSnippetOpen: false, configSnippet: null,
@@ -1118,10 +1127,15 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       docsLinkHtml,
       renderListboxHtml: () => '<LISTBOX/>', pendingListboxes: [],
       MCP_GUIDE_URL: GUIDE_URL, myMountToken: 1, onSaveDefaultDomain: () => {},
+      // Block ③'s own collaborators. The age vocabulary is the real one
+      // (shared/age.js is DOM-free); the loader is a stub because THIS suite
+      // is about the sentences the section renders, not about its load gate.
+      formatAge, freshnessTier, renderReadout,
+      gatedLoader: () => '<LOADER/>', loadGate: null,
     };
     const names = Object.keys(deps);
     mcpHtml = new Function(...names,
-      [blockSrc, infoSrc, mcpSrc, 'return renderMcp;'].join('\n')
+      [blockSrc, infoSrc, mapSrc, mcpSrc, 'return renderMcp;'].join('\n')
     )(...names.map((n) => deps[n]))();
   }
   ok(!!mcpHtml && mcpHtml.includes('status-pill'), 'CONTROL: renderMcp() really rendered its status card');

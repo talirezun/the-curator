@@ -2684,3 +2684,158 @@
    height — it is sized by its own content, exactly like the segmented control
    General's rows put in the same slot. */
 .cur-group-fields > .settings-field-block > .settings-input-suffix { flex: none; }
+
+/* ══ BLOCK ③ — THE TOOL MAP ═══════════════════════════════════════════════
+   A GRID OF TILES, NOT A TABLE. The question this block answers is a shape —
+   "what did my agents use, and what have they never touched" — and a shape is
+   read by scanning, not by comparing rows cell by cell. `auto-fill` with a
+   220px floor means the column count is decided by the main column's own
+   width rather than by a viewport breakpoint: the same call v3.55.0's Ingest
+   confirm gate records, and for the same reason (the thing that must fit is
+   the container, which `auto-fill` measures and a media query guesses at).
+
+   NOTHING HERE IS PRESSABLE, so nothing carries the press family. A tile is a
+   reading; there is no drill-down this release. */
+
+.mcp-session-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-16);
+  margin-bottom: var(--space-10);
+}
+.mcp-session-reading { flex: none; }
+
+.mcp-tool-group + .mcp-tool-group { margin-top: var(--space-10); }
+
+/* The group caption takes the MONO face, because `--type-eyebrow` IS the mono
+   idiom in this system (typography.css defines it as one) and v3.56.0 §11
+   settled that every eyebrow in the app wears it. It names the group and
+   counts it; it carries no prose — §3 of docs/design-system-source.md. */
+.mcp-group-eyebrow {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  margin-bottom: var(--space-4);
+}
+
+.mcp-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+/* ONE CHROME, the kit group's — --surface + --hairline + --elev-1 — so a tile
+   sits in the same register as every other card in /next rather than
+   inventing a fourth. */
+.mcp-tool-tile {
+  min-width: 0;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--elev-1);
+}
+/* A TOOL NOBODY HAS CALLED IS NOT A FAILURE, and it must not look like one.
+   No tint, no warning ink: the only difference is that its mark is the
+   dashed `unknown` ring (shared/freshness.css) and its words say so. */
+.mcp-tool-unused { background: var(--surface-sunken); }
+
+.mcp-tool-hd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* A tool NAME is a literal — the identifier a client shows and a user types
+   into a prompt — which is the one case the monospace budget exists for
+   (scripts/test-next-views-kit.js §7 states the rule). `anywhere` because
+   `search_cross_domain` is 19 characters in a 220px column. */
+.mcp-tool-name {
+  font: var(--type-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+/* ── THE `writes` CHIP ─────────────────────────────────────────────────────
+   TONE IN THE TINT AND THE BORDER, LABEL AT --text — the treatment
+   `.model-badge-lane` records and for the identical measured reason: an
+   accent as a badge LABEL drops under the 4.5 text floor on its own tint,
+   while --text clears it comfortably. Its own class rather than a reuse of
+   `.model-badge-lane`, because that name means BUILD LANE and this one means
+   "this tool can change your files" — two facts that happen to share a
+   recipe.
+
+   ON A MINORITY ONLY (the 7 mutators of 24). v3.16.1: a flag carried by every
+   row of a list carries nothing. */
+.mcp-writes-chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  background: var(--accent-tint);
+  color: var(--text);
+  border: 1px solid var(--accent);
+}
+
+.mcp-tool-purpose {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-md);
+  color: var(--text-2);
+}
+
+.mcp-tool-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+/* The dot and the words are ONE reading and must not be separated by a wrap.
+   The gap lives here rather than on `.fresh-dot`, which shared/freshness.css
+   owns outright — no other stylesheet may declare a `.fresh-` rule. */
+.mcp-age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+/* ── THE UNUSED READING WRAPS, AND ITS MARK KEEPS ITS COLUMN ──────────────
+   FOUND BY RENDERING IT: "not used since this log began · 1 week ago" does not
+   fit a 220px tile on one line, and as an inline-flex row it wrapped after the
+   separator — a tile ending in a dangling "·" with a dot and a date on the
+   line below.
+
+   A two-column GRID instead: the mark in an `auto` column, the sentence in the
+   rest, so every wrapped line stays inside the text column and the mark cannot
+   be carried along with it. `baseline` rather than `center` because a mark
+   centred against a two-line block floats between the lines; a dot with no
+   text of its own synthesises its baseline from its bottom edge, which puts it
+   on the first line's baseline exactly where a bullet belongs.
+
+   THE GEOMETRY IS HERE AND NOT ON `.fresh-dot`: shared/freshness.css owns the
+   `fresh-` prefix outright and no other stylesheet may declare a rule on it —
+   so the column comes from this container, which is this file's to own. */
+.mcp-age-unused {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  white-space: normal;
+}
+/* The separator and the age are ONE clause and never break apart: "began ·"
+   at the end of a line reads as a sentence that lost its ending. */
+.mcp-age-tail { white-space: nowrap; }
+.mcp-tool-uses { color: var(--text-3); }
+/* "not used since this log began · 4 days ago" — the phrase and the log's own
+   age are one sentence, so the age is NOT dimmed further than the phrase. */
+.mcp-tool-unused-words { color: var(--text-2); }
+
+.mcp-map-empty {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text-2);
+}

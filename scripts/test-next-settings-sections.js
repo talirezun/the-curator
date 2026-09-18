@@ -47,6 +47,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// The tool map's real collaborators. Imported rather than stubbed for the same
+// reason `settingsBlock` and `infoMark` are lifted real below: block ③ is one
+// of the ledes G3 measures and one of the heading→body gaps G3b measures, and
+// a stubbed age vocabulary or readout would make both assertions about this
+// file's own fixtures. All three modules are DOM-free by contract.
+import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
+import { renderReadout } from '../src/public/next/shared/text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -164,6 +171,18 @@ const REAL = [
   extractFunction(src, 'installUpdateStyle'),
   extractFunction(src, 'renderTextSize'),
   extractFunction(src, 'renderBackgroundMode'),
+  // ── BLOCK ③'s CHAIN, LIFTED REAL ───────────────────────────────────────
+  // `renderMcp` calls `renderToolMap`, which calls the rest. Every one is
+  // lifted rather than stubbed because G3 measures the lede block ③ paints
+  // and G3b measures the gap above its body — both of which `settingsBlock`
+  // emits from arguments these functions supply.
+  extractFunction(src, 'ageSecondsOf'),
+  extractFunction(src, 'ageMarkHtml'),
+  extractFunction(src, 'renderToolTile'),
+  extractFunction(src, 'renderToolGroup'),
+  extractFunction(src, 'renderSessionStrip'),
+  extractFunction(src, 'renderToolMapBody'),
+  extractFunction(src, 'renderToolMap'),
 ].join('\n');
 
 function baseState() {
@@ -206,6 +225,9 @@ function run(name, state, over) {
     icon: () => '<svg class="i"></svg>',
     TX_INFO_GLYPH: '<svg class="g"></svg>',
     docsLinkHtml,
+    formatAge,
+    freshnessTier,
+    renderReadout,
     gatedLoader: () => '<LOADER/>',
     loadGate: null,
     renderSelfTestResult: () =>
