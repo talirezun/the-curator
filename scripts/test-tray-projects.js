@@ -144,6 +144,7 @@ ok(typeof RP.composeResumePrompt === 'function', 'the resume-prompt composer is 
  */
 function fakeStore(spec) {
   const projects = spec.projects;
+  const foundationsCalls = [];
   return {
     async listAllProjects() {
       return {
@@ -193,6 +194,28 @@ function fakeStore(spec) {
       };
     },
     async readWorkingState() { return { ok: true }; },
+    // ── TIER 0's INDEX — a fake, so it is DUMB by the same rule as the rest
+    //    of this store: it holds `p.foundations` and returns it, or throws
+    //    `p.foundationsThrows`, never computing a freshness answer of its own.
+    //    Absent from `spec` entirely (every fixture above §11), it answers
+    //    `present: false` with zeros — which is what a project with no tier 0
+    //    tier gets from the real store too.
+    async listFoundations(domain, project) {
+      foundationsCalls.push(domain + '\u0000' + project);
+      const p = projects.find((x) => x.domain === domain && x.project === project);
+      if (p && p.foundationsThrows) {
+        throw new Error(typeof p.foundationsThrows === 'string' ? p.foundationsThrows : 'synthetic foundations failure');
+      }
+      if (!p || !p.foundations) return { ok: true, present: false, staleCount: 0, unreachableCount: 0 };
+      return {
+        ok: true, present: true,
+        staleCount: Number.isInteger(p.foundations.staleCount) ? p.foundations.staleCount : 0,
+        unreachableCount: Number.isInteger(p.foundations.unreachableCount) ? p.foundations.unreachableCount : 0,
+      };
+    },
+    // Test-only: not part of the store's real API, read back by §11 to prove
+    // `listFoundations` was called once per project and never once per row.
+    __foundationsCalls: foundationsCalls,
   };
 }
 
@@ -1127,6 +1150,77 @@ section('§10 the stale-foundations mark on the project header (v3.60.0)');
   ok(/9 docs stale$/.test(longLine), `…and the MARK is what survives the clip (${longLine})`);
   ok(!/stale…|stal…|doc…|docs…/.test(longLine),
     '…never a half-cut mark, which would read as a different fact');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§11 the PRODUCER, not just the consumer — real rows into the real composer');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// §10 above proves `buildTrayModel` renders `row.foundations` correctly — but
+// every one of its fixtures is a summary object HAND-BUILT with the field
+// already on it. That is exactly the gap this section closes: it drives the
+// same fake store §1-§9 already use through the REAL `TS.getTraySummary`
+// (the field's actual producer, `src/brain/tray-summary.js`), and only THEN
+// into the real `M.buildTrayModel` and `MENU.buildTrayMenuTemplate` — the
+// same "data layer → model → menu" chain `drive()` uses everywhere else in
+// this file. If the producer stopped attaching the field, or attached it to
+// the wrong rows, this is the section that would go red; §10 could not.
+{
+  const spec = {
+    projects: [
+      { domain: 'workshop', project: 'lumina',
+        foundations: { staleCount: 1, unreachableCount: 0 },
+        scopes: [
+          { scope: 'session-2026-09-07-a', machine: 'mac-a1b2c3', age: 300, harness: 'claude-code', model: 'opus-4-6', headline: 'one' },
+          { scope: 'session-2026-09-06-b', machine: 'mac-a1b2c3', age: 9000, harness: 'claude-code', model: 'opus-4-6', headline: 'two' },
+          { scope: 'session-2026-09-05-c', machine: 'mac-a1b2c3', age: 90000, harness: 'claude-code', model: 'opus-4-6', headline: 'three' },
+        ] },
+      // NO `foundations` key at all — the absent-tier case, from a project
+      // that IS on the store.
+      { domain: 'workshop', project: 'atlas',
+        scopes: [{ scope: 'main', machine: 'mac-a1b2c3', age: 4200, harness: 'opencode', headline: 'quiet' }] },
+    ],
+  };
+  const store = fakeStore(spec);
+  const summary = await TS.getTraySummary({ store, limit: M.TRAY_FETCH_ROWS, now: NOW_MS });
+
+  // The producer, over real store output — nothing hand-built from here on.
+  const luminaRows = summary.scopes.filter((r) => r.project === 'lumina');
+  eq(luminaRows.length, 3, 'PRECONDITION: three lumina rows came back from the real producer');
+  ok(luminaRows.every((r) => r.foundations && r.foundations.staleCount === 1 && r.foundations.unreachableCount === 0),
+    'every lumina row carries the counts the store reported — not hand-set, PRODUCED');
+  const atlasRow = summary.scopes.find((r) => r.project === 'atlas');
+  ok(atlasRow && atlasRow.foundations && atlasRow.foundations.staleCount === 0 && atlasRow.foundations.unreachableCount === 0,
+    'the project with no foundations key at all still gets a zeroed object, from the producer itself');
+  ok(summary.lastSave && summary.lastSave.project === 'lumina' && summary.lastSave.foundations
+    && summary.lastSave.foundations.staleCount === 1,
+    'lastSave, the headline\'s own source, carries the producer\'s counts too');
+
+  // listFoundations was called ONCE for lumina despite three rows — the
+  // producer's memoisation, proven over the fake store's own call log.
+  eq(store.__foundationsCalls.filter((k) => k === 'workshop\u0000lumina').length, 1,
+    `the producer called listFoundations exactly once for lumina (log: ${JSON.stringify(store.__foundationsCalls)})`);
+
+  // ── THEN THE REAL COMPOSER, over rows this section did not write ─────────
+  const model = M.buildTrayModel(summary, { now: NOW });
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(model, NOOPS));
+  const headlineWhere = flat.find((i) => i.id === MENU.ID_HEADLINE_WHERE);
+  ok(headlineWhere != null, 'the headline\'s second line exists in the real menu template');
+  const line = headlineWhere.label.trim();
+  ok(/· 1 doc stale$/.test(line), `the sublabel carries the mark, built from a REAL producer summary, not a fixture (${line})`);
+  ok((line.match(/doc stale/g) || []).length === 1, '…exactly once');
+
+  // §10's control, re-run over the real producer: a project the store
+  // reports as having no foundations must stay silent all the way through —
+  // not merely when the test hand-writes `foundations: null`.
+  const atlasOnly = {
+    projects: [{ domain: 'workshop', project: 'atlas', scopes: spec.projects[1].scopes }],
+  };
+  const atlasSummary = await TS.getTraySummary({ store: fakeStore(atlasOnly), limit: M.TRAY_FETCH_ROWS, now: NOW_MS });
+  const atlasModel = M.buildTrayModel(atlasSummary, { now: NOW });
+  const atlasFlat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(atlasModel, NOOPS));
+  const atlasLine = (atlasFlat.find((i) => i.id === MENU.ID_HEADLINE_WHERE) || {}).label || '';
+  ok(!/stale/i.test(atlasLine), `a real producer summary with nothing stale prints no mark (${atlasLine.trim()})`);
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} test-tray-projects: ${passed} passed, ${failed} failed`);

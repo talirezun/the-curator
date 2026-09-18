@@ -699,6 +699,146 @@ const PROJ = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray
 setDomains(TMP_DOMAINS);
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§8d Tier 0\'s counts ride on the row — the v3.60.0 mark was inert');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `desktop/lib/tray-model.js` learned in v3.60.0 to read `row.foundations`
+// and print "· N docs stale" on the headline's second line — and this
+// module, the PRODUCER, carried no such field on any row, so the mark could
+// never fire. This section drives the REAL store end to end: a genuine
+// repo-owned foundations tier, refreshed via `refreshFoundationsFromRepo`
+// and then edited so one document reads STALE by a real sha256 comparison —
+// the same mechanism `test-foundations.js` §6d proves against
+// `listFoundations` directly. The question here is narrower and is the whole
+// gap: does `getTraySummary` PICK IT UP, attach it to every row of the right
+// project, exactly once per project, and survive the call throwing.
+const eqJSON = (actual, expected, label) => {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  ok(a === e, label, a === e ? '' : `expected: ${e}\n        actual:   ${a}`);
+};
+const PROJ3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray-found-')));
+const REPO3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray-found-repo-')));
+{
+  fs.mkdirSync(path.join(PROJ3, 'workshop'), { recursive: true });
+  fs.writeFileSync(path.join(PROJ3, 'workshop', 'CLAUDE.md'), '# workshop\n');
+  // 'lumina' — THREE saved work-streams, so a per-ROW call would be 3x a
+  // per-PROJECT one and §8d.3 below can tell the difference.
+  for (const [scope, ageSec] of [['session-a', 60], ['session-b', 600], ['session-c', 6000]]) {
+    const dir = path.join(PROJ3, 'workshop', 'state', 'lumina', scope, SELF);
+    fs.mkdirSync(dir, { recursive: true });
+    const cur = path.join(dir, 'current.md');
+    fs.writeFileSync(cur, `# Working state\n\n## Headline\n\n${scope}\n`);
+    const t = (NOW - ageSec * SEC) / 1000;
+    fs.utimesSync(cur, t, t);
+  }
+  // 'atlas' — one work-stream, NO foundations tier at all. Aged to 300s so
+  // it sits between lumina's two newest saves rather than at "now" (a bare
+  // writeFileSync mtime), which would otherwise make it — not lumina — the
+  // newest save in the fixture and starve §8d.2's lastSave assertion.
+  const atlasDir = path.join(PROJ3, 'workshop', 'state', 'atlas', 'main', SELF);
+  fs.mkdirSync(atlasDir, { recursive: true });
+  const atlasCur = path.join(atlasDir, 'current.md');
+  fs.writeFileSync(atlasCur, '# Working state\n\n## Headline\n\natlas work\n');
+  { const t = (NOW - 300 * SEC) / 1000; fs.utimesSync(atlasCur, t, t); }
+
+  setDomains(PROJ3);
+
+  // A real repo-owned foundations tier for 'lumina', refreshed once, then
+  // edited so the mirror is genuinely stale — `computeFreshness` does a real
+  // sha256 comparison against this file, nothing simulated.
+  fs.mkdirSync(path.join(REPO3, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(REPO3, 'docs', 'architecture.md'), '# Architecture\n\nv1\n'.repeat(20));
+  const refreshed = await wsMod.refreshFoundationsFromRepo('workshop', 'lumina', REPO3, {
+    files: [{ path: 'docs/architecture.md', role: 'architecture' }],
+  });
+  ok(refreshed.ok === true, 'PRECONDITION: the foundations tier refreshed against a real repo dir', refreshed.message);
+  fs.writeFileSync(path.join(REPO3, 'docs', 'architecture.md'), '# Architecture\n\nv2, edited\n'.repeat(20));
+  const idxCheck = await wsMod.listFoundations('workshop', 'lumina');
+  ok(idxCheck.staleCount === 1, 'PRECONDITION: listFoundations itself reads one stale document', JSON.stringify(idxCheck));
+
+  // §8d.1 — ABSENT TIER READS AS ZEROS, never null and never an error.
+  const plain = await getTraySummary({ limit: 20 });
+  const atlasRows = plain.scopes.filter((r) => r.project === 'atlas');
+  eq(atlasRows.length, 1, 'CONTROL: the atlas row is present');
+  eqJSON(atlasRows[0].foundations, { staleCount: 0, unreachableCount: 0 },
+    'a project with no foundations tier at all reports zeros, never null');
+  eq(atlasRows[0].foundationsError, null, '…and no error, because absence is not a failure');
+
+  // §8d.2 — THE REAL STALE COUNT RIDES ON EVERY ROW OF THE RIGHT PROJECT.
+  const luminaRows = plain.scopes.filter((r) => r.project === 'lumina');
+  eq(luminaRows.length, 3, 'CONTROL: all three lumina work-streams are present');
+  for (const r of luminaRows) {
+    eqJSON(r.foundations, { staleCount: 1, unreachableCount: 0 },
+      `row "${r.scope}" carries the real stale count computed off disk`);
+    eq(r.foundationsError, null, `…and no error on row "${r.scope}"`);
+  }
+  ok(luminaRows.every((r) => r.foundations === luminaRows[0].foundations),
+    'the SAME object rides every row of one project — one computation, not one per row');
+  eq(plain.lastSave.project, 'lumina', 'CONTROL: the newest save in the fixture is a lumina row, so the headline exercises this too');
+  eqJSON(plain.lastSave.foundations, { staleCount: 1, unreachableCount: 0 },
+    'lastSave — the headline\'s own source — carries the same counts, not just the row list');
+
+  // §8d.3 — listFoundations IS CALLED ONCE PER PROJECT, NEVER ONCE PER ROW.
+  //
+  // Wired through the SAME store seam `getTraySummary({store})` already
+  // exposes for `storeAdapter` — a real delegate to the real store for
+  // everything, with `listFoundations` counted on the way through. This is
+  // not a second opinion about what the store computes, only about how many
+  // times it is asked, so it is the seam the module already uses rather than
+  // a new one.
+  {
+    const calls = [];
+    const spyStore = {
+      listAllProjects: (...a) => wsMod.listAllProjects(...a),
+      listWorkingScopes: (...a) => wsMod.listWorkingScopes(...a),
+      readWorkingState: (...a) => wsMod.readWorkingState(...a),
+      listFoundations: (domain, project) => {
+        calls.push(`${domain}/${project}`);
+        return wsMod.listFoundations(domain, project);
+      },
+    };
+    const spied = await getTraySummary({ store: spyStore, limit: 20 });
+    eq(spied.scopes.filter((r) => r.project === 'lumina').length, 3, 'CONTROL: three lumina rows, through the spy too');
+    eq(calls.filter((c) => c === 'workshop/lumina').length, 1,
+      `listFoundations was called exactly ONCE for lumina despite three rows (calls: ${JSON.stringify(calls)})`);
+    eq(calls.filter((c) => c === 'workshop/atlas').length, 1,
+      'and exactly once for atlas too — whose single row alone could not distinguish "once" from "once per row"');
+  }
+
+  // §8d.4 — A THROWING listFoundations COSTS ONE PROJECT'S ROWS A ZERO AND A
+  // NAMED ERROR, NEVER THE WHOLE SUMMARY. The same store seam, this time
+  // failing on exactly the project under test so the control (atlas) proves
+  // the failure did not leak sideways.
+  {
+    const throwingStore = {
+      listAllProjects: (...a) => wsMod.listAllProjects(...a),
+      listWorkingScopes: (...a) => wsMod.listWorkingScopes(...a),
+      readWorkingState: (...a) => wsMod.readWorkingState(...a),
+      listFoundations: (domain, project) => {
+        if (domain === 'workshop' && project === 'lumina') throw new Error('synthetic foundations failure');
+        return wsMod.listFoundations(domain, project);
+      },
+    };
+    const broken = await getTraySummary({ store: throwingStore, limit: 20 });
+    eq(broken.ok, true, 'a throwing listFoundations never fails the whole summary');
+    const brokenLumina = broken.scopes.filter((r) => r.project === 'lumina');
+    eq(brokenLumina.length, 3, '…and lumina\'s rows are still all present');
+    for (const r of brokenLumina) {
+      eqJSON(r.foundations, { staleCount: 0, unreachableCount: 0 },
+        `row "${r.scope}" degrades to zeros, not a stale count it never computed`);
+      ok(typeof r.foundationsError === 'string' && /synthetic foundations failure/.test(r.foundationsError),
+        `…and names the failure (${r.foundationsError})`);
+    }
+    const brokenAtlas = broken.scopes.filter((r) => r.project === 'atlas');
+    eqJSON(brokenAtlas[0].foundations, { staleCount: 0, unreachableCount: 0 }, 'atlas, whose call did not throw, is unaffected');
+    eq(brokenAtlas[0].foundationsError, null, '…with no error either');
+  }
+}
+setDomains(TMP_DOMAINS);
+try { fs.rmSync(PROJ3, { recursive: true, force: true }); } catch { /* best effort */ }
+try { fs.rmSync(REPO3, { recursive: true, force: true }); } catch { /* best effort */ }
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§9  Isolation held');
 // ═══════════════════════════════════════════════════════════════════════════
 eq(fingerprint(), fpBefore, 'the real credential files are byte-identical after the run');

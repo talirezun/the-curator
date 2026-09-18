@@ -736,6 +736,18 @@ export function storeAdapter(store) {
     async read(domain, project, opts) {
       return s.readWorkingState(domain, { ...(opts || {}), project });
     },
+
+    /**
+     * Tier 0's INDEX for one project — `listFoundations`, not
+     * `readWorkingState`. The index never opens a document body; it only
+     * stats/hashes what `computeFreshness` needs, which is the cheapest
+     * honest source for "is anything stale" that this store exposes. Going
+     * through `readWorkingState` instead would pull `current.md`, the brief
+     * and a journal tail along for a fact that is two integers.
+     */
+    async foundations(domain, project) {
+      return s.listFoundations(domain, project);
+    },
   };
 }
 
@@ -781,9 +793,10 @@ export function projectLabel(domain, project, projectsInDomain) {
  * {
  *   ok: true,
  *   lastSave: {project, scope, machine, harness, writtenAt, writtenAgeSeconds,
- *              ageSource, kind, isThisMachine} | null,
+ *              ageSource, kind, isThisMachine, foundations, foundationsError} | null,
  *   scopes:   [{project, scope, machine, harness, writtenAt, writtenAgeSeconds,
- *               ageSource, headline, isThisMachine, harnessShared, ...}],
+ *               ageSource, headline, isThisMachine, harnessShared,
+ *               foundations: {staleCount, unreachableCount}, foundationsError, ...}],
  *   total: <rows before the limit>, pairsOnDisk: <every pair seen>,
  *   truncated: <total > scopes.length>,
  *   pulse:    {windowSeconds, bucketSeconds, buckets[28], events,
@@ -925,6 +938,41 @@ export async function getTraySummary(opts = {}) {
     pairTotal += Number.isInteger(idx.total) ? idx.total : idx.scopes.length;
     unlisted += Number.isInteger(idx.unlistedEntries) ? idx.unlistedEntries : 0;
 
+    // ── TIER 0's COUNTS, ONE STAT/HASH PASS PER PROJECT ────────────────────
+    //
+    // `listFoundations` runs ONCE here, never inside the (scope, machine) loop
+    // below — a project with N saved work-streams must cost one freshness
+    // pass, not N. It is the INDEX call (`computeFreshness` stats/hashes the
+    // repo source, never a document body), so it is the cheapest honest
+    // source for "is anything stale" this store exposes — cheaper than
+    // `readWorkingState`, which would pull `current.md`, the brief and a
+    // journal tail along for two integers. The result is reduced to the pair
+    // `desktop/lib/tray-model.js`'s `staleDocsOf` actually reads; the
+    // manifest, the per-document table and the reading order are the index
+    // tool's business, not the tray's.
+    let foundations = { staleCount: 0, unreachableCount: 0 };
+    let foundationsError = null;
+    try {
+      const f = await store.foundations(domain, project);
+      // `f.ok === false` is an ORDINARY absence (no such project, or a
+      // read the store itself declined) rather than a bug — the zeros above
+      // already say "nothing known to be stale", and nothing is disclosed
+      // for it. Only a THROW is a failure worth telling the widget about.
+      if (f && f.ok === true) {
+        foundations = {
+          staleCount: Number.isInteger(f.staleCount) ? f.staleCount : 0,
+          unreachableCount: Number.isInteger(f.unreachableCount) ? f.unreachableCount : 0,
+        };
+      }
+    } catch (err) {
+      // NEVER lets a foundations failure cost this project's rows — the same
+      // never-throws contract `getTraySummary` keeps everywhere else in this
+      // function. Disclosed on every row of this project rather than
+      // swallowed, so a consumer can tell "nothing stale" from "could not
+      // check" instead of the two being silently collapsed into one zero.
+      foundationsError = err && err.message ? String(err.message).slice(0, 200) : 'foundations unavailable';
+    }
+
     for (const p of idx.scopes) {
       if (!p || typeof p.scope !== 'string' || typeof p.machine !== 'string') continue;
       // Same validated pairs the rows are built from, so the strip and the
@@ -994,6 +1042,14 @@ export async function getTraySummary(opts = {}) {
         bytes: Number.isInteger(p.bytes) ? p.bytes : null,
         harnessShared: p.harnessShared === true,
         harnesses: Array.isArray(p.harnesses) ? p.harnesses : [],
+        // TIER 0's COUNTS, THE SAME OBJECT ON EVERY ROW OF THIS PROJECT — one
+        // `listFoundations` call above serves every (scope, machine) pair.
+        // `{staleCount: 0, unreachableCount: 0}` when the project has no
+        // foundations tier at all, never a null the consumer has to guard.
+        foundations,
+        // Non-null only when the pass above THREW; a project with no
+        // foundations tier is not an error and leaves this null.
+        foundationsError,
         ...clock,
         ...ident,
         _order: orderKey(clock),
@@ -1111,6 +1167,11 @@ export async function getTraySummary(opts = {}) {
     ageSource: shown[0].ageSource,
     kind: shown[0].kind,
     isThisMachine: shown[0].isThisMachine,
+    // `desktop/lib/tray-model.js`'s headline reads `staleDocsOf(ls)` on
+    // THIS object when `lastSave` is the branch it takes — carried through
+    // explicitly for the same reason every field above is.
+    foundations: shown[0].foundations,
+    foundationsError: shown[0].foundationsError,
   } : null;
 
   return {
