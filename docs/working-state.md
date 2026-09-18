@@ -555,6 +555,17 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 | `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60 |
 | `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line |
 | `save_project_brief` | Replaces one project's standing brief and records who wrote it. **For use on your explicit instruction only** — see [§4](#the-brief-can-be-commissioned-and-it-says-so) |
+| `get_project_context` | The one-call session start (v3.59.0): the brief, the latest handoff (or the `scope` named) and the project's **foundations** — an index of every canonical document with its role, size, source, content hash and freshness, plus the document text in reading order within `max_bytes` (default 120 KB). On a first session every document is included; afterwards only those whose hash differs from `seen_hashes`, which defaults to what the latest handoff recorded. Returns `seen`, the map to record as `foundations_read` on the next save. Never writes. Arguments: `project`, `domain`, `scope`, `include` (`index` / `changed` / `all`), `max_bytes`, `seen_hashes`, `journal_limit` |
+| `save_foundation` | Writes or replaces ONE canonical document (tier 0), whole, verbatim, up to 512 KB, and records that an agent wrote it on the owner's instruction. **Refused without `commissioned_by_owner: true`**, refused for a project whose foundations are mirrored from a repository, and refused when it would shrink a stored document under 10 % without `replace: true`. Arguments: `project`, `domain`, `slug`, `role` (`architecture` / `decisions` / `conventions` / `roadmap` / `api` / `guide` / `other`), `title`, `text`, `commissioned_by_owner`, `replace`, `harness`, `model` |
+
+`save_working_state` gained two arguments in v3.59.0: `foundations_read` (the `seen` map from
+`get_project_context`, written into the handoff as a `## Foundations read` section of
+`- <slug> · <sha256>` lines) and `repo_root` (advisory — an absolute checkout path carrying a
+`.curator-project` marker; when the project is repo-owned and the marker names it, the save also
+refreshes the mirrored documents from that checkout and reports `foundations_refresh`, never
+failing the save). `get_working_state` gained a `foundations` summary
+(`present`, `count`, `totalBytes`, `staleCount`, `unreachableCount`, `budgetExceeded`,
+`orphanFileCount`, `manifestError`).
 
 `list_projects` is the *which project?* tool, and it exists because the alternative is an agent
 guessing. An agent dropped into a folder it has never seen cannot resolve *"carry on with the
@@ -681,6 +692,7 @@ alphabetical or four-box order you might expect:
 | `nextSteps` | list | What to do next |
 | `observations` | list of `{statement, observedAt, recheck}` | Point-in-time facts, timestamped, with the command to re-derive where there is one |
 | `openQuestions` | list | Still genuinely open |
+| `foundationsRead` | map `{slug: sha256}`, rendered as `- <slug> · <sha256>` lines | Which canonical documents this session read, by content hash (v3.59.0). Bookkeeping for the next bootstrap, so it renders last; read back as `current.foundationsRead` |
 
 `decisions` and `traps` are placed **ahead of** `nextSteps` on purpose: both say "do not
 do this", and a model that starts executing the action list on sight meets a dead end
