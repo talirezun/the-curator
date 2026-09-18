@@ -870,6 +870,85 @@ section('§11  CSS HYGIENE');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§11b THE BOX TAKES THE COLUMN, THE PROSE KEEPS A MEASURE (v3.58.0)');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The panel used to cap its own BOX at 68ch, which is the wrong half of
+// docs/design-system-source.md §4's house rule — *cap the prose, never the
+// cards* — and this panel IS a card: border, leading accent rule, tinted wash,
+// its own padding. MEASURED on Domains in a browser: the panel was 556.8px in
+// a 959px content box at a 1370px window (58%) and in a 1144px box at 2000px
+// (48.7%), while the group of project rows under it ran the full width. That
+// is the "block-level ⓘ panels keep the 68ch cap" item v3.55.0 and v3.56.0
+// both carried as known-and-unfixed.
+//
+// So: the box is uncapped, and the measure lives on a one-column grid track
+// inside it. The grid is load-bearing rather than decorative — renderInfoMark
+// emits its escaped prose as a BARE TEXT NODE, which only a grid (or a
+// wrapper this file cannot add without breaking three suites and settings.js's
+// hand copy) can constrain.
+{
+  // The same slice §11 takes: the view-header block of shared/text.css.
+  const vh = (() => { const c = read('shared/text.css'); return c.slice(c.indexOf('/* ── 6. View header')); })();
+  const rule = /\.tx-vh-panel \{([\s\S]*?)\n\}/.exec(vh);
+  ok('CONTROL — the panel rule is found, so everything below is about it', !!rule);
+  // COMMENTS STRIPPED. The rule's own comment QUOTES the `max-width: 68ch` it
+  // replaced, and a raw scan read the explanation as the declaration -- the
+  // comment-satisfies-a-scan hazard this repo keeps recording, here in its
+  // inverted form. Caught by this assertion going red on the first run.
+  const body = rule ? rule[1].replace(/\/\*[\s\S]*?\*\//g, '') : '';
+  ok('the BOX is uncapped — max-width: none',
+    /max-width:\s*none/.test(body) && !/max-width:\s*\d+ch/.test(body), body.match(/max-width:[^;]*/));
+  ok('...and the MEASURE moved inside it, as a one-column grid track',
+    /display:\s*grid/.test(body) && /grid-template-columns:\s*minmax\(0,\s*\d+ch\)/.test(body),
+    body.match(/grid-template-columns:[^;]*/));
+  const measure = Number((/grid-template-columns:\s*minmax\(0,\s*(\d+)ch\)/.exec(body) || [])[1]);
+  ok('...at a measure wider than the old box cap but still a measure (68 < n <= 110)',
+    measure > 68 && measure <= 110, String(measure));
+  ok('...with a ZERO track minimum, so an unbreakable token cannot push the card wide',
+    /minmax\(0,/.test(body));
+  ok('...and overflow-wrap as the second layer under it',
+    /overflow-wrap:\s*anywhere/.test(body));
+
+  // THE GAP BETWEEN BLOCKS MOVED WITH THE LAYOUT. `> * + * { margin-top }`
+  // plus a row-gap is 16px, and an anonymous grid item (which is what a bare
+  // text node becomes) can carry no margin at all — so the two spellings would
+  // have disagreed depending on whether the caller passed HTML or text.
+  ok('the inter-block gap is a row-gap on the grid, not a child margin',
+    /row-gap:\s*8px/.test(body) && !/\.tx-vh-panel > \* \+ \* \{/.test(vh));
+
+  // `display: grid` IS ONLY SAFE BECAUSE THE [hidden] COUNTER-RULE OUTRANKS
+  // IT. `[hidden] { display: none }` is a USER-AGENT rule; an author `display`
+  // beats it at every specificity. That is v3.56.0's `.mem-note` defect
+  // exactly — the wall that showed on an 8KB draft — and this file's own
+  // counter-rule stops being belt-and-braces the moment the panel declares a
+  // display of its own.
+  const hidden = /\.tx-vh-panel\[hidden\]\s*\{\s*display:\s*none;\s*\}/.exec(vh);
+  ok('the [hidden] counter-rule exists', !!hidden);
+  ok('...and is declared BEFORE the display it has to beat, which it does on specificity (0,2,0 > 0,1,0)',
+    !!hidden && !!rule && hidden.index < rule.index, hidden && String(hidden.index));
+
+  // THE OPT-IN IS NOW A NO-OP, AND IT STAYS. views/memory.js still passes
+  // `panelWide: true` and scripts/test-next-memory-view.js §18h asserts both
+  // the class and this declaration; retiring it belongs with that view.
+  ok('.tx-vh-panel-wide still declares max-width: none',
+    /\.tx-vh-panel-wide \{[^}]*max-width:\s*none/.test(vh));
+  ok('...still after .tx-vh-panel, so the cascade order the other suite pins holds',
+    vh.indexOf('.tx-vh-panel-wide {') > vh.indexOf('.tx-vh-panel {'));
+  ok('...and renderViewHeader still emits it only on `=== true`',
+    !/tx-vh-panel-wide/.test(renderViewHeader({ title: 'x', info: 'y', panelWide: 'yes' }))
+    && /tx-vh-panel-wide/.test(renderViewHeader({ title: 'x', info: 'y', panelWide: true })));
+
+  // NO OTHER SHEET RE-CAPS THE PANEL. A view that quietly restored 68ch would
+  // put the defect back for one screen with nothing going red.
+  const others = ['views/domains.css', 'views/memory.css', 'views/settings.css',
+    'views/ingest.css', 'views/chat.css', 'shell.css'];
+  const recaps = others.filter((f) => /\.tx-vh-panel[^{]*\{[^}]*max-width/.test(
+    read(f).replace(/\/\*[\s\S]*?\*\//g, '')));
+  ok('no other stylesheet re-caps the panel', recaps.length === 0, recaps.join(', '));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§12  POSITIVE CONTROLS — every detector above is shown to FIRE');
 // ═══════════════════════════════════════════════════════════════════════════
 // A detector that cannot go red is a comment.

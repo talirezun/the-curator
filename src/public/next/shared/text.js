@@ -504,19 +504,22 @@ export function renderExplainer(o) {
  * from the title alone shipped duplicate DOM ids on Sync and made one panel
  * permanently unreachable; the reasoning is at the derivation itself.
  *
- * ── `panelWide` — ONE OPT-IN, FOR A PAGE THAT IS NOT PROSE ──────────────────
+ * ── `panelWide` — THE OPT-IN THAT BECAME THE DEFAULT ────────────────────────
  *
- * The panel caps itself at 68ch because it is normally a paragraph or two and
- * 68ch is the width at which a LINE OF TEXT is comfortable. Agent memory is a
- * dashboard: v3.55.0 puts every one of its sections at the column's own width,
- * and a help panel that stopped at 47% of the column while the table under it
- * ran the full width was the single most visible remnant of the four-widths
- * page the maintainer rejected. `panelWide: true` appends `tx-vh-panel-wide`,
- * which shared/text.css defines as `max-width: none`, and nothing else moves.
+ * The panel USED to cap its own BOX at 68ch. v3.55.0 added `panelWide: true`
+ * as the one escape, for Agent memory, whose sections all run the column's
+ * width and where a help panel stopping at 47% of it was the most visible
+ * remnant of the four-widths page the maintainer rejected.
  *
- * It is an OPT-IN, not a new default, and the test is `=== true` rather than
- * truthy — the cap is right for every view whose header panel really is prose,
- * and a stray string must not silently widen one.
+ * The same complaint then arrived for the BLOCK-level marks (Domains'
+ * PROJECTS ⓘ), and the cap was wrong in general rather than wrong for one
+ * page: `docs/design-system-source.md` §4's house rule is *cap the prose,
+ * never the cards*, and this panel is a card. shared/text.css now uncaps the
+ * box for every panel and caps the MEASURE inside it instead, so
+ * `panelWide: true` is a no-op that stays only because memory.js passes it
+ * and scripts/test-next-memory-view.js §18h asserts the class reaches the
+ * markup. The `=== true` test stays with it: a flag nothing reads is still a
+ * flag that must not be settable by a stray string.
  *
  * @param {{eyebrow?:string, title:string, info?:string, infoHtml?:boolean,
  *          infoId?:string, actionsHtml?:string, variant?:string,

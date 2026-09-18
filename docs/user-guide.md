@@ -2466,7 +2466,7 @@ Then **four sections**, each in its own card under its own heading, in this orde
 
 | Section | What it is |
 |---|---|
-| **OVERVIEW** | Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders) |
+| **OVERVIEW** | Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *New in v3.58.0:* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. The tabs are unchanged |
 | **PAGES · THE WIKI** | The page list itself, **open**, with its filter box and its All / Entities / Concepts / Summaries / **Memory** tabs. See [§11](#11-read-a-wiki-page) |
 | **PROJECTS IN THIS DOMAIN** | See just below |
 | **WIKI HEALTH** | See [§17](#17-wiki-health) |
@@ -2564,6 +2564,11 @@ with it. Its row therefore **does not offer those two buttons at all**, and says
 domain's own project — it cannot be renamed or deleted"* — rather than offering a control whose
 only possible outcome is a refusal. **Copy marker line**, **Copy agent instructions** and **Edit brief** work on it
 as on any other. You can still empty it: delete or move the work-streams inside it.
+
+*New in v3.58.0:* each copy control carries its own **ⓘ** — what it copies, where to paste it, and
+what happens then — and the section's own **ⓘ**, beside the PROJECTS IN THIS DOMAIN heading, now
+explains what a project is *and* what those two buttons are for. The one-line sentence that used to sit
+between the heading and the list is gone; the mark carries it.
 
 A domain that had agent memory before v3.48.0 shows **one** project, named after the domain
 itself. Nothing was moved to produce that, and nothing ever will be: that is where a domain's own

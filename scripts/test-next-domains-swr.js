@@ -154,9 +154,17 @@ const PREAMBLE = `
 let state = {};
 let myMountToken = 1;
 let mounted = true;
-const calls = { render: 0, fetch: [], gateBegin: 0, gateSettle: 0, health: [], asyncFailures: 0 };
+const calls = { render: 0, renderSidebar: 0, renderMain: 0, fetch: [], gateBegin: 0, gateSettle: 0, health: [], asyncFailures: 0 };
 let fetchResponder = () => ({ entries: [], memory: [] });
 function render() { calls.render++; }
+// v3.58.0. The REAL render() is lifted (see FNS) so the ⓘ capture/restore
+// around the swap can be DRIVEN rather than read. Its two collaborators are
+// recorders, and swapDom is what a real setMain() is from this function's
+// point of view: the nodes it captured from are gone and new ones have taken
+// their place.
+let swapDom = null;
+function renderSidebar() { calls.renderSidebar++; }
+function renderMain() { calls.renderMain++; if (swapDom) document = swapDom; }
 function isCurrentMount() { return mounted; }
 function reportAsyncActionFailure() { calls.asyncFailures++; }
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -191,6 +199,11 @@ const FNS = [
   'loadBrowse', 'loadProjects',
   'selectDomain',
   'captureCardReserve',
+  // v3.58.0. An open ⓘ fold must survive a full repaint -- v3.53.1's finding,
+  // fixed for Settings there and for Agent memory in v3.54.0, and never
+  // reached this view until the OVERVIEW figures started re-rendering the
+  // column from a click.
+  'captureOpenInfoPanels', 'restoreOpenInfoPanels',
   'shouldKeepHealthOnReload', 'healthSection', 'healthScanLabel',
 ];
 
@@ -205,6 +218,18 @@ try {
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
     'let reserveCapturedThisTask = false;\n' +
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
+    // THE SHIPPED render(), UNDER A SECOND NAME. Every other section here
+    // counts calls to the stub above, so lifting this one by its own name
+    // would shadow the counter and silently zero six assertions -- which is
+    // what the first cut did, and what its reds said. Only the declaration's
+    // name is rewritten; the body is byte-for-byte the shipped one.
+    (() => {
+      const src = extractFunction(SRC, 'render');
+      if (!/^function render\(token\) \{/.test(src)) {
+        throw new Error('render() no longer has the shape this rename assumes');
+      }
+      return src.replace('function render(token) {', 'function realRender(token) {');
+    })() + '\n' +
     // The health placeholder is the ONE branch of renderHealthPanel this
     // suite exercises (§5). Lifting the whole function would drag in a dozen
     // collaborators none of which that branch reaches, so the branch is
@@ -224,7 +249,7 @@ ${(() => {
   return null;
 }
 ` +
-    `return { ${FNS.join(', ')}, healthPlaceholder, BROWSE_RENDER_CAP, RESERVE_MIN_PX, RESERVE_MAX_PX,
+    `return { ${FNS.join(', ')}, healthPlaceholder, realRender, BROWSE_RENDER_CAP, RESERVE_MIN_PX, RESERVE_MAX_PX,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gateBegin = 0;
@@ -232,6 +257,7 @@ ${(() => {
        __setFetch: (fn) => { fetchResponder = fn; },
        __setDocument: (d) => { document = d; },
        __setMounted: (v) => { mounted = v; },
+       __setSwapDom: (d) => { swapDom = d; },
        __resetTaskFlag: () => { reserveCapturedThisTask = false; } };`
   )();
 } catch (err) {
@@ -242,7 +268,9 @@ ${(() => {
 const {
   loadBrowse, loadProjects, selectDomain, renderBrowsePanel, activeBrowse, activeProjects,
   browseSignature, captureCardReserve, healthPlaceholder, BROWSE_RENDER_CAP,
+  captureOpenInfoPanels, restoreOpenInfoPanels, realRender,
   __state, __setState, __calls, __reset, __setFetch, __setDocument, __setMounted, __resetTaskFlag,
+  __setSwapDom,
 } = box;
 
 const ENTRY = (slug, folder = 'concepts') => ({ slug, folder, path: folder + '/' + slug + '.md', title: slug });
@@ -540,6 +568,121 @@ section('§5  THE LOADING CARD IS NEVER A ZERO-HEIGHT COLLAPSE');
   captureCardReserve();   // same task: the flag is still set
   eq(__state().reserve.browse, 700, 'a SECOND capture in the same task is skipped — later reads see a DOM we just wrote');
 
+  __setDocument({ querySelector: () => null, getElementById: () => null, querySelectorAll: () => [] });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§5b AN OPEN ⓘ FOLD SURVIVES A FULL REPAINT (v3.58.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// shared/text.js keeps a panel's open state in the DOM ONLY -- it flips
+// `hidden` and sets `aria-expanded` and records nothing -- so every render()
+// closed every fold on this screen. That is v3.53.1's finding verbatim,
+// unfixed here. It matters more now: this card carries four kinds of fold (the
+// PROJECTS mark plus two per project row), and the OVERVIEW figures added this
+// release re-render the whole column on a click, so an open explanation would
+// be shut by the very control it explains.
+//
+// DRIVEN through the SHIPPED render(), with a document that is REPLACED
+// mid-call -- which is what setMain() is from render()'s point of view.
+{
+  // A node model just rich enough for the two helpers: an attribute bag with
+  // `hidden`, and a document that answers by id and by the one selector.
+  const node = (id, expanded) => ({
+    id, _attrs: { 'data-tx-info': id, 'aria-expanded': expanded },
+    getAttribute(n) { return this._attrs[n]; },
+    setAttribute(n, v) { this._attrs[n] = v; },
+    hidden: expanded !== 'true',
+  });
+  const docOf = (btns, panels) => ({
+    getElementById: (id) => btns[id] || panels[id] || null,
+    querySelector: () => null,
+    // BOTH selectors are answered, and that is not padding: a restore that
+    // CLOSED what it did not capture would reach for every mark, and a model
+    // that returned [] for the bare selector would let that mutation pass.
+    querySelectorAll: (sel) => {
+      const all = Object.values(btns);
+      if (sel === '[data-tx-info]') return all;
+      if (sel === '[data-tx-info][aria-expanded="true"]') {
+        return all.filter((b) => b.getAttribute('aria-expanded') === 'true');
+      }
+      return [];
+    },
+  });
+  // TWO TREES, AND THEY ARE NOT THE SAME SHAPE, which is the whole point.
+  // `mk('a')` is what is ON SCREEN: fold `a` open, fold `b` closed. `mk()` is
+  // what a REPAINT produces: every fold closed, because the markup ships
+  // `hidden` and the component records nothing. A fixture whose fresh tree
+  // already had `a` open would pass whether the capture ran before or after
+  // the swap -- which is exactly what the first cut did, and its mutation
+  // stayed green until this was fixed.
+  const mk = (open) => {
+    const btns = { 'a-btn': node('a', open === 'a' ? 'true' : 'false'),
+                   'b-btn': node('b', open === 'b' ? 'true' : 'false') };
+    btns['a-btn'].id = 'a-btn'; btns['b-btn'].id = 'b-btn';
+    btns['a-btn']._attrs['data-tx-info'] = 'a';
+    btns['b-btn']._attrs['data-tx-info'] = 'b';
+    const panels = { a: { hidden: open !== 'a' }, b: { hidden: open !== 'b' } };
+    // getElementById('a') must find the PANEL and getElementById('a-btn') the
+    // button, which is the -btn convention every producer of this mark emits.
+    return { btns, panels, doc: docOf(btns, panels) };
+  };
+
+  const before = mk('a');
+  __setDocument(before.doc);
+  const ids = callOrFail('captureOpenInfoPanels runs', () => captureOpenInfoPanels());
+  eq(JSON.stringify(ids), JSON.stringify(['a']), 'the capture names exactly the OPEN fold');
+
+  const after = mk();
+  // The repaint destroys the old nodes: the new ones are all CLOSED, which is
+  // exactly the defect -- the markup ships `hidden`.
+  eq(after.panels.a.hidden, true, 'CONTROL -- a freshly repainted tree really does start closed');
+  __setDocument(after.doc);
+  callOrFail('restoreOpenInfoPanels runs', () => restoreOpenInfoPanels(ids));
+  eq(after.panels.a.hidden, false, 'the fold that was open is re-opened after the swap');
+  eq(after.btns['a-btn'].getAttribute('aria-expanded'), 'true',
+    '...and its button says so to assistive tech');
+  // RESTORE ONLY EVER OPENS.
+  eq(after.panels.b.hidden, true, 'the fold that was CLOSED is left closed');
+  eq(after.btns['b-btn'].getAttribute('aria-expanded'), 'false', '...and is not announced as expanded');
+
+  // A MARK THAT IS GONE IS SKIPPED, not resurrected: a project renamed, or a
+  // domain switched, takes its folds with it.
+  const empty = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] };
+  __setDocument(empty);
+  callOrFail('restoring against a page that no longer has the mark', () => restoreOpenInfoPanels(['a']));
+  callOrFail('...and restoring nothing at all', () => restoreOpenInfoPanels([]));
+
+  // THE WHOLE THING, THROUGH THE SHIPPED render(). The document is swapped
+  // BY renderMain, so the capture reads the old DOM and the restore the new
+  // one -- which is the ordering the fix depends on and the one a
+  // capture-after-swap would silently get wrong.
+  // RESTORE ONLY EVER OPENS: a fold the NEW tree has opened for itself must
+  // survive a restore that never saw it open. views/memory.js relies on that
+  // for its force-open arms, and settings.js states the rule.
+  const selfOpened = mk('b');
+  __setDocument(selfOpened.doc);
+  callOrFail('restoring against a tree that opened its OWN fold', () => restoreOpenInfoPanels(['a']));
+  eq(selfOpened.panels.b.hidden, false, 'a fold the new tree opened itself is NOT closed by the restore');
+  eq(selfOpened.btns['b-btn'].getAttribute('aria-expanded'), 'true', '...nor is its button contradicted');
+  eq(selfOpened.panels.a.hidden, false, '...and the captured one is opened alongside it');
+
+  const live = mk('a');
+  const fresh = mk();
+  __setDocument(live.doc);
+  __setSwapDom(fresh.doc);
+  __resetTaskFlag();
+  __reset();
+  callOrFail('the shipped render() runs', () => realRender(1));
+  eq(__calls().renderSidebar + __calls().renderMain, 2, 'render repainted both columns');
+  eq(fresh.panels.a.hidden, false, '...and the fold the user had open is open on the NEW tree');
+  eq(fresh.panels.b.hidden, true, '...while the one they had closed stays closed');
+  // ANTI-VACUITY: without the restore the new tree's panel really is hidden.
+  const control = mk();
+  eq(control.panels.a.hidden, true,
+    'CONTROL -- a freshly rendered fold starts hidden, so the assertion above is a finding');
+
+  __setSwapDom(null);
   __setDocument({ querySelector: () => null, getElementById: () => null, querySelectorAll: () => [] });
 }
 

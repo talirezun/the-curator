@@ -102,6 +102,32 @@ function extractConstText(source, name) {
   if (!m) throw new Error(`extractConstText: "${name}" not found as a single-line const`);
   return m[0].trim();
 }
+// ── A multi-line STRING const, lifted rather than re-typed ────────────────
+// `extractConstText` above matches a SINGLE line. The three ⓘ texts
+// (MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML) are multi-line string
+// concatenations, and re-typing them here would make every assertion about a
+// COPY of the shipped words. Scans forward from the `=` for the first `;` that
+// is not inside a string literal, so a semicolon in the prose (or in an HTML
+// entity) cannot end the extraction early.
+function extractConstString(source, name) {
+  const re = new RegExp(`(?:^|\\n)const ${name} =`);
+  const m = re.exec(source);
+  if (!m) throw new Error(`extractConstString: "${name}" not found`);
+  const start = m.index + (source[m.index] === '\n' ? 1 : 0);
+  let i = source.indexOf('=', start) + 1;
+  let quote = null;
+  for (; i < source.length; i++) {
+    const c = source[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    if (c === ';') return source.slice(start, i + 1);
+  }
+  throw new Error(`extractConstString: "${name}" never terminated`);
+}
 function extractConstArray(source, name) {
   const re = new RegExp(`(?:^|\\n)const ${name} = \\[`);
   const m = re.exec(source);
@@ -227,7 +253,8 @@ function docIndex(root) {
 // ═════════════════════════════════════════════════════════════════════════
 const PREAMBLE = `
 let state = {};
-let documentImpl = { getElementById: () => null, querySelectorAll: () => [] };
+let documentImpl = { getElementById: () => null, querySelectorAll: () => [],
+  querySelector: () => null };
 const calls = { setMain: [], render: 0, reader: [], asyncFailures: 0 };
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -266,24 +293,33 @@ function bindProjectListeners() {}
 function bindKnowledgeListeners() {}
 function bindHealthListeners() {}
 function bindBrowseListeners() {}
+// v3.58.0: renderMain wires the OVERVIEW figures, which are now controls over
+// the page-list facet. The REAL selectBrowseFacet is lifted below (S6 drives
+// it); only the binding pass is stubbed, as its five siblings are.
+function bindStatCardListeners() {}
 const MIRROR_INFO = 'mirror-info';
 const DOMAIN_BLURB = 'domain-blurb';
 const MIRROR_WARNING = 'mirror-warning';
 const document = { get getElementById() { return documentImpl.getElementById; },
-                   get querySelectorAll() { return documentImpl.querySelectorAll; } };
+                   get querySelectorAll() { return documentImpl.querySelectorAll; },
+                   get querySelector() { return documentImpl.querySelector; } };
 `;
 
 // The REAL banner text, injected rather than stubbed -- renderCopyOutcome is
 // lifted here so the projects panel it feeds can be rendered at all.
-const { COPY_SUCCESS_BANNER } =
+const { COPY_SUCCESS_BANNER, TEMPLATE } =
   await import('../src/public/next/shared/agent-instructions.js');
 
 const FNS = [
-  'activeBrowse', 'activeProjects', 'projectCount', 'infoMark',
+  'activeBrowse', 'activeProjects', 'projectCount', 'infoMark', 'projInfoId',
   'filterBrowseEntries', 'filterMemoryEntries', 'browseMatches', 'browseWindow',
   'browseRowHtml', 'memoryRowHtml', 'browseMoreHtml', 'browseNoteHtml',
   'renderBrowsePanel', 'renderStatCards', 'renderProjectRow', 'renderCopyOutcome', 'renderProjectsPanel',
   'showMoreBrowseRows', 'bindBrowseRowClicks', 'bindBrowseListeners', 'openMemoryPageFromBrowse',
+  // v3.58.0. The ONE write path the chip row and the OVERVIEW tiles share --
+  // lifted, never stubbed, because bindBrowseListeners below is driven for
+  // real and a stub would make the facet assertions vacuous.
+  'selectBrowseFacet', 'scrollSectionIntoView',
   'healthSection', 'renderMain',
 ];
 
@@ -295,8 +331,13 @@ try {
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
+    // The three ⓘ texts, lifted whole -- see extractConstString.
+    extractConstString(SRC, 'MARKER_INFO_TEXT') + '\n' +
+    extractConstString(SRC, 'AGENT_INFO_TEXT') + '\n' +
+    extractConstString(SRC, 'PROJECTS_INFO_HTML') + '\n' +
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, BROWSE_RENDER_CAP, BROWSE_FOLDERS,
+       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls, __reset: () => { calls.setMain.length = 0; calls.render = 0;
          calls.reader.length = 0; calls.asyncFailures = 0; },
@@ -481,6 +522,248 @@ section('S2 -- THE OVERVIEW CARD, AND THE FIGURE THAT WAS MISSING');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('S2b -- A FIGURE IS A SHORTCUT TO THE LIST IT COUNTS (v3.58.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Reported by a user reviewing the app on video: he wanted to press ENTITIES
+// and get the entities, and had not noticed the filter chips under PAGES · THE
+// WIKI "for a long time". The chips stay; the figures become a second control
+// over the SAME filter state, which is the property every assertion below is
+// really about -- a tile with its own notion of "selected" would be a second
+// state free to disagree with the list under it.
+{
+  const tiles = (html) => descendants(parseNodes(html)).filter((n) => hasClass(n, 'dm-stat-card'));
+  const byLabel = (html, label) => tiles(html).find(
+    (n) => n.children[0] && n.children[0].textContent === label);
+
+  const html = renderCard();
+  const facets = tiles(html).filter((n) => n.attrs['data-stat-facet'] !== undefined);
+  eq('four figures are controls over a chip', facets.length, 4);
+  eq('...PAGES selects All', byLabel(html, 'PAGES').attrs['data-stat-facet'], 'all');
+  for (const [label, key] of [['ENTITIES', 'entities'], ['CONCEPTS', 'concepts'], ['SUMMARIES', 'summaries']]) {
+    eq('...' + label + ' selects the ' + key + ' facet', byLabel(html, label).attrs['data-stat-facet'], key);
+  }
+  ok('every facet named by a tile is a REAL chip, not a string that looks like one',
+    facets.every((t) => box.BROWSE_FOLDERS.some((f) => f.key === t.attrs['data-stat-facet'])),
+    facets.map((t) => t.attrs['data-stat-facet']).join(', '));
+  ok('...and they are <button>s, so keyboard and touch reach them',
+    facets.every((t) => t.tagName === 'BUTTON'), facets.map((t) => t.tagName).join(', '));
+
+  // PROJECTS HAS NO CHIP, so it jumps instead -- and it is NOT a toggle, so it
+  // carries no aria-pressed. aria-pressed on a control that does not stay
+  // pressed is a lie told only to a screen reader.
+  const proj = byLabel(html, 'PROJECTS');
+  eq('PROJECTS jumps to its section rather than filtering', proj.attrs['data-stat-jump'], 'projects');
+  ok('...and carries no aria-pressed, because it is not a toggle',
+    proj.attrs['aria-pressed'] === undefined, proj.attrs['aria-pressed']);
+  ok('...and no facet either, so it can never write the filter state',
+    proj.attrs['data-stat-facet'] === undefined);
+
+  // ONE SOURCE OF TRUTH. The tile's pressed state and the chip's `.active` are
+  // read from the same field, so they cannot disagree.
+  const chipActive = (h, key) => {
+    const c = descendants(parseNodes(h)).find(
+      (n) => n.attrs['data-browse-folder'] === key);
+    return c ? c.classList.includes('active') : null;
+  };
+  for (const key of ['all', 'entities', 'concepts', 'summaries']) {
+    const h = renderCard({ browse: browseState({ folder: key }) });
+    const pressed = tiles(h).filter((t) => t.attrs['aria-pressed'] === 'true');
+    eq('with folder=' + key + ', exactly ONE figure reads pressed', pressed.length, 1);
+    eq('...and it is the one whose facet is ' + key, pressed[0].attrs['data-stat-facet'], key);
+    eq('...and the chip of the same name is active too -- one state, two controls',
+      chipActive(h, key), true);
+    // ANTI-VACUITY: the other three really do read false, not merely absent.
+    const others = tiles(h).filter((t) => t.attrs['data-stat-facet'] !== undefined
+      && t.attrs['data-stat-facet'] !== key);
+    ok('...and the other three read aria-pressed="false", not nothing',
+      others.length === 3 && others.every((t) => t.attrs['aria-pressed'] === 'false'),
+      others.map((t) => t.attrs['data-stat-facet'] + '=' + t.attrs['aria-pressed']).join(', '));
+  }
+  // MEMORY is a chip and deliberately NOT a tile: `all` does not include it
+  // (see BROWSE_FOLDERS), so a figure for it would contradict PAGES above it.
+  ok('the memory facet has a chip and no figure',
+    box.BROWSE_FOLDERS.some((f) => f.key === 'memory')
+    && !tiles(html).some((t) => t.attrs['data-stat-facet'] === 'memory'));
+
+  // THE ACCESSIBLE NAME CARRIES THE COUNT AND THE OUTCOME, on a real control.
+  // v3.20.0 counted 11 pieces of information in this tree carried ONLY by a
+  // hover tooltip; this must not become the twelfth.
+  ok('every figure-control has an accessible name',
+    tiles(html).filter((t) => t.tagName === 'BUTTON').every((t) => (t.attrs['aria-label'] || '').length > 10),
+    tiles(html).map((t) => t.attrs['aria-label']).join(' | '));
+  const ent = byLabel(html, 'ENTITIES');
+  eq('...shaped "Entities, N pages — filter the list"',
+    ent.attrs['aria-label'], 'Entities, 1 pages — filter the list');
+  ok('...and PROJECTS says it goes somewhere rather than filtering',
+    /go to the projects list/.test(proj.attrs['aria-label']), proj.attrs['aria-label']);
+  ok('NO figure carries a title= -- a tooltip on a control is hover-only information',
+    !tiles(html).some((t) => t.attrs.title !== undefined));
+
+  // A CONTROL ONLY WHILE THERE IS A LIST FOR IT TO ACT ON. A button whose only
+  // possible outcome is nothing is worse than no button.
+  for (const [what, over] of [
+    ['loading', browseState({ loading: true, entries: [] })],
+    ['failed', browseState({ error: 'nope', entries: [] })],
+  ]) {
+    const h = renderCard({ browse: over });
+    const t = tiles(h);
+    eq('while the page list is ' + what + ', no figure is a facet control',
+      t.filter((n) => n.attrs['data-stat-facet'] !== undefined).length, 0);
+    ok('...and the five figures are still painted, in the same shape',
+      t.length === 5 && t.every((n) => n.tagName === 'DIV' || n.attrs['data-stat-jump'] !== undefined),
+      t.map((n) => n.tagName).join(', '));
+    ok('...while PROJECTS still jumps, because its section renders in every state',
+      t.some((n) => n.attrs['data-stat-jump'] === 'projects'));
+  }
+  // OTHER is never a control: there is no chip for it.
+  const withOther = renderCard({ domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 4,
+    pageCounts: { entities: 1, concepts: 1, summaries: 1, other: 1 } }] });
+  const other = byLabel(withOther, 'OTHER');
+  ok('CONTROL -- an OTHER figure renders when the count is non-zero', !!other);
+  ok('...and it is NOT a control, because no chip answers for it',
+    other && other.tagName === 'DIV' && other.attrs['data-stat-facet'] === undefined);
+}
+{
+  // THE WRITE PATH, EXECUTED. selectBrowseFacet is the one place both controls
+  // write, so this drives it rather than the markup.
+  box.__setState(mainState({ browse: browseState({ folder: 'all', window: 400 }) }));
+  box.__reset();
+  box.selectBrowseFacet('concepts', {});
+  eq('selecting a facet writes the filter state', box.__state().browse.folder, 'concepts');
+  eq('...and resets the window, because it is a different match set',
+    box.__state().browse.window, box.BROWSE_RENDER_CAP);
+  ok('...and repaints', box.__calls().render > 0);
+
+  // IT REFUSES RATHER THAN GUESSING. A facet arriving for a list that belongs
+  // to another domain, or no key at all, must not write anything -- the layer-2
+  // check activeBrowse() exists for.
+  box.__setState(mainState({ browse: browseState({ slug: 'OTHER-DOMAIN', folder: 'all' }) }));
+  box.__reset();
+  box.selectBrowseFacet('entities', {});
+  eq('a facet press against ANOTHER domain’s list writes nothing',
+    box.__state().browse.folder, 'all');
+  eq('...and does not repaint', box.__calls().render, 0);
+  box.__setState(mainState({ browse: browseState({ folder: 'all' }) }));
+  box.selectBrowseFacet('', {});
+  eq('an empty key writes nothing either', box.__state().browse.folder, 'all');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// A selected figure paints `--accent-tint` behind its digits. That tint is
+// rgba, so the plane under the ink is no longer `--surface` -- which is the
+// backdrop scripts/test-next-views-kit.js computes these same three inks
+// against, and it has no way to know a state was added. Composited here, in
+// both themes, from the SHIPPED token values.
+{
+  const blocksFor = (src, sel) => {
+    let out = '', i = 0;
+    while ((i = src.indexOf(sel, i)) !== -1) {
+      const open = src.indexOf('{', i);
+      const close = src.indexOf('}', open);
+      if (open === -1 || close === -1) break;
+      if (src.slice(i, open).trim() === sel) out += src.slice(open + 1, close) + '\n';
+      i = close + 1;
+    }
+    return out;
+  };
+  const COLOR = readFileSync(join(NEXT, 'tokens/color.css'), 'utf8');
+  const DARK = blocksFor(COLOR, ':root') + blocksFor(CSS, ':root');
+  const LIGHT = DARK + blocksFor(COLOR, '[data-theme="light"]') + blocksFor(CSS, '[data-theme="light"]');
+  const table = (src) => {
+    const t = {};
+    for (const m of src.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) t[m[1]] = m[2].trim();
+    return t;
+  };
+  const resolve = (t, n, d = 0) => {
+    const v = t[n];
+    if (v === undefined || d > 10) return null;
+    const m = /^var\((--[a-z0-9-]+)\)$/.exec(v);
+    return m ? resolve(t, m[1], d + 1) : v;
+  };
+  const toRgb = (v) => {
+    if (!v) return null;
+    let m = /^#([0-9a-f]{6})$/i.exec(v.trim());
+    if (m) return { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16), a: 1 };
+    m = /^rgba?\(([^)]+)\)$/i.exec(v.trim());
+    if (m) { const q = m[1].split(',').map(Number); return { r: q[0], g: q[1], b: q[2], a: q[3] === undefined ? 1 : q[3] }; }
+    return null;
+  };
+  const over = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a),
+    b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1 });
+  const lum = (c) => { const f = (x) => { const y = x / 255; return y <= 0.03928 ? y / 12.92 : Math.pow((y + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+
+  // THE FIGURE IS LARGE TEXT and the floor for it is 3:1, not 4.5. That is not
+  // a convenience: docs/design-system-source.md §11 records the five OVERVIEW
+  // tiles as a deliberate exception at 22px/600, and WCAG's large-text
+  // threshold for bold is 18.66px. The EYEBROW above it is small text and is
+  // held to 4.5 in the same block.
+  const FIG_FLOOR = 3.0;
+  const SMALL_FLOOR = 4.5;
+  for (const [theme, src] of [['dark', DARK], ['light', LIGHT]]) {
+    const t = table(src);
+    const surface = toRgb(resolve(t, '--surface'));
+    const tint = toRgb(resolve(t, '--accent-tint'));
+    ok('CONTROL -- ' + theme + ': both ends of the composite resolve', !!surface && !!tint,
+      resolve(t, '--surface') + ' / ' + resolve(t, '--accent-tint'));
+    if (!surface || !tint) continue;
+    const bg = over(tint, surface);
+    for (const tok of ['--text', '--dm-ink-entity', '--dm-ink-concept', '--dm-ink-summary']) {
+      const fg = toRgb(resolve(t, tok));
+      const got = fg ? ratio(fg, bg) : 0;
+      ok(theme + ': ' + tok + ' reads ' + got.toFixed(2) + ':1 on a SELECTED figure (floor ' + FIG_FLOOR + ')',
+        got >= FIG_FLOOR, resolve(t, tok));
+    }
+    const eyebrow = toRgb(resolve(t, '--text-2'));
+    const eb = eyebrow ? ratio(eyebrow, bg) : 0;
+    ok(theme + ': the tile\u2019s eyebrow reads ' + eb.toFixed(2) + ':1 on the tint (floor ' + SMALL_FLOOR + ')',
+      eb >= SMALL_FLOOR);
+    // ANTI-VACUITY: the tint really does move the plane, so these are findings
+    // and not a restatement of the plain-surface figures the kit already has.
+    const plain = ratio(toRgb(resolve(t, '--dm-ink-concept')), surface);
+    const tinted = ratio(toRgb(resolve(t, '--dm-ink-concept')), bg);
+    ok(theme + ': CONTROL -- the tint MOVES the reading (' + plain.toFixed(2) + ' -> ' + tinted.toFixed(2) + ')',
+      Math.abs(plain - tinted) > 0.05);
+  }
+  // AND THE SELECTED FILL IS NOT THE ONLY SIGNAL. It composites to 1.13:1
+  // against the plain tile -- far under any graphical floor -- which is why
+  // the state is ALSO carried by `aria-pressed` and by an --accent-border
+  // ring, and why the chip of the same name stays on screen saying the same
+  // thing. Recorded rather than measured away.
+  const bare = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const sel = /\.dm-stats-group button\.dm-stat-card\[aria-pressed="true"\]\s*\{([^}]*)\}/.exec(bare);
+  ok('CONTROL -- domains.css declares a selected state for the figure', !!sel, 'no rule');
+  ok('...which paints the accent TINT, the same fill the chip uses',
+    sel && /background:\s*var\(--accent-tint\)/.test(sel[1]), sel && sel[1]);
+  ok('...AND an --accent-border edge, because the fill alone is 1.13:1 against the plain tile',
+    sel && /box-shadow:\s*inset[^;]*var\(--accent-border\)/.test(sel[1]), sel && sel[1]);
+  ok('...as an INSET shadow, so selecting a figure cannot reflow the five-track grid by 2px',
+    sel && !/[^-]border:/.test(sel[1]), sel && sel[1]);
+  ok('the selected figure carries aria-pressed as well as a fill',
+    /\[aria-pressed="true"\]/.test(CSS) && /aria-pressed="/.test(SRC));
+
+  // THE PRESS REACHES A SELECTED FIGURE TOO. `[aria-pressed="true"]` scores
+  // (0,3,1) and a bare `:active` ties with it, losing on order -- so pressing
+  // an already-selected figure would change nothing but the 1px nudge. The
+  // press rule therefore carries BOTH arms: the bare one for the PROJECTS
+  // figure, which jumps and has no aria-pressed at all, and the
+  // attribute-present one to outrank the selected fill.
+  const press = /\.dm-stats-group button\.dm-stat-card:active,\s*\.dm-stats-group button\.dm-stat-card\[aria-pressed\]:active\s*\{([^}]*)\}/.exec(bare);
+  ok('the press rule carries both the bare and the [aria-pressed] arm', !!press,
+    'the two-arm press selector is gone');
+  ok('...declared AFTER the selected fill it has to outrank',
+    press && sel && bare.indexOf(press[0]) > bare.indexOf(sel[0]));
+  ok('...and it changes the fill, not only the nudge',
+    press && /background:\s*var\(--surface-active\)/.test(press[1]) && /transform:/.test(press[1]),
+    press && press[1]);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('S3 -- THE PROJECTS PARAGRAPH IS BEHIND AN ⓘ, LIKE THE HEADER’S');
 // ═════════════════════════════════════════════════════════════════════════
 {
@@ -505,22 +788,116 @@ section('S3 -- THE PROJECTS PARAGRAPH IS BEHIND AN ⓘ, LIKE THE HEADER’S');
   // THE FOLD CARRIES THE PARAGRAPH, and this is the assertion a stubbed
   // infoMark would have passed while rendering nothing.
   ok('the fold contains the explanation that used to be on screen',
-    panel && /agents keep their working notes against/.test(panel.textContent), panel && panel.textContent.slice(0, 80));
+    panel && /a project is one thing you build inside it/.test(panel.textContent),
+    panel && panel.textContent.slice(0, 80));
   ok('...and it is long enough to be the paragraph rather than a label',
     panel && panel.textContent.length > 200, panel && String(panel.textContent.length));
 
-  // THE VISIBLE CAPTION IS ONE LINE.
-  const caption = descendants(root).find((n) => hasClass(n, 'dm-proj-caption'));
-  ok('CONTROL -- the caption is still there', !!caption);
-  const text = caption ? caption.textContent.trim() : '';
-  ok('the visible caption is ONE sentence', (text.match(/[.!?](\s|$)/g) || []).length === 1, text);
-  ok('...and short', text.length < 110, text.length + ' chars: ' + text);
-  ok('...and still the shared DESCRIPTION role, not a re-dressed copy',
-    caption && caption.children.some((c) => hasClass(c, 'tx-desc')));
-  // ANTI-VACUITY: the paragraph is NOT still rendered visibly as well.
-  const visible = html.slice(0, html.indexOf('tx-vh-panel')) + html.slice(html.indexOf('</div>', html.indexOf('tx-vh-panel')));
-  ok('...and the long version is not ALSO on screen beside the fold',
-    !/agents keep their working notes against/.test(caption ? caption.textContent : ''));
+  // ── v3.58.0: THE LOOSE LEDE IS GONE, AND THE ⓘ ANSWERS TWO QUESTIONS ────
+  // v3.50.0 cut a four-line paragraph here to one sentence under the eyebrow.
+  // The maintainer's verdict on the survivor was that it STILL read as a loose
+  // sentence between the heading and the table -- the same complaint one size
+  // smaller -- so the sentence went behind the mark that exists to hold it.
+  ok('no loose lede renders between the eyebrow and the group',
+    !descendants(root).some((n) => hasClass(n, 'dm-proj-caption')),
+    'a .dm-proj-caption is still rendered');
+  ok('...and the header holds the eyebrow and the mark and nothing else',
+    head && head.children.length === 2, head && String(head.children.length));
+  ok('...with the eyebrow still naming the group -- the mark is the dive-in, not the label',
+    head && /PROJECTS IN THIS DOMAIN/.test(head.textContent));
+  ok('CONTROL -- domains.css no longer places a caption either',
+    !/\.dm-proj-caption/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
+  // NOTHING A READER NEEDED WAS DELETED, only moved: the definition is the
+  // FIRST thing inside the fold.
+  ok('the definition survives, as the fold’s opening words',
+    panel && /A domain is one compounding wiki/.test(panel.textContent), panel && panel.textContent.slice(0, 60));
+
+  // TWO LABELLED PARAGRAPHS, and a word budget. A fold is not a licence to
+  // write an essay -- the v3.54.0 lede rule is 20 visible words for what is
+  // ALWAYS on screen, and this is the deeper layer, capped here at 120.
+  const paras = panel ? panel.children.filter((n) => n.tagName === 'P') : [];
+  eq('the fold is TWO paragraphs', paras.length, 2);
+  ok('...each opening with a bold label', paras.every((q) => q.children[0] && q.children[0].tagName === 'STRONG'),
+    paras.map((q) => q.children[0] && q.children[0].tagName).join('/'));
+  const words = panel ? panel.textContent.trim().split(/\s+/).filter(Boolean).length : 0;
+  ok('...and the whole fold is at most 120 words', words > 0 && words <= 120, words + ' words');
+  // AND IT EXPLAINS THE TWO CONTROLS, which is the half that was missing: the
+  // maintainer, who builds this app, said he did not know what Copy marker
+  // line was from the UI.
+  ok('the fold names Copy marker line and says where the copied text goes',
+    panel && /Copy marker line/.test(panel.textContent) && /\.curator-project/.test(panel.textContent));
+  ok('...and names Copy agent instructions and where THAT goes',
+    panel && /Copy agent instructions/.test(panel.textContent) && /CLAUDE\.md/.test(panel.textContent));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+section('S3b -- THE ⓘ TEXTS NAME THE SAME FILES THE BLOCK AND THE DOCS DO');
+// ═══════════════════════════════════════════════════════════════════════
+//
+// A DOC-LINKS-STYLE CROSS-CHECK. The ⓘ texts tell a user which file to paste
+// into. Those file names are DEFINED in two other places -- the frozen block
+// in shared/agent-instructions.js (whose COPY_SUCCESS_BANNER the user reads
+// seconds later, as the post-copy confirmation) and docs/working-state.md's
+// "Where it goes" table. Three copies of one fact is exactly the shape
+// scripts/test-docs-links.js exists for: rename one and the other two become
+// false, silently, in copy that tells people where to put something.
+//
+// EXECUTED, not scanned: the constants are lifted out of the shipped view and
+// out of the shipped module, and the docs are read off disk.
+{
+  const marker = box.MARKER_INFO_TEXT;
+  const agent = box.AGENT_INFO_TEXT;
+  const fold = box.PROJECTS_INFO_HTML;
+  const DOC = readFileSync(join(ROOT, 'docs/working-state.md'), 'utf8');
+
+  ok('CONTROL -- all three ⓘ texts were lifted from the shipped view',
+    typeof marker === 'string' && marker.length > 80 &&
+    typeof agent === 'string' && agent.length > 80 &&
+    typeof fold === 'string' && fold.length > 200);
+
+  // THE MARKER FILE.
+  ok('the marker ⓘ names the file the marker line goes in', /\.curator-project/.test(marker));
+  ok('...and so does the fold', /\.curator-project/.test(fold));
+  ok('...and docs/working-state.md defines that same file name',
+    /###\s+The `\.curator-project` marker/.test(DOC));
+  ok('...and the frozen block itself points an agent at it',
+    /`\.curator-project`/.test(TEMPLATE), TEMPLATE.slice(0, 60));
+  ok('the marker ⓘ says what the copied text IS, not just what to do with it',
+    /domain\/project/.test(marker), marker);
+
+  // THE FOUR ENTRY FILES. Every name the ⓘ quotes must appear in the shipped
+  // banner AND in the docs table, and the banner must name no file the ⓘ has
+  // forgotten -- both directions, or a fifth harness could be added to one
+  // place and stay missing from the other.
+  const NAMES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
+  for (const f of NAMES) {
+    ok('the agent-instructions ⓘ names ' + f, agent.includes(f), agent);
+    ok('...and so does the fold', fold.includes(f));
+    ok('...and COPY_SUCCESS_BANNER, which the user reads seconds later', COPY_SUCCESS_BANNER.includes(f));
+    ok('...and docs/working-state.md’s "Where it goes" table', DOC.includes('`' + f + '`'));
+  }
+  ok('Cursor is named in all four places too',
+    /Cursor/.test(agent) && /Cursor/.test(fold) && /Cursor/.test(COPY_SUCCESS_BANNER) && /Cursor/.test(DOC));
+  // THE OTHER DIRECTION: no file in the banner is missing from the ⓘ.
+  const inBanner = (COPY_SUCCESS_BANNER.match(/[A-Z]+\.md/g) || []);
+  ok('CONTROL -- the banner really does name .md files, so the sweep is not vacuous',
+    inBanner.length === 3, inBanner.join(', '));
+  ok('every entry file the post-copy banner names is also in the ⓘ',
+    inBanner.every((f) => agent.includes(f)), inBanner.join(', '));
+
+  // WHAT HAPPENS THEN. Each ⓘ is what-it-copies / where-to-paste-it /
+  // what-happens-then, and the third part is the one a reader cannot guess.
+  ok('the marker ⓘ says what an agent does with it',
+    /resume/i.test(marker), marker);
+  ok('the agent-instructions ⓘ says what the agent then does',
+    /read/i.test(agent) && /save/i.test(agent) && /handoff/i.test(agent), agent);
+
+  // NEITHER ⓘ CARRIES A WARNING, A COST OR A REFUSAL. v3.16.1: a warning
+  // behind a click is not a warning, and these two folds ship closed.
+  for (const [name, t] of [['marker', marker], ['agent', agent], ['fold', fold]]) {
+    ok('the ' + name + ' ⓘ carries neutral explanation only -- no cost, no warning',
+      !/\$|cost|spend|warning|cannot be undone|permanent/i.test(t), t.slice(0, 80));
+  }
 }
 {
   // THE GLYPH IS THE SHARED ONE, byte for byte. Two copies of a mark that
@@ -553,6 +930,11 @@ function mountPanel(html) {
   const doc = {
     getElementById: (id) => descendants(root).find((n) => n.attrs.id === id) || null,
     querySelectorAll: (sel) => descendants(root).filter((n) => matchSel(n, sel)),
+    // v3.58.0: selectBrowseFacet re-queries the pressed control after the
+    // repaint to hand focus back to it, and scrollSectionIntoView asks for the
+    // section. The model has no layout, so the node it returns simply carries
+    // no scrollIntoView -- which the view treats as "cannot scroll" and skips.
+    querySelector: (sel) => descendants(root).find((n) => matchSel(n, sel)) || null,
   };
   box.__setDocument(doc);
   return { root, doc, list: () => doc.getElementById('dm-browse-list') };
