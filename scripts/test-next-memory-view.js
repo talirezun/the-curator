@@ -148,13 +148,48 @@ import {
 // The docs-link table, imported for the same reason: it takes no imports and
 // THROWS on an unknown key, so lifting the real one is what proves the About
 // panel's link resolves rather than merely that some string was interpolated.
-import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { docsLinkHtml as realDocsLinkHtml } from '../src/public/next/shared/docs-links.js';
+
+// ── THE DOCS TABLE IS ANOTHER PACKAGE'S FILE, AND docsUrl THROWS ──────────
+//
+// `docsUrl` throws on an unknown key by design: a typo is then a blank screen
+// in development rather than a dead link in production. That is right, and it
+// makes a key added by one work package and USED by another into a hard
+// coupling — a throw inside `renderProject` takes every assertion after it
+// with it, and the suite reports a CRASH rather than a named gap.
+//
+// So the real helper is wrapped: a key that does not resolve is RECORDED and a
+// placeholder returned, and §21m below asserts the recorded set is EMPTY. One
+// red assertion naming the missing key, instead of a stack trace — and no
+// weakening, because the assertion fails until the key exists.
+const pendingDocsKeys = new Set();
+function docsLinkHtml(key, label) {
+  try {
+    return realDocsLinkHtml(key, label);
+  } catch {
+    pendingDocsKeys.add(String(key));
+    return '<a href="#unresolved-docs-key">' + String(label) + '</a>';
+  }
+}
 // The shared section block. Imported for the same reason the text renderers
 // are: it imports only shared/text.js, which takes no imports at all, so the
 // real component runs in Node — and every one of this page's five sections is
 // framed by it since v3.55.0, so a stub would let the escaping battery and the
 // placement assertions run past the thing that frames them.
 import { renderBlock } from '../src/public/next/shared/block.js';
+// ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
+// shared/foundations-init.js takes NO imports (the same contract shared/text.js
+// carries), so the real module runs in Node and is imported rather than
+// stubbed. That matters twice: the four STORE MIRRORS it exports are what
+// memory.js's editor measures against, and a stub would let this suite agree
+// with itself about a wall the shipped page enforced at a different number.
+// scripts/test-next-foundations-editor.js pins all four against
+// src/brain/working-state.js.
+import {
+  FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
+  freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
+  renderRoleOptions, renderRefusedList, formatBytes,
+} from '../src/public/next/shared/foundations-init.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -1094,6 +1129,19 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderFoundations', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderFoundationsStatus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
+    // ── TIER 0's OWN EDITOR (v3.61.0) ───────────────────────────────────
+    // Five more, all LIFTED rather than stubbed. The three pure ones decide
+    // whether a save is offered at all (`fndStats`'s wall), whether a name is
+    // one the store will take (`fndSlugError`) and whether the owner is asked
+    // about a shrink (`fndShrinkWarn`); the two renderers are the surface the
+    // editor IS. A stub in any of them would let this suite agree with itself
+    // that the wall, the counter and the Save button describe one draft while
+    // the shipped editor described three.
+    extractFunction(viewSrc, 'fndStats', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fndSlugError', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fndShrinkWarn', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderFoundationEditor', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderFoundationsInit', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderJournal', 'memory.js') + '\n' +
     // The v3.48.0 brief editor. Lifted WITH renderBrief, because renderBrief
     // calls it in both of its branches — a stub would leave §6's escaping
@@ -1151,6 +1199,7 @@ function makeRenderers(stateObj) {
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
     'foundationsFacts, foundationsWord, foundationsRefreshOffer, fndRowHtml, ' +
     'renderFoundations, renderFoundationsStatus, foundationReaderContent, ' +
+    'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
@@ -1158,6 +1207,14 @@ function makeRenderers(stateObj) {
     'renderBriefEditor, renderProjectGroups };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'renderBlock',
+    // ── THE STORE MIRRORS AND THE SHARED CHOOSER (v3.61.0) ─────────────
+    // Injected as the REAL exports of shared/foundations-init.js, not as
+    // literals typed here: the wall the editor refuses at and the grammar it
+    // validates a name against must be the ones the shipped view uses, or
+    // this suite would be asserting a copy.
+    'FOUNDATION_SLUG_RE', 'FOUNDATION_ROLES', 'MAX_FOUNDATION_BYTES',
+    'FOUNDATIONS_BUDGET_BYTES', 'freshChooser', 'chooserBody', 'chooserOutcomeWords',
+    'renderFoundationsChooser', 'renderRoleOptions', 'renderRefusedList', 'formatBytes',
     // The real shared text renderers, so §6's escaping battery runs through
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
@@ -1172,6 +1229,9 @@ function makeRenderers(stateObj) {
     // let §6's escaping battery and §14's placement assertions run past the
     // component that actually frames every one of them.
     renderBlock,
+    FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES,
+    FOUNDATIONS_BUDGET_BYTES, freshChooser, chooserBody, chooserOutcomeWords,
+    renderFoundationsChooser, renderRoleOptions, renderRefusedList, formatBytes,
     renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
     docsLinkHtml);
 }
@@ -2162,14 +2222,35 @@ const fetchArgLists = fetchCallArgs(viewNoComments);
 ok('the scan found the view\'s real fetch call sites (it is not vacuous)',
   fetchArgLists.length >= 2, 'found ' + fetchArgLists.length);
 const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
-eq('EXACTLY TWO fetches in the view carry a request init', withInit.length, 2);
+// ── v3.61.0 TAKES THIS FROM TWO TO FIVE, AND NAMES ALL FIVE ─────────────
+//
+// The count is the wrong thing to defend on its own and always was: what this
+// section proves is WHICH FILES the view can reach, and that is asserted
+// below, write by write, on the URL and the body of each. The count stays
+// EXACT rather than becoming a floor, because an exact set is what forces the
+// next person adding a write to declare it here — a floor would let a sixth
+// arrive in silence, which is the v3.11.0 shape this repo keeps re-learning.
+//
+//   PATCH  …/projects/:project          the standing brief (tier 1)
+//   POST   …/foundations/refresh        the MIRROR copy — a file LIST, no body
+//   POST   …/foundations/init           sets the ownership, ONCE
+//   PUT    …/foundations/:slug          one CURATOR-owned document, verbatim
+//   DELETE …/foundations/:slug          removes one, with the slug as confirm
+//
+// Every one of them is still on tier 0 or tier 1. NOTHING here can reach a
+// work-stream handoff or a journal: the boundary is unmoved and the assertions
+// below say so by NAMING each URL rather than by counting.
+eq('EXACTLY FIVE fetches in the view carry a request init', withInit.length, 5);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 2,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 5,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
-  const patch = inits.find((x) => /\bmethod\s*:\s*'PATCH'/.test(x.init));
-  const post = inits.find((x) => /\bmethod\s*:\s*'POST'/.test(x.init));
+  const withMethod = (m) => inits.filter((x) => new RegExp("\\bmethod\\s*:\\s*'" + m + "'").test(x.init));
+  const patch = withMethod('PATCH')[0];
+  const posts = withMethod('POST');
+  const put = withMethod('PUT')[0];
+  const del = withMethod('DELETE')[0];
   ok('one write uses a LITERAL PATCH — never a variable or a concatenation',
     !!patch, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
   ok('the PATCH targets the PROJECTS endpoint, which reaches tier 1 only',
@@ -2179,18 +2260,59 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     patch && /body:\s*JSON.stringify\(\{\s*brief:/.test(patch.init)
     && !/nowState|nextSteps|observations|traps|decisions/.test(patch.init),
     patch ? patch.init.slice(0, 200) : 'none');
-  ok('the other write uses a LITERAL POST — never a variable or a concatenation',
-    !!post, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
-  ok('the POST targets the foundations REFRESH endpoint, and nothing else under tier 0',
-    post && post.url.includes("'/foundations/refresh'"), post ? post.url.slice(0, 200) : 'none');
-  // THE BODY IS AN EMPTY OBJECT LITERAL, and that is the strongest form this
-  // assertion can take: with no field crossing at all there is no place for a
-  // later edit to add a document body, a slug or a path — the server resolves
-  // the repository root from the manifest it already holds.
-  ok('the POST sends NOTHING — a literal empty body, so no document, slug or path can cross',
-    post && /body:\s*'\{\}'/.test(post.init), post ? post.init.slice(0, 200) : 'none');
-  ok('...and neither write mentions a foundation document body at all',
-    !/\btext\s*:/.test((patch ? patch.init : '') + (post ? post.init : '')));
+  eq('exactly TWO writes use a LITERAL POST', posts.length, 2);
+  const refresh = posts.find((x) => x.url.includes("'/foundations/refresh'"));
+  const init = posts.find((x) => x.url.includes("'/foundations/init'"));
+  ok('one POST targets the foundations REFRESH endpoint',
+    !!refresh, JSON.stringify(posts.map((x) => x.url.slice(0, 120))));
+  // ── THE REFRESH BODY IS A FILE LIST OR NOTHING, NEVER A DOCUMENT ───────
+  // It was the literal '{}' and the guard on it was that NOTHING crossed. One
+  // field crosses now — `files`, an array of PATHS INSIDE the repository the
+  // manifest already names — because without it a mirror could only ever be
+  // created from a test (v3.59.0 shipped the route with no file list at all).
+  // What must stay true is that no document BODY crosses on this route: that
+  // is what keeps "the app is a copier on a mirror, never an author" true of
+  // it. A curator document's bytes go through the PUT below, which is a
+  // different route with a different ownership.
+  ok('...carrying at most a FILE LIST — a path array, never a document body',
+    refresh && /\{\s*files\s*\}/.test(refresh.init) && !/\btext\s*:/.test(refresh.init),
+    refresh ? refresh.init.slice(0, 220) : 'none');
+  ok('...and the empty case is still a literal empty object, so the ordinary refresh sends nothing',
+    refresh && /:\s*\{\}\s*\)/.test(refresh.init), refresh ? refresh.init.slice(0, 220) : 'none');
+  ok('the other POST targets the foundations INIT endpoint, which sets the ownership once',
+    !!init, JSON.stringify(posts.map((x) => x.url.slice(0, 120))));
+  ok('...carrying the chooser\'s OWN body, built by the shared module rather than here',
+    init && /body:\s*JSON\.stringify\(body\)/.test(init.init), init ? init.init.slice(0, 220) : 'none');
+  // ── THE PUT IS THE ONE WRITE THAT CARRIES BYTES ───────────────────────
+  // A curator-owned document, verbatim, under a slug. THREE fields and no
+  // more: the text, its title and its role. `authoredBy` is deliberately
+  // ABSENT — the route stamps `{kind: 'human'}` itself, so there is no field
+  // here through which an agent's provenance line could be forged from a
+  // browser, which is the property tiers 2 and 3 rest on.
+  ok('the third write is a LITERAL PUT, at one document under foundations/',
+    put && put.url.includes("'/foundations/'"), put ? put.url.slice(0, 200) : 'none');
+  ok('...carrying exactly text, title and role — and no provenance field at all',
+    put && /\btext:/.test(put.init) && /\btitle:/.test(put.init) && /\brole:/.test(put.init)
+    && !/authoredBy|commissioned|instructedBy/.test(put.init),
+    put ? put.init.slice(0, 240) : 'none');
+  ok('...and it still cannot name a handoff field',
+    put && !/nowState|nextSteps|observations|traps/.test(put.init));
+  ok('the fourth write is a LITERAL DELETE, at one document under foundations/',
+    del && del.url.includes("'/foundations/'"), del ? del.url.slice(0, 200) : 'none');
+  // THE SLUG IS SENT AS ITS OWN CONFIRMATION, and the route re-checks it —
+  // so a client that skipped the confirm strip deletes nothing. The same
+  // discipline the project delete has carried since v3.48.0.
+  ok('...carrying the slug as its own typed confirmation, which the route re-checks',
+    del && /body:\s*JSON\.stringify\(\{\s*confirm:\s*slug\s*\}\)/.test(del.init),
+    del ? del.init.slice(0, 220) : 'none');
+  ok('every one of the five URLs is under /api/memory and escapes its segments',
+    inits.every((x) => x.url.includes("'/api/memory/'") && x.url.includes('encodeURIComponent')),
+    JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
+  // NONE of the five can reach a work-stream handoff or a journal: neither
+  // path fragment appears in any of their URLs.
+  ok('and NONE of them names a scope, a machine or a journal',
+    inits.every((x) => !/scope|machine|journal/i.test(x.url)),
+    JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
 }
 // Positive control: the detector must SEE an init object, including one whose
 // method is assembled at runtime — the exact mutation the string list missed.
@@ -2205,9 +2327,10 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly two `method:` property keys appear in the view\'s real code, and they are '
-    + '\'PATCH\' and \'POST\' as LITERALS',
-  methods.length === 2 && methods[0] === "'PATCH'" && methods[1] === "'POST'", JSON.stringify(methods));
+  ok('exactly FIVE `method:` property keys appear in the view\'s real code, and every one of them '
+    + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
+  JSON.stringify(methods) === JSON.stringify(["'DELETE'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
+  JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
   ok('the view never reaches for ' + transport + ' (fetch is not the only way to write)',
@@ -6092,11 +6215,19 @@ const fndRead = (payload) => ({
   // A project with no foundations at all, and a server too old to send the key:
   // both answer a zeroed shape rather than throwing, because this runs on every
   // paint of every project.
+  // WRAPPED, so a shipped function that THROWS on an absent payload REDS here
+  // rather than crashing the suite: a crash reads like a pass in a summary
+  // line, which is the v3.11.0 shape this file warns about. Proven necessary by
+  // mutation — replacing the two guards inside `foundationsFacts` with bare
+  // property reads killed the run instead of failing this assertion.
   for (const [name, read] of [['no key', { scopes: [] }], ['null', { foundations: null }],
     ['a string', { foundations: 'nope' }], ['no read at all', null]]) {
-    const f = F.foundationsFacts(read);
+    let f = null;
+    let threw = null;
+    try { f = F.foundationsFacts(read); } catch (err) { threw = err; }
     ok('an absent payload (' + name + ') is a zeroed reading, never a throw',
-      f.count === 0 && f.present === false && Array.isArray(f.docs));
+      !threw && f && f.count === 0 && f.present === false && Array.isArray(f.docs),
+      threw ? 'THREW: ' + threw.message : JSON.stringify(f));
   }
 }
 
@@ -6221,14 +6352,124 @@ const fndRead = (payload) => ({
   ok('CONTROL: the position check is not vacuous — there IS a <details> after them',
     detailsAt > 0);
 
-  // NO DOCUMENTS: the flat card, with the two ways one arrives said in the place
-  // somebody looked for them.
-  const empty = F.renderFoundations(fndRead(fndPayload([])));
-  ok('an empty project keeps the card and loses the chevron', empty.includes('mem-fold-flat'));
-  ok('...and says so', empty.includes('No canonical documents yet'), empty.slice(0, 300));
-  ok('...and names the two ways a document arrives', /an agent you ask writes one/i.test(empty)
-    && /refresh copies them from this project/i.test(empty), empty.slice(0, 400));
-  ok('...and emits no table at all', !empty.includes('fnd-table'));
+  // ── NO DOCUMENTS, AND WHAT REPLACED THE DEAD END (v3.61.0) ────────────
+  //
+  // This used to be one sentence naming the two ways a document arrives —
+  // and NEITHER of them was reachable from the app: the refresh route passed
+  // no file list, so a mirror could only be created from a test, and only the
+  // `save_foundation` MCP tool wrote a curator document. The sentence was true
+  // and the screen was a dead end. Three cases now, and each is asserted for
+  // the control it offers rather than for the words it says.
+  //
+  // (a) NO MANIFEST AT ALL: the ownership chooser, in the place the answer is
+  //     missing, with the commit that sets it. `present: false` is the state
+  //     a project is in before anything has been decided.
+  const unchosen = F.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+  ok('a project that has never answered the ownership question gets the CHOOSER',
+    unchosen.includes('data-fnd-init="mem-fnd-init"'), unchosen.slice(0, 300));
+  ok('...keeping the flat card, so the block chrome does not move',
+    unchosen.includes('mem-fold-flat'));
+  ok('...with both answers on screen at once rather than in a dropdown',
+    unchosen.includes('data-fnd-own="curator"') && unchosen.includes('data-fnd-own="repo"'),
+    unchosen.slice(0, 600));
+  ok('...and NO "decide later" — this screen IS the later',
+    !unchosen.includes('data-fnd-own="later"'));
+  ok('...and the commit that sets the ownership, which is the block\'s one primary',
+    unchosen.includes('id="mem-fnd-init-go"')
+    && (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(0, 900));
+  ok('...and emits no table at all', !unchosen.includes('fnd-table'));
+
+  // (b) REPO-OWNED WITH NOTHING MIRRORED: the ownership is settled, so the
+  //     two-way choice is WITHHELD (it cannot be made) and the scan arm is
+  //     offered on its own. v3.59.0 hid the only action that puts documents
+  //     in at exactly the count where it was needed.
+  const mirrorEmpty = F.renderFoundations(fndRead(fndPayload([], { ownership: 'repo' })));
+  ok('a repo-owned project with nothing mirrored gets the scan arm',
+    mirrorEmpty.includes('id="mem-fnd-init-root"'), mirrorEmpty.slice(0, 400));
+  ok('...and NOT a choice it is no longer allowed to make',
+    !mirrorEmpty.includes('data-fnd-own='), mirrorEmpty.slice(0, 400));
+  ok('...labelled for what it does rather than for what it decides',
+    mirrorEmpty.includes('Add from repository'), mirrorEmpty.slice(0, 1200));
+
+  // (c) CURATOR-OWNED WITH NOTHING IN IT — the owner unticked the seeding.
+  //     The one action that puts a document in must be reachable here too.
+  const curatorEmpty = F.renderFoundations(fndRead(fndPayload([], { ownership: 'curator' })));
+  ok('a curator-owned project with no documents still offers "Add document"',
+    curatorEmpty.includes('id="mem-fnd-add"'), curatorEmpty.slice(0, 600));
+  ok('...and names the three ways one arrives, the third being this screen',
+    /an agent you ask/i.test(curatorEmpty) && /refresh copies them/i.test(curatorEmpty)
+    && /you add one here/i.test(curatorEmpty), curatorEmpty.slice(0, 600));
+  ok('...and emits no table at all', !curatorEmpty.includes('fnd-table'));
+}
+
+// ── §21d2 — a SKELETON is a prompt, and the block says so (v3.61.0) ─────
+{
+  const st = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
+  const F = makeRenderers(st);
+  const skel = (over) => fndDoc({
+    skeleton: true, freshness: 'n/a', commit: null,
+    source: { kind: 'curator', path: null }, ...over,
+  });
+  // THE WORD ORDER, worst first. A skeleton outranks the two words that merely
+  // describe where a document came from — "Curator-authored" over four
+  // unfilled prompts is confident nonsense — and ranks BELOW a stale copy or a
+  // checkout that is not here, because those are comparisons the store tried
+  // to make and could not.
+  const w = (docs, over) => F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(docs, over))));
+  eq('four unfilled skeletons are the reading, not "Curator-authored"',
+    w([skel(), skel({ slug: 'decisions.md' }), skel({ slug: 'conventions.md' }),
+      skel({ slug: 'roadmap.md' })], { ownership: 'curator' }), '4 skeletons to fill');
+  eq('...singular when there is one', w([skel()], { ownership: 'curator' }), '1 skeleton to fill');
+  eq('a stale copy still outranks a skeleton — one is a measured mismatch',
+    w([skel(), fndDoc({ slug: 'b.md', freshness: 'stale' })]), '1 stale');
+  eq('...and so does a source that is not on this computer',
+    w([skel(), fndDoc({ slug: 'b.md', freshness: 'unreachable' })]), 'source unreachable');
+  eq('a project whose skeletons have all been filled reads "Curator-authored" again',
+    w([fndDoc({ skeleton: false, freshness: 'n/a' })], { ownership: 'curator' }), 'Curator-authored');
+  eq('a manifest that will not parse still outranks everything',
+    w([skel()], { manifestError: 'Unexpected token', ownership: 'curator' }), 'manifest unreadable');
+
+  // THE ROW: the word, and deliberately NO dot. A curator document has no
+  // upstream, so the scale — which paints a COMPARISON — has nothing to say;
+  // the em dash a written one gets says nothing at all, and "skeleton · to
+  // fill" is the one fact on the row somebody needs.
+  const row = F.fndRowHtml(skel(), true);
+  ok('a skeleton row reads "skeleton · to fill"', row.includes('skeleton · to fill'), row);
+  ok('...and carries no freshness dot, because there is nothing to compare it against',
+    !/fresh-dot/.test(row), row);
+  ok('CONTROL: a mirrored row in the same renderer DOES carry one',
+    /fresh-dot/.test(F.fndRowHtml(fndDoc(), false)));
+  eq('a curator-owned row carries an Edit control',
+    /data-fnd-edit="architecture\.md"/.test(row), true);
+  ok('...labelled by the document it edits, with no hover-only title=',
+    /aria-label="Edit Architecture"/.test(row) && !/title=/.test(row), row);
+  ok('a MIRRORED row carries none — the route refuses a PUT to one, and a control '
+    + 'whose only outcome is a refusal is worse than no control',
+  !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false)));
+
+  // THE COUNT RIDES INTO THE STATUS LINE AND THE SUMMARY, from ONE derivation.
+  const html = F.renderFoundations(fndRead(fndPayload(
+    [skel(), skel({ slug: 'decisions.md' })], { ownership: 'curator' })));
+  ok('the fold summary quotes the skeleton reading',
+    /2 skeletons to fill/.test(html), html.slice(0, 900));
+  const status = F.renderFoundationsStatus(fndRead(fndPayload(
+    [skel(), skel({ slug: 'decisions.md' })], { ownership: 'curator' })));
+  ok('...and so does the Status block\'s one line, from the same facts',
+    /2 skeletons to fill/.test(status), status);
+
+  // THE PAYLOAD'S OWN COUNT IS THE FALLBACK, and only when no row carries the
+  // flag: a server that sends `skeletonCount` but no per-row boolean is an
+  // older build, and reporting 0 there would claim a project is written when
+  // it is not.
+  const viaCount = F.foundationsFacts(fndRead(fndPayload(
+    [fndDoc({ skeleton: undefined, freshness: 'n/a' })],
+    { ownership: 'curator', skeletonCount: 1 })));
+  eq('a build that sends only skeletonCount is still read', viaCount.skeletons, 1);
+  const rowsWin = F.foundationsFacts(fndRead(fndPayload(
+    [fndDoc({ skeleton: false, freshness: 'n/a' })],
+    { ownership: 'curator', skeletonCount: 4 })));
+  eq('...but a per-row flag WINS, so a stale server count cannot outvote the rows '
+    + 'on screen', rowsWin.skeletons, 0);
 }
 
 // ── §21e — the control's three states, painted ──────────────────────────
@@ -6374,6 +6615,22 @@ const fndRead = (payload) => ({
   const api = new Function(
     'state', 'render', 'reportAsyncMountFailure', 'openReader', 'isCurrentReader', 'isCurrentMount',
     'fetch', 'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout',
+    // ── THE TIER-0 BINDER CARRIES THE WHOLE TIER SINCE v3.61.0 ───────────
+    // `wire()` may not name a new module-level helper — it is lifted and
+    // EXECUTED against a hand-written stub set in
+    // scripts/test-agent-instructions.js, where a free identifier is a CRASH
+    // rather than a failing assertion — so everything the editor adds is bound
+    // inside `bindFoundationRows`, which that stub set already carries.
+    //
+    // This section's subject is the ROW PRESS, so the editor's own
+    // collaborators are STUBBED here and driven for real in
+    // scripts/test-next-foundations-editor.js. The stubs exist because the
+    // binder would otherwise throw on a free identifier before it reached the
+    // row handler at all.
+    'foundationsFacts', 'freshChooser', 'bindFoundationsChooser', 'initFoundations',
+    'loadFoundationDraft', 'readPickedFile', 'saveFoundation', 'deleteFoundation',
+    'fndShrinkWarn', 'fndStats', 'briefDismissDecision',
+    'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
     // Named one by one rather than mapped over a list: §17's census requires
     // every function it claims is EXECUTED to appear in a real
     // `extractFunction(viewSrc, '<name>')` call somewhere in this file, which is
@@ -6398,7 +6655,13 @@ const fndRead = (payload) => ({
         ownership: 'repo', freshness: 'stale', sanitisedOnRead: true,
       }) };
     },
-    escapeHtml, () => '<svg></svg>', renderMarkdown, renderReadout);
+    escapeHtml, () => '<svg></svg>', renderMarkdown, renderReadout,
+    () => ({ present: false, ownership: null, docs: [], count: 0 }),
+    freshChooser, () => {}, async () => {}, async () => {}, async () => ({}),
+    async () => {}, async () => {}, () => null,
+    (t) => ({ bytes: String(t || '').length, words: 0, over: false }),
+    () => 'close', MAX_FOUNDATION_BYTES, FOUNDATION_ROLES,
+    { getItem: () => null, setItem: () => {} });
   api.bindFoundationRows(doc, 1);
   ok('SETUP: the row\'s click handler was bound', typeof btn._click === 'function');
 
@@ -6612,6 +6875,13 @@ const EXECUTED = new Set([
   'foundationsFacts', 'foundationsWord', 'foundationsRefreshOffer', 'fndRowHtml',
   'renderFoundations', 'renderFoundationsStatus', 'foundationReaderContent',
   'openFoundation', 'refreshFoundations', 'bindFoundationRows',
+  // v3.61.0 — tier 0 became editable. Five more LIFTED here and driven in §21:
+  // the three pure decisions (the wall, the slug grammar, the shrink) and the
+  // two renderers, through §6's `makeRenderers`. A stub in any of them would
+  // let this suite agree with itself that the counter, the wall and the Save
+  // button describe one draft while the shipped editor described three.
+  'fndStats', 'fndSlugError', 'fndShrinkWarn',
+  'renderFoundationEditor', 'renderFoundationsInit',
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',
@@ -6642,6 +6912,17 @@ const NOT_EXECUTED = {
   // INSTEAD of a render.
   patchOpenPair: 'targeted DOM writes into a painted main column; EXECUTED against a DOM model in test-next-memory-switch.js, and counted as the row press\'s chosen path in §17c',
   renderProjectSkeleton: 'the first frame of an unread project; EXECUTED in test-next-memory-switch.js, which asserts it reserves the table\'s height and claims no reading the index row does not carry',
+  // v3.61.0 — the four tier-0 writes. Each is async orchestration over a fetch
+  // and a re-read, and each is EXECUTED FOR REAL against a fake fetch in
+  // scripts/test-next-foundations-editor.js, which asserts the method, the URL,
+  // the body, the stamp, the late-reply drop and what survives a failure. The
+  // same split §21k already makes for `refreshFoundations`, one suite over —
+  // and the reason it is over there rather than here is that this file already
+  // runs 1,000 assertions and the editor's own battery is a section of its own.
+  initFoundations: 'async orchestration over the init POST plus a re-read; EXECUTED against a fake fetch in test-next-foundations-editor.js, which asserts the body the chooser built, the refusal keeping the choice, and the hand-off to refreshFoundations on an already-owned mirror',
+  loadFoundationDraft: 'async orchestration over the `?raw=1` read; EXECUTED in test-next-foundations-editor.js, which asserts the RAW query, the byte-exact draft and that a second Edit press wins the race',
+  saveFoundation: 'async orchestration over the PUT plus a re-read; EXECUTED in test-next-foundations-editor.js, which asserts the three fields, the stamp, the late-reply drop and that a failure keeps the draft',
+  deleteFoundation: 'async orchestration over the DELETE; EXECUTED in test-next-foundations-editor.js, which asserts the slug travels as its own confirmation and that a refusal closes the strip rather than the editor',
 };
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',
@@ -6672,6 +6953,24 @@ ok('the census enumerated this view\'s top-level functions FROM DISK',
   ok('self-test: the lifted-set scan is not vacuous (it found the real extractions)',
     lifted.size >= 15, 'found ' + lifted.size);
 }
+
+// ── §21m — every docs key this view links RESOLVES ──────────────────────
+//
+// `docsUrl` throws on an unknown key by design, so a throw inside
+// `renderProject` would take every assertion after it with it and this suite
+// would report a CRASH rather than a named gap. The wrapper at the top of this
+// file records an unresolved key instead; this is where the recording is read.
+//
+// IT FAILS UNTIL THE KEY EXISTS, which is the point: `memory.foundations-edit`
+// is added to src/public/next/shared/docs-links.js by the work package that
+// writes the guide section it points at, and this view USES it. One red
+// assertion naming the missing key is the right shape for that coupling — a
+// tolerant wrapper with no assertion behind it would be an inert guard, which
+// is the thing this repo keeps recording as worse than no guard.
+ok('every docs key the Agent-memory view links resolves in shared/docs-links.js',
+  pendingDocsKeys.size === 0,
+  'unresolved: ' + JSON.stringify([...pendingDocsKeys]) +
+  ' — add the key to src/public/next/shared/docs-links.js (owned by the docs work package)');
 
 // ── Done ─────────────────────────────────────────────────────────────────
 

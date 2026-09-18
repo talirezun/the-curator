@@ -156,6 +156,25 @@
      which discovers /next stylesheets only from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/freshness.css">
 
+<!-- shared/foundations-init.css — the ONE ownership chooser in /next: where a
+     project's canonical documents come from (mirrored from a checkout on this
+     computer, or kept by The Curator). TWO hosts render it — the "New project"
+     form in views/domains.js and the Foundations block in views/memory.js — so
+     its rules can live in neither of their stylesheets without one view
+     depending on the other's. It owns the whole `fnd-init-` prefix, and is
+     linked here for the same reason the six components above are: a view that
+     adopts the chooser must not have to touch this file.
+
+     Linked ABOVE the views on purpose, so a host may still add PLACEMENT at
+     equal specificity after this point — the same layering the components
+     above document.
+
+     Load-bearing twice over, as those <link>s record: without it the chooser
+     is unstyled in both themes, AND the file is invisible to
+     scripts/test-css-tokens.js §5, which discovers /next stylesheets only from
+     this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/foundations-init.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

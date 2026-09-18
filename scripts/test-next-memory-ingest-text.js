@@ -788,29 +788,76 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // loosening the count: two methods, they are PATCH and POST as LITERALS, the
 // POST goes to `…/foundations/refresh`, and it carries an empty body — there
 // is no field for a later edit to smuggle a handoff or a document into.
+//
+// ── v3.61.0 ADDS THREE MORE, AND THE BOUNDARY IS STILL UNMOVED ──────────
+// Tier 0 became EDITABLE by the owner, which is a fifth write and not a fourth
+// tier: the property tiers 2 and 3 rest on was never "one process", it is ONE
+// WRITER PER FILE and PROVENANCE THAT MATCHES. A curator-owned document has
+// one writer — the owner — and the route stamps the write `authoredBy.kind:
+// 'human'`, so it can never wear an agent's provenance line; the store refuses
+// an ownership mismatch, so a human write is structurally incapable of landing
+// on a mirror. What must stay true, and is asserted below, is that NONE of the
+// five URLs names a scope, a machine or a journal.
+//
+//   PATCH  …/projects/:project      the standing brief (tier 1)
+//   POST   …/foundations/refresh    the mirror copy — a file LIST, no bytes
+//   POST   …/foundations/init       sets the ownership, ONCE
+//   PUT    …/foundations/:slug      one curator-owned document, verbatim
+//   DELETE …/foundations/:slug      removes one, slug as its own confirmation
 {
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly TWO mutating HTTP methods', methods.length === 2, methods.join(','));
-  ok('...and they are PATCH and POST', methods[0] === "method: 'PATCH'"
-    && methods[1] === "method: 'POST'", methods.join(','));
+  ok('memory.js issues exactly FIVE mutating HTTP methods', methods.length === 5, methods.join(','));
+  ok('...and they are DELETE, PATCH, POST, POST and PUT, every one a LITERAL',
+    methods.join(',') === "method: 'DELETE',method: 'PATCH',method: 'POST',method: 'POST',method: 'PUT'",
+    methods.join(','));
   ok('...the PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
   ok('...and it never sends a handoff field',
     !/nowState|nextSteps|observations|traps/.test(memCode));
-  ok('...the POST aimed at the foundations REFRESH endpoint, and nothing else under tier 0',
-    /'\/foundations\/refresh'/.test(memCode) && !/'\/foundations\/' \+ [^\n]*method/.test(memCode));
-  ok('...carrying an EMPTY body, so no document, slug or path can cross',
-    /body: '\{\}'/.test(memCode));
+  ok('...one POST aimed at the foundations REFRESH endpoint',
+    /'\/foundations\/refresh'/.test(memCode));
+  // THE REFRESH CARRIES A FILE LIST OR NOTHING — never a document body. That
+  // is what keeps "the app is a COPIER on a mirror, never an author" true of
+  // it: the paths are inside a repository the manifest already names, and the
+  // bytes are the repository's. v3.59.0 shipped this route with no file list
+  // at all, which is why a mirror could only be created from a test.
+  ok('...carrying at most a FILE LIST, never a document body',
+    /body: JSON\.stringify\(Array\.isArray\(files\)[^\n]*\{ files \}/.test(memCode)
+    && !/body: JSON\.stringify\(\{ files[^\n]*text/.test(memCode), 'the refresh body is not a bare file list');
+  ok('...the other POST aimed at the foundations INIT endpoint, which sets the ownership once',
+    /'\/foundations\/init'/.test(memCode));
+  ok('...the PUT and the DELETE aimed at ONE document under foundations/',
+    /'\/foundations\/' \+ encodeURIComponent\(slug\)/.test(memCode));
+  // THE PUT IS THE ONE WRITE THAT CARRIES BYTES, and it carries three fields:
+  // the text, its title, its role. `authoredBy` is ABSENT — the route stamps
+  // it — so there is no field here through which a browser could forge an
+  // agent's provenance.
+  ok('...the PUT sending exactly text, title and role, and no provenance field',
+    /body: JSON\.stringify\(\{ text: e\.text \|\| '', title: e\.title \|\| '', role: e\.role \|\| 'other' \}\)/.test(memCode)
+    && !/authoredBy|commissioned_by_owner|instructedBy/.test(memCode));
+  ok('...and the DELETE sending the slug as its own typed confirmation, which the route re-checks',
+    /body: JSON\.stringify\(\{ confirm: slug \}\)/.test(memCode));
+  ok('...and NOT ONE of the five names a scope, a machine or a journal',
+    !/foundations\/[^']*scope|projects\/[^']*machine/.test(memCode));
   ok('memory.js never calls the tier 2/3 write tool by name',
     !/saveWorkingState/.test(memCode));
 }
-// The ONE editable control, and it is the brief's. `contenteditable` and
-// `<form>` stay forbidden outright: neither is needed for a textarea, and
-// both are how an edit affordance arrives somewhere nobody was looking.
+// TWO editable controls, and each is NAMED. `contenteditable` and `<form>`
+// stay forbidden outright: neither is needed for a textarea, and both are how
+// an edit affordance arrives somewhere nobody was looking.
+//
+// THE COUNT IS EXACT AND IS NOT A FLOOR. Two fields on this screen means the
+// standing brief (tier 1, the human's) and one canonical document (tier 0,
+// curator-owned, the owner's). A THIRD would be a surface nobody declared, and
+// the one thing it could plausibly be is a handoff editor — which is precisely
+// what tiers 2 and 3 may never grow here.
 {
   const textareas = (memCode.match(/<textarea/gi) || []);
-  ok('memory.js renders exactly one <textarea>', textareas.length === 1, 'found ' + textareas.length);
-  ok('...and it is the standing-brief editor', /id="mem-brief-text"/.test(memCode));
+  ok('memory.js renders exactly two <textarea>s', textareas.length === 2, 'found ' + textareas.length);
+  ok('...and they are the standing-brief editor and the foundation editor, by id',
+    /id="mem-brief-text"/.test(memCode) && /id="mem-fnd-text"/.test(memCode));
+  ok('...and neither belongs to a work-stream handoff or a journal',
+    !/id="mem-(current|handoff|journal|scope)-text"/.test(memCode));
   ok('memory.js still renders no contenteditable and no <form>',
     !/contenteditable|<form\b/i.test(memCode));
 }

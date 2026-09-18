@@ -99,7 +99,17 @@
 //                                    'page'.
 //       tags              string[] — plain tag chips rendered after the
 //                                    type badge.
-//       readonly          boolean  — shows the read-only-mirror banner.
+//       readonly          boolean  — shows the read-only banner.
+//       readonlyNote      string   — that banner's sentence. Painted only
+//                                    when `readonly` is set; defaults
+//                                    byte-for-byte to "Read-only Shared
+//                                    Brain mirror", which is what every
+//                                    caller before v3.61.0 got. Agent
+//                                    memory passes its own, because a tier-0
+//                                    foundation is read-only for a different
+//                                    reason from a Shared Brain page and was
+//                                    being captioned with that other
+//                                    feature's name.
 //       loading           boolean  — renders a loading placeholder in place
 //                                    of everything below (tags/body/
 //                                    backlinks). Call openReader() again
@@ -1232,7 +1242,27 @@ function renderReader() {
         )).join('');
 
     bodyInner =
-      (p.readonly ? '<div class="reader-readonly-note">' + icon('alertCircle', 13) + ' Read-only Shared Brain mirror</div>' : '') +
+      // ── THE READ-ONLY NOTE, AND WHOSE SENTENCE IT IS (v3.61.0) ─────────
+      // `readonly` is a FLAG; the sentence beside it is the CALLER'S, because
+      // there is more than one reason a document cannot be edited here. The
+      // flag shipped in v3.2.0 for Shared Brain mirrors and hard-coded that
+      // one reason — so when Agent memory started opening tier-0 foundations
+      // in this reader (v3.59.0), every canonical document in the app was
+      // captioned "Read-only Shared Brain mirror": a sentence about a
+      // different feature, on a document that is usually neither shared nor a
+      // mirror. Found by reading the shipped page.
+      //
+      // `p.readonlyNote` is the fix, and the DEFAULT is the old sentence
+      // BYTE-FOR-BYTE: every existing caller passes no note and is therefore
+      // unchanged, which is what makes this additive rather than a rename.
+      // The note is only ever painted when `readonly` is set, so a caller
+      // cannot use it to smuggle a caption onto an editable page.
+      (p.readonly
+        ? '<div class="reader-readonly-note">' + icon('alertCircle', 13) + ' ' +
+          escapeHtml(typeof p.readonlyNote === 'string' && p.readonlyNote.trim()
+            ? p.readonlyNote.trim()
+            : 'Read-only Shared Brain mirror') + '</div>'
+        : '') +
       '<div class="reader-title">' + escapeHtml(title) + '</div>' +
       tagsHtml +
       '<div class="reader-source-bar" id="reader-source-bar" hidden></div>' +
