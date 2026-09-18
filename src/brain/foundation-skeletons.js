@@ -42,13 +42,18 @@
 
 /**
  * The first line of every skeleton, and the one line a filled document must
- * lose. It is VISIBLE (a blockquote, not a comment) because the document is
- * read by people in Obsidian and by agents as plain text: an HTML comment
+ * lose. It is VISIBLE (bold plain text, not a comment) because the document
+ * is read by people in Obsidian and by agents as plain text: an HTML comment
  * would be invisible in the first surface and meaningless in the second.
+ * It carries NO blockquote marker (`> `) — /next's shared renderer
+ * (src/public/next/shared/markdown.js) has no blockquote pass and escapes
+ * the whole string before matching Markdown syntax, so a leading `> ` was
+ * rendering as a literal `&gt;` in the reader instead of a quote. Bold text
+ * needs no such pass; `renderInline`'s `**…**` handling is enough.
  */
 export const SKELETON_BANNER =
-  '> **Skeleton — not yet written.** Answer the prompts below and delete this line. '
-  + 'An agent fills it only when the owner asks.';
+  '**Skeleton — not yet written.** Answer the prompts below and delete this line. '
+  + 'An agent writes one only when you ask it to.';
 
 /** One skeleton: banner, `# Title`, then `## ` prompt headings. */
 function skeleton(slug, role, title, body) {

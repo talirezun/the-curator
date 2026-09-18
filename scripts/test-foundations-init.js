@@ -183,6 +183,58 @@ section('1. The skeletons are DATA, and there is exactly one copy of them');
   const storeSrc = readFileSync(path.join(REPO, 'src/brain/working-state.js'), 'utf8');
   assert(/from '\.\/foundation-skeletons\.js'/.test(storeSrc) && !storeSrc.includes('Skeleton — not yet written'),
     'the store IMPORTS the skeletons and holds no second copy of the banner text');
+
+  // The banner is read by people in Obsidian's own reader AND in /next's
+  // reader overlay — src/public/next/shared/markdown.js. That renderer has
+  // no blockquote pass and escapes the whole string before matching any
+  // Markdown syntax (verified: `grep -n blockquote` over it returns
+  // nothing), so a banner opening with a Markdown blockquote marker (`> `)
+  // would render as a literal `&gt;` instead of a quote — the defect this
+  // banner's wording was written to avoid. This loads the REAL renderer file
+  // (not a reimplementation) the same way scripts/test-next-markdown.js
+  // does: brace-matched function extraction into a sandboxed `new
+  // Function()`, because a plain `import()` of shared/markdown.js fails —
+  // it statically imports `icon` from ../app.js, which needs a DOM. `icon`
+  // is stubbed; SKELETON_BANNER carries no `[source: …]` citation syntax,
+  // so the stub is never called.
+  function extractMdFn(src, name) {
+    const marker = new RegExp(`(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ${name}\\s*\\(`);
+    const m = marker.exec(src);
+    if (!m) throw new Error(`extractMdFn: "${name}" not found in shared/markdown.js`);
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let p = src.indexOf('(', start);
+    if (p === -1) throw new Error(`extractMdFn: "${name}" has no parameter list`);
+    let parenDepth = 0;
+    for (; p < src.length; p++) {
+      if (src[p] === '(') parenDepth++;
+      else if (src[p] === ')') { parenDepth--; if (parenDepth === 0) { p++; break; } }
+    }
+    let i = src.indexOf('{', p);
+    if (i === -1) throw new Error(`extractMdFn: "${name}" has no body`);
+    let depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+    }
+    const extracted = src.slice(start, i).replace(/^export\s+/, '');
+    if (!/\n\}$/.test(extracted)) {
+      throw new Error(`extractMdFn: "${name}" does not end at a top-level closing brace — the matcher desynced`);
+    }
+    return extracted;
+  }
+  const mdSrc = readFileSync(path.join(REPO, 'src/public/next/shared/markdown.js'), 'utf8');
+  const MD_FNS = ['escHtml', 'formatSegment', 'renderInline',
+    'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass', 'renderMarkdown'];
+  const mdBody = MD_FNS.map((n) => extractMdFn(mdSrc, n)).join('\n\n');
+  const { renderMarkdown: realRenderMarkdown } = new Function('icon',
+    `${mdBody}\nreturn { ${MD_FNS.join(', ')} };`)(() => '');
+  const bannerHtml = realRenderMarkdown(SKELETON_BANNER);
+  assert(bannerHtml.includes('<strong>Skeleton — not yet written.</strong>'),
+    'the REAL /next renderer turns the banner\'s bold lead into <strong>Skeleton — not yet written.</strong>',
+    bannerHtml);
+  assert(!bannerHtml.includes('&gt;'),
+    'the REAL /next renderer emits no &gt; — no blockquote marker survives into the rendered banner',
+    bannerHtml);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -3337,7 +3337,7 @@ Agent memory screen, the moment you open it and it finds no manifest.
 
 **What a skeleton actually is.** Not a template you fill in blanks of — a real markdown document,
 with real `##` headings, whose first line is a visible banner: *"Skeleton — not yet written. Answer
-the prompts below and delete this line. An agent fills it only when the owner asks."* Under each
+the prompts below and delete this line. An agent writes one only when you ask it to."* Under each
 heading sits a question, not a fact — "What are the three or four decisions that would surprise a
 new contributor?" rather than an invented answer. Nothing in The Curator ever answers those
 questions for you. An agent may, but **only when you have asked it to**, exactly as it would before
