@@ -778,7 +778,6 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 
 | Tool | What it does |
 |---|---|
-| `get_project_context` | **New in v3.59.0.** The session-start bootstrap: brief + latest handoff + the foundations you have not already seen, in one call. See [The foundations tier § The bootstrap call](#the-bootstrap-call-and-the-reading-plan) |
 | `list_projects` | Every project that has state — in one domain, or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief. Newest first, capped, and the cap is disclosed |
 | `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}` |
 | `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line. **New in v3.59.0:** accepts `foundations_read` (the sha256 of every foundation this session read) and `repo_root` (advisory; triggers a mirror refresh when the checkout is reachable) |
