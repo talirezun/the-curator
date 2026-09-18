@@ -182,6 +182,7 @@ function fingerprint(dir) {
 const routerMod = await import('../src/routes/memory.js');
 const router = routerMod.default;
 const realStore = await import('../src/brain/working-state.js');
+const { SKELETON_BANNER } = await import('../src/brain/foundation-skeletons.js');
 
 function routesOf(r) {
   return (r.stack || [])
@@ -1783,7 +1784,7 @@ const REPO = join(TMP, 'repo');
     && existsSync(join(st, 'curated', 'foundations', 'manifest.json')));
   ok('...and each one carries the visible banner that says it is not written yet',
     readFileSync(join(st, 'curated', 'foundations', 'roadmap.md'), 'utf8')
-      .startsWith('> **Skeleton — not yet written.**'),
+      .startsWith(SKELETON_BANNER.slice(0, 30)),
     readFileSync(join(st, 'curated', 'foundations', 'roadmap.md'), 'utf8').slice(0, 60));
 
   // ONCE. A second init is refused with the ownership and the count named.
