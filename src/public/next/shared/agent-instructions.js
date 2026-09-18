@@ -159,8 +159,8 @@ export const TEMPLATE_SEED = [
   'Some foundations may be skeletons — prompts, not facts; the document says so',
   'at the top. As you learn the project, fill each one and save it with',
   '`save_foundation` (`commissioned_by_owner: true` — this block is the owner\'s',
-  'commission). On the first commit, export the filled foundations into the',
-  'repository\'s `docs/` folder.',
+  'commission). If the project has a repository, export the filled',
+  'foundations into its `docs/` folder on the first commit.',
 ].join('\n') + '\n';
 
 /**

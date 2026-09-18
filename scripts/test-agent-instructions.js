@@ -854,8 +854,9 @@ section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way
 //
 // TEMPLATE_SEED teaches an agent what a SKELETON foundation is (v3.61.0's
 // "start a project" flow, foundation-skeletons.js, WP-S) and what it may do
-// about one: fill it in, but only under the owner's commission, and export
-// the filled result to docs/ on the first commit. Like TEMPLATE_FOUNDATIONS
+// about one: fill it in, but only under the owner's commission, and, if the
+// project has a repository, export the filled result to docs/ on the first
+// commit. Like TEMPLATE_FOUNDATIONS
 // before it, it is new prose rather than a measured artefact -- it names no
 // experiment and protects no numbers of its own -- and it still gets S1's
 // exact discipline: a hand-written literal AND an independent sha256, because
@@ -873,10 +874,10 @@ section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way
     'Some foundations may be skeletons — prompts, not facts; the document says so\n' +
     'at the top. As you learn the project, fill each one and save it with\n' +
     '`save_foundation` (`commissioned_by_owner: true` — this block is the owner\'s\n' +
-    'commission). On the first commit, export the filled foundations into the\n' +
-    'repository\'s `docs/` folder.\n';
+    'commission). If the project has a repository, export the filled\n' +
+    'foundations into its `docs/` folder on the first commit.\n';
   const SEED_SHA256 =
-    'f28cc8c1a30a5ef17266bd466660f4f5ff93117e548c3d6793af473a7ff89180';
+    '6c82b6351783f335f9a6edf5d5e9e8e2aeed5977a273f2efdd221c899bdcbcf6';
 
   eq('TEMPLATE_SEED matches the hand-written second copy', TEMPLATE_SEED, HAND_WRITTEN_SEED);
   eq('...and hashes to the pinned sha256',
@@ -1058,14 +1059,14 @@ section('S9 -- v3.61.0: the drafting request -- composed, not appended, never du
   const FOUNDATIONS_SHA256 =
     '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b';
   const SEED_SHA256 =
-    'f28cc8c1a30a5ef17266bd466660f4f5ff93117e548c3d6793af473a7ff89180';
+    '6c82b6351783f335f9a6edf5d5e9e8e2aeed5977a273f2efdd221c899bdcbcf6';
   eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 501 bytes',
     Buffer.byteLength(original, 'utf8'), 501);
   eq('...and still hashes to 85dc8f97...',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
   eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 0c522294...',
     createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
-  eq('S8\'s pin still bites: TEMPLATE_SEED still hashes to f28cc8c1...',
+  eq('S8\'s pin still bites: TEMPLATE_SEED still hashes to 6c82b635...',
     createHash('sha256').update(TEMPLATE_SEED, 'utf8').digest('hex'), SEED_SHA256);
   eq('...and composeAgentInstructionsFull is still exactly the three-paragraph v3.61.0 shape',
     full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED);

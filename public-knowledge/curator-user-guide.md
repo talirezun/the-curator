@@ -643,7 +643,7 @@ System check answers "is the app working?". A domain's **Wiki health** panel ans
 
 **Settings → General → Menu bar**, with three choices: **Off**, which is the default; **On**, which puts a small icon in the macOS menu bar alongside your Dock icon; and **On, and hide the Dock icon**. It takes effect immediately with nothing to restart. It applies to the Mac app only, and the control says so in a browser install rather than hiding itself.
 
-The icon answers one question in about a second without leaving what you are doing: whether your coding agent has actually written its handoff, and how long ago. What each row in its menu means belongs to the agent memory material, not here.
+The icon answers one question in about a second without leaving what you are doing: whether your agent has actually written its handoff, and how long ago. What each row in its menu means belongs to the agent memory material, not here.
 
 **"On, and hide the Dock icon" does not hide the Dock icon yet.** The setting is remembered and the app deliberately does the safe half of it, because the macOS call that hides a Dock icon has a return path that is reported broken and could not be tested.
 

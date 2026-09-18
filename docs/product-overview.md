@@ -29,7 +29,7 @@ It holds **three layers of the same idea**, in one format, with one owner:
 | **2. Your team's brain** | The same, built collectively by a cohort, team or research group. Opt-in, one domain at a time | Knowledge **accumulates**, collectively |
 | **3. Your agents' brain** | Where the *work* stands: what is settled, what to do next, what was tried and ruled out | State **supersedes** — each save replaces the previous handoff, so a resolved blocker cannot come back |
 
-Layers 1 and 2 are built by ingesting sources. Layer 3 is written by a coding agent over a
+Layers 1 and 2 are built by ingesting sources. Layer 3 is written by an agent over a
 local MCP bridge at the end of a session and read back at the start of the next one — on a
 different tool, a different model, or a different computer.
 
@@ -54,7 +54,7 @@ flowchart TD
     L1["LAYER 1 — your brain<br/>a personal wiki per domain<br/>entities · concepts · summaries<br/>ACCUMULATES"]
     L1 -->|"you opt in ONE domain"| L2["LAYER 2 — your team's brain<br/>a collective wiki, synthesised<br/>from many contributors<br/>ACCUMULATES, collectively"]
     L2 -->|"comes back as"| MIR["A separate READ-ONLY mirror domain<br/>on every member's own machine"]
-    AG["Your coding agent<br/>over the MCP bridge"] --> L3["LAYER 3 — your agents' brain<br/>working state: brief · handoff · journal<br/>SUPERSEDES"]
+    AG["Your agent<br/>over the MCP bridge"] --> L3["LAYER 3 — your agents' brain<br/>working state: brief · handoff · journal<br/>SUPERSEDES"]
     L3 --> AG
     L1 --- FILES[("One folder of plain markdown<br/>on your own machine")]
     L3 --- FILES
@@ -184,9 +184,9 @@ that the second brain gets **better** with use rather than merely bigger.
 | **Personal Sync** | Backing up and moving between your own computers | You use more than one machine, or want a backup |
 | **Shared Brain** | Pooling knowledge with a cohort or team | Several people are reading in the same area |
 | **Provider and model choice** | Controlling capability and spend | Cost matters, or a model gets retired |
-| **The MCP bridge** | Letting a coding agent read and write it all directly | You want a frontier model working over the whole graph |
+| **The MCP bridge** | Letting an agent read and write it all directly | You want a frontier model working over the whole graph |
 | **The desktop application** | Running it without a terminal | You are on a Mac and want an app |
-| **Working state — the memory layer** | Carrying the state of *work* across sessions, tools, models and machines | You code with agents. It has [its own section](#5-the-memory-layer--your-agents-brain) |
+| **Working state — the memory layer** | Carrying the state of *work* across sessions, tools, models and machines | You work with agent harnesses across sessions — building code, most often, or research, design, a product. It has [its own section](#5-the-memory-layer--your-agents-brain) |
 
 ### 4.1 Ingesting sources
 
@@ -620,7 +620,7 @@ noticeably more input tokens for the same text.
 **A model being retired does not strand you.** Each provider has an ordered fallback list; if
 the pinned model disappears, the next one is used and the app tells you which one answered.
 
-### 4.10 The MCP bridge — a coding agent reading and writing your wiki
+### 4.10 The MCP bridge — an agent reading and writing your wiki
 
 **What it is.** A local bridge that exposes your wiki *and* your working state to any MCP
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
@@ -736,7 +736,8 @@ understanding before it is trusted.
 
 ### The problem
 
-A coding session ends. The next one starts with nothing: not the decisions you already settled,
+A session ends — building code, most often, or research, design, a product. The next one
+starts with nothing: not the decisions you already settled,
 not the approaches you already ruled out, not the number the test suite was sitting at before
 you touched it. So the next session re-derives what it can, re-opens closed questions, and
 walks back into a dead end you already mapped.
@@ -1427,7 +1428,7 @@ seen working end to end" as different claims wherever the docs distinguish them.
 | Setup and everything in plain language | [user-guide.md](user-guide.md) |
 | Worked scenarios per profile, including cohort and monetization patterns | [use-cases.md](use-cases.md) |
 | The memory layer in full | [working-state.md](working-state.md) · [project-brief-template.md](project-brief-template.md) |
-| Connecting a coding agent | [mcp-user-guide.md](mcp-user-guide.md) |
+| Connecting an agent | [mcp-user-guide.md](mcp-user-guide.md) |
 | Domains, the schema and the siloing model | [domains.md](domains.md) |
 | Sync setup and troubleshooting | [sync.md](sync.md) · [sync-via-coding-agent.md](sync-via-coding-agent.md) |
 | The collective layer | [shared-brain-user-guide.md](shared-brain-user-guide.md) · [shared-brain.md](shared-brain.md) · [shared-brain-admin.md](shared-brain-admin.md) · [shared-brain-compliance.md](shared-brain-compliance.md) · [shared-brain-monetization.md](shared-brain-monetization.md) |

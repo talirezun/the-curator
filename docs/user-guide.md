@@ -296,7 +296,7 @@ The installer handles everything automatically:
 3. Installs all dependencies
 4. Builds **The Curator.app** for your Dock
 
-When it finishes, the app opens automatically in your browser. A **Getting started** panel appears in the corner on first launch. It asks which of two things you are setting up — a second brain, or memory for your coding agents — and then walks you through the steps that path actually needs. It doesn't block anything — see [§5](#5-first-run--the-getting-started-panel).
+When it finishes, the app opens automatically in your browser. A **Getting started** panel appears in the corner on first launch. It asks which of two things you are setting up — a second brain, or memory for your agents — and then walks you through the steps that path actually needs. It doesn't block anything — see [§5](#5-first-run--the-getting-started-panel).
 
 > ⚠️ **Pin The Curator to your Dock manually.** The installer puts **The Curator.app** inside `~/the-curator/` but does **not** add it to your Dock automatically. Open Finder → `~/the-curator/` → drag **The Curator** icon down into your Dock. From now on, one click launches everything.
 
@@ -513,20 +513,20 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 > **What do you want to set up first?**
 >
 > - **Build a second brain** — *"Read sources, get a wiki. Ingest and chat need an AI key."*
-> - **Give your coding agents memory** — *"Your agents read and write project context. No AI key needed."*
+> - **Give your agents memory** — *"Your agents read and write project context. No AI key needed."*
 
 | Door | Lands you on | The steps you then get |
 |---|---|---|
 | **Build a second brain** | **Domains** | 1 · Add an AI key → 2 · Point at a wiki, or start one → 3 · Ingest your first source |
-| **Give your coding agents memory** | **Agent memory** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your coding agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat. Agent memory and the bridge work without one.")* |
+| **Give your agents memory** | **Agent memory** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat. Agent memory and the bridge work without one.")* |
 
-**Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give a coding agent memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
+**Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give your agents memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
 
-**Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or a coding agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one screen you would otherwise have had to go looking for: **Settings → MCP bridge**, which the button opens directly.
+**Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or an agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one screen you would otherwise have had to go looking for: **Settings → MCP bridge**, which the button opens directly.
 
 Each item has a button that takes you straight to the right place. The panel tracks real state, not clicks: it reads *"2 of 3 done"* (or *"0 of 4 done"*) and ticks items off by itself as you actually complete them, and it stops appearing once they are all done.
 
-> **The "Connect your coding agent" step works for any MCP client, not just one.** It ticks over when the bridge has actually answered a call — from Claude Desktop, Claude Code, Cursor or anything else that runs a local MCP server — rather than by checking one product's config file. See [§18 → The tool map](#the-tool-map--what-your-agents-used) for where that reading comes from.
+> **The "Connect your agent" step works for any MCP client, not just one.** It ticks over when the bridge has actually answered a call — from Claude Desktop, Claude Code, Cursor or anything else that runs a local MCP server — rather than by checking one product's config file. See [§18 → The tool map](#the-tool-map--what-your-agents-used) for where that reading comes from.
 
 ![The Getting started panel, docked in the top-right corner of the app. It is headed "Getting started" with a close cross, reads "3 OF 3 DONE", and lists three completed items each with a green tick and the word Done: "Add an AI key — A key is saved, so The Curator can read and write"; "Create your first domain — You have somewhere for knowledge to land"; "Ingest your first source — Your wiki has pages in it, the loop is running". A closing line reads "Everything here is done — this guide will not come back on its own."](images/curator-getting-started.png)
 
@@ -3357,9 +3357,9 @@ touching your standing brief: it calls `save_foundation` with `commissioned_by_o
 same flag `save_project_brief` has required since v3.48.0 — and there is no soft failure mode
 around that flag; the tool refuses outright without it. The agent-instructions block ([§13b, "Making
 sure your agent actually does it"](#making-sure-your-agent-actually-does-it)) now carries one more
-paragraph saying exactly this, plus one more line: on the first commit after a skeleton is filled,
-export it into the repository's own `docs/` folder — so a document that started life inside The
-Curator ends up back where a foundation belongs, checked in beside the code it describes.
+paragraph saying exactly this, plus one more line: if the project has a repository, export the
+filled document into its own `docs/` folder on the first commit — so a document that started life
+inside The Curator ends up back where a foundation belongs, checked in beside the work it describes.
 
 ```mermaid
 flowchart TD
@@ -3369,7 +3369,7 @@ flowchart TD
     Q -->|"Mirror from a repository"| MIRROR["Documents copied<br/>byte-for-byte from the checkout"]
     Q -->|"Decide later"| LATER["Nothing written —<br/>asked again from the block"]
     SEED --> FILL["An agent fills each skeleton,<br/>ONLY on your instruction<br/><i>save_foundation, commissioned_by_owner: true</i>"]
-    FILL --> EXPORT["On the first commit,<br/>exported into the repo's own docs/"]
+    FILL --> EXPORT["If there's a repository,<br/>exported into its docs/ on the first commit"]
     MIRROR --> STALE["Stays fresh via Refresh from repo —<br/>never edited in place"]
 ```
 
@@ -3930,7 +3930,7 @@ they belong to each other and the blocks around them do not:
 
 - **Appearance** — a **Dark** / **Light** pair. The same switch is the ☀/☾ button in the rail footer; either one works and they stay in step.
 - **Text size** — four steps from compact to largest. It applies across the whole app and is remembered in this browser. Why it is a *density* trade rather than a zoom — icons, controls and the layout keep their size — is under the block's **ⓘ**.
-- **Menu bar** — a **switch** (*Show the menu bar icon*) with a dependent **checkbox** underneath (*Hide the Dock icon while it is showing*). It puts a small icon in the macOS menu bar showing what your coding agents have just saved. **Off by default**, and it applies to the Mac app only — a browser install has no menu bar presence, and the row says so rather than hiding itself. Everything it does, and the three ways a new menu bar icon can silently fail to appear, is [§6b](#6b-the-menu-bar-icon-mac-app).
+- **Menu bar** — a **switch** (*Show the menu bar icon*) with a dependent **checkbox** underneath (*Hide the Dock icon while it is showing*). It puts a small icon in the macOS menu bar showing what your agents have just saved. **Off by default**, and it applies to the Mac app only — a browser install has no menu bar presence, and the row says so rather than hiding itself. Everything it does, and the three ways a new menu bar icon can silently fail to appear, is [§6b](#6b-the-menu-bar-icon-mac-app).
 
 > **The menu bar failure note is never folded.** Turn the icon on and a short
 > note appears under the row naming the three ways it can silently not show up

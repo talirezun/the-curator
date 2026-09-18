@@ -1497,7 +1497,7 @@ section('13. The re-check must STOP — teardown, stop condition, backoff');
 section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a modal');
 // ═════════════════════════════════════════════════════════════════════════
 // WHAT THIS SECTION EXISTS FOR. The panel taught ONE audience. For the
-// other — somebody giving their coding agents memory — step 1 asserted
+// other — somebody giving their agents memory — step 1 asserted
 // something false about their setup (the memory layer and the bridge need
 // no key: mcp/server.js reads and writes markdown under getDomainsDir()
 // directly), step 3 could never complete (hasAnyPage, and they have no
@@ -1576,7 +1576,7 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
   eq(DOORS.length, 2, 'exactly two doors');
   ok(JSON.stringify(DOORS.map((d) => d.id)) === JSON.stringify(['knowledge', 'agent']),
     'knowledge first, then agent');
-  ok(/second brain/i.test(DOORS[0].title) && /coding agents/i.test(DOORS[1].title),
+  ok(/second brain/i.test(DOORS[0].title) && /agents/i.test(DOORS[1].title),
     'their titles name the two things a person comes here to build');
   for (const d of DOORS) {
     ok(wordCount(d.body) <= 13,

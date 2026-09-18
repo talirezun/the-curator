@@ -41,7 +41,7 @@
 // ── TWO DOORS, AND WHY THERE ARE NOW TWO STEP SETS (v3.61.0) ────────────
 // The three steps above are one audience's: somebody who reads a lot and
 // wants a wiki out of it. For the OTHER audience this app has — somebody
-// giving their coding agents memory — the same three steps were actively
+// giving their agents memory — the same three steps were actively
 // wrong, measured against the code rather than assumed:
 //
 //   · step 1 claimed "nothing else works without a model". The memory
@@ -240,7 +240,7 @@ const DOORS = [
   {
     id: 'agent',
     view: 'memory',
-    title: 'Give your coding agents memory',
+    title: 'Give your agents memory',
     body: 'Your agents read and write project context. No AI key needed.',
   },
 ];
@@ -309,7 +309,7 @@ const STEP_COPY = {
   // Claude Desktop's config file ONLY and would read false for ever for
   // everyone else — step 3's never-completing defect, rebuilt.
   bridge: {
-    title: 'Connect your coding agent',
+    title: 'Connect your agent',
     todo: 'Settings → MCP bridge hands you the snippet your agent needs. It runs with the app closed.',
     done: 'Your agent has called the bridge — it can read and save.',
     action: 'Open Settings',

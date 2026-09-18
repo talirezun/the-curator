@@ -75,7 +75,7 @@ The tradeoff is real. The writing pass costs money and time up front, and ingest
 | Medical and scientific researchers | Building a knowledge graph of genes, proteins, drugs and pathways across a dense literature corpus |
 | Entrepreneurs and startup founders | Grounding strategy in the full history of customer interviews, investor updates and market research |
 | Personal growth and self-analysis | Connecting journal entries, book highlights and therapy notes to see recurring patterns |
-| Anyone coding with agents across sessions, tools and machines | Carrying where the work stands from one session, tool, model or computer to the next |
+| Anyone orchestrating agents across sessions, tools and machines — building code, most often, or research, design, a product | Carrying where the work stands from one session, tool, model or computer to the next |
 | Educational cohorts, research teams, consultancies and product teams | Building one collective wiki together through Shared Brain, without merging anyone's private notes |
 | Independent experts, educators and consultancies | Selling recurring access to a curated brain they maintain |
 
@@ -98,7 +98,7 @@ Four things, all of them packaging rather than capability:
 - The downloadable application bundle and the Dock launcher.
 - Self-update: the app downloads a new version, verifies it against the sha256 that GitHub publishes on the asset, and swaps it in. On other platforms you update the checkout yourself.
 - The native folder picker for choosing where your knowledge lives.
-- The menu bar icon, which shows what your coding agents have just saved without opening the app. It is off by default, because a fresh install has no agent memory and would have nothing to show.
+- The menu bar icon, which shows what your agents have just saved without opening the app. It is off by default, because a fresh install has no agent memory and would have nothing to show.
 
 ## Which AI providers does it work with?
 
@@ -150,7 +150,7 @@ Each contributor keeps a private Curator. Only opted-in domains push LLM-synthes
 
 It is still an **opt-in beta.** General availability is gated on a structured pilot with a real cohort, which has not started. Two limits are worth knowing up front: every working shared brain today stores its data in the United States, because the shipped backend can reach only one API host, and deleting a page in your own domain does not remove it from the collective — that is what the erasure operation is for.
 
-## Can it remember what my AI coding agent was working on?
+## Can it remember what my AI agent was working on?
 
 Yes — that is the third layer, called working state or agent memory. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
 

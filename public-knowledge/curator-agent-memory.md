@@ -2,7 +2,7 @@
 
 ## What is agent memory?
 
-Agent memory, also called working state, is the third layer of The Curator. Layers 1 and 2 are your sources and the wiki built from them. Layer 3 is the context your coding agent leaves behind at the end of a session so the next session picks the work up instead of starting cold.
+Agent memory, also called working state, is the third layer of The Curator. Layers 1 and 2 are your sources and the wiki built from them. Layer 3 is the context your agent leaves behind at the end of a session so the next session picks the work up instead of starting cold.
 
 It is a small, deliberate store held as plain markdown inside a domain, at `domains/<domain>/state/`. It syncs to your private GitHub repository with the rest of your knowledge and opens in Obsidian or any text editor like any other file.
 
