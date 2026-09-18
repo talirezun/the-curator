@@ -1039,6 +1039,14 @@ function freshState() {
     // usageSignature, which names the fields rather than stringifying the
     // whole envelope, so a field nobody draws cannot cost a repaint.
     mcpUsageSig: null,
+    // ── "Test all N tools" (block ③'s control) ───────────────────────────
+    // POST /api/mcp/exercise. Its OUTCOME is state rather than DOM, because
+    // the 30 s revalidate replaces the block body and a result held only in
+    // the markup would vanish at the next tick — which is the one tick that
+    // is certain to fire right after a run, since the run moved the payload.
+    mcpExercise: null,       // { ok, ranAt, durationMs, results, covered, missing }
+    mcpExerciseBusy: false,
+    mcpExerciseError: null,
 
     // Health & scan limits
     aiHealth: null,          // { costCeilingTokens, semanticDupeMaxPairs }
@@ -8693,6 +8701,15 @@ function renderSelfTestResult() {
 const USAGE_POLL_MS = 30000;
 
 /**
+ * The ONE element either repaint is allowed to replace.
+ *
+ * A const rather than the string written twice: two callers now paint this
+ * body — the 30 s revalidate and the "Test all N tools" run — and a selector
+ * typed in two places is a selector that can come to mean two elements.
+ */
+const TOOL_MAP_BODY_SEL = '.settings-block-mcp-tool-map .settings-block-body';
+
+/**
  * The revalidate timer's handle, in an OBJECT rather than in a bare `let`.
  *
  * Not defensiveness and not style: `scripts/test-next-mcp-tool-map.js` lifts
@@ -8724,7 +8741,13 @@ function usageSignature(data) {
     s.lastSaveAt || null,
     tools.map((t) => [t && t.name, t && t.group, t && t.mutates === true,
       t && t.purpose, t && t.lastUsedAt, t && t.lastOk,
-      t && t.count7d, t && t.countTotal, t && t.refusedTotal]),
+      t && t.count7d, t && t.countTotal, t && t.refusedTotal,
+      // v3.61.0 — PAINTED (it is the tile's marker), so it belongs here: a
+      // run that only changed whose reading a tile shows must still repaint.
+      // `selfTestTotal` is deliberately NOT here: the envelope carries it and
+      // nothing on this screen draws it, and a field nobody draws must not be
+      // able to cost a repaint — the rule this projection exists for.
+      t && t.lastVia]),
   ]);
 }
 
@@ -8750,15 +8773,27 @@ function ageSecondsOf(iso, now) {
  * the tick: a tier boundary is exactly where the payload signature moves
  * anyway on the next revalidate, and a clock that rewrote classes would be one
  * step away from being a render.
+ *
+ * `markerWord` (v3.61.0) puts a word INSIDE the reading, before the age and
+ * separated by a "·" — "self-test · 2 min". Inside rather than beside it
+ * because the word qualifies THIS reading and nothing else on the line, and
+ * `.mcp-tool-meta` is a wrapping flex row whose items are separated by a gap:
+ * a third sibling would read as a third fact. The clock still writes only
+ * `.mcp-age-words`, so a tick cannot erase the marker.
  */
-function ageMarkHtml(iso, now, extraClass) {
+function ageMarkHtml(iso, now, extraClass, markerWord) {
   const secs = ageSecondsOf(iso, now);
   const words = secs === null ? null : formatAge(secs);
   const tier = secs === null ? 'unknown' : freshnessTier(secs);
+  const marker = markerWord
+    ? '<span class="mcp-via-mark">' + escapeHtml(markerWord) + '</span>' +
+      '<span class="mcp-via-sep" aria-hidden="true">·</span>'
+    : '';
   return (
     '<span class="mcp-age' + (extraClass ? ' ' + extraClass : '') + '"' +
       (words ? ' data-mcp-age-at="' + escapeHtml(iso) + '"' : '') + '>' +
       '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
+      marker +
       '<span class="mcp-age-words">' + escapeHtml(words || 'unknown') + '</span>' +
     '</span>'
   );
@@ -8785,8 +8820,15 @@ function renderToolTile(t, logStartedAt, now) {
   // NOT USED IS NOT NEVER USED. The log's own start age is printed beside the
   // phrase, because "not used since this log began" means nothing without it —
   // a log that began four minutes ago says nothing about a user's habits.
+  // ── WHOSE READING THIS IS ───────────────────────────────────────────────
+  // A tile lit by the user's own "Test all N tools" run must never be read as
+  // agent use — that is the whole reason the log carries `via`. The marker is
+  // on the READING, so it is impossible to see the age without it. Absent
+  // `lastVia` means an MCP client and nothing more specific: no marker, rather
+  // than a word like "agent" that the log cannot support.
+  const viaWord = t.lastVia === 'self-test' ? 'self-test' : null;
   const meta = used
-    ? ageMarkHtml(t.lastUsedAt, now) +
+    ? ageMarkHtml(t.lastUsedAt, now, null, viaWord) +
       '<span class="mcp-tool-uses">' + escapeHtml(uses + (uses === 1 ? ' use' : ' uses') + ' · 7 days') + '</span>'
     // ── THE UNUSED READING IS ONE SENTENCE, AND IT WRAPS AS ONE ────────────
     // FOUND BY LOOKING at the rendered grid: with the phrase and the age as
@@ -8861,11 +8903,91 @@ function renderSessionStrip(sessions, now) {
 }
 
 /**
+ * THE RUNNER — "Test all N tools", its one-line note, and its outcome.
+ *
+ * ── N IS READ, NEVER TYPED ─────────────────────────────────────────────────
+ * From `state.mcpUsage.tools.length`, which IS the catalogue (the route maps
+ * one row per `TOOL_CATALOGUE` entry, used or not). A literal here would be a
+ * third list of the same tools, after `mcp/tools/index.js` and
+ * `mcp/tools/catalogue.js` — and CLAUDE.md records twice that the number in
+ * prose is the copy that goes stale.
+ *
+ * ── THE SENTENCE IS A `.tx-note`, NOT A SECOND LEDE ────────────────────────
+ * The block already has its lede, and §3 of docs/design-system-source.md
+ * allows a block one: a heading, at most one lede, the ⓘ, and the body. This
+ * sentence qualifies the CONTROL directly, which is exactly what `.tx-note` is
+ * for, and it is one line by that component's contract — 12 visible words,
+ * under the 13-word ceiling a lede would have had to meet anyway.
+ *
+ * ── THE OUTCOME IS NEVER FOLDED ────────────────────────────────────────────
+ * v3.16.1's never-fold list names "the outcome of something the user just
+ * pressed" outright. It is a plain reading on the page: how many answered, how
+ * many refused, how long it took — and, when something did not answer, the
+ * tools BY NAME, because "23 of 24" without the name is a reading nobody can
+ * act on.
+ */
+function renderExerciseRunner(toolCount) {
+  const n = Number.isFinite(toolCount) && toolCount > 0 ? toolCount : null;
+  if (!n) return '';
+  const busy = state.mcpExerciseBusy === true;
+  const label = busy ? 'Testing…' : 'Test all ' + n + ' tools';
+  const control =
+    '<div class="settings-btn-row mcp-runner-row">' +
+      '<button type="button" class="btn btn-secondary" id="btn-mcp-exercise"' +
+        (busy ? ' disabled' : '') + '>' + escapeHtml(label) + '</button>' +
+    '</div>' +
+    // 12 words: Runs / every / tool / against / a / throwaway / copy / nothing
+    // / of / yours / is / touched.
+    '<p class="tx-note mcp-runner-note">Runs every tool against a throwaway ' +
+      'copy — nothing of yours is touched.</p>';
+  return control + renderExerciseOutcome();
+}
+
+/** The outcome line. Empty until a run has happened on this page. */
+function renderExerciseOutcome() {
+  if (state.mcpExerciseError) {
+    return '<div class="settings-inline-error mcp-runner-outcome">' +
+      escapeHtml(state.mcpExerciseError) + '</div>';
+  }
+  const r = state.mcpExercise;
+  if (!r || !Array.isArray(r.results)) return '';
+  const total = r.results.length;
+  const answered = r.results.filter((x) => x && (x.ok === true || x.refused === true)).length;
+  const refused = r.results.filter((x) => x && x.refused === true).length;
+  const secs = Number.isFinite(r.durationMs) ? (r.durationMs / 1000).toFixed(1) : '?';
+  const failed = r.results.filter((x) => x && x.ok !== true && x.refused !== true)
+    .map((x) => x.tool).filter((x) => typeof x === 'string');
+  // The refusals are NAMED too, with their reason, when there are any: a
+  // refusal is a legitimate answer from a tool and the reason is the useful
+  // half. (`scan_semantic_duplicates` refuses its cost estimate on an install
+  // with no provider key, which is a fact about the install, not a fault.)
+  const refusedRows = r.results.filter((x) => x && x.refused === true);
+  const headline = escapeHtml(answered + ' of ' + total + ' answered · ' +
+    refused + ' refused · ' + secs + ' s');
+  const parts = ['<div class="mcp-runner-line"><strong>' + headline + '</strong></div>'];
+  if (failed.length) {
+    parts.push('<div class="mcp-runner-line mcp-runner-bad">' +
+      escapeHtml('No answer from: ' + failed.join(', ')) + '</div>');
+  }
+  for (const row of refusedRows) {
+    parts.push('<div class="mcp-runner-line">' +
+      '<code class="mono">' + escapeHtml(row.tool) + '</code> refused — ' +
+      escapeHtml(row.note || 'no reason given') + '</div>');
+  }
+  const cls = failed.length ? ' mcp-runner-outcome-bad' : '';
+  return '<div class="mcp-runner-outcome' + cls + '" role="status">' + parts.join('') + '</div>';
+}
+
+/**
  * The block's BODY, and it is its own function because the 30s revalidate
  * repaints exactly this and nothing else. A repaint that had to go through
  * `render()` would replace the whole column — closing every ⓘ, every
  * `<details>` and the user's focus — once every thirty seconds, which is the
  * v3.53.1 defect with a slower clock.
+ *
+ * THE RUNNER IS FIRST AND IT IS IN EVERY ARM that has a tool count, INCLUDING
+ * the empty one: a fresh install's map is twenty-four dashed rings, and the
+ * button is the only thing on the screen that can do anything about that.
  */
 function renderToolMapBody(now) {
   const at = typeof now === 'number' ? now : Date.now();
@@ -8875,14 +8997,16 @@ function renderToolMapBody(now) {
   const u = state.mcpUsage;
   if (!u) return gatedLoader(loadGate, 'Loading the tool map…');
   const tools = Array.isArray(u.tools) ? u.tools : [];
+  const runner = renderExerciseRunner(tools.length);
   const anyUsed = tools.some((t) => typeof t.lastUsedAt === 'string' && t.lastUsedAt);
   if (!u.present || !anyUsed) {
-    return '<p class="mcp-map-empty">No calls recorded yet. The map fills as your ' +
+    return runner + '<p class="mcp-map-empty">No calls recorded yet. The map fills as your ' +
       'agents use the bridge.</p>';
   }
   const reads = tools.filter((t) => t.group !== 'write');
   const writes = tools.filter((t) => t.group === 'write');
   return (
+    runner +
     renderSessionStrip(u.sessions, at) +
     renderToolGroup('READ', reads, u.logStartedAt, at) +
     renderToolGroup('WRITE', writes, u.logStartedAt, at)
@@ -8906,8 +9030,10 @@ function renderToolMap() {
     'settings, never inside your knowledge folder, so nothing here is ever synced. The line ' +
     'carries the tool’s name, the domain it touched, whether it succeeded, and how long it ' +
     'took. Never an argument, never a result, never a file path, never an error message, so a ' +
-    'line stays under 200 bytes however large the call was. The file rotates at 1 MB keeping ' +
-    'one previous copy, and deleting it only restarts the map. ' +
+    'line stays under 200 bytes however large the call was. A line written by the button here ' +
+    'carries one extra field, via, whose only value is self-test — that is what puts the word ' +
+    'self-test on a tile, and why a run never counts as a session start or a save. The file ' +
+    'rotates at 1 MB keeping one previous copy, and deleting it only restarts the map. ' +
     docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
   return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), info, '', { html: true });
 }
@@ -8966,9 +9092,24 @@ async function refreshMcpUsage(token) {
   applyUsageVerdict(verdict);
   if (state.section !== 'mcp') return;
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
-  const body = document.querySelector('.settings-block-mcp-tool-map .settings-block-body');
+  const body = document.querySelector(TOOL_MAP_BODY_SEL);
   if (!body) return;
   body.innerHTML = renderToolMapBody();
+  // THE REPAINT REPLACED THE BUTTON, so its listener went with it. Re-bound
+  // here rather than delegated from the document: a delegated handler would
+  // outlive the view, and `wireMcpListeners` is already the one place this
+  // section binds from — this is the same call, on the one element the
+  // revalidate can destroy.
+  wireExerciseControl(token);
+}
+
+/** Bind (or re-bind) block ③'s run control. Idempotent by construction: the
+ *  element is new every time the body is painted, so there is nothing to
+ *  unbind. A no-op when the control is not on screen. */
+function wireExerciseControl(token) {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const btn = document.getElementById('btn-mcp-exercise');
+  if (btn) btn.addEventListener('click', () => onMcpExercise(token));
 }
 
 /** Arm the revalidate. A setTimeout CHAIN, not setInterval: a slow answer must
@@ -9585,6 +9726,9 @@ function wireMcpListeners() {
   if (viewBtn) viewBtn.addEventListener('click', () => onMcpViewConfig(myMountToken));
   const copyBtn = document.getElementById('btn-mcp-copy-snippet');
   if (copyBtn) copyBtn.addEventListener('click', () => onMcpCopySnippet(myMountToken));
+  // Block ③'s run control. Also re-bound by the 30 s revalidate, which
+  // replaces the body this button lives in.
+  wireExerciseControl(myMountToken);
   // The default-domain picker is the shared listbox now — mounted from
   // pendingListboxes in wireGlobalListeners, with its onChange built beside
   // the markup in renderMcp(). Nothing to wire here.
@@ -11123,6 +11267,75 @@ async function onMcpSelfTest(token) {
   } finally {
     if (isCurrentMount(token)) { state.selfTestLoading = false; render(token); }
   }
+}
+
+/**
+ * "Test all N tools" — POST /api/mcp/exercise, then repaint the map.
+ *
+ * ── WHY THIS DOES NOT CALL `render()` ──────────────────────────────────────
+ * It paints through `renderToolMapBody` twice (once for the busy state, once
+ * for the outcome) and lets `refreshMcpUsage` do the third. A `render()` here
+ * would shut every ⓘ and every `<details>` on the section — including the
+ * privacy fold this block's own copy invites the user to open — which is
+ * v3.53.1 exactly.
+ *
+ * ── THE ORDER MATTERS ─────────────────────────────────────────────────────
+ * The run's lines are already on disk by the time the response lands, so the
+ * usage refresh AFTER it is what lights the tiles; it is forced rather than
+ * left to the 30 s tick, because a user who just pressed a button will not
+ * wait thirty seconds to see whether it did anything. The signature has moved
+ * (every tool's `lastUsedAt` and `lastVia` just changed), so that refresh
+ * repaints the body once, and the outcome held in `state.mcpExercise` is
+ * re-rendered with it.
+ */
+async function onMcpExercise(token) {
+  if (state.mcpExerciseBusy) return;
+  state.mcpExerciseBusy = true;
+  state.mcpExerciseError = null;
+  state.mcpExercise = null;
+  paintToolMapBody();
+  try {
+    const res = await fetch('/api/mcp/exercise', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (!isCurrentMount(token)) return;
+    if (!res.ok || !data) {
+      state.mcpExerciseError = (data && data.error)
+        || 'The self-test run did not complete. The bridge may not be reachable from here.';
+    } else if (!Array.isArray(data.results)) {
+      state.mcpExerciseError = data.error || 'The self-test run returned nothing to show.';
+    } else {
+      state.mcpExercise = data;
+      // `missing` is the driver's own honesty field: a tool in the catalogue
+      // the run has no case for. It must be empty, and a suite reds when it is
+      // not — but if one ever reaches a user, the user is told rather than
+      // shown "23 of 24" with no explanation of the twenty-fourth.
+      if (Array.isArray(data.missing) && data.missing.length) {
+        state.mcpExerciseError = 'This build has no test case for: ' + data.missing.join(', ');
+      }
+    }
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.mcpExerciseError = err.message || 'The self-test run did not complete.';
+  } finally {
+    if (isCurrentMount(token)) {
+      state.mcpExerciseBusy = false;
+      paintToolMapBody();
+      // The run just moved every row in the log, so this repaints once more
+      // with the real readings and the new markers.
+      refreshMcpUsage(token).catch(() => {});
+    }
+  }
+}
+
+/** Repaint block ③'s body from state, and nothing else. The shared half of
+ *  the revalidate's DOM write, so a run and a tick cannot disagree about which
+ *  element is replaced or about re-binding the control inside it. */
+function paintToolMapBody() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const body = document.querySelector(TOOL_MAP_BODY_SEL);
+  if (!body) return;
+  body.innerHTML = renderToolMapBody();
+  wireExerciseControl(myMountToken);
 }
 
 async function onMcpViewConfig(token) {

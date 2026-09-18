@@ -11,6 +11,8 @@
  *   POST /api/mcp/reveal-config       → opens Claude Desktop's config file in Finder
  *   GET  /api/mcp/usage               → the tool map: the 24-tool catalogue joined with
  *                                       the local, content-free usage log (v3.60.0)
+ *   POST /api/mcp/exercise            → run EVERY tool once against a throwaway copy,
+ *                                       marking the lines `via: 'self-test'` (v3.61.0)
  *
  * TESTING NOTE — CLAUDE_CONFIG_PATH below is a module constant with no override
  * seam, and it points at the user's REAL Claude Desktop config. Nothing in this
@@ -31,7 +33,8 @@ import { appPath } from '../brain/paths.js';
 import { getCapabilities } from '../brain/install-mode.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
-import { readUsage } from '../brain/mcp-usage.js';
+import { readUsage, VIA_SELF_TEST } from '../brain/mcp-usage.js';
+import { exerciseAllTools } from '../brain/mcp-exercise.js';
 import { TOOL_CATALOGUE } from '../../mcp/tools/catalogue.js';
 
 const router = express.Router();
@@ -652,6 +655,12 @@ export async function usageHandler(_req, res) {
       count7d: agg ? agg.count7d : 0,
       countTotal: agg ? agg.countTotal : 0,
       refusedTotal: agg ? agg.refusedTotal : 0,
+      // v3.61.0 — WHOSE reading this is. `'self-test'` when the NEWEST call
+      // came from the app's own "Test all N tools" run, null when it came from
+      // an MCP client. Null never means "an agent": nothing here can know
+      // which client called, and the view's marker says only what this says.
+      lastVia: agg ? agg.lastVia : null,
+      selfTestTotal: agg ? agg.selfTestTotal : 0,
     };
   });
   res.json({
@@ -667,6 +676,82 @@ export async function usageHandler(_req, res) {
 }
 
 router.get('/usage', usageHandler);
+
+/**
+ * POST /api/mcp/exercise — run EVERY tool once against a throwaway copy
+ * (v3.61.0). The button on block ③ of the MCP bridge page.
+ *
+ * WHY IT IS A MUTATING ROUTE AT ALL, given that it touches nothing of the
+ * user's: it spawns a process, it spends up to a minute, and it APPENDS to the
+ * usage log. That is a side effect, so it is a POST, and the global
+ * cross-origin guard in `src/server.js` therefore covers it exactly as it
+ * covers every other mutator — there is no per-route guard here on purpose,
+ * because a second one is a second thing to get wrong (the guard rejects any
+ * mutating request carrying a non-loopback `Origin`, and the Host guard covers
+ * all requests).
+ *
+ * ── ONE RUN AT A TIME, AND WHY A MODULE FLAG IS THE RIGHT LOCK ─────────────
+ *
+ * The server is single-user and loopback-only, so the only way to get two
+ * concurrent runs is two clicks or two tabs. A module-level boolean, set and
+ * cleared SYNCHRONOUSLY around the await, closes that: there is no `await`
+ * between the check and the set, which is the rule v3.3.0's ingest queue
+ * records ("do not fix a concurrency report by adding another check after an
+ * await, that narrows the window rather than closing it").
+ *
+ * The 60 s wall is the ROUTE'S, above the driver's own 50 s, so a driver that
+ * somehow overran still frees the lock and answers.
+ *
+ * The fixture never touches the user's knowledge folder: the driver seeds it
+ * under an OS temp dir and pins the child to it — see `src/brain/mcp-exercise.js`
+ * for both rungs and for the two identity files a first run can mint.
+ */
+let exerciseInFlight = false;
+
+/** The route's own wall clock, above the driver's. */
+export const EXERCISE_ROUTE_WALL_MS = 60_000;
+
+export async function exerciseHandler(_req, res) {
+  if (exerciseInFlight) {
+    return res.status(409).json({
+      ok: false,
+      reason: 'busy',
+      error: 'A tool self-test is already running. Wait for it to finish — a run takes a second or two.',
+    });
+  }
+  exerciseInFlight = true;
+  try {
+    const run = await Promise.race([
+      exerciseAllTools({ via: VIA_SELF_TEST }),
+      new Promise((resolve) => setTimeout(() => resolve({ __wall: true }), EXERCISE_ROUTE_WALL_MS)),
+    ]);
+    if (run.__wall) {
+      return res.status(504).json({
+        ok: false,
+        reason: 'timeout',
+        error: `The self-test run did not finish within ${Math.round(EXERCISE_ROUTE_WALL_MS / 1000)} seconds and was abandoned.`,
+      });
+    }
+    res.json({
+      ok: run.ok === true,
+      ranAt: run.ranAt,
+      durationMs: run.durationMs,
+      results: run.results,
+      covered: run.covered,
+      missing: run.missing,
+      error: run.error,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, reason: 'failed', error: err.message });
+  } finally {
+    exerciseInFlight = false;
+  }
+}
+
+router.post('/exercise', exerciseHandler);
+
+/** TEST-ONLY: is a run in flight? The 409 arm is otherwise a race to observe. */
+export function __exerciseInFlight() { return exerciseInFlight; }
 
 router.post('/reveal-config', (_req, res) => {
   // Use execFile (no shell) so the target path is never interpreted by the shell.

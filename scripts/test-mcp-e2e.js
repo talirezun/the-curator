@@ -702,9 +702,20 @@ ok(poison.length === 0,
   poison.length === 0
     ? `all ${rawStdoutLines.length} stdout lines parse as JSON-RPC`
     : `NON-JSON ON STDOUT — this is the v2.5.3 bug: the MCP protocol reserves stdout for JSON-RPC frames, so a stray console.log anywhere on the 33-file import graph reaches Claude Desktop as "Unexpected token ... is not valid JSON" and kills the session. ${poison.length} offending line(s); first: ${JSON.stringify(poison[0].slice(0, 160))}. Diagnostics belong on stderr (console.error).`);
+// WHY THIS CAN BE ZERO HERE, stated because it is NOT a property of the
+// bridge (found by scripts/test-mcp-all-tools.js, v3.61.0, whose run drives
+// the same tools against a WRITEABLE fixture and legitimately sees 127 bytes):
+// the brain reports deliberate diagnostics on stderr — `syncSummaryEntities`
+// (src/brain/files.js:587) prints one line per summary it syncs — and this
+// suite never reaches it, because its only `compile_to_wiki` call is §8's,
+// against the read-only MIRROR, which refuses before writing. So zero here is
+// a fact about THIS suite's coverage, not a promise the MCP keeps. If a future
+// section compiles into `FIX`, this assertion is the one that will go red, and
+// the right fix is to accept tagged diagnostics (as the all-tools suite does)
+// rather than to silence the diagnostic.
 ok(Buffer.byteLength(stderrText, 'utf8') === 0,
   Buffer.byteLength(stderrText, 'utf8') === 0
-    ? 'stderr is empty too (CLAUDE.md\'s "0 stderr bytes" claim, now gated)'
+    ? 'stderr is empty too — this suite reaches no stderr diagnostic (see the note above; stdout purity is the real gate)'
     : `stderr carried ${Buffer.byteLength(stderrText, 'utf8')} bytes: ${JSON.stringify(stderrText.slice(0, 200))}`);
 
 // ── Cleanup ────────────────────────────────────────────────────────────────

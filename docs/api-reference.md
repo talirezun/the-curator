@@ -2292,6 +2292,8 @@ that setter, so its own resolution is unchanged. See
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
 | `GET /api/mcp/usage` *(v3.60.0)* | Backs **Settings → MCP bridge → The tool map**. Reads the local, content-free call log at `getMcpUsageLogPath()` (`<user-data>/.mcp-usage.jsonl`, never under `domains/`) and returns per-tool aggregates plus two session-level readings. Cheap by construction — the log is capped at ~1 MB before it rotates, so a full parse on every call stays inexpensive; the route additionally caches its result by the log file's mtime + size. See the response shape below. |
 
+| `POST /api/mcp/exercise` *(v3.61.0)* | Backs the **Test all N tools** button on the tool map. Runs `exerciseAllTools()` (`src/brain/mcp-exercise.js`): seeds a throwaway fixture domain under an OS temp dir, starts `mcp/server.js` through the SAME launch-line builder `POST /self-test` uses, calls every tool in `mcp/tools/catalogue.js` once in a fixed order with deterministic arguments, and removes the fixture in `finally`. The child is pinned to the fixture (`--domains-path` for reads, `CURATOR_TEST_DOMAINS_DIR` for writes), so the user's `domains/` is neither read nor written; provider and GitHub credentials are stripped from its environment. Lines land in the **real** `getMcpUsageLogPath()` with `via: "self-test"`. No tool is driven on an arm that makes an LLM or network call, so a run costs nothing and needs no key. **At most one run at a time** — a concurrent request is refused `409 {ok:false, reason:"busy"}` — and a 60 s route wall clock over the driver's own 50 s answers `504 {reason:"timeout"}`. Guarded by the global cross-origin middleware like every mutating route. |
+
 ### `GET /api/mcp/usage` response
 
 ```json
@@ -2309,7 +2311,9 @@ that setter, so its own resolution is unchanged. See
       "lastOk": true,
       "count7d": 12,
       "countTotal": 41,
-      "refusedTotal": 0
+      "refusedTotal": 0,
+      "lastVia": null,
+      "selfTestTotal": 0
     },
     {
       "name": "save_working_state",
@@ -2320,7 +2324,9 @@ that setter, so its own resolution is unchanged. See
       "lastOk": true,
       "count7d": 9,
       "countTotal": 30,
-      "refusedTotal": 1
+      "refusedTotal": 1,
+      "lastVia": "self-test",
+      "selfTestTotal": 1
     }
   ],
   "sessions": {
@@ -2341,6 +2347,50 @@ app's "not used since this log began" tile reads. `sessions.lastBootstrapAt` is 
 timestamp across every logged `get_project_context` **or** `get_working_state` call;
 `sessions.lastSaveAt` is the newest logged `save_working_state` call — neither is a promise that
 the two calls belonged to the same session, only the most recent instance of each.
+
+**`lastVia` and `selfTestTotal` (v3.61.0).** `lastVia` is `"self-test"` when the tool's **newest**
+logged call was written by `POST /api/mcp/exercise`, and `null` otherwise. Null means *an MCP
+client* and nothing more specific — the log cannot tell which client called, so no other value
+exists. `selfTestTotal` counts how many of that tool's logged calls carry the marker.
+`sessions.lastBootstrapAt` / `lastSaveAt` **ignore marked lines entirely**: a self-test is not a
+session start and wrote nobody's handoff, so a run against a fresh log leaves both `null` while
+every `tools[]` row has a real `lastUsedAt`. The app paints `lastVia` (as the word `self-test`
+before a tile's age) and does **not** paint `selfTestTotal`, which is carried for consumers.
+
+### `POST /api/mcp/exercise` response *(v3.61.0)*
+
+```json
+{
+  "ok": true,
+  "ranAt": "2026-09-18T14:53:10.400Z",
+  "durationMs": 344,
+  "results": [
+    { "tool": "list_domains", "ok": true, "refused": false, "ms": 2, "note": null },
+    { "tool": "scan_semantic_duplicates", "ok": false, "refused": true, "ms": 1,
+      "note": "Estimate failed: No LLM API key found." }
+  ],
+  "covered": ["list_domains", "get_index", "…"],
+  "missing": [],
+  "error": null
+}
+```
+
+`results` carries exactly one row per catalogue tool, in the order the driver called them, and
+exactly the five fields shown. `ok` on a ROW means the tool answered; `refused: true` means it
+answered with the `{ok:false, error}` envelope, which is a legitimate answer — the tool ran its
+guard and wrote its log line (the ten older read tools answer a bad argument with a plain string
+instead, so a string-shaped refusal is recorded as `ok`, the same named limit the usage log has).
+`note` is a short, bounded reason on anything that did not plainly answer, and `null` otherwise.
+
+`missing` is the driver's honesty field: catalogue tools it has no case for. It must be empty,
+and `scripts/test-mcp-all-tools.js` pins it — a 25th tool reds that suite until a case exists. The
+envelope-level `ok` is `true` only when there was no fatal, `missing` is empty, and every row
+answered. `error` is a sentence when the bridge could not be started at all (the same outcome
+`POST /self-test` gives on a machine with no usable Node on `PATH`), `null` otherwise.
+
+The response deliberately carries **no** launch line and no transport diagnostics: the child's
+stdout/stderr are the child's, and `scripts/test-mcp-all-tools.js` reads those from the driver's
+return value rather than from the route.
 
 ### `POST /api/mcp/self-test` response
 
