@@ -4768,6 +4768,28 @@ export function normalizeGeminiUsage(md) {
     // Gemini 2.5 implicit caching has no separate write charge, and the explicit
     // context-cache API (which does) is deliberately not used here.
     cacheWriteTokens: 0,
+    // ── ADDITIVE, AND NEVER SUBTRACTED FROM ANYTHING ────────────────────
+    // Gemini reports hidden deliberation as `thoughtsTokenCount`, and — like
+    // OpenAI's `reasoning_tokens` — it is ALREADY INCLUDED in
+    // `candidatesTokenCount`. So it is surfaced as an EXTRA field and folded
+    // into nothing: adding it to `outputTokens` would bill hidden reasoning
+    // twice, and subtracting it would under-report a real charge.
+    //
+    // The four fields above are byte-identical with and without it, which is
+    // the property that matters here: `accumulateUsage` in ingest.js sums four
+    // NAMED fields (inputTokens / outputTokens / cachedReadTokens /
+    // cacheWriteTokens) and `chargeForItem` prices those four, so a fifth key
+    // on this object cannot move a spend total. Asserted by executing this
+    // normalizer over the same payload with and without `thoughtsTokenCount`.
+    //
+    // ZERO WHEN ABSENT, not omitted, because this normalizer's contract is a
+    // fixed shape — `num()` already coerces every other missing field to 0 and
+    // a caller that treats 0 as "none" is correct for Gemini: a Gemini call
+    // that did no thinking genuinely reports no thought tokens. The
+    // "reported / not reported" distinction is drawn one layer up, by
+    // normalizeReportedUsage in src/brain/chat.js, for providers whose
+    // normalizers emit no such field at all.
+    reasoningTokens:  num(u.thoughtsTokenCount),
   };
 }
 
@@ -4785,6 +4807,17 @@ export function normalizeAnthropicUsage(usage) {
     outputTokens:     num(u.output_tokens),
     cachedReadTokens: num(u.cache_read_input_tokens),
     cacheWriteTokens: num(u.cache_creation_input_tokens),
+    // NO `reasoningTokens`, AND THAT ABSENCE IS THE FACT. Anthropic's usage
+    // block carries no separate count: on a model that reasons by default
+    // (this app never sends a `thinking` parameter — see extractAnthropicText
+    // for what that means per model) the thinking is billed INSIDE
+    // `output_tokens` and the API does not say how much of it there was.
+    // Emitting `reasoningTokens: 0` here would be a measurement we do not
+    // have, and the one place it would be read — the chat cost breakdown —
+    // would then print "0 reasoning" over an answer that certainly reasoned.
+    // The breakdown instead says so in words, gated on the MEASURED per-model
+    // `thinks` flag that `offerableEntryFor` already publishes; see
+    // assistantCostHtml in src/public/next/views/chat.js.
   };
 }
 

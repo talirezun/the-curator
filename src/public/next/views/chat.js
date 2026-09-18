@@ -4839,6 +4839,43 @@ function assistantCostHtml(m, ctx, index) {
   // static call-graph scan over the functions it sandboxes) would have to name
   // it. Repetition here, in a file this change owns, is cheaper than an entry
   // in a suite it does not.
+  //
+  // ── THE UNCOUNTED CASE, WHICH IS THE ONE THAT PROMPTED ALL THIS ────────
+  // Where the provider reports a reasoning count — OpenRouter's
+  // `reasoning_tokens`, Gemini's `thoughtsTokenCount` — the clause carries the
+  // NUMBER. Anthropic's usage block has no such field: on a model that reasons
+  // by default the thinking is billed inside `output_tokens` and the API never
+  // says how much. Saying nothing there would leave the exact answer the user
+  // asked about ($0.10 on Sonnet 5) with a breakdown that still cannot explain
+  // itself, so the fact is stated WITHOUT a number rather than invented.
+  //
+  // THE GATE IS `entry.thinks`, llm.js's own MEASURED per-model boolean (set
+  // in the model table, carried onto the offerable entry, published by
+  // src/routes/config.js) — never a hand-written "Sonnet 5 and Opus 5" list.
+  // That list would be WRONG: llm.js records `claude-opus-5` as thinking 0/3
+  // while `claude-sonnet-5` thinks 7/7, one release apart. One source, so the
+  // note here and the **thinks** badge in the model menu cannot disagree.
+  //
+  // It is also gated on the count being ABSENT. The day a provider starts
+  // reporting one for a thinking model, the number replaces the apology by
+  // itself — no second edit, and no risk of the app saying "we do not know"
+  // beside a figure it does know. MEASURED, AND RECORDED RATHER THAN
+  // OVERCLAIMED: `!u.reasoningTokens` here is DEFENCE IN DEPTH — deleting it
+  // leaves the suite green, because the TERNARY below already makes the two
+  // clauses mutually exclusive, and it is that structure the guard actually
+  // pins (a mutation turning the ternary into a concatenation does go red).
+  // The term is kept because it states the rule where the next reader meets
+  // it, and because an edit that flattened the ternary would otherwise have
+  // nothing upstream saying the two must not co-occur.
+  const thinksEntry = (() => {
+    const id = m && typeof m.model === 'string' && m.model ? m.model : null;
+    if (!id) return null;
+    const c = ctx || {};
+    const row = resolveChatModel(id, c.offerable, c.availableProviders);
+    return row && row.entry ? row.entry : null;
+  })();
+  const unreportedReasoning = !!u && !u.reasoningTokens &&
+    !!thinksEntry && thinksEntry.thinks === true;
   const title = u
     ? 'This answer: ' + Number(u.inputTokens).toLocaleString() +
       ' in / ' + Number(u.outputTokens).toLocaleString() + ' out' +
@@ -4847,7 +4884,9 @@ function assistantCostHtml(m, ctx, index) {
       ' tokens' +
       (u.reasoningTokens
         ? ', of which ' + Number(u.reasoningTokens).toLocaleString() + ' reasoning the model did not show'
-        : '')
+        : (unreportedReasoning
+          ? '. "Out" includes the model\'s hidden reasoning; this provider does not report how much'
+          : ''))
     : '';
   // `renderThreadOnly` rebuilds the whole thread with one innerHTML write, so
   // an id only has to be unique WITHIN one paint of one conversation — the

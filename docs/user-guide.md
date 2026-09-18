@@ -2251,7 +2251,7 @@ The figure in an answer's label line — *"THE CURATOR · Sonnet 5 · $0.10"* �
 
 Two things in that sentence are worth knowing:
 
-- **"out" includes reasoning you never saw.** On models that reason by default — `claude-sonnet-5` is one — the model thinks before it answers, and the provider bills that thinking at the output rate inside the same "out" number. It is why the same question can cost far more on one model than the price table alone suggests. Where the provider tells us how much of the output was reasoning, the breakdown says so; where it does not, the clause is simply absent rather than guessed at.
+- **"out" includes reasoning you never saw.** On models that reason by default — `claude-sonnet-5` is one — the model thinks before it answers, and the provider bills that thinking at the output rate inside the same "out" number. It is why the same question can cost far more on one model than the price table alone suggests. **Where the provider reports how much of the output was reasoning — OpenRouter and Gemini both do — the breakdown gives the figure; on Anthropic, which reports no separate count, it says so in words instead of inventing one.** Whether a model reasons by default is a per-model *measurement*, not a family rule: `claude-opus-5` is newer than `claude-sonnet-5` and does not, so a model with no measurement gets no claim either way.
 - **Later answers in a long thread cost more than earlier ones.** Every previous turn is sent again as input so the model can follow the conversation, so the "in" figure climbs as the thread grows. Starting a **New chat** for a new subject is the cheapest habit in the app.
 
 Three details worth knowing:

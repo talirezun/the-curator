@@ -87,6 +87,16 @@ function extractConst(src, name) {
 }
 /** Strip comments so a rule's own prose cannot satisfy a CSS assertion. */
 function stripCssComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, ''); }
+/**
+ * The same rule for JavaScript. Deliberately crude — it can also blank a `//`
+ * inside a string literal — and that is safe in ONE direction only: it can
+ * make an assertion demand MORE than it needs, never less. Every use of it
+ * below is paired with a CONTROL asserting the stripped text really did lose
+ * something, so a stripper that silently stopped working cannot pass quietly.
+ */
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
 function cssBody(sel) {
   const re = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}');
   const m = re.exec(stripCssComments(chatCss));
@@ -590,6 +600,151 @@ section('§7  The breakdown names the hidden reasoning, and the scope');
   // The figure itself is untouched by any of this.
   ok(/>\$0\.06</.test(withReasoning) || /\$\d/.test(withReasoning),
     'CONTROL: the dollar figure is still rendered — the breakdown was widened, not the price');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8  Gemini reports a count; Anthropic does not, and says so');
+// ═══════════════════════════════════════════════════════════════════════════
+/* The disclosure has to cover the case that prompted it, and that case is
+   Sonnet 5 on Anthropic — where there is no count to show. Two halves:
+   §8a  Gemini's `thoughtsTokenCount` is surfaced ADDITIVELY, proven by
+        executing the real normalizer over one payload with and without it and
+        requiring the four BILLED fields, and the price computed from them, to
+        be byte-identical — and by running the REAL ingest accumulator over
+        both and requiring its totals not to move.
+   §8b  On Anthropic the clause is stated WITHOUT a number, gated on llm.js's
+        MEASURED per-model `thinks` flag rather than a hand-written list. */
+{
+  const llmSrc = readFileSync(path.join(ROOT, 'src/brain/llm.js'), 'utf8');
+  const ingestSrc = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  const norm = new Function(
+    extractFunction(llmSrc, 'normalizeGeminiUsage', 'llm.js') + '\n' +
+    extractFunction(llmSrc, 'normalizeAnthropicUsage', 'llm.js') + '\n' +
+    'return { normalizeGeminiUsage, normalizeAnthropicUsage };')();
+
+  const BASE = { promptTokenCount: 19250, candidatesTokenCount: 6150, cachedContentTokenCount: 512 };
+  const without = norm.normalizeGeminiUsage(BASE);
+  const with_ = norm.normalizeGeminiUsage({ ...BASE, thoughtsTokenCount: 4900 });
+
+  eq(with_.reasoningTokens, 4900, '§8a Gemini\'s thoughtsTokenCount is surfaced as reasoningTokens');
+  eq(without.reasoningTokens, 0, '§8a …and is 0 when the call did no thinking (Gemini genuinely reports none)');
+
+  // ADDITIVE — the four BILLED fields, byte-identical either way.
+  const billed = (x) => JSON.stringify([x.inputTokens, x.outputTokens, x.cachedReadTokens, x.cacheWriteTokens]);
+  eq(billed(with_), billed(without),
+    '§8a the four billed counts are byte-identical with and without thoughtsTokenCount');
+  eq(billed(with_), JSON.stringify([18738, 6150, 512, 0]),
+    '§8a CONTROL: …and they are the values the pre-existing arithmetic produced (input still has cached subtracted)');
+  // The priced cost, from those four, cannot move either.
+  const price = (x) => (x.inputTokens / 1e6) * 0.10 + (x.outputTokens / 1e6) * 0.40 +
+    (x.cachedReadTokens / 1e6) * 0.01 + (x.cacheWriteTokens / 1e6) * 0.125;
+  eq(price(with_), price(without), '§8a the cost computed from them is unchanged to the last digit');
+
+  // THE REAL INGEST ACCUMULATOR. `accumulateUsage` in src/brain/ingest.js is
+  // where a per-call usage payload becomes a running spend total; if a fifth
+  // key could move that, this change would be a money change.
+  const accSrc = /totals\.calls\+\+;[\s\S]{0,400}?cacheWriteTokens\s*\+=[^\n]*\n/.exec(ingestSrc);
+  ok(!!accSrc, '§8a CONTROL: the real accumulator body was found in src/brain/ingest.js');
+  const runTotals = (usage) => {
+    const totals = { calls: 0, inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 };
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    new Function('totals', 'r', 'num', accSrc[0])(totals, usage, num);
+    return JSON.stringify(totals);
+  };
+  eq(runTotals(with_), runTotals(without),
+    '§8a the REAL ingest accumulator produces identical totals from both payloads');
+  ok(!/reasoningTokens/.test(accSrc[0]),
+    '§8a …because it sums four NAMED fields and never spreads the object');
+
+  // ANTHROPIC emits no such field at all.
+  const anth = norm.normalizeAnthropicUsage({ input_tokens: 19250, output_tokens: 6150 });
+  ok(!('reasoningTokens' in anth),
+    '§8b the Anthropic normalizer emits NO reasoning field — the API reports none');
+  // COMMENT-STRIPPED, because the function's OWN prose explains why it does not
+  // emit `reasoningTokens: 0` — and a raw scan is satisfied by that explanation,
+  // the exact shape v3.54.0 records (`test-next-sharedbrain-admin.js` asserted
+  // over raw text and was satisfied by a comment recording a deletion).
+  ok(!/reasoningTokens:\s*0/.test(stripJsComments(extractFunction(llmSrc, 'normalizeAnthropicUsage', 'llm.js'))),
+    '§8b …and specifically does not fake one as 0, which would print "0 reasoning" over an answer that reasoned');
+  ok(/reasoningTokens: 0/.test(extractFunction(llmSrc, 'normalizeAnthropicUsage', 'llm.js')),
+    '§8b CONTROL: the stripper is doing work — that string IS present, in the comment that explains the decision');
+
+  // ── §8b — THE WORDED CLAUSE, gated on the MEASURED flag ────────────────
+  const view = new Function('escapeHtml', 'formatUsdHonest', 'icon', 'resolveChatModel',
+    extractFunction(chatSrc, 'messageUsageTokens', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'cacheMultipliers', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'messageCostUsd', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'costMarkHtml', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'assistantCostHtml', 'chat.js') + '\n' +
+    'return { assistantCostHtml };')(
+    (s) => String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+    (n) => '$' + n.toFixed(2), iconStub,
+    // The measured table, in miniature: one model that thinks and one that does
+    // not, exactly as llm.js records them — sonnet-5 thinks 7/7, opus-5 thinks
+    // 0/3, one release apart. A hand-written "Sonnet 5 / Opus 5" list would be
+    // wrong about the second, which is why the gate reads the flag.
+    (id) => ({
+      'claude-sonnet-5': { entry: { id, label: 'Sonnet 5', input: 2, output: 10, thinks: true } },
+      'claude-opus-5': { entry: { id, label: 'Opus 5', input: 5, output: 25, thinks: false } },
+      'claude-haiku-4-5': { entry: { id, label: 'Haiku 4.5', input: 1, output: 5, thinks: false } },
+    }[id] || null),
+  );
+  // The panel body is HTML SOURCE — `costMarkHtml` escapes the title, so an
+  // apostrophe is `&#39;` on the way in and an apostrophe on the screen. These
+  // assertions are about what a reader SEES, so the entities are decoded back.
+  const panelText = (h) => {
+    const i = h.indexOf('class="chat-cost-panel"');
+    return h.slice(h.indexOf('>', i) + 1, h.indexOf('</div>', i))
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  };
+  const ANTH = { inputTokens: 19250, outputTokens: 6150, cachedReadTokens: 0, cacheWriteTokens: 0 };
+  const say = (model, usage) => panelText(view.assistantCostHtml(
+    { role: 'assistant', content: 'a', model, usage }, {}, 0));
+
+  const NOTE = '. "Out" includes the model\'s hidden reasoning; this provider does not report how much';
+  eq(say('claude-sonnet-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens' + NOTE,
+    '§8b a THINKING model with no reported count states the fact without a number');
+  eq(say('claude-opus-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens',
+    '§8b a model measured NOT to reason by default gets nothing extra — and opus-5 is exactly that model, released AFTER sonnet-5');
+  eq(say('claude-haiku-4-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens',
+    '§8b …nor does the cheap default');
+  ok(!/\b0\b.*reasoning/.test(say('claude-sonnet-5', ANTH)),
+    '§8b the note carries NO number — inventing one would be worse than the silence it replaces');
+
+  // A REPORTED count wins: the day a provider starts reporting one, the number
+  // replaces the apology with no second edit.
+  eq(say('claude-sonnet-5', { ...ANTH, reasoningTokens: 4900 }),
+    'This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show',
+    '§8b a reported count REPLACES the worded note rather than joining it');
+  ok(!say('claude-sonnet-5', { ...ANTH, reasoningTokens: 4900 }).includes('does not report'),
+    '§8b …so the app never says "we do not know" beside a figure it does know');
+  /* WHAT ENFORCES THAT, stated rather than assumed: the TERNARY, not the
+     `!u.reasoningTokens` term in `unreportedReasoning`. Deleting that term
+     leaves this section green (measured); flattening the ternary into a
+     concatenation reds the assertion above. The term is defence in depth and
+     is recorded as such beside the code. */
+
+  // An unknown model resolves to no entry, so there is no measured flag to read
+  // — and, as it happens, no price either, so the whole cost fragment is
+  // withheld (pre-existing behaviour, asserted here so the gate cannot be
+  // blamed for it later). Either way NO claim about reasoning is made: absence
+  // of a flag is not a measurement.
+  eq(view.assistantCostHtml({ role: 'assistant', content: 'a', model: 'zz-not-in-the-catalogue', usage: ANTH }, {}, 0), '',
+    '§8b an unresolvable model renders no cost fragment at all, so it makes no claim about reasoning either');
+
+  // ONE SOURCE. The gate must read the flag, never a list of model ids.
+  const costSrc = extractFunction(chatSrc, 'assistantCostHtml', 'chat.js');
+  ok(/thinks === true/.test(costSrc),
+    '§8b the gate reads the measured `thinks` flag');
+  ok(!/sonnet-5|opus-5|claude-[a-z0-9-]+/.test(stripJsComments(costSrc)),
+    '§8b …and its CODE names no model id at all, so it cannot drift from llm.js');
+  ok(/claude-opus-5/.test(costSrc),
+    '§8b CONTROL: the stripper is doing work here too — the comment DOES name the model whose flag would make a hand-written list wrong');
+  ok(/thinks: spec\.thinks/.test(llmSrc) && /thinks: entry && typeof entry\.thinks === 'boolean'/
+      .test(readFileSync(path.join(ROOT, 'src/routes/config.js'), 'utf8')),
+    '§8b CONTROL: that flag really does travel from llm.js\'s model table to the browser');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
