@@ -3243,7 +3243,7 @@ function renderProjectCreated(f) {
       refused +
       notCopied +
       '<div class="dm-lc-title">Connect your agent</div>' +
-      renderDescription('Paste these two into that project’s repository, once.') +
+      renderDescription('Paste these two where your agent works — the project’s folder, once.') +
       '<div class="dm-lc-actions dm-proj-done-copies">' +
         '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
           'Copy marker line</button>' +

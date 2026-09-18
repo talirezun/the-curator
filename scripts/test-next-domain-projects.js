@@ -910,6 +910,23 @@ section('S6 -- The actions: what the view actually sends');
     ok('the outcome NAMES the project', /Created newthing/.test(done), done.slice(0, 400));
     ok('...unfolded, because an outcome is never behind a chevron',
       !done.includes('<details'));
+    // ── THE "CONNECT YOUR AGENT" LEDE (v3.62.0) ─────────────────────────
+    // Named a repository a project may not have, and its audience is anyone
+    // working with agent harnesses, not only a coding agent inside a checked-
+    // out repository. Design-system §3's word cap applies to it like any
+    // other lede.
+    {
+      const titleAt = done.indexOf('dm-lc-title');
+      const lede = /<p class="tx-desc">([^<]*)<\/p>/.exec(done.slice(titleAt));
+      ok('the "Connect your agent" card carries a lede',
+        !!lede, done.slice(titleAt, titleAt + 300));
+      const words = lede ? lede[1].trim().split(/\s+/).filter(Boolean).length : 99;
+      ok('...of 13 visible words or fewer (design-system \u00a73)', words <= 13,
+        words + ' words: ' + (lede ? lede[1] : ''));
+      eq('...and it names where an agent works, never a repository a project may not have',
+        lede ? lede[1] : null,
+        'Paste these two where your agent works \u2014 the project\u2019s folder, once.');
+    }
     ok('...and offers BOTH copy controls, on the row\u2019s own hooks so there is '
       + 'no second implementation of either',
     done.includes('data-proj-marker="newthing"') && done.includes('data-proj-agent="newthing"'),

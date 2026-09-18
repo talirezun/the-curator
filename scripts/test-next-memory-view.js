@@ -113,9 +113,10 @@
  *    branch is covered, and never that a meaningful assertion was made about
  *    what it returned. Its EXECUTED set is hand-maintained; the only mechanical
  *    check on it is that each name really is extracted from live source here.
- *    `renderSidebar`, `renderMain`, `renderNoProjects`, `freshState`,
+ *    `renderSidebar`, `renderMain`, `freshState`,
  *    `loadIndex`, `selectProject` and `wire` are listed as not executed, each
- *    with its reason, rather than being quietly absent.
+ *    with its reason, rather than being quietly absent. (`renderNoProjects`
+ *    moved to EXECUTED in v3.62.0 — see §21's own note.)
  *  · refreshScopeList's `!state.scope` early return is defence in depth and
  *    is NOT independently pinned: the membership check below it already
  *    returns for a falsy scope. Said so in the source, and measured.
@@ -1209,6 +1210,15 @@ function makeRenderers(stateObj) {
     // the one string on this page that opts into raw HTML.
     extractFunction(viewSrc, 'aboutInfoHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
+    // `renderNoProjects` MOVED here from NOT_EXECUTED (v3.62.0): it used to be
+    // a title and a sentence with no control on it, which is why it was
+    // excused as "a constant string with no inputs and no branches" — never
+    // quite true (it already branched on `noDomains`), and now that the
+    // "Create a project in Domains" pointer lives on this screen instead of
+    // inside a project, a stub here would let this suite agree with itself
+    // that the pointer exists without ever painting the one screen it belongs
+    // on.
+    extractFunction(viewSrc, 'renderNoProjects', 'memory.js') + '\n' +
     // The five that used to be lifted by NOBODY. renderStaleNotice in
     // particular had no assertion of any kind: replacing its body with
     // `return '';` deleted the Reload offer — the v3.17.3 headline — and left
@@ -1244,7 +1254,7 @@ function makeRenderers(stateObj) {
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderCopyOutcome, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
     'effectiveSave, briefStats, briefDismissDecision, ' +
-    'renderBriefEditor, renderProjectGroups };';
+    'renderBriefEditor, renderProjectGroups, renderNoProjects };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'renderBlock',
     // ── THE STORE MIRRORS AND THE SHARED CHOOSER (v3.61.0) ─────────────
@@ -6579,19 +6589,41 @@ const fndRead = (payload) => ({
     unchosen.slice(0, 600));
   ok('...and NO "decide later" — this screen IS the later',
     !unchosen.includes('data-fnd-own="later"'));
-  // ── §8(e): THE MISSING THING HAS TO BE MISSING WHERE YOU LOOKED FOR IT ─
-  // Somebody who reaches this state may equally be somebody who has not
-  // created the project they MEANT, and the create form is one view away with
-  // no route from here. A POINTER at the quietest tier, and BELOW the chooser
-  // rather than above it: painted first it would sit between the block's lede
-  // and the decision the person came to make.
-  ok('...and a pointer to where a project IS created',
-    unchosen.includes('id="mem-fnd-to-domains"')
-    && /Create a project in Domains/.test(unchosen), unchosen.slice(-400));
-  ok('...below the chooser, not between the lede and the decision',
-    unchosen.indexOf('id="mem-fnd-to-domains"') > unchosen.indexOf('data-fnd-own='));
-  ok('...and it is a POINTER, never a second create path — no form, no write',
-    !/dm-proj|method: .POST/.test(unchosen));
+  // ── §8(e), CORRECTED (v3.62.0): NO POINTER HERE ANY MORE ──────────────
+  // This state is reached INSIDE a project that has already been selected —
+  // the sidebar, the brief and the work-stream table above it all agree the
+  // project is real. The missing thing is the ownership answer, and the
+  // chooser right above IS how it is given; a "Create a project in Domains"
+  // pointer used to sit under it, sending the person who came to answer that
+  // very question away from the one control that answers it. It moved to
+  // `renderNoProjects` — the screen reached only when a project genuinely
+  // does not exist — asserted below.
+  ok('...and NO pointer away from the one control that answers the question '
+    + 'this screen asked',
+  !unchosen.includes('id="mem-fnd-to-domains"')
+    && !/Create a project in Domains/.test(unchosen), unchosen.slice(-400));
+
+  // ── (a2) THE POINTER'S NEW HOME: renderNoProjects (v3.62.0) ────────────
+  // The counterpart to (a): `renderNoProjects` is the one screen `renderMain`
+  // paints when `!state.activeProject`, so the missing thing really is a
+  // project and "Create a project in Domains" is the true next step — for
+  // either of its two sentences, since a domain must exist before a project
+  // can and Domains is where both are made.
+  {
+    const noDomains = makeRenderers({ domainsScanned: 0 }).renderNoProjects();
+    ok('no domains at all: still gets the pointer to Domains',
+      noDomains.includes('id="mem-fnd-to-domains"')
+      && /Create a project in Domains/.test(noDomains), noDomains.slice(-400));
+    const noneSaved = makeRenderers({ domainsScanned: 3 }).renderNoProjects();
+    ok('domains exist, nothing saved: SAME pointer, same control id — one '
+      + 'binder, one navigation, never a second write path',
+    noneSaved.includes('id="mem-fnd-to-domains"')
+      && /Create a project in Domains/.test(noneSaved), noneSaved.slice(-400));
+    const unknownCount = makeRenderers({ domainsScanned: null }).renderNoProjects();
+    ok('...and it does not depend on the server having answered the count '
+      + 'either — an unreported `domainsScanned` still gets it',
+    unknownCount.includes('id="mem-fnd-to-domains"'), unknownCount.slice(-400));
+  }
 
   // ── (P1-3) A READ-ONLY SHARED BRAIN MIRROR GETS NO CHOOSER AT ALL ──────
   // Every init this chooser could POST answers 403 there (`refuseMirror`), so
@@ -7315,6 +7347,10 @@ const EXECUTED = new Set([
   // v3.61.0: whether "Copy the drafting request" is offered, withheld with a
   // reason, or absent \u2014 driven over all five states in \u00a721c2.
   'foundationsDraftAsk',
+  // v3.62.0: the "Create a project in Domains" pointer moved from the
+  // no-manifest arm of `renderFoundations` to this, the screen it actually
+  // describes — see the §21 note beside its own assertions.
+  'renderNoProjects',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on
@@ -7323,7 +7359,6 @@ const NOT_EXECUTED = {
   freshState: 'a literal factory with no branches; every field it returns is exercised through the state fixtures',
   renderSidebar: 'setSidebar/setMain need a real DOM; §12 proves render() calls it, §9 proves the token is passed',
   renderMain: 'same — DOM-bound; its three branches are the render* functions §6/§14 execute directly',
-  renderNoProjects: 'a constant string with no inputs and no branches',
   loadIndex: 'orchestration over fetchIndex + selectProject, both executed; its own logic is one sort, covered by §2',
   // (`selectProject` moved to EXECUTED in v3.56.0 — §17c drives it to prove the
   // work-stream window resets on a project switch.)

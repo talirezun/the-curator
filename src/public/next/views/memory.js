@@ -137,9 +137,10 @@ import {
   // user who presses Escape while it is in flight must not have the document
   // reopened on top of whatever they went back to.
   openReader, isCurrentReader,
-  // THE SHELL'S ONE NAVIGATION CHOKEPOINT. Used by the two POINTERS this view
-  // carries — "Create a project in Domains" on a project with no documents
-  // chosen — which are pointers rather than second write paths.
+  // THE SHELL'S ONE NAVIGATION CHOKEPOINT. Used by the POINTER this view
+  // carries — "Create a project in Domains", on the screen `renderMain`
+  // reaches when there is no project to select — which is a pointer rather
+  // than a second write path.
   navigate,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
@@ -2781,10 +2782,24 @@ function renderNoProjects() {
         : 'Nothing has been saved yet. ') +
       'Agent memory lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
       'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
+  // ── §8(e): THE POINTER LIVES WHERE THE MISSING THING IS A PROJECT ──────
+  // Moved here from `renderFoundations`'s no-manifest arm (v3.62.0): that
+  // state is reached INSIDE a project that has already been selected — the
+  // chooser right there IS the way to answer it, and a pointer away from the
+  // page would send the person who came to make that choice somewhere else.
+  // Here the project itself does not exist yet — by definition, this is the
+  // one screen `renderMain` reaches only when `!state.activeProject` — so
+  // "Create a project in Domains" is the true next step whichever of the two
+  // sentences above is on screen, and `mem-fnd-to-domains` is the one control
+  // id `bindFoundationRows` already wires, never a second navigation path.
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">' + title + '</div>' +
       renderDescription(body, { html: true }) +
+      '<div class="mem-fnd-elsewhere">' +
+        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-to-domains">' +
+        'Create a project in Domains</button>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -5296,24 +5311,16 @@ function renderFoundations(read) {
           renderDescription('No canonical documents in this mirror yet.') +
         '</div></div></div>';
     }
-    // ── THE MISSING THING HAS TO BE MISSING WHERE YOU LOOKED FOR IT ──────
-    // §8(e): a person who reaches this block on a project they have not set up
-    // may equally be a person who has not created the project they MEANT, and
-    // the create form is one view away with no route from here. A POINTER, at
-    // the quietest tier — never a second create path, which would be two write
-    // surfaces for one act (the v3.7.0 duplicate-call-site rule).
-    //
-    // BELOW THE CHOOSER, not above it. Painted first — which is where `notes`
-    // puts everything — it sits between the block's lede and the decision the
-    // person came here to make, so the reading order becomes "here is how to
-    // leave, and here is what you came for". A pointer is the LAST thing on a
-    // card, after the thing it is an alternative to; measured in the browser
-    // on this exact state.
-    return notes + renderFoundationsInit(facts) +
-      '<div class="mem-fnd-elsewhere">' +
-        '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-to-domains">' +
-        'Create a project in Domains</button>' +
-      '</div>';
+    // ── NO POINTER HERE: THE PROJECT ALREADY EXISTS ──────────────────────
+    // This state is reached INSIDE a project that has been selected — the
+    // sidebar, the brief and the work-stream table above it all agree the
+    // project is real. The missing thing is the ownership answer, and the
+    // chooser right above IS the way to give it; a "Create a project in
+    // Domains" pointer here would send the person who came to answer that
+    // question away from the one control that answers it. The pointer
+    // belongs to `renderNoProjects()`, where a project genuinely does not
+    // exist yet (§8(e)).
+    return notes + renderFoundationsInit(facts);
   }
   // ── AND WITHHELD ON AN UNREADABLE MANIFEST (P1-3) ────────────────────
   // An unreadable manifest is a PRESENT manifest: `…/foundations/init`
@@ -5555,7 +5562,7 @@ function renderFoundationsInit(facts) {
           ? 'Nothing mirrored yet. Point at the folder and choose which files to copy.'
           : 'No canonical documents yet. Choose how they arrive.') +
         renderFoundationsChooser({
-          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
+          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly, existingProject: true,
         }) +
         '<div class="mem-fnd-init-actions">' +
           // ── THE PRIMARY IS THE HOST'S DECISION (P2-6) ──────────────────
