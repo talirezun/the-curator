@@ -159,3 +159,14 @@ desktop/release/
 AuthKey_*.p8
 .notarize.json
 .env.notarize
+
+# MCP tool-usage log (v3.60.0) + its one rotated generation. In REPO mode
+# `getUserDataDir()` resolves to the app root, so these land here beside
+# `.curator-config.json` — machine-local operational exhaust, not source.
+# The EIGHTH instance of the class the `.curator-install-id` block above names
+# (.write-lock v3.0.15, .DS_Store v3.0.16, the ingest queue v3.3.0, the
+# OpenRouter sidecars v3.16.1, .curator-install-id, .curator-machine-id, the
+# desktop build output), added in the same change that creates the file, which
+# is what that block asks for.
+.mcp-usage.jsonl
+.mcp-usage.jsonl.1

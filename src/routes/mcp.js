@@ -9,6 +9,8 @@
  *                                       on a config it cannot parse
  *   POST /api/mcp/self-test           → spawns mcp/server.js locally, runs list_domains, reports
  *   POST /api/mcp/reveal-config       → opens Claude Desktop's config file in Finder
+ *   GET  /api/mcp/usage               → the tool map: the 24-tool catalogue joined with
+ *                                       the local, content-free usage log (v3.60.0)
  *
  * TESTING NOTE — CLAUDE_CONFIG_PATH below is a module constant with no override
  * seam, and it points at the user's REAL Claude Desktop config. Nothing in this
@@ -29,6 +31,8 @@ import { appPath } from '../brain/paths.js';
 import { getCapabilities } from '../brain/install-mode.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
+import { readUsage } from '../brain/mcp-usage.js';
+import { TOOL_CATALOGUE } from '../../mcp/tools/catalogue.js';
 
 const router = express.Router();
 
@@ -609,6 +613,60 @@ export async function selfTestHandler(_req, res) {
 }
 
 router.post('/self-test', selfTestHandler);
+
+/**
+ * GET /api/mcp/usage — the tool map's data (v3.60.0).
+ *
+ * Joins the CATALOGUE (24 rows: name, capability group, mutates, purpose —
+ * `mcp/tools/catalogue.js`, pure data, so this route does not import the MCP
+ * tool modules and their brain dependencies into the web server) with the
+ * AGGREGATES from the local usage log (`src/brain/mcp-usage.js`).
+ *
+ * Every tool is returned, used or not. A tool with no line gets `lastUsedAt:
+ * null` — and the reading the UI must give that is "not used since this log
+ * began", never "never used", which is why `logStartedAt` is in the envelope
+ * beside it. The log is rotated and can be deleted; absence of evidence here
+ * is not evidence of absence, and the app must not say otherwise.
+ *
+ * Exported for the suite: the router is mounted in server.js, and driving the
+ * handler directly is how the envelope is pinned without a socket.
+ */
+export async function usageHandler(_req, res) {
+  let usage;
+  try {
+    usage = await readUsage();
+  } catch (err) {
+    // A log that cannot be read is not an error the user can act on — the map
+    // is still worth drawing, empty, with every tool listed.
+    usage = { present: false, logBytes: 0, logStartedAt: null, byTool: {}, sessions: { lastBootstrapAt: null, lastSaveAt: null }, readError: err.message };
+  }
+  const tools = TOOL_CATALOGUE.map((t) => {
+    const agg = usage.byTool?.[t.name] || null;
+    return {
+      name: t.name,
+      group: t.group,
+      mutates: t.mutates,
+      purpose: t.purpose,
+      lastUsedAt: agg ? agg.lastUsedAt : null,
+      lastOk: agg ? agg.lastOk : null,
+      count7d: agg ? agg.count7d : 0,
+      countTotal: agg ? agg.countTotal : 0,
+      refusedTotal: agg ? agg.refusedTotal : 0,
+    };
+  });
+  res.json({
+    present: usage.present === true,
+    logStartedAt: usage.logStartedAt ?? null,
+    logBytes: usage.logBytes || 0,
+    tools,
+    sessions: {
+      lastBootstrapAt: usage.sessions?.lastBootstrapAt ?? null,
+      lastSaveAt: usage.sessions?.lastSaveAt ?? null,
+    },
+  });
+}
+
+router.get('/usage', usageHandler);
 
 router.post('/reveal-config', (_req, res) => {
   // Use execFile (no shell) so the target path is never interpreted by the shell.

@@ -128,6 +128,20 @@ eq(path.resolve(createStorageAdapter({}).getBase()), path.resolve(getDomainsDir(
 eq(getDomainsDir(), path.join(OLD_ROOT, 'domains'),
   'app getDomainsDir() default is unchanged (no config/env override active in this run)');
 
+// v3.60.0 — the MCP usage log. Two properties, both load-bearing: it resolves
+// through paths.js like every other user-data path, and it is NOT inside the
+// domains folder, which Personal Sync uses as its git working tree. A
+// per-machine record of which MCP tools ran here must never be committed and
+// pushed alongside the wiki.
+eq(paths.getMcpUsageLogPath(), path.join(OLD_ROOT, '.mcp-usage.jsonl'),
+  'getMcpUsageLogPath() resolves under the user-data dir');
+const usageRelToDomains = path.relative(getDomainsDir(), paths.getMcpUsageLogPath());
+ok(usageRelToDomains.startsWith('..'),
+  `the MCP usage log is OUTSIDE the domains folder (relative path: ${usageRelToDomains})`);
+const ignoreLines = read('.gitignore').split('\n').map(l => l.trim());
+ok(ignoreLines.includes('.mcp-usage.jsonl') && ignoreLines.includes('.mcp-usage.jsonl.1'),
+  'the usage log AND its rotated generation are excluded from the app repo (repo mode puts them beside tracked source)');
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§2  Install-form detection — against a REALISTICALLY built tree');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -405,7 +419,10 @@ ok(rootDerivers.length === 0,
 
 // (b) The user-data filenames may only be JOINED onto a path inside paths.js.
 //     Mentions in comments/strings elsewhere are fine; a path.join is not.
-const DATA_FILES = ['.curator-config.json', '.sync-config.json', '.sharedbrain-config.json', '.knowledge-git'];
+// `.mcp-usage.jsonl` (v3.60.0) joins the list for the same reason as the rest:
+// it is a user-data path, and a second module joining it onto a root of its own
+// is how the two would end up pointing at different files.
+const DATA_FILES = ['.curator-config.json', '.sync-config.json', '.sharedbrain-config.json', '.knowledge-git', '.mcp-usage.jsonl'];
 const joiners = [];
 for (const f of serverFiles) {
   if (f.rel === path.join('src', 'brain', 'paths.js')) continue;
@@ -435,6 +452,7 @@ ok(joiners.length === 0,
 const SNAPSHOTTABLE = [
   'getCuratorConfigFile', 'getSyncConfigFile', 'getSyncGitDir',
   'getSharedBrainConfigFile', 'getDefaultDomainsDir', 'getUserDataDir', 'userDataPath',
+  'getMcpUsageLogPath',
 ];
 const snapshots = [];
 for (const f of serverFiles) {
