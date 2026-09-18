@@ -428,6 +428,18 @@ Each row's submenu offers Open in The Curator, Copy resume prompt, Copy handoff 
 
 It reads the same files as everything else and it never writes. It is also deliberately not a second reader of the handoff document: it shows rows, ages and the agent's own one-line headline, and clicking a row opens the app. The document itself is rendered in one place only. Nothing leaves your machine.
 
+## What does "· docs stale" mean in the menu bar?
+
+A project's foundations are its canonical documents — architecture, firm decisions, conventions —
+either mirrored byte-for-byte from a repository or written by an agent you asked. When a mirrored
+document no longer matches the checkout it was copied from, that project's header in the menu bar
+gains a small `· docs stale` mark, or `· N docs stale` when more than one has drifted. Nothing
+appears when every mirrored document is current, and a document an agent wrote rather than
+mirrored never triggers it, because there is no second copy to compare it against.
+
+The fix is either to refresh the mirror from the repository, on whichever machine has that
+checkout, or, for an agent-written document, to save the version you actually want kept.
+
 ## Does carrying state actually change the answers?
 
 There are two measurements, and they answer different questions.

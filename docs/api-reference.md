@@ -2290,6 +2290,57 @@ that setter, so its own resolution is unchanged. See
 | `POST /api/mcp/write-config` | **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
+| `GET /api/mcp/usage` *(v3.60.0)* | Backs **Settings → MCP bridge → The tool map**. Reads the local, content-free call log at `getMcpUsageLogPath()` (`<user-data>/.mcp-usage.jsonl`, never under `domains/`) and returns per-tool aggregates plus two session-level readings. Cheap by construction — the log is capped at ~1 MB before it rotates, so a full parse on every call stays inexpensive; the route additionally caches its result by the log file's mtime + size. See the response shape below. |
+
+### `GET /api/mcp/usage` response
+
+```json
+{
+  "present": true,
+  "logStartedAt": "2026-08-30T09:12:04.000Z",
+  "logBytes": 184320,
+  "tools": [
+    {
+      "name": "get_project_context",
+      "group": "read",
+      "mutates": false,
+      "purpose": "One-call session bootstrap: brief, handoff, foundations",
+      "lastUsedAt": "2026-09-18T07:41:02.000Z",
+      "lastOk": true,
+      "count7d": 12,
+      "countTotal": 41,
+      "refusedTotal": 0
+    },
+    {
+      "name": "save_working_state",
+      "group": "write",
+      "mutates": true,
+      "purpose": "Write this session's handoff so the next one can resume",
+      "lastUsedAt": "2026-09-18T08:03:47.000Z",
+      "lastOk": true,
+      "count7d": 9,
+      "countTotal": 30,
+      "refusedTotal": 1
+    }
+  ],
+  "sessions": {
+    "lastBootstrapAt": "2026-09-18T07:41:02.000Z",
+    "lastSaveAt": "2026-09-18T08:03:47.000Z"
+  }
+}
+```
+
+`present: false` (with `logStartedAt: null`, `logBytes: 0`, every `tools[].lastUsedAt` etc. `null`
+and `sessions` both fields `null`) is not an error — it is the honest answer for an install whose
+bridge has never been called, and it is what the empty-state copy in the block reads off. `tools`
+always lists **every** tool the bridge exposes, in the same order `tools/list` returns them
+(`mcp/tools/catalogue.js` is the one place `name`/`group`/`mutates`/`purpose` are defined, and its
+`name`s are asserted to match `mcp/tools/index.js`'s `tools` array in order) — a tool with no
+calls at all still appears, with every count field `0` and `lastUsedAt: null`, which is what the
+app's "not used since this log began" tile reads. `sessions.lastBootstrapAt` is the newest
+timestamp across every logged `get_project_context` **or** `get_working_state` call;
+`sessions.lastSaveAt` is the newest logged `save_working_state` call — neither is a promise that
+the two calls belonged to the same session, only the most recent instance of each.
 
 ### `POST /api/mcp/self-test` response
 

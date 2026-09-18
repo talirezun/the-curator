@@ -1681,6 +1681,18 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 > work-streams, a seven-day save pulse, and the standing brief's age — from the menu bar. It is off by default and
 > it is a reader too: nothing in it writes.
 
+The menu bar icon also carries a small honesty check on a project whose foundations are
+**repo-owned** (see [Foundations](#foundations--canonical-documents-that-travel), below): when
+one or more of that project's mirrored documents no longer match the checkout they were copied
+from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once there is more
+than one — the same computed-not-remembered freshness check the in-app Foundations block already
+runs, surfaced where you are most likely to see it before starting work. Nothing appears when
+every mirrored document is current, and a curator-owned foundation (one an agent wrote, with
+nothing to compare it against) never triggers the mark. If you see it: either **refresh the
+mirror from the repository** — the same action the in-app Foundations block offers, run from
+whichever machine has that checkout — or, for a document an agent wrote rather than mirrored,
+**save the fresher version from the checkout** you actually want kept.
+
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
 
@@ -4024,6 +4036,40 @@ Block ②. When you talk to Claude Desktop via My Curator MCP and say *"save thi
 Pick a domain from the dropdown, or leave it on *"— none (require an explicit domain) —"*. Claude's write tools will use it whenever you don't specify; if it's unset, Claude must explicitly ask you which domain to write to.
 
 > Multi-domain users: leaving this unset is the safer default — every MCP write requires you to confirm the domain, and that is what the block's **ⓘ** says: a mis-aimed compile writes its pages into the wrong wiki, and nothing about that is obvious afterwards. Single-domain users can set the default for smoother conversation flow.
+
+### The tool map — what your agents used
+
+Block ③, under the same hairline. Where blocks ① and ② are about *connecting* the bridge, this
+one is about what has actually happened over it since — every tool call any client has made,
+one small local log.
+
+**Privacy first, because that is the question a log like this raises before anything else does:**
+it is kept on this machine, never synced, never uploaded. Each line records the tool's name, the
+domain it touched, whether the call succeeded, and how long it took — **never what you asked,
+and never what came back.** See [mcp-user-guide.md](mcp-user-guide.md) for exactly where the
+file lives and how it rotates.
+
+The block reads as two groups, **read** and **write**, one tile per tool: its name, a one-line
+purpose, and a freshness dot + word on
+[the same scale as everywhere else in the app](#the-freshness-dot-one-scale-everywhere) — live,
+recent, today, week, dormant — computed from that tool's own last call. A **writes** chip marks
+the seven tools that can change something on disk; the other seventeen carry no chip, because a
+flag on every tile would say nothing. A tool nobody has called yet gets the dashed *unknown* ring
+and reads **"not used since this log began · `<age>`"** — deliberately never *"never"*: the log
+itself has a start date (it rotates once it passes 1 MB, keeping one previous file), so a silent
+tool might simply predate the log rather than have gone genuinely unused.
+
+Above the tiles, two readings speak to your agent's own discipline rather than to the bridge
+itself: **"Last session start: `<age>` ago"** — the last time a client opened with
+`get_project_context` or `get_working_state`, i.e. whether a session actually resumed from where
+things stood rather than starting cold — and **"Last save: `<age>` ago"** — the last
+`save_working_state` call, i.e. whether the most recent session wrote a handoff before it
+stopped. Neither line is a verdict; they are the same two questions the
+[Curator Continuity skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170)
+already asks an agent to hold itself to.
+
+If no bridge has ever written to the log, the block says so plainly: *"No calls recorded yet.
+The map fills as your agents use the bridge."*
 
 ### Knowledge base folder
 
