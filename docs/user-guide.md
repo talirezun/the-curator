@@ -3323,6 +3323,14 @@ sets it for good.
 | **Mirror from a repository on this Mac** | A path field plus **Find documents** scans that checkout for candidate files and offers them as checkboxes, each with a role you can correct — this project is now `repo`-owned, and the checkout, not the app, is the source of truth from here on | You already have an architecture doc, a decisions log, or similar, checked in — or just sitting in a folder, whether or not that folder is a git repository |
 | **Decide later** | Nothing is written. The same choice reappears the first time you open this project's Foundations block | You are not sure yet, or you are creating several projects at once and do not want to stop for each one |
 
+**Choosing the folder.** Beside the typed-path field sits a **Choose folder…** button — the same
+native picker Settings uses to point at your knowledge base, opened for reading only: it hands back
+a path and touches nothing else, unlike the Settings picker, which also repoints where your whole
+wiki lives. On a build or platform with no native picker at all, the button is **withheld** and a
+line under the field says so, rather than offering a control that can only refuse — type or paste
+the path instead. An instruction line above the two controls names the order: *"Point at the folder,
+then tick the documents to copy."*
+
 **Onboarding a project that already has its documents.** The "Mirror" path above is not only for a
 brand-new checkout with nothing in it yet — point it at the folder where your architecture doc,
 decision log and roadmap **already live**, and **Find documents** goes looking for them itself,
@@ -3331,11 +3339,45 @@ or `doc/` folder; anywhere in the tree, a file whose *name* says what it is — 
 `decisions.md`, `adr-0012.md`, `CONTRIBUTING.md`, `roadmap.md`, `README.md`, and so on; and every
 document inside a folder literally called `adr`, `adrs`, `decisions`, `architecture` or `rfcs` — the
 layout a lot of real repositories already use. Nothing it finds is guessed *content* — the checkbox
-list shows you the path and the document's own first heading, and you tick what belongs. If it
-misses one, a typed path field beside the list adds it by hand. **The folder does not need to be a
-git repository at all** — a plain folder of documents works exactly as well as a mirror source; the
-only difference is that the Foundations table then shows the source path with no commit beside it,
-because there is no commit to show.
+list shows you the path, the document's own first heading, its size, and how long ago it was last
+touched, and you tick what belongs. If it misses one, a typed path field beside the list adds it by
+hand. **The folder does not need to be a git repository at all** — a plain folder of documents works
+exactly as well as a mirror source; the only difference is that the Foundations table then shows the
+source path with no commit beside it, because there is no commit to show.
+
+**What is ticked by default, and why.** A scan of a real repository routinely turns up twenty or
+thirty matching files — every doc in a `docs/` folder, every ADR, every README. Ticking all of them
+by default once mirrored **25 documents · 1,875 KB** against the 200 KB project budget on the
+maintainer's own repository, nine times over it, including files nobody meant to hand an agent. So
+only the four **canonical roles** — architecture, decisions, conventions, roadmap — start ticked;
+everything else (API references, guides, a README, a changelog) is listed, sized, aged and one tick
+away, but starts **unticked**. The running count under the list — *"4 of 25 ticked · 186 KB of a
+200 KB budget"* — makes the twenty-one untouched rows a visible decision rather than something you
+missed. Ticking or unticking a row never scrolls the list back to the top, even on a long one.
+
+**The budget line is a warning, not a wall.** Ticking past 200 KB does not block you — the store
+accepts an over-budget project and discloses it — but a line appears (and never folds) naming the
+real consequence: *"Over the 200 KB budget: agents receive 120 KB per session and the rest is
+dropped, last in reading order first."* Past the project total, a session bootstrap still has its
+own, smaller budget, and drops whole document bodies — last in reading order — before it drops
+anything else.
+
+**How old each candidate is.** Every row in the checkbox list carries a freshness dot and a word —
+*"updated 3 months ago"* — taken from the source file's own last-modified time, on the same scale
+the rest of the app uses. It is information only: an old document is still offered, still ticked or
+not by the same rule, and the list is never reordered by age — the sort stays role, then path.
+
+**Removing a mirrored document.** *New in v3.61.2* — before this, a mirrored project's document
+list could not be edited at all. Every row of a mirrored project's table now carries its own labelled
+**Remove** button (a curator-owned table's rows carry a pencil **Edit** instead, opening the editor
+described below, which has its own **Delete**). Pressing a mirrored row's Remove opens a confirm
+strip in place, under the table — never a dialog — naming exactly what happens: *"Stop mirroring
+**decisions.md**? The copy is removed and your agents stop reading it; the file in your folder is
+untouched, and you can mirror it again from the same picker."* Confirming removes that one document
+from the project without touching anything else — there is no bulk removal, so twenty-five unwanted
+rows are twenty-five presses (which is exactly what the new default ticks above exist to prevent).
+The editor's **Delete**, for a curator-owned document, reads differently and means it literally:
+*"It cannot be undone from inside The Curator; if you sync, a git client can still recover it."*
 
 The banner after creation says which one fired — *"Created project lumina · 4 skeletons seeded"*,
 *"· 3 documents mirrored"*, or *"· documents: decide later"* — and, if the project itself was

@@ -2456,14 +2456,14 @@ collision (see below the table).
 | Method | Path | What it does |
 |---|---|---|
 | `GET` | `/api/memory` | Every project in every domain, newest first |
-| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0.** Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
+| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0**, candidates gain `modifiedAt` **in v3.61.1**. Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
 | `GET` | `/api/memory/:domain/projects` | One domain's projects |
 | `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
 | `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
-| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole |
-| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Remove one curator-owned document, behind a name confirmation |
+| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror |
+| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.2**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
 | `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
@@ -2504,11 +2504,18 @@ replace a project's brief. Four operations, all tier 1.
 **Tier 0's curator-owned documents joined the human's write surface in v3.61.0 — `init`, `PUT` and
 `DELETE` under `…/foundations/`** — for exactly the same reason and under exactly the same stamp:
 one ownership per project, enforced by the store before any write reaches disk (so an app edit is
-*structurally* incapable of landing on a repo-owned mirror), and a write from here always carries
-`authoredBy.kind: 'human'`, never an agent's harness and model. `POST …/foundations/refresh` is the
-one exception that predates this release and stays one: it is a **byte copy** driven by comparing
-sha256 against a file on a named checkout, never a second author composing content, which is the
-distinction the read-only rule everywhere else in this file protects — see
+*structurally* incapable of landing on a repo-owned mirror's *content*), and a write from here
+always carries `authoredBy.kind: 'human'`, never an agent's harness and model. `PUT` still refuses
+a mirror outright — editing its content would make two writers of one file, exactly the property
+the ownership gate exists to protect.
+
+**`DELETE` is the one asymmetry, since v3.61.2: it works on either ownership.** Removing a
+manifest entry is not a claim about a document's content, it is the decision to stop mirroring or
+keep it — a different thing from writing content, and the gate for it is the manifest existing at
+all (`requireManifest`), not who owns it. `POST …/foundations/refresh` is the older exception and
+stays one for the same reason: it is a **byte copy** driven by comparing sha256 against a file on a
+named checkout, never a second author composing content, which is the distinction the read-only rule
+everywhere else in this file protects — see
 [working-state.md's human-edit-surface argument](working-state.md#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file)
 for the full four-part statement of why none of this reopens a second writer.
 
@@ -2810,9 +2817,14 @@ existing project's Foundations block.
   "ok": true,
   "root": "/Users/you/code/your-project",
   "candidates": [
-    { "path": "docs/architecture.md", "bytes": 8120, "suggestedRole": "architecture", "tooLarge": false, "firstHeading": "Architecture" }
+    { "path": "docs/architecture.md", "bytes": 8120, "suggestedRole": "architecture",
+      "suggestedSlug": "architecture.md", "tooLarge": false, "matchedBy": "docs-folder",
+      "firstHeading": "Architecture", "modifiedAt": "2026-09-01T14:22:03.000Z" }
   ],
-  "truncated": false
+  "truncated": false,
+  "cap": 200,
+  "maxDepth": 4,
+  "maxDocumentBytes": 524288
 }
 ```
 
@@ -2829,6 +2841,14 @@ the first 4 KB only) so a picker can show a title beside a path; a file with no 
 rather than inventing one. `tooLarge: true` marks a candidate over the 512 KB per-document cap —
 still listed, so the person choosing sees *why* it is unavailable rather than wondering where it
 went, but disabled at the picker.
+
+**`modifiedAt` — new in v3.61.1.** The source file's own `mtime`, as an ISO string, read off the
+same `stat` call the scan already makes for `bytes` — no second syscall. `null` when the timestamp
+is missing or is not a real date, computed the same way whether or not the row is `tooLarge`, so the
+field means one thing on every row rather than "absent = refused" on some and "absent = unknown" on
+others. It answers the one question a size and a suggested role cannot: is this document still
+maintained. The picker renders it as an age on the app's one freshness scale; it never reorders the
+list — the sort stays role rank then path.
 
 **Error responses**
 
@@ -2950,19 +2970,48 @@ document.
 
 ### DELETE /api/memory/:domain/:project/foundations/:slug
 
-**New in v3.61.0.** Remove one curator-owned document. **Body: `{ confirm }`, and it must equal the
-document's slug exactly** — the same enforced-at-the-route rule `DELETE …/projects/:project`
-already follows, so the confirmation cannot be skipped by a client that does not render it.
+**New in v3.61.0; works on a mirror too since v3.61.2.** Remove one document. **Body: `{ confirm }`,
+and it must equal the document's slug exactly** — the same enforced-at-the-route rule
+`DELETE …/projects/:project` already follows, so the confirmation cannot be skipped by a client
+that does not render it.
 
-**Success response** `200 OK` — `{ ok: true, domain, project, removed: "architecture.md", wasOrphan: false }`.
+**The gate is the manifest, not the ownership — the v3.61.2 correction.** v3.61.0 refused this
+route with `repo_owned` on a mirror, on the reasoning that "a mirrored document is dropped by no
+longer listing it on the next refresh, never by deleting the copy, which the next refresh would
+simply put back." The second half is false: `refreshFoundationsFromRepo` builds its work list from
+`manifest.documents`, so an entry that is gone **stays gone**. The route now uses a
+`requireManifest` gate — everything `requireCuratorOwned` checks *except* the ownership refusal —
+so **both ownerships can remove an entry**. `PUT` is unchanged and still refuses a mirror with
+`repo_owned`: an *edit* to a mirrored document would create two writers of one file, which is the
+property the ownership gate protects; *removing* its entry is not a claim about its content, it is
+the decision to stop mirroring it.
 
-`wasOrphan` is `true` when the file existed on disk with no matching manifest entry (a document
-`listFoundations` would already have disclosed as `orphanFiles`) — deleting one of those still
-succeeds, and is reported as what it was.
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "domain": "second-brain",
+  "project": "lumina",
+  "removed": "decisions.md",
+  "ownership": "repo",
+  "sourceKept": true,
+  "wasOrphan": false
+}
+```
+
+`ownership` is `"repo"` or `"curator"` — which kind of removal this was, read from the manifest
+**before** the write. `sourceKept` is `true` exactly when `ownership` is `"repo"`: the copy is gone
+and the file it was mirrored **from** is untouched and can be mirrored again from the same picker.
+On a curator-owned document the copy is the only copy, so `sourceKept` is `false` and the removal
+cannot be undone from inside The Curator (a git client can still recover it if you sync). `wasOrphan`
+is `true` when the file existed on disk with no matching manifest entry (a document `listFoundations`
+would already have disclosed as `orphanFiles`) — deleting one of those still succeeds, and is
+reported as what it was.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `confirm_required` (missing, empty, or not an exact match), `repo_owned` — a mirrored document is removed by no longer scanning it into `files` on the next refresh, never by this route. `no_manifest` — no ownership has been set yet. `manifest_unreadable` — a manifest exists but this store cannot parse it |
+| `400` | `confirm_required` (missing, empty, or not an exact match). `no_manifest` — no ownership has been set yet. `manifest_unreadable` — a manifest exists but this store cannot parse it. `repo_owned` no longer applies here — see above; it still applies to `PUT` |
 | `403` | `readonly` |
 | `404` | `foundation_not_found` — no document at that slug (and no orphan file either); or unknown domain/project |
 | `409` | `locked` — the same cross-process lock `PUT` takes |
@@ -3989,6 +4038,56 @@ state at the moment the dialog opened, which is long enough for the batch queue 
 item. That means a `409` refusal is possible on a request that was accepted at entry — and because
 the shipping frontend tests `data.cancelled` before `res.ok`, a refusal must never carry that field.
 The two outcomes are deliberately kept distinct.
+
+---
+
+## POST /api/config/pick-path
+
+**New in v3.61.1.** Open a native folder picker and say what was picked. **Unlike `pick-folder`
+above, this route mutates nothing** — it calls no setter, takes no write lock and needs no
+`guardConcurrent`, because there is nothing for a concurrent write to conflict with. It exists for
+the Foundations chooser, which needs a folder *name* to put in a text field with the knowledge base
+left exactly where it is — folding that into `pick-folder` behind a flag would put "and sometimes
+it does not repoint your whole knowledge base" inside a route every existing caller depends on for
+the opposite behaviour.
+
+**Body**
+
+| Parameter | Description |
+|---|---|
+| `prompt` | Optional. A **key** into a frozen table of dialog-title literals (`foundations` → *"Choose the folder that holds this project's documents:"*, anything else, including omitted, → the generic *"Choose a folder:"*). Never interpolated into the dialog title directly — the repo arm builds an `osascript` command string, so a client-supplied prompt would be shell-interpolated, which this app refuses everywhere. An unknown key takes the default rather than being refused |
+
+**Success response** `200 OK` — a folder was chosen
+
+```json
+{ "ok": true, "path": "/Users/you/code/your-project" }
+```
+
+**Success response** `200 OK` — the user dismissed the dialog
+
+```json
+{ "ok": false, "reason": "cancelled" }
+```
+
+**Refusal response** `501 Not Implemented` — this build/platform has no picker at all
+
+```json
+{
+  "ok": false, "reason": "no-dialog",
+  "message": "This build cannot open a folder picker (no folder picker on this system).",
+  "hint": "Type or paste the full path to the folder instead."
+}
+```
+
+**Error response** `500` — a picker that should work did not — `{ "ok": false, "reason": "failed", "message": "…", "hint": "…" }`.
+
+⚠️ **The client keys on `reason` alone**, and `no-dialog` is a **fact**, not a failure: the
+Foundations chooser withholds its "Choose folder…" button and prints the reason rather than
+offering a control that can only ever refuse. Same repo-arm/`native-dialog`-arm fork as
+`pick-folder` (macOS `osascript`, or the desktop shell's `pickFolder` hook under Electron), and the
+same `-128`-is-cancel / bare-exit-1-is-cancel classification — but every other post-pick decision
+`pick-folder` makes (existence check, `setDomainsDir()`, the concurrency re-check) is absent here on
+purpose.
 
 ---
 
