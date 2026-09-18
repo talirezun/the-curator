@@ -197,9 +197,9 @@ spend (`scripts/test-next-cost-honesty.js`); the app staying **read-only over ti
 (`scripts/test-next-settings-sections.js` §G3).
 
 **Open questions carried out of it.** A second `repo.root` for a project whose conventions live in a
-different checkout (§F Q1). What a deleted **skeleton** means — an ordinary delete ships, fixed slots
-would be a schema decision (§F Q2). Whether the shared Markdown renderer should gain a blockquote
-pass at all (§F Q3).
+different checkout (§F D9). What a deleted **skeleton** means — an ordinary delete ships, fixed slots
+would be a schema decision (§F D10). Whether the shared Markdown renderer should gain a blockquote
+pass at all (§F D11).
 
 ---
 
@@ -258,8 +258,8 @@ one constant and its pin becomes two ordered sets, and `FOCUSABLE_IDS`, four-ish
 docs anchors move in the same commit as the rename.
 
 **Open questions carried out of it.** Whether the two doors eventually deserve a real home view of
-their own (§F Q4). Whether the 568 px column arithmetic holds for the Foundations summary line
-beside two head controls — nothing in the design pass was rendered (§F Q5).
+their own (§F D12). Whether the 568 px column arithmetic holds for the Foundations summary line
+beside two head controls — nothing in the design pass was rendered (§F D13).
 
 ---
 
@@ -314,8 +314,8 @@ source** with the neutral form derived, never a second hand-maintained copy — 
 by models, so two copies would instruct two agents differently.
 
 **Open questions carried out of it.** Whether the honesty meter's "session" is a bridge session or
-a harness session, and whether the two can be told apart from a content-free log (§F Q6). Whether
-the neutral command ships as part of this repository or beside it (§F Q7).
+a harness session, and whether the two can be told apart from a content-free log (§F D14). Whether
+the neutral command ships as part of this repository or beside it (§F D15).
 
 ---
 
@@ -372,8 +372,8 @@ with it in the same commit (`scripts/test-mcp-usage.js`). A foundation is still 
 
 **Open questions carried out of it.** Whether the project pill persists per conversation or per
 session — the conversation JSON syncs, so per conversation makes it travel *and* makes it a schema
-field (§F Q8). Whether "Save as foundation" should be offered on a **question** as well as an
-answer (§F Q9).
+field (§F D16). Whether "Save as foundation" should be offered on a **question** as well as an
+answer (§F D17).
 
 ---
 
