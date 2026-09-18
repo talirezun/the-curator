@@ -629,6 +629,30 @@ passes 1 MB: the file is renamed to `.mcp-usage.jsonl.1` and a fresh one starts,
 bounded at roughly 2 MB and the older file is kept exactly once, not indefinitely. Writing to it
 is best-effort — a tool call still returns its result even if the log can't be written at all.
 
+**One optional seventh field, `via` (v3.61.0).** A line written by the app's own
+**[Test all 24 tools](user-guide.md#test-all-24-tools--lighting-the-map-yourself)** run carries
+`"via": "self-test"`, and nothing else ever does. It is as content-free as the rest — the only
+value the code will write is that exact word, matched literally, so a line written by an ordinary
+client is byte-for-byte what v3.60.0 wrote and the field is simply **absent** rather than
+`null`. Absent means *an MCP client*, never *an agent*: nothing in the log can tell which client
+made a call, and a field claiming otherwise would be an invention.
+
+Two consequences worth knowing. The tool map prints `self-test` before the age on any tile whose
+newest call came from that run, so a reading you caused is never read as evidence about your
+agents. And the map's two session readings — *Last session start* and *Last save* — **skip**
+`self-test` lines entirely: a self-test is not a session start and saved nobody's handoff, and
+those are the two questions the whole memory layer exists to answer. (The field also cost one
+byte of headroom elsewhere: the longest tool name the log will record shrank from 40 characters
+to 32 — no real tool comes close, the longest being `scan_semantic_duplicates` at 24 — so the
+"under 200 bytes, whatever the call" guarantee stays a proof rather than a measurement.)
+
+**Where the run's own lines come from.** The run starts the bridge exactly as your pasted config
+does — the same command, from the same builder — against a throwaway knowledge base in your
+machine's temporary folder, calls every tool once, and deletes it. Your domains folder is neither
+read nor written, and no tool is driven on a path that makes an AI call, so a run costs nothing
+and needs no key. The lines it writes go to the real `.mcp-usage.jsonl`, marked, which is the
+whole point: that is what puts a reading on every tile.
+
 **Security.** Every tool validates its `domain` and `slug` arguments before touching disk, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The fourteen read tools are strictly read-only, as are three of the ten health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — seventeen of the twenty-four never change anything on disk. Of the seven that do (v2.5.2+, plus `save_working_state`, `save_project_brief` and `save_foundation`), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all seven refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
 
 **What a slug is allowed to contain (widened in v3.9.1).** Lowercase letters, digits, hyphens, underscores, and **interior dots** — so `claude-sonnet-3.5`, `gemini-2.5-flash`, `industry-5.0`, `apache-2.0-license` and `express.js` are all addressable. Before v3.9.1 every dot was refused, and the effect was silently self-contradictory: `search_wiki` and `get_index` would happily *show* you those pages, and then `get_node`, `get_backlinks`, `get_connected_nodes`, `get_summary` and `get_raw_source` would all answer *"Invalid slug"* for the exact slug they had just advertised. Across the six real domains it was measured on, that made **73 of 4,751 pages discoverable but unreadable**, and `get_raw_source` unusable for every summary whose source file was actually present.

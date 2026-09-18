@@ -79,7 +79,8 @@ function extractFunction(source, name) {
 }
 
 const RENDER_CHAIN = ['ageSecondsOf', 'ageMarkHtml', 'renderToolTile', 'renderToolGroup',
-  'renderSessionStrip', 'renderToolMapBody', 'renderToolMap', 'usageSignature',
+  'renderSessionStrip', 'renderExerciseOutcome', 'renderExerciseRunner',
+  'renderToolMapBody', 'renderToolMap', 'usageSignature',
   'applyUsageVerdict', 'tickMcpAges'];
 
 /**
@@ -107,6 +108,13 @@ function build(extra, over, alsoReturn) {
     Date,
     settingsBlock: null,
     infoMark: null,
+    // v3.61.0 — block ③'s run control. `refreshMcpUsage` RE-BINDS it after it
+    // repaints the body (the repaint destroyed the button), so the harness
+    // records the call rather than stubbing it away: §11 asserts the re-bind
+    // happened, which is the one thing standing between the poll and a dead
+    // button thirty seconds after a run.
+    wireExerciseControl: () => {},
+    TOOL_MAP_BODY_SEL: '.settings-block-mcp-tool-map .settings-block-body',
   };
   Object.assign(deps, over || {});
   const bodies = [extractFunction(src, 'settingsBlock'), extractFunction(src, 'infoMark')]
@@ -611,6 +619,265 @@ section('10. The stylesheet: the shared scale, and no `.fresh-` rule of its own'
   const pxSizes = block.match(/font-size:\s*\d+px/g) || [];
   ok(pxSizes.length === 0, `no frozen px font-size in the tool-map rules (${pxSizes.length})`);
   ok(block.length > 800, 'CONTROL: the slice really covers the tool-map rules');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('11. "Test all N tools": the marker, the control, and the outcome (v3.61.0)');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THIS STOPS is a reading the user CAUSED being read as evidence
+// about their agents. The app's own run lights every tile; if the tile looks
+// identical to one an agent lit, the map has stopped being an observation and
+// become a mirror of the last button press.
+{
+  // ── 11a  THE MARKER IS ON THE READING, and it is the literal or nothing ──
+  const selfTested = { ...USED[1], lastVia: 'self-test', selfTestTotal: 3 };
+  const marked = MAP.renderToolTile(selfTested, LOG_STARTED, NOW);
+  const secs = Math.round((NOW - Date.parse(USED[1].lastUsedAt)) / 1000);
+  ok(/class="mcp-via-mark">self-test</.test(marked),
+    'a tile whose newest call came from the run says "self-test"');
+  ok(marked.includes('>' + formatAge(secs) + '<'),
+    `…and the age beside it is still formatAge's own ("${formatAge(secs)}")`);
+  // The marker is INSIDE the reading: between the dot and the words, so the
+  // two cannot be read as separate facts on the meta row.
+  const dotAt = marked.indexOf('fresh-dot');
+  const markAt = marked.indexOf('mcp-via-mark');
+  const wordsAt = marked.indexOf('mcp-age-words');
+  ok(dotAt < markAt && markAt < wordsAt,
+    'the marker sits INSIDE the reading, between the dot and the age words');
+  ok(/class="mcp-age-words">/.test(marked),
+    '…and the age still has its own named element, so the clock cannot erase the marker');
+  // CONTROLS. Without these the assertions above pass on a renderer that
+  // prints "self-test" on every tile.
+  ok(!/mcp-via-mark/.test(MAP.renderToolTile(USED[1], LOG_STARTED, NOW)),
+    'CONTROL: a tile with no `lastVia` carries no marker');
+  ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...USED[1], lastVia: null }, LOG_STARTED, NOW)),
+    'CONTROL: an explicit null carries none either');
+  // THE LITERAL, not a truthiness test: `lastVia` reaches the view from a file
+  // on disk, and "an MCP client" must never be spelled with a word the log
+  // cannot support.
+  for (const junk of ['agent', 'Self-Test', 'self-test-2', true, 1]) {
+    ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...USED[1], lastVia: junk }, LOG_STARTED, NOW)),
+      `CONTROL: lastVia=${JSON.stringify(junk)} is not the literal, so no marker`);
+  }
+  // An UNUSED tile never carries it — there is no reading to qualify.
+  ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...UNUSED_READ[0], lastVia: 'self-test' }, LOG_STARTED, NOW)),
+    'an unused tile carries no marker even with lastVia set — it has no age of its own to qualify');
+  // And the never-say-never rule survives the new word.
+  const markedMap = build(null, { state: { mcpUsage: payload({
+    tools: [selfTested].concat(FIXTURE.tools.slice(1)) }) } }).renderToolMapBody(NOW);
+  ok(!/\bnever\b/i.test(markedMap), 'the word "never" still appears nowhere in the rendered map');
+
+  // ── 11b  THE CLOCK LEAVES THE MARKER ALONE ─────────────────────────────
+  {
+    const child = { textContent: 'stale words' };
+    const el = {
+      getAttribute: () => new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+      querySelector: (sel) => (sel === '.mcp-age-words' ? child : null),
+      textContent: 'self-test · stale words',
+    };
+    build(null, { document: { querySelectorAll: () => [el] } }).tickMcpAges();
+    ok(child.textContent === formatAge(45 * 60),
+      'the tick recounts the age words inside a marked reading');
+    ok(el.textContent === 'self-test · stale words',
+      '…and never writes the wrapper, so the marker survives every tick');
+  }
+
+  // ── 11c  THE SIGNATURE MOVES ON `lastVia`, AND NOT ON `selfTestTotal` ──
+  {
+    const api = build(null, {});
+    const base = api.usageSignature(FIXTURE);
+    const viaMoved = api.usageSignature(payload({
+      tools: [{ ...FIXTURE.tools[0], lastVia: 'self-test' }].concat(FIXTURE.tools.slice(1)) }));
+    ok(base !== viaMoved,
+      'a tool whose marker changed moves the signature — otherwise a run would not repaint');
+    const totalMoved = api.usageSignature(payload({
+      tools: [{ ...FIXTURE.tools[0], selfTestTotal: 99 }].concat(FIXTURE.tools.slice(1)) }));
+    ok(base === totalMoved,
+      '`selfTestTotal` does NOT move it — the envelope carries it and nothing draws it, and an undrawn field may not cost a repaint');
+  }
+
+  // ── 11d  THE CONTROL: N IS READ, THE BUSY STATE IS REAL, NO title= ─────
+  {
+    const idle = build(null, { state: { mcpUsage: FIXTURE, mcpExerciseBusy: false } });
+    const html = idle.renderToolMapBody(NOW);
+    ok(/id="btn-mcp-exercise"/.test(html), 'the run control is on the block');
+    ok(/class="btn btn-secondary"[^>]*id="btn-mcp-exercise"/.test(html),
+      '…as a btn-secondary — it inspects rather than completes');
+    ok(html.includes('Test all ' + FIXTURE.tools.length + ' tools'),
+      `its label counts the catalogue it was handed ("Test all ${FIXTURE.tools.length} tools")`);
+    // CONTROL: the count is READ. A literal 24 would pass the line above.
+    const short = build(null, { state: { mcpUsage: payload({ tools: FIXTURE.tools.slice(0, 19) }) } });
+    ok(short.renderToolMapBody(NOW).includes('Test all 19 tools'),
+      'CONTROL: 19 tools in the payload → "Test all 19 tools" — the number is never typed');
+    // BUSY.
+    const busy = build(null, { state: { mcpUsage: FIXTURE, mcpExerciseBusy: true } });
+    const busyHtml = busy.renderToolMapBody(NOW);
+    ok(/id="btn-mcp-exercise" disabled/.test(busyHtml) || /disabled[^>]*id="btn-mcp-exercise"/.test(busyHtml),
+      'while a run is in flight the control is disabled');
+    ok(/Testing…/.test(busyHtml), '…and says so');
+    ok(!/Test all/.test(busyHtml), '…and does not also offer to start another');
+    ok(!/title="/.test(html), 'nothing the control adds is hover-only (no title=)');
+    // THE NOTE — one line, ≤ 13 visible words, and it is a `.tx-note` rather
+    // than a second lede (§3 of the design-system source allows one lede).
+    const note = /class="tx-note mcp-runner-note">([^<]*)</.exec(html);
+    ok(!!note, 'the control carries a one-line .tx-note');
+    const words = note ? note[1].replace(/\s+/g, ' ').trim().split(' ').filter(Boolean) : [];
+    ok(words.length > 0 && words.length <= 13,
+      `the note is ${words.length} visible words (≤ 13, the lede ceiling)`);
+    ok(/throwaway/.test(note ? note[1] : ''), '…and it says the copy is a throwaway');
+    // ONE lede on the block, still.
+    const block = idle.renderToolMap();
+    ok((block.match(/class="settings-block-lede"/g) || []).length <= 1,
+      'the block still carries at most ONE lede');
+    // THE EMPTY STATE OFFERS IT TOO — that is the case it exists for.
+    const nothingUsed = build(null, { state: {
+      mcpUsage: payload({ tools: UNUSED_READ.concat(UNUSED_WRITE) }) } });
+    const emptyHtml = nothingUsed.renderToolMapBody(NOW);
+    ok(/No calls recorded yet/.test(emptyHtml) && /id="btn-mcp-exercise"/.test(emptyHtml),
+      'a map with nothing used yet STILL offers the run — twenty dashed rings is the case the button exists for');
+    // …and a payload with no tools at all offers nothing, because there is no
+    // honest number to put in the label.
+    const noTools = build(null, { state: { mcpUsage: { present: false, tools: [], sessions: {} } } });
+    ok(!/btn-mcp-exercise/.test(noTools.renderToolMapBody(NOW)),
+      'a payload with zero tools offers no control — "Test all 0 tools" is not a thing to offer');
+  }
+
+  // ── 11e  THE OUTCOME IS A READING ON THE PAGE, NEVER A FOLD ────────────
+  {
+    const rows = (n, over) => Array.from({ length: n }, (_, i) =>
+      Object.assign({ tool: 't' + i, ok: true, refused: false, ms: 2, note: null }, (over && over(i)) || {}));
+    // Nothing before a run.
+    ok(!/mcp-runner-outcome/.test(build(null, { state: { mcpUsage: FIXTURE } }).renderToolMapBody(NOW)),
+      'before any run there is no outcome on the page');
+    // The clean run.
+    const clean = build(null, { state: { mcpUsage: FIXTURE, mcpExercise: {
+      ok: true, durationMs: 344, results: rows(24), covered: [], missing: [] } } });
+    const cleanHtml = clean.renderToolMapBody(NOW);
+    ok(/24 of 24 answered · 0 refused · 0\.3 s/.test(cleanHtml),
+      'a clean run reads "24 of 24 answered · 0 refused · 0.3 s"');
+    // THE OUTCOME ELEMENT ITSELF, not a slice of the page: the tiles below it
+    // carry `aria-hidden="true"` on every freshness dot, so a substring search
+    // over the remainder of the body reports "hidden" for a reason that has
+    // nothing to do with this element.
+    const outcomeOnly = clean.renderExerciseOutcome();
+    ok(outcomeOnly.length > 0 && !/<details/.test(outcomeOnly)
+       && !/\shidden(?=[\s=>])/.test(outcomeOnly) && !/aria-expanded/.test(outcomeOnly),
+      'the outcome is NOT folded and not hidden — v3.16.1 puts the outcome of a press on the never-fold list');
+    ok(/role="status"/.test(cleanHtml), '…and it is announced, so it is not a visual-only reading');
+    ok(!/mcp-runner-outcome-bad/.test(cleanHtml), '…and a clean run takes no failure treatment');
+    // A REFUSAL is an answer, and it is named with its reason.
+    const withRefusal = build(null, { state: { mcpUsage: FIXTURE, mcpExercise: {
+      ok: true, durationMs: 400, results: rows(24, (i) => (i === 14
+        ? { tool: 'scan_semantic_duplicates', ok: false, refused: true, note: 'Estimate failed: No LLM API key found.' }
+        : null)) } } });
+    const refHtml = withRefusal.renderToolMapBody(NOW);
+    ok(/24 of 24 answered · 1 refused/.test(refHtml),
+      'a refusal still counts as answered, and is counted separately');
+    ok(/scan_semantic_duplicates<\/code> refused — Estimate failed: No LLM API key found\./.test(refHtml),
+      '…and the tool is named with its reason, which is the useful half');
+    // A TOOL THAT DID NOT ANSWER is named. "23 of 24" alone is unactionable.
+    const withFailure = build(null, { state: { mcpUsage: FIXTURE, mcpExercise: {
+      ok: false, durationMs: 12000, results: rows(24, (i) => (i === 7
+        ? { tool: 'get_connected_nodes', ok: false, refused: false, note: 'no answer within the call budget' }
+        : null)) } } });
+    const failHtml = withFailure.renderToolMapBody(NOW);
+    ok(/23 of 24 answered/.test(failHtml), 'a tool that did not answer drops the count');
+    ok(/No answer from: get_connected_nodes/.test(failHtml),
+      '…and it is named — "23 of 24" with no name is a reading nobody can act on');
+    ok(/mcp-runner-outcome-bad/.test(failHtml), '…and the whole outcome reads as a failure');
+    // A TRANSPORT ERROR replaces the reading rather than sitting beside it.
+    const errored = build(null, { state: { mcpUsage: FIXTURE,
+      mcpExerciseError: 'The bridge could not be started: spawn ENOENT' } });
+    const errHtml = errored.renderToolMapBody(NOW);
+    ok(/settings-inline-error mcp-runner-outcome/.test(errHtml),
+      'a failed run shows the error in the inline-error chrome');
+    ok(/spawn ENOENT/.test(errHtml), '…with the reason the server gave, verbatim');
+    ok(!/answered ·/.test(errHtml), '…and no invented count beside it');
+    // A MALFORMED payload is not rendered as a reading.
+    const junk = build(null, { state: { mcpUsage: FIXTURE, mcpExercise: { ok: true, results: 'nope' } } });
+    ok(!/mcp-runner-outcome/.test(junk.renderToolMapBody(NOW)),
+      'a payload whose `results` is not an array draws no outcome at all');
+  }
+
+  // ── 11f  THE 30s REPAINT RE-BINDS THE CONTROL IT JUST DESTROYED ────────
+  // Without this the button is dead thirty seconds after the page loads, and
+  // nothing anywhere would say so.
+  {
+    const writes = [];
+    let sel = null;
+    const node = { get innerHTML() { return ''; }, set innerHTML(v) { writes.push({ sel, len: v.length }); } };
+    const doc = {
+      querySelector(s) { sel = s; return s.includes('mcp-tool-map') ? node : null; },
+      querySelectorAll() { return []; },
+    };
+    let rebinds = 0;
+    const state = { section: 'mcp', mcpUsage: FIXTURE, mcpUsageSig: 'stale', mcpUsageError: null };
+    const api = build([extractFunction(src, 'refreshMcpUsage')], {
+      state, document: doc,
+      fetchMcpUsage: async () => ({ ok: true, data: payload() }),
+      isCurrentMount: () => true,
+      wireExerciseControl: () => { rebinds++; },
+    }, ['refreshMcpUsage']);
+    await api.refreshMcpUsage(1);
+    ok(writes.length === 1, `the repaint still writes exactly one body (${writes.length})`);
+    ok(rebinds === 1,
+      `…and re-binds the run control it destroyed (${rebinds} re-binds) — the button lives inside the body it replaced`);
+  }
+
+  // ── 11g  THE PRIVACY ⓘ NAMES THE NEW FIELD ─────────────────────────────
+  {
+    const block = build(null, { state: { mcpUsage: FIXTURE } }).renderToolMap();
+    const info = block.slice(block.indexOf('settings-block-info'));
+    for (const claim of ['via', 'self-test', 'session start']) {
+      ok(info.includes(claim), `the ⓘ states: "${claim}"`);
+    }
+    ok(/never counts as a session start or a save/.test(info),
+      '…and says outright that a run is not a session start — the one reading a false mark would corrupt');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('12. The runner’s stylesheet: no new colour, no frozen px size');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const clean2 = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const cls of ['.mcp-runner-row', '.mcp-runner-note', '.mcp-runner-outcome',
+    '.mcp-runner-outcome-bad', '.mcp-runner-line', '.mcp-via-mark', '.mcp-via-sep']) {
+    ok(clean2.includes(cls + ' ') || clean2.includes(cls + ','),
+      `${cls} has a rule`);
+  }
+  // EVERY COLOUR IN THE NEW RULES IS AN EXISTING TOKEN — the claim "no new
+  // colour, so nothing new to measure" is asserted rather than left in prose.
+  const newRules = ['\\.mcp-runner-row', '\\.mcp-runner-note', '\\.mcp-runner-outcome',
+    '\\.mcp-runner-outcome-bad', '\\.mcp-runner-line', '\\.mcp-runner-bad',
+    '\\.mcp-via-mark', '\\.mcp-via-sep']
+    .map((c) => (clean2.match(new RegExp(c + '[^{]*\\{[^}]*\\}', 'g')) || []).join('\n'))
+    .join('\n');
+  ok(newRules.length > 200, 'CONTROL: the new rules were really located in the stylesheet');
+  // THE VALUE IS CAPTURED AND THEN TESTED, never matched with a lookahead
+  // after `\s*`: `\s*` backtracks to zero width, so `(?!var\()` passes on
+  // " var(--x)" and the guard reports every token as a literal. That first
+  // version DID fire — on thirteen perfectly good `var()` values — which is
+  // the kind of green-looking red that would have been silenced rather than
+  // fixed if it had gone the other way.
+  const literals = [...newRules.matchAll(/(?:color|background|border-color)\s*:([^;}]+)/g)]
+    .map((m) => m[1].trim())
+    .filter((v) => !v.startsWith('var('));
+  ok(literals.length === 0,
+    `no literal colour in the new rules (${literals.length}${literals.length ? ': ' + literals.join(' | ') : ''}) — every one is a token whose contrast is already measured`);
+  // CONTROL: the filter can tell a literal apart from a token.
+  ok([...'color: #fff;'.matchAll(/(?:color|background|border-color)\s*:([^;}]+)/g)]
+      .map((m) => m[1].trim()).filter((v) => !v.startsWith('var(')).length === 1,
+    'CONTROL: the same filter DOES flag a hex literal — the zero above is a measurement, not a dead regex');
+  const px = newRules.match(/font-size:\s*\d+px/g) || [];
+  ok(px.length === 0, `no frozen px font-size in the new rules (${px.length})`);
+  // The tokens NAMED, so a future edit that swaps one for an unmeasured
+  // colour has to move this line too.
+  ok(/var\(--text-3\)/.test(newRules), 'the marker uses --text-3, the pairing `.mcp-tool-uses` already carries on --surface');
+  ok(/var\(--danger-text\)/.test(newRules) && /var\(--danger-tint\)/.test(newRules),
+    'the failure arm uses the danger pair `.settings-inline-error` already uses on this surface');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

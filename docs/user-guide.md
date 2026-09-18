@@ -4168,6 +4168,39 @@ already asks an agent to hold itself to.
 If no bridge has ever written to the log, the block says so plainly: *"No calls recorded yet.
 The map fills as your agents use the bridge."*
 
+#### "Test all 24 tools" — lighting the map yourself
+
+A fresh install's map is twenty-four dashed rings, and there is nothing you can do about that by
+looking at it. Waiting for an agent to happen to call `get_backlinks` is not a plan either. So
+the block carries a button — **Test all 24 tools** (the number is read from the bridge, so it
+moves when the bridge does) — with one line beside it: *"Runs every tool against a throwaway
+copy — nothing of yours is touched."*
+
+That sentence is literal. The run builds a tiny fake knowledge base in your machine's temporary
+folder — a handful of pages, one deliberately broken link, one orphan, one summary with its
+source file, one project — starts the bridge pointed at **that**, calls all twenty-four tools
+against it once, and deletes the whole thing when it finishes. Your own domains folder is neither
+read nor written. It costs nothing: every tool is driven on a path that makes no AI call, so
+there is no spend and no key is needed.
+
+It takes a second or two. The outcome appears under the button and stays there — never folded
+away — as a plain reading: **"24 of 24 answered · 0 refused · 0.4 s"**. If a tool refuses, it is
+named with its reason; a refusal is usually a fact about your install rather than a fault, and
+the common one is the duplicate-page scan declining to price itself when no AI provider is
+connected. If a tool does not answer at all, it is named too, because *"23 of 24"* on its own is
+not something you can act on.
+
+Afterwards every tile carries a real reading — and each one is marked **`self-test`** before its
+age, like *"self-test · 2 min"*, so a tile the button lit is never mistaken for one your agents
+lit. The two readings above the tiles, *Last session start* and *Last save*, deliberately **do
+not move**: a self-test is not a session start and it did not write anybody's handoff, and those
+two lines are the only place in the app that answers "did my agent resume, and did it save". A
+button on a settings screen must not be able to make them say yes.
+
+Run it whenever you want to know the bridge works end to end — after connecting a client, after
+moving your knowledge folder, or after an update. Once real agent traffic arrives, those tiles
+lose the `self-test` mark on their own, because the mark describes the most recent call.
+
 ### Knowledge base folder
 
 **Settings → Knowledge base** is one unnumbered block, **Vault folder** — there

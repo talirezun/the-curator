@@ -118,8 +118,13 @@ await settle();
 let lines = readLines();
 eq(lines.length, 1, 'one call wrote exactly one line');
 let rec = JSON.parse(lines[0]);
-eq(Object.keys(rec).join(','), usage.LINE_KEYS.join(','),
+eq(Object.keys(rec).join(','), usage.LINE_KEYS_ALWAYS.join(','),
   'the line carries EXACTLY ts,tool,domain,ok,refused,ms — in that order');
+// `via` (v3.61.0) is the ONE optional key and is ABSENT unless the app's own
+// self-test run asked for it. Absent, never `via: null`: a line written by
+// this version and a line written by v3.60.0 are byte-comparable, which is
+// what lets the map read an old log without a migration.
+ok(!('via' in rec), 'and no `via` key on an ordinary call — absent, not null');
 eq(rec.tool, 'list_domains', 'the tool name is recorded');
 eq(rec.ok, true, 'a successful call records ok:true');
 eq(rec.refused, false, '…and refused:false');
@@ -203,11 +208,23 @@ eq(rec.refused, false, '…and refused:false — a throw is not a refusal');
 ok(!readLines()[0].includes('secret-detail'), 'the error message is NOT in the log');
 
 // (f) buildUsageLine directly — the size proof at the caps, not just in practice.
+// The WORST line the caps allow, and it must include `via` — which is why
+// v3.61.0 narrowed TOOL_NAME_RE from 40 characters to 32: at 40 the worst line
+// with `via` came to 201 bytes and the ⓘ's "under 200 bytes however large the
+// call was" would have become false.
 const maxLine = usage.buildUsageLine(
-  { tool: 'a'.repeat(40), domain: 'b'.repeat(48), ok: false, refused: true, ms: 86_400_000 },
+  { tool: 'a'.repeat(32), domain: 'b'.repeat(48), ok: false, refused: true, ms: 86_400_000, via: 'self-test' },
   '2026-09-18T12:34:56.789Z');
 ok(Buffer.byteLength(maxLine, 'utf8') < usage.MAX_LINE_BYTES,
-  `the WORST line the caps allow is ${Buffer.byteLength(maxLine, 'utf8')} bytes (< ${usage.MAX_LINE_BYTES})`);
+  `the WORST line the caps allow — with \`via\` — is ${Buffer.byteLength(maxLine, 'utf8')} bytes (< ${usage.MAX_LINE_BYTES})`);
+eq(JSON.parse(maxLine).via, 'self-test', '…and that worst line really does carry via');
+eq(JSON.parse(usage.buildUsageLine({ tool: 'a'.repeat(33), ms: 1 }, 'T')).tool, 'unknown',
+  'a 33-character tool name is over the bound and is logged as "unknown" (the bound is what makes the size a proof)');
+eq(JSON.parse(usage.buildUsageLine({ tool: 'a'.repeat(32), ms: 1 }, 'T')).tool, 'a'.repeat(32),
+  'CONTROL: 32 characters is accepted — the narrowing is a bound, not an off-by-one');
+eq(JSON.parse(usage.buildUsageLine({ tool: 'scan_semantic_duplicates', ms: 1 }, 'T')).tool,
+  'scan_semantic_duplicates',
+  'CONTROL: the longest REAL tool name (24) is comfortably inside it');
 eq(JSON.parse(usage.buildUsageLine({ tool: 'get node', ms: -5 }, 'T')).tool, 'unknown',
   'a tool name with a space is not a tool name');
 eq(JSON.parse(usage.buildUsageLine({ tool: 'x', ms: Infinity }, 'T')).ms, 0,
@@ -353,8 +370,9 @@ eq(body.sessions.lastSaveAt, ago(60 * 1000), 'the two session readings are forwa
 // below, not throw a TypeError and take §6 and §7 down with it.
 const rowFor = (n) => body.tools.find(t => t.name === n) ?? {};
 eq(JSON.stringify(Object.keys(rowFor('search_wiki')).sort()),
-  JSON.stringify(['count7d', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'mutates', 'name', 'purpose', 'refusedTotal'].sort()),
-  'every row carries exactly the nine contracted fields');
+  JSON.stringify(['count7d', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
+    'mutates', 'name', 'purpose', 'refusedTotal', 'selfTestTotal'].sort()),
+  'every row carries exactly the eleven contracted fields (v3.61.0 added lastVia + selfTestTotal)');
 eq(rowFor('search_wiki').countTotal, 4, 'a used tool carries its counts');
 eq(rowFor('get_node').lastUsedAt, null, 'an unused tool reports lastUsedAt: null…');
 eq(rowFor('get_node').countTotal, 0, '…with zero counts — never omitted from the map');
@@ -512,6 +530,182 @@ ok(poison.length === 0,
     : `NON-JSON ON STDOUT — src/brain/mcp-usage.js is now on the MCP import graph; a console.log there reaches Claude Desktop as "Unexpected token …". First: ${JSON.stringify(poison[0].slice(0, 160))}`);
 eq(Buffer.byteLength(stderrText, 'utf8'), 0,
   stderrText ? `stderr carried: ${JSON.stringify(stderrText.slice(0, 200))}` : 'stderr is empty — a healthy log says nothing');
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8  `via` — the one optional key, the literal, and the session gate');
+// ═══════════════════════════════════════════════════════════════════════════
+// v3.61.0. The app's "Test all N tools" run marks every line it causes, so a
+// tile lit by the button is never read as agent use. Two things can go wrong
+// and both are silent:
+//
+//   1. A STRING FROM AN ENVIRONMENT VARIABLE REACHING THE FILE. `via` arrives
+//      as `CURATOR_MCP_VIA` on the child, and an env var is a string somebody
+//      supplied. The only value this module may ever write is the exact
+//      literal — everything else leaves the field absent.
+//   2. A SELF-TEST MOVING THE SESSION STRIP. The run CALLS
+//      get_project_context and save_working_state. If those lines counted,
+//      "Last session start · 2 min" would be true of a button on the Settings
+//      screen — a false reading on the one strip the memory layer exists for.
+
+// ── 8a  THE LINE: absent by default, the literal or nothing ───────────────
+{
+  eq(usage.LINE_KEYS.join(','), 'ts,tool,domain,ok,refused,ms,via',
+    'LINE_KEYS names `via` last — the optional key is emitted after the six');
+  eq(usage.LINE_KEYS_ALWAYS.join(','), 'ts,tool,domain,ok,refused,ms',
+    'LINE_KEYS_ALWAYS is the six every line carries');
+  eq(usage.VIA_SELF_TEST, 'self-test', 'the literal is "self-test"');
+  eq(usage.VIA_ENV_VAR, 'CURATOR_MCP_VIA', 'the environment variable is CURATOR_MCP_VIA');
+
+  const plain = JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3 }, 'T'));
+  ok(!('via' in plain), 'no `via` argument → the key is ABSENT, not null');
+  eq(Object.keys(plain).join(','), usage.LINE_KEYS_ALWAYS.join(','),
+    '…so the line is byte-comparable with every line v3.60.0 wrote');
+  eq(JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3, via: 'self-test' }, 'T')).via,
+    'self-test', 'the literal is recorded');
+  eq(Object.keys(JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3, via: 'self-test' }, 'T'))).join(','),
+    usage.LINE_KEYS.join(','), '…last, after the six');
+  // NOT A PATTERN. Every one of these is a string somebody could put in an
+  // environment variable, and none of them may reach the file.
+  for (const junk of ['agent', 'Self-Test', 'SELF-TEST', 'self-test ', ' self-test',
+    'self-test; rm -rf /', 'x'.repeat(10 * 1024), true, 1, {}, [], null, undefined]) {
+    const line = usage.buildUsageLine({ tool: 'get_node', ms: 1, via: junk }, 'T');
+    ok(!('via' in JSON.parse(line)),
+      `via=${JSON.stringify(junk === undefined ? 'undefined' : junk).slice(0, 28)} is not the literal → absent`);
+    ok(Buffer.byteLength(line, 'utf8') < usage.MAX_LINE_BYTES,
+      `…and the line stays under the ${usage.MAX_LINE_BYTES}-byte ceiling`);
+  }
+  eq(usage.normaliseVia('self-test'), 'self-test', 'normaliseVia passes the literal');
+  eq(usage.normaliseVia('agent'), null, '…and nulls everything else');
+  // The env seam is read PER CALL, never snapshotted at import (the M1 rule).
+  eq(usage.viaFromEnv({ CURATOR_MCP_VIA: 'self-test' }), 'self-test', 'viaFromEnv reads the variable');
+  eq(usage.viaFromEnv({ CURATOR_MCP_VIA: 'anything-else' }), null, '…and refuses any other value');
+  eq(usage.viaFromEnv({}), null, '…and an absent variable is null');
+}
+
+// ── 8b  THE ENVIRONMENT DRIVES IT, THROUGH THE REAL DISPATCH ─────────────
+// The dispatch handler passes no `via` — it knows which tool ran, and only the
+// process that SPAWNED this one knows why. So the value has to come off the
+// environment inside appendUsage, and this drives the real handler to prove it.
+{
+  clearLog();
+  const prev = process.env.CURATOR_MCP_VIA;
+  process.env.CURATOR_MCP_VIA = 'self-test';
+  try {
+    await call('list_domains', {});
+    await settle();
+    const rec = JSON.parse(readLines()[0]);
+    eq(rec.via, 'self-test',
+      'with CURATOR_MCP_VIA=self-test in the environment, the real dispatch handler\'s line carries it');
+    // A junk value in the same variable must not reach the file.
+    clearLog();
+    process.env.CURATOR_MCP_VIA = 'pretend-i-am-an-agent';
+    await call('list_domains', {});
+    await settle();
+    ok(!('via' in JSON.parse(readLines()[0])),
+      'CONTROL: a junk value in the SAME variable leaves the field absent');
+    clearLog();
+    delete process.env.CURATOR_MCP_VIA;
+    await call('list_domains', {});
+    await settle();
+    ok(!('via' in JSON.parse(readLines()[0])),
+      'CONTROL: with the variable unset the field is absent — this is the ordinary MCP client');
+  } finally {
+    if (prev === undefined) delete process.env.CURATOR_MCP_VIA;
+    else process.env.CURATOR_MCP_VIA = prev;
+  }
+}
+
+// ── 8c  THE BOOTSTRAP EXCLUSION, AND ITS CONTROL ─────────────────────────
+// Two logs whose lines are IDENTICAL but for `via`. The session readings must
+// be opposite, or the exclusion is not doing anything.
+{
+  const NOW2 = Date.parse('2026-09-18T12:00:00.000Z');
+  const at = (min) => new Date(NOW2 - min * 60_000).toISOString();
+  const seed = (via) => [
+    { ts: at(30), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 9, ...(via ? { via } : {}) },
+    { ts: at(20), tool: 'get_working_state', domain: DOM, ok: true, refused: false, ms: 4, ...(via ? { via } : {}) },
+    { ts: at(10), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 12, ...(via ? { via } : {}) },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+  clearLog();
+  writeFileSync(LOG, seed(null), 'utf8');
+  usage.__clearUsageCache();
+  const plainAgg = await usage.readUsage({ now: NOW2, noCache: true });
+  eq(plainAgg.sessions.lastBootstrapAt, at(20),
+    'CONTROL (unmarked): lastBootstrapAt is the newest of the two bootstrap tools');
+  eq(plainAgg.sessions.lastSaveAt, at(10), 'CONTROL (unmarked): lastSaveAt is the save');
+  eq(plainAgg.byTool.get_project_context.lastVia, null, 'CONTROL: lastVia is null');
+  eq(plainAgg.byTool.get_project_context.selfTestTotal, 0, 'CONTROL: selfTestTotal is zero');
+
+  clearLog();
+  writeFileSync(LOG, seed('self-test'), 'utf8');
+  usage.__clearUsageCache();
+  const viaAgg = await usage.readUsage({ now: NOW2, noCache: true });
+  eq(viaAgg.sessions.lastBootstrapAt, null,
+    'THE GATE: the SAME three calls marked self-test leave lastBootstrapAt null');
+  eq(viaAgg.sessions.lastSaveAt, null, '…and lastSaveAt null');
+  // …while everything the tile shows is still counted, because the calls did
+  // happen. The gate is about the SESSION strip only.
+  eq(viaAgg.byTool.get_project_context.countTotal, 1, 'the call is still counted per tool');
+  eq(viaAgg.byTool.get_project_context.lastUsedAt, at(30), '…with its real timestamp');
+  eq(viaAgg.byTool.get_project_context.lastVia, 'self-test', '…and marked on the tile');
+  eq(viaAgg.byTool.save_working_state.selfTestTotal, 1, '…and counted as a self-test');
+  eq(viaAgg.lineCount, 3, 'no line was dropped from the log by the gate');
+
+  // ── A MIXED LOG is the ordinary state of a machine whose owner presses the
+  // button: the AGENT's older calls must still drive the strip.
+  clearLog();
+  writeFileSync(LOG,
+    JSON.stringify({ ts: at(120), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 9 }) + '\n' +
+    JSON.stringify({ ts: at(110), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 9 }) + '\n' +
+    seed('self-test'), 'utf8');
+  usage.__clearUsageCache();
+  const mixed = await usage.readUsage({ now: NOW2, noCache: true });
+  eq(mixed.sessions.lastBootstrapAt, at(120),
+    'a mixed log reports the AGENT\'s two-hour-old bootstrap, not the run\'s ten-minute-old one');
+  eq(mixed.sessions.lastSaveAt, at(110), '…and the agent\'s save');
+  eq(mixed.byTool.get_project_context.lastVia, 'self-test',
+    '…while the TILE shows self-test, because the newest call really was one');
+  eq(mixed.byTool.get_project_context.countTotal, 2, '…and both calls are counted');
+  eq(mixed.byTool.get_project_context.selfTestTotal, 1, '…one of them as a self-test');
+
+  // A via value that is NOT the literal on disk (a hand edit, a future
+  // version) is normalised on READ, so it cannot silently suppress a session.
+  clearLog();
+  writeFileSync(LOG,
+    JSON.stringify({ ts: at(5), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 9, via: 'agent' }) + '\n',
+    'utf8');
+  usage.__clearUsageCache();
+  const junkVia = await usage.readUsage({ now: NOW2, noCache: true });
+  eq(junkVia.sessions.lastBootstrapAt, at(5),
+    'a line whose `via` is not the literal still counts as a session start — the gate keys on the literal, on read as well as write');
+  eq(junkVia.byTool.get_project_context.lastVia, null, '…and the tile shows no marker for it');
+}
+
+// ── 8d  THE ROUTE FORWARDS BOTH NEW FIELDS ───────────────────────────────
+{
+  clearLog();
+  const NOW3 = Date.parse('2026-09-18T12:00:00.000Z');
+  writeFileSync(LOG, [
+    { ts: new Date(NOW3 - 600_000).toISOString(), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 5 },
+    { ts: new Date(NOW3 - 60_000).toISOString(), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 5, via: 'self-test' },
+    { ts: new Date(NOW3 - 30_000).toISOString(), tool: 'get_tags', domain: DOM, ok: true, refused: false, ms: 5 },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+  const routes2 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  let body2 = null;
+  await routes2.usageHandler({}, { json: (o) => { body2 = o; } });
+  const r = (n) => body2.tools.find((t) => t.name === n) || {};
+  eq(r('search_wiki').lastVia, 'self-test',
+    'a tool whose newest call was a self-test reaches the view marked');
+  eq(r('search_wiki').selfTestTotal, 1, '…with one of its two calls attributed to the run');
+  eq(r('search_wiki').countTotal, 2, '…and both still counted');
+  eq(r('get_tags').lastVia, null, 'a tool an agent called last reaches the view unmarked');
+  eq(r('get_tags').selfTestTotal, 0, '…with a zero self-test count');
+  eq(r('get_node').lastVia, null, 'an unused tool reports lastVia: null');
+  eq(r('get_node').selfTestTotal, 0, '…and selfTestTotal: 0 — never omitted');
+}
 
 // ── Cleanup ────────────────────────────────────────────────────────────────
 try { if (CHILD_PID && !child.killed) process.kill(CHILD_PID, 'SIGKILL'); } catch { /* gone */ }

@@ -11,9 +11,10 @@
  *
  *   {"ts":"…","tool":"get_node","domain":"articles","ok":true,"refused":false,"ms":12}
  *
- * Those six keys, in that order, and nothing else — EVER. No arguments, no
- * results, no file paths, no error text, no user prose. Two reasons, and the
- * second is the one that binds:
+ * Those six keys, in that order, plus ONE optional seventh — `via` (v3.61.0),
+ * whose only legal value is the literal `"self-test"` — and nothing else, EVER.
+ * No arguments, no results, no file paths, no error text, no user prose. Two
+ * reasons, and the second is the one that binds:
  *
  *   1. A search query, a slug, a conversation title or a handoff body is the
  *      user's content. This file is not a place for content. `search_wiki`'s
@@ -29,6 +30,24 @@
  * `"unknown"` otherwise — a caller can name any tool it likes over JSON-RPC,
  * and an unknown NAME is a user-supplied string. The domain is checked the
  * same way and dropped to `null` when it does not look like a slug.
+ *
+ * ── `via`, AND WHY IT IS A LITERAL RATHER THAN A STRING ──────────────────────
+ *
+ * `via: "self-test"` marks a line written by the app's own "Test all N tools"
+ * run (`src/brain/mcp-exercise.js`), so a tile lit by that run is never read as
+ * agent use. It arrives as the environment variable `CURATOR_MCP_VIA` on the
+ * child, and an environment variable is a string somebody supplied — so the
+ * ONLY value this module will ever write is the exact literal, matched with
+ * `===`. Anything else, including a 10 KB value, leaves the field ABSENT.
+ *
+ * ABSENT means "an MCP client", never "an agent": nothing in this file can know
+ * which client made a call, and a field that claimed to would be a fabrication.
+ *
+ * A self-test line is deliberately NOT counted toward
+ * `sessions.lastBootstrapAt` / `lastSaveAt`. A self-test is not a session
+ * start and did not save anyone's handoff, and those two readings are the one
+ * strip the whole memory layer exists for — a false reading there is worse than
+ * no reading.
  *
  * ── BEST-EFFORT, AND WHAT THAT COSTS ────────────────────────────────────────
  *
@@ -59,17 +78,41 @@ import { getMcpUsageLogPath } from './paths.js';
 /** Rotate at this size; one previous generation is kept as `<path>.1`. */
 export const MAX_LOG_BYTES = 1024 * 1024;
 
-/** The line's keys, in emission order. The guard compares against this array. */
-export const LINE_KEYS = ['ts', 'tool', 'domain', 'ok', 'refused', 'ms'];
+/**
+ * The line's keys, in emission order. The guard compares against this array.
+ *
+ * The first six are ALWAYS present. `via` is the one optional key and is
+ * emitted last, so a line without it is byte-identical to every line written
+ * before v3.61.0 — see LINE_KEYS_ALWAYS, which is what a reader should compare
+ * an ordinary line against.
+ */
+export const LINE_KEYS = ['ts', 'tool', 'domain', 'ok', 'refused', 'ms', 'via'];
+
+/** The six keys every line carries. `LINE_KEYS` minus the optional `via`. */
+export const LINE_KEYS_ALWAYS = LINE_KEYS.slice(0, 6);
+
+/** The only value `via` may ever hold. Matched with `===`, never a pattern. */
+export const VIA_SELF_TEST = 'self-test';
+
+/** The environment variable the app's exercise run sets on the MCP child. */
+export const VIA_ENV_VAR = 'CURATOR_MCP_VIA';
 
 /** Default recency window for `count7d`. */
 export const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * What a tool name may look like. Anything else is logged as `unknown`.
- * 40 characters: the longest real name is `scan_semantic_duplicates` at 24.
+ *
+ * 32 characters: the longest real name is `scan_semantic_duplicates` at 24, so
+ * this leaves eight characters of headroom for a tool nobody has written yet.
+ *
+ * It was 40 until v3.61.0, and the eight characters were given up to keep the
+ * 200-byte ceiling a PROOF once `via` joined the line (see MAX_LINE_BYTES).
+ * The trade is one-directional and cheap: a tool name over 32 characters is
+ * logged as `unknown` — which is already what happens to a name over 40, and
+ * to every name of any length that is not shaped like an identifier.
  */
-const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,39}$/;
+const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
 
 /**
  * What a domain slug may look like. Deliberately a LOCAL copy rather than an
@@ -81,12 +124,33 @@ const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,39}$/;
  * deliberate trade, and it is the only place this module loses information: a
  * domain whose slug is longer than 48 characters is recorded as `null` rather
  * than lengthening the line. Written out, the bound is what makes the size
- * ceiling a PROOF rather than a test result — 7 + 24 (ISO stamp) + 10 + 40
- * (tool) + 12 + 48 (domain) + 42 = 183 bytes, whatever a caller sends.
+ * ceiling a PROOF rather than a test result — see MAX_LINE_BYTES.
  */
 const DOMAIN_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/i;
 
-/** The proven ceiling on one line, before the newline. Pinned by the guard. */
+/**
+ * The proven ceiling on one line, before the newline. Pinned by the guard.
+ *
+ * Every variable part of a line is bounded, so this is arithmetic and not a
+ * measurement that happened to come out low:
+ *
+ *   {            1
+ *   "ts":"…"    31   (5 + a 26-byte quoted ISO stamp)
+ *   ,"tool":"…" 42   (8 + 2 quotes + 32, the TOOL_NAME_RE bound)
+ *   ,"domain":… 60   (10 + 2 quotes + 48, the DOMAIN_SLUG_RE bound)
+ *   ,"ok":false 11
+ *   ,"refused": 15
+ *   ,"ms":…     14   (6 + 8 digits, ms clamped at 86_400_000)
+ *   ,"via":"…"  18   (the literal, or the field is absent)
+ *   }            1
+ *                ───
+ *                193
+ *
+ * That is why TOOL_NAME_RE lost eight characters in v3.61.0: at the old bound
+ * of 40 the worst line with `via` came to 201 and this number would have had to
+ * move — and the app tells the user, in as many words, that a line stays under
+ * 200 bytes however large the call was.
+ */
 export const MAX_LINE_BYTES = 200;
 
 let _warnedThisProcess = false;
@@ -107,6 +171,28 @@ export function __resetUsageWarning() {
   _warnedThisProcess = false;
 }
 
+/**
+ * `via`, normalised to the one literal or to null.
+ *
+ * An `===` against the literal rather than a pattern: the value arrives from
+ * an environment variable, and the set of legal values has exactly one member.
+ * A pattern would be a place for a second member to be added without anyone
+ * deciding that a second member is allowed in a content-free file.
+ */
+export function normaliseVia(v) {
+  return v === VIA_SELF_TEST ? VIA_SELF_TEST : null;
+}
+
+/**
+ * Read `via` off a process environment. Re-read per call, never snapshotted at
+ * import: the same rule paths.js's getters follow, so a seam set after import
+ * still wins and a test does not depend on module load order.
+ */
+export function viaFromEnv(env) {
+  const e = env || (typeof process !== 'undefined' ? process.env : null);
+  return normaliseVia(e ? e[VIA_ENV_VAR] : null);
+}
+
 /** Build the one line this module will ever write. Total function — no throw. */
 export function buildUsageLine(entry, nowIso) {
   const e = entry || {};
@@ -117,14 +203,20 @@ export function buildUsageLine(entry, nowIso) {
   // Bounded so a broken clock cannot write an arbitrarily long number, which
   // is the only way a line could grow past the 200-byte ceiling the guard pins.
   ms = Math.min(Math.round(ms), 86_400_000);
-  return JSON.stringify({
+  const rec = {
     ts: nowIso || new Date().toISOString(),
     tool,
     domain,
     ok: e.ok === true,
     refused: e.refused === true,
     ms,
-  });
+  };
+  // LAST, and only when it is the literal. Assigning `via: null` unconditionally
+  // would change every ordinary line's key set for no reader's benefit, and the
+  // guard compares that set exactly.
+  const via = normaliseVia(e.via);
+  if (via) rec.via = via;
+  return JSON.stringify(rec);
 }
 
 /**
@@ -135,7 +227,12 @@ export function buildUsageLine(entry, nowIso) {
 export async function appendUsage(entry) {
   try {
     const file = getMcpUsageLogPath();
-    const line = `${buildUsageLine(entry)}\n`;
+    // `via` comes from the CHILD'S ENVIRONMENT, not from the dispatch handler:
+    // the handler knows which tool ran, and only the process that spawned this
+    // one knows why. An entry may still carry it (that is the in-process seam
+    // the suites drive) and an explicit value wins.
+    const via = entry && entry.via !== undefined ? entry.via : viaFromEnv();
+    const line = `${buildUsageLine({ ...(entry || {}), via })}\n`;
     // Rotate BEFORE appending, so the new line always lands in a file under
     // the cap. Statting per call rather than tracking the size in memory: the
     // app and the MCP child are separate processes over one file, and an
@@ -185,6 +282,10 @@ function parseLines(text) {
       ok: rec.ok === true,
       refused: rec.refused === true,
       ms: Number.isFinite(rec.ms) ? rec.ms : 0,
+      // Normalised on READ as well as on write. A line on disk can have been
+      // hand-edited or written by a future version, and everything downstream
+      // of here treats `via` as a two-state fact.
+      via: normaliseVia(rec.via),
     });
   }
   return { records: out, malformed };
@@ -195,8 +296,9 @@ function parseLines(text) {
  *
  *   {
  *     present, path, logBytes, logStartedAt, lineCount, malformedLines,
- *     byTool: { <name>: {lastUsedAt, lastOk, count7d, countTotal, refusedTotal} },
- *     sessions: { lastBootstrapAt, lastSaveAt },
+ *     byTool: { <name>: {lastUsedAt, lastOk, lastVia, count7d, countTotal,
+ *                        refusedTotal, selfTestTotal} },
+ *     sessions: { lastBootstrapAt, lastSaveAt },   // self-test lines EXCLUDED
  *   }
  *
  * `logStartedAt` comes from the first parseable line of the OLDEST file
@@ -251,16 +353,29 @@ export async function readUsage(opts = {}) {
     let agg = byTool[r.tool];
     if (!agg) {
       agg = byTool[r.tool] = {
-        lastUsedAt: null, lastOk: null, count7d: 0, countTotal: 0, refusedTotal: 0,
+        lastUsedAt: null, lastOk: null, lastVia: null,
+        count7d: 0, countTotal: 0, refusedTotal: 0, selfTestTotal: 0,
       };
     }
     agg.countTotal++;
     if (r.refused) agg.refusedTotal++;
+    if (r.via === VIA_SELF_TEST) agg.selfTestTotal++;
     if (r.at >= since) agg.count7d++;
     if (agg.lastUsedAt === null || r.at >= Date.parse(agg.lastUsedAt)) {
       agg.lastUsedAt = r.ts;
       agg.lastOk = r.ok;
+      // The NEWEST line's `via`, which is what the tile's marker reads: the
+      // question a marker answers is "is the reading above it mine or my
+      // agent's", and the reading above it is the newest call.
+      agg.lastVia = r.via;
     }
+    // ── THE TWO SESSION READINGS SKIP SELF-TEST LINES ──────────────────────
+    // A self-test is not a session start and saved nobody's handoff. Counting
+    // it here would make "Last session start · 2 min" true of a button the
+    // user pressed on this screen, on the one strip the memory layer exists
+    // for — a false reading is worse than no reading (v3.15.0's rule, and
+    // v3.60.0 built this strip precisely to answer the question honestly).
+    if (r.via === VIA_SELF_TEST) continue;
     // A session STARTED when an agent bootstrapped its context. Either tool
     // does it — get_project_context is v3.59.0's one-call bootstrap and
     // get_working_state was the way before it, and a user on an older skill

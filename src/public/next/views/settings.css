@@ -2697,6 +2697,55 @@
    NOTHING HERE IS PRESSABLE, so nothing carries the press family. A tile is a
    reading; there is no drill-down this release. */
 
+/* ── THE RUN CONTROL, ITS NOTE AND ITS OUTCOME (v3.61.0) ──────────────────
+   FIRST IN THE BODY, because on a fresh install the rest of the block is
+   twenty-four dashed rings and this button is the only thing that can change
+   that.
+
+   The button is `btn-secondary` at the body's own md size — it INSPECTS rather
+   than completes, which is the taxonomy's own test (the note above `.btn` in
+   shell.css) and the same call block ① makes for "Run self-test".
+
+   NO NEW COLOUR ANYWHERE IN THESE RULES. The outcome's ink is `--text`, its
+   rows `--text-2`, its failure arm the `--danger-*` pair the inline error
+   already uses on this surface, and the `self-test` marker is `--text-3` — the
+   exact pairing `.mcp-tool-uses` has carried on `--surface` since v3.60.0. So
+   there is nothing here whose contrast has not already been measured. */
+.mcp-runner-row { margin-top: 0; }
+/* The note's own top margin comes from `.tx-note`; this only closes the gap to
+   the button it qualifies, which the shared value opens to --space-4. */
+.mcp-runner-note { margin-top: var(--space-2); }
+
+/* THE OUTCOME IS NEVER FOLDED (v3.16.1: the outcome of something the user just
+   pressed is on the never-fold list). A sunken well rather than a card: it is
+   a reading about the block it sits in, not a thing of its own. */
+.mcp-runner-outcome {
+  margin: var(--space-5) 0 var(--space-8);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+/* A run with a tool that did not answer is a real failure and reads as one —
+   the same danger pair `.settings-inline-error` uses two hundred lines above,
+   so the treatment is one decision rather than two. */
+.mcp-runner-outcome-bad {
+  border-color: var(--danger-text);
+  background: var(--danger-tint);
+}
+.mcp-runner-line + .mcp-runner-line { margin-top: var(--space-2); }
+.mcp-runner-line > strong { color: var(--text); font-weight: var(--weight-medium); }
+.mcp-runner-bad { color: var(--danger-text); }
+/* An error the outcome renders INSTEAD of a reading keeps the inline-error
+   chrome; it only needs the rhythm the well has. */
+.settings-inline-error.mcp-runner-outcome {
+  background: var(--danger-tint);
+  border-color: var(--danger-text);
+  color: var(--danger-text);
+}
+
 .mcp-session-strip {
   display: flex;
   flex-wrap: wrap;
@@ -2829,6 +2878,21 @@
 /* The separator and the age are ONE clause and never break apart: "began ·"
    at the end of a line reads as a sentence that lost its ending. */
 .mcp-age-tail { white-space: nowrap; }
+/* ── THE `self-test` MARKER (v3.61.0) ────────────────────────────────────
+   Inside the reading, before the age: "self-test · 2 min". A word rather than
+   a chip, because it is not a flag on the tool — it says whose call produced
+   the age standing next to it, and a chip beside a chip (`writes` is already
+   on seven tiles) would read as a second property of the tool itself.
+
+   `--text-3` on `--surface`, which is EXACTLY `.mcp-tool-uses`'s pairing three
+   rules above — so no contrast pair here is new and none needed measuring.
+   It is one rung dimmer than the age it qualifies, which is the right
+   subordination: the reading is the fact, the marker is its provenance. */
+.mcp-via-mark {
+  font: var(--type-mono);
+  color: var(--text-3);
+}
+.mcp-via-sep { color: var(--text-3); }
 .mcp-tool-uses { color: var(--text-3); }
 /* "not used since this log began · 4 days ago" — the phrase and the log's own
    age are one sentence, so the age is NOT dimmed further than the phrase. */

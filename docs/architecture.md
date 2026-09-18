@@ -2000,6 +2000,57 @@ Usage log (v3.60.0, every tool call, read or write):
       Read back by GET /api/mcp/usage (src/routes/mcp.js) for Settings →
       MCP bridge → The tool map; see docs/api-reference.md for the shape.
 
+      v3.61.0 adds ONE optional seventh field, `via`, whose only legal value
+      is the literal 'self-test'. It comes off the CHILD'S ENVIRONMENT
+      (CURATOR_MCP_VIA), not from the dispatch handler: the handler knows
+      which tool ran, and only the process that SPAWNED it knows why. Matched
+      with === rather than a pattern, because an environment variable is a
+      string somebody supplied and this file holds no user strings; anything
+      else leaves the field ABSENT, so an ordinary line is byte-identical to
+      every line v3.60.0 wrote. A marked line NEVER counts toward
+      sessions.lastBootstrapAt / lastSaveAt — a self-test is not a session
+      start and saved nobody's handoff, and those two readings are the one
+      strip the memory layer exists for. Paying for the field cost eight
+      characters of the tool-name bound (40 → 32; the longest real name is 24)
+      so the 200-byte line ceiling stays arithmetic rather than a measurement.
+
+Exercising every tool (v3.61.0):
+      src/brain/mcp-exercise.js — exerciseAllTools({domainsDir?, userDataDir?,
+      via?, timeoutMs?}) → [{tool, ok, refused, ms, note}] + {covered, missing}
+      ONE driver, TWO callers that must not be allowed to disagree:
+        scripts/test-mcp-all-tools.js  → an isolated user-data dir; pins that
+                                         every catalogue tool answered.
+        POST /api/mcp/exercise         → the app's "Test all N tools" button;
+                                         the REAL log, via: 'self-test'.
+      A second implementation for the button would be v3.6.1's shape exactly
+      (the self-test route built its own launch line, drifted from the
+      prescribed one, and passed against the wrong folder), so the launch
+      line is buildCuratorEntry's — imported DYNAMICALLY from
+      src/routes/mcp.js, because that file imports this one to register the
+      route and an injected builder parameter would be a seam through which a
+      second launch line could arrive.
+      It seeds a throwaway fixture domain under an OS temp dir (pages with one
+      auto-fixable broken link, one orphan, one summary with its raw source,
+      and the state tiers written by the run's own save tools before its read
+      tools reach them), pins the child to it with BOTH --domains-path (rung 2
+      of mcp/storage/local.js, which serves reads) and CURATOR_TEST_DOMAINS_DIR
+      (the only rung of config.js's getDomainsDir() above .curator-config.json,
+      and MCP writes resolve through that one), and removes the fixture in
+      `finally`. The env var carries TEST in its name and this is shipping
+      code: stated rather than hidden, because DOMAINS_PATH LOSES to a
+      configured domainsPath and would let the child write into the user's real
+      wiki. Provider and GitHub credentials are stripped from the child.
+      ZERO PAID CALLS: every tool is driven on an arm that makes no LLM or
+      network request — scan_semantic_duplicates through its estimate_only arm
+      — and the suite proves it with a --import network spy in the child,
+      once with credentials stripped and once with a fake-shaped key present,
+      because "no key was configured" is a weaker claim than "no call was
+      made".
+      Two writes land outside the fixture in the app's run and only there: the
+      usage log itself, which is the point, and <user-data>/.curator-install-id
+      + .curator-machine-id, minted by save_working_state if absent —
+      idempotent, and byte-for-byte what a first real handoff would create.
+
 ---
 
 ## Module reference
