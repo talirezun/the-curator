@@ -518,7 +518,7 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 | Door | Lands you on | The steps you then get |
 |---|---|---|
 | **Build a second brain** | **Domains** | 1 · Add an AI key → 2 · Point at a wiki, or start one → 3 · Ingest your first source |
-| **Give your coding agents memory** | **Agent memory** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your coding agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat")* |
+| **Give your coding agents memory** | **Agent memory** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your coding agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat. Agent memory and the bridge work without one.")* |
 
 **Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give a coding agent memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
 

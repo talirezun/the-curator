@@ -2449,33 +2449,41 @@ project — which is why the deprecated alias below exists and why index rows no
 
 ### The route table, and why its order is a correctness property
 
+**The order below is the router's actual registration order** — read it top to bottom rather than
+by HTTP verb or resource grouping, because that order is what decides which literal wins a
+collision (see below the table).
+
 | Method | Path | What it does |
 |---|---|---|
 | `GET` | `/api/memory` | Every project in every domain, newest first |
+| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0.** Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
 | `GET` | `/api/memory/:domain/projects` | One domain's projects |
 | `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
 | `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
-| `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
-| `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
-| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0.** Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
-| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
+| `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
 | `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole |
 | `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Remove one curator-owned document, behind a name confirmation |
-| `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
+| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
+| `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
+| `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
 
 A domain slug and a project slug are drawn from the same alphabet, so `/api/memory/lumina` is
 genuinely ambiguous on its face. Express matches by **segment count**, which is what makes the
 disambiguation structural rather than a heuristic. Two literals collide with a legal project slug:
 `projects` itself, which would shadow `GET /:domain/:project` for a project of that name, and — new
 in v3.61.0 — `repo-scan`, which has the same one-segment-past-`/api/memory/` shape as the deprecated
-`GET /:project` alias. Both are **refused as a project name** by the create and rename routes
-(alongside `project.md` and `journal.jsonl`), and `repo-scan` additionally joins the store's own
-reserved-name set so a project directory of that name created out of band cannot be minted by
-`initFoundations` either. A project directory named `projects` or `repo-scan` created out of band is
-still listed and still readable by every MCP tool; only its own detail URL on this router is
-unreachable. That is a real, small, permanent hole, and hiding it would be worse than the hole.
+`GET /:project` alias. **Both are refused as a project name by this router's own
+`RESERVED_PROJECT_NAMES`** (`projects`, `repo-scan`, `project.md`, `journal.jsonl`, `foundations`)
+— a set this file, not the store, maintains, precisely because `projects` and `repo-scan` are
+collisions this ROUTER's URL shape creates and the store has no reason to know about. **The store
+keeps its own, narrower set** (`project.md`, `journal.jsonl`, `current.md`, `foundations` — the
+names of its own on-disk entries), so a project directory literally named `repo-scan` created out
+of band (by an agent writing state directly, say) is refused by the router's create/rename routes
+but not by the store's `initFoundations` — it would still be listed and still readable by every MCP
+tool; only its own detail URL on this router is unreachable. That is a real, small, permanent hole,
+and hiding it would be worse than the hole.
 
 ### Which tiers the app may write
 
@@ -2736,8 +2744,19 @@ work-stream or a journal.
 
 ```json
 { "ok": true, "domain": "acme", "project": "lumina", "created": true,
-  "foundations": { "…": "…the wire shape, or null…" }, "foundationsError": null }
+  "markerLine": "acme/lumina",
+  "foundations": { "…": "…the wire shape (`foundationsWire()`), or null…" },
+  "refresh": { "…": "…the mirror step's own report (`refreshWire()`), or null…" },
+  "foundationsError": null }
 ```
+
+`markerLine` is what goes into a `.curator-project` file at a coding agent's repository root so it
+knows which project to resume — always present, even when `foundations` was never requested, and
+composed by the store with a `"<domain>/<project>"` fallback so an older store can never make the
+field absent. `foundations` is `null` unless the `foundations` body field was sent AND the tier-0
+step succeeded; `refresh` is the mirror step's own report (only present when `foundations.files` was
+non-empty on the `repo` arm), `null` otherwise; `foundationsError` is `{reason, message}` when the
+tier-0 step was requested and failed — see below.
 
 | Status | Condition |
 |--------|-----------|
@@ -2815,7 +2834,7 @@ went, but disabled at the picker.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `invalid_root` — `root` missing, not absolute, or resolves outside itself (a `..`-shaped escape) |
+| `400` | `invalid_root` — `root` is missing, empty, not a string, contains a NUL byte, or is not an absolute path |
 | `409` | `repo_unreachable` — the path does not exist, or is not readable, from this machine |
 
 ### POST /api/memory/:domain/:project/foundations/init
@@ -2846,11 +2865,18 @@ Foundations block.
 ```json
 {
   "ok": true, "domain": "acme", "project": "lumina",
+  "ownership": "curator",
   "foundations": { "…": "…the wire shape…" },
   "seeded": ["architecture.md", "decisions.md", "conventions.md", "roadmap.md"],
-  "refresh": null
+  "refresh": null,
+  "notes": []
 }
 ```
+
+`ownership` echoes back the decision just recorded (`'repo'` or `'curator'`) — the one field a
+caller needs to confirm without re-reading the index. `notes` is the store's own disclosure array
+(for example, a budget already exceeded by the seeded skeletons) and is always an array, never
+omitted.
 
 `seeded` lists the skeleton slugs actually written (empty on the `repo` arm, or on `curator` with
 `seed: false`). `refresh` carries the mirror step's own result (`{ refreshed, added, missing,
@@ -2864,7 +2890,7 @@ choice; the pre-v3.61.0 refresh route's "empty work list is a no-op" behaviour i
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `invalid_ownership` (missing or unrecognised value), `ownership_set` (a manifest already exists for this project — **even one with zero documents in it** — ownership is decided once), `root_not_allowed` (`repoRoot` supplied on the `curator` arm) |
+| `400` | `invalid_ownership` (missing or unrecognised value), `ownership_set` (a manifest already exists for this project — **even one with zero documents in it** — ownership is decided once), `root_not_allowed` (`repoRoot` supplied on the `curator` arm), `manifest_unreadable` (a manifest exists but this store cannot parse it — fix or remove `foundations/manifest.json` first) |
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | Unknown domain or project |
 | `409` | `repo_unreachable` — neither `repoRoot` nor a reachable checkout can be read from this machine |
@@ -2882,9 +2908,14 @@ document** (empty editor or **Choose a file…**) for a new one.
 { "text": "# Architecture\n…", "title": "Architecture", "role": "architecture" }
 ```
 
-`title` and `role` are required when **creating** a document (there is nothing to default them
-from) and optional when replacing one (an omitted field keeps the manifest's existing value). The
-route passes `replace: true` to the store — the store's own 10% destructive-shrink guard is waived
+**`title` and `role` are both optional, on creation as well as on replacement** — the store
+(`saveFoundation`) derives whatever is omitted rather than refusing, and it does so **unconditionally
+from this call's own input, never from the manifest's existing row**: an omitted `title` is read
+from the NEW text's first `# ` heading (falling back to the slug if there is none), and an omitted
+`role` defaults to `'other'` regardless of what the document was previously filed under. Sending
+either overrides the derived value. This is a consequence of the save being a whole-document
+**replace**, not a partial update — there is no "existing value" the store reads back to fill a gap.
+The route passes `replace: true` to the store — the store's own 10% destructive-shrink guard is waived
 here for the same reason it is waived on the standing-brief route: the editor is seeded with the
 document's current text, so a shrink is something a person did to text on their own screen, and the
 guard's own remedy ("repeat the call with `replace: true`") is advice a person in a browser cannot
@@ -2897,17 +2928,22 @@ act on.
   "ok": true, "domain": "acme", "project": "lumina", "created": false,
   "document": { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
     "bytes": 41200, "sha256": "…", "skeleton": false, "…": "…" },
-  "totalBytes": 148230, "budgetBytes": 200000, "budgetExceeded": false, "notes": []
+  "totalBytes": 148230, "budgetBytes": 200000, "budgetExceeded": false,
+  "wasSkeleton": true, "notes": []
 }
 ```
 
 Saving a document that was a skeleton **clears its `skeleton` mark** — reflected in `document`
 above and in the very next `GET` of the same document or of the project's Foundations index; a
-skeleton is only ever *filled*, never quietly re-marked.
+skeleton is only ever *filled*, never quietly re-marked. `wasSkeleton` is the one-shot fact this
+save FILLED a skeleton (computed from the pre-write manifest, not from `document.skeleton` which is
+already `false` by the time the response is built) — the field a banner needs to say "Architecture
+is written now" rather than just "saved", and `false` on every ordinary re-save of an already-filled
+document.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `repo_owned` — this project mirrors from a repository; edit the source and **Refresh from repo** instead. `no_manifest` — no ownership has been set yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `too_large` — over the 512 KB per-document wall; both the document's size and the wall are named. `invalid_slug`, `invalid_role`, `empty` |
+| `400` | `repo_owned` — the router emits this `error` verbatim: *"This document is mirrored from the repository — edit it there and refresh. A mirror is a byte copy of a file whose author is the folder it came from, so an edit made here would be overwritten by the next refresh."* ("the repository" is the wire word; the mirror source only has to be **an absolute, reachable folder on this machine** — a git checkout is not required, and one with no `.git` at all mirrors exactly the same way). `no_manifest` — no ownership has been set yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `manifest_unreadable` — a manifest exists but this store cannot parse it. `too_large` — over the 512 KB per-document wall; both the document's size and the wall are named. `invalid_slug`, `invalid_role`, `empty` |
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | Unknown domain or project |
 | `409` | `locked` — another write to this project's foundations is in flight (the cross-process `.write-lock`, the one tier-0 exception to "no lock is taken" — see [working-state.md § 2](working-state.md#concurrency-this-tier-is-the-one-exception-to-no-lock-is-taken)) |
@@ -2926,7 +2962,7 @@ succeeds, and is reported as what it was.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `confirm_required` (missing, empty, or not an exact match), `repo_owned` — a mirrored document is removed by no longer scanning it into `files` on the next refresh, never by this route |
+| `400` | `confirm_required` (missing, empty, or not an exact match), `repo_owned` — a mirrored document is removed by no longer scanning it into `files` on the next refresh, never by this route. `no_manifest` — no ownership has been set yet. `manifest_unreadable` — a manifest exists but this store cannot parse it |
 | `403` | `readonly` |
 | `404` | `foundation_not_found` — no document at that slug (and no orphan file either); or unknown domain/project |
 | `409` | `locked` — the same cross-process lock `PUT` takes |
@@ -3067,7 +3103,11 @@ alias — the fields below replace them.
 directory entries the store will not address, counted rather than silently skipped.
 
 **New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
-`foundations` field — the **index only**, never document bodies, matching `listFoundations`:
+`foundations` field — the **index only**, never document bodies, matching `listFoundations` through
+this file's own `foundationsWire()` allow-list, which carries exactly `present`, `ownership`,
+`repo`, `budgetBytes`, `totalBytes`, `skeletonCount`, `documents`, `orphanFiles` and `manifestError`
+— **no `count` and no `staleCount`** (those two exist only on the MCP `get_working_state` tool's own
+foundations summary, a different, smaller object built by different code; see below):
 
 ```json
 "foundations": {
@@ -3078,8 +3118,6 @@ directory entries the store will not address, counted rather than silently skipp
   "budgetBytes": 200000,
   "totalBytes": 148230,
   "skeletonCount": 0,
-  "count": 6,
-  "staleCount": 1,
   "documents": [
     { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
       "bytes": 41200, "sha256": "…", "updatedAt": "2026-09-10T08:00:00.000Z",
@@ -3344,10 +3382,12 @@ A document whose source path no longer exists at the checkout is reported in `mi
 stored copy is **left in place**, never deleted, because the checkout being unreachable from this
 machine right now is not evidence the document should disappear. `added` lists documents that
 entered the mirror for the first time this call, via `files`. **`refused` (new in v3.61.0)** lists
-any `files` entry that failed its own validation — `{ path, reason }` — forwarded rather than
+any `files` entry that failed its own validation — `{ path, reason }`, each string capped at 200
+characters and the array itself capped at **50 entries** (`refreshWire()`) — forwarded rather than
 silently dropped, and rendered **un-folded** beside the outcome rather than tucked behind a
 disclosure, because a document someone asked to mirror and did not get is the kind of fact a fold
-successfully hides.
+successfully hides. `refreshed`, `unchanged`, `added` and `missing` are each capped at 200 entries
+by the same function, and `notes` at 20.
 
 **Error responses**
 
