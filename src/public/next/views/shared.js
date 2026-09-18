@@ -176,7 +176,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // renderDescription is the ONE description role (13px, --text-2, 68ch). The
 // off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
 // under every other description in the app.
-import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
+import { renderViewHeader, renderStatus, renderDescription, renderInfoMark } from '../shared/text.js';
 
 function freshState() {
   return {
@@ -483,13 +483,30 @@ function renderMain(token) {
   );
 }
 
+/**
+ * ── THE OFF-STATE: ONE LINE, THEN THE ⓘ (v3.58.0) ─────────────────────────
+ *
+ * This card carried a 49-word `.settings-hint-text` doing a lede's job under a
+ * title — the loose paragraph between a heading and its control that the text
+ * rule exists to remove. What a reader needs before pressing the one button is
+ * what pressing it DOES, which is thirteen words. The two reassurances it was
+ * welded to — that enabling connects you to nothing, and that nothing leaves
+ * this machine until you push — are an answer to "is this safe?", a question
+ * about the MECHANISM, so they move under the mark rather than being cut. They
+ * are not warnings, costs or outcomes, so the v3.16.1 never-fold list does not
+ * reach them; the view header takes the same view of "Nothing else on your
+ * machine moves" three functions above.
+ */
 function renderDisabled() {
+  const why = renderInfoMark('sb-enable-info', 'What enabling does',
+    'Turning it on doesn’t connect you to anything by itself — it only unlocks this view. ' +
+    'Nothing is sent anywhere until you push a domain to a Shared Brain you’ve configured.');
   return (
     '<div class="sb-enable-card">' +
       '<div class="sb-enable-title">Shared Brain is off on this install</div>' +
-      '<p class="settings-hint-text">Turning it on doesn’t connect you to anything by itself — it just unlocks ' +
-      'this view so you can join a cohort with an invite token, or set one up for others to join. Nothing is sent ' +
-      'anywhere until you push a domain to a Shared Brain you’ve configured.</p>' +
+      '<p class="settings-hint-text">Unlocks this view, so you can join a cohort or set one up. ' +
+      why.btn + '</p>' +
+      why.panel +
       (state.enableError ? '<div class="settings-inline-error">' + escapeHtml(state.enableError) + '</div>' : '') +
       '<button type="button" class="btn btn-primary" id="btn-sb-enable"' + (state.enabling ? ' disabled' : '') + '>' +
         (state.enabling ? 'Enabling…' : 'Enable Shared Brain (beta)') +

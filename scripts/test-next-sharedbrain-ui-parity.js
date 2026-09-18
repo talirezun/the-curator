@@ -48,7 +48,7 @@ const ROOT = path.join(__dirname, '..');
 
 // shared/text.js takes no imports by design, precisely so a suite can EXECUTE
 // it rather than scan it (see its own "WHY IT HAS NO IMPORTS" header).
-import { renderDescription } from '../src/public/next/shared/text.js';
+import { renderDescription, renderInfoMark } from '../src/public/next/shared/text.js';
 
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const shared = R('src/public/next/views/shared.js');
@@ -165,17 +165,19 @@ const ICON_STUB = 'function icon(name, size) { return "<svg data-icon=\\"" + nam
 const SHARED_FNS = [
   'formatRelativeTime', 'composeDoneMessage', 'renderActions',
   'renderPushConfirm', 'renderSynthesizeConfirm', 'renderSkips', 'renderEnabled',
+  // v3.58.0: the off state is now measured, not only source-scanned (§4b).
+  'renderDisabled',
 ];
 // renderDescription is the REAL export of shared/text.js, not a stub: §4 below
 // asserts that the off state's CTA descriptions wear the system's own class,
 // and a stub would let this file certify a class it had itself invented.
-const sharedBox = new Function('renderDescription',
+const sharedBox = new Function('renderDescription', 'renderInfoMark',
   'let state = { flagError: null, listError: null, enabling: false, connections: [], cards: {}, expandedSkips: new Set(), expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   SHARED_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SHARED_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)(renderDescription);
+)(renderDescription, renderInfoMark);
 
 /** Brace-free sibling of extractFunction: lifts a top-level `const NAME = …;`
  *  out of live source. Needed because panelStep3() now interpolates a real
@@ -213,14 +215,14 @@ const WIZ_FNS = [
   'panelStep1', 'panelStep2', 'panelStep3', 'panelStep4', 'panelStep5',
   'panelAdminStep1', 'panelAdminStep2',
 ];
-const wizBox = new Function(
+const wizBox = new Function('renderInfoMark',
   'let state = {};\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   WIZ_CONSTS.map((n) => extractConst(wizard, n, 'shared-brain-wizard.js')).join('\n') + '\n' +
   WIZ_FNS.map((n) => extractFunction(wizard, n, 'shared-brain-wizard.js')).join('\n\n') + '\n' +
   `return { ${WIZ_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)();
+)(renderInfoMark);
 
 const {
   formatRelativeTime, composeDoneMessage, renderActions,
@@ -318,6 +320,29 @@ section('1. Phase 1 — the four properties the first deleted block guarded');
     '…and posts to the feature-flag endpoint');
   ok(!/sharedbrain|shared-brain|Shared Brain/i.test(settingsCode),
     'settings.js hosts NO Shared Brain control — the toggle moved to the feature\'s own view');
+
+  // ── P4b: THE OFF STATE SAYS ONE THING, AND STILL SAYS THE REST (v3.58.0) ──
+  //
+  // That card carried a 49-word paragraph under its title doing a lede's job.
+  // The text rule caps a lede at THIRTEEN visible words and puts the rest
+  // behind the ⓘ — but "put it behind the ⓘ" and "delete it" produce the same
+  // short card, and one of them silently drops the two sentences that answer
+  // "is this safe?". So both halves are asserted here, EXECUTED against the
+  // real renderer with the real renderInfoMark, because a source scan cannot
+  // tell a sentence that is rendered from one that is merely typed.
+  const off = sharedBox.renderDisabled();
+  ok(/btn-sb-enable/.test(off) && /sb-enable-title/.test(off),
+    '(control) renderDisabled() really rendered its title and its enable button');
+  const visible = (off.match(/<p class="settings-hint-text">([\s\S]*?)<\/p>/) || [, ''])[1]
+    .replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;|&#\d+;/gi, ' ').trim()
+    .split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  ok(visible.length >= 4 && visible.length <= 13,
+    `the visible sentence is ${visible.length} words (4..13): "${visible.join(' ')}"`);
+  for (const kept of ['connect you to anything by itself', 'Nothing is sent anywhere until you push']) {
+    ok(off.includes(kept), `…and the reassurance "${kept}…" is still rendered, not cut`);
+  }
+  ok(/class="tx-vh-panel"[^>]*hidden/.test(off),
+    '…inside a fold that ships CLOSED and is present in the markup, not fetched later');
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -145,11 +145,13 @@ import {
 // closed unconditionally by this view's teardown, so navigating away can
 // never leave it mounted behind the next view.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-// MCP_GUIDE_URL is DECLARED THERE, not here: this view and the wizard both
-// make the "works with any MCP client" claim, and two copies of the link
-// would rot apart. settings.js already imports that module, so the constant
-// travels this way round; the reverse would be a cycle.
-import { openMcpWizard, closeMcpWizardIfOpen, MCP_GUIDE_URL } from './mcp-wizard.js';
+// MCP_GUIDE_URL is DECLARED THERE and is no longer imported here (v3.58.0):
+// this view's copy of the link moved into block ①'s ⓘ, where it is emitted by
+// `docsLinkHtml('settings.mcp-bridge')` — the same key MCP_GUIDE_URL itself
+// resolves, so it is still ONE destination with one checkable table behind it,
+// and there is no second constant to rot. An unused import is an unadopted
+// component, so it goes rather than lingering as a promise.
+import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
@@ -2050,13 +2052,25 @@ function renderGeneral() {
   // BEFORE the button is pressed and therefore reads the install's own
   // capability rather than a check result that does not exist yet. Each is
   // the first clause of the paragraph it replaces; the rest is under the ⓘ.
+  //
+  // ONE CLAUSE EACH (v3.58.0). They were 15 / 18 / 16 words, because each
+  // carried a second sentence saying the user's data is left alone. That
+  // sentence is REASSURANCE — it is not a warning, a cost or the outcome of
+  // something pressed, so it is not on the v3.16.1 never-fold list — and it
+  // answers "what does this do to my wiki?", which is a question about the
+  // MECHANISM. So it opens the ⓘ instead, where it is one sentence for all
+  // three modes rather than three near-copies of itself.
   const updateLede = installerMode
     ? (updaterAttached === true
-      ? 'Installs the newest build here. Your knowledge base, keys and sync settings are never touched.'
-      : 'Finds the newest build and opens its download page — you run the installer. Your data is untouched.')
-    : 'Installs the published version over this copy. Your knowledge base, keys and sync settings are untouched.';
+      ? 'Installs the newest build here, over this copy.'
+      : 'Finds the newest build and opens its download page; you run the installer.')
+    : 'Installs the published version over this copy.';
 
   const updateInfo =
+    // FIRST, because it is the question the button raises and the reason the
+    // lede could give it up: an update replaces the program, never the data.
+    '<p>Your knowledge base, your keys and your sync settings are never touched — an update ' +
+    'replaces the program, not what it holds.</p>' +
     '<p>' + (installerMode
       ? (updaterAttached === true
         ? 'The Curator downloads the build, checks it arrived complete and unaltered, and only then restarts into ' +
@@ -5181,11 +5195,15 @@ function renderChatBlock(k) {
       'of that menu, above everything else you have connected.</p>';
   }
 
-  const lede = 'Chat can use <strong>any</strong> model you have connected — ' +
-    '<strong>you pick it per message, in the composer</strong>.';
-  const ledeInfo = 'That includes the models that cannot build a wiki: nothing is at stake in an ' +
-    'answer but the cost of that answer. The composer choice never touches what builds your wiki, ' +
-    'so there is no second control for it here.';
+  // ONE CLAUSE, AND IT IS THE POINTER (v3.58.0). At 16 words this was a
+  // capability statement joined to an instruction. The instruction is the half
+  // a reader acts on — it says where the control is, and therefore why this
+  // block has none — so it is what stays visible; "any model you have
+  // connected" survives inside it rather than as a sentence of its own.
+  const lede = 'Pick <strong>any</strong> model you have connected — per message, in the composer.';
+  const ledeInfo = 'Every model you have connected can answer chat, including the ones that cannot ' +
+    'build a wiki: nothing is at stake in an answer but the cost of that answer. The composer ' +
+    'choice never touches what builds your wiki, so there is no second control for it here.';
 
   return settingsBlock(3, 'chat', 'Chat', lede, body, ledeInfo);
 }
@@ -8452,17 +8470,22 @@ function renderMcp() {
   // against the real markdown, so this list cannot drift from what the docs
   // can back.
   //
-  // THE LINK STAYS IN THE VISIBLE LEDE rather than moving into the fold with
-  // the rest of the paragraph. It is the one thing here that answers a
-  // question this block cannot answer itself ("what IS an MCP client?"), and
-  // a link reachable only through a disclosure is a link with two clicks on
-  // it. The fold's trailing link is the same destination, which costs
-  // nothing: the fold ships closed, so the two are never on screen together
-  // unless the reader opened the long version — and at the bottom of the long
-  // version, "read more" is the exit.
+  // THE LINK MOVED INTO THE FOLD (v3.58.0), reversing the v3.49.0 decision
+  // recorded here — and reversing it costs nothing, because the two links
+  // were always the SAME destination. `MCP_GUIDE_URL` is
+  // `docsUrl('settings.mcp-bridge')` and so is the fold's trailing "Read more
+  // in the guide", which v3.54.0 filed under KNOWN AND UNFIXED as "MCP ①'s
+  // lede and its fold both link the MCP guide". One destination, named twice,
+  // once on screen and once behind the mark, is one name too many; the fold is
+  // where §3 of docs/design-system-source.md puts a docs link, and the rest of
+  // this block's long version is already there.
+  //
+  // "that runs" → "running" is the one word that got the sentence to 13. The
+  // claim, the three client names and the ChatGPT exclusion in the fold are
+  // untouched — scripts/test-next-mcp-wizard.js §11 checks each name against
+  // docs/mcp-user-guide.md itself, so this list still cannot drift.
   const connectLede =
-    'Works with any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor. ' +
-    '<a href="' + MCP_GUIDE_URL + '" target="_blank" rel="noopener noreferrer">Read the MCP guide</a>.';
+    'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.';
   const connectInfo =
     'ChatGPT’s web app cannot run a local server, so it cannot connect — the limit is the ' +
     'transport, not the vendor. The bridge is a separate stdio process the client launches on ' +
@@ -8572,7 +8595,10 @@ function renderHealthLimits() {
     return gatedLoader(loadGate, 'Loading scan limits…');
   }
 
-  const lede = 'Caps what one AI duplicate scan may cost. Used by Health → Ask AI scans.';
+  // "AI duplicate" was the two spare words: the block is titled
+  // "Semantic-duplicate scan limits" and the second sentence already says
+  // Ask AI, so the lede was naming both twice. 14 → 12.
+  const lede = 'Caps what one scan may cost. Used by Health → Ask AI scans.';
   const info =
     'A scan estimates its own cost before it starts and REFUSES to run when the estimate is over ' +
     'the ceiling — it does not start and truncate, so nothing is half-scanned and no partial ' +
