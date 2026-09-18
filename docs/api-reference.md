@@ -2750,7 +2750,7 @@ work-stream or a journal.
   "foundationsError": null }
 ```
 
-`markerLine` is what goes into a `.curator-project` file at a coding agent's repository root so it
+`markerLine` is what goes into a `.curator-project` file at the project's root folder so an agent
 knows which project to resume — always present, even when `foundations` was never requested, and
 composed by the store with a `"<domain>/<project>"` fallback so an older store can never make the
 field absent. `foundations` is `null` unless the `foundations` body field was sent AND the tier-0

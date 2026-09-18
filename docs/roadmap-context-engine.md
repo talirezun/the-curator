@@ -49,7 +49,7 @@ verbatim — the original *is* the product. Full design record of the three laye
 
 **Two audiences, one roof, neither abandoned.**
 
-| | Audience 1 — the knowledge builder | Audience 2 — the builder working with AI coding agents |
+| | Audience 1 — the knowledge builder | Audience 2 — the builder working with agent harnesses |
 |---|---|---|
 | What they came for | A second brain, or a shared/company brain: ingest → wiki → chat → share | A context machine: their project's context surviving a change of session, harness, model or machine |
 | Their unit of work | A **domain** | A **project** inside a domain |
@@ -82,7 +82,7 @@ asserted** — the Agent Skills standard existing does not mean a given host imp
 
 Both audiences in one table, in the order a person meets them. **Audience 1's rows are the protected
 basics** — they are first because they must not regress, not because they are done with.
-`K` = knowledge builder, `B` = builder with coding agents. Status is of `main` on 2026-09-18.
+`K` = knowledge builder, `B` = builder with agent harnesses. Status is of `main` on 2026-09-18.
 
 | # | Audience | Scenario | Served by | Status |
 |---|---|---|---|---|
@@ -153,7 +153,7 @@ paste documents one at a time**, which was the only way in before this release.
 | The owner's edit surface | Create / edit / delete a curator-owned document inside the Foundations fold, loading **raw** bytes (`?raw=1`), stamped `authoredBy: {kind: 'human'}` |
 | The copyable drafting request | One sentence naming the project, `save_foundation` and the approval gate; composed from the project's real skeleton slugs, with the sha pin on the template |
 | Every MCP tool exercised, in the suite and by an in-app run | The census stays at **24** tools ([mcp/tools/catalogue.js](../mcp/tools/catalogue.js)) |
-| The two-door first-run card | *Build a second brain* / *Give your coding agents memory* — non-blocking, dismissible, setting the landing view and the step set |
+| The two-door first-run card | *Build a second brain* / *Give your agents memory* — non-blocking, dismissible, setting the landing view and the step set |
 | The cheap shell copy fixes | Chat's false `the default view` eyebrow; onboarding step 1's false "nothing works without a key"; the rail array; a `Create a project in Domains` pointer on the memory empty state; one pointer note on Ingest for `.md`/`.txt` |
 
 **What it deliberately does NOT do.**
@@ -427,7 +427,7 @@ Five rules that should survive this roadmap even if every release in it is re-pl
 | | Decision |
 |---|---|
 | D1 | The Documents choice on the create form defaults to **decide later** — fail-safe: nothing is written on an unread form |
-| D2 | First run gets **two non-blocking doors** (*Build a second brain* / *Give your coding agents memory*) setting the landing view and the steps that follow; still dismissible, never a modal; the agent door drops the model-key claim and points at the MCP bridge |
+| D2 | First run gets **two non-blocking doors** (*Build a second brain* / *Give your agents memory*) setting the landing view and the steps that follow; still dismissible, never a modal; the agent door drops the model-key claim and points at the MCP bridge |
 | D3 | A **PDF is refused** at tier 0, with the reason: documents are kept word for word, a PDF needs converting — ingest it into the wiki, or export it as Markdown first |
 | D4 | **Rename `Agent memory` → `Project context`**, rail caption `Context`, scheduled with the v3.62.0 shell release (it moves `FOCUSABLE_IDS`, suites and docs chapters) |
 | D5 | The skeleton banner's first line is **bold text**, not a blockquote, this release |

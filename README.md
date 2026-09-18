@@ -292,7 +292,7 @@ when the app updates itself. The honest detail:
 > then open it normally. (Don't disable Gatekeeper system-wide to get around this.)
 
 **One optional extra the browser install has no equivalent for:** a **menu bar icon** showing
-what your coding agents have just saved, so you can check your state is written without leaving
+what your agents have just saved, so you can check your state is written without leaving
 what you are doing — the last save and where it was, a **save pulse** drawing the last seven
 days, and up to five recent work-streams newest first, each with a coloured recency dot. It is **off by default** — a fresh
 install has no agent memory, so an on-by-default icon would have nothing to show — and lives in
@@ -478,7 +478,8 @@ operations, compliance and monetization each have their own doc in the tables be
 Content creators turning years of reading into a cited script · researchers batch-loading 20+ PDFs
 and hunting the gaps between methodologies · executives synthesising months of reports and
 interviews past their own recency bias · architecture teams asking *why* a decision was made years
-ago · anyone coding with agents across sessions, tools and machines.
+ago · anyone orchestrating agents across sessions, tools and machines — building code, most often,
+or research, design, a product.
 
 → Worked-through scenarios for every profile, plus cohort, team and monetization patterns:
 [docs/use-cases.md](docs/use-cases.md)

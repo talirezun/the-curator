@@ -2231,7 +2231,7 @@ function renderGeneral() {
     'their size, so it buys legibility with density rather than zooming the window — your browser’s own zoom ' +
     'still does that, and this setting is remembered per browser. ' +
     docsLinkHtml('settings.text-size', 'Read more in the guide') + '</p>' +
-    '<p><strong>Menu bar</strong> puts a small icon in the Mac menu bar showing what your coding agents have ' +
+    '<p><strong>Menu bar</strong> puts a small icon in the Mac menu bar showing what your agents have ' +
     'just saved, so you can glance at it without opening the app. It is off by default — until an agent has ' +
     'written something there is nothing for it to show — and it applies to the Mac app only, because a browser ' +
     'install has no menu bar presence at all. ' +

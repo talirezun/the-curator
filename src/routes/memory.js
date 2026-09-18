@@ -1210,8 +1210,8 @@ router.post('/:domain/projects', async (req, res) => {
     const initOk = !!(init && init.ok !== false);
     res.status(201).json({
       ok: true, domain, project, created: true,
-      // WHAT GOES IN `.curator-project` at the root of the code folder, so a
-      // coding agent knows which project to resume. The store composes it;
+      // WHAT GOES IN `.curator-project` at the root of the project folder, so an
+      // agent knows which project to resume. The store composes it;
       // the fallback is the same string and exists only so an older store
       // cannot make this field absent, which a view would read as "this
       // server does not know about marker lines".
