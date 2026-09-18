@@ -84,7 +84,15 @@ as the behaviour change**. This folder is part of that. The wording for the
 release checklist:
 
 > Update `public-knowledge/` when a user-visible behaviour, price, default
-> model, label or URL changes.
+> model, label or URL changes — **and then re-upload the changed files to
+> Lumina by hand.**
+
+**Editing a file here changes nothing on the website.** There is no pipeline, no
+webhook and no sync: Lumina serves the copy it was given, so a release that
+edits these files and stops there leaves the assistant answering from the
+previous version. Re-uploading is a manual step the maintainer performs, per
+changed file, using the procedure below. Treat it as part of the release, not
+as follow-up.
 
 The failure mode is specific and worth naming: the GitHub docs get updated in
 the release, this folder does not, and the website assistant then answers with

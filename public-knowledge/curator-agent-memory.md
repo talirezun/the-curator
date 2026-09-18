@@ -16,13 +16,16 @@ Vendor features hold context inside one vendor. Working state is portable by con
 
 ## What exactly does The Curator store?
 
-Three tiers, under the project's folder inside a domain's `state/`.
+Four tiers, under the project's folder inside a domain's `state/`.
 
 | Tier | File | Who writes it | Write behaviour | What it holds |
 |---|---|---|---|---|
+| 0 — foundations, added in version 3.59.0 | `<project>/foundations/<slug>.md`, plus a `manifest.json` | A repository, mirrored byte-for-byte. Or an agent, on your explicit instruction | Replaced whole, never merged | The project's canonical documents, verbatim: architecture, firm decisions, conventions, roadmap, API surface, a guide |
 | 1 — standing brief | `<project>/project.md` | You. Or an agent, on your explicit instruction | Replaced whole | What this project is, the firm decisions that hold across every session, the working model, pointers to where the depth lives. One per project, shared by every work-stream, returned on every read |
 | 2 — handoff | `<project>/<scope>/<machine>/current.md` | An agent, through `save_working_state`. Nothing else | Overwritten in full on every save | Where things stand right now, what to do next, what is settled, what to avoid, what is still open |
 | 3 — journal | `<project>/<scope>/<machine>/journal.jsonl` | An agent, as a by-product of a save. Nothing else | Appended, one line per save | Timestamp, scope, machine, harness, model, the one-line headline, the byte size, and any sanitiser rejections |
+
+Tier 0 is numbered below tier 1 rather than after tier 3 because it is a different kind of context: tiers 1 to 3 are volatile state a session writes and a later one reads, while tier 0 is canonical of the project itself.
 
 The full address of a handoff is four parts — domain, project, scope, machine. Each answers a different question: which knowledge, which build, which piece of work, which computer.
 
@@ -62,10 +65,40 @@ The wiki's merge unions bullets: every ingest adds to a page's sections and noth
 | "The suite was at 84 green before my change" | Working state (`observations`) | A point-in-time baseline that re-deriving destroys |
 | How a subsystem actually works | A wiki page | Durable, and other pages should link to it |
 | "We settled on X; do not re-litigate" | Working state (`decisions`), or the standing brief | A standing constraint on the work |
+| The architecture document the whole build is governed by | Foundations (tier 0) | It is canonical, it is read verbatim, and it changes on the order of releases |
 
 Get this wrong in the direction of putting durable material in state and the next save overwrites it. Nothing warns you, because from the store's point of view an overwrite is the correct behaviour.
 
 `state/` is a sibling of `wiki/`, never a path inside it, and it is deliberately not written through the wiki's page pipeline: that pipeline redirects every non-canonical path into the three wiki folders and flattens to the basename, so two work-streams in two different projects would land on the same file. The project-and-scope pair is inexpressible there.
+
+## What is a canonical document, and how does it stay fresh?
+
+A canonical document — a **foundation** — is one an agent should have read before it proposes anything: the architecture, the standing decisions, the conventions, the roadmap, the API surface, a user-facing guide. The practical test is durability. A foundation changes on the order of releases rather than sessions, and it is meant to be read in full rather than searched.
+
+Until version 3.59.0 those documents lived only as plain files inside a code repository, so an agent that had not personally checked that repository out on the machine it was running on could not see them at all. Foundations put a verbatim copy in the project's own folder, which syncs and travels like the rest of your working state.
+
+Ingesting the document instead does not solve it, for two reasons. Uploaded sources land in a folder that is deliberately never synced, so a copy ingested on one computer is invisible on every other. And ingest compiles: it writes wiki pages distilled from a document, which is right for knowledge and wrong for a document whose whole value is being read exactly as written.
+
+A project holds documents of one ownership only, and the first one saved sets which.
+
+| Mode | Who writes it | How it stays fresh | What "stale" means |
+|---|---|---|---|
+| Repository-owned | The repository is the source of truth. The app and the bridge only mirror it — a byte-for-byte copy, never an edit | A **Refresh from repo** action re-reads each mirrored file from the checkout named in the manifest, compares its sha256 against the stored copy, and copies over whatever changed | The stored copy's sha256 no longer matches the file at the recorded path, or that path is not reachable from this machine |
+| Curator-owned | An agent, and only on your explicit instruction — the same commissioned-only rule the standing brief follows | Whoever you next ask to update it. Nothing regenerates one automatically | Not applicable. There is no second copy to compare against, so a curator-owned document is never marked stale |
+
+Freshness is **computed, never remembered**: there is no stored flag, only a sha256 comparison made at the moment you read. A document is `fresh`, `stale`, or `unreachable` from this machine.
+
+Each document is capped at 512 KB and is refused above it, because a canonical document cannot be honestly trimmed. A project's foundations are capped at 200 KB in total, and an over-budget save there is accepted and disclosed rather than refused — the same rule a handoff follows, since a rejected save loses the document outright.
+
+In the app, Foundations is the fifth block on the Agent memory screen, between Standing brief and Session journal, closed by default. Each row shows the document's role, title, size, source and freshness; pressing a row opens it in the reader.
+
+## How does an agent start a session with all of this?
+
+One call. `get_project_context` returns the standing brief, the latest handoff, and the foundations the caller has not already seen, in one response — so a cold session on any machine and in any tool has what it needs without a second round trip.
+
+The first session gets every foundation, in the manifest's reading order, up to a budget. A returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what has changed since. A document nothing has touched is not re-sent.
+
+Reads never write. The bootstrap does not mark anything as seen on your behalf; the agent records what it read on its next save. A session that reads a document and then crashes has recorded nothing, so the next start correctly treats that document as unseen.
 
 ## What is a project, and how is it different from a domain?
 
@@ -182,16 +215,18 @@ Through the **My Curator** MCP bridge — a small program that runs on your own 
 
 It works with any MCP client that can start a local program: Claude Desktop, Claude Code, Cursor, opencode, Codex, Gemini CLI and others. A browser-only assistant cannot reach it — ChatGPT's web app cannot run a local program, so it is out of scope by construction. The bridge is set up in the app under Settings, in the MCP bridge section.
 
-Four of the bridge's tools are the working-state tools:
+Six of the bridge's tools are the working-state tools:
 
 | Tool | What it does |
 |---|---|
 | `list_projects` | Every project that has state — in one domain or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief |
+| `get_project_context` | The one call a session opens with: the standing brief, the latest handoff, and the foundations this caller has not already seen |
 | `get_working_state` | Returns the standing brief always. With a work-stream named, also that work-stream's handoff and recent journal entries. Without one, an index of the work-streams that have state |
 | `save_working_state` | Overwrites the handoff for one project, work-stream and machine, and appends one journal line |
 | `save_project_brief` | Replaces one project's standing brief and records who wrote it. For use on your explicit instruction only |
+| `save_foundation` | Writes or replaces one canonical document. For use on your explicit instruction only — it is refused without a flag saying you commissioned it |
 
-The bridge exposes 22 tools in total: 16 that read and 6 that write. The other 18 are about your wiki — search, nodes, tags, backlinks, multi-hop traversal, cross-domain search, topology, the original source behind a summary, compiling a conversation into pages, and wiki health.
+The bridge exposes 24 tools in total: 17 that read and 7 that write. The other 18 are about your wiki — search, nodes, tags, backlinks, multi-hop traversal, cross-domain search, topology, the original source behind a summary, compiling a conversation into pages, and wiki health.
 
 Every read and every save reports where it landed — the domain, the project, and how the name was resolved. A call that resolved a bare name by searching across domains made a choice on your behalf, and a response that does not say so leaves you unable to tell a confirmed project from an inferred one.
 
@@ -209,7 +244,7 @@ Resume project "lumina" (domain "acme"), latest scope.
 
 "Where did we leave off", "continue", "pick up where we left off" and "catch me up on this project" all work too — they are the skill's own trigger phrases. With the block pasted into your entry file, the agent is told to read state at the start of every session whether or not you say anything.
 
-What comes back is the standing brief, the latest work-stream's handoff, the machines holding state for it, and the most recent journal headlines — with the machine the content came from and when it was written, so provenance is visible rather than assumed.
+What comes back is the standing brief, the latest work-stream's handoff, the machines holding state for it, and the most recent journal headlines — with the machine the content came from and when it was written, so provenance is visible rather than assumed. Asked through `get_project_context`, the same answer carries the project's foundations as well.
 
 In the app, the menu bar icon's per-row submenu has a **Copy resume prompt** item that puts a longer version on your clipboard, naming the MCP call to make and, for an agent without the bridge, the file path as a fallback. A **Copy handoff as Markdown** item puts the document itself on the clipboard, for an assistant that can reach neither.
 
@@ -254,9 +289,15 @@ This repository's working state lives in The Curator (project `<domain>/<project
 brief before acting. SAVE with `save_working_state` under project "<project>", scope
 "main", after every material decision and at least every ten tool calls, and ALWAYS
 before you stop; a save overwrites, so send the complete state each time.
+
+This project also keeps foundations — canonical documents such as its architecture and firm
+decisions — that travel with it. At session start, call `get_project_context` instead of
+`get_working_state` to receive them alongside the brief and handoff. On every
+`save_working_state` call, include `foundations_read` (the hashes you were given) so the next
+session knows what changed.
 ```
 
-The text is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works.
+The first paragraph is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works. The second paragraph was added in version 3.59.0 for the foundations tier, which the measurement predates, and is composed after the frozen one rather than merged into it.
 
 Where it goes — plain prose in a file each of these already reads on its own. Nothing needs to be installed, and it is the same text everywhere.
 
@@ -311,6 +352,8 @@ The app labels this rather than hiding it. When a handoff you are reading was wr
 
 There is also a clock note. A file that arrived over sync carries the moment of the pull as its file timestamp, because git rewrites that on checkout. So the app shows the agent's own clock where the journal recorded one, says "this file arrived on this computer N ago" when the two clocks are known and disagree by more than two minutes, and says plainly when the only time it has is the file's.
 
+Foundations travel the same way, which is the point of them: a canonical document mirrored from a repository on the laptop is readable on the desktop even if that computer has never checked the repository out. Unlike a handoff, a foundation has no machine name in its path — it is meant to be identical everywhere — so a repository-owned mirror converges on whichever machine saved last. That is acceptable because the repository, not the mirror, is the source of truth: any machine re-asserts its own checkout with a refresh, which is a cheap byte comparison, and the app shows the stored commit beside the local checkout's current one so a machine that has drifted is visible rather than silent.
+
 ## Why is there a machine name in the path?
 
 Because two computers writing the same handoff file would destroy each other's work silently.
@@ -345,7 +388,7 @@ The **Memory** item on the rail opens **Agent memory**, a browser for the workin
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
 - **A save-status card** answers the question people actually arrive with: is this saved, and is it any good? One line on a healthy day — a dot, "Last saved", an age, the work-stream and the harness. Under it, only when each has something to say, up to five qualifying lines.
 - **Work-stream and Machine selectors** appear when there is more than one of either.
-- **The standing brief and the journal** sit behind collapsed sections — the brief because it rarely changes, the journal because it is history rather than state. The brief opens by default when there is no handoff yet, and it carries an **Edit** button.
+- **The standing brief, the foundations and the journal** sit behind collapsed sections — the brief because it rarely changes, the foundations because they change on the order of releases, the journal because it is history rather than state. All three start closed and remember whether you left them open. The brief's row carries a pencil button that opens its editor.
 
 The qualifying lines on the save-status card:
 
