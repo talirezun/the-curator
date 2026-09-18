@@ -197,9 +197,9 @@ spend (`scripts/test-next-cost-honesty.js`); the app staying **read-only over ti
 (`scripts/test-next-settings-sections.js` §G3).
 
 **Open questions carried out of it.** A second `repo.root` for a project whose conventions live in a
-different checkout (§F Q1). What a deleted **skeleton** means — an ordinary delete ships, fixed slots
-would be a schema decision (§F Q2). Whether the shared Markdown renderer should gain a blockquote
-pass at all (§F Q3).
+different checkout (§F D9). What a deleted **skeleton** means — an ordinary delete ships, fixed slots
+would be a schema decision (§F D10). Whether the shared Markdown renderer should gain a blockquote
+pass at all (§F D11).
 
 ---
 
@@ -258,8 +258,8 @@ one constant and its pin becomes two ordered sets, and `FOCUSABLE_IDS`, four-ish
 docs anchors move in the same commit as the rename.
 
 **Open questions carried out of it.** Whether the two doors eventually deserve a real home view of
-their own (§F Q4). Whether the 568 px column arithmetic holds for the Foundations summary line
-beside two head controls — nothing in the design pass was rendered (§F Q5).
+their own (§F D12). Whether the 568 px column arithmetic holds for the Foundations summary line
+beside two head controls — nothing in the design pass was rendered (§F D13).
 
 ---
 
@@ -278,6 +278,7 @@ returns an empty store confidently.
 | **A public working-state spec** | The on-disk format published so **any** tool can write it — the store's shape is already plain markdown plus append-only JSONL, and the spec makes that a contract instead of an implementation detail. A third-party writer needs the layout, the section vocabulary, the machine-segment rule and the budgets |
 | **An honesty meter, per project** | Sessions this week, grouped by harness, **saved / not saved**. The one question the memory layer exists for is *did this session start with the bootstrap and save before it stopped*, and the app should answer it without the owner reading a file. The content-free MCP usage log (v3.60.0, `src/brain/mcp-usage.js`, `GET /api/mcp/usage`) is the existing seam: it already records one line per tool call — tool, domain, outcome, duration, and nothing else |
 | **The live harness matrix** | Claude Code, Codex, Cursor and Gemini CLI, each measured for **reads** and for **unprompted saves**, published as a verified-in table with the date, the sample size and the arms |
+| **Mirror from a GitHub repository — a third ownership arm** | Sources foundations from a GitHub repo over the API instead of a local checkout, using the same personal access token Personal Sync already holds (`.sync-config.json`'s `token`, saved by `saveConfig` in [src/brain/sync.js](../src/brain/sync.js)); populates `repo.remote` — a manifest field that already exists in [src/brain/working-state.js](../src/brain/working-state.js) but today is only ever carried through or defaulted to `null`, never actively written; refreshes by blob sha. The Shared Brain adapter already speaks the shape this needs — [src/brain/sharedbrain-github-adapter.js](../src/brain/sharedbrain-github-adapter.js) does `GET`/`PUT`/`DELETE …/contents/:path` and `GET …/git/trees/:branch?recursive=1` — so this arm reuses a proven client rather than inventing one. Its value, stated honestly: it removes the "source not on this computer" state for any machine that can reach the remote. Its costs, stated honestly: network and rate limits, the PAT's scope (Personal Sync's token was never asked to cover an arbitrary foundations-source repo), and the eventual consistency the Shared Brain adapter already argues around (never read-after-write against GitHub's contents API on a correctness path). Placed here rather than in v3.62.0 because it is network-facing engine work — reliability, rate limits, honest disclosure of what a machine can and cannot reach — which is v3.63.0's register; v3.62.0's scope is shell and rail only, with no backend addition |
 
 **What it deliberately does NOT do.**
 
@@ -313,8 +314,8 @@ source** with the neutral form derived, never a second hand-maintained copy — 
 by models, so two copies would instruct two agents differently.
 
 **Open questions carried out of it.** Whether the honesty meter's "session" is a bridge session or
-a harness session, and whether the two can be told apart from a content-free log (§F Q6). Whether
-the neutral command ships as part of this repository or beside it (§F Q7).
+a harness session, and whether the two can be told apart from a content-free log (§F D14). Whether
+the neutral command ships as part of this repository or beside it (§F D15).
 
 ---
 
@@ -371,8 +372,8 @@ with it in the same commit (`scripts/test-mcp-usage.js`). A foundation is still 
 
 **Open questions carried out of it.** Whether the project pill persists per conversation or per
 session — the conversation JSON syncs, so per conversation makes it travel *and* makes it a schema
-field (§F Q8). Whether "Save as foundation" should be offered on a **question** as well as an
-answer (§F Q9).
+field (§F D16). Whether "Save as foundation" should be offered on a **question** as well as an
+answer (§F D17).
 
 ---
 
@@ -434,40 +435,29 @@ Five rules that should survive this roadmap even if every release in it is re-pl
 | D6 | Deleting a skeleton is an **ordinary delete** — no fixed slots; whether a project keeps four slots is a schema question for later |
 | D7 | Second-machine curator-owned edits get **the documentation carve-out only** this release; an editor warning needs a sync fact the view does not have |
 | D8 | The drafting request is **composed from the project's real skeleton slugs**, with the sha pin covering the template rather than the rendered string |
+| D9 | (was Q1) **One mirror root per project** — a second root is not designed until a user needs it |
+| D10 | (was Q2) **No fixed document slots** — roles are a vocabulary and the seed is a convenience; deleting a skeleton stays an ordinary delete |
+| D11 | (was Q3) **A blockquote pass in `shared/markdown.js`**, strictly `> ` lines, ships as its own v3.62.0 item, measured against the v3.58.0 document corpus before it ships; the bold banner stays |
+| D12 | (was Q4) **No home view in v3.62.0** — judged only after the two-audience shell has been used |
+| D13 | (was Q5) **CLOSED by measurement** — the 568 px arithmetic was measured in the Browser pane during v3.61.0 (summary meta 356 px in 466 available; overflow 0 at 589 and 959 px); the Electron gap remains |
+| D14 | (was Q6) A **"session" in the honesty meter is a bridge session** (one MCP child process, initialize → exit) — the only unit a content-free log can observe; harnesses are told apart by one new bounded content-free usage-line field `client`, taken from the MCP client's own name at initialize (v3.63.0) |
+| D15 | (was Q7) **The neutral `curator` command lives in this repository**, published as a bin of the same package so it installs without the app, adapters as files beside it; split out only if adapters need their own cadence |
+| D16 | (was Q8) **Chat's project pill persists per conversation**, as a field on the conversation file (absence = none), so it travels with sync |
+| D17 | (was Q9) **"Save as foundation" is offered on a question and on an answer** — the editor opens pre-filled either way; the owner's approval in the editor is the rule, not a preview |
+| D18 | (was Q10) **The honesty meter never fails or blocks a session** — it reports, and may show a reading as a warning; capture stays advisory |
 
 **Still open, numbered.**
 
-1. **A second mirror root.** The manifest records one `repo.root` and the picker scans it. A project
-   whose conventions live in a second checkout has no path in, and a second root is a schema change.
-   Unresolved and not designed.
-2. **Fixed slots for a project's canonical documents.** D6 ships an ordinary delete. If a project is
-   meant to always *have* an architecture document, "missing" and "the owner said there is none" are
-   two different summary lines and the store cannot currently tell them apart.
-3. **A blockquote pass in the shared Markdown renderer.** The right long-term answer, and it needs
-   its own corpus measurement against the same document set v3.58.0 used (where the fuller
-   CommonMark fix changed 108 documents and **23 of those swallowed a following paragraph**). Whose
-   risk budget owns `shared/markdown.js` is the question, not whether the pass is nice to have.
-4. **A real home view.** The two doors are a first-run card in v3.62.0. Whether the app eventually
-   gets a home that is not a synonym for Domains is a restructure with its own content cap, block
-   rhythm and proof.
-5. **Rendered layout.** Nothing in the design pass was rendered — every wireframe was derived from
-   shipped CSS and recorded measurements. The 568 px arithmetic (a four-clause summary line beside
-   two head controls) needs one pass in a browser on an isolated copy before it is asserted, and
-   the Electron gap in §D applies to all of it.
-6. **What a "session" is in the honesty meter.** Bridge session or harness session, and whether a
-   content-free log can tell them apart. Getting this wrong makes the meter confidently wrong about
-   the one thing it exists to report.
-7. **Where the neutral `curator` command lives.** Inside this repository (one release, one test
-   suite, one version) or beside it (installable without the app, versioned separately). This
-   decides how the per-harness adapters are distributed.
-8. **Whether Chat's project pill persists per conversation or per session.** Conversations sync, so
-   per conversation makes it travel — and makes it a schema field on the conversation JSON.
-9. **Whether "Save as foundation" is offered on a question as well as an answer.** A question is the
-   owner's own text, which is the same argument [roadmap-chat-modes.md](roadmap-chat-modes.md) makes
-   for Dictate needing no preview at all.
-10. **Whether the honesty meter should ever be able to fail a session.** It reports today. If it ever
-    warned, or blocked, capture would stop being advisory — and the fail-safe direction is the
-    reason no enforcement exists.
+11. **The foundations budget on a mature project.** Measured on this repository's own documents:
+    `docs/architecture.md` 372 KB, `docs/working-state.md` 125 KB, `CONTRIBUTING.md` 70 KB,
+    `docs/design-system-source.md` 68 KB, `docs/roadmap-context-engine.md` 47 KB, `docs/sync.md`
+    37 KB (`wc -c`, 2026-09-19) — against the 200 KB project budget (exceeded is accepted and
+    disclosed, never refused) and the bootstrap's 120 KB default reading budget, which drops
+    document bodies last-first. Three honest options: keep both budgets and teach that foundations
+    are the documents an agent must not act without, not the reference manual; a per-document
+    "include in bootstrap" flag; a curator-owned excerpt beside a large mirrored document, with no
+    LLM — the owner writes it. Recommendation here is the first option plus the flag; the excerpt
+    option needs a schema field and is not designed.
 
 ---
 
