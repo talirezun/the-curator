@@ -112,14 +112,6 @@ import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
-// >>> WP-V TEMPORARY — DELETE THESE FOUR IMPORTS AT MERGE >>>
-// Only the read-only tier-0 stand-in at the foot of this file uses them; see
-// the fenced block there for why it exists and what deleting it restores.
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
-import { getDomainsDir } from '../brain/config.js';
-// <<< WP-V TEMPORARY <<<
 
 const router = Router();
 
@@ -616,10 +608,7 @@ const FOUNDATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
  */
 function fstore() {
   const s = ws();
-  // >>> WP-V TEMPORARY — DELETE THESE TWO LINES AT MERGE >>>
-  if (typeof s.listFoundations !== 'function') return wpvFoundationsFake();
-  // <<< WP-V TEMPORARY <<<
-  return s;
+    return s;
 }
 
 /**
@@ -1503,78 +1492,5 @@ function withErrorProse(out) {
   return { ...out, error: out.message };
 }
 
-// >>> WP-V TEMPORARY — DELETE THIS FENCED BLOCK AT MERGE >>>
-//
-// WP-S owns `src/brain/working-state.js` and ships `listFoundations`,
-// `readFoundation` and `refreshFoundationsFromRepo` there with the shapes this
-// router is written against. Until that lands, this worktree has no store
-// functions to call at all, and a route that cannot be RUN is a route nothing
-// proves — so the three calls are answered by a READ-ONLY stand-in over the
-// same on-disk layout, which is what let the routes, the view and the browser
-// check be driven for real in this branch.
-//
-// It reads and it hashes; it writes nothing, and it REFUSES the refresh rather
-// than performing a copy the real store owns. `fstore()` reaches it only when
-// the store has no `listFoundations`, so deleting this block and the two fenced
-// lines in `fstore()` is the whole merge.
-function wpvFoundationsFake() {
-  const dirOf = (domain, project) => join(
-    getDomainsDir(), domain, 'state', project === domain ? '' : project, 'foundations');
-  const sha = (buf) => createHash('sha256').update(buf).digest('hex');
-  return {
-    async listFoundations(domain, project) {
-      const dir = dirOf(domain, project);
-      const manifestPath = join(dir, 'manifest.json');
-      if (!existsSync(manifestPath)) return { present: false, documents: [] };
-      let manifest;
-      try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); }
-      catch (err) { return { present: false, documents: [], manifestError: err.message }; }
-      const listed = new Set();
-      const documents = (manifest.documents || []).map((d) => {
-        listed.add(d.slug);
-        let freshness = 'n/a';
-        if (d.source && d.source.kind === 'repo') {
-          const src = manifest.repo && manifest.repo.root
-            ? join(manifest.repo.root, d.source.path) : null;
-          if (!src || !existsSync(src)) freshness = 'unreachable';
-          else freshness = sha(readFileSync(src)) === d.sha256 ? 'fresh' : 'stale';
-        }
-        let bytes = d.bytes;
-        try { bytes = statSync(join(dir, d.slug)).size; } catch { /* keep the manifest's */ }
-        return { ...d, bytes, freshness };
-      });
-      const orphanFiles = readdirSync(dir)
-        .filter((f) => f.endsWith('.md') && !listed.has(f));
-      return {
-        present: true,
-        ownership: manifest.ownership || null,
-        repo: manifest.repo || null,
-        budgetBytes: manifest.budgetBytes || 200000,
-        totalBytes: documents.reduce((a, d) => a + (d.bytes || 0), 0),
-        documents, orphanFiles, manifestError: null,
-      };
-    },
-    async readFoundation(domain, project, slug) {
-      const idx = await this.listFoundations(domain, project);
-      const meta = (idx.documents || []).find((d) => d.slug === slug);
-      if (!meta) return { ok: false, reason: 'foundation_not_found' };
-      const file = join(dirOf(domain, project), slug);
-      if (!existsSync(file)) return { ok: false, reason: 'foundation_not_found' };
-      const text = readFileSync(file, 'utf8');
-      return {
-        ok: true, slug, role: meta.role, title: meta.title, text,
-        bytes: Buffer.byteLength(text, 'utf8'), sha256: meta.sha256,
-        updatedAt: meta.updatedAt, commit: meta.commit ?? null,
-        source: meta.source, authoredBy: meta.authoredBy, ownership: idx.ownership,
-        freshness: meta.freshness, sanitisedOnRead: false, truncated: false,
-      };
-    },
-    async refreshFoundationsFromRepo() {
-      return { ok: false, reason: 'store_pending',
-        message: 'The foundations store has not shipped in this build.' };
-    },
-  };
-}
-// <<< WP-V TEMPORARY <<<
 
 export default router;
