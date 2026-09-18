@@ -275,7 +275,11 @@ under the owner's commission — never on your own initiative, and never by inve
 answer a prompt you have no basis for.** The pasted agent-instructions block a user adds to
 `CLAUDE.md`/`AGENTS.md` (see below) IS that commission for the project it names — its own paragraph
 says so — but a general "help me get set up" from the user is not, and neither is noticing an
-unfilled skeleton while doing something else. When you genuinely do not know the answer to a
+unfilled skeleton while doing something else. If a message pastes the app's **drafting request**
+(the "Copy the drafting request" sentence, naming a project and `save_foundation` /
+`commissioned_by_owner: true`) that is a commission too — follow it the same way: show each
+document before saving, save only what the user approves, and never invent a fact to fill a
+prompt you have no basis for. When you genuinely do not know the answer to a
 skeleton's prompt, **ask the user, or leave the prompt as it is** — a plausible-sounding invention
 saved into a document every future session is told to treat as canonical is worse than an
 unanswered question with its banner still attached. Saving through `save_foundation` clears the

@@ -178,3 +178,115 @@ export const TEMPLATE_SEED = [
 export function composeAgentInstructionsFull(args) {
   return composeAgentInstructions(args) + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED;
 }
+
+// ── v3.61.0: the drafting request — a ONE-OFF chat message, not a standing
+// instruction, and NOT part of composeAgentInstructionsFull ─────────────────
+//
+// The three constants above are pasted into an entry file (CLAUDE.md /
+// AGENTS.md / …) and re-read by an agent every session — that is what
+// "standing instruction" means, and it is why they are frozen. This constant
+// answers a different gap: a curator-owned project's tier 0 can be seeded with
+// SKELETONS (foundation-skeletons.js, the "start a project" flow) — prompts,
+// not facts — and an owner who wants an agent to fill them in needs a sentence
+// naming the tool, the project and the approval gate. Composing that sentence
+// by hand is exactly the friction that TEMPLATE existed to remove for the
+// working-state block; this is the same fix for the drafting ask.
+//
+// It is pasted into a CHAT, once, to ask for a draft — never into an entry
+// file, and it must never be appended to composeAgentInstructionsFull: doing
+// so would put a "draft these now" imperative into a file an agent re-reads
+// every session, i.e. a standing instruction to keep re-drafting. Kept as its
+// own constant and its own compose function so the two call sites (an entry
+// file vs a chat box) can never collapse into one.
+//
+// TEMPLATE_DRAFT_ASK is pinned the same way TEMPLATE_FOUNDATIONS and
+// TEMPLATE_SEED are — a hand-written literal AND an independent sha256 in
+// scripts/test-agent-instructions.js §S9 — for the same reason: a well-meant
+// reword of model-read instruction text is a silent behaviour change to every
+// agent that reads it next. Every named phrase in it is load-bearing:
+// `save_foundation` and `commissioned_by_owner` name the exact tool and its
+// gate, "Show me each document before saving" states the approval order, and
+// "do not invent facts" is the same rule this release puts in
+// skills/my-curator/SKILL.md for a commissioned save — the drafting ask and
+// the skill must not be able to say different things about what an agent may
+// invent.
+//
+// `{{DOMAIN_PROJECT}}` stands for `domain/project`, exactly as it does in
+// TEMPLATE. `{{DOCUMENTS}}` stands for a natural-English list of the
+// project's UNFILLED documents — composed from the project's real skeleton
+// slugs by composeDraftingAsk below, not a fixed guess, because a fixed list
+// of four role names is wrong the moment a project's skeletons were unticked
+// or it carries other roles (api, guide, other). The sha pin below covers
+// this TEMPLATE (the two placeholders, unsubstituted) rather than any one
+// rendered string, the same way TEMPLATE's own pin covers the placeholder
+// text and not any one project's composed block.
+export const TEMPLATE_DRAFT_ASK =
+  'Draft the unfilled foundations of the Curator project {{DOMAIN_PROJECT}} — {{DOCUMENTS}} — ' +
+  'from what you can see of this codebase. Show me each document before saving. When I approve ' +
+  'one, save it with save_foundation and commissioned_by_owner: true; do not invent facts to ' +
+  'fill a prompt — leave the prompt and ask me.';
+
+// The four roles `foundation-skeletons.js` seeds a fresh curator-owned project
+// with, in seeding order. Named here rather than imported from
+// `src/brain/foundation-skeletons.js`: that module sits on the server/MCP
+// import graph and this one is a browser ES module loaded with no build step
+// (see the file header) — the four words are data, not logic, so duplicating
+// them costs far less than adding a cross-boundary import for a browser file.
+// Used ONLY when a project's real skeleton list is empty (or not given), i.e.
+// exactly the shape the seed itself writes.
+const DEFAULT_DRAFT_ROLES = ['architecture', 'decisions', 'conventions', 'roadmap'];
+
+/** English list join: "a", "a and b", "a, b and c" — no Oxford comma, matching
+ * this constant's own prose ("architecture, decisions, conventions and
+ * roadmap" reads the same way). */
+function joinNatural(items) {
+  if (items.length <= 1) return items.join('');
+  if (items.length === 2) return items[0] + ' and ' + items[1];
+  return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
+}
+
+/**
+ * The sentence a user pastes into ANY harness with the my-curator MCP
+ * installed to have its model draft a project's unfilled foundations.
+ *
+ * Pure: no I/O, no clock, no globals, no module state — same rule as
+ * `composeAgentInstructions`, and the same REFUSAL shape: an empty domain or
+ * project is refused rather than composed around, because the rendered
+ * sentence is an instruction naming a `save_foundation` target, and a target
+ * project "" cannot exist.
+ *
+ * @param {{domain: string, project: string, documents?: Array<{slug?: string,
+ *   role?: string, title?: string}>}} args `documents` is the project's real
+ *   unfilled skeletons (Q8: composed from what the project actually has, not
+ *   a fixed guess). Each entry is named by its `role` if present, else its
+ *   `title`; entries with neither are skipped. An empty or omitted array
+ *   falls back to the four default roles a fresh curator-owned project is
+ *   seeded with.
+ * @returns {string} the composed sentence, both placeholders substituted.
+ */
+export function composeDraftingAsk(args) {
+  // Same guard shape as composeAgentInstructions, and the same reason:
+  // String(undefined) is the truthy string "undefined", so a coerce-then-check
+  // would sail past a missing argument and compose a sentence naming project
+  // "undefined". Read the fields off a defaulted object and require a
+  // non-empty STRING before coercing anything.
+  const a = args && typeof args === 'object' ? args : {};
+  const domain = typeof a.domain === 'string' ? a.domain : '';
+  const project = typeof a.project === 'string' ? a.project : '';
+  if (!domain || !project) {
+    throw new Error('composeDraftingAsk needs both a domain and a project');
+  }
+  const documents = Array.isArray(a.documents) ? a.documents : [];
+  const labels = [];
+  for (const doc of documents) {
+    if (!doc || typeof doc !== 'object') continue;
+    const role = typeof doc.role === 'string' ? doc.role.trim() : '';
+    const title = typeof doc.title === 'string' ? doc.title.trim() : '';
+    const label = role || title;
+    if (label) labels.push(label);
+  }
+  const names = labels.length ? labels : DEFAULT_DRAFT_ROLES.slice();
+  return TEMPLATE_DRAFT_ASK
+    .split('{{DOMAIN_PROJECT}}').join(domain + '/' + project)
+    .split('{{DOCUMENTS}}').join(joinNatural(names));
+}
