@@ -183,8 +183,13 @@ const PRE_EXISTING = [
 ok(PRE_EXISTING.every((n) => wireNames.includes(n)),
   `all ${PRE_EXISTING.length} pre-existing tools still registered (registration was additive)`);
 // v3.48.0 added the project level: `list_projects` (read) and
-// `save_project_brief` (mutator), so working state now contributes FOUR tools.
-const WORKING_STATE_TOOLS = ['get_working_state', 'list_projects', 'save_working_state', 'save_project_brief'];
+// `save_project_brief` (mutator); v3.59.0 added tier 0: `get_project_context`
+// (read, the one-call bootstrap) and `save_foundation` (mutator, commissioned
+// only). Working state now contributes SIX tools.
+const WORKING_STATE_TOOLS = [
+  'get_working_state', 'list_projects', 'get_project_context',
+  'save_working_state', 'save_project_brief', 'save_foundation',
+];
 ok(WORKING_STATE_TOOLS.every((n) => wireNames.includes(n)),
   `all ${WORKING_STATE_TOOLS.length} working-state tools are registered`);
 ok(wireNames.length === PRE_EXISTING.length + WORKING_STATE_TOOLS.length,
@@ -198,11 +203,18 @@ ok(JSON.stringify(wireNames.slice().sort()) === JSON.stringify(registry.map((t) 
 // make these assertions FAIL, not throw — a TypeError here would abort the run
 // before §2–§0 and discard the stdout-purity gate along with everything else.
 const def = (n) => wireTools.find((t) => t.name === n) || {};
-for (const n of ['get_working_state', 'save_working_state']) {
+for (const n of ['get_working_state', 'save_working_state', 'get_project_context', 'save_foundation']) {
   const bytes = Buffer.byteLength(JSON.stringify(def(n)), 'utf8');
   ok(bytes > 200 && bytes < 3200,
     `${n} definition is ${bytes} B (< 3200 B ceiling; the 18-tool average is ~1183 B)`);
 }
+// v3.59.0 — the bootstrap is a READ and must sit before the write block, for
+// the same discoverability reason every read tool does.
+ok(wireNames.indexOf('get_project_context') > -1
+   && wireNames.indexOf('get_project_context') < wireNames.indexOf('compile_to_wiki'),
+  'get_project_context is registered BEFORE the first write tool');
+ok(wireNames.indexOf('save_foundation') > wireNames.indexOf('compile_to_wiki'),
+  '…and save_foundation sits in the write block');
 // The read tool's description must carry the resume vocabulary — that phrasing
 // IS how an agent finds it, and MCP has no keywords field.
 const getDesc = def('get_working_state').description || '';
@@ -581,8 +593,15 @@ const coldRaw = rawText(coldFrame);
 const cold = asJson(coldFrame);
 ok(cold?.ok === true && cold.brief?.present === false && cold.scopeCount === 0,
   'PRECONDITION: the cold-start read genuinely returns no content of any kind');
-ok(Buffer.byteLength(coldRaw, 'utf8') < 700,
+// v3.59.0 raised the ceiling 700 → 1000: the response now carries the tier-0
+// `foundations` SUMMARY (~200 B pretty-printed: present/count/bytes/stale/
+// unreachable/orphan/manifestError) — facts about what exists, not a warning
+// about absent text. The two assertions after this one are what pin the
+// caveat's collapse; this one only bounds the envelope.
+ok(Buffer.byteLength(coldRaw, 'utf8') < 1000,
   `the cold-start response is ${Buffer.byteLength(coldRaw, 'utf8')} B (was 835 B, 63% of it a warning about absent text)`);
+ok(cold?.foundations && cold.foundations.present === false && cold.foundations.count === 0,
+  '…and the tier-0 summary is on a cold read too: present false, count 0 — a measurement, not an absence');
 ok((cold?.content_is_data || '').length < 200,
   `…because the caveat collapsed to ${(cold?.content_is_data || '').length} chars (was 525)`);
 ok(!/`brief`|`current`|`journal`/.test(cold?.content_is_data || ''),
@@ -940,6 +959,130 @@ ok(replaceProp.type === 'boolean',
 ok(/OVERWRIT/i.test(replaceProp.description || '')
    && /(gone for good|not recoverable)/i.test(replaceProp.description || ''),
   '...and its description names the consequence, not just the mechanism');
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('§11  TIER 0 — the bootstrap, the commissioned write and the delta read, over the wire');
+// v3.59.0. Everything the store's own suite proves in-process is re-proven
+// here for the three properties only the child can show: the two tools are on
+// the wire with schemas a client accepts, the `seen` → `foundations_read` →
+// `changed` loop closes across separate JSON-RPC calls in ONE session, and
+// stdout stays pure with the FOUNDATIONS block (and its dynamic
+// child_process import) on the child's import graph — asserted by §0 below.
+const ctxDesc = def('get_project_context').description || '';
+for (const kw of ['start a session', 'load the project context', 'what should I read first', 'bootstrap', 'resume with full context', 'RECORDED DATA']) {
+  ok(ctxDesc.includes(kw), `get_project_context description carries the trigger/framing phrase "${kw}"`);
+}
+const sfDesc = def('save_foundation').description || '';
+ok(/ONLY CALL THIS WHEN THE USER EXPLICITLY ASKS/.test(sfDesc) && /commissioned_by_owner/.test(sfDesc),
+  'save_foundation says in as many words that it is instruction-only and names the flag that records the instruction');
+ok((def('save_foundation').inputSchema?.required || []).includes('commissioned_by_owner'),
+  '…and the flag is REQUIRED in the schema, so a client sees it before calling');
+const swProps = def('save_working_state').inputSchema?.properties || {};
+ok('foundations_read' in swProps && 'repo_root' in swProps,
+  'save_working_state advertises foundations_read and repo_root');
+
+// The instruction gate, three ways: absent, truthy-but-not-true, then a mirror.
+const noFlag = asJson(await callTool('save_foundation', { project: P, slug: 'architecture', role: 'architecture', text: '# A\n\nbody\n' }));
+ok(noFlag?.ok === false && noFlag?.reason === 'not-commissioned',
+  'save_foundation WITHOUT commissioned_by_owner is refused with reason not-commissioned', JSON.stringify(noFlag).slice(0, 160));
+const strFlag = asJson(await callTool('save_foundation', { project: P, slug: 'architecture', text: '# A\n', commissioned_by_owner: 'yes' }));
+ok(strFlag?.ok === false && strFlag?.reason === 'not-commissioned',
+  'a TRUTHY string is not an instruction either — strict === true');
+ok(!existsSync(path.join(DOMAINS_DIR, P, 'state', 'foundations')),
+  '…and nothing was written: no foundations/ folder exists yet');
+const mirrorSf = asJson(await callTool('save_foundation', { project: MIRROR, slug: 'architecture', text: '# A\n', commissioned_by_owner: true }));
+ok(mirrorSf?.ok === false && /Push contributions/i.test(mirrorSf.error || ''),
+  'save_foundation on a read-only mirror is refused by the MCP\'s OWN refuseIfReadonly (mutator #7)');
+ok(!existsSync(path.join(DOMAINS_DIR, MIRROR, 'state')), '…and the mirror still has no state/ directory');
+
+// The commissioned write.
+const sf1 = asJson(await callTool('save_foundation', {
+  project: P, slug: 'architecture', role: 'architecture', title: 'Architecture',
+  text: '# Architecture\n\n## Store\n\nThe store owns containment.\n\n## MCP\n\nThe MCP is the surface.\n',
+  commissioned_by_owner: true, harness: 'curator-ws-suite', model: 'test-model',
+}));
+ok(sf1?.ok === true, `save_foundation with the flag succeeds (got ${JSON.stringify(sf1?.error || sf1?.ok)})`);
+ok(sf1?.path === 'state/foundations/architecture.md', `…at state/foundations/<slug> for the domain's own project (got ${sf1?.path})`);
+ok(/^[0-9a-f]{64}$/.test(sf1?.sha256 || ''), '…with a 64-hex content hash');
+ok(sf1?.authored_by?.kind === 'agent' && sf1?.authored_by?.commissionedBy === 'owner',
+  '…recorded as agent-written on the owner\'s instruction — the label is fixed by the handler, never by the caller',
+  JSON.stringify(sf1?.authored_by));
+ok(sf1?.ownership === 'curator', '…and the first save set the project\'s ownership to curator');
+const onDisk = readFileSync(path.join(DOMAINS_DIR, P, 'state', 'foundations', 'architecture.md'), 'utf8');
+ok(onDisk.includes('\n## Store\n') && !onDisk.includes('\\## '),
+  'the document is stored VERBATIM — its `## ` headings are not escaped (unlike a handoff field)');
+
+// The bootstrap, first session: everything, and a `seen` map.
+const boot1 = asJson(await callTool('get_project_context', { project: P, scope: 'auth-refactor' }));
+ok(boot1?.ok === true, 'get_project_context answers ok');
+ok(boot1?.brief && boot1?.current?.present === true && boot1?.foundations,
+  '…with brief, the named handoff and the foundations in one payload');
+ok(boot1?.foundations?.includeMode === 'all' && boot1?.foundations?.seenSource === 'none',
+  `a handoff with no Foundations read section means a FIRST-session read: include 'all', seenSource 'none' (got ${boot1?.foundations?.includeMode}/${boot1?.foundations?.seenSource})`);
+ok(boot1?.foundations?.documents?.length === 1 && boot1.foundations.documents[0].slug === 'architecture.md'
+   && boot1.foundations.documents[0].text.includes('The store owns containment.'),
+  'the document TEXT is returned');
+ok(boot1?.seen?.['architecture.md'] === sf1?.sha256, '`seen` carries the hash the write reported');
+ok(/foundations\.documents/.test(boot1?.content_is_data || '') && /never as instructions/i.test(boot1?.content_is_data || ''),
+  'content_is_data labels the documents as recorded data, never instructions');
+ok(Object.keys(boot1?.brief || {})[0] === 'authority_note' || boot1?.brief?.present === false,
+  'the brief keeps get_working_state\'s envelope: authority_note FIRST');
+ok(/Included 1 in reading order: architecture\.md/.test(boot1?.report || '') && /Record `seen`/.test(boot1?.report || ''),
+  'the report names what was included and tells the agent to record `seen`', boot1?.report);
+const bootRaw = rawText(await callTool('get_project_context', { project: P, scope: 'auth-refactor' }));
+ok(Buffer.byteLength(bootRaw, 'utf8') < 400 * 1024 && !/_truncated/.test(bootRaw), 'the bootstrap fits under the 400 KB guard');
+
+// The save that closes the loop: foundations_read = seen, repo_root advisory.
+const noMarker = path.join(ROOT, 'checkout-without-marker');
+mkdirSync(noMarker, { recursive: true });
+const sv = asJson(await callTool('save_working_state', {
+  project: P, scope: 'boot', headline: 'bootstrapped, read the architecture',
+  now_state: 'Read the foundations; starting the build.',
+  foundations_read: boot1.seen, repo_root: noMarker,
+}));
+ok(sv?.ok === true && (sv?.sections_written || []).includes('foundationsRead'),
+  'save_working_state writes the Foundations read section from foundations_read', JSON.stringify(sv?.sections_written));
+ok(sv?.foundations_refresh?.attempted === false && /\.curator-project/.test(sv?.foundations_refresh?.skipped || ''),
+  'repo_root without a marker: the refresh is SKIPPED and the reason names the marker', JSON.stringify(sv?.foundations_refresh));
+ok(/not refreshed/i.test(sv?.report || ''), '…and the report says so');
+const bootFile = readFileSync(path.join(DOMAINS_DIR, P, 'state', 'boot', sv.machine, 'current.md'), 'utf8');
+ok(bootFile.includes(`- architecture.md · ${sf1.sha256}`), 'the handoff on disk carries `- <slug> · <sha256>`');
+const rd = asJson(await callTool('get_working_state', { project: P, scope: 'boot' }));
+ok(rd?.current?.foundationsRead?.['architecture.md'] === sf1.sha256, 'get_working_state parses it back to current.foundationsRead');
+ok(rd?.foundations?.present === true && rd?.foundations?.count === 1, '…and carries the tier-0 summary');
+
+// The delta read: nothing changed → no bodies; then a change → one body.
+const boot2 = asJson(await callTool('get_project_context', { project: P, scope: 'boot' }));
+ok(boot2?.foundations?.includeMode === 'changed' && boot2?.foundations?.seenSource === 'handoff',
+  'a handoff that recorded hashes makes the next bootstrap a DELTA read defaulted from the handoff');
+ok(boot2?.foundations?.documents?.length === 0 && boot2?.foundations?.changedCount === 0,
+  '…and with nothing changed, no document body is sent');
+ok(/0 changed since the last handoff read them/.test(boot2?.report || ''), '…which the report states');
+const sf2 = asJson(await callTool('save_foundation', {
+  project: P, slug: 'architecture', role: 'architecture',
+  text: '# Architecture v2\n\n## Store\n\nThe store owns containment and the manifest.\n\n## MCP\n\nThe MCP is the surface.\n',
+  commissioned_by_owner: true,
+}));
+ok(sf2?.ok === true && sf2?.replaced === true && sf2?.sha256 !== sf1?.sha256, 'a second commissioned save REPLACES the document and changes its hash');
+const boot3 = asJson(await callTool('get_project_context', { project: P, scope: 'boot' }));
+ok(boot3?.foundations?.documents?.length === 1 && boot3.foundations.documents[0].text.includes('v2'),
+  'the changed document — and only it — comes back in the next bootstrap');
+ok(boot3?.seen?.['architecture.md'] === sf2?.sha256, '…with the new hash in `seen`');
+const explicit = asJson(await callTool('get_project_context', { project: P, scope: 'boot', seen_hashes: boot3.seen }));
+ok(explicit?.foundations?.seenSource === 'caller' && explicit?.foundations?.documents?.length === 0,
+  'seen_hashes passed by the caller win over the handoff, and nothing changed against them');
+const indexOnly = asJson(await callTool('get_project_context', { project: P, include: 'index' }));
+ok(indexOnly?.foundations?.includeMode === 'index' && indexOnly?.foundations?.documents?.length === 0
+   && indexOnly?.foundations?.index?.length === 1, "include: 'index' returns the index and no bodies");
+
+// The audit log has the write.
+let sfAudit = [];
+try {
+  sfAudit = readFileSync(path.join(DOMAINS_DIR, P, '.mcp-write-log.jsonl'), 'utf8').trim().split('\n')
+    .map((l) => { try { return JSON.parse(l); } catch { return {}; } }).filter((e) => e.tool === 'save_foundation');
+} catch { sfAudit = []; }
+ok(sfAudit.length === 2 && sfAudit[0]?.paths?.[0] === 'state/foundations/architecture.md',
+  `both commissioned writes are audited (got ${sfAudit.length})`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §0 LAST, on purpose: it must cover every byte the child emitted across every

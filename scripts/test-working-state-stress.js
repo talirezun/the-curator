@@ -911,6 +911,8 @@ section('6. Budget and the D1 protection guard, at the boundaries');
     nowState: 'P'.repeat(8000),
     nextSteps: fat, decisions: fat, traps: fat, openQuestions: fat,
     observations: fat.map(s => ({ statement: s, observedAt: '2026-01-01T00:00:00Z', recheck: 'npm test' })),
+    // v3.59.0's seventh section, so "no section vanishes" covers it too.
+    foundationsRead: { 'architecture.md': 'a'.repeat(64) },
   });
   assert(over.ok, 'a save far over MAX_STATE_BYTES is TRIMMED, never refused', over.message);
   assert(over.bytes <= MAX_STATE_BYTES,
@@ -1039,10 +1041,12 @@ section('7. Round-trip fidelity at size and in seven scripts');
     nextSteps: [CORPUS.backtick, CORPUS.table],
     openQuestions: [CORPUS.cyrillic],
     observations: [{ statement: CORPUS.cjk, observedAt: '2026-08-01T09:00:00Z', recheck: 'npm test' }],
+    // v3.59.0's seventh section; its content is validated hex, not prose.
+    foundationsRead: { 'architecture.md': 'b'.repeat(64) },
   });
-  assert(r.ok, 'a full six-section multilingual handoff saves', r.message);
+  assert(r.ok, 'a full seven-section multilingual handoff saves', r.message);
   assert(r.sectionsWritten.length === STATE_SECTIONS.length,
-    'all six sections are written', JSON.stringify(r.sectionsWritten));
+    'every section is written', JSON.stringify(r.sectionsWritten));
 
   const disk = readFileSync(statePath(P, 'fidelity/m/current.md'), 'utf8');
   for (const [name, text] of Object.entries(CORPUS)) {

@@ -155,8 +155,9 @@ ok(wireNames.includes('list_projects'), 'tools/list carries list_projects');
 ok(wireNames.includes('save_project_brief'), 'tools/list carries save_project_brief');
 
 const { tools: registry } = await import(path.join(REPO_ROOT, 'mcp/tools/index.js'));
-ok(wireNames.length === registry.length && wireNames.length === 22,
-  `the wire holds all ${registry.length} registered tools, and that is 22 (got ${wireNames.length})`);
+// v3.59.0: 22 → 24 (get_project_context, save_foundation).
+ok(wireNames.length === registry.length && wireNames.length === 24,
+  `the wire holds all ${registry.length} registered tools, and that is 24 (got ${wireNames.length})`);
 ok(JSON.stringify(wireNames.slice().sort()) === JSON.stringify(registry.map((t) => t.definition.name).sort()),
   'the wire NAME SET === the `tools` array in mcp/tools/index.js');
 

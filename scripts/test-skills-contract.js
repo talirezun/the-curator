@@ -206,8 +206,10 @@ for (const name of SKILLS) {
   // other here and carries refuseIfReadonly for the same reason: a `shared-*`
   // mirror is rebuilt from the collective, so a local tier-1 write there is
   // silently lost.
-  ok(mutators.size === 6,
-    `refuseIfReadonly call sites identify ${mutators.size} mutating tools (expected 6): ${[...mutators].sort().join(', ')}`);
+  // v3.59.0 added `save_foundation`, the seventh — tier 0's commissioned-only
+  // writer, refused on a mirror for the same reason the brief writer is.
+  ok(mutators.size === 7,
+    `refuseIfReadonly call sites identify ${mutators.size} mutating tools (expected 7): ${[...mutators].sort().join(', ')}`);
   const undeclared = [...mutators].filter(t => !declaredBySkill['my-curator'].has(t));
   ok(undeclared.length === 0,
     undeclared.length === 0

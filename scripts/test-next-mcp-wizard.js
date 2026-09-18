@@ -762,8 +762,10 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
     }
   }
 
-  ok(realTotal === 22, `sanity: mcp/tools/index.js registers 22 tools (got ${realTotal})`);
-  ok(realWrite === 6, `sanity: 6 tools call refuseIfReadonly (got ${realWrite})`);
+  // v3.59.0: 22 → 24 tools (get_project_context, save_foundation) and 6 → 7
+  // mutators (save_foundation carries refuseIfReadonly).
+  ok(realTotal === 24, `sanity: mcp/tools/index.js registers 24 tools (got ${realTotal})`);
+  ok(realWrite === 7, `sanity: 7 tools call refuseIfReadonly (got ${realWrite})`);
 
   ok(TOOL_TOTAL === realTotal, `the wizard's TOOL_TOTAL (${TOOL_TOTAL}) matches the real table (${realTotal})`);
   ok(TOOL_WRITE === realWrite, `the wizard's TOOL_WRITE (${TOOL_WRITE}) matches the real guard count (${realWrite})`);

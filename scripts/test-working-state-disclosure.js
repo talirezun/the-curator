@@ -79,7 +79,7 @@ process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); 
 
 const WS = await import('../src/brain/working-state.js');
 const { saveWorkingState, readWorkingState, listWorkingScopes, MAX_INDEX_ENTRIES, CURRENT_FILENAME } = WS;
-const { getWorkingStateHandler, saveWorkingStateHandler } = await import('../mcp/tools/working-state.js');
+const { getWorkingStateHandler, saveWorkingStateHandler, getProjectContextHandler } = await import('../mcp/tools/working-state.js');
 const { createStorageAdapter } = await import('../mcp/storage/local.js');
 const { __setUserDataDirOverride } = await import('../src/brain/paths.js');
 
@@ -858,6 +858,144 @@ section('10  THE TRAY IS A CONSUMER TOO — and it has dropped a field already')
     'and the handover is DRAWN — `harness-two ← harness-one` on the row itself', trayRow.sublabel);
   ok(trayRow.toolTip.includes('model: demo-model-4-6'),
     'with the exact model string in the tooltip', trayRow.toolTip);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('11  TIER 0 — every foundations disclosure survives BOTH read tools');
+/**
+ * v3.59.0 added a tier whose whole value is its disclosures: a stale mirror, a
+ * source root this machine cannot reach, a manifest the store cannot parse,
+ * an orphan file left by a crash between the document write and the manifest
+ * write, and a reading budget that omits documents by name. Each is computed
+ * by the store and each is one explicit assignment away from being dropped
+ * by a consumer. The five shapes the contract names are built here with the
+ * REAL writers (and, for the two the writers cannot produce, by hand on
+ * disk), then the store and the MCP handlers are run on identical arguments
+ * and compared — top level by §7's own detector, and `foundations` ONE LEVEL
+ * DOWN by a recursive variant, because a `foundations` object that arrives
+ * with a field missing inside it is the same drop wearing a wrapper.
+ */
+function findDroppedDeep(storeObj, payloadObj, prefix = '') {
+  const dropped = [];
+  for (const [k, v] of Object.entries(storeObj || {})) {
+    if (v === undefined || v === null) continue;
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (!payloadObj || !(k in payloadObj)) { dropped.push({ key, reason: 'absent' }); continue; }
+    const got = payloadObj[k];
+    if (Array.isArray(v)) {
+      if (!Array.isArray(got) || got.length !== v.length) dropped.push({ key, reason: 'array changed', value: v.length, got: Array.isArray(got) ? got.length : typeof got });
+    } else if (typeof v === 'object') {
+      dropped.push(...findDroppedDeep(v, got, key));
+    } else if (got !== v) {
+      dropped.push({ key, reason: 'changed', value: v, got });
+    }
+  }
+  return dropped;
+}
+{
+  const { saveFoundation, refreshFoundationsFromRepo, getProjectContext, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME } = WS;
+  // (1) Curator-authored documents, with a save that carries `foundationsRead`.
+  const P_CUR = 'zz-found-curator';
+  mkDomain(P_CUR);
+  const c1 = await saveFoundation(P_CUR, P_CUR, { slug: 'architecture', role: 'architecture', text: '# Architecture\n\nStore, MCP, routes.\n', authoredBy: { kind: 'agent', harness: 'h', model: 'm', instructedBy: 'user' } });
+  // Over 1 KB on purpose: the 1 KB budget case below must have something to omit.
+  const c2 = await saveFoundation(P_CUR, P_CUR, { slug: 'decisions', role: 'decisions', text: `# Decisions\n\n${'- One writer per tier.\n'.repeat(80)}`, authoredBy: { kind: 'agent', instructedBy: 'user' } });
+  ok(c1.ok && c2.ok, 'FIXTURE: two curator documents saved', JSON.stringify(c1).slice(0, 160));
+  await saveWorkingState(P_CUR, { scope: 'main', headline: 'h', nowState: 'n', foundationsRead: { [c1.slug]: c1.sha256 } });
+
+  // (2) A repo mirror with one STALE document and (3) an UNREACHABLE root.
+  const P_REPO = 'zz-found-repo';
+  mkDomain(P_REPO);
+  const repo = path.join(TMP, 'repo-disclose');
+  mkdirSync(path.join(repo, 'docs'), { recursive: true });
+  writeFileSync(path.join(repo, 'docs', 'architecture.md'), '# Arch v1\n');
+  writeFileSync(path.join(repo, 'docs', 'roadmap.md'), '# Roadmap v1\n');
+  const rf = await refreshFoundationsFromRepo(P_REPO, P_REPO, repo, { files: [{ path: 'docs/architecture.md' }, { path: 'docs/roadmap.md' }] });
+  ok(rf.ok && rf.added.length === 2, 'FIXTURE: two documents mirrored from a repository', JSON.stringify(rf).slice(0, 200));
+  writeFileSync(path.join(repo, 'docs', 'architecture.md'), '# Arch v2 — changed after the mirror\n');
+  const P_UNREACH = 'zz-found-unreach';
+  mkDomain(P_UNREACH);
+  const repo2 = path.join(TMP, 'repo-vanishes');
+  mkdirSync(path.join(repo2, 'docs'), { recursive: true });
+  writeFileSync(path.join(repo2, 'docs', 'guide.md'), '# Guide\n');
+  const rf2 = await refreshFoundationsFromRepo(P_UNREACH, P_UNREACH, repo2, { files: [{ path: 'docs/guide.md' }] });
+  ok(rf2.ok && rf2.added.length === 1, 'FIXTURE: a mirror whose root will vanish');
+  rmSync(repo2, { recursive: true, force: true });
+
+  // (4) A MALFORMED manifest and (5) an ORPHAN file.
+  const P_BAD = 'zz-found-badmanifest';
+  mkDomain(P_BAD);
+  mkdirSync(path.join(DOMAINS, P_BAD, 'state', FOUNDATIONS_DIRNAME), { recursive: true });
+  writeFileSync(path.join(DOMAINS, P_BAD, 'state', FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME), '{ not json');
+  writeFileSync(path.join(DOMAINS, P_BAD, 'state', FOUNDATIONS_DIRNAME, 'stranded.md'), '# Stranded\n');
+  const P_ORPHAN = 'zz-found-orphan';
+  mkDomain(P_ORPHAN);
+  const o1 = await saveFoundation(P_ORPHAN, P_ORPHAN, { slug: 'conventions', role: 'conventions', text: '# Conventions\n' });
+  ok(o1.ok, 'FIXTURE: one listed document beside the orphan');
+  writeFileSync(path.join(DOMAINS, P_ORPHAN, 'state', FOUNDATIONS_DIRNAME, 'orphan.md'), '# Orphan — written, never listed\n');
+
+  const CASES = [
+    ['curator documents, delta read against the handoff', P_CUR, {}],
+    ['curator documents, first-session read (all)', P_CUR, { include: 'all' }],
+    ['curator documents, budget omits the second', P_CUR, { include: 'all', maxBytes: 1024 }],
+    ['repo mirror with a STALE document', P_REPO, {}],
+    ['repo mirror whose root is UNREACHABLE', P_UNREACH, {}],
+    ['MALFORMED manifest', P_BAD, {}],
+    ['ORPHAN file beside a listed document', P_ORPHAN, {}],
+  ];
+  let keys = 0;
+  for (const [label, dom, opts] of CASES) {
+    const storeOut = await getProjectContext(dom, dom, opts);
+    const argsMcp = { project: dom };
+    if (opts.include) argsMcp.include = opts.include;
+    if (opts.maxBytes) argsMcp.max_bytes = opts.maxBytes;
+    const payload = JSON.parse(JSON.stringify(await getProjectContextHandler(argsMcp, storage)));
+    ok(payload.ok === true, `${label}: the handler answers ok`, JSON.stringify(payload).slice(0, 200));
+    const top = findDroppedFields(storeOut, payload);
+    const deep = findDroppedDeep(storeOut.foundations, payload.foundations, 'foundations');
+    const seenDrop = findDroppedDeep(storeOut.seen, payload.seen, 'seen');
+    keys += Object.keys(storeOut).length + Object.keys(storeOut.foundations || {}).length;
+    ok(top.length === 0 && deep.length === 0 && seenDrop.length === 0,
+      `${label}: every store field survives into get_project_context's payload, foundations one level down included`,
+      JSON.stringify([...top, ...deep, ...seenDrop]).slice(0, 400));
+    // get_working_state carries the SUMMARY of the same tier; compare it too.
+    const ws = await readWorkingState(dom, {});
+    const wsPayload = JSON.parse(JSON.stringify(await getWorkingStateHandler({ project: dom }, storage)));
+    const sumDrop = findDroppedDeep(ws.foundations, wsPayload.foundations, 'foundations');
+    ok(sumDrop.length === 0, `${label}: get_working_state forwards the foundations SUMMARY field for field`, JSON.stringify(sumDrop));
+  }
+  ok(keys > 120, `CORPUS NON-VACUITY: ${keys} keys compared across ${CASES.length} tier-0 scenarios`, keys);
+
+  // The five disclosures are REAL in the corpus — otherwise the comparisons
+  // above would be passing over shapes that never occurred.
+  const stale = await getProjectContext(P_REPO, P_REPO, {});
+  ok(stale.foundations.staleCount === 1 && stale.foundations.index.some((d) => d.freshness === 'stale'),
+    'corpus: the repo mirror really reports one STALE document', JSON.stringify(stale.foundations.index.map((d) => d.freshness)));
+  const unreach = await getProjectContext(P_UNREACH, P_UNREACH, {});
+  ok(unreach.foundations.unreachableCount === 1 && unreach.foundations.repo?.reachable === false,
+    'corpus: the vanished root really reports UNREACHABLE');
+  const bad = await getProjectContext(P_BAD, P_BAD, {});
+  ok(bad.foundations.present === false && typeof bad.foundations.manifestError === 'string' && bad.foundations.orphanFiles.includes('stranded.md'),
+    'corpus: the malformed manifest really reports manifestError and the stranded file', JSON.stringify(bad.foundations).slice(0, 200));
+  const orphan = await getProjectContext(P_ORPHAN, P_ORPHAN, {});
+  ok(orphan.foundations.orphanFiles.length === 1 && orphan.foundations.orphanFiles[0] === 'orphan.md',
+    'corpus: the orphan file really is disclosed by name');
+  const budget = await getProjectContext(P_CUR, P_CUR, { include: 'all', maxBytes: 1024 });
+  ok(budget.foundations.budget.omitted.length >= 1 || budget.foundations.budget.truncated === true,
+    'corpus: the 1 KB budget really omits or truncates', JSON.stringify(budget.foundations.budget));
+  const delta = await getProjectContext(P_CUR, P_CUR, {});
+  ok(delta.foundations.seenSource === 'handoff' && delta.foundations.includeMode === 'changed'
+     && delta.foundations.documents.length === 1 && delta.foundations.documents[0].slug === c2.slug,
+    'corpus: the delta read really defaulted to the handoff\'s hashes and returned only the unread document',
+    JSON.stringify({ src: delta.foundations.seenSource, mode: delta.foundations.includeMode, docs: delta.foundations.documents.map((d) => d.slug) }));
+  // Positive control for the deep detector, every run.
+  const probe = { a: 1, nested: { b: 2, list: [1, 2] } };
+  ok(findDroppedDeep(probe, { a: 1, nested: { b: 3, list: [1, 2] } }).some((d) => d.key === 'nested.b'),
+    'CONTROL: the deep detector reports a changed nested scalar');
+  ok(findDroppedDeep(probe, { a: 1, nested: { b: 2, list: [1] } }).some((d) => d.key === 'nested.list'),
+    'CONTROL: …and a shortened nested array');
+  ok(findDroppedDeep(probe, { a: 1, nested: { b: 2, list: [1, 2] } }).length === 0,
+    'CONTROL: …and reports nothing on a faithful copy');
 }
 
 console.log(`\n${'═'.repeat(60)}`);

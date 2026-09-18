@@ -27,14 +27,23 @@ import { getHealthDismissedDefinition,       getHealthDismissedHandler }       f
 import { dismissWikiIssueDefinition,         dismissWikiIssueHandler }         from './dismissed.js';
 import { undismissWikiIssueDefinition,       undismissWikiIssueHandler }       from './dismissed.js';
 
-// Track 7 — portable working state. Two reads, two writes (v3.48.0 added the
-// project level: `list_projects` answers "which project", `save_project_brief`
-// writes tier 1 and is instruction-only).
+// Track 7 — portable working state. Three reads, three writes (v3.48.0 added
+// the project level: `list_projects` answers "which project",
+// `save_project_brief` writes tier 1 and is instruction-only; v3.59.0 added
+// tier 0: `get_project_context` is the one-call bootstrap, `save_foundation`
+// writes a canonical document and is instruction-only too).
 import { getWorkingStateDefinition,          getWorkingStateHandler }          from './working-state.js';
 import { listProjectsDefinition,             listProjectsHandler }             from './working-state.js';
+import { getProjectContextDefinition,        getProjectContextHandler }        from './working-state.js';
 import { saveWorkingStateDefinition,         saveWorkingStateHandler }         from './working-state.js';
 import { saveProjectBriefDefinition,         saveProjectBriefHandler }         from './working-state.js';
+import { saveFoundationDefinition,           saveFoundationHandler }           from './working-state.js';
 
+// THE COUNT, for every place that quotes one at a user: 24 tools as of
+// v3.59.0 (22 in v3.48.0), of which 7 call refuseIfReadonly and so MUTATE
+// (compile_to_wiki, fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue,
+// save_working_state, save_project_brief, save_foundation). Derive the
+// mutator list from the refuseIfReadonly call sites, never from this comment.
 export const tools = [
   // ── Read tools (v2.3.0+) ────────────────────────────────────────────────────
   { definition: listDomainsDefinition,      handler: listDomainsHandler },
@@ -56,6 +65,12 @@ export const tools = [
   // block for the same reason every read tool is: tool ordering nudges a model
   // to reach for a read first when the intent is exploration.
   { definition: listProjectsDefinition,     handler: listProjectsHandler },
+  // v3.59.0 — the ONE-CALL BOOTSTRAP: brief + latest handoff + the project's
+  // canonical documents (index always, bodies within a budget, deltas against
+  // what the last handoff recorded). Read-only; registered before the write
+  // block like every read tool. Its `foundations.documents` array is on the
+  // size guard's trim list below.
+  { definition: getProjectContextDefinition, handler: getProjectContextHandler },
   // ── Write tools (v2.5.2+) ───────────────────────────────────────────────────
   { definition: compileToWikiDefinition,          handler: compileToWikiHandler },
   { definition: scanWikiHealthDefinition,         handler: scanWikiHealthHandler },
@@ -71,6 +86,12 @@ export const tools = [
   // that it is called when the USER asks, never on the agent's own initiative,
   // and every write it makes is stamped as agent-authored in the file itself.
   { definition: saveProjectBriefDefinition,       handler: saveProjectBriefHandler },
+  // v3.59.0 — tier 0's one writer for curator-owned canonical documents.
+  // Instruction-only like save_project_brief (refused without
+  // `commissioned_by_owner: true`), and mutator #7 by the refuseIfReadonly
+  // census. It does NOT call invalidateGraph: state/ is outside the graph
+  // cache, exactly as the other two state writers are.
+  { definition: saveFoundationDefinition,         handler: saveFoundationHandler },
 ];
 
 // Response size cap. 1 MB of JSON is ~250 000 tokens — alone it would saturate
@@ -109,23 +130,41 @@ function enforceSizeLimit(toolName, result) {
     // domains (the user's articles wiki currently has 645 broken links).
     'brokenLinks', 'orphans', 'folderPrefixLinks',
     'crossFolderDupes', 'hyphenVariants', 'missingBacklinks', 'pairs',
+    // v3.59.0 — get_project_context's document bodies, ONE level down. The
+    // halving keeps the FIRST half, and the store put the documents in
+    // reading order, so the last in reading order go first. Without this a
+    // bootstrap over budget would collapse to the bare `{_truncated}`
+    // fallback below, with `ok`, the brief and the handoff erased.
+    'foundations.documents',
   ];
   const trimmed = { ...result };
   const trimmedFields = [];
 
+  // A dotted name addresses a nested array; the path's objects are copied on
+  // write so the caller's object is never mutated. Top-level names behave
+  // exactly as they always have.
+  const getAt = (obj, p) => p.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj);
+  const setAt = (obj, p, v) => {
+    const keys = p.split('.');
+    let o = obj;
+    for (let i = 0; i < keys.length - 1; i++) { o[keys[i]] = { ...o[keys[i]] }; o = o[keys[i]]; }
+    o[keys[keys.length - 1]] = v;
+  };
+
   for (const field of trimmable) {
-    if (!Array.isArray(trimmed[field])) continue;
-    const original = trimmed[field].length;
+    if (!Array.isArray(getAt(trimmed, field))) continue;
+    const original = getAt(trimmed, field).length;
     // Halve this array, then re-measure
     while (
-      Array.isArray(trimmed[field]) &&
-      trimmed[field].length > 10 &&
+      Array.isArray(getAt(trimmed, field)) &&
+      getAt(trimmed, field).length > (field.includes('.') ? 0 : 10) &&
       Buffer.byteLength(JSON.stringify(trimmed, null, 2), 'utf8') > MAX_RESPONSE_BYTES
     ) {
-      trimmed[field] = trimmed[field].slice(0, Math.floor(trimmed[field].length / 2));
+      const cur = getAt(trimmed, field);
+      setAt(trimmed, field, cur.slice(0, Math.floor(cur.length / 2)));
     }
-    if (trimmed[field].length < original) {
-      trimmedFields.push(`${field}: ${original} → ${trimmed[field].length}`);
+    if (getAt(trimmed, field).length < original) {
+      trimmedFields.push(`${field}: ${original} → ${getAt(trimmed, field).length}`);
     }
     if (Buffer.byteLength(JSON.stringify(trimmed, null, 2), 'utf8') <= MAX_RESPONSE_BYTES) break;
   }
@@ -149,6 +188,13 @@ function enforceSizeLimit(toolName, result) {
   }
   return text;
 }
+
+/** TEST-ONLY seam (v3.59.0): lets a suite drive the guard's nested-path trim
+ *  (`foundations.documents`) directly. The MCP handlers bound themselves
+ *  before this guard is reached, so the nested arm is defence in depth and
+ *  cannot be reached over the wire with the shipped constants — which is
+ *  exactly why it needs a seam to be tested at all. Never called in production. */
+export const __enforceSizeLimit = enforceSizeLimit;
 
 export function registerTools(server, storage) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({

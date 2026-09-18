@@ -148,9 +148,9 @@
  * cache TTL out of date. Stale state is worse than no state.
  */
 
-import { readdir, stat, mkdir, appendFile, open, rename, rm } from 'fs/promises';
+import { readdir, stat, mkdir, appendFile, open, rename, rm, realpath, readFile } from 'fs/promises';
 import { readFileSync, writeFileSync } from 'fs';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import { hostname } from 'os';
 import path from 'path';
 import { domainPath, listDomains, isDomainReadonly } from './files.js';
@@ -187,12 +187,46 @@ import { resolveInsideWiki } from './wiki-read.js';
 // coherent outcome. It is also user-initiated and retryable, which is what
 // makes refusing on a held lock acceptable here and not acceptable for a
 // handoff written by an agent that is about to run out of context.
-import { acquireFileLock } from './write-registry.js';
+//
+// v3.59.0: the FOUNDATIONS tier (tier 0) takes BOTH the file lock and the
+// in-memory registry (`registerWrite`) on every writer, and the reason is the
+// mirror image of the tier-2 argument above: foundation files have NO machine
+// segment, so two processes on one machine — the app and the MCP child — can
+// target the SAME file and the same manifest. See the FOUNDATIONS block.
+import { acquireFileLock, registerWrite } from './write-registry.js';
 
 export const STATE_DIRNAME = 'state';
 export const BRIEF_FILENAME = 'project.md';
 export const CURRENT_FILENAME = 'current.md';
 export const JOURNAL_FILENAME = 'journal.jsonl';
+// ── Tier 0, the foundations (v3.59.0) — see the FOUNDATIONS block below ────
+export const FOUNDATIONS_DIRNAME = 'foundations';
+export const FOUNDATIONS_MANIFEST_FILENAME = 'manifest.json';
+export const FOUNDATIONS_MANIFEST_VERSION = 1;
+/** Per-document cap. A larger save is REFUSED with the size named: a verbatim
+ *  document cannot be trimmed honestly (a handoff can, because it is ours). */
+export const MAX_FOUNDATION_BYTES = 512 * 1024;
+/** Project-wide budget. Exceeding it is ACCEPTED and disclosed, never refused
+ *  — a refused save loses the document (the same rule as a handoff). */
+export const FOUNDATIONS_BUDGET_BYTES = 200 * 1024;
+/** The manifest is small by construction; a read past this is a malformed file. */
+export const MAX_FOUNDATIONS_MANIFEST_BYTES = 1024 * 1024;
+/** Manifest entries per project. Bounds the index and the `seen` map. */
+export const MAX_FOUNDATIONS_PER_PROJECT = 200;
+export const FOUNDATION_ROLES = Object.freeze([
+  'architecture', 'decisions', 'conventions', 'roadmap', 'api', 'guide', 'other',
+]);
+/** Replacing a document with one under this fraction of its size needs
+ *  `replace: true` — 10 %, not the brief's 5 %, per the v3.59.0 contract. */
+export const FOUNDATION_REPLACE_RATIO = 0.10;
+/** `getProjectContext` document-text budget: default and hard cap. The cap
+ *  keeps the whole MCP response (brief 32 KB + handoff 48 KB + index) under
+ *  the 400 KB guard with margin; `scripts/test-foundations.js` asserts it. */
+export const CONTEXT_MAX_BYTES_DEFAULT = 120 * 1024;
+export const CONTEXT_MAX_BYTES_CAP = 200 * 1024;
+export const MAX_FOUNDATION_TITLE_CHARS = 120;
+/** The handoff section that records which foundations a session read. */
+export const FOUNDATIONS_READ_HEADING = 'Foundations read';
 
 // ── Budgets ──────────────────────────────────────────────────────────────
 // Every one of these exists so the READ is self-capping. The MCP response
@@ -1219,13 +1253,29 @@ export function sanitiseObservations(raw, savedAt, { label = 'observations' } = 
 // the doing has started. Argument NAMES are unchanged; only the rendered
 // order moves.
 //
+//
+// ── v3.59.0: `foundationsRead` IS A REAL SECTION, and it is LAST ──────────
+// The bootstrap (`getProjectContext`) hands a session the project's canonical
+// documents and a `seen` map of their content hashes; the session records
+// that map on its next save so the NEXT bootstrap sends only what changed.
+// It has to be a section in THIS array, not a field smuggled through prose:
+// `saveWorkingState` builds the document from this list and drops any other
+// key, and `escapeHeadings` neutralises a line-initial `#` inside a field, so
+// there is no other way to get a heading into current.md. It renders as a
+// bullet list `- <slug> · <sha256>` and parses back to an object
+// (`parseFoundationsRead`). It is placed LAST because it is bookkeeping for
+// the next bootstrap, not something a human resuming cold should read first.
+// It counts toward MAX_STATE_BYTES like any list and is capped at
+// MAX_ITEMS_PER_LIST (40) entries; a project with more foundations than that
+// is out of scope for the delta read and the cap is disclosed as an omission.
 export const STATE_SECTIONS = [
-  { key: 'nowState',      heading: 'Where things stand',                  kind: 'prose' },
-  { key: 'decisions',     heading: 'Firm decisions — do not re-litigate', kind: 'list'  },
-  { key: 'traps',         heading: 'Traps and dead ends',                 kind: 'list'  },
-  { key: 'nextSteps',     heading: 'Next steps',                          kind: 'list'  },
-  { key: 'observations',  heading: 'Observations (point-in-time)',        kind: 'obs'   },
-  { key: 'openQuestions', heading: 'Open questions',                      kind: 'list'  },
+  { key: 'nowState',        heading: 'Where things stand',                  kind: 'prose' },
+  { key: 'decisions',       heading: 'Firm decisions — do not re-litigate', kind: 'list'  },
+  { key: 'traps',           heading: 'Traps and dead ends',                 kind: 'list'  },
+  { key: 'nextSteps',       heading: 'Next steps',                          kind: 'list'  },
+  { key: 'observations',    heading: 'Observations (point-in-time)',        kind: 'obs'   },
+  { key: 'openQuestions',   heading: 'Open questions',                      kind: 'list'  },
+  { key: 'foundationsRead', heading: FOUNDATIONS_READ_HEADING,              kind: 'list'  },
 ];
 
 export const BRIEF_SECTIONS = [
@@ -1424,7 +1474,16 @@ export const LATEST_SCOPE = 'latest';
  * ours, and a project resolving onto one of those would build a path whose
  * last segment collides with a file this module reads.
  */
-const RESERVED_PROJECT_NAMES = new Set([BRIEF_FILENAME, JOURNAL_FILENAME, CURRENT_FILENAME]);
+// `foundations` (v3.59.0) is a DIRECTORY name under every project — the tier-0
+// folder — so a project of that name would resolve `state/foundations/` as
+// both a project root and the default project's document folder. Refused here
+// (`projectPrefix` returns null), which is what refuses it on every read and
+// write path at once; the routes refuse it at create with the same shape.
+const RESERVED_PROJECT_NAMES = new Set([BRIEF_FILENAME, JOURNAL_FILENAME, CURRENT_FILENAME, FOUNDATIONS_DIRNAME]);
+/** A scope of this name would put `<machine>/current.md` INSIDE the
+ *  foundations folder. Refused at save; a pre-existing directory of that name
+ *  stays readable, because refusing a read would hide state that is on disk. */
+const RESERVED_SCOPE_NAMES = new Set([FOUNDATIONS_DIRNAME]);
 
 /**
  * The path prefix for (domain, project), relative to the domain's state root.
@@ -1516,6 +1575,11 @@ export async function scanStateLayout(domain) {
   let shadowedDefault = false;
 
   for (const name of safe) {
+    // The default project's tier-0 folder (v3.59.0) is a store directory,
+    // like project.md is a store file: neither a scope nor a project. Skipped
+    // here so it cannot be listed as a work-stream or mistaken for a project;
+    // `RESERVED_PROJECT_NAMES` refuses the name on every other path.
+    if (name === FOUNDATIONS_DIRNAME) continue;
     const dirAbs = resolveInsideState(domain, name);
     if (!dirAbs) continue;                       // symlink out of state/ — refused
     const hasBrief = await isFile(path.join(dirAbs, BRIEF_FILENAME));
@@ -2798,6 +2862,14 @@ export async function saveWorkingState(project, input = {}) {
   if (!scope) {
     return { ok: false, reason: 'invalid-scope', message: `"${input.scope}" is not a usable scope name.` };
   }
+  if (RESERVED_SCOPE_NAMES.has(scope)) {
+    return {
+      ok: false, reason: 'reserved-scope',
+      message: `"${scope}" is reserved: it is the name of the folder that holds this project's canonical `
+        + 'documents (tier 0), and a work-stream of that name would write its handoff inside it. '
+        + 'Choose another scope name.',
+    };
+  }
   const machineExplicit = input.machine !== undefined && input.machine !== null;
   const machine = machineId(input.machine);
   if (!machine) {
@@ -2859,6 +2931,11 @@ export async function saveWorkingState(project, input = {}) {
   const obs = sanitiseObservations(input.observations, savedAt, { label: 'observations' });
   push(obs.notes);
   data.observations = obs.items;
+  // v3.59.0 — the hashes of the foundations this session read, rendered as a
+  // bullet list so the next bootstrap can send only what changed.
+  const fr = sanitiseFoundationsRead(input.foundationsRead, { label: 'foundationsRead' });
+  push(fr.notes);
+  data.foundationsRead = fr.items;
 
   const provenance = [
     `Machine: ${machine}`,
@@ -2978,12 +3055,27 @@ export async function saveWorkingState(project, input = {}) {
     console.error('[working-state] journal append failed (non-fatal):', scrubPaths(String(err?.message ?? err)));
   }
 
+  // ── v3.59.0: the ADVISORY repo refresh, AFTER the handoff is on disk ────
+  // `repoRoot` is a hint, never a command: the refresh runs only when the
+  // project is repo-owned, `<repoRoot>/.curator-project` names THIS project,
+  // and the path is reachable from here. Every other case is reported as
+  // skipped with the reason, and a refresh that fails never fails the save —
+  // the handoff is the product and it is already written.
+  let foundationsRefresh = null;
+  if (input.repoRoot !== undefined && input.repoRoot !== null && input.repoRoot !== '') {
+    foundationsRefresh = await maybeRefreshFoundations(project, projectSlug, prefix, input.repoRoot);
+  }
+
   return {
     // `project` is the PROJECT slug — identical to the domain name for the
     // domain's own project, so the value every existing caller reads is
     // unchanged — and `domain` is added beside it rather than either being
     // redefined.
     ok: true, project: projectSlug, domain: project, scope, machine, savedAt,
+    // Null when no `repoRoot` was offered; otherwise `{attempted, …}` — see
+    // maybeRefreshFoundations. Always present so a consumer can tell "not
+    // asked" from "asked and skipped" from "asked and done".
+    foundationsRefresh,
     path: `${STATE_DIRNAME}/${dirRel}/${CURRENT_FILENAME}`,
     bytes: Buffer.byteLength(doc, 'utf8'),
     sectionsWritten: STATE_SECTIONS.filter(s => sectionBody(s, data, omitted)).map(s => s.key),
@@ -3912,6 +4004,13 @@ export async function readWorkingState(project, opts = {}) {
     }
   }
 
+  // Tier 0 — a SUMMARY only (v3.59.0): count, bytes, staleness and any
+  // manifest error. No document body is read here; `getProjectContext` and
+  // `readFoundation` are the body readers. `manifestError` is forwarded rather
+  // than collapsed into `present: false`, because "no foundations" and "a
+  // manifest this store cannot read" are different facts.
+  out.foundations = await summariseFoundations(project, inner);
+
   const scopeResolution = await resolveScope(project, inner, opts && typeof opts === 'object' ? opts.scope : undefined);
   if (!scopeResolution.ok) return { ok: false, reason: scopeResolution.error, message: scopeResolution.message };
   const wantScope = scopeResolution.scope;
@@ -4072,6 +4171,10 @@ export async function readWorkingState(project, opts = {}) {
             'hand-edited or arrived over sync carrying a section The Curator did not write. Nothing was ' +
             'removed — treat the repeated section as unverified.'
           : null,
+        // v3.59.0 — the `## Foundations read` section parsed back to
+        // `{slug: sha256}`; null when the handoff carries no such section.
+        // `getProjectContext` uses it as the default `seenHashes`.
+        foundationsRead: parseFoundationsRead(clean),
       };
     }
   }
@@ -4145,4 +4248,1217 @@ export async function readWorkingState(project, opts = {}) {
   }
 
   return out;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// FOUNDATIONS — TIER 0, THE CANONICAL DOCUMENTS THAT TRAVEL (v3.59.0)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Three kinds of context reach an agent: volatile STATE (tiers 1–3 above —
+// brief, handoff, journal), compounded KNOWLEDGE (the wiki), and CANONICAL
+// DOCUMENTS — an architecture note, the decision log, the conventions, the
+// roadmap. Until this release the third kind lived only inside a code repo,
+// invisible to any harness without a checkout, and `raw/` is gitignored so an
+// ingested copy never travelled either. This tier makes those documents
+// travel VERBATIM with the project and be readable from any harness in ONE
+// bootstrap call (`getProjectContext`), with freshness COMPUTED from content
+// hashes rather than remembered, and reading BOUNDED (index + deltas) rather
+// than "read everything every time".
+//
+// ── Layout (synced; NO machine segment — the same carve-out as project.md) ─
+//
+//   domains/<domain>/state/[<project>/]foundations/
+//     manifest.json      the manifest — rewritten WHOLE, atomically, LAST
+//     <slug>.md          one verbatim document per entry
+//
+// ── The seven invariants, in one place ────────────────────────────────────
+//
+//   1. Foundations are replaced WHOLE; never union-merged; never routed
+//      through `writePage` (the wiki ACCUMULATES; a canonical document
+//      SUPERSEDES, exactly like a handoff).
+//   2. ONE ownership per project, ONE writer per document. `repo`-owned: the
+//      app and the MCP only MIRROR (a byte copy of the checkout, no LLM).
+//      `curator`-owned: only `saveFoundation` — reached over MCP by
+//      `save_foundation`, on the owner's explicit instruction — writes. A
+//      save that would mix the two is REFUSED. The app edits neither in
+//      this release.
+//   3. Provenance on every document (`authoredBy`, `source`, `commit`);
+//      `sha256` over the STORED BYTES is the identity; freshness of a mirror
+//      is computed by re-hashing the source when it is reachable, never
+//      remembered.
+//   4. No machine segment. A mirror is identical bytes on every machine, so
+//      two checkouts at the same commit cannot conflict; two at DIFFERENT
+//      commits converge to whichever machine saved last, and because the
+//      repository is the source of truth any machine re-asserts its checkout
+//      on its next save (`repoRoot` on `saveWorkingState`) — cheap and
+//      idempotent. Curator-authored documents share project.md's carve-out in
+//      docs/sync.md exactly.
+//   5. Every read is disclosed: budget truncation, omitted documents,
+//      unreachable sources, a malformed manifest, an orphan file.
+//   6. Reads never write. The bootstrap does not touch the handoff; the
+//      caller records `seen` on its own next save as `foundationsRead`.
+//   7. Sanitisation on READ like the brief (`neutraliseProtocol`; defang never
+//      deletes). Per-document cap MAX_FOUNDATION_BYTES (a larger save is
+//      REFUSED with the size named — a verbatim document cannot be trimmed
+//      honestly); project budget FOUNDATIONS_BUDGET_BYTES is DISCLOSED when
+//      exceeded, never refused (a refused save loses the document).
+//
+// ── Why heading escaping is OFF here, and what that trades ────────────────
+// The brief's write path (`writeBriefDoc`) truncates at MAX_BRIEF_BYTES and
+// `applyWriteRules` rewrites a line-initial `## ` to `\## ` so a FIELD cannot
+// forge a section in a document we assemble around it. Both would destroy a
+// mirrored architecture document: it IS headings, and it must round-trip
+// byte-for-byte (the refresh's whole correctness claim is sha(stored) ===
+// sha(source)). So foundation bodies are stored VERBATIM — no heading escape,
+// no write-side neutralisation, no trim. The trade, stated: a stored file can
+// carry protocol-shaped text. That is the same trust the brief is given (a
+// canonical document is the owner's, or their repository's), and the reader
+// neutralises on READ and reports `sanitisedOnRead`, while the MCP layer
+// labels every document `content_is_data`. Heading escaping stays ON for the
+// brief and for every handoff field; both are asserted in
+// scripts/test-foundations.js.
+//
+// ── Why every writer takes BOTH locks ─────────────────────────────────────
+// Tier-2 writers skip the file lock because their target is per-(scope,
+// machine). Foundations have no machine segment, so the app's refresh route
+// and the MCP child — two processes — can target the SAME document and the
+// SAME manifest. `saveFoundation`, `removeFoundation` and
+// `refreshFoundationsFromRepo` therefore run inside `registerWrite` (so the
+// web server's update/sync/delete endpoints see an active write) AND
+// `acquireFileLock` (so the MCP child and the server exclude each other), and
+// write the manifest LAST: a crash between the document and the manifest
+// leaves a document with no entry — an ORPHAN, which `listFoundations`
+// discloses as `orphanFiles` — never an entry with no document.
+// ═════════════════════════════════════════════════════════════════════════
+
+const FOUNDATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
+const FOUNDATION_STEM_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const SOURCE_EXT_RE = /\.(md|txt)$/i;
+const FOUNDATIONS_READ_LINE_RE = /^-[ \t]+([a-z0-9][a-z0-9-]{0,63}\.md)[ \t]+·[ \t]+([0-9a-f]{64})[ \t]*$/;
+const GIT_SHA_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * Normalise a document slug, or null.
+ *
+ * The on-disk rule is `^[a-z0-9][a-z0-9-]{0,63}\.md$` and nothing else is
+ * ever written. Two tolerances on INPUT, both deterministic and lossless:
+ * trailing/leading whitespace and upper case are folded, and a bare stem
+ * (`architecture`) gets its `.md` — a model that sends the name without the
+ * extension is not wrong, it is just not using our spelling, and refusing it
+ * would cost a document to buy tidiness. A dot anywhere but in the suffix, a
+ * slash, a space, or a leading hyphen is refused: the slug is a path segment.
+ */
+export function normaliseFoundationSlug(s) {
+  if (typeof s !== 'string') return null;
+  let t = s.trim().toLowerCase();
+  if (!t || t.includes('/') || t.includes('\\') || t.includes('..')) return null;
+  if (FOUNDATION_STEM_RE.test(t)) t = `${t}.md`;
+  return FOUNDATION_SLUG_RE.test(t) ? t : null;
+}
+
+function sha256Hex(buf) {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+/** A sha256 hex string, lower-cased, or null. */
+function normaliseSha(h) {
+  if (typeof h !== 'string') return null;
+  const t = h.trim().toLowerCase();
+  return SHA256_RE.test(t) ? t : null;
+}
+
+/**
+ * Write-side sanitiser for the `foundationsRead` section.
+ *
+ * Accepts the shape the bootstrap hands out (`{slug: sha256}`), an array of
+ * `{slug, sha256}` objects, or an array of `"slug · sha256"` lines, and
+ * renders each valid pair as ONE bullet `<slug> · <sha256>`. Nothing here
+ * passes through `sanitiseLine`: every emitted character comes from a
+ * validated slug and a validated hex digest, so there is nothing to escape.
+ *
+ * An entry that is not a (valid slug, valid sha) pair is DROPPED and the note
+ * says so with the loss word, deliberately: `classifySaveNotes` derives its
+ * body-field set from STATE_SECTIONS, so this note classifies the save
+ * `trimmed`. That is honest — a hash the next bootstrap cannot see means
+ * that document is re-sent whole — and it is the fail-safe direction.
+ */
+export function sanitiseFoundationsRead(raw, { label = 'foundationsRead' } = {}) {
+  const notes = [];
+  if (raw === undefined || raw === null) return { items: [], notes };
+  if (typeof raw === 'string') {
+    // A string is re-read line by line through the array arm's rule.
+    return sanitiseFoundationsRead(raw.split('\n').filter((l) => l.trim()), { label });
+  }
+  const pairs = [];
+  if (Array.isArray(raw)) {
+    for (const e of raw) {
+      if (typeof e === 'string') {
+        const m = /^[\s-]*(\S+)\s*(?:·|:|=|\s)\s*([0-9a-fA-F]{64})\s*$/.exec(e);
+        pairs.push(m ? [m[1], m[2]] : [e, null]);
+      } else if (e && typeof e === 'object') {
+        pairs.push([e.slug, e.sha256 ?? e.sha]);
+      } else {
+        pairs.push([null, null]);
+      }
+    }
+  } else if (typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) pairs.push([k, v]);
+  } else {
+    notes.push(`${label}: dropped 1 value that was neither an object nor a list`);
+    return { items: [], notes };
+  }
+  const map = new Map();
+  let dropped = 0;
+  for (const [s, h] of pairs) {
+    const slug = normaliseFoundationSlug(s);
+    const sha = normaliseSha(h);
+    if (!slug || !sha) { dropped++; continue; }
+    map.set(slug, sha);                     // last spelling of a slug wins
+  }
+  if (dropped) {
+    notes.push(`${label}: dropped ${dropped} entr${dropped === 1 ? 'y' : 'ies'} — each must be a document slug `
+      + 'like architecture.md paired with its 64-hex sha256');
+  }
+  let items = [...map].map(([slug, sha]) => `${slug} · ${sha}`);
+  if (items.length > MAX_ITEMS_PER_LIST) {
+    const over = items.length - MAX_ITEMS_PER_LIST;
+    items = items.slice(0, MAX_ITEMS_PER_LIST);
+    notes.push(`${label}: dropped ${over} entr${over === 1 ? 'y' : 'ies'} over the ${MAX_ITEMS_PER_LIST}-entry cap `
+      + '— the next bootstrap re-sends those documents whole');
+  }
+  return { items, notes };
+}
+
+/**
+ * Parse a handoff's `## Foundations read` section back to `{slug: sha256}`.
+ * Null when the section is absent (a pre-v3.59.0 handoff, or a session that
+ * recorded nothing); an object — possibly empty — when it is present. The two
+ * are different facts and `getProjectContext` treats them differently: null
+ * means "no evidence of a previous read", so every document is unchanged-
+ * unknown and is sent.
+ */
+export function parseFoundationsRead(text) {
+  if (typeof text !== 'string' || !text) return null;
+  let inSection = false, found = false;
+  const out = {};
+  for (const line of text.split('\n')) {
+    const h = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
+    if (h) {
+      inSection = h[1] === FOUNDATIONS_READ_HEADING;
+      if (inSection) found = true;
+      continue;
+    }
+    if (!inSection) continue;
+    const m = FOUNDATIONS_READ_LINE_RE.exec(line);
+    if (m) out[m[1]] = m[2];
+  }
+  return found ? out : null;
+}
+
+// ── Paths and the manifest ────────────────────────────────────────────────
+
+/** The tier-0 paths for (domain, project), or null when anything is unsafe.
+ *  Every path is built through `resolveInsideState` — the sole chokepoint. */
+function foundationsPaths(domain, prefix) {
+  if (prefix === null || prefix === undefined) return null;
+  const dirRel = `${prefix}${FOUNDATIONS_DIRNAME}`;
+  const dirAbs = resolveInsideState(domain, dirRel);
+  const manifestAbs = resolveInsideState(domain, `${dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+  if (!dirAbs || !manifestAbs) return null;
+  return { dirRel, dirAbs, manifestAbs };
+}
+
+/** Resolve the project argument the way every read path here does. */
+function projectView(domain, project) {
+  if (!isSafeSegment(domain)) {
+    return { ok: false, reason: 'invalid-project', message: `"${domain}" is not a valid project name.` };
+  }
+  const inner = project !== undefined && project !== null && project !== '' ? String(project) : domain;
+  const prefix = projectPrefix(domain, inner);
+  if (prefix === null) {
+    return { ok: false, reason: 'invalid-state-project', message: `"${project}" is not a usable project name.` };
+  }
+  const paths = foundationsPaths(domain, prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'That project resolves outside the state folder.' };
+  return { ok: true, inner, prefix, paths };
+}
+
+function emptyManifest() {
+  return {
+    version: FOUNDATIONS_MANIFEST_VERSION,
+    ownership: null,
+    repo: null,
+    budgetBytes: FOUNDATIONS_BUDGET_BYTES,
+    order: [...FOUNDATION_ROLES],
+    documents: [],
+  };
+}
+
+function normaliseAuthoredBy(a) {
+  if (!a || typeof a !== 'object') return null;
+  const raw = String(a.kind || '').toLowerCase();
+  const kind = raw === 'human' ? 'human' : raw === 'agent' ? 'agent' : 'unknown';
+  const commissioned = a.commissionedBy === 'owner' || a.instructedBy === 'user' ? 'owner' : null;
+  return {
+    kind,
+    harness: provenanceValue(typeof a.harness === 'string' ? a.harness : null),
+    model: provenanceValue(typeof a.model === 'string' ? a.model : null),
+    commissionedBy: kind === 'agent' ? (commissioned || 'owner') : commissioned,
+  };
+}
+
+function readTitle(t) {
+  return typeof t === 'string' && t.trim()
+    ? neutraliseProtocol(t.replace(/[\r\n\t]+/g, ' ')).trim().slice(0, MAX_FOUNDATION_TITLE_CHARS)
+    : null;
+}
+
+/**
+ * Validate a parsed manifest. Returns `{ok:true, manifest}` with every field
+ * normalised, or `{ok:false, error}` naming the first defect. A manifest that
+ * fails here yields `present: false` + `manifestError` on every read — never
+ * a crash, never a silent empty — and every WRITER refuses to touch it,
+ * because rewriting a manifest we cannot read could drop entries for
+ * documents we cannot see.
+ */
+function validateManifest(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, error: 'manifest is not a JSON object' };
+  if (obj.version !== FOUNDATIONS_MANIFEST_VERSION) {
+    return { ok: false, error: `manifest version ${JSON.stringify(obj.version)} is not ${FOUNDATIONS_MANIFEST_VERSION}` };
+  }
+  const ownership = obj.ownership === 'repo' || obj.ownership === 'curator' ? obj.ownership
+    : obj.ownership === null || obj.ownership === undefined ? null : undefined;
+  if (ownership === undefined) return { ok: false, error: `ownership ${JSON.stringify(obj.ownership)} is not "repo", "curator" or null` };
+  let repo = null;
+  if (obj.repo !== null && obj.repo !== undefined) {
+    if (typeof obj.repo !== 'object' || Array.isArray(obj.repo)) return { ok: false, error: 'repo is not an object' };
+    if (obj.repo.root !== null && obj.repo.root !== undefined && typeof obj.repo.root !== 'string') {
+      return { ok: false, error: 'repo.root is not a string' };
+    }
+    repo = {
+      root: typeof obj.repo.root === 'string' && obj.repo.root ? obj.repo.root : null,
+      remote: typeof obj.repo.remote === 'string' ? obj.repo.remote.slice(0, 400) : null,
+      lastRefreshAt: isIsoish(obj.repo.lastRefreshAt) ? new Date(obj.repo.lastRefreshAt).toISOString() : null,
+      lastRefreshCommit: typeof obj.repo.lastRefreshCommit === 'string' && GIT_SHA_RE.test(obj.repo.lastRefreshCommit)
+        ? obj.repo.lastRefreshCommit : null,
+    };
+  }
+  const budgetBytes = Number.isInteger(obj.budgetBytes) && obj.budgetBytes > 0 ? obj.budgetBytes : FOUNDATIONS_BUDGET_BYTES;
+  if (obj.budgetBytes !== undefined && obj.budgetBytes !== budgetBytes) {
+    return { ok: false, error: 'budgetBytes is not a positive integer' };
+  }
+  const order = Array.isArray(obj.order) && obj.order.every((r) => typeof r === 'string')
+    ? obj.order.filter((r) => FOUNDATION_ROLES.includes(r))
+    : obj.order === undefined ? [...FOUNDATION_ROLES] : null;
+  if (order === null) return { ok: false, error: 'order is not an array of role names' };
+  for (const r of FOUNDATION_ROLES) if (!order.includes(r)) order.push(r);   // every role has a rank
+  if (!Array.isArray(obj.documents)) return { ok: false, error: 'documents is not an array' };
+  if (obj.documents.length > MAX_FOUNDATIONS_PER_PROJECT) {
+    return { ok: false, error: `documents holds ${obj.documents.length} entries, over the ${MAX_FOUNDATIONS_PER_PROJECT} cap` };
+  }
+  const seen = new Set();
+  const documents = [];
+  for (let i = 0; i < obj.documents.length; i++) {
+    const d = obj.documents[i];
+    const where = `documents[${i}]`;
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return { ok: false, error: `${where} is not an object` };
+    const slug = typeof d.slug === 'string' && FOUNDATION_SLUG_RE.test(d.slug) ? d.slug : null;
+    if (!slug) return { ok: false, error: `${where}.slug ${JSON.stringify(String(d.slug).slice(0, 80))} is not a valid document slug` };
+    if (seen.has(slug)) return { ok: false, error: `${where}.slug "${slug}" is listed twice` };
+    seen.add(slug);
+    if (!FOUNDATION_ROLES.includes(d.role)) return { ok: false, error: `${where}.role ${JSON.stringify(d.role)} is not a known role` };
+    const kind = d.source && typeof d.source === 'object' ? d.source.kind : undefined;
+    if (kind !== 'repo' && kind !== 'curator') return { ok: false, error: `${where}.source.kind must be "repo" or "curator"` };
+    if (kind === 'repo' && (typeof d.source.path !== 'string' || !d.source.path)) {
+      return { ok: false, error: `${where}.source.path is required for a repo source` };
+    }
+    if (ownership && ((kind === 'repo') !== (ownership === 'repo'))) {
+      return { ok: false, error: `${where} is ${kind}-sourced inside a ${ownership}-owned project` };
+    }
+    const sha256 = normaliseSha(d.sha256);
+    if (!sha256) return { ok: false, error: `${where}.sha256 is not a 64-hex digest` };
+    if (!Number.isInteger(d.bytes) || d.bytes < 0) return { ok: false, error: `${where}.bytes is not a non-negative integer` };
+    documents.push({
+      slug,
+      role: d.role,
+      title: readTitle(d.title) || slug.replace(/\.md$/, ''),
+      source: kind === 'repo' ? { kind, path: String(d.source.path).slice(0, 512) } : { kind },
+      sha256,
+      bytes: d.bytes,
+      updatedAt: isIsoish(d.updatedAt) ? new Date(d.updatedAt).toISOString() : null,
+      commit: typeof d.commit === 'string' && GIT_SHA_RE.test(d.commit) ? d.commit : null,
+      authoredBy: normaliseAuthoredBy(d.authoredBy),
+    });
+  }
+  return { ok: true, manifest: { version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents } };
+}
+
+/** Read + validate the manifest. `status` is `absent` | `ok` | `malformed`. */
+async function readManifest(manifestAbs) {
+  if (!manifestAbs) return { status: 'malformed', error: 'manifest path resolves outside the state folder' };
+  const r = await readCapped(manifestAbs, MAX_FOUNDATIONS_MANIFEST_BYTES);
+  if (!r) return { status: 'absent' };
+  if (r.truncated) return { status: 'malformed', error: `manifest.json is ${r.bytes} bytes, over the ${MAX_FOUNDATIONS_MANIFEST_BYTES}-byte read cap` };
+  let parsed;
+  try { parsed = JSON.parse(r.text); } catch (err) {
+    return { status: 'malformed', error: `manifest.json is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
+  }
+  const v = validateManifest(parsed);
+  return v.ok ? { status: 'ok', manifest: v.manifest, mtime: r.mtime } : { status: 'malformed', error: v.error };
+}
+
+/** The manifest is written WHOLE, atomically, and always LAST. */
+async function writeManifest(manifestAbs, manifest) {
+  await writeFileAtomic(manifestAbs, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+/** Both locks, released in reverse order, whatever `fn` does. */
+async function withFoundationsLock(domain, op, fn) {
+  const releaseRegistry = registerWrite(domain, op);
+  let releaseLock = null;
+  try {
+    releaseLock = await acquireFileLock(domainPath(domain), { op });
+    if (!releaseLock) {
+      return {
+        ok: false, reason: 'locked',
+        message: `Another write is in progress on "${domain}". Nothing was changed — try again in a moment.`,
+      };
+    }
+    return await fn();
+  } finally {
+    if (releaseLock) { try { await releaseLock(); } catch { /* best-effort */ } }
+    releaseRegistry();
+  }
+}
+
+/** Manifest order (roles), then title, then slug. */
+function readingOrderOf(manifest) {
+  const rank = new Map(manifest.order.map((r, i) => [r, i]));
+  return manifest.documents
+    .slice()
+    .sort((a, b) => (rank.get(a.role) ?? 99) - (rank.get(b.role) ?? 99)
+      || String(a.title).localeCompare(String(b.title))
+      || a.slug.localeCompare(b.slug))
+    .map((d) => d.slug);
+}
+
+function totalBytesOf(manifest) {
+  return manifest.documents.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0);
+}
+
+/** Read up to `max` RAW bytes. sha256 needs the bytes, not the decoded text. */
+async function readCappedBytes(absPath, max) {
+  let fh = null;
+  try {
+    fh = await open(absPath, 'r');
+    const st = await fh.stat();
+    if (!st.isFile()) return null;
+    const want = Math.min(st.size, max);
+    const buf = Buffer.alloc(want);
+    const got = await fillBuffer(fh, buf, 0);
+    return { buf: buf.subarray(0, got), bytes: st.size, truncated: st.size > max, mtime: st.mtime.toISOString() };
+  } catch {
+    return null;
+  } finally {
+    if (fh) { try { await fh.close(); } catch { /* ignore */ } }
+  }
+}
+
+// ── Repository sources ────────────────────────────────────────────────────
+
+/** `{ok, realRoot}` or a refusal. Never throws; never includes a raw path. */
+async function resolveRepoRoot(repoRoot) {
+  if (typeof repoRoot !== 'string' || !repoRoot.trim() || !path.isAbsolute(repoRoot)) {
+    return { ok: false, reason: 'repo-unreachable', message: 'The repository root must be an absolute path on this machine.' };
+  }
+  try {
+    const realRoot = await realpath(repoRoot);
+    const st = await stat(realRoot);
+    if (!st.isDirectory()) return { ok: false, reason: 'repo-unreachable', message: 'The repository root is not a directory.' };
+    return { ok: true, realRoot };
+  } catch {
+    return {
+      ok: false, reason: 'repo-unreachable',
+      message: 'The repository root is not reachable from this machine — the manifest records where the '
+        + 'last refresh ran, and that path may only exist there.',
+    };
+  }
+}
+
+/**
+ * Read one repository source, with every refusal named.
+ *   ok        → { status:'ok', buf, bytes, sha256, rel }
+ *   missing   → the file is not there (the entry is KEPT and disclosed)
+ *   too-large → over MAX_FOUNDATION_BYTES; cannot be mirrored honestly
+ *   refused   → outside the root (lexically OR through a symlink), not
+ *               .md/.txt, absolute, not a regular file
+ */
+async function sourceDigest(realRoot, relPath) {
+  if (typeof relPath !== 'string' || !relPath.trim()) return { status: 'refused', reason: 'empty path' };
+  if (path.isAbsolute(relPath) || /^[a-zA-Z]:[\\/]/.test(relPath)) {
+    return { status: 'refused', reason: 'absolute paths are refused — name the file relative to the repository root' };
+  }
+  if (relPath.includes('\0')) return { status: 'refused', reason: 'path contains a NUL byte' };
+  if (!SOURCE_EXT_RE.test(relPath)) return { status: 'refused', reason: 'only .md and .txt sources are mirrored' };
+  const abs = path.resolve(realRoot, relPath);
+  const rel = path.relative(realRoot, abs);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { status: 'refused', reason: 'outside the repository root' };
+  let real;
+  try { real = await realpath(abs); } catch (err) {
+    return err && err.code === 'ENOENT' ? { status: 'missing' } : { status: 'refused', reason: 'unreadable' };
+  }
+  const realRel = path.relative(realRoot, real);
+  if (!realRel || realRel.startsWith('..') || path.isAbsolute(realRel)) {
+    return { status: 'refused', reason: 'resolves outside the repository root through a symlink' };
+  }
+  let st;
+  try { st = await stat(real); } catch { return { status: 'missing' }; }
+  if (!st.isFile()) return { status: 'refused', reason: 'not a regular file' };
+  if (st.size > MAX_FOUNDATION_BYTES) return { status: 'too-large', bytes: st.size };
+  let buf;
+  try { buf = await readFile(real); } catch { return { status: 'refused', reason: 'unreadable' }; }
+  return { status: 'ok', buf, bytes: buf.length, sha256: sha256Hex(buf), rel: rel.split(path.sep).join('/') };
+}
+
+/**
+ * `git rev-parse HEAD` for a checkout, or null — git absent, not a repo, a
+ * timeout: all null, none an error. `execFile`, never `exec`: no shell.
+ *
+ * `child_process` is imported DYNAMICALLY, here and nowhere else in this
+ * module, and the reason is a guard in another suite rather than style:
+ * `scripts/test-tray-summary.js` §6 walks the STATIC import graph of
+ * `src/brain/tray-summary.js` — which imports this module — and requires that
+ * `child_process` be unreachable, because the menubar widget must never be
+ * able to run `git` of any kind. That claim stays TRUE: the only call is
+ * inside `refreshFoundationsFromRepo`, which the tray never reaches. The
+ * dynamic form keeps the static graph honest about what the tray CAN reach;
+ * it is stated here so nobody reads it as an evasion of that guard.
+ */
+async function gitHeadCommit(realRoot) {
+  try {
+    const { execFile } = await import('child_process');
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      try {
+        execFile('git', ['-C', realRoot, 'rev-parse', 'HEAD'],
+          { timeout: 4000, windowsHide: true, maxBuffer: 4096 },
+          (err, stdout) => {
+            if (err) return done(null);
+            const s = String(stdout || '').trim();
+            done(GIT_SHA_RE.test(s) ? s : null);
+          });
+      } catch { done(null); }
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** `docs/Architecture-Decisions.md` → `architecture-decisions.md`, or null. */
+function deriveSlugFromPath(rel) {
+  const base = path.basename(String(rel)).replace(SOURCE_EXT_RE, '');
+  const stem = base.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 64);
+  return normaliseFoundationSlug(stem);
+}
+
+/** A DEFAULT role from the file name. The caller can always name one. */
+function guessRole(rel) {
+  const s = String(rel).toLowerCase();
+  if (/architect/.test(s)) return 'architecture';
+  if (/decision|\badr\b|adrs/.test(s)) return 'decisions';
+  if (/convention|style|contributing/.test(s)) return 'conventions';
+  if (/roadmap|plan/.test(s)) return 'roadmap';
+  if (/\bapi\b|api[-_.]/.test(s)) return 'api';
+  if (/guide|readme|handbook/.test(s)) return 'guide';
+  return 'other';
+}
+
+/** The first `# ` heading of a document, or the slug's stem. */
+function deriveTitle(buf, slug) {
+  const head = buf.subarray(0, 4096).toString('utf8');
+  const m = /^#[ \t]+(.+?)[ \t]*$/m.exec(head);
+  return readTitle(m ? m[1] : null) || slug.replace(/\.md$/, '');
+}
+
+// ── Reads ─────────────────────────────────────────────────────────────────
+
+/** Freshness of every document, reading NO stored bodies. Repo sources are
+ *  re-hashed when the root is reachable; `n/a` for curator-owned. */
+async function computeFreshness(manifest) {
+  const out = new Map();
+  let realRoot = null, reachable = false;
+  if (manifest.ownership === 'repo' && manifest.repo?.root) {
+    const r = await resolveRepoRoot(manifest.repo.root);
+    if (r.ok) { realRoot = r.realRoot; reachable = true; }
+  }
+  for (const d of manifest.documents) {
+    if (d.source.kind !== 'repo') { out.set(d.slug, 'n/a'); continue; }
+    if (!reachable) { out.set(d.slug, 'unreachable'); continue; }
+    const src = await sourceDigest(realRoot, d.source.path);
+    if (src.status === 'ok') out.set(d.slug, src.sha256 === d.sha256 ? 'fresh' : 'stale');
+    else if (src.status === 'too-large') out.set(d.slug, 'stale');
+    else out.set(d.slug, 'unreachable');
+  }
+  return { freshness: out, reachable };
+}
+
+function indexEntry(d, freshness, fileMissing) {
+  return {
+    slug: d.slug, role: d.role, title: d.title, bytes: d.bytes, sha256: d.sha256,
+    updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
+    freshness, fileMissing,
+  };
+}
+
+/**
+ * The tier-0 INDEX for one project. Reads no document body.
+ *
+ * Every disclosure lives here: `manifestError` (a manifest this store cannot
+ * read — `present` is false and the reason is named), `orphanFiles` (`.md`
+ * files in the folder with no manifest entry — the shape a crash between a
+ * document write and the manifest write leaves behind), `fileMissing` per
+ * entry (the opposite shape, which the write order makes unreachable through
+ * this store but not through sync or a hand edit), `freshness` per entry and
+ * `repo.reachable`.
+ */
+export async function listFoundations(domain, project) {
+  const view = projectView(domain, project);
+  if (!view.ok) return view;
+  const base = {
+    ok: true, domain, project: view.inner, present: false, ownership: null, repo: null,
+    budgetBytes: FOUNDATIONS_BUDGET_BYTES, totalBytes: 0, budgetExceeded: false,
+    count: 0, staleCount: 0, unreachableCount: 0, missingFileCount: 0,
+    documents: [], readingOrder: [], orphanFiles: [], manifestError: null,
+  };
+  const mf = await readManifest(view.paths.manifestAbs);
+  let names = [];
+  try {
+    names = (await readdir(view.paths.dirAbs, { withFileTypes: true }))
+      .filter((e) => e.isFile() && e.name.endsWith('.md'))
+      .map((e) => e.name);
+  } catch { names = []; }
+  if (mf.status === 'malformed') {
+    base.manifestError = mf.error;
+    base.orphanFiles = names.filter((n) => FOUNDATION_SLUG_RE.test(n)).slice(0, 50);
+    return base;
+  }
+  if (mf.status === 'absent') {
+    base.orphanFiles = names.filter((n) => FOUNDATION_SLUG_RE.test(n)).slice(0, 50);
+    return base;
+  }
+  const manifest = mf.manifest;
+  const { freshness, reachable } = await computeFreshness(manifest);
+  const documents = [];
+  for (const d of manifest.documents) {
+    const abs = resolveInsideState(domain, `${view.paths.dirRel}/${d.slug}`);
+    const fileMissing = !(await isFile(abs));
+    documents.push(indexEntry(d, freshness.get(d.slug), fileMissing));
+  }
+  const listed = new Set(manifest.documents.map((d) => d.slug));
+  const totalBytes = totalBytesOf(manifest);
+  return {
+    ...base,
+    present: true,
+    ownership: manifest.ownership,
+    repo: manifest.repo ? { ...manifest.repo, reachable } : null,
+    budgetBytes: manifest.budgetBytes,
+    totalBytes,
+    budgetExceeded: totalBytes > manifest.budgetBytes,
+    count: documents.length,
+    staleCount: documents.filter((d) => d.freshness === 'stale').length,
+    unreachableCount: documents.filter((d) => d.freshness === 'unreachable').length,
+    missingFileCount: documents.filter((d) => d.fileMissing).length,
+    documents,
+    readingOrder: readingOrderOf(manifest),
+    orphanFiles: names.filter((n) => !listed.has(n)).slice(0, 50),
+  };
+}
+
+/** The summary `readWorkingState` carries. Derived from the index, so the two
+ *  cannot disagree; never throws. */
+async function summariseFoundations(domain, project) {
+  const empty = { present: false, count: 0, totalBytes: 0, staleCount: 0, unreachableCount: 0, budgetExceeded: false, orphanFileCount: 0, manifestError: null };
+  try {
+    const idx = await listFoundations(domain, project);
+    if (!idx.ok) return empty;
+    return {
+      present: idx.present, count: idx.count, totalBytes: idx.totalBytes, staleCount: idx.staleCount,
+      unreachableCount: idx.unreachableCount, budgetExceeded: idx.budgetExceeded,
+      orphanFileCount: idx.orphanFiles.length, manifestError: idx.manifestError,
+    };
+  } catch (err) {
+    return { ...empty, manifestError: `could not read the foundations: ${scrubPaths(String(err?.message ?? err)).slice(0, 160)}` };
+  }
+}
+
+/** Read ONE stored document: raw bytes → sha over the bytes → text sanitised
+ *  on read. `shaMismatch` says the bytes on disk are not what the manifest
+ *  recorded (a hand edit, or a sync merge), and `sha256` is then the on-disk
+ *  digest, because that is what the next bootstrap will compare against. */
+async function readStoredDocument(domain, dirRel, d) {
+  const abs = resolveInsideState(domain, `${dirRel}/${d.slug}`);
+  if (!abs) return { ok: false, reason: 'unsafe-path' };
+  const r = await readCappedBytes(abs, MAX_FOUNDATION_BYTES);
+  if (!r) return { ok: false, reason: 'file-missing' };
+  const raw = sliceToBytes(r.buf.toString('utf8'), r.buf.length);
+  const clean = neutraliseProtocol(raw);
+  const sha256 = sha256Hex(r.buf);
+  return {
+    ok: true, slug: d.slug, role: d.role, title: d.title, text: clean,
+    bytes: r.bytes, sha256, manifestSha256: d.sha256, shaMismatch: sha256 !== d.sha256,
+    truncated: r.truncated, updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
+    sanitisedOnRead: clean !== raw,
+    sanitisedOnReadNote: clean !== raw ? READ_SANITISE_NOTE : null,
+    mtime: r.mtime,
+  };
+}
+
+/**
+ * Read one document verbatim (sanitised on read, never trimmed under the cap).
+ * `not-found` when the slug has no manifest entry — with `orphan: true` when
+ * a file of that name sits in the folder unlisted, because "not a document"
+ * and "a document this store will not vouch for" are different facts.
+ */
+export async function readFoundation(domain, project, slug) {
+  const view = projectView(domain, project);
+  if (!view.ok) return view;
+  const s = normaliseFoundationSlug(slug);
+  if (!s) return { ok: false, reason: 'invalid-slug', message: `"${String(slug).slice(0, 80)}" is not a usable document slug (a-z, 0-9, hyphens, ending in .md).` };
+  const mf = await readManifest(view.paths.manifestAbs);
+  if (mf.status === 'malformed') {
+    return { ok: false, reason: 'manifest-unreadable', message: `The foundations manifest could not be read: ${mf.error}`, manifestError: mf.error };
+  }
+  const d = mf.status === 'ok' ? mf.manifest.documents.find((x) => x.slug === s) : null;
+  if (!d) {
+    const orphan = await isFile(resolveInsideState(domain, `${view.paths.dirRel}/${s}`));
+    return {
+      ok: false, reason: 'not-found', orphan,
+      message: orphan
+        ? `"${s}" is on disk but not in the manifest — an orphan this store will not vouch for. Re-save it to list it.`
+        : `No foundation document "${s}" in project "${view.inner}".`,
+    };
+  }
+  const idx = await computeFreshness(mf.manifest);
+  const r = await readStoredDocument(domain, view.paths.dirRel, d);
+  if (!r.ok) {
+    return { ok: false, reason: r.reason, message: r.reason === 'file-missing'
+      ? `"${s}" is in the manifest but its file is missing — remove the entry or refresh from the repository.`
+      : 'The document resolves outside the state folder.' };
+  }
+  return { ok: true, domain, project: view.inner, ...r, freshness: idx.freshness.get(s) };
+}
+
+// ── Writes ────────────────────────────────────────────────────────────────
+
+/**
+ * Save one document WHOLE (replace, never merge) and rewrite the manifest.
+ *
+ * `source` defaults to `{kind:'curator'}`; a `{kind:'repo', path}` source is
+ * how the refresh writes, and it is accepted here so a caller can list a
+ * mirror by hand — but the ownership rule holds either way: the first save
+ * SETS the project's ownership and every later save must match it.
+ *
+ * Refusals: an unusable slug or role; text that is not a string, is empty,
+ * or is over MAX_FOUNDATION_BYTES (size named); mixed ownership; the
+ * destructive-shrink guard (under FOUNDATION_REPLACE_RATIO of the stored
+ * file without `replace: true`); a manifest this store cannot read; the lock.
+ * Over-BUDGET is accepted and disclosed.
+ */
+export async function saveFoundation(domain, project, input = {}) {
+  const inp = input && typeof input === 'object' ? input : {};
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const slug = normaliseFoundationSlug(inp.slug);
+  if (!slug) {
+    return { ok: false, reason: 'invalid-slug', message: `"${String(inp.slug).slice(0, 80)}" is not a usable document slug — a-z, 0-9 and hyphens, up to 64 characters, ending in .md.` };
+  }
+  const role = inp.role === undefined || inp.role === null || inp.role === '' ? 'other' : inp.role;
+  if (!FOUNDATION_ROLES.includes(role)) {
+    return { ok: false, reason: 'invalid-role', message: `"${String(inp.role).slice(0, 40)}" is not a document role. One of: ${FOUNDATION_ROLES.join(', ')}.` };
+  }
+  if (typeof inp.text !== 'string' && !Buffer.isBuffer(inp.text)) {
+    return { ok: false, reason: 'empty-foundation', message: 'text must be a string — the COMPLETE document; a save replaces the whole file.' };
+  }
+  const buf = Buffer.isBuffer(inp.text) ? inp.text : Buffer.from(inp.text, 'utf8');
+  if (!buf.toString('utf8').trim()) {
+    return { ok: false, reason: 'empty-foundation', message: 'The document would be empty. Send the complete text; a save replaces the whole file.' };
+  }
+  if (buf.length > MAX_FOUNDATION_BYTES) {
+    return {
+      ok: false, reason: 'too-large',
+      message: `The document is ${buf.length} bytes, over the ${MAX_FOUNDATION_BYTES}-byte (${Math.round(MAX_FOUNDATION_BYTES / 1024)} KB) per-document cap. `
+        + 'A canonical document is stored verbatim and cannot be trimmed honestly — split it, or store the part that matters.',
+      bytes: buf.length, cap: MAX_FOUNDATION_BYTES,
+    };
+  }
+  const srcKind = inp.source && typeof inp.source === 'object' && inp.source.kind === 'repo' ? 'repo' : 'curator';
+  if (srcKind === 'repo' && (typeof inp.source.path !== 'string' || !inp.source.path.trim())) {
+    return { ok: false, reason: 'invalid-source', message: 'A repo source needs a `path` relative to the repository root.' };
+  }
+  const ownershipIn = srcKind;
+  const title = readTitle(inp.title) || deriveTitle(buf, slug);
+  const authoredBy = normaliseAuthoredBy(inp.authoredBy) || { kind: 'human', harness: null, model: null, commissionedBy: null };
+  const commit = typeof inp.commit === 'string' && GIT_SHA_RE.test(inp.commit) ? inp.commit : null;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+
+  return withFoundationsLock(domain, 'save-foundation', async () => {
+    const notes = [];
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return {
+        ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
+        message: `The foundations manifest for "${target.project}" could not be read (${mf.error}). Nothing was written: `
+          + 'rewriting a manifest this store cannot read could drop entries for documents it cannot see. '
+          + 'Fix or remove foundations/manifest.json first.',
+      };
+    }
+    const manifest = mf.status === 'ok' ? mf.manifest : emptyManifest();
+    if (manifest.ownership && manifest.ownership !== ownershipIn) {
+      return {
+        ok: false, reason: 'ownership-mismatch', ownership: manifest.ownership,
+        message: `Project "${target.project}" holds ${manifest.ownership}-owned foundations, and this save is ${ownershipIn}-sourced. `
+          + 'A project holds documents of ONE ownership — repo mirrors are written only by a refresh from the checkout, '
+          + 'curator documents only by a commissioned save — so the two are never mixed. Nothing was written.',
+      };
+    }
+    const prior = manifest.documents.find((d) => d.slug === slug) || null;
+    if (!prior && manifest.documents.length >= MAX_FOUNDATIONS_PER_PROJECT) {
+      return { ok: false, reason: 'too-many-documents', message: `This project already holds ${MAX_FOUNDATIONS_PER_PROJECT} foundation documents, the cap.` };
+    }
+    const docAbs = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
+    if (!docAbs) return { ok: false, reason: 'unsafe-path', message: 'The document path resolves outside the state folder.' };
+
+    // ── The destructive-shrink guard, against the BYTES ON DISK ──────────
+    // Measured against the file rather than the manifest entry so a hand
+    // edit that grew the file is still protected. Same two arms as the brief
+    // — empty is already refused above — at the tier's own 10 % ratio.
+    let priorBytes = 0;
+    try { const st = await stat(docAbs); if (st.isFile()) priorBytes = st.size; } catch { priorBytes = prior ? prior.bytes : 0; }
+    const shrinks = priorBytes >= MIN_PROTECTED_BODY_BYTES && buf.length < priorBytes * FOUNDATION_REPLACE_RATIO;
+    if (shrinks && inp.replace !== true) {
+      return {
+        ok: false, reason: 'would-replace-larger-foundation',
+        message: `Refusing to replace "${slug}" (${priorBytes} bytes stored) with ${buf.length} bytes — under `
+          + `${Math.round(FOUNDATION_REPLACE_RATIO * 100)}% of it. A foundation is replaced WHOLE and there is no journal `
+          + 'behind it, so the stored text would not be recoverable. Send the complete document, or repeat the call '
+          + 'with replace: true if you really mean to replace it.',
+        existing: { bytes: priorBytes, updatedAt: prior ? prior.updatedAt : null },
+        incoming: { bytes: buf.length },
+      };
+    }
+    if (shrinks) {
+      notes.unshift(`replace: deliberately overwrote a larger document (${priorBytes} → ${buf.length} bytes) because replace: true was set`);
+    }
+
+    try { await mkdir(paths.dirAbs, { recursive: true }); }
+    catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+    // Re-resolve AFTER mkdir so the physical check sees the directory that
+    // now exists — a symlinked foundations/ arriving over sync is caught here.
+    const docAbs2 = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
+    const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+    if (!docAbs2 || !manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The foundations folder resolves outside the project — refusing to write.' };
+
+    // 1. The DOCUMENT, verbatim.
+    try { await writeFileAtomic(docAbs2, buf); }
+    catch (err) { return { ok: false, reason: 'io', message: `Could not write ${slug}: ${scrubPaths(String(err?.message ?? err))}` }; }
+
+    // 2. The MANIFEST, whole, last.
+    const updatedAt = new Date().toISOString();
+    const entry = {
+      slug, role, title,
+      source: srcKind === 'repo' ? { kind: 'repo', path: String(inp.source.path).replace(/\\/g, '/').slice(0, 512) } : { kind: 'curator' },
+      sha256: sha256Hex(buf), bytes: buf.length, updatedAt, commit, authoredBy,
+    };
+    const documents = prior
+      ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
+      : [...manifest.documents, entry];
+    const next = { ...manifest, ownership: manifest.ownership || ownershipIn, documents };
+    const totalBytes = totalBytesOf(next);
+    const budgetExceeded = totalBytes > next.budgetBytes;
+    if (budgetExceeded) {
+      notes.push(`budget: this project's foundations total ${totalBytes} bytes, over the ${next.budgetBytes}-byte `
+        + `(${Math.round(next.budgetBytes / 1024)} KB) project budget. The save is complete; the bootstrap will omit `
+        + 'documents past its own reading budget and say which.');
+    }
+    try { await writeManifest(manifestAbs2, next); }
+    catch (err) {
+      return {
+        ok: false, reason: 'io',
+        message: `The document was written but the manifest was not: ${scrubPaths(String(err?.message ?? err))}. `
+          + `"${slug}" is now an orphan file — listFoundations discloses it; re-save to list it.`,
+        orphan: slug,
+      };
+    }
+    return {
+      ok: true, domain, project: target.project, slug, role, title,
+      path: `${STATE_DIRNAME}/${paths.dirRel}/${slug}`,
+      bytes: buf.length, sha256: entry.sha256, replaced: !!prior, updatedAt, commit,
+      ownership: next.ownership, authoredBy, source: entry.source,
+      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
+      notes: finaliseNotes(notes),
+    };
+  });
+}
+
+/**
+ * Remove one document and its entry. Manifest FIRST, then the file: a crash
+ * between the two leaves an orphan file (disclosed), never an entry pointing
+ * at nothing. An unlisted orphan of that name can be removed the same way.
+ */
+export async function removeFoundation(domain, project, slug) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const s = normaliseFoundationSlug(slug);
+  if (!s) return { ok: false, reason: 'invalid-slug', message: `"${String(slug).slice(0, 80)}" is not a usable document slug.` };
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  return withFoundationsLock(domain, 'remove-foundation', async () => {
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was removed.` };
+    }
+    const docAbs = resolveInsideState(domain, `${paths.dirRel}/${s}`);
+    if (!docAbs) return { ok: false, reason: 'unsafe-path', message: 'The document path resolves outside the state folder.' };
+    const listed = mf.status === 'ok' && mf.manifest.documents.some((d) => d.slug === s);
+    const onDisk = await isFile(docAbs);
+    if (!listed && !onDisk) return { ok: false, reason: 'not-found', message: `No foundation document "${s}" in project "${target.project}".` };
+    let next = null;
+    if (listed) {
+      next = { ...mf.manifest, documents: mf.manifest.documents.filter((d) => d.slug !== s) };
+      try { await writeManifest(paths.manifestAbs, next); }
+      catch (err) { return { ok: false, reason: 'io', message: `Could not rewrite the manifest: ${scrubPaths(String(err?.message ?? err))}. Nothing was removed.` }; }
+    }
+    if (onDisk) {
+      try { await rm(docAbs, { force: false }); }
+      catch (err) {
+        return { ok: false, reason: 'io', message: `The manifest entry was removed but the file was not: ${scrubPaths(String(err?.message ?? err))}. "${s}" is now an orphan file.`, orphan: s };
+      }
+    }
+    return {
+      ok: true, domain, project: target.project, slug: s, removed: true, wasOrphan: !listed && onDisk,
+      totalBytes: next ? totalBytesOf(next) : (mf.status === 'ok' ? totalBytesOf(mf.manifest) : 0),
+      documentCount: next ? next.documents.length : (mf.status === 'ok' ? mf.manifest.documents.length : 0),
+    };
+  });
+}
+
+/**
+ * Mirror a repository's documents into a repo-owned project: for every
+ * manifest entry with a repo source, plus any newly listed `files`, read the
+ * file at `<repoRoot>/<source.path>`, compare sha256, and COPY THE BYTES when
+ * they differ. No LLM, no transformation, no trim. `commit` is stamped from
+ * `git rev-parse HEAD` when git and a checkout are there, else null.
+ *
+ * NO SHRINK GUARD HERE, deliberately: the repository is the source of truth
+ * for a mirror, so a document that shrank in the checkout shrinks in the
+ * mirror. The guard belongs to `saveFoundation`, where the caller is an agent
+ * whose partial send would destroy a whole document.
+ *
+ * A source that VANISHED is reported in `missing` and its copy is KEPT — the
+ * copy is the last known good text, and deleting it silently would be the
+ * false-absence class this module refuses. Every refused path is named in
+ * `refused` with its reason.
+ */
+export async function refreshFoundationsFromRepo(domain, project, repoRoot, opts = {}) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const root = await resolveRepoRoot(repoRoot);
+  if (!root.ok) return root;
+  const realRoot = root.realRoot;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  const files = Array.isArray(opts?.files) ? opts.files : [];
+
+  return withFoundationsLock(domain, 'refresh-foundations', async () => {
+    const notes = [];
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
+    }
+    const manifest = mf.status === 'ok' ? mf.manifest : emptyManifest();
+    if (manifest.ownership === 'curator') {
+      return {
+        ok: false, reason: 'ownership-mismatch', ownership: 'curator',
+        message: `Project "${target.project}" holds curator-authored foundations. A refresh mirrors repository files and would `
+          + 'overwrite them — a project holds documents of ONE ownership. Nothing was changed.',
+      };
+    }
+    // The work list: existing mirrors first, then listed files.
+    const work = new Map();
+    for (const d of manifest.documents) {
+      if (d.source.kind === 'repo') work.set(d.slug, { entry: d, srcPath: d.source.path, role: d.role, title: d.title });
+    }
+    const refused = [];
+    // ONE slug per path and ONE path per slug. The second rule is the one the
+    // first draft lacked: `docs\decisions.md` listed under a new slug landed
+    // as a fourth document mirroring a file already mirrored — found by the
+    // suite, not by reading. `byPath` is rebuilt as `work` grows so a listed
+    // file cannot collide with an earlier listed one either.
+    const byPath = () => new Map([...work].map(([s, w]) => [w.srcPath.replace(/\\/g, '/').replace(/^\.\//, ''), s]));
+    for (const f of files) {
+      if (!f || typeof f !== 'object' || typeof f.path !== 'string') {
+        refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' });
+        continue;
+      }
+      const slug = f.slug !== undefined && f.slug !== null ? normaliseFoundationSlug(f.slug) : deriveSlugFromPath(f.path);
+      if (!slug) { refused.push({ path: f.path.slice(0, 120), reason: 'no usable slug could be derived — pass `slug`' }); continue; }
+      if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
+        refused.push({ path: f.path.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` });
+        continue;
+      }
+      const existing = work.get(slug) || null;
+      const existingPath = existing ? existing.srcPath.replace(/\\/g, '/') : null;
+      const wantPath = f.path.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (existingPath && existingPath !== wantPath) {
+        refused.push({ path: f.path.slice(0, 120), reason: `slug "${slug}" already mirrors ${existingPath}` });
+        continue;
+      }
+      const holder = byPath().get(wantPath);
+      if (holder && holder !== slug) {
+        refused.push({ path: f.path.slice(0, 120), reason: `${wantPath} is already mirrored as "${holder}"` });
+        continue;
+      }
+      const curatorClash = manifest.documents.find((d) => d.slug === slug && d.source.kind !== 'repo');
+      if (curatorClash) { refused.push({ path: f.path.slice(0, 120), reason: `slug "${slug}" is a curator-authored document` }); continue; }
+      const role = f.role !== undefined && f.role !== null ? f.role : (existing ? existing.role : guessRole(f.path));
+      work.set(slug, {
+        entry: existing ? existing.entry : null, srcPath: wantPath, role,
+        title: readTitle(f.title) || (existing ? existing.title : null),
+      });
+    }
+    if (work.size > MAX_FOUNDATIONS_PER_PROJECT) {
+      return { ok: false, reason: 'too-many-documents', message: `${work.size} documents would exceed the ${MAX_FOUNDATIONS_PER_PROJECT}-document cap.` };
+    }
+    if (!work.size) {
+      return {
+        ok: true, domain, project: target.project, repoRoot: realRoot, noop: true, commit: null,
+        refreshed: [], unchanged: [], missing: [], added: [], refused,
+        totalBytes: totalBytesOf(manifest), budgetBytes: manifest.budgetBytes, budgetExceeded: false,
+        notes: ['nothing to refresh: no repo-sourced documents are listed and no `files` were named'],
+      };
+    }
+
+    const commit = await gitHeadCommit(realRoot);
+    const now = new Date().toISOString();
+    const refreshed = [], unchanged = [], missing = [], added = [];
+    let documents = manifest.documents.slice();
+    let dirMade = false;
+    for (const [slug, w] of work) {
+      const src = await sourceDigest(realRoot, w.srcPath);
+      if (src.status === 'refused') { refused.push({ path: w.srcPath.slice(0, 120), reason: src.reason }); continue; }
+      if (src.status === 'missing') { missing.push(w.srcPath); continue; }
+      if (src.status === 'too-large') {
+        refused.push({ path: w.srcPath.slice(0, 120), reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte per-document cap` });
+        continue;
+      }
+      const docAbs = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
+      if (!docAbs) { refused.push({ path: w.srcPath.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+      const onDisk = await isFile(docAbs);
+      if (w.entry && w.entry.sha256 === src.sha256 && onDisk) { unchanged.push(slug); continue; }
+      if (!dirMade) {
+        try { await mkdir(paths.dirAbs, { recursive: true }); dirMade = true; }
+        catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+      }
+      const docAbs2 = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
+      if (!docAbs2) { refused.push({ path: w.srcPath.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+      try { await writeFileAtomic(docAbs2, src.buf); }
+      catch (err) { return { ok: false, reason: 'io', message: `Could not write ${slug}: ${scrubPaths(String(err?.message ?? err))}`, refreshed, added }; }
+      const entry = {
+        slug, role: w.role, title: w.title || deriveTitle(src.buf, slug),
+        source: { kind: 'repo', path: src.rel },
+        sha256: src.sha256, bytes: src.bytes, updatedAt: now, commit,
+        authoredBy: w.entry?.authoredBy || { kind: 'human', harness: null, model: null, commissionedBy: null },
+      };
+      documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
+      (w.entry ? refreshed : added).push(slug);
+    }
+    const next = {
+      ...manifest,
+      ownership: 'repo',
+      repo: { root: realRoot, remote: manifest.repo?.remote ?? null, lastRefreshAt: now, lastRefreshCommit: commit },
+      documents,
+    };
+    const totalBytes = totalBytesOf(next);
+    const budgetExceeded = totalBytes > next.budgetBytes;
+    if (budgetExceeded) notes.push(`budget: the mirrored documents total ${totalBytes} bytes, over the ${next.budgetBytes}-byte project budget — accepted; the bootstrap omits past its reading budget and says which`);
+    if (missing.length) notes.push(`missing: ${missing.length} source file(s) are not in the checkout; their stored copies were KEPT and are reported unreachable`);
+    if (!commit) notes.push('commit: could not be read (no git, or not a checkout) — stamped null');
+    const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+    if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The manifest path resolves outside the state folder.' };
+    if (!dirMade) {
+      try { await mkdir(paths.dirAbs, { recursive: true }); }
+      catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+    }
+    try { await writeManifest(manifestAbs2, next); }
+    catch (err) {
+      return { ok: false, reason: 'io', message: `Documents were copied but the manifest was not written: ${scrubPaths(String(err?.message ?? err))}. Newly added copies are orphan files until the next refresh.`, refreshed, added };
+    }
+    return {
+      ok: true, domain, project: target.project, repoRoot: realRoot, commit, refreshedAt: now,
+      refreshed, unchanged, missing, added, refused,
+      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
+      notes: finaliseNotes(notes),
+    };
+  });
+}
+
+/**
+ * The ADVISORY refresh `saveWorkingState` runs when handed `repoRoot`.
+ * Never throws; `attempted: false` carries the reason it was skipped.
+ */
+async function maybeRefreshFoundations(domain, projectSlug, prefix, repoRoot) {
+  const skip = (skipped) => ({ attempted: false, skipped });
+  try {
+    if (typeof repoRoot !== 'string' || !path.isAbsolute(repoRoot)) return skip('repoRoot must be an absolute path');
+    const root = await resolveRepoRoot(repoRoot);
+    if (!root.ok) return skip('the repository path is not reachable from this machine');
+    const marker = await readCapped(path.join(root.realRoot, '.curator-project'), 1024);
+    const line = marker ? (marker.text.split('\n').map((s) => s.trim()).find(Boolean) || null) : null;
+    if (!line) return skip('no .curator-project marker at the repository root');
+    const isDefault = prefix === '';
+    const names = isDefault
+      ? new Set([domain, `${domain}/${domain}`])
+      : new Set([projectSlug, `${domain}/${projectSlug}`]);
+    if (!names.has(line)) {
+      return skip(`the .curator-project marker names "${neutraliseProtocol(line).slice(0, 80)}", not this project`);
+    }
+    const paths = foundationsPaths(domain, prefix);
+    if (!paths) return skip('the foundations folder resolves outside the state folder');
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'absent') return skip('this project has no foundations manifest yet — nothing to refresh');
+    if (mf.status === 'malformed') return { attempted: false, skipped: 'the foundations manifest could not be read', manifestError: mf.error };
+    if (mf.manifest.ownership !== 'repo') return skip('this project\'s foundations are curator-authored, not a repository mirror');
+    const r = await refreshFoundationsFromRepo(domain, projectSlug, root.realRoot);
+    return { attempted: true, ...r };
+  } catch (err) {
+    return { attempted: true, ok: false, reason: 'io', message: scrubPaths(String(err?.message ?? err)).slice(0, 200) };
+  }
+}
+
+// ── The bootstrap ─────────────────────────────────────────────────────────
+
+/** `{slug: sha}` with every entry validated, or null when nothing survives. */
+function normaliseSeen(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const slug = normaliseFoundationSlug(k);
+    const sha = normaliseSha(v);
+    if (slug && sha) out[slug] = sha;
+  }
+  return out;
+}
+
+/**
+ * ONE call for a session start: the brief, the latest handoff (or the scope
+ * named), and the foundations — index always, bodies by `include`:
+ *
+ *   'all'      every document, in reading order, within `maxBytes`
+ *   'changed'  only documents whose sha differs from `seenHashes`
+ *   'index'    no bodies
+ *
+ * `include` defaults to 'changed' when hashes are known — passed by the
+ * caller, or recorded by the latest handoff's `## Foundations read` section
+ * — and to 'all' on a first session. The reading budget applies in reading
+ * order; a document that does not fit is OMITTED and named, never cut, with
+ * ONE exception: when the very first document alone exceeds the budget it is
+ * cut with `truncated: true`, because a caller who asked for the documents
+ * and got none has been told nothing. `seen` is the map the caller should
+ * record on its next save. Reads never write.
+ */
+export async function getProjectContext(domain, project, opts = {}) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const scope = o.scope === undefined || o.scope === null || o.scope === '' ? LATEST_SCOPE : o.scope;
+  const state = await readWorkingState(domain, { project, scope, journalLimit: o.journalLimit });
+  if (!state.ok) return state;
+  const inner = state.project;
+  const index = await listFoundations(domain, inner);
+  if (!index.ok) return index;
+
+  let seenHashes = null, seenSource = 'none';
+  const callerSeen = normaliseSeen(o.seenHashes);
+  if (callerSeen) { seenHashes = callerSeen; seenSource = 'caller'; }
+  else if (state.current?.present && state.current.foundationsRead) {
+    seenHashes = state.current.foundationsRead; seenSource = 'handoff';
+  }
+  const includeMode = o.include === 'index' || o.include === 'changed' || o.include === 'all'
+    ? o.include : (seenHashes ? 'changed' : 'all');
+  const rawMax = Number(o.maxBytes);
+  const maxBytes = Number.isFinite(rawMax) && rawMax > 0
+    ? Math.max(1024, Math.min(Math.floor(rawMax), CONTEXT_MAX_BYTES_CAP))
+    : CONTEXT_MAX_BYTES_DEFAULT;
+
+  const bySlug = new Map(index.documents.map((d) => [d.slug, d]));
+  const indexRows = index.readingOrder.map((slug) => {
+    const d = bySlug.get(slug);
+    return { ...d, changedSinceSeen: !seenHashes || seenHashes[slug] !== d.sha256 };
+  });
+  const wanted = includeMode === 'index' ? []
+    : indexRows.filter((d) => includeMode === 'all' || d.changedSinceSeen);
+
+  const documents = [];
+  const omitted = [];
+  const unreadable = [];
+  let usedBytes = 0, truncated = false;
+  const seen = {};
+  const view = projectView(domain, inner);
+  for (const row of indexRows) if (!row.fileMissing) seen[row.slug] = row.sha256;
+  for (const row of wanted) {
+    if (row.fileMissing) { unreadable.push(row.slug); continue; }
+    const r = await readStoredDocument(domain, view.paths.dirRel, bySlug.get(row.slug));
+    if (!r.ok) { unreadable.push(row.slug); continue; }
+    // The hash the caller is handed is the hash of what it was handed.
+    seen[row.slug] = r.sha256;
+    let text = r.text;
+    let size = Buffer.byteLength(text, 'utf8');
+    let cut = r.truncated;
+    if (usedBytes + size > maxBytes) {
+      if (documents.length > 0) { omitted.push(row.slug); continue; }
+      text = sliceToBytes(text, Math.max(0, maxBytes - 64)) + '\n\n_(document cut at the reading budget)_\n';
+      size = Buffer.byteLength(text, 'utf8');
+      cut = true;
+      truncated = true;
+    }
+    usedBytes += size;
+    documents.push({
+      slug: r.slug, role: r.role, title: r.title, text, sha256: r.sha256, bytes: r.bytes,
+      truncated: cut, shaMismatch: r.shaMismatch, source: r.source, commit: r.commit,
+      freshness: row.freshness, sanitisedOnRead: r.sanitisedOnRead, sanitisedOnReadNote: r.sanitisedOnReadNote,
+    });
+  }
+  if (omitted.length) truncated = true;
+
+  const { brief, current, journal, ...rest } = state;
+  return {
+    ...rest,
+    brief,
+    current,
+    journal,
+    foundations: {
+      present: index.present,
+      ownership: index.ownership,
+      repo: index.repo,
+      manifestError: index.manifestError,
+      orphanFiles: index.orphanFiles,
+      count: index.count,
+      totalBytes: index.totalBytes,
+      budgetBytes: index.budgetBytes,
+      budgetExceeded: index.budgetExceeded,
+      staleCount: index.staleCount,
+      unreachableCount: index.unreachableCount,
+      changedCount: indexRows.filter((d) => d.changedSinceSeen).length,
+      includeMode,
+      seenSource,
+      index: indexRows,
+      documents,
+      unreadable,
+      budget: { maxBytes, usedBytes, truncated, omitted },
+      readingOrder: index.readingOrder,
+    },
+    seen,
+  };
 }

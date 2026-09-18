@@ -292,6 +292,9 @@ const HOSTILE = {
   traps: ['the retry ladder swallows aborts'],
   openQuestions: ['do we need a migration?'],
   observations: [{ statement: '84 offline suites green', recheck: 'npm test' }],
+  // v3.59.0's seventh section. Its content is a validated slug and hex, so
+  // the hostile-corpus assertions above it are untouched by its presence.
+  foundationsRead: { 'architecture.md': 'c'.repeat(64) },
   harness: 'claude-code',
   model: 'claude-opus-5',
 };
@@ -1309,9 +1312,15 @@ section('21. D4 — negative constraints render BEFORE the action list');
     'orientation still leads the document');
   // The argument NAMES must not have moved — a UI and a tool layer are built
   // against them.
+  // v3.59.0 added exactly ONE key, `foundationsRead`, LAST — bookkeeping for
+  // the bootstrap, not something a human resuming cold reads first. The six
+  // original keys are unchanged; test-foundations.js pins the new one's
+  // position and round-trip.
   const keys = STATE_SECTIONS.map(s => s.key).sort().join(',');
-  assert(keys === 'decisions,nextSteps,nowState,observations,openQuestions,traps',
-    'the section KEYS are unchanged — only the order moved', keys);
+  assert(keys === 'decisions,foundationsRead,nextSteps,nowState,observations,openQuestions,traps',
+    'the section KEYS are the six originals plus foundationsRead — only the order of the six moved', keys);
+  assert(STATE_SECTIONS[STATE_SECTIONS.length - 1].key === 'foundationsRead',
+    'foundationsRead renders LAST, after every section a human acts on');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
