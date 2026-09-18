@@ -673,8 +673,8 @@ existing, ownerless project's Foundations block:
   skeleton is a real document, not a placeholder outside the store's normal shape: it has the same
   `##` headings any foundation has, under which sit **prompts, not facts** — "what would surprise a
   new contributor?" rather than an invented answer — and its first line is a fixed, visible banner:
-  `> **Skeleton — not yet written.** Answer the prompts below and delete this line. An agent fills
-  it only when the owner asks.` `SKELETON_BANNER` and the four documents live in ONE place,
+  `**Skeleton — not yet written.** Answer the prompts below and delete this line. An agent writes
+  one only when you ask it to.` `SKELETON_BANNER` and the four documents live in ONE place,
   `src/brain/foundation-skeletons.js` — this repository's most-repeated defect class is a template
   copied per surface, and three separate brief templates already exist with no drift guard between
   them; the skeletons do not add a fourth copy of that problem.
