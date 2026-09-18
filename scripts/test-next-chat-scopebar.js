@@ -181,10 +181,11 @@ function render(over = {}) {
     extractConst(chatSrc, 'COMPILE_MIN_USER_MESSAGES') + '\n' +
     extractFunction(chatSrc, 'renderCompileButtonHtml') + '\n' +
     extractFunction(chatSrc, 'compileMessageCount') + '\n' +
+    extractFunction(chatSrc, 'compileTurnCounts') + '\n' +
     extractFunction(chatSrc, 'compileCaptionText') + '\n' +
     extractFunction(chatSrc, 'compileControlHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
-    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount };';
+    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts };';
 
   const api = new Function(
     'document', 'state', 'isCurrentMount', 'setMain', 'escapeHtml', 'icon',
@@ -336,13 +337,33 @@ section('§3 — The caption states the real message count');
     ],
   });
   const cap = findByClass(four.tree, 'chat-compile-caption');
-  eq(cap.text.trim(), 'Saves this conversation (4 messages) as wiki pages',
-    'a four-message thread is described as four messages');
+  eq(cap.text.trim(), 'Saves this conversation — 2 questions and 2 answers — as wiki pages',
+    'a four-message thread is described as the two questions and two answers it is');
+
+  // THE SIX-MESSAGE CASE THE REPORT NAMED. The caption said "(2 messages)"
+  // beside a sidebar row saying "6 messages" for the same thread. The WORDING
+  // half is asserted here; the WHEN half — the caption was painted once and
+  // never repainted — is §3b below.
+  const six = render({
+    thread: [
+      { role: 'user', content: 'a' }, { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c' }, { role: 'assistant', content: 'd' },
+      { role: 'user', content: 'e' }, { role: 'assistant', content: 'f' },
+    ],
+  });
+  eq(findByClass(six.tree, 'chat-compile-caption').text.trim(),
+    'Saves this conversation — 3 questions and 3 answers — as wiki pages',
+    'the reported six-message thread reads as 3 questions and 3 answers — units the reader can count on screen');
+  ok(!findByClass(six.tree, 'chat-compile-caption').text.includes('message'),
+    '…and never as "N messages", the unit nobody counts');
+  eq(six.api.compileTurnCounts().questions + six.api.compileTurnCounts().answers,
+    six.api.compileMessageCount(),
+    'questions + answers IS the message count, so the caption cannot claim a different total from the compile input');
 
   const one = render({ thread: [{ role: 'user', content: 'a' }] });
   eq(findByClass(one.tree, 'chat-compile-caption').text.trim(),
-    'Saves this conversation (1 message) as wiki pages',
-    'one message is not pluralised');
+    'Saves this conversation — 1 question and no answers yet — as wiki pages',
+    'one question is not pluralised, and "0 answers" is stated as the state it is');
 
   // The synthetic outcome cards runCompile pushes into state.thread are NOT
   // messages. Counting them would make a second compile of the same thread
@@ -354,8 +375,8 @@ section('§3 — The caption states the real message count');
     ],
   });
   eq(findByClass(withCard.tree, 'chat-compile-caption').text.trim(),
-    'Saves this conversation (2 messages) as wiki pages',
-    'a compile outcome card is not counted as a message');
+    'Saves this conversation — 1 question and 1 answer — as wiki pages',
+    'a compile outcome card is neither a question nor an answer');
 
   // A hole in the thread is neither counted nor fatal. Driven against
   // compileMessageCount DIRECTLY rather than through renderMain, and the
@@ -393,6 +414,79 @@ section('§3 — The caption states the real message count');
   const capSrc = extractFunction(chatSrc, 'compileControlHtml');
   ok(/escapeHtml\(compileCaptionText\(\)\)/.test(capSrc),
     'the caption is emitted through escapeHtml, not interpolated raw');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§3b — The caption TICKS with the thread, and does so without a repaint');
+// ═════════════════════════════════════════════════════════════════════════
+/* THE REPORTED DEFECT, and it is a WHEN, not a WHAT. `renderMain` builds the
+   caption; an ordinary turn never reaches it (sendCurrentMessage's not-new
+   branch calls renderThreadOnly + renderSidebarConversationsOnly and patches
+   the sidebar row's count with bumpMessageCountForTurn). So the sidebar ticked
+   2 → 4 → 6 while the caption held the number it was first painted with — the
+   "(2 messages)" beside "6 messages" the user photographed.
+
+   Driven against a fake element rather than read out of the source, because a
+   grep for the call site proves a line exists and not what it does (this
+   repo's own v3.0.17 rule). The fake caption node records every write. */
+{
+  const writes = [];
+  const capNode = { textContent: 'Saves this conversation — 1 question and 1 answer — as wiki pages' };
+  Object.defineProperty(capNode, 'textContent', {
+    get() { return writes.length ? writes[writes.length - 1] : ''; },
+    set(v) { writes.push(v); },
+  });
+  const thread = [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }];
+  const state = { thread };
+  let selector = null;
+  const doc = { querySelector: (s) => { selector = s; return capNode; } };
+  const api = new Function('document', 'state',
+    extractFunction(chatSrc, 'compileTurnCounts') + '\n' +
+    extractFunction(chatSrc, 'compileCaptionText') + '\n' +
+    extractFunction(chatSrc, 'refreshCompileCaption') + '\n' +
+    'return { refreshCompileCaption };')(doc, state);
+
+  api.refreshCompileCaption();
+  eq(selector, '.chat-compile-caption', 'it resolves the caption by its own class, not by a stale captured node');
+  eq(capNode.textContent, 'Saves this conversation — 1 question and 1 answer — as wiki pages',
+    'the first refresh states the thread it was given');
+
+  thread.push({ role: 'user', content: 'c' }, { role: 'assistant', content: 'd' });
+  api.refreshCompileCaption();
+  thread.push({ role: 'user', content: 'e' }, { role: 'assistant', content: 'f' });
+  api.refreshCompileCaption();
+  eq(capNode.textContent, 'Saves this conversation — 3 questions and 3 answers — as wiki pages',
+    'after two more turns it reads 3 and 3 — the number the sidebar reports as "6 messages"');
+  eq(writes.length, 3, 'one targeted write per refresh, and nothing else touched');
+
+  // A `textContent` write, NEVER an innerHTML one: the caption is text, and
+  // a markup write here would be a second, unescaped path for a string the
+  // renderer already escapes.
+  const refSrc = extractFunction(chatSrc, 'refreshCompileCaption');
+  ok(/\.textContent = compileCaptionText\(\)/.test(refSrc) && !/innerHTML/.test(refSrc),
+    'the refresh writes textContent, never innerHTML');
+  ok(!/setMain\(|renderMain\(|renderShell\(/.test(refSrc),
+    'and it never repaints a section — the v3.53.1 defect was a section re-rendering itself on a tick');
+
+  // ABSENT ELEMENT: a no-op, not a crash. The Compile control is not rendered
+  // for a conversation with no user turn, and renderThreadOnly calls this on
+  // every paint regardless.
+  const bare = new Function('document', 'state',
+    extractFunction(chatSrc, 'compileTurnCounts') + '\n' +
+    extractFunction(chatSrc, 'compileCaptionText') + '\n' +
+    extractFunction(chatSrc, 'refreshCompileCaption') + '\n' +
+    'return { refreshCompileCaption };')({ querySelector: () => null }, { thread: [] });
+  let threw = false;
+  try { bare.refreshCompileCaption(); } catch { threw = true; }
+  ok(!threw, 'with no caption on screen it does nothing and throws nothing');
+
+  // THE CALL SITE, asserted where it must be: renderThreadOnly is the one
+  // function every turn goes through.
+  const rto = extractFunction(chatSrc, 'renderThreadOnly');
+  ok(/refreshCompileCaption\(\)/.test(rto),
+    'renderThreadOnly — the path an ordinary turn takes — calls it');
+  ok(rto.indexOf('refreshCompileCaption()') > rto.indexOf('el.innerHTML = state.thread.map'),
+    '…after the thread has been repainted from the same state the caption counts');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

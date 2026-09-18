@@ -1041,7 +1041,8 @@ function normalizeCitationTitles(t) {
 }
 
 /**
- * The four token counts from a provider's usage payload, or null.
+ * The four BILLED token counts from a provider's usage payload — plus a fifth,
+ * optional, non-billed one when the provider reports it — or null.
  *
  * ── ALL FOUR OR NOTHING, AND THAT IS THE HONESTY RULE ────────────────────
  * This is a MONEY input: the four fields are multiplied by four different
@@ -1062,10 +1063,12 @@ function normalizeCitationTitles(t) {
  * defensive rather than expected. It is written anyway because the payload
  * arrives through a callback contract, not a type system.
  *
- * The returned object is a FRESH literal with the four keys in a fixed order —
- * never the caller's object — so nothing else riding on the usage payload
- * (provider, model, or anything llm.js adds later) can leak into a persisted
- * conversation record and out over the wire.
+ * The returned object is a FRESH object carrying an explicit ALLOW-LIST of
+ * fields — never the caller's object — so nothing else riding on the usage
+ * payload (provider, model, or anything llm.js adds later) can leak into a
+ * persisted conversation record and out over the wire. The four counts above
+ * are REQUIRED; `reasoningTokens` is a fifth, OPTIONAL one, added at the end
+ * and only when the provider reported it (see its own note below).
  */
 function normalizeReportedUsage(u) {
   if (!u || typeof u !== 'object') return null;
@@ -1098,6 +1101,34 @@ function normalizeReportedUsage(u) {
   // element and changing it would move real money arithmetic in a release about
   // a chat label.
   if (out.inputTokens === 0 && out.outputTokens === 0) return null;
+
+  // ── REASONING TOKENS: CARRIED, AND OPTIONAL ─────────────────────────────
+  // A user asked why the same question cost $0.10 on one model and $0.0024 on
+  // another when the price table implies about half that ratio. The rest is
+  // hidden deliberation: this app never sends a `thinking` parameter, which on
+  // Sonnet 5 and the Opus 4.7+/Fable family means ADAPTIVE thinking is on, and
+  // the provider bills those tokens inside `output_tokens`. So the breakdown
+  // under the figure — "19,250 in / 6,150 out" — was true and still could not
+  // explain the number, because most of that "out" was never shown to anyone.
+  //
+  // `normalizeOpenRouterUsage` already computes it (llm.js), and it arrived
+  // here only to be dropped by the fixed four-field list above. It is added
+  // here as a FIFTH, OPTIONAL field rather than a fifth required one, and that
+  // distinction is the whole design: the Anthropic and Gemini normalizers emit
+  // no such field at all — Anthropic's API reports no separate count, and
+  // Gemini's `thoughtsTokenCount` is not surfaced by its normalizer — so
+  // requiring it would make this function return null for those providers and
+  // silently delete every cost figure in the app.
+  //
+  // ABSENT MEANS "NOT TOLD", NOT "ZERO". A missing or malformed value is
+  // OMITTED rather than written as 0, so the renderer can tell the two apart
+  // and say nothing rather than claim an answer did no hidden reasoning. The
+  // known gap is stated plainly: on Anthropic-direct and Gemini this field
+  // never arrives, so the breakdown there still cannot account for reasoning
+  // that is nonetheless being billed. Surfacing it would mean changing
+  // llm.js's normalizers, which feed the ingest queue's spend arithmetic.
+  const r = u.reasoningTokens;
+  if (typeof r === 'number' && Number.isFinite(r) && r >= 0) out.reasoningTokens = r;
   return out;
 }
 
@@ -1211,7 +1242,12 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const prompt = buildPrompt(domain, pages, history, userMessage, responseStyle);
   // v3.0.7: base cap 8192 (analytical questions need room; text-mode truncation
   // degrades to partial-with-note, never a hard error). Tier 2: the response
-  // style sets the cap — concise 4096 / balanced 8192 / comprehensive 12288.
+  // style sets the cap. The caps are RESPONSE_STYLES' own — read them there,
+  // they have moved once already. This comment said "concise 4096 / balanced
+  // 8192 / comprehensive 12288" long after every one of those numbers had been
+  // raised (to 12288 / 16384 / 20480) because reasoning models were spending
+  // 79–90 % of the old budget on hidden deliberation, and each of those three
+  // constants carries the measurement that moved it.
   const maxTokens = RESPONSE_STYLES[responseStyle].maxTokens;
   // v3.0.11: honour the chat model selector via the provider override (null →
   // global active provider). generateText re-validates the key defensively.

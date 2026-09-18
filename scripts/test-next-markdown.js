@@ -917,6 +917,110 @@ section('10. GFM tables');
     'a cell whose text is "-" does not start a bullet list');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('11. Ordered lists keep the number they were written with');
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * THE REPORT, AND WHICH CASE IT ACTUALLY WAS.
+ *
+ * A user (Robin Good, with screenshots) asked one question of two models. The
+ * Flash Lite 2.5 answer rendered "1." four times; the Sonnet 5 answer rendered
+ * 1, 2, 3. In the Flash Lite screenshot each numbered item was followed by a
+ * citation chip line of its own and then a blank line.
+ *
+ * Two hypotheses were possible and they are NOT the same defect:
+ *   (a) the model wrote "1." for every item;
+ *   (b) something between the items ended the list, and each following item
+ *       opened a fresh <ol> that the browser restarted at 1.
+ *
+ * §11a settles it by EXECUTING the renderer on both shapes. (a) has never been
+ * the bug — a contiguous "1. 1. 1." already renders 1, 2, 3, because a browser
+ * numbers <li> elements by position. (b) is the bug, and the citation line is
+ * one instance of it: this renderer treats ANY non-list line as the end of the
+ * list, and the model's own `[source: …]` line is a non-list line.
+ */
+{
+  const CITE = '[source: summaries/89-what-wins-attention-in-the-age-of-ai.md]';
+
+  // ── §11a — WHICH CASE IT WAS ────────────────────────────────────────────
+  const contiguousRepeat = renderMarkdown('1. one\n1. two\n1. three');
+  ok((contiguousRepeat.match(/<ol/g) || []).length === 1 &&
+     (contiguousRepeat.match(/<li>/g) || []).length === 3 &&
+     !/start=/.test(contiguousRepeat),
+    '§11a hypothesis (a) REFUTED: a contiguous "1. 1. 1." was always ONE <ol> of three items, i.e. 1, 2, 3');
+
+  const screenshot = renderMarkdown(
+    '1. **Attention is scarce** — the first claim.\n' + CITE + '\n\n' +
+    '2. **Trust compounds** — the second claim.\n' + CITE + '\n\n' +
+    '3. **Distribution is the moat** — the third claim.\n' + CITE);
+  const opens = screenshot.match(/<ol[^>]*>/g) || [];
+  ok(opens.length === 3,
+    `§11a hypothesis (b) CONFIRMED: the screenshot's shape still produces THREE separate lists (${opens.length})`);
+  ok(JSON.stringify(opens) === JSON.stringify(['<ol>', '<ol start="2">', '<ol start="3">']),
+    `§11a …and the second and third now carry their own start, so the reader sees 1, 2, 3 (${opens.join(' ')})`);
+  ok((screenshot.match(/chat-citation-tag/g) || []).length === 3,
+    '§11a CONTROL: all three citation chips are still rendered — nothing was swallowed to achieve this');
+
+  // ── §11b — start IS NOT EMITTED WHEN THE LIST OPENS AT 1 ────────────────
+  // The overwhelming majority of lists must render byte-identically to before
+  // this change; measured on the maintainer's corpus, 21 of 5,575 documents
+  // moved and every one was a genuinely mis-numbered list.
+  ok(!/start=/.test(renderMarkdown('1. a\n2. b\n3. c')),
+    '§11b an ordinary 1/2/3 list carries no start attribute at all');
+  ok(!/start=/.test(renderMarkdown('- a\n- b')),
+    '§11b …nor does a bullet list, which has no number to carry');
+  ok(renderMarkdown('- a\n- b') === '<ul><li>a</li><li>b</li></ul>',
+    '§11b CONTROL: the <ul> path is byte-unchanged');
+  ok(renderMarkdown('1. a\n2. b') === '<ol><li>a</li><li>b</li></ol>',
+    '§11b CONTROL: the ordinary <ol> path is byte-unchanged');
+
+  // ── §11c — ONLY THE OPENING ITEM SETS IT ────────────────────────────────
+  ok(/^<ol start="7">/.test(renderMarkdown('7. seven\n8. eight\n9. nine')),
+    '§11c a list that opens at 7 starts at 7');
+  ok((renderMarkdown('7. seven\n8. eight').match(/start=/g) || []).length === 1,
+    '§11c …and the later numbers are ignored, as CommonMark requires');
+  ok(/^<ol start="7">/.test(renderMarkdown('7. seven\n2. two\n99. ninetynine')),
+    '§11c …even when the later numbers are nonsense');
+
+  // A new list after a paragraph re-reads the opening number; it never
+  // inherits the previous list's.
+  const twoLists = renderMarkdown('5. five\n\ntext between\n\n1. one');
+  ok(twoLists.includes('<ol start="5">') && twoLists.includes('</ol><p>text between</p><ol><li>one'),
+    '§11c a later list that opens at 1 gets NO start');
+  /* NOT ENFORCED, and said rather than implied: flushList's `listStart = 1`
+     reset is DEFENCE IN DEPTH, not load-bearing. Deleting it leaves this whole
+     section green — `listType` only becomes 'ol' inside the `num` branch, and
+     that branch assigns `listStart` whenever no list is open, so the stale
+     value is unreachable today. The mutation that proved this is recorded
+     beside the declaration in shared/markdown.js. */
+
+  // ── §11d — THE ATTRIBUTE IS OURS, NOT THE INPUT'S ───────────────────────
+  // The cardinal rule is that no INPUT TEXT reaches an attribute. The value
+  // here is a Number this module produced from a digits-only capture and
+  // re-stringified, exactly like tableAlignClass's fixed class names.
+  for (const hostile of [
+    '2" onmouseover="alert(1)". item',
+    '2' + String.fromCharCode(0) + '. item',
+    '00000000000000000000002. item',   // 21 digits — over the \d{1,9} bound
+  ]) {
+    const h = renderMarkdown(hostile);
+    ok(!/\son\w+\s*=/.test((h.match(/<[a-zA-Z][^>]*>/g) || []).join(' ')),
+      `§11d no event-handler attribute escapes from ${JSON.stringify(hostile.slice(0, 24))}`);
+    ok(!/<ol start="[^"]*[^0-9"][^"]*"/.test(h),
+      '§11d …and any start attribute emitted contains digits only');
+  }
+  ok(!/<ol/.test(renderMarkdown('0000000000. over the bound')),
+    '§11d a run of digits past the \\d{1,9} bound is not a list at all — it degrades to text, never a half-list');
+  ok(/^<ol start="999999999">/.test(renderMarkdown('999999999. at the bound')),
+    '§11d CONTROL: exactly nine digits is still a list, so the bound is a bound and not a ban');
+
+  // ── §11e — THE LIMIT, STATED ────────────────────────────────────────────
+  // Named so nobody reads §11a as "the numbering is fixed in every case".
+  const allOnes = renderMarkdown('1. one\n' + CITE + '\n\n1. two\n' + CITE);
+  ok((allOnes.match(/<ol[^>]*>/g) || []).length === 2 && !/start=/.test(allOnes),
+    '§11e KNOWN AND UNFIXED: a model that writes "1." for EVERY item AND breaks between them still renders 1, 1 — that is the number it wrote');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

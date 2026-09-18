@@ -382,6 +382,12 @@ function makeThreadRenderer(state) {
     'assistantEyebrowHtml', 'cancelNoticeHtml', 'thinkingBodyHtml', 'folderOfPath',
     'typeChipClass', 'typeDotStyle', 'openWikiReader', 'openBrowseDialog',
     'formatDurationMs', 'MODEL_PICKER_ENABLED',
+    // Two bindings renderThreadOnly gained with the per-message copy control
+    // and the Compile caption's targeted refresh. Both are stubbed rather than
+    // extracted: this suite's subject is the FAILURE markup, and an errored
+    // message carries no copyable content anyway (copyControlHtml returns ''
+    // for it) — test-next-chat-copy.js drives the real pair.
+    'copyControlHtml', 'refreshCompileCaption',
     src,
   )(
     state, doc, () => true,
@@ -392,6 +398,7 @@ function makeThreadRenderer(state) {
     () => '<div class="chat-msg-eyebrow mono">THE CURATOR</div>',
     () => '', () => '', () => 'entities', () => '', () => '',
     () => {}, () => {}, (ms) => `${Math.round(ms / 1000)}s`, true,
+    () => '', () => {},
   );
   run();
   return el.innerHTML;

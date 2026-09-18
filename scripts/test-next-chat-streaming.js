@@ -287,6 +287,11 @@ function makeSandbox(opts = {}) {
     // an opt-in for §8.
     extractFunction(chatSrc, 'titleFromSlug') + '\n' +
     extractFunction(chatSrc, 'citationLabel') + '\n' +
+    // The per-message copy control. Extracted REAL rather than stubbed, so §9
+    // below can assert on what `renderThreadOnly` actually emits — in
+    // particular that the in-flight bubble, which this suite owns, carries no
+    // copy control while a final message does.
+    extractFunction(chatSrc, 'copyControlHtml') + '\n' +
     extractFunction(chatSrc, 'threadScrollHost') + '\n' +
     extractFunction(chatSrc, 'isThreadAtBottom') + '\n' +
     extractFunction(chatSrc, 'stickThreadToBottom') + '\n' +
@@ -305,6 +310,10 @@ function makeSandbox(opts = {}) {
     'assistantEyebrowHtml', 'failedModelNoteHtml', 'reaskButtonHtml',
     'folderOfPath', 'typeChipClass', 'typeDotStyle',
     'openBrowseDialog', 'openWikiReader', 'questionForAnswerIndex', 'window',
+    // `icon` is what the extracted copyControlHtml reaches for; the Compile
+    // caption's targeted refresh is a no-op here because this fake document
+    // has no scope bar (the real one guards on the element being absent).
+    'icon', 'refreshCompileCaption',
     src
   )(
     doc, state,
@@ -328,6 +337,8 @@ function makeSandbox(opts = {}) {
     // setTimeout — which is what a non-browser host does and is the branch this
     // suite can drive deterministically.
     {},
+    (n, px) => `<svg data-icon="${n}" data-px="${px}"></svg>`,
+    () => {},
   );
 
   return { api, doc, state, calls };
