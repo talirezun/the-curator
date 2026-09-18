@@ -296,7 +296,7 @@ The installer handles everything automatically:
 3. Installs all dependencies
 4. Builds **The Curator.app** for your Dock
 
-When it finishes, the app opens automatically in your browser. A **Getting started** panel appears in the corner on first launch and walks you through the three things that have to happen before the app is useful: add an API key, create your first domain, ingest your first source. It doesn't block anything — see [§5](#5-first-run--the-getting-started-panel).
+When it finishes, the app opens automatically in your browser. A **Getting started** panel appears in the corner on first launch. It asks which of two things you are setting up — a second brain, or memory for your coding agents — and then walks you through the steps that path actually needs. It doesn't block anything — see [§5](#5-first-run--the-getting-started-panel).
 
 > ⚠️ **Pin The Curator to your Dock manually.** The installer puts **The Curator.app** inside `~/the-curator/` but does **not** add it to your Dock automatically. Open Finder → `~/the-curator/` → drag **The Curator** icon down into your Dock. From now on, one click launches everything.
 
@@ -508,29 +508,41 @@ Two things make this easy to stay on top of:
 
 ## 5. First run — the Getting started panel
 
-The first time you open The Curator there is nothing to talk to yet, so a small **Getting started** panel appears in the corner with a three-item checklist:
+The first time you open The Curator there is nothing to talk to yet, so a small **Getting started** panel appears in the corner. Since v3.61.0 it opens with a question, because two quite different people install this app and the steps are not the same for them:
 
-1. **Add an AI key** — *"Nothing else works without a model. Paste a Gemini or Anthropic key in Settings."* → **Open Settings**
-2. **Create your first domain** — *"A domain is one subject area with its own wiki — 'articles', 'research', 'work'."* → **Open Domains**
-3. **Ingest your first source** — *"Drop in a PDF, Markdown or text file. The Curator reads it and writes the wiki pages."* → **Open Ingest**
+> **What do you want to set up first?**
+>
+> - **Build a second brain** — *"Read sources, get a wiki. Ingest and chat need an AI key."*
+> - **Give your coding agents memory** — *"Your agents read and write project context. No AI key needed."*
 
-Each item has a button that takes you straight to the right place. The panel tracks real state, not clicks: it reads *"2 of 3 done"* and ticks items off by itself as you actually complete them, and it stops appearing once all three are done.
+| Door | Lands you on | The steps you then get |
+|---|---|---|
+| **Build a second brain** | **Domains** | 1 · Add an AI key → 2 · Point at a wiki, or start one → 3 · Ingest your first source |
+| **Give your coding agents memory** | **Agent memory** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your coding agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat")* |
+
+**Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give a coding agent memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
+
+**Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or a coding agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one screen you would otherwise have had to go looking for: **Settings → MCP bridge**, which the button opens directly.
+
+Each item has a button that takes you straight to the right place. The panel tracks real state, not clicks: it reads *"2 of 3 done"* (or *"0 of 4 done"*) and ticks items off by itself as you actually complete them, and it stops appearing once they are all done.
+
+> **The "Connect your coding agent" step works for any MCP client, not just one.** It ticks over when the bridge has actually answered a call — from Claude Desktop, Claude Code, Cursor or anything else that runs a local MCP server — rather than by checking one product's config file. See [§18 → The tool map](#the-tool-map--what-your-agents-used) for where that reading comes from.
 
 ![The Getting started panel, docked in the top-right corner of the app. It is headed "Getting started" with a close cross, reads "3 OF 3 DONE", and lists three completed items each with a green tick and the word Done: "Add an AI key — A key is saved, so The Curator can read and write"; "Create your first domain — You have somewhere for knowledge to land"; "Ingest your first source — Your wiki has pages in it, the loop is running". A closing line reads "Everything here is done — this guide will not come back on its own."](images/curator-getting-started.png)
 
-*The panel with all three steps completed. On a fresh install each row is unticked and reads "0 OF 3 DONE" instead, with an action button in place of the word "Done".*
+*The **second-brain** list with all three steps completed. The screenshot predates v3.61.0's two doors, so it shows the checklist rather than the question that now comes before it, and the second step is captioned by its older title ("Create your first domain"; it reads "Point at a wiki, or start one" today, because pointing at a wiki you already have is the other way to finish it). A fresh install now opens on the two doors; pick one and each row is unticked, reading "0 OF 3 DONE" — or "0 OF 4 DONE" on the coding-agents list — with an action button in place of the word "Done".*
 
 **It never blocks you.** It is a panel, not a modal — you can click past it, start typing, and ignore it entirely. Dismiss it with the **✕** in its corner. Dismissing is not permanent: **Settings → General → Show setup guide** brings it back at any time. The dismissal is remembered per *install*, not per browser, so it does not follow you from a browser install into the Mac app.
 
-> Step 1 is the only one you truly cannot skip in substance — without a key, ingest and chat have no model to call. Nothing stops you dismissing the panel first and adding the key later.
+> **On the second-brain path, the key step is the only one you truly cannot skip in substance** — without a key, ingest and chat have no model to call. Nothing stops you dismissing the panel first and adding the key later. **On the coding-agents path it is genuinely optional**, which is why it sits last there and says so: the memory layer and the MCP bridge never call a model.
 
-> **An OpenRouter key alone does not tick off step 1.** The checklist looks for a Gemini or an Anthropic key specifically. If OpenRouter is your only provider the app works fine — you can ingest and chat — but this row keeps saying "Add an AI key" until you either add one of the other two or dismiss the panel. Dismissing it is the right move; nothing is wrong.
+> **An OpenRouter key alone does not tick off the key step.** The checklist looks for a Gemini or an Anthropic key specifically. If OpenRouter is your only provider the app works fine — you can ingest and chat — but this row keeps saying "Add an AI key" until you either add one of the other two or dismiss the panel. Dismissing it is the right move; nothing is wrong.
 
 ### First run is the same in the Mac app — with one thing to expect
 
-The panel, the three steps and the order are identical, because it is the same
-interface. There is no separate installer wizard and nothing asks you for a key
-before the app will open.
+The panel, the two doors and the steps behind each of them are identical, because it
+is the same interface. There is no separate installer wizard and nothing asks you for
+a key before the app will open.
 
 The one thing that differs is what an **existing** user sees. The app does not go
 looking for a wiki you already have, so it starts genuinely empty: no domains, and the
@@ -538,7 +550,7 @@ Getting started panel offering to create your first one. That is the expected st
 Point it at your existing folder — **Settings → Knowledge base** — and everything
 appears. [§3b](#moving-an-existing-wiki-into-the-app) has the full three-step path.
 
-> **For developers:** you can also configure API keys by creating a `.env` file manually (`cp .env.example .env`) and setting `GEMINI_API_KEY=your_key_here`. Keys saved in Settings take priority over `.env` when both are present. Note that a `.env`-only key does **not** tick off step 1 — the checklist reads keys saved through the app (`.curator-config.json`), so it will keep showing "Add an AI key" even though the app can already make calls.
+> **For developers:** you can also configure API keys by creating a `.env` file manually (`cp .env.example .env`) and setting `GEMINI_API_KEY=your_key_here`. Keys saved in Settings take priority over `.env` when both are present. Note that a `.env`-only key does **not** tick off the key step — the checklist reads keys saved through the app (`.curator-config.json`), so it will keep showing "Add an AI key" even though the app can already make calls.
 >
 > This `.env` route is for the browser install only. The Mac app's program files are inside the application bundle, which is read-only, so there is nowhere useful to put a `.env` — use Settings.
 
@@ -5310,7 +5322,7 @@ Do not edit any files outside ~/the-curator. Do not commit anything to my git co
 
 - Most agents will ask before running `npm install` and before launching the server. Approve those — they're the install.
 - If the agent doesn't have permission to install Node.js system-wide, it will tell you. On Linux, `sudo apt install nodejs npm` (or your distro's equivalent) is enough.
-- After the install, the **Getting started** panel in the browser walks you through the rest: API key, first domain, first ingest. The agent should not need to touch any of that.
+- After the install, the **Getting started** panel in the browser walks you through the rest. It asks which path you are setting up first; the second-brain path is API key, first domain, first ingest. The agent should not need to touch any of that.
 - The agent doesn't replace this guide — when you want to understand what the app actually does, [§4 (API keys)](#4-get-your-api-key-gemini-claude-or-openrouter), [§13 (three ways to talk to your knowledge)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp), and [§19 (cost)](#19-api-keys-cost--free-tier) are the most important sections.
 
 ### Updating with a coding agent

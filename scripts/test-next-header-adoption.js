@@ -202,7 +202,7 @@ section('§1  THE CLASS GUARD — no view hand-rolls a header');
   ok('...and its zero-domain sentence lives in the SHARED empty card, not under the title',
     /emptyCard\(\{[\s\S]{0,300}?Chat needs at least one domain to talk to/.test(SRC['chat.js']));
   ok('...with the header itself coming from the component, in both densities',
-    /renderViewHeader\(\{ eyebrow: 'the default view', title: 'Chat' \}\)/.test(SRC['chat.js'])
+    /renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat' \}\)/.test(SRC['chat.js'])
     && /renderViewHeader\(\{ variant: 'sidebar', title: 'Chat' \}\)/.test(SRC['chat.js']));
   // CONTROL: the inverted assertion can still go red — proven on a copy that
   // restores the exact original two lines.

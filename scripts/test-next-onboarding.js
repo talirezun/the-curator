@@ -185,15 +185,28 @@ const PURE_FNS = [
   'hasApiKey',
   'hasAnyDomain',
   'hasAnyPage',
+  'hasAnyProject',
+  'bridgeHasBeenUsed',
   'factsFrom',
+  'deriveDoor',
   'buildSteps',
   'readDismissed',
   'writeDismissed',
+  'writeLandingView',
   'shouldShowPanel',
   'progressLabel',
   'targetViewFor',
 ];
-const PURE_CONSTS = ['DISMISS_KEY', 'STEP_ORDER', 'STEP_COPY', 'UNKNOWN_FACTS'];
+// ORDER MATTERS, and only for one reason: these are emitted as `const`
+// declarations in source order, so a const built FROM another (STEP_SETS
+// reads STEP_ORDER and AGENT_STEP_ORDER) has to come after it or the
+// sandbox throws on a temporal dead zone. It is not an ordering the module
+// itself depends on.
+const PURE_CONSTS = [
+  'DISMISS_KEY', 'LANDING_VIEW_KEY',
+  'STEP_ORDER', 'AGENT_STEP_ORDER', 'STEP_SETS',
+  'DOORS', 'STEP_COPY', 'AGENT_STEP_COPY', 'UNKNOWN_FACTS',
+];
 
 const sandbox = new Function(
   PURE_CONSTS.map((c) => extractConst(ob, c)).join('\n') + '\n' +
@@ -202,9 +215,11 @@ const sandbox = new Function(
 )();
 
 const {
-  hasApiKey, hasAnyDomain, hasAnyPage, factsFrom, buildSteps, readDismissed,
-  writeDismissed, shouldShowPanel, progressLabel, targetViewFor,
-  DISMISS_KEY, STEP_ORDER,
+  hasApiKey, hasAnyDomain, hasAnyPage, hasAnyProject, bridgeHasBeenUsed,
+  factsFrom, deriveDoor, buildSteps, readDismissed,
+  writeDismissed, writeLandingView, shouldShowPanel, progressLabel, targetViewFor,
+  DISMISS_KEY, LANDING_VIEW_KEY, STEP_ORDER, AGENT_STEP_ORDER, STEP_SETS, DOORS,
+  STEP_COPY, AGENT_STEP_COPY,
 } = sandbox;
 
 // Realistic bodies, shaped from the actual routes:
@@ -227,6 +242,42 @@ function domain(slug, pageCount) {
     slug, displayName: slug, pageCount, conversationCount: 0, lastIngestDate: null,
     pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 },
   };
+}
+// GET /api/memory (src/routes/memory.js's index route) — one row per
+// PROJECT across every domain since v3.48.0, with `total` the store's own
+// count taken before its cap.
+function memoryBody(rows, over) {
+  return Object.assign({
+    ok: true,
+    projects: rows || [],
+    total: (rows || []).length,
+    truncated: false,
+    layoutWarning: null,
+    domainsScanned: 1,
+  }, over || {});
+}
+function projectRow(domainSlug, project) {
+  return { domain: domainSlug, project, distinctScopeCount: 0, savedCopies: 0, latestSavedAt: null };
+}
+// GET /api/mcp/usage (src/routes/mcp.js's usageHandler) — every catalogue
+// row is returned whether used or not, with lastUsedAt null and the counts
+// at 0 for a tool that has no line.
+function usageBody(over, toolOver) {
+  return Object.assign({
+    present: false,
+    logStartedAt: null,
+    logBytes: 0,
+    tools: [Object.assign({
+      name: 'get_project_context', group: 'read', mutates: false, purpose: 'x',
+      lastUsedAt: null, lastOk: null, count7d: 0, countTotal: 0, refusedTotal: 0,
+    }, toolOver || {})],
+    sessions: { lastBootstrapAt: null, lastSaveAt: null },
+  }, over || {});
+}
+// Visible words, the way docs/design-system-source.md §3's ceiling is
+// counted: punctuation is not a word and an em dash is not a word.
+function wordCount(s) {
+  return String(s).replace(/[—–-]/g, ' ').split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -271,6 +322,45 @@ section('1. The three fact predicates — driven BOTH ways, plus junk input');
     'a domain whose stats FAILED (no pageCount) does not complete the step');
   eq(hasAnyPage({ domains: [null, undefined] }), false, 'null entries in the list are tolerated');
   eq(hasAnyPage(statsBody([domain('a', -3)])), false, 'a negative pageCount does not count');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('1b. The two AGENT-side facts (v3.61.0) — the ones the old panel had no step for');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  eq(hasAnyProject(memoryBody()), false, 'no projects anywhere -> false');
+  eq(hasAnyProject(memoryBody([projectRow('projects', 'curator')])), true, 'one project row -> true');
+  // `total` is the store's count BEFORE its own cap, so it is read as well
+  // as the array — a capped list would otherwise be the only evidence, and
+  // a cap is not a measurement (the v3.17.1 rule).
+  eq(hasAnyProject(memoryBody([], { total: 7 })), true,
+    'an EMPTY array with a non-zero `total` still counts — the list is capped, the count is not');
+  eq(hasAnyProject(null), false, 'null body -> false (fetch failed)');
+  eq(hasAnyProject({}), false, 'a body with neither field -> false');
+  eq(hasAnyProject({ projects: 'curator' }), false, 'a non-array `projects` -> false');
+  eq(hasAnyProject({ total: 'lots' }), false, 'a non-numeric `total` -> false');
+
+  // THE POINT OF THIS PREDICATE, stated as an assertion: it must not be
+  // `installed` from GET /api/mcp/config, which reads Claude Desktop's
+  // config file only. A Claude Code or Cursor user would read false for
+  // ever — step 3's never-completing defect, rebuilt.
+  eq(bridgeHasBeenUsed(usageBody()), false,
+    'a bridge that has never answered a call -> NOT done (present false, no lastUsedAt)');
+  eq(bridgeHasBeenUsed(usageBody({ present: true, logStartedAt: '2026-09-01T00:00:00.000Z' })), false,
+    'a log that EXISTS but records no call -> still not done ("nothing since this log began" is not a call)');
+  eq(bridgeHasBeenUsed(usageBody(
+    { present: true }, { lastUsedAt: '2026-09-18T10:00:00.000Z', countTotal: 3 })), true,
+    'present + a tool with a lastUsedAt -> done');
+  eq(bridgeHasBeenUsed(usageBody({ present: true }, { countTotal: 2 })), true,
+    'a count with no timestamp is still evidence of a call');
+  eq(bridgeHasBeenUsed(usageBody(
+    { present: false }, { lastUsedAt: '2026-09-18T10:00:00.000Z' })), false,
+    'a used tool without `present` -> false; both halves are required');
+  eq(bridgeHasBeenUsed(usageBody({ present: true, tools: 'lots' })), false, 'a non-array `tools` -> false');
+  eq(bridgeHasBeenUsed(usageBody({ present: true, tools: [null] })), false, 'a null row is tolerated');
+  eq(bridgeHasBeenUsed(null), false, 'null body -> false (fetch failed)');
+  eq(bridgeHasBeenUsed(usageBody({ present: 'yes' }, { countTotal: 9 })), false,
+    'a truthy non-boolean `present` does NOT count (strict, like hasApiKey)');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -319,6 +409,78 @@ section('2. buildSteps() — the ORDER is the design (R7), and it is pinned');
   const f2 = factsFrom(null, null);
   ok(f2.hasKey === false && f2.hasDomain === false && f2.hasPages === false,
     'factsFrom(null, null) — a total request failure — is all-false, which SHOWS the panel');
+
+  // THE KNOWLEDGE PATH IS UNCHANGED BY v3.61.0, and that is the first
+  // audience's whole guarantee. Asserted as an EXACT comparison against a
+  // hand-written expectation rather than "still three steps": a shuffled
+  // order or edited action label would pass a length check.
+  const oneArg = buildSteps({ hasKey: false, hasDomain: true, hasPages: false });
+  const withDoor = buildSteps({ hasKey: false, hasDomain: true, hasPages: false }, 'knowledge');
+  ok(JSON.stringify(oneArg) === JSON.stringify(withDoor),
+    'a ONE-ARGUMENT call is byte-identical to an explicit knowledge call — every pre-v3.61.0 caller still means what it meant');
+  ok(JSON.stringify(oneArg.map((x) => [x.id, x.action, x.done]))
+    === JSON.stringify([['api-key', 'Open Settings', false], ['domain', 'Open Domains', true], ['ingest', 'Open Ingest', false]]),
+    'and the knowledge set is exactly key/domain/ingest with its own actions and its own done-ness');
+  ok(oneArg.every((x) => x.optional === false), 'no knowledge step is marked optional — all three are needed for that path');
+  ok(JSON.stringify(buildSteps(null, 'nonsense')) === JSON.stringify(buildSteps(null)),
+    'an UNKNOWN door falls back to the shipped knowledge set, never to an empty list');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('2b. The AGENT step set — four steps, the key LAST and optional');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const blank = { hasKey: false, hasDomain: false, hasPages: false, hasProject: false, bridgeUsed: false };
+  const a = buildSteps(blank, 'agent');
+  eq(a.length, 4, 'exactly four steps');
+  ok(JSON.stringify(a.map((x) => x.id)) === JSON.stringify(['domain', 'project', 'bridge', 'api-key']),
+    'domain -> project -> bridge -> api-key, in that order');
+  ok(JSON.stringify(AGENT_STEP_ORDER) === JSON.stringify(['domain', 'project', 'bridge', 'api-key']),
+    'AGENT_STEP_ORDER itself is that order');
+  ok(STEP_SETS.knowledge === STEP_ORDER && STEP_SETS.agent === AGENT_STEP_ORDER,
+    'STEP_SETS names the two orders rather than re-typing them');
+
+  // ── THE DEFECT THIS SET EXISTS TO FIX ──────────────────────────────────
+  // The key is LAST and it is flagged optional, because the memory layer
+  // and the bridge need no model: mcp/server.js reads and writes markdown
+  // directly and never calls a provider.
+  eq(a[3].id, 'api-key', 'the key is the LAST step, not the first');
+  ok(a[3].optional === true, '…and it is the one step marked optional');
+  ok(a.filter((x) => x.optional === true).length === 1,
+    'exactly ONE of the four carries the flag — a mark on all of them would carry nothing (v3.16.1)');
+  ok(/needed for ingest and chat/i.test(a[3].body),
+    'its body names WHAT the key is for rather than claiming nothing works without it');
+  ok(!/nothing else works|nothing works/i.test(a[3].body),
+    'THE FALSE CLAIM, GUARDED: the agent path never says nothing works without a model');
+
+  // Each new fact drives exactly its own step, both directions.
+  const p = buildSteps(Object.assign({}, blank, { hasProject: true }), 'agent');
+  ok(p[1].done === true && p[0].done === false && p[2].done === false && p[3].done === false,
+    'hasProject completes ONLY the project step');
+  const b = buildSteps(Object.assign({}, blank, { bridgeUsed: true }), 'agent');
+  ok(b[2].done === true && b[0].done === false && b[1].done === false && b[3].done === false,
+    'bridgeUsed completes ONLY the bridge step');
+  const all = buildSteps({ hasKey: true, hasDomain: true, hasPages: false, hasProject: true, bridgeUsed: true }, 'agent');
+  ok(all.every((x) => x.done === true),
+    'THE OTHER HALF OF THE DEFECT: this set CAN complete without a single ingested page (hasPages false)');
+  eq(progressLabel(all), '4 of 4 done', 'and the progress line counts four, not three');
+
+  // A done step's copy differs from its todo copy, on the two new steps too.
+  ok(p[1].body !== a[1].body && b[2].body !== a[2].body,
+    'both new steps read differently once they are done');
+
+  // The SHARED steps are the same steps: same fact, same action, same
+  // destination — only the api-key copy is overridden.
+  const k = buildSteps(Object.assign({}, blank, { hasDomain: true }), 'knowledge');
+  ok(a[0].title === k[1].title && a[0].action === k[1].action,
+    'the domain step is the SAME step in both sets, not a second copy of it');
+  ok(a[3].title === k[0].title && a[3].action === k[0].action,
+    'and so is the key step — the override touches the body and the flag, nothing else');
+  ok(a[3].body !== k[0].body, '…but its body IS overridden for this audience');
+  const kDone = buildSteps({ hasKey: true, hasDomain: false, hasPages: false }, 'knowledge');
+  const aDone = buildSteps(Object.assign({}, blank, { hasKey: true }), 'agent');
+  ok(aDone[3].body === kDone[0].body,
+    'the DONE copy is shared — a saved key means the same thing to both audiences');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -426,10 +588,46 @@ section('5. Every step POINTS. Nothing here writes anything.');
   ok(!/\/api\/domains['"`]\s*,/.test(obCode), 'and no POST-shaped call to /api/domains');
   ok(!/POST/.test(obCode), 'the string POST does not appear in the module code');
 
-  // Only the two READ endpoints it needs.
+  // Only the READ endpoints it needs — FOUR since v3.61.0, and the list is
+  // exact rather than a floor, because this panel POLLS: an endpoint added
+  // here is added to a timer, and two of the four are the reason
+  // loadFacts() fetches conditionally at all.
   const fetched = [...obCode.matchAll(/getJson\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
-  ok(JSON.stringify(fetched) === JSON.stringify(['/api/config/api-keys', '/api/domains/stats']),
-    `it reads exactly the two GET endpoints it needs — found ${JSON.stringify(fetched)}`);
+  ok(JSON.stringify(fetched) === JSON.stringify(
+    ['/api/config/api-keys', '/api/domains/stats', '/api/mcp/usage', '/api/memory']),
+    `it reads exactly the four GET endpoints it needs — found ${JSON.stringify(fetched)}`);
+
+  // ── THE AGENT PAIR IS CONDITIONAL, AND THAT IS EXECUTED ───────────────
+  // GET /api/memory walks every domain's state tree, so fetching it twelve
+  // times a minute on an install where it cannot change the answer is a
+  // real cost on the exact install this panel already polls forever (a
+  // populated wiki whose only key lives in .env — this file's header).
+  // Driven against the real loadFacts() with a recording getJson.
+  const loadFactsSrc = extractFunction(obCode, 'loadFacts');
+  function runLoadFacts(chosen, stats) {
+    const seen = [];
+    const box = new Function('getJson', 'factsFrom', 'hasAnyPage',
+      loadFactsSrc + '\nreturn { loadFacts };')(
+      (url) => { seen.push(url); return Promise.resolve(url === '/api/domains/stats' ? stats : null); },
+      (...args) => args,
+      (s) => !!(s && Array.isArray(s.domains) && s.domains.some((d) => Number(d.pageCount) > 0)),
+    );
+    return box.loadFacts(chosen).then(() => seen.sort());
+  }
+  const popul = statsBody([domain('articles', 3445)]);
+  const bare = statsBody([domain('articles', 0)]);
+  const cases = await Promise.all([
+    runLoadFacts(null, popul), runLoadFacts(null, bare),
+    runLoadFacts('knowledge', bare), runLoadFacts('agent', popul),
+  ]);
+  ok(JSON.stringify(cases[0]) === JSON.stringify(['/api/config/api-keys', '/api/domains/stats']),
+    'no door yet + pages already exist -> the agent pair is NOT fetched (the door is decided by that one fact)');
+  ok(cases[1].length === 4 && cases[1].includes('/api/memory') && cases[1].includes('/api/mcp/usage'),
+    'no door yet + no pages -> both agent facts ARE fetched, because either could decide the door');
+  ok(JSON.stringify(cases[2]) === JSON.stringify(['/api/config/api-keys', '/api/domains/stats']),
+    'the KNOWLEDGE door never pays for them — neither fact appears in its step set');
+  ok(cases[3].length === 4,
+    'the AGENT door always fetches them, pages or not — two of its four ticks are those facts');
 
   // D-A: never reintroduce the fields v3.0.13 deliberately removed.
   ok(!/geminiUsable|anthropicUsable|getEffectiveKey/.test(obCode),
@@ -674,11 +872,23 @@ section('7. It is a REGION, not a dialog (D-E) — no modality, no trap');
   const renderFn = extractFunction(ob, 'render');
   const interpolationsIn = (src) =>
     [...src.matchAll(/'\s*\+\s*([A-Za-z_$][\w$.()\[\]]*)\s*\+\s*'/g)].map((m) => m[1]);
+  // `rows` and `doors` are the two locals that hold BUILT markup, and both
+  // are built inside this same function from escapeHtml()/icon() calls the
+  // scan below therefore also sees. Nothing else may be interpolated.
   const unguarded = (src) =>
-    interpolationsIn(src).filter((x) => !/^escapeHtml\(|^icon\(|^rows$|^String\(/.test(x));
+    interpolationsIn(src).filter((x) => !/^escapeHtml\(|^icon\(|^rows$|^doors$|^String\(/.test(x));
   const found = unguarded(renderFn);
+  // A FLOOR AND A COUNT. The floor catches a scanner that stopped reaching
+  // the function at all; the count catches the subtler thing that nearly
+  // happened while v3.61.0's Optional flag was being written — an
+  // escapeHtml() site becoming invisible to this scan because a ternary was
+  // inserted between it and its closing quote. Ratchet: this may rise with
+  // new markup and must never fall silently.
+  const escapedSites = interpolationsIn(renderFn).filter((x) => /^escapeHtml\(/.test(x));
   ok(interpolationsIn(renderFn).length >= 5,
     `render() really does interpolate (${interpolationsIn(renderFn).length} sites — a near-zero count means this scanner stopped reaching it)`);
+  ok(escapedSites.length >= 8,
+    `and ${escapedSites.length} of them are escapeHtml() sites this scan can SEE (>= 8; a drop means one stopped being scanned, not that it stopped existing)`);
   ok(found.length === 0,
     `every value interpolated into markup goes through escapeHtml()/icon() — unguarded: ${JSON.stringify(found)}`);
   // Negative control: the detector can actually fail.
@@ -736,7 +946,7 @@ section('9. Staleness discipline (D-F) — captured LOCALLY, compared live');
     'and specifically does not re-capture it inside itself (that is the inert-guard shape)');
   const checks = (refresh.match(/isFresh\(myGen\)/g) || []).length;
   ok(checks >= 2, `refresh() re-checks freshness ${checks} times — before and after the await`);
-  ok(/if \(!isFresh\(myGen\) \|\| !root\) return;[\s\S]*await loadFacts\(\)[\s\S]*if \(!isFresh\(myGen\) \|\| !root\) return;/.test(refresh),
+  ok(/if \(!isFresh\(myGen\) \|\| !root\) return;[\s\S]*await loadFacts\([^)]*\)[\s\S]*if \(!isFresh\(myGen\) \|\| !root\) return;/.test(refresh),
     'one check sits before the await and one after it');
 
   // Every caller captures synchronously.
@@ -763,6 +973,15 @@ section('9. Staleness discipline (D-F) — captured LOCALLY, compared live');
       'the timer callback checks freshness against that frozen value');
     ok(/startRefresh\(panelGen\)/.test(extractFunction(obCode, 'openPanel')),
       'openPanel() supplies it, synchronously, after bumping the counter');
+    // A HOLE FOUND BY MUTATION IN v3.61.0, and it predates this release:
+    // openPanel has TWO arms — the already-open re-entry (which passes
+    // panelGen) and the FIRST open at the end of the function (which passes
+    // the local myGen). Deleting the second one left the assertion above
+    // green, because the first one still matches the regex — i.e. a panel
+    // that opened and then never polled at all, on the automatic first-run
+    // path, was not caught by anything. Count both.
+    ok(callSiteCount(ob, 'startRefresh', { within: 'openPanel' }) === 2,
+      'and BOTH of openPanel’s arms arm the poll — the re-entry and the first open');
   }
 
   ok(/panelGen \+= 1;/.test(extractFunction(ob, 'openPanel')), 'opening bumps the counter');
@@ -834,6 +1053,43 @@ section('10. CSS — tokens, [data-theme], prefix ownership, no scrim');
 
   // No inline style="" with a var() — test-css-tokens.js §8 walks these.
   ok(!/style="[^"]*var\(/.test(obCode), 'no built HTML string carries a var() inside an inline style attribute');
+
+  // ── v3.61.0's THREE MEASURED CSS DECISIONS, pinned ────────────────────
+  // Each of these came out of the running app, and each would go quietly
+  // wrong again if the token were swapped back for the obvious one.
+  //
+  // 1. The Optional chip's outline. --border-subtle measured 1.06:1 against
+  //    --surface-overlay in the dark theme — an outline nobody can see.
+  //    --control-edge measures 3.24 dark / 3.70 light, over the 3:1 floor
+  //    for a non-text graphic (WCAG 1.4.11).
+  ok(/\.obp-step-optional \{[^}]*border: 1px solid var\(--control-edge\)/.test(obCssCode),
+    'the Optional chip outlines with --control-edge (3.24 dark / 3.70 light), not the invisible --border-subtle (1.06)');
+  ok(/--border-subtle was the outline here and it was MEASURED OUT/i.test(obCss),
+    '…and the file records the measurement that rejected the other token, so the swap is not re-made by taste');
+
+  // 2. The card's height ceiling. The AGENT set has four steps; at 1024px
+  //    wide the card narrows and its copy wraps, measured 699.7px of an
+  //    800px viewport — one notch shorter and the last step, the way back
+  //    and the dismissal reassurance are off-screen on a `position: fixed`
+  //    card. The 24px is .obp-root's own 12px top + 12px bottom padding,
+  //    DERIVED rather than guessed, which is the same rule the 28px width
+  //    budget follows.
+  ok(/\.obp-panel \{[\s\S]*?max-height: calc\(100vh - 24px\)/.test(obCssCode),
+    'the panel caps its height at the viewport minus its wrapper’s own padding');
+  ok(/\.obp-panel \{[\s\S]*?overflow-y: auto/.test(obCssCode),
+    '…and contains the overflow inside the card, so a short window cannot make the last step unreachable');
+  ok(/padding: 12px 16px/.test(obCssCode),
+    '…and .obp-root really declares the 12px the ceiling is derived from (this guard would rot silently otherwise)');
+
+  // 3. The door buttons' size comes from a TOKEN, never a px literal —
+  //    --control-sm IS --hit-min, so the box is the target and no ::before
+  //    hit box is needed (the rule test-next-views-kit.js §10 enforces).
+  ok(/\.obp-panel \.obp-door-btn \{[^}]*height: var\(--control-sm\)/.test(obCssCode),
+    'each door button takes --control-sm, which is --hit-min — the box is the target');
+  ok(/\.obp-swap \{[^}]*min-height: var\(--hit-min\)/.test(obCssCode),
+    'and the way-back control reaches --hit-min by its box (a text control has no glyph to preserve)');
+  ok(!/\.obp-door-btn \{[^}]*height: \d+px/.test(obCssCode) && !/\.obp-swap \{[^}]*height: \d+px/.test(obCssCode),
+    'neither of them hard-codes a pixel height');
 
   // Every var(--x) this file references must be defined somewhere in the
   // /next token universe. test-css-tokens.js enforces this globally; a
@@ -1064,17 +1320,25 @@ section('13. The re-check must STOP — teardown, stop condition, backoff');
     // guard — it looks identical to a broken test, and the next person
     // deletes it. Set FALSE, which is the Settings "Show setup guide" path,
     // i.e. exactly the case where the shipped defect made the poll permanent.
+    // activeDoor / chosenDoor joined the list in v3.61.0 because
+    // screenSignature() reads them: the panel's BODY is the two doors when
+    // activeDoor is null and the step list otherwise, so a signature blind
+    // to the door would let the no-op guard skip the one repaint that
+    // matters most. Started at the module's own initial values.
     'let root = null;\nlet steps = [];\nlet lastRefreshMs = 0;\nlet autoCloseOnComplete = false;\n' +
+    "let activeDoor = 'knowledge';\nlet chosenDoor = null;\n" +
     POLL_CONSTS.map((c) => extractConst(ob, c)).join('\n') + '\n' +
     POLL_FNS.map((n) => extractFunction(ob, n)).join('\n\n') + '\n' +
     `return { ${POLL_FNS.join(', ')},
        __setRoot(v) { root = v; },
        __setSteps(v) { steps = v; },
+       __setDoors(a, c) { activeDoor = a; chosenDoor = c; },
        __setLastRefreshMs(v) { lastRefreshMs = v; } };`
   )();
   const { shouldKeepPolling, nextPollDelay, screenSignature } = pollBox;
   const setRoot = pollBox.__setRoot;
   const setSteps = pollBox.__setSteps;
+  const setDoors = pollBox.__setDoors;
   const setLast = pollBox.__setLastRefreshMs;
 
   // ── The stop condition, driven ────────────────────────────────────────
@@ -1181,6 +1445,37 @@ section('13. The re-check must STOP — teardown, stop condition, backoff');
   ok(screenSignature() !== sigA,
     'and so does a DIFFERENT step, so the guard is not keyed on the count alone');
 
+  // ── THE DOOR IS IN THE SIGNATURE (v3.61.0), and it has to be ──────────
+  // Same steps, different body. If the signature could not see this, the
+  // panel would stay on the question after the facts resolved, or stay on
+  // the checklist after the user asked for the question back — the no-op
+  // guard reading "nothing changed" about the largest possible change.
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  setDoors('knowledge', null);
+  const sigKnowledge = screenSignature();
+  setDoors(null, null);
+  const sigDoors = screenSignature();
+  ok(sigDoors !== sigKnowledge,
+    'flipping to the two doors changes the signature even though the steps did not');
+  setDoors('agent', 'agent');
+  const sigAgent = screenSignature();
+  ok(sigAgent !== sigKnowledge && sigAgent !== sigDoors && sigAgent.length > 0,
+    'and so does the door itself — all three bodies are distinguishable');
+  setDoors('knowledge', 'knowledge');
+  const sigChosen = screenSignature();
+  setDoors('knowledge', null);
+  ok(screenSignature() !== sigChosen,
+    'a PRESSED door differs from a DERIVED one — that is what draws the "Pick a different start" control');
+  // An optional flag is on screen too, so it is in the signature.
+  setDoors('agent', 'agent');
+  setSteps([{ id: 'api-key', done: false, optional: true }]);
+  const sigOpt = screenSignature();
+  setSteps([{ id: 'api-key', done: false, optional: false }]);
+  ok(screenSignature() !== sigOpt, 'the Optional flag is in the signature — it is a visible difference');
+  // Restore the state the assertions after this block expect.
+  setDoors('knowledge', null);
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+
   const refreshSrc = extractFunction(obCode, 'refresh');
   ok(/if \(screenSignature\(\) === renderedSignature\) return;/.test(refreshSrc),
     'refresh() skips render() when nothing on screen would differ');
@@ -1196,6 +1491,298 @@ section('13. The re-check must STOP — teardown, stop condition, backoff');
     'refresh() refuses to overlap itself — go() fires a manual re-check while the chain is armed independently');
   ok(/finally \{\s*refreshing = false;/.test(refreshSrc),
     'and clears the flag in a finally, so a thrown fetch cannot wedge the loop off permanently');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a modal');
+// ═════════════════════════════════════════════════════════════════════════
+// WHAT THIS SECTION EXISTS FOR. The panel taught ONE audience. For the
+// other — somebody giving their coding agents memory — step 1 asserted
+// something false about their setup (the memory layer and the bridge need
+// no key: mcp/server.js reads and writes markdown under getDomainsDir()
+// directly), step 3 could never complete (hasAnyPage, and they have no
+// PDFs), and the two steps they needed were in no step at all.
+//
+// The fix is two doors and two step sets. The thing that must not happen
+// while fixing it is the panel becoming a WIZARD — R7 is binding, and §7
+// above is the guard on that; this section adds the door-specific half.
+{
+  // ── DERIVATION, both directions, every rule ───────────────────────────
+  const blank = { hasKey: false, hasDomain: false, hasPages: false, hasProject: false, bridgeUsed: false };
+  const F = (over) => Object.assign({}, blank, over);
+
+  eq(deriveDoor(blank, null), null,
+    'a genuinely blank install -> NULL, which is what puts the two doors on screen');
+  eq(deriveDoor(F({ hasKey: true, hasDomain: true }), null), null,
+    'THE RULE THAT MATTERS: a key and an empty domain are on BOTH paths, so they carry no signal — still the doors');
+  eq(deriveDoor(F({ hasPages: true }), null), 'knowledge', 'a page exists -> knowledge');
+  eq(deriveDoor(F({ hasProject: true }), null), 'agent', 'a project exists -> agent');
+  eq(deriveDoor(F({ bridgeUsed: true }), null), 'agent', 'a bridge that answered a call -> agent');
+  eq(deriveDoor(F({ hasPages: true, hasProject: true, bridgeUsed: true }), null), 'knowledge',
+    'BOTH audiences’ facts present -> knowledge wins, deliberately: it is the shipped path and audience 1 must lose nothing');
+
+  // An explicit press beats every fact, or the doors would be decorative.
+  eq(deriveDoor(F({ hasPages: true }), 'agent'), 'agent',
+    'a PRESSED agent door beats a knowledge fact — the user saying so is better evidence than an inference');
+  eq(deriveDoor(F({ hasProject: true }), 'knowledge'), 'knowledge', 'and the same in reverse');
+  eq(deriveDoor(blank, 'nonsense'), null, 'an unrecognised choice is ignored rather than trusted');
+  eq(deriveDoor(null, null), null, 'null facts -> the doors (a failed fetch must not pick an audience)');
+  eq(deriveDoor('nope', null), null, 'a non-object facts value -> the doors');
+
+  // ── DERIVED, NOT STORED: the panel keeps no persona field ─────────────
+  ok(!/persona|audience[A-Za-z]*\s*=|'knowledge'\s*\)\s*;?\s*\/\/\s*stored/.test(obCode),
+    'nothing in the module stores a persona');
+  const keysWritten = [...obCode.matchAll(/setItem\(\s*([A-Za-z_$][\w$]*)/g)].map((m) => m[1]).sort();
+  ok(JSON.stringify([...new Set(keysWritten)]) === JSON.stringify(['DISMISS_KEY', 'LANDING_VIEW_KEY']),
+    `it writes exactly two storage keys, both named constants — found ${JSON.stringify(keysWritten)}`);
+  eq(LANDING_VIEW_KEY, 'curator-next-view',
+    'and the second one is app.js’s EXISTING landing key, not a new key (scripts/test-ui-state.js’s census is the gate)');
+  ok(/const VIEW_KEY = 'curator-next-view';/.test(appJs),
+    '…which app.js really declares under that literal today (this guard would rot silently otherwise)');
+  ok(/pickStartView\(localStorage\.getItem\(VIEW_KEY\)\)/.test(appCode),
+    '…and really READS at boot, through pickStartView — which is the only reason writing it means anything');
+
+  // ── THE WRITE ITSELF, executed, including its allow-list ──────────────
+  {
+    const wrote = [];
+    const capture = { setItem: (k, v) => wrote.push([k, v]) };
+    eq(writeLandingView(capture, 'memory'), true, 'the agent door’s view is written');
+    ok(wrote.length === 1 && wrote[0][0] === LANDING_VIEW_KEY && wrote[0][1] === 'memory',
+      'under the landing key, with the view as its value');
+    eq(writeLandingView(capture, 'domains'), true, 'and the knowledge door’s view is written');
+
+    // THE ALLOW-LIST. Only a door's own view may be written, so a caller
+    // cannot put an arbitrary string into the key app.js boots from.
+    eq(writeLandingView(capture, 'settings'), false, 'a view NO door names is refused');
+    eq(writeLandingView(capture, ''), false, 'an empty view is refused');
+    eq(writeLandingView(capture, '../../evil'), false, 'and so is junk');
+    eq(wrote.length, 2, 'the three refusals wrote nothing at all');
+
+    // Best-effort, like writeDismissed: a private window throws on setItem.
+    const throwing = { setItem() { throw new Error('SecurityError: storage is disabled'); } };
+    eq(writeLandingView(throwing, 'memory'), false,
+      'a THROWING storage reports failure instead of throwing out of the click handler');
+
+    // Every door's view must be one app.js can actually navigate to, or the
+    // write would be silently discarded by pickStartView on the next boot.
+    for (const d of DOORS) {
+      ok(new RegExp("'" + d.view + "'").test(
+        (appCode.match(/const NAV_VIEWS = \[[^\]]*\]/) || [''])[0]),
+        `the ${d.id} door's landing view (${d.view}) is a real NAV_VIEWS entry`);
+    }
+  }
+
+  // ── THE TWO DOORS' COPY ───────────────────────────────────────────────
+  eq(DOORS.length, 2, 'exactly two doors');
+  ok(JSON.stringify(DOORS.map((d) => d.id)) === JSON.stringify(['knowledge', 'agent']),
+    'knowledge first, then agent');
+  ok(/second brain/i.test(DOORS[0].title) && /coding agents/i.test(DOORS[1].title),
+    'their titles name the two things a person comes here to build');
+  for (const d of DOORS) {
+    ok(wordCount(d.body) <= 13,
+      `the ${d.id} door's body is ${wordCount(d.body)} visible words (<= 13, docs/design-system-source.md §3)`);
+    ok(d.body.length > 0 && d.title.length > 0, `the ${d.id} door has a title and a body`);
+  }
+  // CONTROL: the word counter can fail.
+  ok(wordCount('one two three four five six seven eight nine ten eleven twelve thirteen fourteen') === 14,
+    'CONTROL: the word counter really counts words, so the ceilings above are not vacuous');
+  ok(wordCount(STEP_COPY['api-key'].todo) <= 13,
+    `step 1's rewritten body is ${wordCount(STEP_COPY['api-key'].todo)} visible words (<= 13)`);
+
+  // ── THE AGENT PATH NAMES NO PRODUCT AND DEMANDS NO KEY ────────────────
+  // Naming one MCP client would tell Claude Code and Cursor users the step
+  // is not theirs, and the bridge serves all three.
+  const agentCopy = JSON.stringify([
+    DOORS[1], STEP_COPY.project, STEP_COPY.bridge, AGENT_STEP_COPY,
+  ]);
+  ok(!/Claude Desktop/i.test(agentCopy),
+    'the agent path never says "Claude Desktop" — the bridge is harness-neutral');
+  ok(!/Claude Desktop/i.test(obCode), '…and neither does any other string in the module');
+  ok(!/nothing else works|you need a key|requires a key/i.test(agentCopy),
+    'and it never states a key requirement');
+  ok(/MCP bridge/.test(STEP_COPY.bridge.todo),
+    'the bridge step names the Settings block it points at, by its shipped label');
+  ok(/MCP bridge'\]/.test(settingsCode) || /'mcp',\s*'MCP bridge'/.test(settingsCode),
+    '…which views/settings.js really calls that today (this guard would rot silently otherwise)');
+  ok(/[Pp]roject/.test(STEP_COPY.project.todo),
+    'and the project step says the word "project" — which appeared in NO step before this release');
+
+  // ── DONE-NESS COMES FROM THE HARNESS-NEUTRAL FACT ─────────────────────
+  ok(!/api\/mcp\/config/.test(obCode),
+    'THE REBUILT-DEFECT GUARD: the bridge step never reads /api/mcp/config, whose `installed` inspects Claude Desktop’s file ONLY');
+  ok(/getJson\('\/api\/mcp\/usage'\)/.test(obCode), 'it reads the usage log instead');
+
+  // ── THE NEW STEPS POINT, LIKE EVERY OTHER STEP ────────────────────────
+  eq(targetViewFor('project'), 'domains', 'the project step points at Domains, which owns the project list and its form');
+  eq(targetViewFor('bridge'), 'settings', 'the bridge step points at Settings, which owns the snippet');
+  ok(AGENT_STEP_ORDER.every((id) => targetViewFor(id) !== null), 'every agent step has a destination');
+  ok(!/method:\s*'PUT'|method:\s*'PATCH'|method:\s*'DELETE'/.test(obCode),
+    'and none of them mutates anything — the panel still only reads');
+
+  // The bridge step opens the SECTION, the same way step 2 opens Domains'
+  // create form: through afterViewMount, because v3.57.0's exit animation
+  // means the statement order says nothing about the event order.
+  {
+    const goSrc2 = extractFunction(obCode, 'go') + '\n' +
+      extractFunction(obCode, 'goToDomainsCreate') + '\n' +
+      extractFunction(obCode, 'goToMcpBridge');
+    function runGo2(stepId, { deferMount }) {
+      const log = [];
+      const queued = [];
+      let mounted = false;
+      const btn = { click: () => log.push('click') };
+      const doc = {
+        getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null),
+        querySelector: (sel) => ((sel === '.settings-nav-row[data-section="mcp"]' && mounted) ? btn : null),
+      };
+      const api = new Function(
+        'navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+        goSrc2 + '\nreturn { go };')(
+        (v) => { log.push('navigate:' + v); if (!deferMount) mounted = true; },
+        (cb) => { if (deferMount) { queued.push(cb); return; } cb(); },
+        targetViewFor,
+        doc,
+        () => log.push('refresh'),
+        0,
+      );
+      let threw = null;
+      try { api.go(stepId); } catch (e) { threw = e; }
+      return { log, threw, flushMount() { mounted = true; queued.splice(0).forEach((c) => c()); } };
+    }
+    const r = runGo2('bridge', { deferMount: true });
+    ok(r.threw === null, 'go(\'bridge\') does not throw while the mount is pending');
+    ok(!r.log.includes('click'), 'and does NOT click the nav row before Settings has mounted — it does not exist yet');
+    r.flushMount();
+    ok(r.log.includes('click'), '…and DOES once it has');
+    ok(r.log.indexOf('navigate:settings') < r.log.indexOf('click'), 'navigation first, then the section click');
+    ok(r.log.filter((e) => e === 'click').length === 1, 'exactly one click');
+
+    const imm = runGo2('bridge', { deferMount: false });
+    ok(imm.log.indexOf('navigate:settings') < imm.log.indexOf('click')
+      && imm.log.indexOf('click') < imm.log.indexOf('refresh'),
+      `motion off: navigate → click → refresh (got ${imm.log.join(' → ')})`);
+
+    // A project step must NOT open the create form — it points at the list.
+    const proj = runGo2('project', { deferMount: false });
+    ok(proj.log.includes('navigate:domains'), 'the project step navigates to Domains');
+    ok(!proj.log.includes('click'),
+      'and clicks nothing: it points at the project list rather than opening a form the panel does not own');
+
+    // Degradation contract: a renamed hook is a no-op, never a throw.
+    const gone = new Function('navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+      goSrc2 + '\nreturn { go };')(
+      () => {}, (cb) => cb(), targetViewFor,
+      { getElementById: () => null, querySelector: () => null }, () => {}, 0);
+    let threw2 = null;
+    try { gone.go('bridge'); } catch (e) { threw2 = e; }
+    ok(threw2 === null,
+      'a renamed nav row leaves the user on Settings with the section list in front of them rather than throwing');
+  }
+
+  // ── STILL NOT A MODAL, and the doors did not smuggle one in ───────────
+  // §7 proves this for the module as a whole. These are the door-specific
+  // ways it could have been broken: a door that is the primary action, a
+  // question the user cannot get past, or a scrim behind the choice.
+  ok(!/btn-primary/.test(obCode),
+    'NEITHER door is the primary — a door is a choice between two equal paths, not the action that finishes a block');
+  const doorBtns = (obCode.match(/obp-door-btn/g) || []).length;
+  ok(doorBtns >= 2, 'the doors are real <button>s with a data-door hook and a click binding');
+  ok(/data-door="' \+ escapeHtml\(d\.id\)/.test(obCode), 'their hook carries the door id, escaped');
+  ok(/\.obp-door-btn'\)\.forEach/.test(obCode) || /querySelectorAll\('\.obp-door-btn'\)/.test(obCode),
+    'and bind() wires every one of them');
+  ok(!/obp-scrim|obp-doors-overlay/.test(obCssCode + obCode), 'no scrim came with the doors');
+  ok(/id="obp-dismiss"/.test(obCode) && /askingDoor/.test(obCode),
+    'the dismiss control is in the SHARED head, so the door state is dismissible exactly like the checklist');
+  // The dismiss is not inside the branch — a door state you cannot dismiss
+  // is a modal with extra steps.
+  const renderSrc = extractFunction(obCode, 'render');
+  ok(renderSrc.indexOf('id="obp-dismiss"') > -1
+    && renderSrc.indexOf('id="obp-dismiss"') < renderSrc.indexOf('obp-ask')
+    && renderSrc.indexOf('id="obp-dismiss"') < renderSrc.indexOf('obp-steps'),
+    '…and it is emitted BEFORE either branch of the body, so no state can drop it');
+
+  // ── THE WAY BACK ──────────────────────────────────────────────────────
+  ok(/id="obp-swap"/.test(obCode), 'a pressed door can be swapped for the other one');
+  ok(/chosenDoor !== null/.test(renderSrc),
+    '…and that control is offered only for a PRESSED door, never a derived one (where it would ask a question the facts have answered)');
+
+  // ── chooseDoor(), EXECUTED ────────────────────────────────────────────
+  // The behaviour the contract asks for, driven rather than scanned: press
+  // a door -> the key is written and the step list swaps; press the way
+  // back -> the choice clears and the facts decide again.
+  {
+    const chooseSrc = extractFunction(obCode, 'chooseDoor');
+    function runChoose(startFacts, startChosen) {
+      const wrote = [];
+      const calls = [];
+      // The module's real neighbours are INJECTED — deriveDoor, buildSteps
+      // and writeLandingView are the extracted originals, not stand-ins, so
+      // this drives the real decision chain and not a model of it. Only the
+      // three side-effecting neighbours (render / refresh / startRefresh)
+      // and the storage are recorders.
+      const box = new Function(
+        'DOORS', 'deriveDoor', 'buildSteps', 'writeLandingView', 'landingStorage',
+        'render', 'refresh', 'startRefresh', 'panelGen', '__chosen', '__facts',
+        'let chosenDoor = __chosen;\nlet activeDoor = null;\nlet lastFacts = __facts;\nlet steps = [];\n' +
+        chooseSrc + '\nreturn { chooseDoor, state: () => ({ chosenDoor, activeDoor, steps }) };')(
+        DOORS, deriveDoor, buildSteps, writeLandingView,
+        () => ({ setItem: (k, v) => wrote.push([k, v]) }),
+        () => calls.push('render'), () => calls.push('refresh'), () => calls.push('startRefresh'),
+        0, startChosen, startFacts,
+      );
+      return { chooseDoor: box.chooseDoor, state: box.state, wrote, calls };
+    }
+    const b1 = runChoose(F({ hasKey: true, hasDomain: true }), null);
+    b1.chooseDoor('agent');
+    const s1 = b1.state();
+    eq(s1.chosenDoor, 'agent', 'pressing the agent door records the choice for this page load');
+    eq(s1.activeDoor, 'agent', '…and the panel is now on that door');
+    ok(JSON.stringify(s1.steps.map((x) => x.id)) === JSON.stringify(['domain', 'project', 'bridge', 'api-key']),
+      '…with the agent step list in place, immediately, off the facts already in hand');
+    ok(s1.steps[0].done === true, '…and the shared domain step keeps the tick it had already earned');
+    ok(b1.wrote.length === 1 && b1.wrote[0][0] === 'curator-next-view' && b1.wrote[0][1] === 'memory',
+      'the landing key is written with the agent door’s view');
+    ok(b1.calls.includes('render') && b1.calls.includes('refresh') && b1.calls.includes('startRefresh'),
+      'it repaints, re-checks, and RE-ARMS the poll — a set with more unmet steps has something to watch again');
+    ok(!b1.calls.includes('navigate'),
+      'and it does NOT navigate: the panel points, the steps move (R7). Re-mounting the view under a choosing user would be the panel doing something');
+
+    const b2 = runChoose(F({ hasKey: true }), null);
+    b2.chooseDoor('knowledge');
+    ok(b2.wrote[0][1] === 'domains' &&
+      JSON.stringify(b2.state().steps.map((x) => x.id)) === JSON.stringify(['api-key', 'domain', 'ingest']),
+      'pressing the knowledge door writes domains and restores the three shipped steps');
+
+    // The way back: clear the choice and let the facts answer again.
+    const b3 = runChoose(F({ hasProject: true }), 'knowledge');
+    b3.chooseDoor(null);
+    eq(b3.state().chosenDoor, null, '"Pick a different start" clears the pressed choice');
+    eq(b3.state().activeDoor, 'agent', '…and the FACTS decide again — here a project exists, so the agent door');
+    eq(b3.wrote.length, 0, '…writing nothing: handing the decision back is not choosing a landing view');
+
+    const b4 = runChoose(blank, 'agent');
+    b4.chooseDoor(null);
+    eq(b4.state().activeDoor, null, 'with no discriminating fact, the way back lands on the two doors');
+
+    const b5 = runChoose(blank, null);
+    b5.chooseDoor('nonsense');
+    eq(b5.state().chosenDoor, null, 'an unknown door id is refused');
+    eq(b5.wrote.length, 0, '…and writes nothing');
+    eq(b5.calls.length, 0, '…and repaints nothing');
+  }
+
+  // ── THE GATE IS NEVER ASKED ABOUT AN EMPTY LIST ───────────────────────
+  // door === null renders the doors, but shouldShowPanel() still has to be
+  // handed real steps or it would hide the panel on the one install it
+  // exists for. The module stands the knowledge set in, and that cannot
+  // mis-gate: door === null implies hasPages === false implies the ingest
+  // step is not done.
+  ok(/buildSteps\(facts, door \|\| 'knowledge'\)/.test(obCode),
+    'the knowledge set stands in for the gate while the doors are on screen');
+  const standIn = buildSteps(F({ hasKey: true, hasDomain: true }), deriveDoor(F({ hasKey: true, hasDomain: true }), null) || 'knowledge');
+  eq(shouldShowPanel(standIn, false), true,
+    'EXECUTED: a key + an empty domain (the doors case) still SHOWS the panel, rather than hiding it as all-done');
+  ok(standIn.some((s) => s.done === false), '…because the stand-in list genuinely has an unfinished step in it');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

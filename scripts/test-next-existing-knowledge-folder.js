@@ -760,6 +760,15 @@ section('§9  The first-run panel stops telling an existing user to start over')
      'that has never mutated anything would be a new write path, not a copy edit');
   ok(/STEP_ORDER = \['api-key', 'domain', 'ingest'\]/.test(onbSrc),
      'and STEP_ORDER is untouched — nothing works without a model, so the key still comes first');
+  // READ THIS BEFORE TRUSTING THE LINE ABOVE. Since v3.61.0 STEP_ORDER is
+  // the KNOWLEDGE set, one of two (STEP_SETS), and the other one puts the
+  // key LAST and marks it optional — correctly, because the memory layer
+  // and the MCP bridge need no model. This assertion still means what it
+  // says: the order an existing wiki owner is shown is unchanged. It does
+  // NOT mean the panel has one order. scripts/test-next-onboarding.js §2b
+  // and §14 own the second set and the door that selects it.
+  ok(/const AGENT_STEP_ORDER = /.test(onbSrc),
+     '…and the pin above is scoped: a SECOND set exists, so this one is the knowledge path rather than the only path');
 }
 
 console.log('\n' + '─'.repeat(56));
