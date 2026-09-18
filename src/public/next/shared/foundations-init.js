@@ -504,7 +504,7 @@ export function renderFoundationsChooser(cfg) {
     '<div class="fnd-init" data-fnd-init="' + escapeHtml(id) + '">' +
       options +
       (own === 'repo' ? repoArm(id, choice, busy) : '') +
-      (own === 'curator' ? curatorArm(id, choice, busy) : '') +
+      (own === 'curator' ? curatorArm(id, choice, busy, c.existingProject === true) : '') +
     '</div>'
   );
 }
@@ -665,8 +665,16 @@ function candidateRow(id, choice, cand, busy) {
   );
 }
 
-/** The CURATOR arm: the seed tick, and the optional files to start from. */
-function curatorArm(id, choice, busy) {
+/**
+ * The CURATOR arm: the seed tick, and the optional files to start from.
+ *
+ * `existingProject` distinguishes the two hosts' truth about the file
+ * chooser's "nothing is uploaded until…" clause. On the create form the
+ * project does not exist yet, so the clause is literally true as written; in
+ * Agent memory the project the chooser is attached to already exists — what
+ * has not happened yet is the documents themselves.
+ */
+function curatorArm(id, choice, busy, existingProject) {
   const dis = busy ? ' disabled' : '';
   const imports = Array.isArray(choice.imports) ? choice.imports : [];
   const seedRow =
@@ -698,7 +706,8 @@ function curatorArm(id, choice, busy) {
       '<button type="button" class="btn btn-secondary btn-xs fnd-init-file"' +
         ' id="' + escapeHtml(id) + '-files-btn"' + dis + '>Choose files…</button>' +
       '<span class="fnd-init-file-hint">Optional. Each file becomes one document, read on this ' +
-        'computer — nothing is uploaded until you create the project.</span>' +
+        'computer — nothing is uploaded until you ' +
+        (existingProject ? 'set up documents' : 'create the project') + '.</span>' +
     '</div>';
 
   const err = choice.importError

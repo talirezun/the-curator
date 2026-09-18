@@ -654,6 +654,38 @@ section('§5 — THE CHOOSER, RENDERED, IN BOTH HOSTS');
   ok('...MULTIPLE on the create form, where each file becomes one document',
     /id="x-files"[^>]*multiple/.test(cur));
 
+  // ── THE HINT'S "UNTIL…" CLAUSE IS HOST-DEPENDENT (v3.62.0) ─────────────
+  //
+  // On the create form the project genuinely does not exist yet, so "nothing
+  // is uploaded until you create the project" is true as written — that is
+  // `cur` above, built with no `existingProject`, the module's own default.
+  // In Agent memory the project this chooser is attached to already exists;
+  // what has not happened yet is the DOCUMENTS, so the same clause there
+  // would be false. `existingProject` is the one flag the chooser's cfg
+  // object carries for the difference, threaded through to `curatorArm`
+  // rather than the two hosts each composing their own hint text.
+  ok('CREATE FORM (no existingProject): the hint says "create the project"',
+    /nothing is uploaded until you create the project\./.test(cur), cur.slice(0, 2000));
+  ok('...and NOT the Agent-memory wording',
+    !/until you set up documents/.test(cur));
+  const curExisting = FI.renderFoundationsChooser({
+    id: 'x', choice: FI.freshChooser({}), existingProject: true,
+  });
+  ok('AGENT MEMORY (existingProject: true): the hint says "set up documents"',
+    /nothing is uploaded until you set up documents\./.test(curExisting),
+    curExisting.slice(0, 2000));
+  ok('...and NOT the create-form wording, which would be false there — the '
+    + 'project already exists',
+  !/until you create the project/.test(curExisting));
+  // CONTROL: every other byte of the chooser is untouched by the flag — the
+  // two only differ in the clause after "until you". Normalised with a plain
+  // regex rather than a sentinel byte, so nothing unusual lands in this file's
+  // own bytes (test-source-scan-helpers.js §9 checks for exactly that).
+  ok('CONTROL: the flag touches ONLY the hint clause, nothing else in the chooser',
+    cur.replace(/until you create the project\./, 'until you CLAUSE.')
+      === curExisting.replace(/until you set up documents\./, 'until you CLAUSE.'),
+    'cur: ' + cur.length + ' bytes, curExisting: ' + curExisting.length + ' bytes');
+
   // HOSTILE TEXT, through the real renderer.
   const XSS = '<img src=x onerror=alert(1)>';
   const hostile = FI.renderFoundationsChooser({ id: 'x', choice: {
