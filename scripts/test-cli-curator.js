@@ -193,6 +193,17 @@ function stable(value) {
   return value;
 }
 const same = (a, b) => JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+// The bootstrap envelope carries two READ-TIME fields (ageSeconds, writtenAgeSeconds)
+// computed from the clock: two reads a second apart legitimately differ there and nowhere
+// else. Strip exactly those two keys for a whole-envelope comparison; §2 asserts separately
+// that BOTH sides carry them, so the strip cannot hide their absence.
+const AGE_KEYS = new Set(['ageSeconds', 'writtenAgeSeconds']);
+const withoutAges = (v) => Array.isArray(v) ? v.map(withoutAges)
+  : (v && typeof v === 'object') ? Object.fromEntries(Object.entries(v).filter(([k]) => !AGE_KEYS.has(k)).map(([k, x]) => [k, withoutAges(x)]))
+  : v;
+const countAgeKeys = (v) => Array.isArray(v) ? v.reduce((n, x) => n + countAgeKeys(x), 0)
+  : (v && typeof v === 'object') ? Object.entries(v).reduce((n, [k, x]) => n + (AGE_KEYS.has(k) ? 1 : 0) + countAgeKeys(x), 0) : 0;
+const sameModuloAges = (a, b) => same(withoutAges(a), withoutAges(b));
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§1  Project resolution — the marker, the flag, and the refusal');
@@ -269,8 +280,10 @@ const ctxJson = parseOut(ctxRun);
     'stdout is ONE line — every diagnostic is on stderr (the harness parses stdout)');
 
   const direct = await store.getProjectContext(D1, 'lumina', {});
-  ok(same(ctxJson, direct),
-    'the CLI emits the STORE’S envelope verbatim, field for field');
+  ok(sameModuloAges(ctxJson, direct),
+    'the CLI emits the STORE’S envelope verbatim, field for field (the two read-time age fields aside)');
+  ok(countAgeKeys(ctxJson) > 0 && countAgeKeys(ctxJson) === countAgeKeys(direct),
+    'both envelopes carry the read-time age fields in the same places — the strip hides no absence');
 }
 {
   // The MCP handler reshapes for a MODEL (a framed brief, `content_is_data`, a
