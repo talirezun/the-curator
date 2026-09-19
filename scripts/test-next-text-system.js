@@ -1015,27 +1015,14 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
         .every(([, css]) => !/\.tx-readout-value/.test(css)),
      'no other stylesheet mentions .tx-readout-value at all, so nothing can override it upward');
 
-  // ── (iii) THE MEMORY "WORKING ON" LINE IS A READING, NOT A TITLE ──────
-  // Arbitrary-length text from a file (MAX_HEADLINE_CHARS = 200), so at a
-  // title rung a long headline dwarfs the block title above it.
-  const working = sizeOf('.mem-working-text');
-  ok(RAMP_ORDER.indexOf(working.token) <= RAMP_ORDER.indexOf('--text-md'),
-     `the Working-on line is ${working.token}, at or under --text-md — it is the agent's own ` +
-     'sentence, not a heading');
-  const WEIGHT_NUM = { '--weight-regular': 400, '--weight-medium': 500, '--weight-semibold': 600, '--weight-bold': 700 };
-  ok((WEIGHT_NUM[working.weight] || 400) <= 600,
-     `...and its weight is ${working.weight} (<= --weight-semibold), never bolder than a title`);
-  const workingRule = allRules.find((r) => r.sel.split(',').map((s) => s.trim()).includes('.mem-working-text'));
-  ok(!!workingRule && /-webkit-line-clamp\s*:\s*[12]\b/.test(workingRule.decls),
-     'and it is CLAMPED to one or two lines — a 200-character headline must not push the ' +
-     'Last-saved strip off the first screen');
+  // (iii) — the memory view's 'Working on' line (.mem-working-text) was deleted in v3.62.0 with the Status block; its reading now lives in the strip through renderReadout.
 
   // ── (iv) NO NEW PX FONT SIZE ANYWHERE THE STANDARD REACHES ────────────
   // The hard ratchet lives in test-css-tokens.js's FROZEN_PX_CEILING (lowered
   // to shell.css: 1 by this release). This is the per-ROLE half: not one
   // selector in the standard may leave the ramp, ever, under any ceiling.
   const offRamp = everySel
-    .concat(['.tx-readout-value', '.mem-working-text'])
+    .concat(['.tx-readout-value'])
     .map((s) => [s, sizeOf(s)])
     .filter(([, r]) => r.token === 'PX-LITERAL' || !/^--(text|type)-/.test(r.token));
   ok(offRamp.length === 0,
@@ -1061,10 +1048,6 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
   ok(plantedRaise.length === 1 && sizeTokenOf(plantedRaise[0].decls) === '--text-2xl'
      && RAMP_ORDER.indexOf('--text-2xl') > RAMP_ORDER.indexOf('--text-lg'),
      'CONTROL: a planted view override raising .tx-readout-value above the ceiling IS detected');
-  const plantedBig = rules('.mem-working-text { font-size: var(--text-lg); font-weight: var(--weight-bold); }');
-  ok(RAMP_ORDER.indexOf(sizeTokenOf(plantedBig[0].decls)) > RAMP_ORDER.indexOf('--text-md')
-     && WEIGHT_NUM[weightTokenOf(plantedBig[0].decls)] > 600,
-     'CONTROL: a planted Working-on line at --text-lg / bold IS detected on both axes');
   const plantedPx = rules('.dm-health-title { font-size: 15px; }');
   ok(sizeTokenOf(plantedPx[0].decls) === 'PX-LITERAL',
      'CONTROL: a planted px literal on a standardised title IS detected');
