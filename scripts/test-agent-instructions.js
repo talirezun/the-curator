@@ -511,6 +511,14 @@ function renderLayerStrip() { return '<!--STRIP-->'; }
 function renderWorkStreamsFold() { return '<!--WSFOLD-->'; }
 function renderKnowledge() { return '<!--KNOWLEDGE-->'; }
 function loadKnowledge() { return Promise.resolve(); }
+// v3.63.0: the honesty meter. renderProject composes it into step (2) and
+// selectProject asks for its reading. Neither is exercised here, but both
+// lifted functions would throw on a free identifier, so each is stubbed with
+// a named marker -- an undefined collaborator is a crash, not a failing
+// assertion. (No backticks in this block -- the whole PREAMBLE is a template
+// literal, and one would end it.)
+function renderCaptureMeter() { return '<!--CAPTURE-->'; }
+function loadCapture() { return Promise.resolve(); }
 function requestDomain() {}
 function goToChatScoped() {}
 function navigate() {}

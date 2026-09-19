@@ -300,6 +300,30 @@ const BRIEF_MAX_BYTES = 32768;
 // not add an export to a module two views share.
 const READ_FIRST_BUDGET_BYTES = 120 * 1024;
 
+// ── THE HONESTY METER'S WINDOW, AND THE LIST UNDER IT (v3.63.0) ──────────
+//
+// The one question the memory layer exists for is "did this session start with
+// the bootstrap, and did it save before it stopped?", and it is asked PER
+// PROJECT — which is why the reading lives inside step ② rather than beside
+// the tool map on the MCP bridge page. That page is per TOOL and app-wide;
+// this one is about this project.
+//
+// THIRTY DAYS, NOT SEVEN, and the divergence is deliberate. `mcp-usage.js`'s
+// own `RECENT_WINDOW_MS` is seven days and the design record proposed seven
+// here too; the route takes `since` from the CALLER precisely so the window is
+// the reader's decision rather than the log's. Seven days on a project someone
+// picks up on alternate weekends reads "no agent session" about a project that
+// is being worked on, and a meter whose whole subject is honesty must not say
+// that. The phrase on screen is DERIVED from this constant (see
+// `renderCaptureMeter`), so the number and the words cannot drift apart.
+const CAPTURE_WINDOW_DAYS = 30;
+// How many session rows the fold ASKS the route for. The route caps and
+// answers `sessionsTruncated` / `sessionsShown`; the disclosure under the table
+// is that answer, never this number — a view that printed its own request back
+// as a measurement would be reporting a CAP as a reading, which is the defect
+// `distinctScopeCount` is counted before the index slice to avoid.
+const CAPTURE_SESSION_LIMIT = 20;
+
 // Journal page sizes. The store clamps journalLimit to [1, 50] itself
 // (MAX_JOURNAL_ENTRIES); these are just the two steps this view offers, and
 // the store stays the authority on the ceiling.
@@ -558,6 +582,18 @@ function freshState() {
     // `null` means nothing has been asked for yet, which is neither loading
     // nor an error and must not be rendered as either.
     knowledge: null,
+
+    // ── THE HONESTY METER'S ONE READ (v3.63.0) ─────────────────────────
+    //
+    // `GET /api/memory/:domain/:project/capture` — an aggregation over the
+    // local, content-free MCP usage log. STAMPED WITH ITS PAIR, not just its
+    // domain like `knowledge` above: this reading is about ONE PROJECT, and a
+    // payload for the project the user has just left would paint another
+    // project's sessions under this one's heading — the exact false-reading
+    // class the strip the memory layer exists for was built to avoid.
+    // `null` means nothing has been asked for yet, which is neither loading
+    // nor an error and must not be rendered as either.
+    capture: null,
   };
 }
 
@@ -605,6 +641,16 @@ const FOCUSABLE_IDS = [
   // capture/restore pass to do — see fndRowHtml.
   // `mem-fold-streams` joined in v3.62.0 with the work-stream table's own fold.
   'mem-fold-journal', 'mem-fold-brief', 'mem-fold-foundations', 'mem-fold-streams',
+  // `mem-fold-capture` joined in v3.63.0 with the honesty meter's session
+  // list, for the same reason as its four siblings: a <summary> is focusable,
+  // and this screen re-renders on a poll.
+  'mem-fold-capture',
+  // THE METER'S OWN ⓘ. A real <button> emitted by `renderInfoMark`, and the
+  // panel it opens carries the limits of the reading — what a session is, that
+  // a client label is self-reported, and what the log cannot see. Without this
+  // entry a keyboard user reading that panel is dropped to <body> on the next
+  // poll, which is the case the strip's own mark is here for.
+  'mem-capture-info-btn',
   // ── THE STRIP'S ⓘ AND STEP ③'s TWO DOORS (v3.62.0) ───────────────────
   // The mark explains every age on the page and is a real <button>; a render
   // replaces the pane it sits in, so without it a keyboard user reading the
@@ -809,6 +855,18 @@ const knowledgeCache = new Map();
 // The domain a stats read is in flight for, so two project switches inside one
 // domain do not issue two requests. Cleared when that read settles.
 let knowledgeInFlight = null;
+
+// ── THE METER'S READ, CACHED PER (DOMAIN, PROJECT) (v3.63.0) ────────────
+// The same discipline as `knowledgeCache` one line up, keyed one level finer
+// because the reading is per project. Switching back to a project already read
+// paints the meter in the frame the click lands; only a genuine miss costs a
+// second paint. Unbounded for the same reason: one small object per project
+// visited in this mount, carrying counts and at most CAPTURE_SESSION_LIMIT
+// rows — never a document, which is what the LRU above exists for.
+const captureCache = new Map();
+// The (domain, project) a capture read is in flight for, so two rapid switches
+// back and forth do not issue two requests. Cleared when that read settles.
+let captureInFlight = null;
 
 const MAX_CACHE = 24;
 
@@ -1149,7 +1207,9 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // own inside step ②. It is the one long list on this page that could not be put
 // away — WS_STEP_ALL_MAX is 20 rows — and v3.58.0's measurement (the page
 // 3,241 → 1,278px once the brief and the journal folded) is the reason.
-const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams'];
+// `capture` joined in v3.63.0 with the honesty meter's session list. The
+// READING above it never folds (v3.16.1) — only the per-session detail does.
+const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture'];
 
 export function readRememberedFolds() {
   try {
@@ -1454,6 +1514,53 @@ function screenSignature() {
         kn.data.lastIngestTitle || null] : null]
     : null;
 
+  // ── THE HONESTY METER IS A PANE, AND ITS FIGURES COME FROM A THIRD READ
+  //    (v3.63.0) ─────────────────────────────────────────────────────────
+  //
+  // The same lesson this function has now learned six times: a no-op guard
+  // that cannot see a pane is not a guard for that pane. `state.capture` is
+  // filled by its own request against its own clock, and nothing else in this
+  // signature can see it — so the reading landing, or a session that saved
+  // arriving from an agent working in another window, would leave the meter
+  // painting a figure that had stopped being true and the poll would skip the
+  // render that fixes it. MISS THIS AND THE STEP PAINTS A STALE FIGURE, which
+  // on the one reading whose subject is honesty is worse than no reading.
+  //
+  // THE AGE OF THE NEWEST SESSION RIDES WITH IT, folded through `formatAge`
+  // for the reason every other age here is: the mark must move exactly when
+  // the PIXELS do. A raw timestamp never changes (so the row's clock would
+  // freeze between bands) and a raw age in seconds changes every tick (so
+  // every poll would repaint, closing the ⓘ somebody is reading).
+  //
+  // A PLAIN EXPRESSION, naming no collaborator this function does not already
+  // use. `screenSignature` is LIFTED and EXECUTED against a fixed set of
+  // injected functions (scripts/test-memory-truth.js §8b), so a call to
+  // `captureFacts` or `renderCaptureMeter` here would be a ReferenceError — a
+  // CRASH rather than a failing assertion, the v3.11.0 shape this file warns
+  // about five times. `effectiveSave({ savedAt })` is the same borrowing
+  // `briefMark` makes of a plain ISO stamp: only `.seconds` is read, and the
+  // `source` it also computes is meaningless for a session and is not used.
+  const cap = state.capture && state.capture.domain === state.activeDomain
+    && state.capture.project === state.activeProject ? state.capture : null;
+  const capData = cap && cap.data && typeof cap.data === 'object' ? cap.data : null;
+  const capTotals = capData && capData.totals && typeof capData.totals === 'object'
+    ? capData.totals : null;
+  const capRows = capData && Array.isArray(capData.sessions) ? capData.sessions : [];
+  const captureMark = cap
+    ? [cap.domain, cap.project, cap.error || null,
+      capData
+        ? [capData.logPresent === true, capData.note || null,
+          capTotals
+            ? [capTotals.sessions, capTotals.sessionsRead, capTotals.sessionsSaved,
+              capTotals.sessionsReadNotSaved, capTotals.legacyLines, capTotals.selfTestLines]
+            : null,
+          capData.sessionsTruncated === true, capData.sessionsShown,
+          capRows.map((r) => [r && r.sid, (r && r.client) || null, (r && r.calls) || 0,
+            r && r.read === true, r && r.saved === true,
+            formatAge(effectiveSave({ savedAt: (r && (r.endedAt || r.startedAt)) || null }).seconds)])]
+        : null]
+    : null;
+
   const editMark = state.briefEdit
     ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null,
       // Preview and the unsaved-draft bar BOTH change what is on screen and
@@ -1481,6 +1588,7 @@ function screenSignature() {
     fndEditMark,
     fndInitMark,
     knowledgeMark,
+    captureMark,
     editMark,
     // The DOMAIN rides in each row, because the rail groups by it: two
     // projects with the same name in two domains are two different rows, and
@@ -2027,6 +2135,13 @@ async function selectProject(domain, project, token, opts = {}) {
   // paints step ③ filled on the frame the click lands, and only a genuine
   // miss costs a second paint.
   loadKnowledge(domain, token).catch((err) => reportAsyncMountFailure(token, err));
+  // ── AND THE HONESTY METER'S, FOR THE SAME REASON (v3.63.0) ──────────
+  // Not awaited and BEFORE the render, exactly like its sibling above: an
+  // async function runs synchronously up to its first await and
+  // `loadCapture`'s cache-hit arm has none, so returning to a project
+  // already read paints the meter on the frame the click lands. Its key is
+  // the PAIR rather than the domain, because the reading is per project.
+  loadCapture(domain, project, token).catch((err) => reportAsyncMountFailure(token, err));
   render(token);
 
   // A user-initiated selection is the cheapest honest moment to re-ask the
@@ -3562,6 +3677,348 @@ async function loadKnowledge(domain, token) {
   render(token);
 }
 
+/**
+ * THE HONESTY METER'S NUMBERS, READ OFF THE ROUTE WITHOUT INVENTING ANY.
+ *
+ * Every count is an integer OR NULL, never a defaulted zero: "the route did
+ * not say" and "it happened no times" are two different facts, and collapsing
+ * them here would print a clean `0 read and did not save` over a reading that
+ * was never taken. That collapse is this repository's most reliably recurring
+ * defect class — `domainsScanned`, `lastIngestKind` and `scopeCount` all carry
+ * the same rule — and it costs the most on this particular reading, whose
+ * entire subject is what the log can and cannot see.
+ *
+ * `readNotSaved` is taken from the route and NOT re-derived. It is not
+ * `read - saved`: a session may save without ever having read (an agent that
+ * never bootstrapped still hands off), so the subtraction would be a different
+ * quantity wearing this one's name. src/routes/memory.js computes it from the
+ * per-session facts, which is the only place both halves are in hand.
+ */
+function captureFacts(payload) {
+  const p = payload && typeof payload === 'object' ? payload : null;
+  const t = p && p.totals && typeof p.totals === 'object' ? p.totals : {};
+  const num = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+  const rows = p && Array.isArray(p.sessions)
+    ? p.sessions.filter((r) => r && typeof r === 'object') : [];
+  return {
+    // POSITIVE EVIDENCE ONLY, like the work-stream table's `machineIsThisMachine`:
+    // the log is treated as present because the route SAID so, never because
+    // the field was missing.
+    logPresent: p ? p.logPresent === true : false,
+    sessions: num(t.sessions),
+    read: num(t.sessionsRead),
+    saved: num(t.sessionsSaved),
+    readNotSaved: num(t.sessionsReadNotSaved),
+    legacyLines: num(t.legacyLines),
+    selfTestLines: num(t.selfTestLines),
+    rows,
+    shown: num(p && p.sessionsShown) === null ? rows.length : p.sessionsShown,
+    truncated: p ? p.sessionsTruncated === true : false,
+    note: p && typeof p.note === 'string' && p.note.trim() ? p.note.trim() : null,
+  };
+}
+
+/**
+ * STEP 2's FIRST ROW — THE HONESTY METER (v3.63.0).
+ *
+ * ── IT REPORTS, AND IT NEVER BLOCKS (Decision G) ───────────────────────
+ * Nothing here refuses a session, delays one or warns an agent. A meter that
+ * could refuse a session would be the enforcement the capture design forbids,
+ * and the ⓘ says so in as many words so nobody reads a low figure as a gate.
+ *
+ * ── THE READING NEVER FOLDS; THE DETAIL DOES ───────────────────────────
+ * v3.16.1's rule. The four numbers and the route's own `note` are in the open;
+ * the per-session list is a closed `<details>` like its four siblings, because
+ * twenty rows of history is the shape v3.58.0 measured this page at 3,241px
+ * for.
+ *
+ * ── "READ AND DID NOT SAVE" IS THE POINT, SO IT IS NAMED ───────────────
+ * Not a percentage, not a bar, not `4/6`. A ratio hides the one number the
+ * reading exists to surface, and it hides it in the direction that flatters:
+ * `67%` reads as a grade, `2 read and did not save` reads as two sessions
+ * whose work is not in the store. The clause is dropped only when the route
+ * did not send the figure — never printed as zero.
+ *
+ * ── THE DOT IS AN AGE, NOT A RATIO, AND THAT IS A CORRECTION ───────────
+ * The design record says the mark's tier comes "from the ratio". The shared
+ * scale (design-system-source.md §6) is an AGE ladder whose first rule is that
+ * tiers are "cut on `formatAge`'s own bands, never a second threshold table" —
+ * so a ratio painted in `--fresh-*` would be a second ladder wearing the
+ * first's colours, and `4 of 6` in amber would read as "four hours ago" at a
+ * glance. The mark therefore reports WHEN THE LAST SESSION WAS, which is a
+ * real age on the real ladder, and a reading nobody could take (no log, no
+ * session, no stamp) is the dashed unknown ring with the words beside it —
+ * never age zero.
+ */
+function renderCaptureMeter() {
+  const c = state.capture && state.capture.domain === state.activeDomain
+    && state.capture.project === state.activeProject ? state.capture : null;
+
+  // The ⓘ is composed once and offered in EVERY state, including the two that
+  // carry no figures: what a session is, and what the log cannot see, is most
+  // worth reading precisely when the reading is empty or failed.
+  const info = renderInfoMark('mem-capture-info', 'About the capture reading',
+    '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
+    + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
+    + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
+    + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
+    + 'handoff or foundations before it saved anything — at any point before that first save, not '
+    + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
+    + 'refused save is not a save.</p>'
+    + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
+    + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
+    + 'not appear in this count unless it went through the bridge. A session that never opened the '
+    + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
+    + 'that used The Curator, and never a claim about your whole week.</p>'
+    + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
+    + 'the name it sends, it is matched against a list of harnesses that have actually been '
+    + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
+    + 'because of it — it is a label on a row and nothing more.</p>'
+    + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
+    + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
+    + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
+    + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
+    + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
+    + 'warns an agent, and no number on it can.</p>'
+    + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+    { html: true });
+  const infoHtml = '<div class="mem-capture-info">' + info.btn + info.panel + '</div>';
+  const shell = (bodyHtml) => '<div class="mem-capture">'
+    + '<div class="mem-capture-head">'
+      + '<div class="mem-capture-cells">' + bodyHtml + '</div>'
+      + infoHtml
+    + '</div>';
+
+  if (!c || (!c.data && !c.error)) {
+    // RESERVE THE HEIGHT, exactly as step 3 does: the reading lands in one
+    // local request, and a step that grows a row under the reader's eye is the
+    // defect the project skeleton exists to remove.
+    return shell('<div class="mem-ghost mem-ghost-line" aria-busy="true"></div>') + '</div>';
+  }
+  if (c.error) {
+    // NEUTRAL, NOT DANGER, and the distinction is the honest one. Step 3 paints
+    // a failed stats read red because that domain's wiki certainly exists; this
+    // route may legitimately be absent — an install running a server older than
+    // v3.63.0 has no capture endpoint at all — and dressing an optional reading
+    // that is simply not there as a fault would be the app claiming a problem
+    // it has not diagnosed.
+    return shell(renderStatus({
+      state: 'neutral',
+      title: 'No capture reading for this project',
+      detail: c.error,
+    })) + '</div>';
+  }
+
+  const f = captureFacts(c.data);
+  const win = CAPTURE_WINDOW_DAYS + ' days';
+
+  // ── THE HEADLINE FIGURE, AND THE THREE STATES IT HAS TO TELL APART ────
+  // "no log on this computer", "a log, and nothing ran" and "N sessions" are
+  // three different facts and the first two are not failures. Only the third
+  // takes an age mark off a real stamp.
+  let value;
+  let tier = 'unknown';
+  let prov = null;
+  if (!f.logPresent) {
+    value = 'no usage log on this computer yet';
+  } else if (f.sessions === null) {
+    value = 'sessions could not be counted';
+  } else if (f.sessions === 0) {
+    value = 'no agent session in the last ' + win;
+  } else {
+    value = f.sessions.toLocaleString('en-US')
+      + ' session' + (f.sessions === 1 ? '' : 's') + ' in the last ' + win;
+    // THE SENTENCE, WITH THE UNCOMFORTABLE NUMBER IN IT. Each clause is
+    // dropped INDIVIDUALLY when the route did not send its figure, so a
+    // partial answer prints what it knows and claims nothing else.
+    prov = [
+      f.read === null ? null : f.read + ' started with the context',
+      f.saved === null ? null : f.saved + ' saved before stopping',
+      f.readNotSaved === null ? null : f.readNotSaved + ' read and did not save',
+    ].filter(Boolean).join(' · ') || null;
+    const newest = f.rows.length ? (f.rows[0].endedAt || f.rows[0].startedAt) : null;
+    const secs = effectiveSave({ savedAt: newest }).seconds;
+    if (secs !== null) tier = freshnessTier(secs);
+  }
+
+  const reading = renderReadout({
+    label: 'CAPTURE',
+    value,
+    provenance: prov || undefined,
+    // The mark is a graphic and carries no reading of its own — the words
+    // beside it are the reading, and it is aria-hidden for that reason.
+    markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
+  });
+
+  // ── THE ROUTE'S OWN NOTE, UNFOLDED ────────────────────────────────────
+  // Whatever the route needs to say about the reading it just gave — an absent
+  // log, a log that began after the window opened — is an OUTCOME, and an
+  // outcome may not sit behind a chevron (v3.16.1). It is rendered as the
+  // route sent it rather than paraphrased: the producer knows which limit
+  // applied and this view does not.
+  const notice = f.note
+    ? renderStatus({ state: 'neutral', title: f.note })
+    : '';
+
+  // ── THE TWO LINE CLASSES THIS READING DOES NOT COUNT ──────────────────
+  // Stated in the open rather than only in the ⓘ, because both change what the
+  // figures are taken over. `legacyLines` are calls written before the bridge
+  // recorded a session id at all — real work that cannot be attributed to any
+  // session — and `selfTestLines` are the app's own "Test all N tools" run,
+  // which is the exact contamination `via: 'self-test'` was invented to keep
+  // out.
+  const limits = [
+    f.legacyLines ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
+      + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
+    f.selfTestLines ? f.selfTestLines.toLocaleString('en-US') + ' self-test call'
+      + (f.selfTestLines === 1 ? '' : 's') + ' excluded' : null,
+  ].filter(Boolean).join(' · ');
+  const limitsHtml = limits
+    ? '<p class="mem-capture-limits">' + escapeHtml(limits) + '</p>' : '';
+
+  return shell(reading) + notice + limitsHtml + renderCaptureSessions(f) + '</div>';
+}
+
+/**
+ * THE PER-SESSION LIST, IN A CLOSED FOLD.
+ *
+ * One row per session, newest first, each saying what that session did rather
+ * than what it should have done: when it started, which harness reported
+ * itself, how many calls it made, whether it read and whether it saved.
+ *
+ * THE MISSING THING STAYS MISSING WHERE YOU LOOKED FOR IT (v3.17.1): with no
+ * rows there is no fold at all — the reading above has already said so in
+ * words, and an empty chevron would invite a click that answers nothing. That
+ * is the same call `renderWorkStreamsFold` makes with its flat card.
+ */
+function renderCaptureSessions(f) {
+  if (!f.rows.length) return '';
+  const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
+  const meta = [
+    f.sessions === null ? null : f.sessions + ' session' + (f.sessions === 1 ? '' : 's'),
+    f.read === null ? null : f.read + ' read',
+    f.saved === null ? null : f.saved + ' saved',
+    f.readNotSaved === null ? null : f.readNotSaved + ' read and did not save',
+  ].filter(Boolean).join(' · ');
+  // A TICK IS NOT A COLOUR AND NOT A COLOUR ALONE: the glyph is aria-hidden
+  // and a visually-hidden word carries the fact, so a screen reader hears
+  // "read yes" rather than a check mark's name, and nothing here is decoded
+  // from ink. The dash is an en dash rather than a hyphen for the same reason
+  // the rest of this view uses one — it is a mark, not a minus.
+  const flag = (on, word) => '<span class="mem-cap-flag' + (on ? ' mem-cap-flag-on' : '') + '">'
+    + '<span aria-hidden="true">' + (on ? '✓' : '–') + '</span>'
+    + '<span class="visually-hidden">' + word + (on ? ' yes' : ' no') + '</span></span>';
+  const rows = f.rows.map((r) => {
+    const at = typeof r.startedAt === 'string' ? r.startedAt : null;
+    const secs = effectiveSave({ savedAt: at }).seconds;
+    const words = formatAge(secs);
+    return '<tr>'
+      + '<td' + (at ? ' data-mem-age-at="' + escapeHtml(at) + '"' : '') + '>'
+        + '<span class="mem-age-words">' + escapeHtml(words || 'time unknown') + '</span>'
+        // THE ABSOLUTE STAMP, KEPT AND REACHABLE — visually hidden rather than
+        // a `title=`, which is hover-only and therefore invisible to keyboard
+        // and to touch. This view's hover-only ceiling is one and must not rise.
+        + (at ? '<span class="visually-hidden"> (' + escapeHtml(at) + ')</span>' : '')
+      + '</td>'
+      // DECISION I: the client name is a LABEL. It is escaped like any other
+      // untrusted string, nothing branches on it, and an absent or unmatched
+      // one reads "not reported" rather than being guessed at.
+      + '<td>' + escapeHtml(typeof r.client === 'string' && r.client ? r.client : 'not reported') + '</td>'
+      + '<td class="mem-cap-num">' + escapeHtml(String(Number.isInteger(r.calls) ? r.calls : 0)) + '</td>'
+      + '<td>' + flag(r.read === true, 'read') + '</td>'
+      + '<td>' + flag(r.saved === true, 'saved') + '</td>'
+    + '</tr>';
+  }).join('');
+  // THE CAP IS THE ROUTE'S ANSWER, NOT THE REQUEST. `sessionsTruncated` is
+  // what the producer said it had to leave out; printing CAPTURE_SESSION_LIMIT
+  // here instead would report a cap as a measurement.
+  const cut = f.truncated
+    ? '<p class="mem-capture-limits">Showing the ' + escapeHtml(String(f.shown))
+      + ' most recent of ' + escapeHtml(String(f.sessions === null ? f.shown : f.sessions))
+      + ' sessions.</p>'
+    : '';
+  return (
+    '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
+      + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
+        + '<span>Sessions</span>'
+        + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
+      + '</summary>'
+      + '<div class="mem-fold-body">'
+        + '<div class="mem-cap-wrap">'
+          + '<table class="mem-cap-table">'
+            + '<thead><tr>'
+              + '<th scope="col">Started</th>'
+              + '<th scope="col">Harness</th>'
+              + '<th scope="col">Calls</th>'
+              + '<th scope="col">Read</th>'
+              + '<th scope="col">Saved</th>'
+            + '</tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+          + '</table>'
+        + '</div>'
+        + cut
+      + '</div>'
+    + '</details>'
+  );
+}
+
+/**
+ * THE METER'S ONE REQUEST (v3.63.0).
+ *
+ * ── WHAT IT COSTS, AT THE PRODUCER ────────────────────────────────────
+ * `GET /api/memory/:domain/:project/capture` reads one local JSONL file,
+ * rotated at 1 MB, and aggregates it. No LLM, no network, no read of any wiki
+ * page or handoff — opening this screen costs one file scan.
+ *
+ * ── WHY `since` IS SENT RATHER THAN DEFAULTED ─────────────────────────
+ * The window is a reading decision, not a storage one, so the view names it
+ * (CAPTURE_WINDOW_DAYS) and the route honours it. Computed at REQUEST time and
+ * cached with its answer: a window recomputed on every paint would make two
+ * consecutive reads of an unchanged log differ, which is exactly what the
+ * cache exists to prevent.
+ *
+ * ── CACHED PER (DOMAIN, PROJECT), AND STAMPED ─────────────────────────
+ * Same discipline as `loadKnowledge` one level up, one key finer. NEVER
+ * THROWS, and a failure is a DISCLOSURE rather than a blank.
+ */
+async function loadCapture(domain, project, token) {
+  if (!domain || !project) return;
+  const key = keyOf(domain, project);
+  const hit = captureCache.get(key);
+  if (hit) {
+    state.capture = { domain, project, data: hit, error: null };
+    return;
+  }
+  if (captureInFlight === key) return;
+  captureInFlight = key;
+  state.capture = { domain, project, data: null, error: null };
+  const since = new Date(Date.now() - CAPTURE_WINDOW_DAYS * 86400000).toISOString();
+  let next;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/capture?since=' + encodeURIComponent(since)
+      + '&limit=' + CAPTURE_SESSION_LIMIT);
+    const data = await res.json();
+    next = res.ok && data && data.ok
+      ? { domain, project, data, error: null }
+      : { domain,
+        project,
+        data: null,
+        error: (data && data.error) ? data.error : 'HTTP ' + res.status };
+  } catch (err) {
+    next = { domain, project, data: null, error: err.message };
+  }
+  if (captureInFlight === key) captureInFlight = null;
+  if (!isCurrentMount(token)) return;
+  // STAMPED AT THE POINT OF USE. This view switches project without
+  // unmounting, so a reply for a project the user has already left must never
+  // be written into state at all.
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  if (next.data) captureCache.set(key, next.data);
+  state.capture = next;
+  render(token);
+}
+
 function renderProject() {
   const read = state.projectRead;
   const d = state.detail;
@@ -3736,6 +4193,14 @@ function renderProject() {
     noticeHtml: statusHtml ? '<div class="mem-status-stack">' + statusHtml + '</div>' : '',
     bodyHtml:
       '<div class="mem-state-stack">'
+        // ── THE HONESTY METER, FIRST IN THE STEP (v3.63.0) ────────────
+        // Inside step 2 rather than in a block of its own or as a fourth
+        // cell on the strip: the strip is three cells because there are
+        // three LAYERS, and a fourth would break that mapping. This is a
+        // reading ABOUT the working state — did the sessions that touched
+        // it start with it, and did they save it — so it belongs to the
+        // step that owns it, above the three folds it qualifies.
+        + renderCaptureMeter()
         + renderWorkStreamsFold(read, d)
         + renderBrief(read)
         + renderJournal()

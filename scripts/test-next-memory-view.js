@@ -1085,6 +1085,12 @@ const READ_FIRST_BUDGET_SRC = (() => {
 const WS_WINDOW_SRC = numConst('WS_WINDOW');
 const WS_STEP_SRC = numConst('WS_STEP');
 const WS_STEP_ALL_MAX_SRC = numConst('WS_STEP_ALL_MAX');
+// ── v3.63.0's TWO CAPTURE LITERALS, READ OFF LIVE SOURCE ────────────────
+// Retyped here they could agree with every assertion in §22 while the shipped
+// view asked the route for a different window — which is exactly the reading
+// the meter would then be wrong about.
+const CAPTURE_WINDOW_DAYS_SRC = numConst('CAPTURE_WINDOW_DAYS');
+const CAPTURE_SESSION_LIMIT_SRC = numConst('CAPTURE_SESSION_LIMIT');
 // The drafting-ask ⓘ's own words, off LIVE SOURCE. Typed here they would be a
 // second copy of the sentence that makes this control's privacy claim, which
 // is the one sentence on it a user has to be able to trust.
@@ -1298,6 +1304,18 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'projectHeadline', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderWorkStreamsFold', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderKnowledge', 'memory.js') + '\n' +
+    // ── v3.63.0's HONESTY METER ────────────────────────────────────────
+    // Lifted for real rather than stubbed, and the reason is the one this
+    // whole harness exists for: `renderProject` composes the meter into step
+    // ②, so a stub would let every assertion below run past the reading whose
+    // entire subject is honesty. The two constants are injected as the
+    // LITERALS read off live source, so the window in the assertions is the
+    // window the shipped view asks the route for.
+    'const CAPTURE_WINDOW_DAYS = ' + CAPTURE_WINDOW_DAYS_SRC + ';\n' +
+    'const CAPTURE_SESSION_LIMIT = ' + CAPTURE_SESSION_LIMIT_SRC + ';\n' +
+    extractFunction(viewSrc, 'captureFacts', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderCaptureSessions', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderCaptureMeter', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderStaleNotice', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'unlistedCount', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderUnlistedNote', 'memory.js') + '\n' +
@@ -1325,6 +1343,7 @@ function makeRenderers(stateObj) {
     'fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, foundationsNotices, foundationReaderContent, ' +
     'renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, ' +
+    'captureFacts, renderCaptureMeter, renderCaptureSessions, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
@@ -5708,6 +5727,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       wsWindow: 40, journalLimit: 50, briefEdit: { text: 'x' }, copied: { ok: true },
       projectRead: { scopes: [] }, detail: { scope: 'old' } };
     const knowledgeAsked = [];
+    const captureAsked = [];
     const api = new Function('state', 'isCurrentMount', 'render', 'keyOf', 'activeKey',
       'rememberProject', 'fetchState', 'refreshIndex', 'loadScope', 'reportAsyncMountFailure',
       // ── STEP ③'s READ (v3.62.0) ──────────────────────────────────────
@@ -5715,6 +5735,11 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // what this harness is about is what `selectProject` ASKS for. §16h
       // drives the real one against a fake fetch.
       'loadKnowledge',
+      // ── AND THE HONESTY METER'S READ (v3.63.0), FOR THE SAME REASON ──
+      // A spy, for the same reason and with one extra property to check: it
+      // is asked for the PAIR, not just the domain. A meter read that named
+      // only the domain would paint another project's sessions here.
+      'loadCapture',
       'JOURNAL_PAGE', 'WS_WINDOW',
       extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
@@ -5739,6 +5764,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       () => {}, async () => ({ data: { scopes: [], brief: { present: false } }, error: null }),
       async () => {}, async () => {}, () => {},
       async (domain) => { knowledgeAsked.push(domain); },
+      async (domain, project) => { captureAsked.push(domain + '/' + project); },
       10, WS_WINDOW_SRC);
 
     await api.selectProject('acme', 'other', 1);
@@ -5753,6 +5779,14 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     // page count, or on a ghost, for ever.
     eq('the domain\'s figures are asked for, once, naming the new domain',
       knowledgeAsked.join(','), 'acme');
+    // ── AND THE HONESTY METER'S READING, NAMED BY ITS PAIR (v3.63.0) ──
+    // The reading is PER PROJECT, so an ask that carried only the domain
+    // would paint one project's sessions under another project's heading —
+    // the false-reading class the whole meter exists to avoid. Asserted as
+    // the full pair, so dropping the project argument reds rather than
+    // quietly aggregating.
+    eq('the project\'s capture reading is asked for, once, naming the PAIR',
+      captureAsked.join(','), 'acme/other');
   }
 
   // ── ESCAPE AND THE ✕ REALLY DO RETURN FOCUS ─────────────────────────────
@@ -5909,6 +5943,11 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // what this harness is about is what `selectProject` ASKS for. §16h
       // drives the real one against a fake fetch.
       'loadKnowledge',
+      // ── AND THE HONESTY METER'S READ (v3.63.0), FOR THE SAME REASON ──
+      // A spy, for the same reason and with one extra property to check: it
+      // is asked for the PAIR, not just the domain. A meter read that named
+      // only the domain would paint another project's sessions here.
+      'loadCapture',
       'JOURNAL_PAGE', 'WS_WINDOW',
       extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n'
@@ -5934,7 +5973,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       async () => ({ data: { scopes: STORE, brief: { present: false } }, error: null }),
       async () => {},
       async (scope, machine, token, opts) => { loaded.push({ scope, machine, opts }); },
-      () => {}, async () => {}, 10, WS_WINDOW_SRC);
+      () => {}, async () => {}, async () => {}, 10, WS_WINDOW_SRC);
 
     await api.selectProject('acme', 'lumina', 1);
     eq('arriving on a project opens exactly one pair', loaded.length, 1);
@@ -6372,10 +6411,13 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // it that way first and watching it fail on correct output.
   const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  // FOUR, not three: the three steps plus the STRIP's own ⓘ, which explains
-  // every age on the page and therefore belongs to the instrument rather than
-  // to any one step.
-  eq('CONTROL: the four folds were really found (the scan is not vacuous)', panels.length, 4);
+  // FIVE, and each one is named: the three steps, the STRIP's own ⓘ (which
+  // explains every age on the page and therefore belongs to the instrument
+  // rather than to any one step), and — since v3.63.0 — the honesty meter's,
+  // which carries what a session is and what the usage log cannot see. The
+  // meter's own READING is deliberately not among them: it is in step ②'s
+  // body, unfolded, because it is an outcome (v3.16.1).
+  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   for (const marker of ['id="mem-reload"', 'mem-save-line', 'mem-note-loud']) {
@@ -8532,6 +8574,12 @@ const EXECUTED = new Set([
   // project — because the sentence it carries, that a mirror's SOURCE FILE is
   // untouched, is the whole reason it is not the editor's delete strip.
   'renderFoundationStop',
+  // ── v3.63.0's HONESTY METER ────────────────────────────────────────────
+  // All three are lifted by §6's makeRenderers and reached through
+  // renderProject, which §6/§14/§18i execute; §22 in
+  // scripts/test-next-capture-meter.js drives each of them directly over the
+  // route's states as well.
+  'captureFacts', 'renderCaptureMeter', 'renderCaptureSessions',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on
@@ -8573,6 +8621,7 @@ const NOT_EXECUTED = {
   // ── v3.61.0's THREE ────────────────────────────────────────────────────
   requestProject: 'the one-shot handoff from the OTHER view (P1-10): a module variable set by views/domains.js and cleared on read here, so driving it needs both halves. EXECUTED in test-next-memory-switch.js, which sets it and then runs the arrival decision',
   takePendingProject: 'the read half of that handoff, and the half that makes staleness impossible \u2014 EXECUTED beside it in test-next-memory-switch.js',
+  loadCapture: 'async orchestration over the capture route plus a per-pair cache; EXECUTED against a fake fetch in scripts/test-next-capture-meter.js, which asserts the URL (the pair, the `since` derived from CAPTURE_WINDOW_DAYS, the limit), the cache hit, the in-flight guard, the late-reply drop on a project switch and that a failure is disclosed rather than blanked. §16f above additionally proves `selectProject` ASKS for it, naming the pair',
   copyDraftingAsk: 'async orchestration over the clipboard: composes through the REAL composeDraftingAsk and stamps the outcome with the pair it was pressed on. EXECUTED in test-next-foundations-editor.js, which drives the success and the refusal and asserts the text names this project\u2019s own unfilled slugs',
 };
 

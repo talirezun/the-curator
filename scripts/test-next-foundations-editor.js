@@ -1877,13 +1877,16 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   // The EDITOR still invents no key: it joins the FOUNDATIONS fold that
   // already exists, which is what this assertion has always been about. The
   // list grew by one in v3.62.0 — `streams`, when the work-stream table became
-  // a fold of its own inside step ② — and the thing that must not move is the
+  // a fold of its own inside step ② — and by one again in v3.63.0 — `capture`,
+  // the honesty meter's session list inside the same step. Neither is the
+  // editor's, which is the whole claim; the thing that must not move is the
   // localStorage KEY (`curator-memory-folds-v1`), which is the registry
   // scripts/test-ui-state.js holds and is untouched.
   const foldKeys = /const FOLD_KEYS = (\[[^\]]*\]);/.exec(viewSrc);
   eq('FOLD_KEYS carries the foundations fold the editor reuses, beside the '
-    + 'other three, and no key of the editor\'s own',
-  foldKeys && foldKeys[1].replace(/\s+/g, ''), "['brief','journal','foundations','streams']");
+    + 'other four, and no key of the editor\'s own',
+  foldKeys && foldKeys[1].replace(/\s+/g, ''),
+  "['brief','journal','foundations','streams','capture']");
   ok('...and the localStorage key itself is unmoved, which is the registry that '
     + 'matters', /const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc));
 }

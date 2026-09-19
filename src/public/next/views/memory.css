@@ -101,6 +101,103 @@
   gap: var(--space-8);
 }
 
+/* ── THE HONESTY METER, FIRST INSIDE STEP ② (v3.63.0) ────────────────────
+   The reading and its ⓘ share a row, the same arrangement `.mem-layers` makes
+   one level up: the instrument takes the width and the mark sits at the right
+   edge of the step it belongs to. The stack below it — the route's note, the
+   two lines this reading does not count, and the session fold — is a column,
+   and the gap is ONE declaration on the wrapper rather than a margin on each
+   child, the call `.mem-state-stack` records directly above.
+
+   10px (`--space-5`) and not 16: these belong TOGETHER. Each one qualifies the
+   reading above it, exactly as `.mem-status-stack`'s three do, and spacing them
+   at the group rhythm would read as four sections instead of one reading with
+   its caveats. */
+.mem-capture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+/* The ⓘ takes the right edge; the reading takes everything else and is allowed
+   to shrink (`min-width: 0`) so a long provenance wraps inside the column
+   rather than pushing the mark off it. `align-items: flex-start` keeps the
+   mark on the reading's FIRST line when the provenance wraps to a second —
+   the same call `.mem-layers` makes and for the same reason. */
+.mem-capture-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+/* A WRAPPER OF THIS VIEW'S OWN around the kit's readout. shared/text.css owns
+   the `tx-` prefix outright — scripts/test-next-memory-ingest-text.js fails any
+   `tx-` selector declared in this file — so a view asks for flex behaviour
+   around a kit component by wrapping it, never by reaching into it. */
+.mem-capture-cells { flex: 1 1 auto; min-width: 0; }
+.mem-capture-info { flex: none; margin-left: auto; }
+
+/* THE TWO LINE CLASSES THIS READING DOES NOT COUNT, and the truncation note
+   under the table. --text-2, not --text-3: this file carries ZERO
+   `color: var(--text-3)` declarations and a guard asserts the count, because
+   its own measurements put that rung under 4.5:1 on every surface here.
+   --text-2 measures 8.34 dark / 7.26 light on --surface. */
+.mem-capture-limits {
+  margin: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── THE SESSION TABLE ────────────────────────────────────────────────────
+   Deliberately NOT `.mem-ws-table`. That table's cells are a CONTROL — the
+   first cell is a button, the row carries hover, press and a selected state —
+   and this one is a list of facts with nothing to press. Sharing the class
+   would hand every session row a hover highlight that promises a click it does
+   not have, which is the one thing a table of readings must not do. The type
+   and the rules are the same on purpose; the behaviour is not.
+
+   It scrolls inside its own wrapper rather than overflowing the step, which is
+   what keeps a five-column table honest in a 224px column at 568px. */
+.mem-cap-wrap { overflow-x: auto; }
+.mem-cap-table { width: 100%; border-collapse: collapse; }
+.mem-cap-table th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 0 var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline-strong);
+  white-space: nowrap;
+}
+.mem-cap-table td {
+  padding: var(--space-3) var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.mem-cap-table tbody tr:last-child td { border-bottom: none; }
+/* The call count ticks and the ages line up under each other, so the figures
+   take tabular numerals — the same property `.mem-row-meta` and `.mem-j-when`
+   take, and for the same reason: a proportional `1` is narrower than a `4`. */
+.mem-cap-num { font-variant-numeric: var(--numeric-tabular); }
+
+/* THE TICK AND THE DASH. The glyph is aria-hidden and a visually-hidden word
+   carries the fact, so nothing here is decoded from ink alone — which is what
+   lets the "did" state take a colour at all.
+
+   --success on --surface: 4.05 light / 10.07 dark, both clear of the 4.5 TEXT
+   floor in dark and — at 4.05 — BELOW it in light. That is why the glyph is
+   not the carrier: it is a MARK beside a word a screen reader reads, and the
+   column header above it says which question it answers. The "did not" state
+   takes --text-2 rather than a status colour, because a session that did not
+   save is a reading and not a fault: --attention means a human has to act, and
+   this meter reports and never blocks (Decision G). */
+.mem-cap-flag { color: var(--text-2); }
+.mem-cap-flag-on { color: var(--success); }
+
 /* ── STEP ③ — THE WIKI'S FIGURES AND ITS TWO DOORS (v3.62.0, P1-8) ────────
    The readouts are the shared group again; only the gap to the doors below
    them belongs to this view. Both doors are `btn-secondary btn-xs` and wrap
