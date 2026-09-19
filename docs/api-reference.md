@@ -2467,7 +2467,8 @@ collision (see below the table).
 | `PATCH` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.62.0.** The reading plan and nothing else — `{readFirst}` — on **either** ownership |
 | `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
 | `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
-| `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
+| `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine |
+| `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter — how many bridge sessions ran for this project, how many read, how many saved |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
 
@@ -3270,9 +3271,9 @@ directory entries the store will not address, counted rather than silently skipp
 **New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
 `foundations` field — the **index only**, never document bodies, matching `listFoundations` through
 this file's own `foundationsWire()` allow-list, which carries exactly `present`, `ownership`,
-`repo`, `budgetBytes`, `totalBytes`, `skeletonCount`, `readFirstCount`, `onRequestCount`,
-`readFirstBytes`, `readFirstBudgetBytes`, `readFirstBudgetExceeded`, `documents`, `orphanFiles` and
-`manifestError` — **no `count` and no `staleCount`** (those two exist only on the MCP
+`repo`, `budgetBytes`, `totalBytes`, `remoteMirror`, `remoteChecked`, `remoteCommit`,
+`remoteError`, `skeletonCount`, `readFirstCount`, `onRequestCount`, `readFirstBytes`,
+`readFirstBudgetBytes`, `readFirstBudgetExceeded`, `documents`, `orphanFiles` and `manifestError` — **no `count` and no `staleCount`** (those two exist only on the MCP
 `get_working_state` tool's own foundations summary, a different, smaller object built by different
 code; see below):
 
@@ -3284,6 +3285,10 @@ code; see below):
     "lastRefreshAt": "2026-09-10T08:00:00.000Z", "lastRefreshCommit": "9623343" },
   "budgetBytes": 200000,
   "totalBytes": 148230,
+  "remoteMirror": false,
+  "remoteChecked": false,
+  "remoteCommit": null,
+  "remoteError": null,
   "skeletonCount": 0,
   "readFirstCount": 2,
   "onRequestCount": 4,
@@ -3312,6 +3317,16 @@ never been saved since, and `false` on every other document, **always present** 
 when false — a Foundations block reading "N skeletons to fill" needs both a positive and a negative
 answer from every row, not an absence to interpret. Filling a skeleton in and saving it (from the
 app or through `save_foundation`) clears the mark on the very next read.
+
+**The four remote readings are new in v3.63.0**, and they are **project-level facts, not per-document
+ones**, which is why they sit beside `repo` rather than inside a row. `remoteMirror` says whether a
+GitHub repository is recorded for this mirror at all; `remoteCommit` and `remoteError` report what
+the **last refresh** found. **`remoteChecked` is always `false` off this call, by design** — a GitHub
+comparison happens only inside
+[`…/foundations/refresh`](#post-apimemorydomainprojectfoundationsrefresh), an action with a button,
+never on a read that rides on every project switch and on the menu bar widget's summary. The field
+exists so a surface can tell *"nobody has asked GitHub"* from *"GitHub said the copy is current"*,
+which are different facts and would otherwise both look like silence.
 
 **`readFirst` and the five read-first readings are new in v3.62.0.** `documents[].readFirst` is the
 owner's routing instruction — `true` means every session is handed that document's **text**, and
@@ -3545,8 +3560,30 @@ distinction the read-only rule in this file protects.
 **Body**
 
 ```json
-{ "repoRoot": "/Users/you/code/your-project", "files": [{ "path": "docs/roadmap.md", "role": "roadmap" }] }
+{
+  "source": "auto",
+  "tokenSource": "config",
+  "remote": "acme/lumina",
+  "repoRoot": "/Users/you/code/your-project",
+  "files": [{ "path": "docs/roadmap.md", "role": "roadmap" }]
+}
 ```
+
+Every field is optional. **`source`** (v3.63.0) picks the arm — `auto` (the default: take the
+checkout when it is here, GitHub when it is not), `local` (this machine's checkout only) or
+`remote` (the repository only). Naming `local` with no reachable root is refused rather than
+quietly doing the other thing, because naming an arm is a decision.
+
+**`tokenSource`** (v3.63.0) names **which file the GitHub token is read from** — `config` (the
+default: the `githubReadToken` key in `.curator-config.json`, which should be a fine-grained,
+read-only token scoped to the source repository) or `sync` (Personal Sync's PAT). **No token
+crosses this route.** A `token` field in the body is not read here or in the store: a credential
+that can arrive in an HTTP body is a credential path, and this feature is not going to be the first
+one into the app.
+
+**`remote`** (v3.63.0) names the repository for this call — `owner/repo`, an `https://` or `git@`
+URL, or the `{owner, repo, ref, path}` object — when the manifest does not already record one. An
+unparseable value is a `400 invalid-remote` rather than a silent fallback.
 
 `repoRoot` is optional — when omitted, the manifest's own `repo.root` (the checkout that last
 refreshed, on whichever machine that was) is tried instead. Both are resolved and prefix-checked
@@ -3564,9 +3601,22 @@ before it is read.
 **Success response** `200 OK`
 
 ```json
-{ "ok": true, "refreshed": ["architecture.md"], "unchanged": ["decisions.md", "roadmap.md"],
+{ "ok": true, "domain": "acme", "project": "lumina",
+  "source": "remote", "remoteChecked": true, "remoteCommit": "9f3c1a…", "remoteError": null,
+  "remote": { "owner": "acme", "repo": "lumina", "ref": "main", "path": "docs" },
+  "tokenSource": "config", "repoRoot": null, "commit": "9f3c1a…",
+  "refreshed": ["architecture.md"], "unchanged": ["decisions.md", "roadmap.md"],
   "missing": [], "added": ["conventions.md"], "refused": [] }
 ```
+
+**The five v3.63.0 fields are always present, on both arms**, because an absence is not an answer:
+`source` is `local` or `remote`; `remoteChecked` says whether GitHub was actually asked, which is
+the fact a view needs to choose between *"source not on this computer"* and *"mirrored from GitHub
+@ 9f3c1a"*; `remoteCommit` is the commit read; `remoteError` is a **code** rather than a sentence
+(the sentence is in `error`, and a code is what a client can branch on); and `tokenSource` names
+**which file** the token came from — **never the token** — reading `null` on the local arm, which
+needs none. `repoRoot` is taken from the store rather than echoed from the request, so a response
+can never name a folder that was not the source.
 
 A document whose source path no longer exists at the checkout is reported in `missing` — the
 stored copy is **left in place**, never deleted, because the checkout being unreachable from this
@@ -3583,9 +3633,99 @@ by the same function, and `notes` at 20.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | The project is **curator-owned** — there is nothing to refresh a mirror of |
-| `409` | Neither the supplied `repoRoot` nor the manifest's own `repo.root` is reachable from this machine |
-| `404` | Unknown domain or project |
+| `400` | The project is **curator-owned** — there is nothing to refresh a mirror of; or `invalid-remote` |
+| `409` | **Both arms are impossible** — no reachable checkout *and* no recorded repository, or `no-token`. The body's `arms` object names the reason for each one separately, because "we could not do it" without "and here is why each way failed" is not actionable |
+| `404` | Unknown domain or project; or `remote-not-found` — the repository, the ref or the path is not there, **or the token cannot see it**, which GitHub answers identically and the message says so |
+| `403` | `unauthorised` — the stored credential cannot read that repository. Not `401`: you are not being asked to authenticate to The Curator |
+| `429` | `rate-limited` — GitHub's limit, not ours, and the one status that means *later* |
+| `502` | `remote-tree-truncated` (GitHub silently truncates a huge recursive tree, and a silent miss would keep a stale copy while reporting success), `remote-http`, `remote-unreachable`, `remote-too-large`. Nothing is malformed and nothing is broken locally, which is what `502` says and `400` would deny |
+
+**Nothing is written until everything is fetched** on the remote arm: the ref, the tree and every
+changed blob are read first, and the documents and manifest are written only once all of them are in
+hand. So *"a truncated tree refuses loudly"* also means *"and changed nothing"*.
+
+### GET /api/memory/:domain/:project/capture
+
+**New in v3.63.0.** The **honesty meter**: *did this project's agent sessions start by reading its
+state, and did they save before they stopped?* It reads the local, content-free
+[MCP usage log](mcp-user-guide.md) and groups it into sessions by the `sid` field v3.63.0 added,
+filtered to one project by the `project` field it added beside it.
+
+**It is read-only and it never blocks.** Nothing here writes — not the log, not the store, not a
+cache — so asking for the meter costs nothing and can fail nothing. A meter that could refuse a
+session would be enforcement, and capture is deliberately advisory.
+
+**Query**
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `since` | 30 days ago | ISO 8601. **Best-effort**: an unparseable value falls back to the default rather than `400`ing |
+| `limit` | `20`, max `200` | How many sessions to list. Out of range falls back to the default |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "domain": "acme",
+  "project": "lumina",
+  "since": "2026-08-20T09:00:00.000Z",
+  "logPresent": true,
+  "lineCeiling": 300,
+  "lineCeilingLabel": "300 bytes",
+  "totals": {
+    "sessions": 6, "sessionsRead": 5, "sessionsSaved": 4,
+    "sessionsReadNotSaved": 1, "legacyLines": 0, "selfTestLines": 24
+  },
+  "sessions": [
+    { "sid": "9f2c1a4b7e30", "client": "claude-code",
+      "startedAt": "2026-09-19T09:02:11.000Z", "endedAt": "2026-09-19T10:44:02.000Z",
+      "calls": 14, "read": true, "saved": true }
+  ],
+  "sessionsShown": 6,
+  "sessionsTruncated": false,
+  "note": null
+}
+```
+
+**`totals` is computed over every session in the window, before `limit` truncates the list below
+it** — the store's own rule (`distinctScopeCount`, `savedCopies`) restated for this reading: a count
+taken after a display cap is a cap reported as a measurement. `sessionsTruncated` is how a caller
+learns the list was cut without comparing lengths itself.
+
+**What each reading means, exactly**
+
+| Field | Definition |
+|---|---|
+| `sessions` | distinct `sid` with at least one line at or after `since`; a session touched by the window is then read **whole**, so one that bootstrapped eight days ago and saved today is not reported as *"did not read"* |
+| `sessionsRead` | sessions where `get_project_context` or `get_working_state` answered `ok: true` **before that session's first save** |
+| `sessionsSaved` | sessions where `save_working_state` answered `ok: true`. A **refused** save is not a save |
+| `sessionsReadNotSaved` | the reading that matters: the agent had the context and did not write one back |
+| `legacyLines` | lines with no `sid` — every line written before v3.63.0. Counted **before** the project filter, deliberately, because such a line carries no project and never could: the number is about the **log**, not about this project, and it is what lets a caller tell *"no sessions"* from *"this log predates the meter"* |
+| `selfTestLines` | lines from the app's own *Test all 24 tools* run, excluded from every session figure |
+
+**`client` is `null`, not `"other"`, when no session line survives for that id** — rotated away, or
+the append was in flight when the bridge child exited. *"A name we did not recognise"* and *"no
+session line at all"* are different facts and stay different.
+
+**An absent log is not an error.** `logPresent: false` with zeroed totals, an empty `sessions` array
+and a `note` saying the meter starts counting with the first bridge session on v3.63.0. Silence in a
+never-written log is not evidence that no agent ever worked here.
+
+**The log's on-disk path is deliberately not in this envelope.** The MCP bridge page's own privacy
+panel is where a user reads it, and repeating it here would be a second place for that sentence to
+go stale if the path ever moves.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_project` — the name is not a usable project name |
+| `404` | Unknown domain, or `project_not_found` |
+
+There is **no `403`** here and no `readonly` on the envelope: this is a read, and a Shared Brain
+mirror's usage history is still real history. `refuseMirror` is reserved for this router's write
+routes, and this is not one.
 
 ### GET /api/memory/:project — DEPRECATED
 

@@ -352,6 +352,29 @@ copies.
 
 ---
 
+### Where a skill goes on the other harnesses — and what must never go there
+
+Two directories cover most of them, and both hold the **same files**:
+
+| Directory | Read by |
+|---|---|
+| `~/.claude/skills/` | Claude Code, Claude Desktop, **and Cursor** |
+| `.agents/skills/` | OpenCode, goose, Kilo, DeepSeek Harness (`dsh`), GitHub Copilot CLI |
+
+Between them that is eight of the thirteen harnesses researched for v3.63.0, for content that is
+already generated from one source. Nothing new is written for either path.
+
+**What must not go into an instruction file.** The neutral always-on playbook measures about
+**63,500 bytes** (53,195 with companions omitted). **Codex truncates `AGENTS.md` at 32,768 bytes**,
+silently — so pasting the playbook there gives you a model-read document cut off mid-sentence, with
+no error and no warning. The playbook belongs in a **skills tree**; the thing that goes in
+`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` is the short **agent-instructions block** (about 1.5 KB with
+every paragraph), which fits everywhere with room to spare. `my-curator doctor` reports the
+instruction file's size against that cap on Codex, and — on Zed and Gemini CLI, where the file a
+harness *actually* reads is not the one you would guess — which file it will read at all.
+
+---
+
 ## Research prompts to try
 
 Once connected, these prompts unlock what the graph layer is actually for:
@@ -622,12 +645,46 @@ agents have actually called — the data behind **Settings → MCP bridge →
 machine only, never synced, never uploaded**, at `<user-data>/.mcp-usage.jsonl` — a sibling of
 your credential files, not of `domains/`, so it can never travel with a knowledge folder or ride
 along with GitHub sync. Each line is one JSON object: the tool's name, the domain it touched,
-whether the call succeeded, and how long it took, in milliseconds. **It never records your
-prompt, the tool's arguments, or what came back** — a call passing a 10 KB argument still writes
-a line well under 200 bytes, because there was never anything larger to write. It rotates once it
-passes 1 MB: the file is renamed to `.mcp-usage.jsonl.1` and a fresh one starts, so the log is
-bounded at roughly 2 MB and the older file is kept exactly once, not indefinitely. Writing to it
-is best-effort — a tool call still returns its result even if the log can't be written at all.
+whether the call succeeded, how long it took in milliseconds, and — since v3.63.0 — a **session
+id** and, when the call was about one, a **project** name. **It never records your prompt, the
+tool's arguments, or what came back** — a call passing a 10 KB argument still writes a line of at
+most **300 bytes**, because there was never anything larger to write. It rotates once it passes
+1 MB: the file is renamed to `.mcp-usage.jsonl.1` and a fresh one starts, so the log is bounded at
+roughly 2 MB and the older file is kept exactly once, not indefinitely. Writing to it is
+best-effort — a tool call still returns its result even if the log can't be written at all.
+
+**The three fields v3.63.0 added, and why.** The log could say *what* was called and *when*. It
+could not say which calls belonged to **one session**, which **project** they were about, or which
+**harness** made them — so it could not answer the one question the memory layer exists for: *did
+this session start by reading the project's state, and did it save before it stopped?* Three facts
+were missing, and each is one bounded field:
+
+| Field | On | What it is |
+|---|---|---|
+| `sid` | every line | A **minted random id**, 12 hex characters, generated once per bridge process. One bridge process is one session. Not your process id (the operating system recycles those, and two sessions sharing one would merge into a single reading that both read *and* saved when in fact each did half), not a silence heuristic, and not the harness's own id |
+| `project` | a line about a project | The project slug. **This is a deliberate widening** of a file described as content-free, from one name you chose to two — taken rather than assumed, because the meter's page is *per project* and a per-project figure silently aggregated over a whole domain would be a false reading on the one screen that exists to avoid those |
+| `client` | a once-per-process **session line** | Which MCP client connected, as an **allow-listed label** — `claude-code`, `codex`, `cursor`, or `other`. Never the string the client sent |
+
+The **session line** is a second kind of line, written once per bridge process immediately before
+that process's first tool call:
+
+```json
+{"ts":"2026-09-19T10:57:06.400Z","ev":"session","sid":"9f2c1a4b7e30","client":"claude-code"}
+```
+
+It carries the client name so the name does not have to ride on every line, and the same 300-byte
+ceiling covers it.
+
+**The client name is a label, and nothing reads it but you.** It is read from the two protocol eras
+the bridge lives in — the MCP specification's revision `2026-07-28` removed the `initialize`
+handshake and makes `clientInfo` an optional, per-request, self-reported field that a server
+*should not* change behaviour on — then normalised and looked up in a fixed table that maps **many
+names to one harness**, because one product really does send two (GitHub Copilot CLI moved from
+`github-copilot-developer` to `copilot-cli` inside six months; Cline reports `Cline` from VS Code
+and `@cline/core` from its SDK). A name not in the table is written as `other`. Three rows in it are
+**community-reported rather than measured**, and one of them is worth naming: `claude-ai` is
+**Claude Desktop** — a different surface from Claude Code, with its own id, so a desktop-chat
+session never lands in a coding harness's row.
 
 **One optional seventh field, `via` (v3.61.0).** A line written by the app's own
 **[Test all 24 tools](user-guide.md#test-all-24-tools--lighting-the-map-yourself)** run carries
@@ -641,10 +698,15 @@ Two consequences worth knowing. The tool map prints `self-test` before the age o
 newest call came from that run, so a reading you caused is never read as evidence about your
 agents. And the map's two session readings — *Last session start* and *Last save* — **skip**
 `self-test` lines entirely: a self-test is not a session start and saved nobody's handoff, and
-those are the two questions the whole memory layer exists to answer. (The field also cost one
-byte of headroom elsewhere: the longest tool name the log will record shrank from 40 characters
-to 32 — no real tool comes close, the longest being `scan_semantic_duplicates` at 24 — so the
-"under 200 bytes, whatever the call" guarantee stays a proof rather than a measurement.)
+those are the two questions the whole memory layer exists to answer. (The field also cost some
+headroom elsewhere: the longest tool name the log will record shrank from 40 characters to 32 — no
+real tool comes close, the longest being `scan_semantic_duplicates` at 24 — so the "at most 300
+bytes, whatever the call" guarantee stays a **proof**, derived by adding up every field's own
+bound, rather than a measurement that happened to come out low. The ceiling was 200 bytes until
+v3.63.0; `sid` and `project` are 98 bytes of worst case between them, and there is no arrangement
+of the fields that fits the old number. What was **not** done to buy it back: narrowing the domain
+or project bounds, either of which would drop a real name to `null`, and a meter that cannot name
+the project it is about is not a meter.)
 
 **Where the run's own lines come from.** The run starts the bridge exactly as your pasted config
 does — the same command, from the same builder — against a throwaway knowledge base in your

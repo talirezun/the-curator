@@ -518,8 +518,12 @@ the app has a **Copy marker line** button that gives you the exact line for a pr
 menu-bar widget's **Copy resume prompt** names the same line for the same project — one rule, so
 the two can never hand you different answers.
 
-**This is a convention, not a mechanism.** No server code and no MCP tool reads that file. The
-[continuity skill](#the-skill-that-carries-the-capture-discipline) is what reads it, from the
+**This is a convention, not a route.** **No server code and no MCP tool reads that file** — that
+much is unchanged, and it is the part that matters: nothing the browser or an agent's bridge does
+depends on it. Since v3.63.0 there is one more reader, and it is neither of those: the
+**`my-curator` command** resolves a project from it (`src/cli/resolve.js`), because a hook the
+command installs runs in a repository directory and has to know which project that directory is.
+The [continuity skill](#the-skill-that-carries-the-capture-discipline) still reads it too, from the
 working directory or a parent of it, as step two of a three-step ritual:
 
 1. If you named a project in the conversation, that wins.
@@ -527,6 +531,12 @@ working directory or a parent of it, as step two of a three-step ritual:
 3. Otherwise, call `list_projects` and **ask which one**.
 
 Then `get_working_state({ project, scope: 'latest' })`.
+
+The **command** walks the same first two rungs and then differs on the third, because a program
+cannot ask: `--project` wins, else the nearest `.curator-project` at or above the working directory
+(up to 64 levels), else the configured default domain's own project — and where even that is not
+resolvable it prints the candidates and **exits 2**. It never creates a project and never picks one
+for you.
 
 So the marker does nothing at all in an agent that has not been told about it, and an agent that
 has been told is instructed to fall back to asking rather than to guessing. Which is the same
@@ -749,6 +759,14 @@ on **this** machine — `fresh` when they match, `stale` when they do not, `unre
 cannot be read from here at all (a different machine, a moved checkout, a repository nobody has
 cloned on this computer). A curator-owned document reports `n/a`: there is no second copy to be
 stale against.
+
+**A remote mirror is not compared over the network on a read** (v3.63.0), and that is deliberate
+rather than unfinished. A read rides on every project switch and on the menu bar widget's summary; a
+GitHub comparison is a network call with a rate limit attached. So the comparison happens only inside
+a **refresh** — an action with a button — and a read of a project whose checkout is not here still
+says `source not on this computer`, which remains true of *this disk*. `remoteChecked` on the wire is
+`false` off any read, and the field exists so a surface can tell *"nobody has asked GitHub"* from
+*"GitHub said the copy is current"*.
 
 ### The reading plan: read-first documents, and fetch by name
 
@@ -984,14 +1002,67 @@ somebody:**
 | Fact | Consequence |
 |---|---|
 | **Foundations live under `state/`, so they SYNC.** Unlike `raw/`, which is gitignored and never travels | The *copies* reach every machine — a mirrored architecture document is readable on a laptop that has never cloned the repository it came from. That is the whole point of the tier |
-| **A refresh needs the SOURCE machine.** `repo.root` is advisory and machine-specific | On any other computer the freshness column reads **`source not on this computer`** rather than `stale`, and *Refresh from repo* is withheld with that reason. The copy is still readable; it is only the comparison that cannot be made |
+| **A refresh needs the source — a checkout here, OR the repository over GitHub** (the second arm is v3.63.0) | With no checkout on this computer the freshness column reads **`source not on this computer`** rather than `stale`, because that is true of this disk. If the project records a `repo.remote`, a refresh can still read the repository itself and the copies update from the commit it names; with neither, both arms are refused **and each one says why** |
 | **Remove on a mirrored document deletes the COPY and its manifest entry — nothing else** (v3.61.1) | It is the decision to **stop mirroring** that document. The file in your checkout is untouched (`sourceKept: true` in the reply), and re-adding it from the folder brings it back |
 | **Two machines editing one curator-owned document converge to whichever saved LAST** | No machine segment, so `pull -X theirs` has a conflicting hunk to resolve and resolves it silently. Edit rarely, then sync — the same discipline `project.md` needs |
 
-**The piece that would remove the second row is a GitHub mirror, and it is v3.63.0's**, not this
-release's: mirroring from the *repository* rather than from a checkout on one particular disk is
-what would make a refresh possible from any machine. Until then, the honest statement is the one
-above — the copy travels, the refresh does not.
+### Mirroring from GitHub, when the checkout is not here (v3.63.0)
+
+The second row above used to end *"the copy travels, the refresh does not"*. It now has a second
+arm: a mirror can be refreshed from the **repository** rather than from a checkout on one particular
+disk, so *"source not on this computer"* stops being a permanent state on every machine but one.
+
+**What changes is where the bytes are read from, and nothing about who wrote them.** The repository
+is still the author; this is still a byte copy; two copiers of one byte string still converge rather
+than conflict. `ownership` stays `repo` — a non-null **`repo.remote`** (`{owner, repo, ref, path}`,
+a manifest field that has existed since v3.59.0 and now has its first writer) is what makes a mirror
+a *remote* mirror, so the one-ownership-per-project rule is untouched.
+
+**Three of the things it adds are refusals, not powers:**
+
+- **The client can issue no verb but `GET`.** `src/brain/github-read-client.js` — the HTTP plumbing
+  lifted out of the Shared Brain adapter so there is one implementation, not two — has no `PUT`, no
+  `POST`, no `DELETE` and no way to reach one. A mirror refresh that could write to the source
+  repository is a path-construction defect waiting to happen.
+- **A truncated file listing refuses loudly, before a single byte is fetched.** GitHub silently
+  truncates a recursive tree at roughly 100,000 entries; a silent miss there would mark a document
+  `missing` and *keep a stale copy* while reporting success.
+- **Nothing is written until everything is fetched.** The ref, the tree and every changed blob are
+  read into memory first; the documents and then the manifest are written only once all of them are
+  in hand. A network read that fails half way therefore leaves the mirror exactly as it was.
+
+**How "unchanged" is decided without downloading anything.** The tree carries git's own blob sha per
+path, and a blob sha is sha1 over `blob <len>\0` plus the repository's bytes — which is what the
+stored copy holds, because the copy was made from them. So the stored file is re-hashed that way and
+compared: equal means **no fetch at all**. `sha256` stays the manifest's identity; the blob sha is a
+transport optimisation, computed on the fly and never stored.
+
+**One honest difference from the local arm.** The local arm copies the *working tree's* bytes; this
+one copies the *repository's*. With no `.gitattributes` text filter and no `core.autocrlf` they are
+the same bytes. With one, the two arms can disagree about the same file and the mirror's sha would
+flip on every alternation — which, undocumented, would look like a defect in the freshness reading
+rather than in the repository's configuration.
+
+**The token, and the argument stated rather than assumed.** A token is read **from a file, never
+from a caller's argument** — a token that can arrive in a function call can arrive in an HTTP body,
+and this feature is not going to be the first credential path into the app. Two sources, and the
+default is the safer one:
+
+| `tokenSource` | Where it is read from | Why you might not want it |
+|---|---|---|
+| **`config`** (the default, and recommended) | `githubReadToken` in `.curator-config.json` | Nothing — this is the path the design recommends: a second, **fine-grained, read-only** (Contents: Read) token scoped to the source repository |
+| `sync` | Personal Sync's `.sync-config.json` | It was granted for *sync*. A **classic** `repo` token can read **every repository you own**, and spending a permission granted for one purpose on another is exactly what this arm must not do silently |
+
+**The token is never logged**, never placed in a URL or a query string, never serialised, and never
+included in a thrown error. Errors name the token's **source** — `.curator-config.json` or Personal
+Sync — so a person can fix the right file, which is the actionable half and carries none of the risk.
+Known GitHub credential shapes are additionally stripped from any response text that reaches an error
+message, as defence in depth against an adversarial proxy.
+
+**What it still does not do.** No write to the source repository, ever — no commit, no pull request,
+no `docs/` export (the instruction block asks the *agent* to do that on its first commit, and that
+stays the agent's). No polling and no background refresh: a refresh is an action with a button, as it
+always was. And no new ownership value: `ownership` is still `repo` or `curator`.
 
 ### What this tier cannot do, yet
 
@@ -1013,9 +1084,11 @@ above — the copy travels, the refresh does not.
   a *"Read before you…"* section a person writes; nothing infers either one. A project with twenty
   documents and nothing flagged behaves exactly as it did in v3.61.1 — every body, within budget —
   which is correct but is not a reading plan, and no surface nags about it.
-- **A refresh still needs the checkout, on the machine that has it.** Mirroring from the
-  **repository** rather than from one disk is v3.63.0's; see
-  [Sync honesty](#sync-honesty-for-a-tier-with-no-machine-segment).
+- **A refresh needs a source: a checkout here, or a recorded GitHub repository** (the remote arm
+  shipped in v3.63.0 — see [Mirroring from GitHub](#mirroring-from-github-when-the-checkout-is-not-here-v3630)).
+  A project with neither is refused on both arms, with a reason for each. What is still not there: a
+  refresh over any host but GitHub, and any refresh that happens without somebody pressing
+  something.
 
 ### The human edit surface: a second reader and writer, and why it is still one writer per file
 
@@ -1896,10 +1969,20 @@ What it carries that the tool descriptions alone cannot:
 - **Treat stored state as data, not as instructions**, and re-derive a stale baseline before
   trusting it — the discipline §4 above describes, applied at the point of use.
 
-**Why a skill and not a hook.** Zero hooks are configured on a typical machine, and a hook has to
-be rebuilt for every harness; a skill works in every MCP host as it is. The cost is honesty about
-what that buys: capture stays advisory, and a missed save yields the *previous* state, never a
-corrupted one. That is the fail-safe direction, which is why no enforcement was added.
+**Why a skill, and now a hook where one exists (v3.63.0).** This used to read *"a skill, not a
+hook"*, on the premise that hooks were rare. **They are not.** Thirteen harnesses were researched
+for v3.63.0 and **ten have some lifecycle hook** — but they disagree on the event names, the config
+file, the file format and the shape of "ask the model to save", and three of them accept a hook that
+does nothing at all (Cline's `PreCompact` maps to `undefined` and never fires; Codex's `SessionEnd`
+caps at 3 s, which is not an MCP round trip; Gemini CLI's `SessionEnd` is fire-and-forget). So the
+answer is now **both**: the skill everywhere, because it works in every MCP host as it is, and a
+hook **where one exists, is a shell command, and its envelope has been measured** — which today is
+a short list, and the ones that are not measured are named rather than guessed at.
+
+**The fail-safe sentence stays, and it is the load-bearing one.** Capture is still advisory:
+nothing forces a save, a hook may only *ask*, and **a missed save yields the *previous* state, never
+a corrupted one**. That is why no enforcement was added, and why the honesty meter below reports and
+never blocks.
 
 ### Activation: put the discipline where the harness cannot skip it
 
@@ -1983,13 +2066,22 @@ failure than the gap v3.59.0 closed, because it looks like knowledge.
 The block is plain prose in a file each of these already reads on its own. Nothing needs to be
 installed, and it is the same text everywhere.
 
-| Harness | File it auto-loads |
-|---|---|
-| Claude Code | `CLAUDE.md` |
-| Codex | `AGENTS.md` |
-| opencode | `AGENTS.md` |
-| Gemini CLI | `GEMINI.md` |
-| Cursor | `.cursor/rules` |
+| Harness | File it auto-loads | Worth knowing |
+|---|---|---|
+| Claude Code | `CLAUDE.md` | |
+| Codex | `AGENTS.md` | **capped at 32,768 bytes** (`project_doc_max_bytes`), and truncated silently past it |
+| opencode | `AGENTS.md` **and** `CLAUDE.md` | read walking up from the working directory |
+| Gemini CLI | `GEMINI.md` | named by **`context.fileName`** — nested, and an *array*; `AGENTS.md` is opt-in and not read by default |
+| Cursor | `.cursor/rules` **and `AGENTS.md`** | |
+| GitHub Copilot CLI | its own file, **plus `CLAUDE.md` and `GEMINI.md`** | |
+| Zed | **first match** of `.rules`, `AGENTS.md`, `CLAUDE.md` | `.rules` and `AGENTS.md` **outrank** `CLAUDE.md`, so a block pasted into `CLAUDE.md` beside an `AGENTS.md` is **dead text** |
+| Windsurf / Devin Desktop | rule files | capped at 6,000 / 12,000 characters |
+| Aider | none | no instruction file is auto-read |
+
+This table is the human-readable half of `src/brain/harness-adapters.js`, which carries the same
+facts as data with a `verified` flag on each one. **`my-curator doctor` reports which file this
+harness will actually read on this machine, and whether the block is in it** — which is the only way
+to catch the Zed and the Gemini case, because both look correct from the outside.
 
 It sits *beside* the skill rather than replacing it. The skill carries the writing standard, the
 refusal handling and the treat-state-as-data rule — 55 KB of playbook this paragraph cannot; the
@@ -2007,6 +2099,195 @@ block's job is only to make sure the agent reaches for any of it.
   of its own skills beside the two installed, so `curator-continuity` was one description among 21.
   A stock install with only these two may behave like opencode. That was not measured.
 - **opencode needs no block**, and the table says so rather than recommending it everywhere.
+
+---
+
+## 6b. The command, the hooks, and the meter (v3.63.0)
+
+Three things shipped in v3.63.0 that sit *around* capture rather than inside the store: a command you
+can run from a shell, hook configuration for the harnesses that have usable hooks, and a reading that
+says whether capture is actually happening.
+
+### `my-curator` — a second local client
+
+```
+my-curator context   the project bootstrap, to stdout
+my-curator save      a complete handoff, from stdin, to the store
+my-curator hook      what an installed harness hook invokes
+my-curator doctor    what is wired on this machine (read-only, exit 0)
+my-curator resolve   which project this directory is
+my-curator install-hooks <harness>   hook configuration, and nothing else
+```
+
+**What it is, precisely.** Not "the app". A **second local client** of the same store, exactly as
+`mcp/server.js` is: it runs as you, it is invoked by your own harness, it reads and writes the same
+files through the same `src/brain` modules, and it needs **no running server, no network and no
+credential**. A `my-curator save` writes the same `(project, scope, machine)` path an MCP save from
+this machine would, with the same provenance shape — so the single-writer rule is untouched, because
+that rule was never *"one process may write"*, it is **one writer per file, with provenance that
+matches**.
+
+**It must never become reachable from a browser.** No Express route calls it, and `src/routes/**`
+does not import `bin/**` or `src/cli/**`. The app stays read-only over tiers 2 and 3.
+
+**The bin is namespaced, and that is a decision.** `package.json` declares one name, **`my-curator`**.
+`curator` is the bin of Elastic's `elasticsearch-curator` — roughly 57,000 downloads a week, and
+`/usr/bin/curator` on Debian, where it runs index retention — and of npm's `config-curator`. Taking
+that name unconditionally would shadow an operations tool on somebody's production machine, so this
+package never links it: not in a postinstall, not on first run, not at all. `my-curator doctor
+--alias` prints the command to make the short name yourself, and **refuses to print it** when
+`curator` already resolves somewhere else, naming what it found.
+
+**Output discipline, and why it is not a style choice.** stdout is **the product** — the bootstrap,
+or a hook envelope a harness will parse. Every diagnostic, warning and refusal goes to **stderr**.
+Exit codes: `0` fine · `1` the **store** refused (its own reason and message, surfaced verbatim) ·
+`2` a usage error, an ambiguous project, **and** the `stop` hook's deliberate block — the three cases
+where the caller, not the store, has to act.
+
+**`my-curator save` takes JSON, not markdown.** The store has no read-side section parser — a handoff
+is returned whole and exactly one section (`## Foundations read`) is parsed back — so a
+markdown→fields parser here would be a second grammar to keep in step with the store's own. The body
+is `save_working_state`'s field shape, in snake_case or camelCase, derived from `STATE_SECTIONS`
+rather than typed out. A third party that wants to write markdown **writes the file**, per
+[the public spec](spec/working-state-v1.md); it does not come through this command.
+
+**And a read here writes nothing — including nothing to the usage log.** A CLI read is not an MCP
+call. If it appended, every session on a hook-wired harness would read as *"read"* and the meter's
+denominator would grow by sessions that never opened a bridge: the instrument measuring itself.
+
+### What a hook may do, and what it may never do
+
+**A hook may ask, inject or record. It may not compose.** It never summarises a transcript, never
+calls a model, and never writes a handoff on the agent's behalf — `my-curator hook` does not call
+`saveWorkingState` at all. **A fabricated handoff is worse than a missing one**, because the store's
+whole contract is that what was written was written by whoever the provenance names. So the hook asks
+the *model* to call `save_working_state` itself.
+
+**The capture point is the turn end, not the session end**, and that is mechanical as well as
+principled: Codex's `SessionEnd` has a 1 s default and a 3 s hard maximum, and Gemini CLI's and
+Cursor's are fire-and-forget — on three harnesses a session-end hook *physically cannot* complete a
+save. No `SessionEnd` entry is installed anywhere, for a second reason as well: a hook cannot close a
+bridge session it has no handle on, since the session id is minted inside the MCP child.
+
+**The stop ladder is five rungs, and four of them are refusals to intervene.** The harness says it
+already asked → exit. No project → exit. No bounded session window → exit. A save already landed this
+session → exit. No bridge session at all for this project in this window → exit, because asking an
+agent to use a tool it does not have is nagging. Only then does it ask, **at most once per turn by
+construction**, in that harness's own shape.
+
+**One policy, several envelopes.** Claude Code *blocks* (`exit 2`, the reason on stderr); Cursor
+*submits a message* (`followup_message`), which is strictly gentler and is preferred where a harness
+offers both; Codex blocks on `Stop` and can refuse a compaction with `{"continue": false}` — the one
+blocking pre-compaction hook the research found. **An unverified envelope is never approximated.** A
+harness whose shape has not been measured emits nothing and records why; Gemini CLI's `AfterAgent` is
+the named case — the capture *point* is right, the envelope is not, so it ships withheld.
+
+### Which harnesses get hooks written
+
+`my-curator install-hooks <harness>` writes **hook configuration only**, idempotently, into the file
+that harness reads. It **never** writes `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules` or any
+other model-read instruction file — that paste stays yours, and `--print-instructions` prints the
+snippet instead of writing it. It refuses a file it cannot parse rather than merging into a document
+it cannot read, and it leaves every hook it did not write untouched.
+
+| Harness | Hook state | Events written | Where |
+|---|---|---|---|
+| **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | `.claude/settings.json` · `.claude/settings.local.json` · `~/.claude/settings.json` |
+| **Cursor** | verified | `sessionStart` · `preCompact` · `stop` (with `loop_limit: 1`) | `.cursor/hooks.json` · `~/.cursor/hooks.json` |
+| **Codex CLI** | unverified | `PreCompact` · `Stop`. **`SessionEnd` refused** — 3 s maximum | `.codex/hooks.json` · `~/.codex/hooks.json` |
+| **GitHub Copilot CLI** | unverified | `sessionStart` · `preCompact` · `agentStop` — **refused by default**, envelopes unmeasured | `.github/hooks/` · `~/.copilot/hooks/` |
+| **goose** | unverified | `Stop` · `SessionEnd` — **refused by default**, envelopes unmeasured | `~/.agents/plugins/my-curator/hooks/hooks.json` |
+| **Gemini CLI** | unverified | none — `AfterAgent`'s envelope is unmeasured | — |
+| **Cline** | unverified | none — the config *path* is unmeasured. **`PreCompact` refused**: it is accepted and never fires | — |
+| **DeepSeek Harness (`dsh`)** | unverified | none — the Cordis overlay path is unmeasured | — |
+| **OpenCode**, **Kilo** | present-useless | none — hooks here are **TypeScript plugins**, not shell commands | — |
+| **Windsurf / Devin Desktop** | present-useless | none — twelve hooks, and not one of them is a stop, session-end or pre-compaction hook | — |
+| **Zed** | none | none — no hook mechanism exists (open proposal #57890) | — |
+| **Claude Desktop** | none | none | — |
+| **Aider** | none | none — **no MCP client at all**; the only capture is a shell wrapper around the process | — |
+
+`--allow-withheld` lays the wiring for a refused-by-default harness anyway, knowing it stays inert
+until that envelope is measured. Every command written is the **resolved absolute path** of the
+binary (`--bin`, else `my-curator` on `PATH`, else this checkout behind the running node — `curator`
+is never searched for), because `--scope project` writes a file that gets committed, and a teammate
+without that binary on their `PATH` would experience it as *"the harness is broken on this repo"*.
+
+**"Present and useless" is a finding, not a gap**, and so is *advisory-only*. Windsurf and Zed are
+**measured to have no usable hook**; that is a different claim from *not measured*, and the table
+keeps the two apart.
+
+**No hook here has yet been run by a real harness.** Every shape except Claude Code's is documented
+or inferred rather than observed, which is what `unverified` means in that table, and nothing in this
+release should be read as a claim of reach — see the meter below and `scripts/measure-harness.js` for
+the protocol that would change it.
+
+### The honesty meter — did this session read, and did it save?
+
+The one question this whole layer exists for. Since v3.63.0 the local, content-free MCP usage log
+carries three more bounded fields — a **session id** (`sid`, 12 hex, minted once per bridge process),
+the **project** a call was about, and, on a once-per-process **session line**, an allow-listed
+**client** label — and with them the log can finally be grouped into sessions and asked:
+
+| Reading | Definition |
+|---|---|
+| **sessions** | distinct `sid` in the window |
+| **read** | a session where `get_project_context` or `get_working_state` answered `ok: true`, **at any point before that session's first save** |
+| **saved** | a session where `save_working_state` answered `ok: true` |
+
+`ok: true` is required in both: a refused save is not a save. *Read* is *before the first save*
+rather than *the first call*, because an agent that calls `list_projects` first and bootstraps second
+has still bootstrapped — the skill's own three-step ritual would otherwise read as a false negative.
+
+**Three states it must tell apart**, and the reason the project field was worth taking: *no bridge
+session ran* (not a failure — say so), *a session ran and did not save* (the reading that matters),
+and *sessions ran and saved* (the ratio).
+
+**What it deliberately does not count.** Self-test lines (`via: 'self-test'`) — pressing *Test all
+24 tools* on the Settings screen must never report a session that read and saved. Lines with no
+`sid`, which is every line written before v3.63.0: those are reported as **legacy lines** and never
+as a session, because inventing sessions out of lines that cannot be grouped is exactly the false
+reading this strip exists to avoid. And a `my-curator context` read, which opens no bridge at all.
+
+**What it cannot see, stated rather than discovered.** A session's **end** is inferred as its last
+line — nothing writes an end marker, because the bridge process is usually killed. `client` is
+**null**, not `other`, when no session line survives for that id (rotated away, or the append was in
+flight when the child exited): *"a name we did not recognise"* and *"no session line at all"* are
+different facts and stay different.
+
+**It reports and never blocks.** A meter that could refuse a session would be the enforcement the
+fail-safe rule forbids.
+
+Where it appears: `my-curator doctor` prints it in the terminal, `scripts/measure-harness.js` prints
+it as a matrix row per harness, `GET /api/memory/:domain/:project/capture` serves it, and the
+Project-context view carries it on step ② — TODO(V): the on-screen wording, the fold and what its ⓘ
+says.
+
+### The client label is a label
+
+`clientInfo.name` names which harness connected. **Nothing branches on it**, and three independent
+reasons converge on that rule: the MCP specification's revision `2026-07-28` **removed the
+`initialize` handshake** and makes `clientInfo` an optional, per-request, self-reported `_meta` entry
+that a server **SHOULD NOT** change behaviour or security decisions on; the values are demonstrably
+unstable (Copilot CLI moved from `github-copilot-developer` to `copilot-cli` inside six months, and
+Cline reports `Cline` from VS Code and `@cline/core` from its SDK — one product, two values, in both
+directions); and the file is content-free by contract.
+
+So the name is read from **both protocol eras**, newest first, normalised, and looked up in a
+**many-to-one** allow-list (`src/brain/mcp-clients.js`). A hit writes a canonical harness id; a miss
+writes `other`. The caller's own string never reaches disk. Three rows in that table are marked
+**community-reported and unverified** — `claude-code`, `cursor-vscode` and `claude-ai` — and
+`claude-ai` is **Claude Desktop, a different surface**, which is why it keeps its own id rather than
+being folded into Claude Code's row.
+
+### The format is public
+
+[`docs/spec/working-state-v1.md`](spec/working-state-v1.md) is the on-disk format, versioned
+`working-state/1`, written so a tool that is not The Curator can read and write it: the layout, the
+`<machine>` rule *and its reason*, the handoff's section grammar, the sanitisation a reader applies,
+the journal line, the manifest schema field by field, the budgets and what happens at each one, and
+the bootstrap contract. It is kept true by execution — `scripts/test-spec-working-state.js` parses
+its tables and compares them against the live constants, and renders a real handoff to check the
+grammar it publishes — so a spec that drifts from the store reds `npm test`.
 
 ---
 
@@ -2033,4 +2314,6 @@ false claim: it double-grants, including across processes.
 - [mcp-user-guide.md](mcp-user-guide.md) — installing the MCP bridge and the full tool list
 - [domains.md](domains.md) — what a domain is and why state lives inside one
 - [sync.md](sync.md) — how `state/` reaches your other machines
+- [spec/working-state-v1.md](spec/working-state-v1.md) — the PUBLIC on-disk format, for anyone
+  writing a reader or a writer that is not The Curator
 - [architecture.md](architecture.md) — where the store sits in the system

@@ -84,6 +84,32 @@ a curator-owned foundation on your laptop, edit the *same* one on your desktop b
 and you are in the ordinary conflicting-hunk case two paragraphs up — the loser's edit dropped with
 no warning. The advice does not change either: edit it, then sync soon after.
 
+#### Mirroring from GitHub, and the token that does *not* get reused (v3.63.0)
+
+A mirror can now be refreshed from the **repository** as well as from a checkout on this disk, so
+*"source not on this computer"* is no longer a permanent state on every machine but one. Two things
+about it belong in *this* guide rather than only in the technical one, because both are about a
+credential you created for something else.
+
+**Your Personal Sync token is not silently reused.** A refresh names **which file** its token comes
+from, and the default is a *different* one:
+
+| Where the token comes from | What you should know |
+|---|---|
+| **`githubReadToken` in `.curator-config.json`** — the default, and the recommended path | A second token, **fine-grained and read-only** (Contents: **Read**, nothing else), scoped to the repository you are mirroring. It can do nothing but read that one repository |
+| **Personal Sync's token** — only when explicitly asked for | It was granted for **sync**. If you created a **classic** token, that grants access to **every repository you own** (see the two-options table above), so using it to read a *different* repository spends a permission you granted for one purpose on another. That is why it is never the default and never happens without being named |
+
+**A refresh only ever reads.** The client the mirror uses can issue no HTTP verb but `GET` — there
+is no `PUT`, no `DELETE` and no path to one — so a mirror refresh cannot write to the repository it
+is mirroring, whatever token it is holding. The token itself is never written to a log, never put in
+a URL, and never included in an error message; when something goes wrong the message names **which
+file** the token came from, which is the part you can act on.
+
+**What it does not change.** Everything in the two sections above still holds: foundations have no
+machine segment, a mirror refreshed on two machines between syncs still converges to whichever saved
+last, and the repository is still the source of truth. The remote arm makes *"refresh from the
+source"* possible from any machine — it does not make two machines agree without one.
+
 Because `state/` syncs, an agent saving working state adds to your pending-changes count exactly like an ingest or a chat message does. If you see the Sync badge tick up between sessions with no ingest to explain it, a saved handoff is a normal cause, not a bug — see [`working-state.md`](working-state.md) for what's actually being written.
 
 ---

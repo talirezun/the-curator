@@ -223,7 +223,21 @@ The old frontend's blocking 4-step onboarding wizard — the one modal with no `
 
 ```
 the-curator/
+├── bin/
+│   └── curator.js              `my-curator` — the neutral command (v3.63.0). argv → a subcommand,
+│                               and nothing else; works with the app NOT running, no network, no
+│                               credential. ONE bin name, namespaced: `curator` belongs to Elastic's
+│                               elasticsearch-curator and is never linked. See the section below.
 ├── src/
+│   ├── cli/                    The command's subcommands (v3.63.0) — a SECOND LOCAL CLIENT of the
+│   │   │                       store, never an Express caller. src/routes/** imports neither this
+│   │   │                       directory nor bin/.
+│   │   ├── resolve.js          argv, output discipline, exit codes, the one project resolver
+│   │   ├── context.js          `my-curator context` — the bootstrap to stdout
+│   │   ├── save.js             `my-curator save` — a complete handoff from stdin
+│   │   ├── hook.js             `my-curator hook` — the capture policy and the per-harness envelopes
+│   │   ├── install-hooks.js    `my-curator install-hooks` — hook CONFIG only, never an instruction file
+│   │   └── doctor.js           `my-curator doctor` — prints, writes nothing, exits 0 always
 │   ├── server.js               Express entry point (port 3333 unless PORT is set — the desktop shell
 │   │                           sets a dynamic one; auto-opens the browser unless CURATOR_NO_OPEN=1)
 │   ├── routes/
@@ -240,6 +254,17 @@ the-curator/
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
+│   │   ├── mcp-clients.js      clientInfo.name → a canonical harness id, MANY-to-one, allow-listed
+│   │   │                       (v3.63.0). PURE DATA, imports nothing — it sits on the MCP child's
+│   │   │                       import graph. A LABEL for a report: nothing branches on it.
+│   │   ├── harness-adapters.js The per-harness table (v3.63.0) — 14 entries, each fact carrying its
+│   │   │                       own source + verified, hooks.state in four words, measured: null on
+│   │   │                       every row. Pure data + pure functions, no Node builtin, so a view
+│   │   │                       can import it.
+│   │   ├── github-read-client.js  READ-ONLY GitHub plumbing (v3.63.0), extracted from the Shared
+│   │   │                       Brain adapter so there is one implementation, not two. GET only; the
+│   │   │                       token is read from a FILE and never logged. MIT by ENTERPRISE-FILES'
+│   │   │                       own rule — it is not on that list.
 │   │   ├── install-mode.js     What this copy may do to its OWN code — getInstallMode() + a frozen
 │   │   │                       capability record. Imports isBundleInstall from paths.js; nothing
 │   │   │                       imports it back. Routes fork on a CAPABILITY, never on the mode (v3.26.0)
@@ -2019,7 +2044,8 @@ Usage log (v3.60.0, every tool call, read or write):
       <user-data>/.mcp-usage.jsonl — NOT under domains/, so it never syncs
       and is invisible to git, exactly like the credential files paths.js
       already keeps there. One JSONL line per call: tool name, domain slug
-      (or null), ok, refused, ms — never the arguments, never the result,
+      (or null), ok, refused, ms, and — since v3.63.0 — sid and (when the
+      call is about one) project. Never the arguments, never the result,
       never any text the model produced or was given. Rotates at 1 MB
       (renamed to .1, one previous file kept), so the log is bounded at
       roughly 2 MB regardless of how long the bridge has been in use.
@@ -2041,7 +2067,57 @@ Usage log (v3.60.0, every tool call, read or write):
       start and saved nobody's handoff, and those two readings are the one
       strip the memory layer exists for. Paying for the field cost eight
       characters of the tool-name bound (40 → 32; the longest real name is 24)
-      so the 200-byte line ceiling stays arithmetic rather than a measurement.
+      so the line ceiling stays arithmetic rather than a measurement.
+
+      v3.63.0 adds THREE more bounded fields and a SECOND KIND OF LINE, and
+      moves the ceiling MAX_LINE_BYTES 200 → 300 to pay for them — re-derived
+      field by field in the constant's own docblock, not measured. The three:
+        sid      12 hex, crypto.randomBytes(6), minted ONCE per bridge
+                 process at module load. A session IS one bridge process.
+                 Not a pid (the OS recycles them, and two processes sharing
+                 one inside a log generation would MERGE into one session
+                 that read and saved when in fact each did half — a wrong
+                 reading on the one strip this feeds); not a silence
+                 heuristic; not the harness's own session id, which only a
+                 hook can see.
+        project  the resolved project slug when the call carries one, ABSENT
+                 otherwise. A DELIBERATE WIDENING of a file the product calls
+                 content-free, from one user-chosen slug to two, taken
+                 because the meter's page is PER PROJECT and a silently
+                 aggregated figure there would be a false reading.
+        client   NOT on a tool line at all — it rides a once-per-process
+                 SESSION LINE, {ts, ev:'session', sid, client[, via]}, written
+                 lazily in the same appendFile as that process's first tool
+                 line. Keeping it off every tool line is what keeps the
+                 arithmetic tractable.
+      What must NOT be done to buy bytes back: narrowing DOMAIN_SLUG_RE (48)
+      or bounding project below the store's own 64. Either drops a REAL name
+      to null, and a meter that cannot name the project it is about is not a
+      meter. MAX_LINE_BYTES_LABEL exists so a view can DERIVE the user-visible
+      sentence instead of typing the number a second time.
+
+      summariseSessions(records, {project?, since?}) groups lines by sid into
+      {sessions[], totals}: sessions / sessionsRead / sessionsSaved /
+      sessionsReadNotSaved / legacyLines / selfTestLines. ONE aggregation,
+      THREE callers — GET /api/memory/:domain/:project/capture,
+      scripts/measure-harness.js and `my-curator doctor` — never three
+      implementations. A line with no sid is counted as LEGACY and never as a
+      session: inventing sessions out of lines that cannot be grouped is the
+      false reading the strip exists to avoid.
+
+src/brain/mcp-clients.js (v3.63.0) — PURE DATA, imports nothing, because it
+      sits on the MCP child's import graph where every added module is one
+      that could print to stdout. raw clientInfo.name → a canonical harness
+      id, MANY-to-one (Cline reports 'Cline' and '@cline/core'; Copilot CLI
+      moved 'github-copilot-developer' → 'copilot-cli' inside six months), a
+      miss writes 'other', and the caller's own string NEVER reaches disk.
+      readClientName(request, server) reads BOTH protocol eras, newest first:
+      the per-request _meta['io.modelcontextprotocol/clientInfo'] of spec
+      revision 2026-07-28 (which REMOVED the initialize handshake and says a
+      server SHOULD NOT branch on the value), then the SDK 1.29.0
+      getClientVersion() the self-test still exercises. NOTHING BRANCHES ON
+      IT — a suite greps mcp/** for a read outside the logger, with a planted
+      violation as a control.
 
 Exercising every tool (v3.61.0):
       src/brain/mcp-exercise.js — exerciseAllTools({domainsDir?, userDataDir?,
@@ -2081,6 +2157,139 @@ Exercising every tool (v3.61.0):
       idempotent, and byte-for-byte what a first real handoff would create.
 
 ---
+
+## The neutral command (`bin/curator.js`, `src/cli/**`) — v3.63.0
+
+A **second local client** of the same store, and the word *client* is the whole design. It is not
+the app and it is not a route: it runs as the user, is invoked by the user's own harness, reads and
+writes the same files through the same `src/brain` modules, and needs no running server, no network
+and no credential — the shape `mcp/server.js` already proves.
+
+```
+bin/curator.js          argv → a subcommand module, and nothing else.
+                        `--domains-path` is installed BEFORE any subcommand
+                        loads (setCliDomainsDir), exactly as mcp/server.js
+                        does it, so the read side and the write side can
+                        never resolve different trees. Subcommands are
+                        therefore DYNAMIC imports.
+src/cli/resolve.js      argv parsing, output discipline, exit codes, and the
+                        ONE project resolver: --project → the nearest
+                        .curator-project marker at or above cwd (≤ 64 levels)
+                        → the configured default domain's own project →
+                        REFUSE with candidates. It never creates a project
+                        and never guesses one. Also `my-curator resolve`.
+src/cli/context.js      the bootstrap to stdout. getProjectContext(), the
+                        same function get_project_context calls, with the
+                        same include / slugs / maxBytes options. --json emits
+                        the store's envelope VERBATIM; --for-hook emits that
+                        harness's session-start envelope and nothing else.
+src/cli/save.js         a complete handoff from stdin (or -f), in
+                        save_working_state's field shape, snake_case and
+                        camelCase both, DERIVED from STATE_SECTIONS rather
+                        than typed out. JSON and not markdown because the
+                        store has no read-side section parser, and writing
+                        one here would be a second grammar to keep in step.
+src/cli/hook.js         the CAPTURE POLICY, in one place. HARNESS_HOOKS maps
+                        a harness id to its events and its envelope; the stop
+                        ladder is five rungs of which four are refusals to
+                        intervene. An unknown --harness exits 0 and emits
+                        NOTHING: a harness this build does not know is a
+                        harness whose response shape we would be inventing.
+src/cli/install-hooks.js  writes hook CONFIGURATION and nothing else, into
+                        the file that harness reads, idempotently, merging
+                        and preserving foreign entries. Never an instruction
+                        file (CLAUDE.md / AGENTS.md / GEMINI.md / rules) —
+                        that paste stays the owner's; --print-instructions
+                        prints the snippet instead. Refuses a file it cannot
+                        parse, the buildFullConfigPayload precedent.
+src/cli/doctor.js       PRINTS, writes nothing, exits 0 ALWAYS — a doctor
+                        that fails is a doctor nobody runs.
+```
+
+**Three properties are load-bearing and are asserted rather than hoped for.**
+
+1. **No Express route calls it, and `src/routes/**` imports neither `bin/**` nor `src/cli/**`.** The
+   app stays read-only over tiers 2 and 3; a browser-reachable save would make it a second writer
+   with the wrong provenance. The command is the user's own hand, not the server's.
+2. **stdout is the product; everything else is stderr.** A harness *parses* stdout. Same rule as the
+   MCP's stdout discipline, for the same reason.
+3. **`process.exitCode`, never `process.exit()`.** On a pipe, stdout writes are asynchronous and
+   `process.exit()` discards everything past the pipe buffer — measured in this repository by
+   `skills/build.mjs`, which lost a model-read document past 64 KB to exactly that. A truncated
+   bootstrap is the same defect wearing a different hat.
+
+**Exit codes:** `0` fine · `1` the **store** refused (its own reason and message, verbatim) · `2` a
+usage error, an ambiguous project, **and** the `stop` hook's deliberate block.
+
+**A CLI read never touches the usage log.** A read here opens no bridge, so recording one would make
+the honesty meter count sessions that never existed — the instrument measuring itself.
+
+### `src/brain/harness-adapters.js` (v3.63.0)
+
+**Pure data plus pure functions**: it reads no file, spawns no process, writes nothing, and imports
+**no Node builtin at all**, so it is importable by a view exactly as `agent-instructions.js` is (the
+views are served as raw ESM with no bundler, and one `import … from 'node:path'` here would take the
+page down — which is also why its path helpers join with `/` and are untested on Windows).
+
+Fourteen entries, one per harness. Each fact block (`mcpConfig`, `instructionFile`, `hooks`,
+`skillsTree`, `clientInfo`) carries its own `source` and `verified`, and `verified` is **false** for
+`community` and `unverified` — a community report is not a measurement. **`hooks.state` is four
+words, not a boolean**, because the research found four genuinely different situations and
+collapsing any two would make the table lie in the user's favour: `verified`, `unverified`,
+`present-useless` (OpenCode and Kilo take TypeScript plugins, not shell commands; Windsurf has twelve
+hooks and not one of them is a stop, session-end or pre-compaction hook) and `none`.
+
+**`measured` is `null` on every entry in this release, and that is the point.** The protocol in
+`scripts/measure-harness.js` has not been run, so nothing here may imply reach; a harness with no
+measurement row renders as **not measured** everywhere it appears.
+
+It never composes the bridge's launch line — `mcpEntryFor(id, launch)` takes `{command, args}` from
+`buildCuratorEntry()`, **the** one launch line — and it never hand-writes prose a model reads:
+`instructionSnippetFor()` derives its text from `composeAgentInstructionsFull()`. The only strings it
+authors are addressed to a human.
+
+**Two tables it has to agree with, and the duplication is made non-silent rather than tolerated.**
+`src/cli/doctor.js` carries harness config **paths** and `src/cli/hook.js` carries the **envelopes**;
+`scripts/test-harness-adapters.js` requires set equality with the first and an envelope-class match
+with the second, so a drift reds the suite.
+
+### `src/brain/github-read-client.js` (v3.63.0)
+
+The HTTP plumbing tier 0's remote mirror needs, **extracted from
+`src/brain/sharedbrain-github-adapter.js` rather than written again** — headers and token redaction,
+per-segment path encoding, the rate-limit reading, base64 decoding, the API host, the version string.
+The adapter now **delegates**: one implementation of each, not two, and
+`test-sharedbrain-github-offline.js` stays green with no edits, which was the acceptance criterion.
+
+- **`GET`, and only `GET`.** No `PUT`, no `POST`, no `DELETE`, and no way to reach one.
+- **The token is read from a FILE**, never from a caller's argument, and never leaves the module: not
+  in a URL, not in a log, not in a thrown error. Errors name the token's **source** so a person can
+  fix the right file.
+- **A truncated recursive tree throws**, before a byte is fetched.
+
+It is reached from `working-state.js` through a **dynamic import**, because
+`scripts/test-tray-summary.js` walks that module's static import graph to prove the menubar widget
+can reach no subprocess and no fetch site.
+
+**Licensing, stated rather than assumed.** The code was extracted from an ENTERPRISE-licensed file,
+and this one is **not** on `LICENSES/ENTERPRISE-FILES.txt` — so by that document's own rule it is
+MIT. That is deliberate and is why the seam is drawn where it is: nothing in it is Shared Brain
+logic, and putting it on the enterprise list instead would make `working-state.js` — the core of the
+app — depend on an enterprise-licensed module. The opposite call is the maintainer's, and is one line
+in that file plus an import audit.
+
+### `scripts/measure-harness.js` (v3.63.0)
+
+Read-only. It reads the usage log (or `--log <path>`) and prints **one matrix row per
+`(harness, arm)`** from the sids in a window, using the **same** `summariseSessions` the capture
+route uses — one aggregation, two callers. Its header comment **is** the operator protocol: arms
+A/B/C, N=4 per arm, one fixed task that never mentions saving, a throwaway fixture pinned with both
+`CURATOR_TEST_DOMAINS_DIR` and `--domains-path`, and what a row may and may not claim.
+
+The verdict vocabulary is four words, computed against `--min-sessions` (default **4**):
+`not-measured` (no sessions — **silence, not a verdict of failure**), `measured-no`,
+`measured-partial`, `measured-yes`. It never fails on what it finds: a script that reports must not
+break a caller's chain.
 
 ## Module reference
 
