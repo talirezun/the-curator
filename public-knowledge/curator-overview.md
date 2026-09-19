@@ -98,7 +98,7 @@ Four things, all of them packaging rather than capability:
 - The downloadable application bundle and the Dock launcher.
 - Self-update: the app downloads a new version, verifies it against the sha256 that GitHub publishes on the asset, and swaps it in. On other platforms you update the checkout yourself.
 - The native folder picker for choosing where your knowledge lives.
-- The menu bar icon, which shows what your agents have just saved without opening the app. It is off by default, because a fresh install has no agent memory and would have nothing to show.
+- The menu bar icon, which shows what your agents have just saved without opening the app. It is off by default, because a fresh install has no saved working state and would have nothing to show.
 
 ## Which AI providers does it work with?
 
@@ -152,7 +152,7 @@ It is still an **opt-in beta.** General availability is gated on a structured pi
 
 ## Can it remember what my AI agent was working on?
 
-Yes — that is the third layer, called working state or agent memory. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
+Yes — that is the third layer, called working state, shown on the Project context screen. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
 
 There is a dedicated file in this knowledge base covering how it is structured, what belongs in it, how it is set up and what it measurably does.
 

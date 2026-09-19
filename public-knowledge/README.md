@@ -29,7 +29,7 @@ on every answer, so a fact repeated in two files is a fact paid for twice.
 |---|---|
 | `curator-overview.md` | What The Curator is, who it is for, what it costs, licensing, security posture, and the limits — what it does *not* do |
 | `curator-user-guide.md` | Installing it, and using every screen: ingest, chat, domains, wiki, Health, sync, settings, Obsidian, troubleshooting |
-| `curator-agent-memory.md` | Working state — projects, standing briefs, the MCP memory tools, the skills, activation, Copy agent instructions, the menu bar icon |
+| `curator-agent-memory.md` | Project context — foundations and the reading plan, working state, projects, standing briefs, the MCP memory tools, the skills, activation, Copy agent instructions, the menu bar icon. **The FILENAME deliberately did not follow v3.62.0's rename**: the set is uploaded by filename, its budget is keyed on that name below, and renaming would break the upload identity for nothing |
 | `curator-links.md` | Navigation only. No facts: it says which page in the GitHub docs answers a question, and gives the URL |
 
 When a fact straddles two files, the owning file states it and the other file

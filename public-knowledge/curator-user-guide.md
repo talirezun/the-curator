@@ -195,7 +195,7 @@ At the top of the rail, the mark is a button: it takes you **Home**, which is **
 | Domains | Domains | Your knowledge one domain at a time — counts, the page list, Projects, Wiki health. This is Home. |
 | *a dividing line* | | Everything below it is the advanced half. |
 | Shared Brain | Shared | Collective wikis you contribute to with a cohort or team. Off by default. |
-| Agent memory | Memory | Working state your agents read and write over the MCP bridge. |
+| Project context | Context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over the MCP bridge. Called Agent memory before v3.62.0. |
 
 At the bottom of the rail, separated by a gap: the sun/moon **theme toggle**, **Sync**, and **Settings**.
 
@@ -225,7 +225,7 @@ At the top: the folder path in monospace, the display name with an information m
 |---|---|
 | **OVERVIEW** | Five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. |
 | **PAGES · THE WIKI** | The page list, open, with a **Filter by name…** box and facet tabs: **All**, **Entities**, **Concepts**, **Summaries** and **Memory**. |
-| **PROJECTS IN THIS DOMAIN** | The projects built with this knowledge. Covered in the agent memory material, not here. |
+| **PROJECTS IN THIS DOMAIN** | The projects built with this knowledge. Covered in the project context material, not here. |
 | **WIKI HEALTH** | The health panel. See below. |
 
 The list loads with the domain, so there is nothing to press. On a large domain the first 150 matching rows are painted, with **"Showing 150 of 3,410"** under the list and a **Show 150 more** row. Press it and the next 150 are added to what is already there; the last press offers only the remainder, and when everything matching is on screen the row and the count both disappear. Typing in the filter, or switching facet, starts the window fresh at 150.

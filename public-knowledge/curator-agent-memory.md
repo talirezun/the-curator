@@ -1,8 +1,10 @@
-# The Curator — agent memory (working state)
+# The Curator — project context (working state and foundations)
 
-## What is agent memory?
+## What is project context?
 
-Agent memory, also called working state, is the third layer of The Curator. Layers 1 and 2 are your sources and the wiki built from them. Layer 3 is the context your agent leaves behind at the end of a session so the next session picks the work up instead of starting cold.
+Project context is everything one project gives an agent. The screen that shows it was called Agent memory until v3.62.0, and the older name still describes half of it: the working state an agent leaves behind at the end of a session so the next session picks the work up instead of starting cold. The other half is the project's foundations — the canonical documents it is built against.
+
+Layers 1 and 2 of The Curator are your sources and the wiki built from them. Layer 3 is this.
 
 It is a small, deliberate store held as plain markdown inside a domain, at `domains/<domain>/state/`. It syncs to your private GitHub repository with the rest of your knowledge and opens in Obsidian or any text editor like any other file.
 
@@ -90,7 +92,7 @@ Freshness is **computed, never remembered**: there is no stored flag, only a sha
 
 Each document is capped at 512 KB and is refused above it, because a canonical document cannot be honestly trimmed. A project's foundations are capped at 200 KB in total, and an over-budget save there is accepted and disclosed rather than refused — the same rule a handoff follows, since a rejected save loses the document outright.
 
-In the app, Foundations is the fifth block on the Agent memory screen, between Standing brief and Session journal, closed by default. Each row shows the document's role, title, size, source and freshness; pressing a row opens it in the reader.
+In the app, Foundations is step 1 on the Project context screen, closed by default. Each row shows the document's role, title, size, whether it is marked read first, its source and its freshness; pressing a row opens it in the reader.
 
 ## How do I start a project, and where do its foundations come from?
 
@@ -114,11 +116,41 @@ This does not add a second writer to a document the way it might sound: one owne
 
 ## How does an agent start a session with all of this?
 
-One call. `get_project_context` returns the standing brief, the latest handoff, and the foundations the caller has not already seen, in one response — so a cold session on any machine and in any tool has what it needs without a second round trip.
+One call. `get_project_context` returns the standing brief, the latest handoff, and the project's foundations, in one response — so a cold session on any machine and in any tool has what it needs without a second round trip.
 
-The first session gets every foundation, in the manifest's reading order, up to a budget. A returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what has changed since. A document nothing has touched is not re-sent.
+What it sends of the foundations is the part you control, since v3.62.0. The **index** of every document — title, role, size, freshness — always comes back, every call, and nothing suppresses it. The **text** comes back for the documents you marked **read first**. Everything else is an index row until the agent asks for it by name, with a `slugs` argument on the same call, and then it comes back whole.
+
+An index row with no text means a document waiting to be asked for. It never means a document that does not exist, and the tool says so in as many words, because an agent that reported "this project has no decision log" while `decisions.md` sat in the index would have told you something false about your own project.
+
+If you have marked nothing, the older behaviour is unchanged: a first session gets every document up to a budget, and a returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what changed since.
 
 Reads never write. The bootstrap does not mark anything as seen on your behalf; the agent records what it read on its next save. A session that reads a document and then crashes has recorded nothing, so the next start correctly treats that document as unseen.
+
+## How do I choose which documents an agent gets automatically?
+
+Mark them **read first**, from the row's own control in step 1 of the Project context screen.
+
+A project with four documents can hand an agent all four at the start of every session. A project with twenty cannot — the session then opens with twenty documents most of which have nothing to do with the work in front of it, and the reading budget starts dropping documents nobody chose to drop. Marking is how you choose instead.
+
+Mark sparingly. The marked set is the one that is sent every session, so it is the one that costs; two or three documents is a reading plan, twelve is the old behaviour with extra steps. The block's summary line counts both — "2 read first · 4 on request" — and tells you when the marked set has grown past what one session's reading can carry.
+
+Marking works on a mirrored document too. The mark lives in The Curator's own index rather than in the document, so the file in your checkout is untouched, a refresh still compares the two byte for byte, and the mark survives that refresh: the repository owns the text, you own the reading order.
+
+You can also ask an agent to set it, through `save_foundation`'s optional `read_first`. Leaving it out is the safe default and the intended one — an ordinary save then keeps whatever you chose.
+
+## How do I tell an agent which document to open for which kind of work?
+
+Write it in your standing brief, under **"Read before you…"** — a heading the brief template now offers.
+
+A flag answers whether a document is required reading. It cannot answer which document suits which kind of work, because that is a sentence rather than a checkbox, and it is yours to write:
+
+    ## Read before you…
+
+    - …change how anything is built: architecture.md
+    - …re-open a settled question: decisions.md
+    - …write or review code: conventions.md
+
+An agent is told to consult that section and open what it names. Where it is empty, the documents' own roles — architecture, decisions, conventions, roadmap, api, guide — are the next best signal.
 
 ## What is a project, and how is it different from a domain?
 
@@ -130,7 +162,7 @@ Projects are created, renamed, deleted and given a brief in the app, under Domai
 
 A project name is one path segment: lowercase letters, digits, dot, hyphen and underscore, at most 64 characters. A name that would make one folder mean two things is refused rather than resolved.
 
-A domain that had agent memory before projects existed shows one project named after the domain. Nothing was moved to produce that, and nothing migrates.
+A domain that had working state before projects existed shows one project named after the domain. Nothing was moved to produce that, and nothing migrates.
 
 ## How does an agent know which project to resume?
 
@@ -296,7 +328,7 @@ What the measurement does not show:
 
 ## What is "Copy agent instructions", and what does it give me?
 
-It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the header of the **Agent memory** screen. It puts a short block on your clipboard with your domain and project already filled in. A banner then names where to paste it.
+It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the header of the **Project context** screen. It puts a short block on your clipboard with your domain and project already filled in. A banner then names where to paste it.
 
 This is the composed block. `<domain>` and `<project>` stand where your own names appear; the project name is substituted at three points and the `domain/project` pair at one.
 
@@ -402,13 +434,15 @@ The standing brief is the one file two machines can genuinely conflict on, becau
 
 ## Where do I see this inside the app?
 
-The **Memory** item on the rail opens **Agent memory**, a browser for the working state your agents leave for each other.
+The **Context** item on the rail opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under a three-cell strip, read top to bottom, in the order a session start reads them: step 1 **Foundations**, step 2 **Working state**, step 3 **Knowledge**.
 
 - **The sidebar lists your projects, grouped by domain**, each with its work-stream count and how long ago it was last written to. A project with a brief but no save yet is listed, dimmed, reading "no state saved yet", because that is a real answer rather than a broken row. The screen opens on whichever project was written to most recently and remembers the last project you looked at in each domain.
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
-- **A save-status card** answers the question people actually arrive with: is this saved, and is it any good? One line on a healthy day — a dot, "Last saved", an age, the work-stream and the harness. Under it, only when each has something to say, up to five qualifying lines.
-- **Work-stream and Machine selectors** appear when there is more than one of either.
-- **The standing brief, the foundations and the journal** sit behind collapsed sections — the brief because it rarely changes, the foundations because they change on the order of releases, the journal because it is history rather than state. All three start closed and remember whether you left them open. The brief's row carries a pencil button that opens its editor.
+- **A three-cell strip** answers the question people actually arrive with: where does this project stand? One reading per layer — the canonical documents, the working state, the knowledge — each with a freshness dot and the word beside it, because colour never carries a reading on its own. An unknown age is drawn as a dashed ring and the words, never as age zero.
+- **Step 1, Foundations** holds the canonical documents, or — before ownership is chosen — the question that chooses it.
+- **Step 2, Working state** holds three collapsed folds in ownership order: the standing brief (yours, with a pencil), the work-streams (your agents'; press a row to read that handoff in the reader), and the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds.
+- **Step 3, Knowledge** holds five wiki figures and two doors: Open in Domains, and Ask this domain.
+- **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
 
 The qualifying lines on the save-status card:
 
@@ -506,7 +540,7 @@ Reads are capped at the source, so a hand-edited or synced oversized file cannot
 
 ## Something is wrong — what do I check?
 
-**The Agent memory screen is empty.** Nothing has saved yet. Install the `curator-continuity` skill, and paste the block from **Copy agent instructions** into the file your tool loads every session. That is the write half, and it is not code.
+**The Project context screen is empty.** Nothing has saved yet. Install the `curator-continuity` skill, and paste the block from **Copy agent instructions** into the file your tool loads every session. That is the write half, and it is not code.
 
 **My agent says it is going to save and then nothing appears.** Check that the MCP bridge is connected — Settings, MCP bridge, Run self-test. In one measured run the agent said it would save, failed to issue the call, and tried a shell workaround instead.
 

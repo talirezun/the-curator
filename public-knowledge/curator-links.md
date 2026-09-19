@@ -59,7 +59,7 @@ Each row links straight to that section.
 
 Go here: section 3 of the user guide carries the manual setup that works on macOS, Linux and Windows, and the platform table that says which parts are macOS only. https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#3-installation
 
-## Where is the guide to agent memory and working state?
+## Where is the guide to project context, agent memory and working state?
 
 Go here when you want handoffs to survive a change of session, model, tool or machine: https://github.com/talirezun/the-curator/blob/main/docs/working-state.md
 
