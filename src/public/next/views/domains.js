@@ -2381,10 +2381,38 @@ function selectDomain(slug) {
  * a brief into these four. Saying so here is what stops the template reading
  * as a schema.
  */
+// ── "Read before you…" (v3.62.0) ───────────────────────────────
+//
+// Tier 0 can now be ROUTED: a foundation flagged `readFirst` is handed to
+// every session, and everything else rides as an index the agent opens BY
+// NAME. What the flag cannot express is WHICH document for WHICH KIND OF
+// WORK — that is a sentence, not a boolean, and it belongs to the owner.
+// This heading is where it goes, and the agent-instructions block tells an
+// agent to consult it.
+//
+// THIS IS A SECOND COPY, and it is a knowingly imperfect one. The store has
+// its own `briefTemplate(project)` (src/brain/working-state.js) used by the
+// MCP path; this array is the one the create FORM seeds, and the two have
+// never been byte-equal — the store's headings carry italic prompts and a
+// `# <project>` title this form does not want, because the form's field is
+// edited in a textarea next to a name the user has just typed. Folding them
+// into one is a real piece of work and it is not this release's; what IS
+// this release's is that the heading a new project needs in order to use the
+// reading plan is present in BOTH, so an owner who starts from either sees
+// the place to write the routing table down.
 const PROJECT_BRIEF_TEMPLATE = [
   '## Standing brief',
   '',
   'What this project is, and what "done" looks like.',
+  '',
+  '## Read before you…',
+  '',
+  'Which canonical document to open for which kind of work. Foundations marked',
+  '"read first" arrive with every session; name the rest here and an agent opens',
+  'them by name.',
+  '',
+  '- …change how anything is built: architecture.md',
+  '- …re-open a settled question: decisions.md',
   '',
   '## Firm decisions — do not re-litigate',
   '',
@@ -2398,7 +2426,7 @@ const PROJECT_BRIEF_TEMPLATE = [
   '',
   '- ',
   '',
-  '<!-- Add any headings you like — these four are a starting point, not a schema. -->',
+  '<!-- Add any headings you like — these five are a starting point, not a schema. -->',
   '',
 ].join('\n');
 

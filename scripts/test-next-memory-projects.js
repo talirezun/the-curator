@@ -514,6 +514,12 @@ const EXPECTED = [
   // load-bearing is that all of them still precede the one-segment alias.
   ['get', '/:domain/:project/foundations/:slug'],
   ['put', '/:domain/:project/foundations/:slug'],
+  // v3.62.0. THE READING PLAN, and the only route in this file that writes on
+  // BOTH ownerships by design: `readFirst` is curator metadata ABOUT a
+  // document, so it lands in the manifest and never in a mirrored file. It is
+  // the only PATCH on four segments, so its position here is readability
+  // rather than correctness.
+  ['patch', '/:domain/:project/foundations/:slug'],
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
@@ -2445,7 +2451,7 @@ const REPO = join(TMP, 'repo');
   // pattern can match a four-segment path, so the collision cannot reach here.
   {
     const four = ROUTES.filter((r) => r.path.split('/').filter(Boolean).length === 4).map((r) => r.path);
-    ok('every foundations route is four segments deep', four.length === 5, JSON.stringify(four));
+    ok('every foundations route is four segments deep', four.length === 6, JSON.stringify(four));
     const twoGet = ROUTES.filter((r) => r.method === 'get'
       && r.path.split('/').filter(Boolean).length === 2).map((r) => r.path);
     eq('...while the colliding literal is a TWO-segment pattern',

@@ -605,9 +605,30 @@ section('S5 -- The lifecycle card, and the typed delete confirmation');
   const create = renderProjectLifecycleCard();
   ok('CREATE offers a name and a brief', create.includes('dm-proj-name') && create.includes('dm-proj-brief'));
   ok('...seeded with the starting template', create.includes('Firm decisions'));
-  ok('...whose four headings are the ones the store renders',
+  ok('...whose headings are the ones the store renders',
     ['## Standing brief', '## Firm decisions', '## Working model', '## Pointers to depth']
       .every((h) => PROJECT_BRIEF_TEMPLATE.includes(h)), PROJECT_BRIEF_TEMPLATE);
+  // ── THE ROUTING TABLE (v3.62.0) ──────────────────────────────
+  // `readFirst` decides WHICH documents every session is handed; it cannot
+  // say WHICH document for WHICH KIND OF WORK, because that is a sentence and
+  // it is the owner's. This heading is where the owner writes it, and the
+  // agent-instructions block tells an agent to consult it — so a brief
+  // template without it is a project whose reading plan has nowhere to live.
+  //
+  // THE STORE HAS ITS OWN COPY of this template (briefTemplate, in
+  // src/brain/working-state.js) and the two are NOT byte-equal and never have
+  // been: the store's carries a `# <project>` title and italic prompts this
+  // form does not want beside a name the user has just typed. What must not
+  // differ is whether the HEADING is there at all, so this asserts it in both.
+  ok('...including the "Read before you…" routing table',
+    PROJECT_BRIEF_TEMPLATE.includes('## Read before you'), PROJECT_BRIEF_TEMPLATE);
+  {
+    const storeSrc = readFileSync(join(ROOT, 'src/brain/working-state.js'), 'utf8');
+    ok('...which the STORE’s own template carries too, so a brief seeded from '
+      + 'either place has somewhere to put the routing table',
+    /'## Read before you/.test(storeSrc),
+    'src/brain/working-state.js');
+  }
   ok('...and which says out loud that more headings are fine',
     /not a schema/i.test(PROJECT_BRIEF_TEMPLATE), PROJECT_BRIEF_TEMPLATE);
   ok('...and says the brief is optional', /optional/i.test(create));
