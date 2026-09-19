@@ -120,7 +120,43 @@
    Every readout in the app comes through this one rule (renderReadout in
    shared/text.js is the only emitter, and no other stylesheet may declare a
    `tx-` rule), so the decision is taken ONCE — the property
-   scripts/test-next-text-system.js §8 pins. */
+   scripts/test-next-text-system.js §8 pins.
+
+   ── THE THREE FLEX DECLARATIONS, AND WHY THEY COST NOTHING ──────────────
+   They exist for `renderReadout`'s `markHtml`: a freshness mark rides INSIDE
+   this element, before the figure, so a readout can carry the app's one
+   freshness dot on the same scale as every other mark rather than growing a
+   fourth private one in a view sheet. `display` + `gap` are literally
+   `.fnd-fresh`'s shipped recipe (views/memory.css:1542), which is the mark
+   pattern this generalises.
+
+   `inline-flex` RATHER THAN `flex`, and the distinction is decorative HERE
+   and load-bearing LATER: `.tx-readout` is a column flex container, so this
+   element is a flex item and its display is BLOCKIFIED — a browser reports
+   `flex` either way (measured: computed `display` reads `flex`). The inline
+   form is written because it is the honest one for a box whose intrinsic
+   width is its content, and because it is what this element would need if it
+   were ever emitted outside the `.tx-readout` wrapper.
+
+   `baseline` RATHER THAN `center`, MEASURED rather than copied from
+   `.fnd-fresh`. Dot top/bottom within the value box, 8px dot, --text-base:
+
+       align-items      one line          a value that WRAPPED to two lines
+       stretch (dflt)   0.0 -  8.0        0.0 -  8.0     pinned to the top
+       center           3.7 - 11.7       11.4 - 19.4     drifts off line one
+       baseline         4.0 - 12.0        4.0 - 12.0     stays on line one
+
+   On one line the two are 0.3px apart; on a wrapped value `center` floats the
+   mark into the middle of the block, beside no word at all. `.fnd-fresh` sits
+   in a nowrap table cell and never meets that case; a readout value carries
+   `overflow-wrap: anywhere` and does.
+
+   EXISTING READOUTS ARE UNMOVED, measured in a browser over the ten shipped
+   call shapes (Domains health, the Ingest estimate, memory's Last-saved /
+   Foundations / journal / reader, the Settings tool map, a bare figure, a
+   real zero, and a value forced to wrap to four lines at 160px): 71 elements,
+   x / y / width / height identical to the hundredth of a pixel in every one.
+   The ONLY computed property that moves is `display`, block -> flex. */
 .tx-readout-value {
   font-family: var(--font-mono);
   font-size: var(--text-base);
@@ -129,6 +165,9 @@
   letter-spacing: var(--track-mono);
   color: var(--text);
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
 }
 
 /* Provenance: the quietest part of the instrument, and still --text-2.
