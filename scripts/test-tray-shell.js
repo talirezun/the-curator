@@ -348,7 +348,7 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   }
   eq(model.buildTrayModel(null, { now: NOW }).empty, true, 'and garbage produces the EMPTY state');
   eq(model.buildTrayModel({ ok: false, scopes: [] }, { now: NOW }).headline.text,
-    'Agent memory could not be read',
+    'Project context could not be read',
     'a FAILED READ is a different sentence from "nothing has been saved"');
 
   // Headlines are clipped visibly, and newlines never reach a menu label.
@@ -531,7 +531,7 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
     'an unrelated coded warning is passed through unchanged');
 
   // Bare strings still work — main.js pushes them on its own failure paths.
-  const bare = model.buildTrayModel({ ok: false, scopes: [], warnings: ['Could not read agent memory: EACCES'] },
+  const bare = model.buildTrayModel({ ok: false, scopes: [], warnings: ['Could not read project context: EACCES'] },
     { now: NOW });
   ok(bare.notices.some((n) => (n.full || n.text).includes('EACCES')),
     'a bare STRING warning still renders — main.js emits those and they carry no code');
@@ -1770,7 +1770,7 @@ section('§17 sections, the two pictures, and the items that are now reachable')
     if (item && typeof item.click === 'function') item.click();
   }
   eq(clicks, ['memory', 'memory'],
-    'both land on Agent Memory — the same destination as the headline, which is where the saves this strip counts are actually listed');
+    'both land on Project Context — the same destination as the headline, which is where the saves this strip counts are actually listed');
   ok(pulseItem.toolTip && pulseItem.toolTip.length > 20, 'the full reading, including everything the label budget dropped, is on its tooltip');
   // ── THE READING IS NEVER THE THING THAT DOES NOT FIT ─────────────────
   //

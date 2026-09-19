@@ -60,7 +60,7 @@ import { functionSource } from './test-helpers/source-scan.js';
 import {
   composeAgentInstructions, COPY_SUCCESS_BANNER, HEADING, TEMPLATE,
   composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS, TEMPLATE_SEED,
-  TEMPLATE_DRAFT_ASK, composeDraftingAsk,
+  TEMPLATE_DRAFT_ASK, composeDraftingAsk, TEMPLATE_READ_FIRST,
 } from '../src/public/next/shared/agent-instructions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -903,10 +903,14 @@ section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way
   // exactly one blank line, never merged, never reversed.
   const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
   const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
-  eq('composeAgentInstructionsFull is the ORIGINAL block, then TEMPLATE_FOUNDATIONS, ' +
-    'then TEMPLATE_SEED, joined by single blank lines -- the exact v3.61.0 composition',
-    full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED);
-  ok('...ending with the seed paragraph', full.endsWith(TEMPLATE_SEED));
+  // v3.62.0 (package S): a FOURTH paragraph, TEMPLATE_READ_FIRST, now follows
+  // this one -- see section S10, which re-pins the whole composition against
+  // the v3.62.0 shape. What is kept here, unaltered in what it checks, is the
+  // v3.61.0-era proof that TEMPLATE_SEED sits directly after
+  // TEMPLATE_FOUNDATIONS with exactly one blank line and nothing merged.
+  ok('composeAgentInstructionsFull is the ORIGINAL block, then TEMPLATE_FOUNDATIONS, ' +
+    'then TEMPLATE_SEED, in that order, joined by single blank lines',
+    full.startsWith(original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED));
   ok('...and TEMPLATE_SEED does not itself end with a second trailing blank line',
     !TEMPLATE_SEED.endsWith('\n\n'));
 
@@ -1068,8 +1072,14 @@ section('S9 -- v3.61.0: the drafting request -- composed, not appended, never du
     createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
   eq('S8\'s pin still bites: TEMPLATE_SEED still hashes to 6c82b635...',
     createHash('sha256').update(TEMPLATE_SEED, 'utf8').digest('hex'), SEED_SHA256);
-  eq('...and composeAgentInstructionsFull is still exactly the three-paragraph v3.61.0 shape',
-    full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED);
+  // v3.62.0 (package S): a FOURTH paragraph, TEMPLATE_READ_FIRST, is composed
+  // after TEMPLATE_SEED, so the equality this line used to assert now lives in
+  // S10, where it is pinned against the v3.62.0 shape. What S9 is ABOUT is
+  // that the drafting ask is not in the block at all, and that the standing
+  // paragraphs keep their order -- so that is what is checked here, unchanged
+  // in meaning: the first three still open the block in the same order.
+  ok('...and composeAgentInstructionsFull still OPENS with the three standing paragraphs in order',
+    full.startsWith(original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED));
 
   // ONE TEXT. Extends S6's scan (same mechanism, same reason) to this
   // constant's distinguishing sentences: nothing yet imports
@@ -1080,6 +1090,105 @@ section('S9 -- v3.61.0: the drafting request -- composed, not appended, never du
       !src.includes('Draft the unfilled foundations of the Curator project'));
     ok(name + ' does not carry a second copy of its approval-gate sentence',
       !src.includes('save_foundation and commissioned_by_owner'));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('S10 -- v3.62.0: the read-first addendum, a FOURTH paragraph pinned the same way');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// v3.62.0 gives the owner a per-document `readFirst` flag: the marked
+// documents arrive with their text every session and everything else arrives
+// as an INDEX, opened by name with `get_project_context({slugs})`. An agent
+// with no instruction about that reads an index row carrying no text as an
+// ABSENCE -- "this project has no decision log" -- which is a worse failure
+// than the one v3.59.0's paragraph closed, because it looks like knowledge.
+// TEMPLATE_READ_FIRST is the sentence that closes it.
+//
+// Like the two addenda before it, it is new prose rather than a measured
+// artefact, and it still gets S1's exact discipline: a hand-written literal
+// AND an independent sha256. And because a FOURTH frozen constant is only
+// worth having if the first three are still frozen, this section re-asserts
+// all three of their pinned facts.
+
+{
+  // A second, hand-written copy -- same reasoning as MEASURED_EXP_WIDGET,
+  // HAND_WRITTEN_FOUNDATIONS and HAND_WRITTEN_SEED above: deriving the
+  // expectation from TEMPLATE_READ_FIRST would make this a tautology that
+  // passes for any text, including an edited one.
+  const HAND_WRITTEN_READ_FIRST =
+    'Foundations marked "read first" arrive with their text; the rest arrive as an index.\n' +
+    'Open any of them by name with `get_project_context` and `slugs` when the work calls\n' +
+    'for it — the brief\'s "Read before you…" section says which. An index entry with no\n' +
+    'text is a document waiting to be asked for, not one that is missing.\n';
+  const READ_FIRST_SHA256 =
+    '907c7d9abc879d31c9e1e32d42d8d1a8d432ec8d355677653e7fc8ba3314020d';
+
+  eq('TEMPLATE_READ_FIRST matches the hand-written second copy',
+    TEMPLATE_READ_FIRST, HAND_WRITTEN_READ_FIRST);
+  eq('...and hashes to the pinned sha256',
+    createHash('sha256').update(TEMPLATE_READ_FIRST, 'utf8').digest('hex'), READ_FIRST_SHA256);
+  ok('...at most 60 words (harness-neutral addendum, not a second playbook)',
+    TEMPLATE_READ_FIRST.trim().split(/\s+/).length <= 60,
+    TEMPLATE_READ_FIRST.trim().split(/\s+/).length + ' words');
+
+  // The three things the addendum exists to carry: the tool, the argument
+  // that fetches by name, and the brief section that says WHICH document.
+  for (const phrase of ['get_project_context', '`slugs`', 'Read before you']) {
+    ok('the read-first addendum names ' + JSON.stringify(phrase),
+      TEMPLATE_READ_FIRST.includes(phrase));
+  }
+  // The misreading it exists to prevent, stated in as many words.
+  ok('...and says an index entry with no text is not a missing document',
+    /not one that is missing/.test(TEMPLATE_READ_FIRST));
+
+  // CONTROL -- a one-word change to the NEW paragraph must fail its own pin.
+  const nudgedRf = TEMPLATE_READ_FIRST.replace('index', 'list');
+  ok('CONTROL -- a one-word change to the read-first paragraph fails the literal',
+    nudgedRf !== HAND_WRITTEN_READ_FIRST);
+  ok('CONTROL -- ...and the hash',
+    createHash('sha256').update(nudgedRf, 'utf8').digest('hex') !== READ_FIRST_SHA256);
+
+  // THE WHOLE COMPOSITION, as of v3.62.0: original block, TEMPLATE_FOUNDATIONS,
+  // TEMPLATE_SEED, TEMPLATE_READ_FIRST -- in that order, each joined by exactly
+  // one blank line, never merged, never reordered.
+  const full = composeAgentInstructionsFull({ domain: 'exp', project: 'widget' });
+  const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
+  eq('composeAgentInstructionsFull is the ORIGINAL block, then TEMPLATE_FOUNDATIONS, ' +
+    'then TEMPLATE_SEED, then TEMPLATE_READ_FIRST -- the exact v3.62.0 composition',
+    full, original + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED + '\n' + TEMPLATE_READ_FIRST);
+  ok('...ending with the read-first paragraph', full.endsWith(TEMPLATE_READ_FIRST));
+  ok('...and TEMPLATE_READ_FIRST does not itself end with a second trailing blank line',
+    !TEMPLATE_READ_FIRST.endsWith('\n\n'));
+  // The ONE-OFF drafting ask is still NOT part of the standing block (S9's
+  // rule): a "draft these now" imperative in a file re-read every session is
+  // a standing instruction to keep re-drafting. Re-asserted here because this
+  // section is the one that changes the composition.
+  ok('...and the drafting ask is STILL not part of it',
+    !full.includes('Draft the unfilled foundations'));
+
+  // The pins this section exists to protect: all three earlier constants must
+  // still hold, proving a fourth constant disturbed none of them.
+  const ORIGINAL_SHA256 =
+    '85dc8f9738e783e3c909133fd899c84978aa48b7c4e2c9ab922d927305244f5b';
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 501 bytes',
+    Buffer.byteLength(original, 'utf8'), 501);
+  eq('...and still hashes to 85dc8f97...',
+    createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
+  eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 0c522294...',
+    createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'),
+    '0c522294f0926af45d2db6afba4a3fea5f2b4769385afaa03d9aa03a7579c22b');
+  eq('S8\'s pin still bites: TEMPLATE_SEED still hashes to 6c82b635...',
+    createHash('sha256').update(TEMPLATE_SEED, 'utf8').digest('hex'),
+    '6c82b6351783f335f9a6edf5d5e9e8e2aeed5977a273f2efdd221c899bdcbcf6');
+
+  // ONE TEXT (S6's rule, extended): neither view may carry a second copy of
+  // this paragraph's distinguishing sentence. Two copies of a MODEL-READ
+  // instruction do not merely disagree -- they instruct two agents to behave
+  // differently, which is this repository's most reliably recurring defect.
+  for (const [name, src] of [['domains.js', DOMAINS_SRC], ['memory.js', MEMORY_SRC]]) {
+    ok(name + ' does not carry a second copy of the read-first sentence',
+      !src.includes('arrive with their text; the rest arrive as an index'));
   }
 }
 

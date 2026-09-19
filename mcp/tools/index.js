@@ -146,6 +146,12 @@ function enforceSizeLimit(toolName, result) {
     // bootstrap over budget would collapse to the bare `{_truncated}`
     // fallback below, with `ok`, the brief and the handoff erased.
     'foundations.documents',
+    // v3.62.0 — the documents a caller named with `slugs`. LISTED AFTER the
+    // line above so the bootstrap's own selection is given up first: a named
+    // document is an instruction, the selection is the store's guess.
+    // `boundContextResponse` normally gets there first (and records the drop
+    // by name); this is the same defence in depth the line above is.
+    'foundations.requested',
   ];
   const trimmed = { ...result };
   const trimmedFields = [];

@@ -847,7 +847,7 @@ export async function getTraySummary(opts = {}) {
       remote: readRemoteObservation(now),
       warnings: [{
         code: 'domains-unreadable',
-        message: 'Could not read the knowledge folder, so no agent memory can be listed.',
+        message: 'Could not read the knowledge folder, so no project context can be listed.',
         detail: err && err.code ? String(err.code) : null,
       }],
     };
@@ -1128,7 +1128,7 @@ export async function getTraySummary(opts = {}) {
     warnings.push({
       code: 'unlisted-entries',
       message: `${unlisted} folder${unlisted === 1 ? '' : 's'} on disk could not be listed. ` +
-               'Open Agent memory for how to rename them.',
+               'Open Project context for how to rename them.',
       total: unlisted,
     });
   }

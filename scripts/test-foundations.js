@@ -72,6 +72,7 @@ const {
   saveWorkingState, readWorkingState, listWorkingScopes, listProjects, createProject,
   saveProjectBrief, saveProjectBriefText, readProjectBrief,
   listFoundations, readFoundation, saveFoundation, removeFoundation, refreshFoundationsFromRepo,
+  setFoundationReadFirst,
   getProjectContext, normaliseFoundationSlug, sanitiseFoundationsRead, parseFoundationsRead,
   classifySaveNotes, resolveInsideState, scanStateLayout,
   STATE_SECTIONS, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME, FOUNDATIONS_READ_HEADING,
@@ -769,6 +770,280 @@ section('11. Source guards — the shapes behaviour cannot reach');
   assert(/foundations\.documents: 40 → \d+/.test(out._truncated || ''), '…and `_truncated` names the nested field and the counts', out._truncated);
   const topLevel = __enforceSizeLimit('search_wiki', { ok: true, results: Array.from({ length: 200 }, (_, i) => ({ i, t: 'y'.repeat(4096) })) });
   assert(/results: 200 → \d+/.test(JSON.parse(topLevel)._truncated || ''), '(control) a top-level array still trims exactly as before');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('12. readFirst — the owner\'s routing flag, and fetch by name (v3.62.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// v3.62.0 splits the tier in two: the documents the owner marks READ FIRST
+// arrive with their text every session, and everything else arrives as an
+// index row to be opened BY NAME (`slugs`). Four things can go silently
+// wrong, and each has its own block below.
+//
+//  12a. THE FLAG IS METADATA, NOT CONTENT. `setFoundationReadFirst` must
+//       write the MANIFEST and nothing else, on BOTH ownerships — a mirror's
+//       bytes and sha must be identical afterwards, or the refresh's whole
+//       freshness claim (sha(stored) === sha(source)) is broken by the act of
+//       flagging. Asserted by hashing the file before and after.
+//  12b. AN ORDINARY SAVE MUST NOT UNFLAG. `readFirst` is tri-state at
+//       `saveFoundation`: absent PRESERVES. The opposite default to
+//       `skeleton`, and getting it wrong would mean the flag survives exactly
+//       one agent edit — invisible until a session arrives with no context.
+//  12c. NOTHING CHANGES WHEN NOTHING IS FLAGGED. Existing projects keep
+//       working, and that is a claim about the SELECTION and the budget
+//       arithmetic, pinned against hand-written expectations over the same
+//       scenarios §8 covers, plus a hand-written list of every field the
+//       v3.61.1 envelope carried.
+//  12d. A REFRESH MUST PRESERVE IT. The repository owns the bytes, the owner
+//       owns the routing — so a document edited in the checkout and re-copied
+//       keeps its flag, and a newly added one starts unflagged.
+{
+  makeDomain('frf');
+  const body = (label, kb) => `# ${label}\n\n${'w'.repeat(kb * 1024)}\n`;
+  for (const [slug, role] of [['architecture', 'architecture'], ['decisions', 'decisions'], ['roadmap', 'roadmap']]) {
+    await saveFoundation('frf', 'frf', { slug, role, text: body(slug, 2), authoredBy: AGENT });
+  }
+
+  // ── 12c FIRST, while nothing is flagged: the v3.61.1 behaviour, pinned ──
+  // Hand-written, NOT derived from the code: deriving the expectation from
+  // the same logic under test is the tautology this repo keeps re-learning.
+  const V3611_FOUNDATIONS_FIELDS = [
+    'present', 'ownership', 'repo', 'manifestError', 'orphanFiles', 'count', 'totalBytes',
+    'budgetBytes', 'budgetExceeded', 'staleCount', 'unreachableCount', 'skeletonCount',
+    'changedCount', 'includeMode', 'seenSource', 'index', 'documents', 'unreadable',
+    'budget', 'readingOrder',
+  ];
+  const V3620_ADDED_FIELDS = [
+    'readFirstCount', 'onRequestCount', 'readFirstBytes', 'readFirstBudgetBytes',
+    'readFirstBudgetExceeded', 'bodySelection', 'requested', 'requestedRefused', 'requestedBytes',
+  ];
+  const plain = await getProjectContext('frf', 'frf', {});
+  const keys = Object.keys(plain.foundations);
+  assert(V3611_FOUNDATIONS_FIELDS.every((k) => keys.includes(k)),
+    'every field the v3.61.1 foundations envelope carried is still there',
+    V3611_FOUNDATIONS_FIELDS.filter((k) => !keys.includes(k)).join());
+  assert(JSON.stringify(keys.filter((k) => !V3611_FOUNDATIONS_FIELDS.includes(k)).sort())
+    === JSON.stringify([...V3620_ADDED_FIELDS].sort()),
+    'and the ONLY new fields are the nine v3.62.0 ones — a tenth is a deliberate decision, not a drift',
+    keys.filter((k) => !V3611_FOUNDATIONS_FIELDS.includes(k)).join());
+  // The selection and the budget arithmetic, unflagged, across §8's scenarios.
+  const unflagged = [
+    ['first session',   {},                     'all',     'all',     ['architecture.md', 'decisions.md', 'roadmap.md']],
+    ['include all',     { include: 'all' },     'all',     'all',     ['architecture.md', 'decisions.md', 'roadmap.md']],
+    ['include index',   { include: 'index' },   'index',   'index',   []],
+    ['include changed', { include: 'changed' }, 'changed', 'changed', ['architecture.md', 'decisions.md', 'roadmap.md']],
+  ];
+  for (const [label, opts, mode, sel, want] of unflagged) {
+    const c = await getProjectContext('frf', 'frf', opts);
+    assert(c.foundations.includeMode === mode && c.foundations.bodySelection === sel
+      && c.foundations.documents.map((d) => d.slug).join() === want.join(),
+      `UNFLAGGED ${label}: includeMode ${mode}, bodySelection ${sel}, ${want.length} bodies — exactly v3.61.1`,
+      JSON.stringify({ m: c.foundations.includeMode, s: c.foundations.bodySelection, d: c.foundations.documents.map((d) => d.slug) }));
+    assert(c.foundations.requested.length === 0 && c.foundations.requestedRefused.length === 0
+      && c.foundations.readFirstCount === 0 && c.foundations.onRequestCount === 3,
+      `…and the new fields read empty/zero for ${label}`);
+  }
+  const tiny = await getProjectContext('frf', 'frf', { include: 'all', maxBytes: 3 * 1024 });
+  assert(tiny.foundations.documents.map((d) => d.slug).join() === 'architecture.md'
+    && JSON.stringify(tiny.foundations.budget.omitted) === JSON.stringify(['decisions.md', 'roadmap.md'])
+    && tiny.foundations.budget.truncated === true,
+    'UNFLAGGED budget: the same omit-in-reading-order arithmetic, omitted NAMED',
+    JSON.stringify(tiny.foundations.budget));
+
+  // ── 12a. The setter: manifest only, both ownerships, idempotent ────────
+  const before = await readFoundation('frf', 'frf', 'decisions', { raw: true });
+  const set1 = await setFoundationReadFirst('frf', 'frf', 'decisions', true);
+  assert(set1.ok && set1.slug === 'decisions.md' && set1.readFirst === true && set1.wasReadFirst === false && set1.changed === true,
+    'setFoundationReadFirst flags a document and reports what it was', JSON.stringify(set1));
+  assert(set1.readFirstCount === 1 && set1.onRequestCount === 2 && set1.readFirstBytes > 0
+    && set1.readFirstBudgetBytes === CONTEXT_MAX_BYTES_DEFAULT && set1.readFirstBudgetExceeded === false,
+    '…and returns the readings a view needs, against the BOOTSTRAP budget, not the project budget',
+    JSON.stringify(set1));
+  const after = await readFoundation('frf', 'frf', 'decisions', { raw: true });
+  assert(before.sha256 === after.sha256 && before.text === after.text && before.bytes === after.bytes,
+    'THE DOCUMENT IS UNTOUCHED — same bytes, same sha: the flag is metadata, never content',
+    `${before.sha256} vs ${after.sha256}`);
+  assert(manifestOf('frf', 'frf').documents.find((d) => d.slug === 'decisions.md').readFirst === true,
+    '…and it is on disk in the manifest');
+  const set2 = await setFoundationReadFirst('frf', 'frf', 'decisions', true);
+  assert(set2.ok && set2.changed === false && set2.readFirst === true && set2.wasReadFirst === true,
+    'setting it to what it already is is a NO-OP WRITE, reported as changed: false');
+  const unset = await setFoundationReadFirst('frf', 'frf', 'decisions', false);
+  assert(unset.ok && unset.readFirst === false && unset.wasReadFirst === true && unset.readFirstCount === 0,
+    'and it unflags too');
+  await setFoundationReadFirst('frf', 'frf', 'decisions', true);
+  // Every refusal in the store's own vocabulary.
+  const rf1 = await setFoundationReadFirst('frf', 'frf', 'nope', true);
+  assert(!rf1.ok && rf1.reason === 'not-found', 'an unknown slug is not-found', JSON.stringify(rf1));
+  const rf2 = await setFoundationReadFirst('frf', 'frf', '../escape', true);
+  assert(!rf2.ok && rf2.reason === 'invalid-slug', 'a hostile slug is invalid-slug');
+  makeDomain('frf-empty');
+  const rf3 = await setFoundationReadFirst('frf-empty', 'frf-empty', 'architecture', true);
+  assert(!rf3.ok && rf3.reason === 'no-manifest', 'a project with no foundations is no-manifest', JSON.stringify(rf3));
+  makeDomain('frf-bad');
+  mkdirSync(fdir('frf-bad', 'frf-bad'), { recursive: true });
+  writeFileSync(path.join(fdir('frf-bad', 'frf-bad'), FOUNDATIONS_MANIFEST_FILENAME), '{ not json');
+  const rf4 = await setFoundationReadFirst('frf-bad', 'frf-bad', 'architecture', true);
+  assert(!rf4.ok && rf4.reason === 'manifest-unreadable', 'a manifest this store cannot read is refused, not rewritten');
+  const rf5 = await setFoundationReadFirst(MIRROR, MIRROR, 'architecture', true);
+  assert(!rf5.ok && rf5.reason === 'readonly', 'a read-only Shared Brain mirror is refused', JSON.stringify(rf5));
+  for (const junk of [null, undefined, 42, [], {}, 'x'.repeat(5000)]) {
+    let threw = null;
+    try { await setFoundationReadFirst(junk, junk, junk, junk); } catch (e) { threw = e; }
+    assert(!threw, `setFoundationReadFirst tolerates ${String(typeof junk === 'object' ? JSON.stringify(junk) : junk).slice(0, 20)}`, threw && threw.message);
+  }
+
+  // ── 12b. saveFoundation's tri-state ────────────────────────────────────
+  const keep = await saveFoundation('frf', 'frf', { slug: 'decisions', role: 'decisions', text: body('decisions v2', 2), authoredBy: AGENT });
+  assert(keep.ok && keep.readFirst === true && keep.wasReadFirst === true,
+    'an ordinary save with NO readFirst argument PRESERVES the flag — the opposite of `skeleton`, on purpose',
+    JSON.stringify({ rf: keep.readFirst, was: keep.wasReadFirst }));
+  const clear = await saveFoundation('frf', 'frf', { slug: 'decisions', role: 'decisions', text: body('decisions v3', 2), authoredBy: AGENT, readFirst: false });
+  assert(clear.ok && clear.readFirst === false && clear.wasReadFirst === true, 'an explicit false clears it, and says what it was');
+  const setTrue = await saveFoundation('frf', 'frf', { slug: 'decisions', role: 'decisions', text: body('decisions v4', 2), authoredBy: AGENT, readFirst: true });
+  assert(setTrue.ok && setTrue.readFirst === true && setTrue.wasReadFirst === false, 'an explicit true sets it');
+  const fresh = await saveFoundation('frf', 'frf', { slug: 'guide', role: 'guide', text: body('guide', 1), authoredBy: AGENT });
+  assert(fresh.ok && fresh.readFirst === false && fresh.wasReadFirst === false, 'a NEW document starts unflagged');
+  assert((await saveFoundation('frf', 'frf', { slug: 'decisions', role: 'decisions', text: body('decisions v5', 2), authoredBy: AGENT, readFirst: 'yes' })).readFirst === false,
+    'a TRUTHY STRING is not the owner marking a document — only the literal true counts');
+  await setFoundationReadFirst('frf', 'frf', 'decisions', true);
+
+  // ── The bootstrap composition table ────────────────────────────────────
+  const flagged = [
+    ['default (no include)',  {},                     'changed', 'read-first', ['decisions.md']],
+    ['explicit changed',      { include: 'changed' }, 'changed', 'read-first', ['decisions.md']],
+    ['explicit all',          { include: 'all' },     'all',     'all',        ['architecture.md', 'decisions.md', 'roadmap.md', 'guide.md']],
+    ['explicit index',        { include: 'index' },   'index',   'index',      []],
+  ];
+  for (const [label, opts, mode, sel, want] of flagged) {
+    const c = await getProjectContext('frf', 'frf', opts);
+    assert(c.foundations.includeMode === mode && c.foundations.bodySelection === sel
+      && c.foundations.documents.map((d) => d.slug).join() === want.join(),
+      `FLAGGED ${label}: includeMode ${mode}, bodySelection ${sel}, bodies ${JSON.stringify(want)}`,
+      JSON.stringify({ m: c.foundations.includeMode, s: c.foundations.bodySelection, d: c.foundations.documents.map((d) => d.slug) }));
+    assert(c.foundations.index.length === 4 && c.foundations.index.filter((d) => d.readFirst).map((d) => d.slug).join() === 'decisions.md',
+      `…and the INDEX of all four rides regardless, with the flag on exactly one (${label})`);
+  }
+  // READ-FIRST BODIES IGNORE seenHashes — the one real judgement, executed.
+  const everything = await getProjectContext('frf', 'frf', { include: 'all' });
+  const sv = await saveWorkingState('frf', { scope: 'main', machine: M, headline: 'read them', nowState: 'n', foundationsRead: everything.seen });
+  assert(sv.ok, 'PRECONDITION: a handoff recorded every hash');
+  const resumed = await getProjectContext('frf', 'frf', {});
+  assert(resumed.foundations.seenSource === 'handoff' && resumed.foundations.changedCount === 0
+    && resumed.foundations.bodySelection === 'read-first'
+    && resumed.foundations.documents.map((d) => d.slug).join() === 'decisions.md',
+    'a resumed session with NOTHING changed still receives the read-first body — the flag is a per-SESSION instruction, not an economy',
+    JSON.stringify({ s: resumed.foundations.seenSource, ch: resumed.foundations.changedCount, d: resumed.foundations.documents.map((d) => d.slug) }));
+  assert(resumed.foundations.index.every((d) => d.changedSinceSeen === false),
+    '…while changedSinceSeen still reports the truth per row, so an agent can see what moved');
+  const explicitSeen = await getProjectContext('frf', 'frf', { seenHashes: everything.seen });
+  assert(explicitSeen.foundations.seenSource === 'caller' && explicitSeen.foundations.documents.map((d) => d.slug).join() === 'decisions.md',
+    '…and caller-supplied hashes do not change that either');
+
+  // ── `slugs`: fetch by name ─────────────────────────────────────────────
+  const named = await getProjectContext('frf', 'frf', { slugs: ['roadmap', 'architecture.md'] });
+  assert(named.foundations.requested.map((d) => d.slug).join() === 'roadmap.md,architecture.md',
+    'slugs returns the named documents IN THE ORDER GIVEN — reading order does not re-sort them',
+    JSON.stringify(named.foundations.requested.map((d) => d.slug)));
+  assert(named.foundations.requested.every((d) => d.text.length > 1000 && d.truncated === false),
+    '…whole, not cut');
+  assert(named.foundations.documents.map((d) => d.slug).join() === 'decisions.md',
+    '…and the rest of the bootstrap still rides unchanged: slugs ADDS bodies, it is not a mode');
+  assert(named.foundations.requestedBytes > 0 && named.seen['roadmap.md'] && named.seen['architecture.md'],
+    '…with the bytes counted and every hash handed back in `seen`');
+  const namedIndex = await getProjectContext('frf', 'frf', { include: 'index', slugs: ['roadmap.md'] });
+  assert(namedIndex.foundations.documents.length === 0 && namedIndex.foundations.requested.map((d) => d.slug).join() === 'roadmap.md',
+    "include: 'index' + slugs gives the index and exactly the documents named — the flow the flag exists for");
+  const budgeted = await getProjectContext('frf', 'frf', { include: 'all', maxBytes: 1024, slugs: ['roadmap.md'] });
+  assert(budgeted.foundations.requested[0].slug === 'roadmap.md' && budgeted.foundations.requested[0].truncated === false
+    && Buffer.byteLength(budgeted.foundations.requested[0].text, 'utf8') > 1024,
+    'a named document is NOT subject to max_bytes — a caller that named it asked for it',
+    JSON.stringify({ b: Buffer.byteLength(budgeted.foundations.requested[0].text, 'utf8') }));
+  assert(!budgeted.foundations.documents.some((d) => d.slug === 'roadmap.md')
+    && !budgeted.foundations.budget.omitted.includes('roadmap.md'),
+    '…and it is EXCLUDED from the budgeted set rather than sent twice');
+  const dbl = await getProjectContext('frf', 'frf', { slugs: ['decisions.md'] });
+  assert(dbl.foundations.requested.map((d) => d.slug).join() === 'decisions.md'
+    && dbl.foundations.documents.length === 0,
+    'naming a READ-FIRST document moves it into `requested`, never into both arrays');
+  const refused = await getProjectContext('frf', 'frf', { slugs: ['nope', '../escape', 'roadmap', 'roadmap.md', 42] });
+  assert(refused.foundations.requested.map((d) => d.slug).join() === 'roadmap.md',
+    'one usable name out of five is honoured');
+  assert(JSON.stringify(refused.foundations.requestedRefused.map((r) => `${r.slug}:${r.reason}`))
+    === JSON.stringify(['nope.md:not-found', '../escape:invalid-slug', 'roadmap.md:duplicate', '42:invalid-slug']),
+    'EVERY refusal is named with a reason — a slug you got wrong is never silently dropped',
+    JSON.stringify(refused.foundations.requestedRefused));
+  const single = await getProjectContext('frf', 'frf', { slugs: 'roadmap.md' });
+  assert(single.foundations.requested.map((d) => d.slug).join() === 'roadmap.md', 'a bare string is accepted as a one-element list');
+  for (const junk of [null, 42, {}, [null, undefined, []], 'x'.repeat(300)]) {
+    let threw = null;
+    try { await getProjectContext('frf', 'frf', { slugs: junk }); } catch (e) { threw = e; }
+    assert(!threw, `slugs tolerates ${JSON.stringify(junk)?.slice(0, 30)}`, threw && threw.message);
+  }
+  // Reads never write, with the new argument too.
+  const snapRf = () => readdirSync(fdir('frf', 'frf')).map((f) => `${f}:${sha(readFileSync(path.join(fdir('frf', 'frf'), f)))}`).join('|');
+  const beforeReads = snapRf();
+  await getProjectContext('frf', 'frf', { slugs: ['roadmap.md', 'architecture.md'] });
+  await getProjectContext('frf', 'frf', { include: 'index' });
+  assert(snapRf() === beforeReads, 'a `slugs` read changes not one byte, manifest included');
+
+  // ── The read-first BUDGET reading (what the view warns on) ─────────────
+  makeDomain('frf-big');
+  for (let i = 0; i < 4; i++) {
+    await saveFoundation('frf-big', 'frf-big', { slug: `doc-${i}`, role: 'other', text: body(`Doc ${i}`, 40), authoredBy: AGENT });
+    await setFoundationReadFirst('frf-big', 'frf-big', `doc-${i}`, true);
+  }
+  const bigIdx = await listFoundations('frf-big', 'frf-big');
+  assert(bigIdx.readFirstCount === 4 && bigIdx.readFirstBytes > CONTEXT_MAX_BYTES_DEFAULT && bigIdx.readFirstBudgetExceeded === true,
+    'a read-first set over the 120 KB READING budget is disclosed as exceeded — computed once, in the store',
+    JSON.stringify({ n: bigIdx.readFirstCount, b: bigIdx.readFirstBytes, cap: bigIdx.readFirstBudgetBytes, x: bigIdx.readFirstBudgetExceeded }));
+  assert(bigIdx.budgetExceeded === false,
+    '…and that is a DIFFERENT reading from the 200 KB project budget, which this set is still under');
+  const bigCtx = await getProjectContext('frf-big', 'frf-big', {});
+  assert(bigCtx.foundations.budget.omitted.length >= 1 && bigCtx.foundations.budget.truncated === true,
+    '…and the bootstrap really does omit part of the read-first set, by name', JSON.stringify(bigCtx.foundations.budget));
+  assert(bigCtx.foundations.readFirstBudgetExceeded === true, '…with the same reading carried on the bootstrap envelope');
+
+  // ── The SUMMARY readWorkingState carries ───────────────────────────────
+  const ws = await readWorkingState('frf', {});
+  assert(ws.foundations.readFirstCount === 1 && ws.foundations.onRequestCount === 3,
+    'readWorkingState\'s summary carries the two counts, so a consumer never makes a second store call',
+    JSON.stringify(ws.foundations));
+
+  // ── 12d. A mirror refresh preserves the flag ───────────────────────────
+  makeDomain('frf-mirror');
+  const mrepo = path.join(TMP, 'repo-readfirst');
+  mkdirSync(path.join(mrepo, 'docs'), { recursive: true });
+  writeFileSync(path.join(mrepo, 'docs', 'architecture.md'), '# Arch v1\n\nfirst.\n');
+  writeFileSync(path.join(mrepo, 'docs', 'roadmap.md'), '# Roadmap v1\n\nlater.\n');
+  const m1 = await refreshFoundationsFromRepo('frf-mirror', 'frf-mirror', mrepo,
+    { files: [{ path: 'docs/architecture.md' }, { path: 'docs/roadmap.md' }] });
+  assert(m1.ok && m1.added.length === 2, 'PRECONDITION: two documents mirrored', JSON.stringify(m1).slice(0, 160));
+  const mset = await setFoundationReadFirst('frf-mirror', 'frf-mirror', 'architecture', true);
+  assert(mset.ok && mset.readFirst === true,
+    'a REPO-OWNED project can be routed by its owner — the flag is not a document write, so ownership does not refuse it',
+    JSON.stringify(mset));
+  const mirrorSha = manifestOf('frf-mirror', 'frf-mirror').documents.find((d) => d.slug === 'architecture.md').sha256;
+  assert(mirrorSha === sha(readFileSync(path.join(fdir('frf-mirror', 'frf-mirror'), 'architecture.md'))),
+    '…and the mirrored copy still hashes to what the manifest recorded, so the freshness claim survives flagging');
+  writeFileSync(path.join(mrepo, 'docs', 'architecture.md'), '# Arch v2\n\nchanged in the checkout.\n');
+  writeFileSync(path.join(mrepo, 'docs', 'conventions.md'), '# Conventions\n\nnew file.\n');
+  const m2 = await refreshFoundationsFromRepo('frf-mirror', 'frf-mirror', mrepo, { files: [{ path: 'docs/conventions.md' }] });
+  assert(m2.ok && m2.refreshed.includes('architecture.md') && m2.added.includes('conventions.md'),
+    'PRECONDITION: one document re-copied, one added', JSON.stringify({ r: m2.refreshed, a: m2.added }));
+  const mIdx = await listFoundations('frf-mirror', 'frf-mirror');
+  const byId = new Map(mIdx.documents.map((d) => [d.slug, d]));
+  assert(byId.get('architecture.md').readFirst === true,
+    'A RE-COPY PRESERVES THE FLAG — the repository owns the bytes, the owner owns the routing');
+  assert(byId.get('conventions.md').readFirst === false && byId.get('roadmap.md').readFirst === false,
+    '…and a newly mirrored document starts unflagged');
+  // A vanished source keeps its copy AND its flag.
+  rmSync(path.join(mrepo, 'docs', 'architecture.md'), { force: true });
+  const m3 = await refreshFoundationsFromRepo('frf-mirror', 'frf-mirror', mrepo);
+  assert(m3.ok && m3.missing.some((p) => p.includes('architecture.md')), 'PRECONDITION: the source vanished', JSON.stringify(m3.missing));
+  assert((await listFoundations('frf-mirror', 'frf-mirror')).documents.find((d) => d.slug === 'architecture.md').readFirst === true,
+    '…and a `missing` mark keeps the copy AND its flag');
 }
 
 console.log(`\n${'═'.repeat(60)}`);

@@ -1155,7 +1155,7 @@ async function refreshTraySummary() {
   if (!getTraySummary) {
     traySnapshot = {
       ok: false, scopes: [], warnings: [
-        'Agent memory is unavailable in this build' + (traySummaryError ? ': ' + traySummaryError : ''),
+        'Project context is unavailable in this build' + (traySummaryError ? ': ' + traySummaryError : ''),
       ],
     };
     renderTrayFromSnapshot();
@@ -1168,7 +1168,7 @@ async function refreshTraySummary() {
     // indistinguishable from one that was never installed.
     traySnapshot = {
       ok: false, scopes: [],
-      warnings: ['Could not read agent memory: ' + ((err && err.message) || String(err))],
+      warnings: ['Could not read project context: ' + ((err && err.message) || String(err))],
     };
   }
   renderTrayFromSnapshot();
@@ -1379,9 +1379,9 @@ async function openMemoryView(project) {
   }
   if (landed === 'project' || landed === 'view') return;
   dialog.showErrorBox(
-    'Could not open Agent Memory',
+    'Could not open Project Context',
     'The Curator’s window did not respond to the menu bar.\n\n' +
-    'Open it with the Agent memory button in the left-hand rail.'
+    'Open it with the Context button in the left-hand rail.'
   );
 }
 

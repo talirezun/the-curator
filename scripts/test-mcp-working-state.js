@@ -1075,14 +1075,127 @@ const indexOnly = asJson(await callTool('get_project_context', { project: P, inc
 ok(indexOnly?.foundations?.includeMode === 'index' && indexOnly?.foundations?.documents?.length === 0
    && indexOnly?.foundations?.index?.length === 1, "include: 'index' returns the index and no bodies");
 
-// The audit log has the write.
+// ─────────────────────────────────────────────────────────────────────────────
+section('§11b  v3.62.0 — read_first and slugs, over the wire');
+// The flag and the by-name fetch are the halves of "the right context at the
+// right time", and neither can be trusted from an in-process handler alone:
+// `read_first` is a TRI-STATE argument that has to survive JSON-RPC as
+// `undefined` (a client that sent `null`, or a handler that coerced it, would
+// silently UNFLAG a document on every ordinary save), and `slugs` is an ARRAY
+// argument — the first on either state tool — so it is the first thing here
+// that could arrive as a string, a number or a nested object from a loose
+// client. Both are driven against the real child, and §0 below still requires
+// every stdout line to parse as JSON with this code on the import graph.
+const ctxProps = def('get_project_context').inputSchema?.properties || {};
+ok(ctxProps.slugs?.type === 'array' && ctxProps.slugs?.items?.type === 'string',
+  '`slugs` is declared on the wire as an array of strings, so a client can see how to ask');
+const sfProps2 = def('save_foundation').inputSchema?.properties || {};
+ok(sfProps2.read_first?.type === 'boolean' && /routing|Omit it|OMIT IT/i.test(sfProps2.read_first?.description || ''),
+  '`read_first` is declared as a boolean and its description says to OMIT it rather than guess',
+  JSON.stringify(sfProps2.read_first));
+ok(!(def('save_foundation').inputSchema?.required || []).includes('read_first'),
+  '…and it is NOT required — the owner\'s routing decision is not something every save must restate');
+for (const n of ['get_project_context', 'save_foundation']) {
+  const bytes = Buffer.byteLength(JSON.stringify(def(n)), 'utf8');
+  ok(bytes < 3200, `${n} is still ${bytes} B — under the 3200 B ceiling after the v3.62.0 arguments`);
+}
+
+// A second document, so "read first" can mean something other than "all".
+const sfB = asJson(await callTool('save_foundation', {
+  project: P, slug: 'conventions', role: 'conventions',
+  text: '# Conventions\n\n## Tests\n\nnpm test must be green.\n',
+  commissioned_by_owner: true,
+}));
+ok(sfB?.ok === true && sfB?.read_first === false && sfB?.was_read_first === false,
+  'a NEW document is saved unflagged, and the reply says so both ways', JSON.stringify({ r: sfB?.read_first, w: sfB?.was_read_first }));
+ok(/not marked read first/.test(sfB?.report || ''),
+  '…and the report tells the agent later sessions will open it by name', sfB?.report);
+
+const sfFlag = asJson(await callTool('save_foundation', {
+  project: P, slug: 'architecture', role: 'architecture',
+  text: '# Architecture v3\n\n## Store\n\nThe store owns containment, the manifest and the routing flag.\n',
+  commissioned_by_owner: true, read_first: true,
+}));
+ok(sfFlag?.ok === true && sfFlag?.read_first === true && sfFlag?.was_read_first === false,
+  'read_first: true marks a document on save', JSON.stringify({ r: sfFlag?.read_first, w: sfFlag?.was_read_first }));
+ok(/marked READ FIRST/.test(sfFlag?.report || ''), '…and the report says every session will be handed its text', sfFlag?.report);
+ok(JSON.parse(readFileSync(path.join(DOMAINS_DIR, P, 'state', 'foundations', 'manifest.json'), 'utf8'))
+  .documents.find((d) => d.slug === 'architecture.md').readFirst === true,
+  '…and it is on disk in the manifest, not only in the reply');
+
+// THE TRI-STATE, over the wire. This is the assertion the whole argument for
+// `undefined` rests on: a save that says nothing about routing must not undo it.
+const sfKeep = asJson(await callTool('save_foundation', {
+  project: P, slug: 'architecture', role: 'architecture',
+  text: '# Architecture v4\n\n## Store\n\nAn ordinary edit, saying nothing about routing.\n',
+  commissioned_by_owner: true,
+}));
+ok(sfKeep?.ok === true && sfKeep?.read_first === true && sfKeep?.was_read_first === true,
+  'an ordinary save that OMITS read_first PRESERVES the flag across JSON-RPC — the tri-state survives the wire',
+  JSON.stringify({ r: sfKeep?.read_first, w: sfKeep?.was_read_first }));
+
+// The bootstrap now routes by the flag.
+const routed = asJson(await callTool('get_project_context', { project: P, scope: 'boot' }));
+ok(routed?.foundations?.bodySelection === 'read-first'
+   && routed?.foundations?.readFirstCount === 1 && routed?.foundations?.onRequestCount === 1,
+  'the bootstrap reports bodySelection read-first with the two counts',
+  JSON.stringify({ s: routed?.foundations?.bodySelection, rf: routed?.foundations?.readFirstCount, or: routed?.foundations?.onRequestCount }));
+ok(routed?.foundations?.documents?.length === 1 && routed.foundations.documents[0].slug === 'architecture.md',
+  '…and sends ONLY the read-first body, although both documents changed since the handoff',
+  JSON.stringify(routed?.foundations?.documents?.map((d) => d.slug)));
+ok(routed?.foundations?.index?.length === 2
+   && routed.foundations.index.filter((d) => d.readFirst).map((d) => d.slug).join() === 'architecture.md',
+  '…while the INDEX of both rides, with the flag on exactly one row');
+ok(/1 marked READ FIRST by the owner and 1 on request/.test(routed?.report || ''),
+  'the report states the split in words — an index row with no text must not read as an absence', routed?.report);
+
+// FETCH BY NAME, over the wire.
+const byName = asJson(await callTool('get_project_context', { project: P, scope: 'boot', slugs: ['conventions.md'] }));
+ok(byName?.foundations?.requested?.length === 1
+   && byName.foundations.requested[0].slug === 'conventions.md'
+   && byName.foundations.requested[0].text.includes('npm test must be green'),
+  'slugs returns the named document WHOLE over JSON-RPC',
+  JSON.stringify(byName?.foundations?.requested?.map((d) => d.slug)));
+ok(byName?.foundations?.documents?.map((d) => d.slug).join() === 'architecture.md',
+  '…and the rest of the bootstrap still rides: slugs ADDS bodies rather than replacing the call');
+ok(/You asked for 1 document\(s\) by name/.test(byName?.report || ''), '…which the report names', byName?.report);
+const byNameBad = asJson(await callTool('get_project_context', { project: P, slugs: ['nope.md', '../escape'] }));
+ok(JSON.stringify((byNameBad?.foundations?.requestedRefused || []).map((r) => `${r.slug}:${r.reason}`))
+   === JSON.stringify(['nope.md:not-found', '../escape:invalid-slug']),
+  'an unknown and a hostile slug are both REFUSED BY NAME with a reason — never silence',
+  JSON.stringify(byNameBad?.foundations?.requestedRefused));
+ok(/NOT returned, and why: nope\.md \(not-found\)/.test(byNameBad?.report || ''), '…and the report says which and why', byNameBad?.report);
+ok(!existsSync(path.join(DOMAINS_DIR, P, 'state', 'foundations', 'escape'))
+   && !existsSync(path.join(ROOT, 'escape')),
+  '…and the hostile slug wrote and read nothing outside the foundations folder');
+for (const junk of [42, 'conventions.md', {}, [7, null, 'conventions.md'], []]) {
+  const r = asJson(await callTool('get_project_context', { project: P, slugs: junk }));
+  ok(r?.ok === true, `a hostile \`slugs\` argument ${JSON.stringify(junk)} is answered, never crashed`, JSON.stringify(r).slice(0, 140));
+}
+const asString = asJson(await callTool('get_project_context', { project: P, slugs: 'conventions.md' }));
+ok(asString?.foundations?.requested?.map((d) => d.slug).join() === 'conventions.md',
+  '…and a bare string is taken as a one-element list rather than refused');
+
+// The audit log has every commissioned write. §11 above made two and §11b
+// three more, so the count is FIVE and each one is named: the figure is the
+// point (a write that reaches disk without a line is the failure this checks),
+// so it is spelled out rather than compared to a length.
 let sfAudit = [];
 try {
   sfAudit = readFileSync(path.join(DOMAINS_DIR, P, '.mcp-write-log.jsonl'), 'utf8').trim().split('\n')
     .map((l) => { try { return JSON.parse(l); } catch { return {}; } }).filter((e) => e.tool === 'save_foundation');
 } catch { sfAudit = []; }
-ok(sfAudit.length === 2 && sfAudit[0]?.paths?.[0] === 'state/foundations/architecture.md',
-  `both commissioned writes are audited (got ${sfAudit.length})`);
+ok(sfAudit.length === 5, `all five commissioned writes are audited (got ${sfAudit.length})`);
+ok(sfAudit[0]?.paths?.[0] === 'state/foundations/architecture.md',
+  '…and each line names the path it wrote', JSON.stringify(sfAudit[0]));
+ok(JSON.stringify(sfAudit.map((e) => e.paths?.[0]))
+   === JSON.stringify([
+     'state/foundations/architecture.md', 'state/foundations/architecture.md',
+     'state/foundations/conventions.md', 'state/foundations/architecture.md',
+     'state/foundations/architecture.md',
+   ]),
+  '…in the order the writes happened, the v3.62.0 read_first saves included',
+  JSON.stringify(sfAudit.map((e) => e.paths?.[0])));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §0 LAST, on purpose: it must cover every byte the child emitted across every

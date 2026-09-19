@@ -163,20 +163,56 @@ export const TEMPLATE_SEED = [
   'foundations into its `docs/` folder on the first commit.',
 ].join('\n') + '\n';
 
+// ── v3.62.0: a FOURTH, separately pinned paragraph — routing the read ───────
+//
+// v3.59.0 taught an agent to READ foundations; v3.61.0 taught it what a
+// SKELETON is. Both assumed the whole set arrives every session, which is what
+// the bootstrap did. v3.62.0 changes that: the owner marks the documents an
+// agent must not start without (`readFirst`), everything else arrives as an
+// INDEX, and the agent opens what it needs BY NAME with
+// `get_project_context({slugs})`. An agent with no instruction about that
+// reads an index row with no text as an absence — "there is no decision log"
+// — rather than as a document waiting to be asked for. That misreading is
+// worse than the gap v3.59.0 closed, because it looks like knowledge.
+//
+// A FOURTH CONSTANT rather than a re-pin of TEMPLATE_FOUNDATIONS, and the
+// reason is the same one the file has given three times: TEMPLATE's 501-byte
+// / sha256 pin, TEMPLATE_FOUNDATIONS's own pin and TEMPLATE_SEED's own pin all
+// have to keep matching their own text alone, and separate constants are the
+// only shape where all of them can. A re-pin would also have meant moving a
+// sha in the same commit as a behaviour change — legal under §S6/S7, but it
+// buys nothing here and costs the ability to say "v3.59.0's paragraph is
+// untouched" with a hash instead of a claim.
+//
+// Composed LAST, after TEMPLATE_SEED, so §S7's two adjacency assertions about
+// TEMPLATE_FOUNDATIONS remain literally true and unedited; only §S8's
+// whole-composition equality moves, in this commit, by one term. Pinned in
+// §S10 of scripts/test-agent-instructions.js by a hand-written literal AND an
+// independent sha256.
+export const TEMPLATE_READ_FIRST = [
+  'Foundations marked "read first" arrive with their text; the rest arrive as an index.',
+  'Open any of them by name with `get_project_context` and `slugs` when the work calls',
+  'for it — the brief\'s "Read before you…" section says which. An index entry with no',
+  'text is a document waiting to be asked for, not one that is missing.',
+].join('\n') + '\n';
+
 /**
  * The block for one project, PLUS the foundations addendum, PLUS the seed
- * addendum — what the Copy control pastes as of v3.61.0. `composeAgentInstructions`
- * itself is untouched (its output is still exactly the measured 501-byte
- * artefact for the same arguments), so anything that still wants the
- * original alone keeps calling it directly.
+ * addendum, PLUS the read-first addendum — what the Copy control pastes as of
+ * v3.62.0. `composeAgentInstructions` itself is untouched (its output is still
+ * exactly the measured 501-byte artefact for the same arguments), so anything
+ * that still wants the original alone keeps calling it directly.
  *
  * @param {{domain: string, project: string}} args
  * @returns {string} heading, blank line, the measured block, a blank line,
- *   the foundations paragraph, a blank line, then the seed paragraph — one
- *   trailing newline.
+ *   the foundations paragraph, a blank line, the seed paragraph, a blank line,
+ *   then the read-first paragraph — one trailing newline.
  */
 export function composeAgentInstructionsFull(args) {
-  return composeAgentInstructions(args) + '\n' + TEMPLATE_FOUNDATIONS + '\n' + TEMPLATE_SEED;
+  return composeAgentInstructions(args)
+    + '\n' + TEMPLATE_FOUNDATIONS
+    + '\n' + TEMPLATE_SEED
+    + '\n' + TEMPLATE_READ_FIRST;
 }
 
 // ── v3.61.0: the drafting request — a ONE-OFF chat message, not a standing
