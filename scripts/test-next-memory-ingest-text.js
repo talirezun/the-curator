@@ -1103,8 +1103,8 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   // wording, so an assertion pinning that arrangement now pins the defect.
   // Deleting it would lose the mutation's lesson; inverting keeps it pointed at
   // the same site, in the same file, one step further on.
-  ok('the Agent-memory sidebar is the header COMPONENT, not a title plus a paragraph',
-    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Agent memory',/.test(stripComments(memSrc)));
+  ok('the Project-context sidebar is the header COMPONENT, not a title plus a paragraph',
+    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Project context',/.test(stripComments(memSrc)));
   ok('and the sentence has NOT returned as a paragraph under that title, in EITHER shape',
     !/class="sidebar-hint">The working brief/.test(stripComments(memSrc))
     && !/renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));

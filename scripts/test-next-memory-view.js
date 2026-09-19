@@ -5017,8 +5017,12 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     return { render, panelEls, set: mk._set };
   };
 
-  const MAIN = 'tx-vh-info-agent-memory';
-  const SIDE = 'tx-vh-info-agent-memory-sidebar';
+  // THE TWO IDS ARE DERIVED FROM THE VIEW TITLE, which v3.62.0 renamed
+  // Agent memory → Project context. These two lines are the only thing in the
+  // suite that catches a title landing without its FOCUSABLE_IDS entries, so
+  // they move in the same commit the title does.
+  const MAIN = 'tx-vh-info-project-context';
+  const SIDE = 'tx-vh-info-project-context-sidebar';
 
   const r = mkInfoRig({ expandedBefore: [MAIN], presentAfter: [MAIN, SIDE] });
   r.render(1);
@@ -6029,7 +6033,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     /renderViewHeader\(\{[\s\S]{0,400}panelWide: true/.test(src), 'panelWide is not passed');
   // EXECUTED, not merely present: the component has to emit the class.
   const head = renderViewHeader({
-    eyebrow: 'x', title: 'Agent memory', info: '<p>hi</p>', infoHtml: true, panelWide: true,
+    eyebrow: 'x', title: 'Project context', info: '<p>hi</p>', infoHtml: true, panelWide: true,
   });
   ok('...and the component really emits the modifier on the panel',
     /class="tx-vh-panel tx-vh-panel-wide"/.test(head), head);

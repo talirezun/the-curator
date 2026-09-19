@@ -589,7 +589,15 @@ const FOCUSABLE_IDS = [
   // keyboard user reading either panel is dropped to <body> on the next poll.
   // The ids are the component's own derivation from the title (and, for the
   // rail, from the variant): see renderViewHeader's panelId block.
-  'tx-vh-info-agent-memory-btn', 'tx-vh-info-agent-memory-sidebar-btn',
+  // ── DERIVED FROM THE TITLE, SO THEY MOVED WITH IT (v3.62.0, A4) ──────
+  // renderViewHeader builds the panel id as
+  // `'tx-vh-info-' + slugForId(title) + (sidebar ? '-sidebar' : '')`, so the
+  // rename Agent memory → Project context RE-DERIVES both ids. They are
+  // changed in the SAME commit as the two titles deliberately: a title
+  // landing without them kills keyboard focus restoration for both marks, and
+  // the failure is invisible and permanent — nothing throws, nothing paints
+  // differently, a keyboard user is simply dropped to <body> on the next poll.
+  'tx-vh-info-project-context-btn', 'tx-vh-info-project-context-sidebar-btn',
   // Both revalidation controls. `mem-reload` is the one that matters: it
   // REMOVES itself on success (the notice it lives in is gone once the
   // reload lands), so it needs the same fallback treatment as "Show more".
@@ -2620,7 +2628,7 @@ function renderSidebar(token) {
   // invisible to keyboard and to touch — the class v3.20.0 counted 11 of.
   const head = renderViewHeader({
     variant: 'sidebar',
-    title: 'Agent memory',
+    title: 'Project context',
     info: 'The working brief your agents leave for each other. This screen re-checks by itself '
       + 'when you come back to it, so Refresh is rarely needed. '
       + 'Agents save handoffs here over MCP; you write the standing brief.',
@@ -2639,14 +2647,14 @@ function renderSidebar(token) {
     // version of the description directly above it.
     setSidebar(head + renderStatus({
       state: 'danger',
-      title: 'Could not load agent memory',
+      title: 'Could not load this project’s context',
       detail: state.indexError,
     }), token);
     return;
   }
   if (!state.projects.length) {
     setSidebar(head + '<div class="cur-eyebrow" style="margin-top:10px">PROJECTS</div>' +
-      renderDescription('No domains yet. Agent memory is kept per domain — create one in Domains first.'),
+      renderDescription('No domains yet. Project context is kept per domain — create one in Domains first.'),
       token);
     return;
   }
@@ -2694,10 +2702,10 @@ function renderSidebar(token) {
 function renderMain(token) {
   let body;
   if (state.loading) {
-    body = gatedLoader(loadGate, 'Loading agent memory…');
+    body = gatedLoader(loadGate, 'Loading project context…');
   } else if (state.indexError) {
     body = renderStatus({
-      state: 'danger', title: 'Could not load agent memory', detail: state.indexError,
+      state: 'danger', title: 'Could not load this project’s context', detail: state.indexError,
     });
   } else if (!state.activeProject) {
     body = renderNoProjects();
@@ -2743,7 +2751,7 @@ function renderMain(token) {
   setMain(
     renderViewHeader({
       eyebrow: 'your agents’ brain',
-      title: 'Agent memory',
+      title: 'Project context',
       info: aboutInfoHtml(),
       infoHtml: true,
       // THE PANEL RUNS THE COLUMN, like everything under it. This page's five
@@ -2777,18 +2785,18 @@ function renderMain(token) {
 function renderNoProjects() {
   const n = state.domainsScanned;
   const noDomains = n === 0;
-  const title = noDomains ? 'No domains yet' : 'No agent memory yet';
+  const title = noDomains ? 'No domains yet' : 'No project context yet';
   // `html: true` because these sentences carry an inline <code>. The caller
   // owns escaping when it opts in; every value here is a literal or a
   // server-supplied INTEGER, which is why `n` is checked with Number.isInteger
   // before it is used and rendered as a count rather than interpolated raw.
   const body = noDomains
-    ? 'Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
+    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
       'Create a domain first, then point an agent at it — the brief appears here the moment one saves.'
     : (Number.isInteger(n) && n > 0
         ? 'Nothing has been saved in ' + (n === 1 ? 'your domain' : 'any of your ' + n + ' domains') + ' yet. '
         : 'Nothing has been saved yet. ') +
-      'Agent memory lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
+      'Project context lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
       'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
   // ── §8(e): THE POINTER LIVES WHERE THE MISSING THING IS A PROJECT ──────
   // Moved here from `renderFoundations`'s no-manifest arm (v3.62.0): that
@@ -3016,7 +3024,7 @@ function renderProject() {
 
   if (state.detailError) {
     return header + '<div class="mem-section">' + renderStatus({
-      state: 'danger', title: 'Could not read this project’s memory', detail: state.detailError,
+      state: 'danger', title: 'Could not read this project’s context', detail: state.detailError,
     }) + '</div>';
   }
   if (state.detailLoading && !read) {
@@ -7298,7 +7306,7 @@ function renderJournal() {
 function aboutInfoHtml() {
   return (
     '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
-    'thing you build inside it, and a domain can hold several. Agent memory is kept per project, in ' +
+    'thing you build inside it, and a domain can hold several. Project context is kept per project, in ' +
     '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
     '<ul class="mem-about-list">' +
       '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
