@@ -3867,8 +3867,18 @@ function renderCaptureMeter() {
   // session — and `selfTestLines` are the app's own "Test all N tools" run,
   // which is the exact contamination `via: 'self-test'` was invented to keep
   // out.
+  //
+  // THE LEGACY CLAUSE DEFERS TO THE ROUTE'S NOTE, and this is the one thing a
+  // browser found that no fixture could: src/routes/memory.js emits ONE note
+  // "naming whichever honest limit applies", and on a real log that note IS the
+  // legacy count — so the two sentences landed four pixels apart saying the
+  // same number in different words. The route is the producer and owns that
+  // disclosure; this line says it only where the route stayed silent. The
+  // SELF-TEST count is never in the route's note at all, so it is always this
+  // line's. Written as "is there a note" rather than as a match against the
+  // producer's prose, which would be a copy of a sentence this file does not own.
   const limits = [
-    f.legacyLines ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
+    (!f.note && f.legacyLines) ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
       + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
     f.selfTestLines ? f.selfTestLines.toLocaleString('en-US') + ' self-test call'
       + (f.selfTestLines === 1 ? '' : 's') + ' excluded' : null,

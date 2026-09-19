@@ -444,17 +444,40 @@ section('§5 — AN ABSENT FIGURE IS NOT A ZERO');
   // ── THE TWO LINE CLASSES THE READING CANNOT COUNT ─────────────────────
   const dirty = makeMeter(stFor({
     capture: { domain: 'acme', project: 'lumina', error: null,
-      data: payload({ totals: { ...payload().totals, legacyLines: 412, selfTestLines: 24 } }) },
+      data: payload({ note: null,
+        totals: { ...payload().totals, legacyLines: 412, selfTestLines: 25 } }) },
   })).renderCaptureMeter();
   ok(dirty.includes('412 earlier calls carried no session id and cannot be counted'),
     'calls from before the bridge recorded a session id are disclosed — they are real '
     + 'work this reading cannot attribute');
-  ok(dirty.includes('24 self-test calls excluded'),
+  ok(dirty.includes('25 self-test calls excluded'),
     '...and so is the app\'s own self-test run, the exact contamination `via` was invented to keep out');
   ok(dirty.indexOf('carried no session id') < dirty.indexOf('<details'),
     '...both in the open, above the fold: a limit on a reading is part of the reading');
   ok(!makeMeter(stFor()).renderCaptureMeter().includes('cannot be counted'),
     'CONTROL: with neither class present the line is absent, so it is not always on');
+
+  // ── THE LEGACY CLAUSE DEFERS TO THE ROUTE'S NOTE ──────────────────────
+  // FOUND IN A BROWSER, on a real 463-line log: src/routes/memory.js emits ONE
+  // note "naming whichever honest limit applies", and on a log with pre-`sid`
+  // lines that note IS the legacy count — so the route's sentence and this
+  // view's landed four pixels apart saying 412 in different words. No fixture
+  // in this file would have shown it, because a fixture chooses whether to
+  // send a note. The route owns that disclosure; the view says it only where
+  // the route stayed silent, and the SELF-TEST count — which the route never
+  // mentions — is always the view's.
+  const withNote = makeMeter(stFor({
+    capture: { domain: 'acme', project: 'lumina', error: null,
+      data: payload({ note: '412 lines predate session ids and are not counted',
+        totals: { ...payload().totals, legacyLines: 412, selfTestLines: 25 } }) },
+  })).renderCaptureMeter();
+  ok(withNote.includes('412 lines predate session ids'),
+    'the route\'s note is rendered as the producer wrote it');
+  ok(!withNote.includes('carried no session id'),
+    '...and the view does NOT repeat the same number in its own words beside it',
+    withNote.slice(withNote.indexOf('mem-capture-limits') - 40, withNote.indexOf('mem-capture-limits') + 160));
+  ok(withNote.includes('25 self-test calls excluded'),
+    '...while the self-test count, which the route never mentions, is still said');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
