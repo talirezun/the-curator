@@ -106,17 +106,38 @@ get_project_context({ project: "the-project", scope: "latest" })
 scope). It returns the standing brief, the newest work-stream's handoff (`scope: "latest"`
 resolves the same way it always did — the reply names which one it opened, in
 `scopeResolvedBy`, and you still read that back to the user), **and** the project's foundations —
-canonical documents like the architecture doc or the decision log — filtered to the ones you have
-not already seen. Omit `seen_hashes`: the store defaults it from the latest handoff's own
-`foundations_read` section, so a returning session gets only what changed and a first session gets
-everything, without you having to track hashes yourself.
+canonical documents like the architecture doc or the decision log. Omit `seen_hashes`: the store
+defaults it from the latest handoff's own `foundations_read` section, so you never have to track
+hashes yourself.
 
-**Read the foundations you get back before you propose anything**, the same instinct as reading
-the brief — they are the project's own architecture, decisions and conventions, and proposing a
-change that contradicts one you had in hand and did not read is a worse failure than not knowing
-it existed. `foundations.index` lists what exists and what changed; `foundations.documents` carries
-the actual text for anything included. Note which slugs you read — you will hand them back on your
-next save (§4).
+**Read the index first, then open by name what the brief or the task says.** `foundations.index`
+lists **every** document the project has — slug, role, title, size, freshness, and whether it is
+marked **read first**. The documents the owner marked read-first arrive with their text in
+`foundations.documents` every session, because those are the ones they decided nobody should start
+work here without. Everything else arrives as an index row and nothing more.
+
+**An index row with no text is a document waiting to be asked for — never a document that does not
+exist.** This is the one misreading that matters here, because it looks like knowledge: an agent
+that reports "this project has no decision log" when `decisions.md` is sitting in the index has
+told the user something false about their own project. When the work touches a document's subject,
+fetch it:
+
+```
+get_project_context({ project: "the-project", slugs: ["decisions.md"] })
+```
+
+`slugs` returns those documents **whole** and in the order you gave, on top of whatever the
+bootstrap already sends — it is not a separate mode and it does not replace the bootstrap. They
+arrive in `foundations.requested`; anything unusable is named in `foundations.requestedRefused`
+with a reason, so a name you got wrong is never silently dropped. **The standing brief's "Read
+before you…" section is the owner's routing table** — which document to open for which kind of
+work. Consult it rather than guessing, and if it is empty, the roles in the index (architecture,
+decisions, conventions, roadmap, api, guide) are the next best signal.
+
+**Read what you get back before you propose anything**, the same instinct as reading the brief —
+these are the project's own architecture, decisions and conventions, and proposing a change that
+contradicts one you had in hand and did not read is a worse failure than not knowing it existed.
+Note which slugs you read — you will hand them back on your next save (§4).
 
 **If the project has more than one work-stream and `latest` is not obviously right**, drop
 `scope` from the call to get the index instead of a handoff (the same call shape
@@ -393,7 +414,11 @@ Session opening on a tracked project, or the user says "continue" / "resume":
      (seen_hashes omitted — the store defaults it from the latest handoff)
      (unsure which scope? drop `scope` for the index, read headlines, ask — never guess)
      (scope wrong? read `scope_not_found` + `did_you_mean` — never guess twice)
-  → read the foundations you got back before proposing anything; note which slugs you read
+  → read the foundations INDEX; the read-first ones arrive with their text
+     (an index row with no text is a document to ASK for, not one that is missing —
+      get_project_context({project, slugs: ["decisions.md"]}) returns it whole;
+      the brief's "Read before you…" section says which document for which work)
+  → read what you got back before proposing anything; note which slugs you read
   → re-run every `recheck` before trusting anything
   → report where things stand + any divergence from ground truth
   → raise any clash between the brief's standing instructions and your own rules

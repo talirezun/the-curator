@@ -54,6 +54,12 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The REAL docs table (v3.62.0). `docsUrl()` THROWS on an unknown key, which
+// is the module's whole point, so injecting the real one is what makes a
+// mistyped key a FATAL here instead of a blank panel in the browser.
+const { docsLinkHtml } =
+  await import('../src/public/next/shared/docs-links.js');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -199,6 +205,12 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
+    'docsLinkHtml',
+    // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
+    // so the legend text and the shared docs table are collaborators of it.
+    // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
+    // not in the frozen map, and a stub would let a mistyped key pass here and
+    // blank the panel in the browser.
     MAIN_PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -215,13 +227,15 @@ try {
     extractFunction(SRC, 'browseMoreHtml') + '\n' +
     extractFunction(SRC, 'browseNoteHtml') + '\n' +
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
+    extractFunction(SRC, 'threeLayersInfoHtml') + '\n' +
+    extractFunction(SRC, 'infoMark') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
     `return { renderMain, renderBrowsePanel, BROWSE_EYEBROW, browseMatches, browseWindow,
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )();
+  )(docsLinkHtml);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -495,6 +509,13 @@ function loadBrowse(slug, token) { calls.browse.push({ slug, token }); return Pr
 let state = { semanticScan: null, health: null, healthSlug: null };
 const calls = { browse: [], health: [], projects: [] };
 let loadGate = null;
+// v3.62.0 (P1-9). The module variable onEnter writes the shell's one-shot
+// domain request into and loadDomainsList spends. NULL here, which is the
+// no-request case: this section's subject is the ORDINARY mount, and the
+// request's own behaviour is driven end to end in test-next-domain-request.js.
+let arrivalRequest = null;
+const NEW_PROJECT_REASON = 'new-project';
+function freshProjectLifecycle() { return { mode: 'create' }; }
 function render() {}
 function isCurrentMount() { return true; }
 function reportAsyncActionFailure() {}

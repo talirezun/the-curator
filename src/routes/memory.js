@@ -47,11 +47,24 @@
  *
  * So the write surface here is: create / rename / delete a project, replace
  * a project's brief, set the ownership once, WRITE one canonical document on a
- * curator-owned project only — and REMOVE one on either ownership (v3.61.1).
- * The asymmetry is the point and is argued at `requireManifest`: an edit to a
- * mirrored document would make two writers of one file, while removing its
- * entry is the decision to stop mirroring it and touches nothing in the
- * folder. All tier 1 and tier 0, all on files an agent does not race for.
+ * curator-owned project only — REMOVE one on either ownership (v3.61.1) — and
+ * FLAG one read-first on either ownership (v3.62.0). The asymmetry is the
+ * point, and the three cases fall out of one rule rather than three:
+ *
+ *   · An EDIT to a mirrored document would make two writers of one FILE, so
+ *     `PUT` stays curator-only (`requireManifest`'s neighbour,
+ *     `requireCuratorOwned`).
+ *   · REMOVING its entry is the decision to stop mirroring it. It rewrites
+ *     the manifest and touches nothing in the folder the copy came from.
+ *   · FLAGGING it read-first is the same kind of act one step smaller:
+ *     `readFirst` is CURATOR METADATA ABOUT a document, never part of it, so
+ *     `setFoundationReadFirst` writes `manifest.json` and nothing else and
+ *     every mirrored `.md` stays byte-for-byte the checkout's — which is what
+ *     the freshness claim `sha(stored) === sha(source)` rests on. The manifest
+ *     is ALREADY a file this app writes on a mirror, on every refresh. And who
+ *     reads what first is a decision a repository cannot make for its owner.
+ *
+ * All tier 1 and tier 0, all on files an agent does not race for.
  *
  * ── THE ONE PROPERTY THIS DOES COST, STATED RATHER THAN IMPLIED AWAY ─────
  * `project.md` has no `<machine>` segment, so it is the one file in the
@@ -74,12 +87,22 @@
  *   GET    /                                 the index, every project
  *   GET    /repo-scan?root=<abs>             candidate documents in a folder
  *   GET    /:domain/projects                 one domain's projects
+ *   GET    /:domain/projects?as=project      …or the PROJECT called
+ *                                            `projects`, if there is one
+ *                                            (v3.62.0; see that route)
  *   POST   /:domain/projects                 create        {project, brief?,
  *                                                           foundations?}
  *   PATCH  /:domain/projects/:project        rename/brief  {rename?, brief?}
  *   DELETE /:domain/projects/:project        delete        {confirm}
  *   GET    /:domain/:project/foundations/:slug   one document (`?raw=1`)
- *   PUT    /:domain/:project/foundations/:slug   write one  {text, title?, role?}
+ *   PUT    /:domain/:project/foundations/:slug   write one  {text, title?,
+ *                                                role?, readFirst?} — the
+ *                                                flag is TRI-STATE: omit it
+ *                                                to leave the reading plan
+ *                                                alone (v3.62.0)
+ *   PATCH  /:domain/:project/foundations/:slug   the reading plan ONLY
+ *                                                {readFirst} — EITHER
+ *                                                ownership (v3.62.0)
  *   DELETE /:domain/:project/foundations/:slug   remove one {confirm} — EITHER
  *                                                ownership (v3.61.1): on a
  *                                                mirror it stops mirroring
@@ -94,28 +117,39 @@
  * TWO literals collide with a legal project slug: `projects`, which would
  * shadow `GET /:domain/:project` for a project of that name, and — since
  * v3.61.0 — `repo-scan`, which is the shape the one-segment deprecated alias
- * matches. Rather than leave either to chance, both are REFUSED as a project
- * name by the create and rename routes (RESERVED_PROJECT_NAMES), so the app
- * cannot produce the collision. A project directory of either name created
- * out of band — by hand, or by an MCP client — is still listed by
- * `GET /:domain/projects` and is still readable by every MCP tool; only its
- * own detail URL on this router is unreachable. That is stated here because
- * it is a real, small, permanent hole and hiding it would be worse than the
- * hole.
+ * matches. Both are REFUSED as a project name by the create and rename routes
+ * (RESERVED_PROJECT_NAMES), so the app cannot MINT the collision.
  *
- * ── AND ONE COLLISION THAT IS NOT CLOSED, BECAUSE IT CANNOT BE ───────────
- * `GET /:domain/projects` matches before `GET /:domain/:project`, so a
- * project literally named after its DOMAIN — the domain's OWN project, whose
- * slug IS the domain name — is reachable on the two-segment detail read
- * (`/alpha/alpha` has two segments and the literal is `projects`, not
- * `alpha`), while a project someone named `projects` is not. Recorded in
- * v3.57.0 as a reserved-name collision. The FOUR-segment foundations routes
- * are unaffected in both directions: `/:domain/projects` matches exactly two
- * segments and cannot shadow four, so `…/alpha/alpha/foundations/init` and
- * every sibling reach the domain's own project — asserted, not assumed, in
+ * ── AND THE ONE IT COULD NOT MINT, CLOSED IN v3.62.0 ─────────────────
+ * Reserving a NAME cannot help with the domain's OWN project, because that
+ * one is not minted — it exists because the domain does, and its slug IS the
+ * domain name (`defaultProjectOf`). So a domain called `projects` has a
+ * project called `projects`, and `/projects/projects` is one URL naming two
+ * live resources: the Domains view's list and the Project-context view's
+ * detail read. v3.57.0 recorded it; v3.61.0 recorded it again as "a project
+ * literally named after its domain is still unreachable on the 2-segment
+ * read". The list won and the detail simply lost.
+ *
+ * It is now settled by the CALLER rather than by the path: `?as=project` on
+ * `GET /:domain/projects` makes that handler decline (`next()`), and Express
+ * continues to `GET /:domain/:project`. The default — no `as` at all — is
+ * byte-identical to what shipped, on every domain, so nothing that worked
+ * before can now answer differently. The full argument, including why an
+ * unrecognised value is a 400 while `?open=newest` is ignored, is at that
+ * route. A project of either reserved name created OUT OF BAND is therefore
+ * now fully addressable too — `projects` through `as=project`, `repo-scan`
+ * through its two-segment detail URL, which the one-segment alias never
+ * shadowed.
+ *
+ * The FOUR-segment foundations routes are unaffected in both directions:
+ * `/:domain/projects` matches exactly two segments and cannot shadow four, so
+ * `…/alpha/alpha/foundations/init` and every sibling reach the domain's own
+ * project — asserted, not assumed, in
  * scripts/test-next-memory-projects.js §S10g. `PATCH`/`DELETE
  * /:domain/projects/:project` shadow nothing: they are the only routes on
- * their (method, segment-count) pair.
+ * their (method, segment-count) pair, and the new `PATCH
+ * /:domain/:project/foundations/:slug` is the only route on ITS pair
+ * (four segments, PATCH).
  *
  * ── THE DEPRECATED ALIAS ─────────────────────────────────────────────────
  * `GET /api/memory/:project` was the v3.17.0–v3.47 detail route, where
@@ -722,6 +756,15 @@ function foundationDocRow(d) {
     // row, not an absence to interpret. A store that does not know the field
     // answers `false`, which is what an unfilled skeleton is not.
     skeleton: d.skeleton === true,
+    // ── THE OWNER'S ROUTING FLAG (v3.62.0) ────────────────────────────
+    // `readFirst` is what a session is handed every time; everything else
+    // rides as an index row an agent opens BY NAME. Same `=== true` and the
+    // same always-present rule as `skeleton` above, for the same reason: a
+    // table with a "read first" column needs a negative answer from every
+    // row, not an absence to interpret. It is CURATOR METADATA ABOUT a
+    // document rather than part of it, which is why it exists on a mirror at
+    // all — the manifest moves, the copied bytes do not.
+    readFirst: d.readFirst === true,
   };
 }
 
@@ -745,6 +788,26 @@ function foundationsWire(out) {
     // left to the view, because two surfaces counting the same array is the
     // shape this file's neighbours keep re-learning.
     skeletonCount: docs.filter((d) => d && d.skeleton === true).length,
+    // ── THE FIVE READ-FIRST READINGS (v3.62.0), FORWARDED, NOT DERIVED ──
+    //
+    // Taken from the store rather than recomputed here, because the store's
+    // own `readFirstReadings` is what `setFoundationReadFirst` and the
+    // bootstrap answer with, and three surfaces counting one array is the
+    // shape this file's neighbours keep re-learning. Absent facts become
+    // 0/false so a consumer can tell "the store looked and there was nothing"
+    // from "this server does not know the field".
+    //
+    // `readFirstBudgetBytes` IS NOT `budgetBytes`. The first is the
+    // BOOTSTRAP's reading budget (120 KB — what one session is actually
+    // handed); the second is the PROJECT budget (200 KB — what tier 0 may
+    // hold on disk). A project can sit comfortably under 200 KB and still
+    // flag more than a bootstrap will send, so collapsing the two would make
+    // a view say "within budget" about the wrong budget.
+    readFirstCount: Number.isInteger(out.readFirstCount) ? out.readFirstCount : 0,
+    onRequestCount: Number.isInteger(out.onRequestCount) ? out.onRequestCount : 0,
+    readFirstBytes: Number.isInteger(out.readFirstBytes) ? out.readFirstBytes : 0,
+    readFirstBudgetBytes: Number.isInteger(out.readFirstBudgetBytes) ? out.readFirstBudgetBytes : 0,
+    readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
     documents: docs.filter(Boolean).map(foundationDocRow),
     // A `.md` file in the directory with no manifest entry. The manifest is
     // written LAST on every save, so a crash leaves a document without an
@@ -809,6 +872,12 @@ const TIER0_WIRE_REASON = new Map([
   ['invalid-role', 'invalid_role'],
   ['empty-foundation', 'empty'],
   ['not-found', 'foundation_not_found'],
+  // v3.62.0. `setFoundationReadFirst` answers these two where the older write
+  // routes reached them through `requireManifest`/`requireCuratorOwned`
+  // instead. Named here so the PATCH's refusals cross the wire in the same
+  // underscored spelling as every other tier-0 route's.
+  ['no-manifest', 'no_manifest'],
+  ['unsafe-path', 'unsafe_path'],
 ]);
 function tier0Reason(reason) {
   return TIER0_WIRE_REASON.get(String(reason || '')) || reason || 'io';
@@ -1137,17 +1206,99 @@ router.get('/repo-scan', async (req, res) => {
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
 // GET /api/memory/:domain/projects — one domain's projects
 //
 // REGISTERED BEFORE `/:domain/:project`. Express matches in registration
-// order within a segment count, so this literal has to come first; see the
-// header block for the one collision that creates and why `projects` is a
-// reserved project name because of it.
-// ═════════════════════════════════════════════════════════════════════════
-router.get('/:domain/projects', async (req, res) => {
+// order within a segment count, so this literal has to come first — without
+// it the Domains view's list endpoint would not be reachable at all.
+//
+// ── THE COLLISION THAT ORDERING CREATES, AND HOW IT IS RESOLVED (v3.62.0) ─
+//
+// The second segment `projects` is genuinely ambiguous. For every domain it
+// can mean the LIST; for a domain whose own project is named `projects` — and
+// `defaultProjectOf(domain)` returns the DOMAIN NAME, so that is exactly the
+// domain called `projects`, which is the maintainer's own — it can equally
+// mean that project's DETAIL read. `/projects/projects` is one URL and two
+// resources, and both are live: the Domains view needs the list, the
+// Project-context view needs the detail.
+//
+// So it cannot be settled from the path, and the previous release did not
+// settle it: v3.57.0 recorded it, v3.61.0 recorded it again as "a project
+// literally named after its domain is still unreachable on the 2-segment
+// read". What was reachable was the list; the detail simply lost.
+//
+// THE RULE: the second segment `projects` means the LIST unless the request
+// says `?as=project`, in which case this handler declines by calling `next()`
+// and Express continues to `GET /:domain/:project` — which re-parses its own
+// params and is answered about a project called `projects`.
+//
+//   GET /articles/projects                → the list         (unchanged)
+//   GET /projects/projects                → the list         (unchanged)
+//   GET /projects/projects?as=project     → the detail read  (NEW)
+//   GET /articles/projects?as=project     → the detail read of a project
+//                                           called `projects` in `articles`,
+//                                           404 when there is none
+//
+// WHY IT CANNOT MISROUTE. The default is byte-identical to what shipped: a
+// caller that has never heard of `as` gets exactly today's answer, on every
+// domain, including one called `projects`. The only way to reach the other
+// resource is to ASK for it by name, and asking for it on a domain that has
+// no such project is a 404 from `handleDetail`'s own `project_not_found` arm
+// rather than a wrong 200. A domain called `projects` holding a real project
+// called `projects` — which the STORE permits, since its own
+// `RESERVED_PROJECT_NAMES` holds only the four names that collide with a file
+// or directory it addresses, and `projects` is not one — therefore has BOTH
+// of its resources addressable, which is the first time that has been true.
+//
+// WHY NOT RESERVE THE NAME HARDER INSTEAD. `RESERVED_PROJECT_NAMES` below
+// already stops this app MINTING such a project, and that is kept. It cannot
+// help here: the domain's OWN project is not minted, it exists because the
+// domain does, and its name is the domain's name. Reserving `projects` as a
+// DOMAIN name would be a migration for every install that has one.
+//
+// WHY A QUERY PARAMETER RATHER THAN A NEW PATH. A new path (`…/project/…`)
+// would be a second public shape for a read that already has one, and this
+// router already carries one deprecated alias it is trying to retire. `as` is
+// ADDITIVE: no existing URL changes meaning, and the contract stays "one
+// path, two resources, and the caller names which".
+//
+// AN UNRECOGNISED VALUE IS A 400, not an ignored field — deliberately
+// different from `?open=newest`, which this router DOES ignore when it does
+// not recognise it. The difference is what a mistake costs. `open` picks how
+// much of one resource to send; `as` picks WHICH RESOURCE, so silently
+// serving the list to somebody who typed `as=projct` is the exact failure
+// this parameter exists to remove.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The one value of `?as=` that changes which resource `…/projects` names.
+ * Exported so a suite pins the literal rather than re-typing it, and so the
+ * two readings of the segment have a name in code.
+ */
+export const AS_PROJECT = 'project';
+export const AS_LIST = 'list';
+
+router.get('/:domain/projects', async (req, res, next) => {
   try {
     const { domain } = req.params;
+    // THE DISAMBIGUATOR IS READ BEFORE THE DOMAIN IS RESOLVED, so a
+    // fall-through never costs a `listDomains()` this handler is not going to
+    // use — and, more importantly, so the 404 for an unknown domain comes
+    // from ONE place (the handler that actually answers) rather than from
+    // whichever of the two got there first.
+    const as = req.query.as;
+    if (as !== undefined) {
+      if (as === AS_PROJECT) return next();
+      if (as !== AS_LIST) {
+        return res.status(400).json({
+          ok: false, reason: 'invalid_as',
+          error: `"${String(as).slice(0, 40)}" is not a value for \`as\`. `
+            + `Use \`as=${AS_LIST}\` for this domain's projects, or \`as=${AS_PROJECT}\` `
+            + 'to read a project that is itself called "projects".',
+        });
+      }
+    }
     if (!await requireDomain(res, domain)) return;
     const store = ws();
     const listed = await projectsIn(store, domain);
@@ -1564,6 +1715,25 @@ router.put('/:domain/:project/foundations/:slug', async (req, res) => {
         error: 'Send `text` — the COMPLETE document. A save replaces the whole file.',
       });
     }
+    // ── `readFirst` IS TRI-STATE AND MUST STAY THAT WAY (v3.62.0) ───────
+    //
+    // The store reads `undefined` as "leave the existing flag alone" and an
+    // explicit boolean as "move it". So an OMITTED field has to arrive as
+    // `undefined`, never as `false`: a save that carried a normalised `false`
+    // would silently un-route a document every time its text was edited, and
+    // the owner would find their reading plan quietly emptying itself one
+    // save at a time with nothing to see.
+    //
+    // Allow-listed like the rest of this body (v3.61.0: a create body could
+    // stamp a seeded skeleton with a FORGED agent provenance), so only a real
+    // boolean is forwarded and anything else is the omitted case.
+    if (body.readFirst !== undefined && typeof body.readFirst !== 'boolean') {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_read_first',
+        error: '`readFirst` must be true or false. Omit it to leave the document\u2019s '
+          + 'current reading plan alone.',
+      });
+    }
 
     const gate = await requireCuratorOwned(res, domain, project);
     if (!gate.ok) return;
@@ -1584,6 +1754,11 @@ router.put('/:domain/:project/foundations/:slug', async (req, res) => {
       // line, and never left to a default: `save_foundation` over MCP stamps
       // the agent, so an unstamped file would be ambiguous.
       authoredBy: { kind: 'human' },
+      // SPREAD, not `readFirst: body.readFirst`. The key must be ABSENT when
+      // the caller omitted it, because the store distinguishes an absent key
+      // from `false` and an explicit `readFirst: undefined` is the same thing
+      // to `inp.readFirst === undefined` but not to a reader of this code.
+      ...(body.readFirst === undefined ? {} : { readFirst: body.readFirst }),
       replace: true,
     });
     if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
@@ -1611,10 +1786,130 @@ router.put('/:domain/:project/foundations/:slug', async (req, res) => {
       // rather than just "saved" — dropping a fact the store computed
       // honestly is this module's own recorded defect class.
       wasSkeleton: out.wasSkeleton === true,
+      // AND WHERE THE FLAG ENDED UP. Forwarded on the SAVE as well as on the
+      // PATCH, because a save that preserved a flag and a save that moved one
+      // are different facts and the row beside the editor shows the flag.
+      readFirst: out.readFirst === true,
+      wasReadFirst: out.wasReadFirst === true,
       notes: Array.isArray(out.notes) ? out.notes : [],
     });
   } catch (err) {
     console.error('Memory foundation write error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PATCH /api/memory/:domain/:project/foundations/:slug — the reading plan
+//
+// EITHER OWNERSHIP, and that is the whole reason this is not the PUT's job.
+// ══════════════════════════════════════════════════════════════════════════
+/**
+ * Flag ONE document read-first, or unflag it. Body: `{readFirst: boolean}` and
+ * nothing else.
+ *
+ * ── WHY THIS IS NOT `PUT … {readFirst}` ──────────────────────────
+ * The PUT is refused `repo_owned` on a mirror, on the single-writer argument
+ * the tier-0 block above states: an EDIT there would be overwritten by the
+ * next refresh, because the folder is the author. A repo-owned project routed
+ * only through the PUT would therefore have had no way to flag anything from
+ * the app at all — which is most of the projects this tier exists for, since
+ * mirroring a checkout is the commonest way documents arrive.
+ *
+ * ── AND WHY A FLAG ON A MIRROR IS NOT A SECOND WRITER ────────────────
+ * The property the argument protects is ONE WRITER PER FILE WITH PROVENANCE
+ * THAT MATCHES — never "one process may write". `readFirst` is CURATOR
+ * METADATA ABOUT a document, not part of it: `setFoundationReadFirst` writes
+ * `foundations/manifest.json` and NOTHING else, so every mirrored `.md` stays
+ * byte-for-byte the checkout's and `sha(stored) === sha(source)`, which is the
+ * claim the whole freshness reading rests on, is untouched. The manifest is
+ * ALREADY a file this app writes on a mirror — `POST …/foundations/refresh`
+ * rewrites it on every re-copy, and v3.61.1's `DELETE` rewrites it to stop
+ * mirroring a document. This is the same file, one boolean, and the routing
+ * decision it records is the OWNER's: who reads what first is not something a
+ * repository can know.
+ *
+ * The cost, stated rather than implied away: tier 0 has no `<machine>`
+ * segment, so two machines flagging the same project converge to whichever
+ * saved last — the `project.md` carve-out in docs/sync.md, extended one tier
+ * down, and the same cost `saveFoundation` already pays.
+ *
+ * ── THE BODY IS ONE FIELD, AND A SECOND ONE IS A 400 ────────────────
+ * Not tidiness: this route is reachable on a MIRROR, so a body that quietly
+ * ignored a `text` key would be a write path to a mirrored document wearing
+ * the wrong method. Refusing the whole request is what keeps the "this route
+ * writes the manifest and nothing else" claim checkable from the outside.
+ */
+router.patch('/:domain/:project/foundations/:slug', async (req, res) => {
+  try {
+    const { domain, project, slug } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    if (!FOUNDATION_SLUG_RE.test(String(slug || ''))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_slug',
+        error: `"${slug}" is not a usable document name. Use lowercase letters, digits and `
+          + '"-", up to 64 characters, ending in ".md".',
+      });
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (typeof body.readFirst !== 'boolean') {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_read_first',
+        error: 'Send `{ readFirst: true }` or `{ readFirst: false }`. This route changes the '
+          + 'reading plan and nothing else.',
+      });
+    }
+    const extra = Object.keys(body).filter((k) => k !== 'readFirst');
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts only \`readFirst\`. It was also sent: ${extra.slice(0, 10).join(', ')}. `
+          + 'Use PUT to change a document\u2019s text, title or role.',
+      });
+    }
+
+    // NO `requireCuratorOwned` AND NO `requireManifest` HERE. The store's own
+    // gate is the one that matters and it is the one the view has to be able
+    // to act on: `no-manifest` before init, `not-found` for a slug that is not
+    // listed, `manifest-unreadable` for a manifest this app must not rewrite.
+    // Pre-reading the index here would be a SECOND copy of that decision, one
+    // that could disagree with the store under the lock the store takes and
+    // this route does not.
+    const out = await fstore().setFoundationReadFirst(domain, project, slug, body.readFirst);
+    if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
+
+    res.json({
+      ok: true, domain, project,
+      slug: out.slug || slug,
+      readFirst: out.readFirst === true,
+      // WAS IT ALREADY? `changed: false` is a SUCCESS — the document is in
+      // the state that was asked for — and saying so is what lets a view
+      // avoid announcing a change nobody made.
+      wasReadFirst: out.wasReadFirst === true,
+      changed: out.changed === true,
+      // THE FIVE READINGS, so the block's summary line ("N read first · M on
+      // request") can be patched in place without a re-read of the project.
+      // Forwarded from the store rather than recomputed, for the reason
+      // `foundationsWire` records at its own copy of these names.
+      readFirstCount: Number.isInteger(out.readFirstCount) ? out.readFirstCount : 0,
+      onRequestCount: Number.isInteger(out.onRequestCount) ? out.onRequestCount : 0,
+      readFirstBytes: Number.isInteger(out.readFirstBytes) ? out.readFirstBytes : 0,
+      readFirstBudgetBytes: Number.isInteger(out.readFirstBudgetBytes) ? out.readFirstBudgetBytes : 0,
+      // A DISCLOSURE, NEVER A WALL, and measured against the BOOTSTRAP's
+      // 120 KB reading budget rather than the project's 200 KB: the flagged
+      // set is what one session is handed, so that is the figure a person
+      // flagging a fifth document needs to see.
+      readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
+    });
+  } catch (err) {
+    console.error('Memory foundation read-first error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -2176,6 +2471,22 @@ function statusForStoreRefusal(out) {
     || reason === 'invalid-root' || reason === 'invalid_root'
     || reason === 'ownership-mismatch' || reason === 'repo_owned'
     || reason === 'too-many-documents' || reason === 'too_many_documents'
+    // v3.62.0, both spellings, for the same reason the pairs above are here:
+    // `setFoundationReadFirst` answers `no-manifest` and `unsafe-path`
+    // directly, and while both are 400 by the default arm, the default's
+    // correctness for them would be a coincidence rather than a decision.
+    //
+    // STATED HONESTLY: these two lines are the only ones in this function
+    // that NO behavioural assertion can pin, because deleting them changes no
+    // answer — the default arm produces the same 400. A mutation proving that
+    // came back green, deliberately, and it is recorded rather than hidden
+    // behind an assertion that would have been measuring the default. What
+    // IS pinned is the WIRE SPELLING, one table up: dropping `no-manifest`
+    // from TIER0_WIRE_REASON makes the PATCH answer the store's hyphenated
+    // word where every other tier-0 route answers this router's underscored
+    // one, and test-next-memory-routes-live.js §2 reds on it.
+    || reason === 'no-manifest' || reason === 'no_manifest'
+    || reason === 'unsafe-path' || reason === 'unsafe_path'
     || reason === 'would-replace-larger-foundation') return 400;
   // NOT A 500 AND NOT A 400: the checkout this mirror is copied from is not on
   // this computer. Nothing is malformed and nothing is broken — the server's

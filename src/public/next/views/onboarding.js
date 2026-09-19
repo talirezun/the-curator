@@ -256,7 +256,7 @@ const STEP_COPY = {
   // that need it instead of with the exemption.
   'api-key': {
     title: 'Add an AI key',
-    todo: 'Needed for ingest and chat. Agent memory and the bridge work without one.',
+    todo: 'Needed for ingest and chat. Project context and the bridge work without one.',
     done: 'A key is saved, so The Curator can read and write.',
     action: 'Open Settings',
   },
@@ -448,7 +448,7 @@ function deriveDoor(facts, chosen) {
 //     build has dropped falls back to HOME_VIEW rather than breaking;
 //   · every navigate() WRITES it. So the next rail click supersedes this,
 //     and the app's existing "restore the view you left" behaviour takes
-//     over — which for somebody who spends the session in Agent memory
+//     over — which for somebody who spends the session in Project context
 //     lands them there anyway.
 //
 // What the write therefore buys is the first frame of the NEXT launch for a

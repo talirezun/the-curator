@@ -310,6 +310,12 @@ const document = { get getElementById() { return documentImpl.getElementById; },
 const { COPY_SUCCESS_BANNER, TEMPLATE } =
   await import('../src/public/next/shared/agent-instructions.js');
 
+// The REAL docs table (v3.62.0). `docsUrl()` THROWS on an unknown key, which
+// is the module's whole point, so injecting the real one is what makes a
+// mistyped key a FATAL here instead of a blank panel in the browser.
+const { docsLinkHtml } =
+  await import('../src/public/next/shared/docs-links.js');
+
 const FNS = [
   'activeBrowse', 'activeProjects', 'projectCount', 'infoMark', 'projInfoId',
   'filterBrowseEntries', 'filterMemoryEntries', 'browseMatches', 'browseWindow',
@@ -321,12 +327,18 @@ const FNS = [
   // real and a stub would make the facet assertions vacuous.
   'selectBrowseFacet', 'scrollSectionIntoView',
   'healthSection', 'renderMain',
+  // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
+  // so the legend text and the shared docs table are collaborators of it.
+  // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
+  // not in the frozen map, and a stub would let a mistyped key pass here and
+  // blank the panel in the browser.
+  'threeLayersInfoHtml',
 ];
 
 let box;
 try {
   box = new Function(
-    'COPY_SUCCESS_BANNER',
+    'COPY_SUCCESS_BANNER', 'docsLinkHtml',
     PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -343,7 +355,7 @@ try {
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )(COPY_SUCCESS_BANNER);
+  )(COPY_SUCCESS_BANNER, docsLinkHtml);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);

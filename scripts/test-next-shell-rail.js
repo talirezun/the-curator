@@ -89,6 +89,12 @@ function section(t) { console.log(`\n${t}`); }
 
 const appJs = readFileSync(APP, 'utf8');
 
+// The one `opts.reason` value any consumer acts on, read from the source
+// rather than typed here: §9 asserts the NORMALISATION lands on it, and a
+// copy in this file would assert a copy.
+const newProjectReasonMatch = /export const NEW_PROJECT_REASON = '([^']+)';/.exec(appJs);
+const newProjectReasonLiteral = newProjectReasonMatch ? newProjectReasonMatch[1] : null;
+
 // ── Extraction helpers ───────────────────────────────────────────────────
 // Brace-matched so nested braces cannot truncate an extraction, and a
 // missing name THROWS rather than silently testing nothing. Same discipline
@@ -278,13 +284,29 @@ for (const v of ALL) {
   eq(cap, R.api.VIEW_META[v].caption, `${v}'s rendered caption is VIEW_META.${v}.caption`);
   ok(!/\s/.test(cap || ' '), `${v}'s caption is ONE word — a two-word caption is what forced "Shared Brain" to "Shared"`);
 }
-// The two abbreviations are the whole reason `caption` is a separate field
-// from `label` and `title`. Pin them by NAME, so shortening a third one
-// silently is not possible without this line changing.
-eq(R.api.VIEW_META.shared.caption, 'Shared', 'Shared Brain abbreviates to "Shared" on the rail');
-eq(R.api.VIEW_META.memory.caption, 'Memory', 'Agent memory abbreviates to "Memory" on the rail');
-ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Agent memory',
-  'the FULL names survive on `title` — the caption abbreviates the rail, not the app');
+// The two shortenings are the whole reason `caption` is a separate field from
+// `label` and `title`. Pin them by NAME, so shortening a third one silently is
+// not possible without this line changing.
+//
+// T1/T2 (v3.62.0): this used to read "Agent memory abbreviates to Memory".
+// Two things changed and only one of them is the rename. The VIEW is now
+// "Project context" and its caption "Context" — and "Context" is NOT an
+// abbreviation of "Project context", any more than "Shared" is one of "Shared
+// Brain". Both are SHORTENINGS: the word that is kept is a real name for the
+// thing, which is the property that lets the rail be read without the tooltip
+// and the reason the field could be re-pointed at a different word at all. An
+// abbreviation would have had to stay "Memory".
+eq(R.api.VIEW_META.shared.caption, 'Shared', 'Shared Brain shortens to "Shared" on the rail');
+eq(R.api.VIEW_META.memory.caption, 'Context', 'Project context shortens to "Context" on the rail');
+ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Project context',
+  'the FULL names survive on `title` — the caption shortens the rail, not the app');
+// THE VIEW ID DOES NOT MOVE (rename Tier C, refused). `memory` is the stored
+// `curator-next-view` value, the onboarding agent door's target, and the
+// attribute the Electron main process evaluates across a process boundary —
+// three contracts a presentation rename has no business breaking.
+ok(Object.prototype.hasOwnProperty.call(R.api.VIEW_META, 'memory')
+  && !Object.prototype.hasOwnProperty.call(R.api.VIEW_META, 'context'),
+'the VIEW ID stays `memory` — only the words a person reads changed');
 for (const v of ALL) {
   const b = buttons.find((x) => x.attrs['data-view'] === v);
   eq(b.attrs['aria-label'], R.api.VIEW_META[v].title,
@@ -332,7 +354,7 @@ if (dividers.length === 1) {
   const after = buttons.filter((b) => b.index > d.index).sort((a, b) => a.index - b.index)[0];
   eq(before.attrs['data-view'], R.api.RAIL_DIVIDER_AFTER, 'the divider follows RAIL_DIVIDER_AFTER');
   eq(before.attrs['data-view'], 'domains', 'the everyday group ends at Domains');
-  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Agent memory (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely)');
+  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Project context (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely; v3.62.0 renamed it and moved nothing)');
   eq(d.attrs['aria-hidden'], 'true', 'the divider is hidden from assistive technology');
   eq(d.attrs.role, 'presentation', 'the divider carries role="presentation" — grouping, not a landmark');
 }
@@ -493,6 +515,124 @@ eq(family, '--font-sans', `${capFont} resolves to the SANS family — a section 
   eq(eyebrowFamily, '--font-mono',
     'CONTROL: the same resolver reads --type-eyebrow as --font-mono, so §8 distinguishes the two faces');
 }
+// ════════════════════════════════════════════════════════════════════════
+section('§9  THE DOMAIN REQUEST (P1-9) — recorded once, spent once, never stored');
+// ════════════════════════════════════════════════════════════════════════
+//
+// The shell's other cross-view handoff, and the one the Context view's "Open
+// in Domains" / "Ask this domain" / "+ New project" doors all ride on. Every
+// property below regresses SILENTLY: a request that is not cleared re-opens a
+// domain somebody asked for once, an hour later; a request that records a
+// blank slug reads to the consumer as "a domain was asked for" when none was;
+// and a `reason` the shell decided to interpret would make an arrival fail on
+// a word the producer chose.
+//
+// EXECUTED, not scanned — these are the real functions out of app.js, in a
+// sandbox with no DOM, because the pair touches nothing but one module
+// variable and that is exactly what makes it testable here.
+{
+  let reqBox;
+  try {
+    reqBox = new Function(`
+      ${extractFunction(appJs, 'requestDomain')}
+      ${extractFunction(appJs, 'consumeDomainRequest')}
+      let _pendingDomainRequest = null;
+      const NEW_PROJECT_REASON = ${JSON.stringify(newProjectReasonLiteral)};
+      return { requestDomain, consumeDomainRequest, NEW_PROJECT_REASON,
+               __peek: () => _pendingDomainRequest };
+    `)();
+  } catch (err) {
+    ok(false, `FATAL: could not build the request sandbox — ${err.message}`);
+    reqBox = null;
+  }
+
+  if (reqBox) {
+    const { requestDomain, consumeDomainRequest } = reqBox;
+
+    // ── The happy path, and the shape the consumer is promised ──────────
+    ok(consumeDomainRequest() === null,
+      'with nothing pending, consumeDomainRequest() is null — not an object with a null slug');
+    requestDomain('articles');
+    const first = consumeDomainRequest();
+    eq(first && first.slug, 'articles', 'a recorded slug comes back on the first consume');
+    eq(first && first.reason, null, '…with reason null when none was given');
+
+    // ── SELF-CLEARING. The whole reason this is module state and not a
+    //    localStorage key: a second read must find nothing, or every later
+    //    Domains mount re-applies one old click.
+    ok(consumeDomainRequest() === null,
+      'the SECOND consume in a row is null — the request is spent by reading it');
+    requestDomain('alpha');
+    consumeDomainRequest();
+    ok(reqBox.__peek() === null,
+      '…and the module variable itself is cleared, not merely reported as spent');
+
+    // ── A BLANK REQUEST IS NO REQUEST, and it also CLEARS a pending one.
+    //    The consumer's contract is "a slug or nothing"; recording
+    //    {slug: null} would make "nobody asked" indistinguishable from
+    //    "somebody asked for nothing" at the point of use.
+    requestDomain('alpha');
+    requestDomain('');
+    ok(consumeDomainRequest() === null, 'an empty slug clears a pending request rather than recording a blank one');
+    requestDomain('alpha');
+    requestDomain(null);
+    ok(consumeDomainRequest() === null, '…and so does null');
+    requestDomain('alpha');
+    requestDomain(42);
+    ok(consumeDomainRequest() === null, '…and so does a non-string, which a caller can reach through a typo');
+    requestDomain('   ');
+    ok(consumeDomainRequest() === null, '…and so does whitespace, which would otherwise pass a truthiness check');
+    requestDomain('  beta  ');
+    eq((consumeDomainRequest() || {}).slug, 'beta', 'a slug is trimmed, so a padded value still matches a real domain');
+
+    // ── LAST WRITER WINS. Two doors pressed in one task is not a queue.
+    requestDomain('alpha');
+    requestDomain('beta');
+    eq((consumeDomainRequest() || {}).slug, 'beta', 'a second request replaces the first — there is no queue to drain');
+
+    // ── `reason` IS ADVISORY, and the shell attaches no meaning to it.
+    requestDomain('alpha', { reason: 'anything-at-all' });
+    eq((consumeDomainRequest() || {}).reason, 'anything-at-all',
+      'an unrecognised reason is carried through untouched — the consumer ignores what it has not learned');
+    requestDomain('alpha', { reason: '' });
+    eq((consumeDomainRequest() || {}).reason, null, 'an empty reason is null, never the empty string');
+    requestDomain('alpha', 'not-an-object');
+    eq((consumeDomainRequest() || {}).reason, null, 'a non-object opts bag is ignored rather than thrown over');
+
+    // ── THE ONE NORMALISATION. The design pass sketched the Context view's
+    //    "+ New project" as `{openCreate: true}` while the build contract
+    //    fixed the bag as `{reason?: string}`; both reach the consumer as ONE
+    //    stored field, so the two packages cannot disagree at merge.
+    requestDomain('alpha', { openCreate: true });
+    eq((consumeDomainRequest() || {}).reason, reqBox.NEW_PROJECT_REASON,
+      '{openCreate: true} normalises to the NEW_PROJECT_REASON literal');
+    requestDomain('alpha', { openCreate: 'yes' });
+    eq((consumeDomainRequest() || {}).reason, null,
+      '…on `=== true` only, so a truthy string cannot switch a navigation into a form');
+    requestDomain('alpha', { reason: 'other', openCreate: true });
+    eq((consumeDomainRequest() || {}).reason, 'other',
+      'an explicit reason wins over the shorthand — one field is stored, and it is `reason`');
+  }
+
+  // ── THE LITERAL IS EXPORTED, AND THE CONSUMER IMPORTS IT ──────────────
+  // The producer (views/memory.js) and the consumer (views/domains.js) are
+  // different packages. A string typed in both is a string that can be typed
+  // differently in one, and the failure is a button that navigates correctly
+  // and then silently does nothing else — no error, no warning.
+  ok(/export const NEW_PROJECT_REASON = /.test(appJs),
+    'NEW_PROJECT_REASON is EXPORTED from app.js, so neither side has to re-type it');
+  {
+    const domainsJs = readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
+    const importBlock = (/import \{([\s\S]*?)\} from '\.\.\/app\.js';/.exec(domainsJs) || [])[1] || '';
+    ok(/\bNEW_PROJECT_REASON\b/.test(importBlock),
+      'views/domains.js imports it from the shell rather than typing the string');
+    ok(/\bconsumeDomainRequest\b/.test(importBlock),
+      '…alongside consumeDomainRequest, the half that spends the request');
+    ok(!/['"]new-project['"]/.test(domainsJs),
+      '…and does not carry the literal itself anywhere');
+  }
+}
+
 // And the rail column is a token, not four literals — the thing that made
 // the caption measurable in the first place.
 ok(/--app-rail-w:\s*\d+px;/.test(shellCss), 'shell.css defines --app-rail-w');

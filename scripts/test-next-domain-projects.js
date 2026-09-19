@@ -138,6 +138,11 @@ const FNS = [
   'renderProjectRow',
   'renderProjectsPanel',
   'renderProjectLifecycleCard',
+  // v3.62.0 (P1-9). `openProjectLifecycle` is this plus a render, and the
+  // extraction has to carry BOTH or the click path throws: the form object
+  // was pulled out so `loadDomainsList` can open a create form inside its own
+  // single settled paint, without a second render.
+  'freshProjectLifecycle',
   'openProjectLifecycle',
   'closeProjectLifecycle',
   'classifyProjectError',
@@ -165,6 +170,17 @@ const FNS = [
   // let an empty field pass that assertion.
   'foundationsField',
   'bindProjectListeners',
+  // v3.62.0 (P1-14). The OVERVIEW block's ⓘ — the ONE place in the app that
+  // teaches the three-layer SET (accumulates / supersedes / replaced whole).
+  // Its second paragraph is about PROJECTS, which is this suite's subject, and
+  // §S16 asserts the words a user reads; lifted rather than re-typed for the
+  // reason the five ⓘ texts above are.
+  'threeLayersInfoHtml',
+  // renderStatCards asks it whether there is a list for a facet tile to act
+  // on; lifted rather than stubbed so the OVERVIEW assertions run against
+  // the real branch a cold card takes.
+  'activeBrowse',
+  'renderStatCards',
 ];
 
 // The collaborators. Every one is injected and RECORDED, so an assertion can
@@ -226,6 +242,14 @@ const {
   bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, pickedFiles,
 } = await import('../src/public/next/shared/foundations-init.js');
 
+// ── THE REAL DOCS TABLE, INJECTED (v3.62.0) ──────────────────────────────
+// `docsUrl()` THROWS on a key that is not in the map, which is the whole point
+// of the module — so a stub here would let a mistyped key pass this suite and
+// blank the OVERVIEW panel in the browser. scripts/test-docs-links.js proves
+// the key resolves to a real heading; this proves the view asks for it.
+const { docsLinkHtml, DOCS_LINKS } =
+  await import('../src/public/next/shared/docs-links.js');
+
 // The two spies the handoff needs. Module-scoped so the assertions below read
 // them directly: what is under test is that the control records the pair
 // BEFORE it navigates, and an ordering claim needs both recorded in one place.
@@ -248,6 +272,7 @@ try {
     // control RECORDS the pair before it navigates, and the consuming half is
     // driven in test-next-memory-switch.js.
     'requestProject', 'shell', 'infoMark2',
+    'docsLinkHtml',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -285,7 +310,8 @@ try {
     bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, pickedFiles,
     (d, p2) => { handoff.push([d, p2]); },
     { navigate: (v) => { navigations.push(v); } },
-    null);
+    null,
+    docsLinkHtml);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -293,10 +319,11 @@ try {
 
 const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
-  renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
+  renderProjectLifecycleCard, freshProjectLifecycle, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
   copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
   foundationsField, createConsequence, createdOutcomeDetail, renderProjectCreated,
+  threeLayersInfoHtml, activeBrowse, renderStatCards,
   PROJECT_BRIEF_TEMPLATE, MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
   FOUNDATIONS_INFO_HTML, CREATE_INFO_HTML,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
@@ -578,9 +605,30 @@ section('S5 -- The lifecycle card, and the typed delete confirmation');
   const create = renderProjectLifecycleCard();
   ok('CREATE offers a name and a brief', create.includes('dm-proj-name') && create.includes('dm-proj-brief'));
   ok('...seeded with the starting template', create.includes('Firm decisions'));
-  ok('...whose four headings are the ones the store renders',
+  ok('...whose headings are the ones the store renders',
     ['## Standing brief', '## Firm decisions', '## Working model', '## Pointers to depth']
       .every((h) => PROJECT_BRIEF_TEMPLATE.includes(h)), PROJECT_BRIEF_TEMPLATE);
+  // ── THE ROUTING TABLE (v3.62.0) ──────────────────────────────
+  // `readFirst` decides WHICH documents every session is handed; it cannot
+  // say WHICH document for WHICH KIND OF WORK, because that is a sentence and
+  // it is the owner's. This heading is where the owner writes it, and the
+  // agent-instructions block tells an agent to consult it — so a brief
+  // template without it is a project whose reading plan has nowhere to live.
+  //
+  // THE STORE HAS ITS OWN COPY of this template (briefTemplate, in
+  // src/brain/working-state.js) and the two are NOT byte-equal and never have
+  // been: the store's carries a `# <project>` title and italic prompts this
+  // form does not want beside a name the user has just typed. What must not
+  // differ is whether the HEADING is there at all, so this asserts it in both.
+  ok('...including the "Read before you…" routing table',
+    PROJECT_BRIEF_TEMPLATE.includes('## Read before you'), PROJECT_BRIEF_TEMPLATE);
+  {
+    const storeSrc = readFileSync(join(ROOT, 'src/brain/working-state.js'), 'utf8');
+    ok('...which the STORE’s own template carries too, so a brief seeded from '
+      + 'either place has somewhere to put the routing table',
+    /'## Read before you/.test(storeSrc),
+    'src/brain/working-state.js');
+  }
   ok('...and which says out loud that more headings are fine',
     /not a schema/i.test(PROJECT_BRIEF_TEMPLATE), PROJECT_BRIEF_TEMPLATE);
   ok('...and says the brief is optional', /optional/i.test(create));
@@ -641,7 +689,7 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     + 'read both halves before deciding',
   create.includes('data-fnd-own="curator"') && create.includes('data-fnd-own="repo"'));
   ok('...plus "decide later", which only makes sense HERE: the Foundations block in '
-    + 'Agent memory IS the later', create.includes('data-fnd-own="later"'));
+    + 'Project context IS the later', create.includes('data-fnd-own="later"'));
   // ── THE DEFAULT POSTPONES (v3.61.0, maintainer's call on Q1) ──────────
   // The fail-safe direction decides it: on a form somebody has not read, the
   // arm that WRITES FOUR DOCUMENTS is not the safe answer and "decide later"
@@ -738,7 +786,7 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     && !/Mirrored from a repository/.test(FOUNDATIONS_INFO_HTML));
   // ── AND IT NAMES THE OWNER BEFORE THE AGENT (P1-12) ──────────────────
   ok('...and says the OWNER fills a skeleton, with the agent as the second way',
-    FOUNDATIONS_INFO_HTML.indexOf('You fill one in on the Agent memory page')
+    FOUNDATIONS_INFO_HTML.indexOf('You fill one in on the Project context page')
       < FOUNDATIONS_INFO_HTML.indexOf('or ask an agent to'),
     FOUNDATIONS_INFO_HTML.slice(0, 900));
   ok('...and that Decide later is the DEFAULT as well as a real answer',
@@ -977,7 +1025,7 @@ section('S6 -- The actions: what the view actually sends');
     const panels = done.match(/<div class="tx-vh-panel" id="[^"]+"[^>]*hidden>/g) || [];
     ok('...each with its own ⓘ, and both panels ship CLOSED', panels.length === 2,
       JSON.stringify(panels));
-    ok('...and the handoff into Agent memory', done.includes('id="dm-proj-open-memory"'));
+    ok('...and the handoff into Project context', done.includes('id="dm-proj-open-memory"'));
     ok('...and a way out that commits nothing', /id="dm-proj-cancel"[^>]*>Done</.test(done), done.slice(-500));
     // NO PRIMARY. Nothing on this panel commits anything — two copies, one
     // navigation, one dismissal — and inventing a primary would be the tier-1
@@ -1138,7 +1186,7 @@ section('S6 -- The actions: what the view actually sends');
   ok('...and painted, naming the path AND the store\u2019s own reason',
     /docs\/nope\.md/.test(done2) && /not found under the root/.test(done2), done2.slice(0, 900));
   ok('...unfolded, beside the count that does not include it', !done2.includes('<details'));
-  ok('...through the SAME shared component the Agent-memory block uses, so a '
+  ok('...through the SAME shared component the Project-context block uses, so a '
     + 'refusal reads identically wherever it lands',
   /fnd-init-note-loud/.test(done2), done2.slice(0, 900));
   ok('CONTROL: a create with nothing refused paints no such list',
@@ -1149,7 +1197,7 @@ section('S6 -- The actions: what the view actually sends');
   // DECIDE LATER SENDS NO KEY AT ALL, not `{ownership: 'later'}`: the route's
   // body is an allow-list and "later" is a fourth ownership the store has
   // never heard of. A project with no manifest is exactly the state the
-  // Agent-memory chooser exists to resolve.
+  // Project-context chooser exists to resolve.
   __setState(freshState());
   __reset();
   openProjectLifecycle('create');
@@ -1163,8 +1211,8 @@ section('S6 -- The actions: what the view actually sends');
   // ── POSTPONING IS REPORTED AS WHAT IT IS ──────────────────────────────
   // Nothing was written, so there is nothing to claim: the outcome says the
   // project and its brief are saved and stops there. The Foundations block on
-  // the Agent memory page is where the question is asked again, and "Open in
-  // Agent memory" beside this sentence is how you get there.
+  // the Project context page is where the question is asked again, and "Open in
+  // Project context" beside this sentence is how you get there.
   eq('...and the outcome claims nothing about documents',
     String((__state().projectLc || {}).outcomeDetail),
     'The project and its brief are saved.');
@@ -1189,7 +1237,7 @@ section('S6 -- The actions: what the view actually sends');
     // documents were not set up; neither is a suffix to the other (v3.16.1).
     ok('...and the refusal is a SECOND fact, not a suffix to the first',
       /not set up/.test(d) && /not on this computer/.test(d), d);
-    ok('...naming where to finish the job', /Agent memory/.test(d));
+    ok('...naming where to finish the job', /Project context/.test(d));
     eq('...while the success half still says what DID happen',
       lc.outcomeDetail, 'The project and its brief are saved.');
     const done = renderProjectCreated(lc);
@@ -1248,7 +1296,7 @@ section('S6 -- The actions: what the view actually sends');
 {
   // A FAILED IMPORT NEVER FAILS THE CREATE. The project exists and its brief is
   // written; a document that did not land is reported by name on the second
-  // line, and the owner can add it again from Agent memory. Refusing the whole
+  // line, and the owner can add it again from Project context. Refusing the whole
   // outcome for it would be v3.32.0's shape one level up.
   __setState(freshState());
   __reset();
@@ -2034,6 +2082,94 @@ const WRITABLE = () => freshState({
     /\.dm-proj-footer:focus-visible\s*\{[^}]*inset[^}]*\}/.test(CSS));
   ok('CONTROL -- the group really does clip, which is why the ring is inset',
     /\n\.cur-group\s*\{[^}]*overflow:\s*hidden/.test(shell));
+}
+
+section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The app has ONE place that teaches what kind of thing each of a domain's
+// figures counts, and this is it. Three things about it can regress silently:
+// the panel can lose a layer (leaving a legend that describes two of three);
+// the words can drift away from the three VERBS, which are the only part a
+// reader has to take away; and the docs link can start pointing at a key that
+// resolves to the top of a long page. The first two are asserted from the
+// lifted text, the third from the frozen map the view actually asks.
+{
+  const html = threeLayersInfoHtml();
+
+  // ── THE THREE VERBS, each exactly once and each on its own layer ──────
+  // A legend whose value is the contrast has to state all three, and stating
+  // one twice is how the contrast quietly becomes a list.
+  for (const [verb, layer] of [['accumulates', 'the wiki'],
+    ['supersedes', 'working state'],
+    ['replaced whole', 'canonical documents']]) {
+    ok('the legend names "' + verb + '" — the verb for ' + layer,
+      html.includes(verb), html);
+  }
+  ok('...and names the wiki, working state and canonical documents by name',
+    /<strong>wiki<\/strong>/.test(html)
+    && /<strong>working\s+state<\/strong>/.test(html)
+    && /<strong>canonical\s+documents<\/strong>/.test(html), html);
+
+  // ── ONE NOUN FOR THE BLOCK (D-K) ──────────────────────────────────────
+  // "Canonical documents" survives ONLY as the adjective inside this
+  // definition. The block that holds them is FOUNDATIONS wherever it is
+  // named, and a legend that introduced a second name for it would be the
+  // thing the naming decision exists to stop.
+  ok('the legend does NOT name the block — it defines the layer',
+    !/Foundations/.test(html), html);
+
+  // ── IT IS A DEFINITION, NOT A WARNING (v3.16.1 / design-system §3) ────
+  // Warnings, costs, refusals and outcomes never fold. Nothing in here is
+  // one of those, and asserting so is what keeps the panel from becoming a
+  // place to hide a consequence.
+  for (const forbidden of ['delete', 'cannot be undone', 'costs', '$', 'refus']) {
+    ok('...and carries no "' + forbidden + '" — an ⓘ may not hold a warning or a cost',
+      !html.toLowerCase().includes(forbidden), html);
+  }
+  // NO CONTROL. The delegated listener toggles on the BUTTON, so anything
+  // focusable inside the panel is unreachable until the panel is open.
+  ok('...and no control: no <button>, no <input>, no id the view would bind',
+    !/<button|<input|<select|id=/.test(html), html);
+
+  // ── THE LINK IS DATA ──────────────────────────────────────────────────
+  const href = (/href="([^"]+)"/.exec(html) || [])[1] || '';
+  ok('the panel ends in a docs link built by the shared table',
+    href.startsWith('https://github.com/talirezun/the-curator/blob/main/docs/'), href);
+  ok('...pointing at the guide’s three-kinds-of-context heading',
+    href.endsWith('user-guide.md#the-three-kinds-of-context-it-carries'), href);
+  ok('...and the key it uses is the DOMAINS one, because the prefix names the '
+    + 'surface the link is rendered on',
+  Object.prototype.hasOwnProperty.call(DOCS_LINKS, 'domains.three-layers'),
+  Object.keys(DOCS_LINKS).join(','));
+  ok('...opened safely — target=_blank without rel=noopener hands the opened '
+    + 'page a window.opener handle back into this document',
+  /rel="noopener noreferrer"/.test(html), html);
+
+  // ── AND IT IS ACTUALLY ON THE BLOCK ───────────────────────────────────
+  // The text existing proves nothing about the section rendering it. This
+  // executes the shipped renderer.
+  __setState({ activeSlug: 'alpha', browse: null, projects: null });
+  const card = renderStatCards({ entities: 3, concepts: 2, summaries: 1 }, 6, 4);
+  ok('the OVERVIEW section renders the mark',
+    card.includes('data-tx-info="dm-overview-info"'), card.slice(0, 400));
+  ok('...and the panel beside it, HIDDEN on first paint — an ⓘ ships closed',
+    /<div class="tx-vh-panel" id="dm-overview-info"[^>]*hidden>/.test(card), card.slice(0, 900));
+  ok('...with the eyebrow still naming the group',
+    /dm-section-eyebrow">OVERVIEW</.test(card), card.slice(0, 900));
+  // THE SHARED HEAD ROW, not a new one. `.dm-section-head-row` is the class
+  // the PROJECTS section already uses for eyebrow-plus-mark, so adopting it
+  // is what keeps this from needing a rule of its own in views/domains.css.
+  ok('...inside the SAME head row the PROJECTS section uses',
+    card.includes('<div class="dm-section-head-row">'), card.slice(0, 900));
+  ok('CONTROL: the projects panel uses that same class, so the line above is '
+    + 'about REUSE rather than about a string',
+  /dm-section-head-row/.test(SRC.slice(SRC.indexOf('PROJECTS IN THIS DOMAIN') - 400,
+    SRC.indexOf('PROJECTS IN THIS DOMAIN'))), 'renderProjectsPanel head');
+  // NO `title=`. This view's ceiling in test-next-title-affordances.js is 0
+  // and the mark's accessible name is on the button.
+  ok('the mark carries an aria-label',
+    /aria-label="About these figures"/.test(card), card.slice(0, 900));
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

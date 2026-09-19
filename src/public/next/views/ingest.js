@@ -1409,7 +1409,7 @@ function renderSidebar(token) {
 
   // The destination list. Every other /next view's sidebar carries a
   // primary action plus the navigable list of what the view operates on
-  // (Domains: domains; Chat: conversations; Agent memory: projects).
+  // (Domains: domains; Chat: conversations; Project context: projects).
   // Ingest's is the DESTINATION — which domain the next file lands in.
   //
   // Rows are LOCKED (not hidden) while this view is mid-write: switching
@@ -1903,7 +1903,7 @@ function verbatimPointerHtml(file) {
     '<div class="tx-note ing-verbatim-note">' + icon('alertCircle', 13) +
       '<span>Wanted this kept word for word? Add it as a project document instead.</span>' +
       '<button type="button" class="btn btn-ghost btn-xs" id="ing-open-memory">' +
-        'Open Agent memory</button>' +
+        'Open Project context</button>' +
     '</div>'
   );
 }
