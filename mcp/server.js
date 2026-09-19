@@ -67,6 +67,32 @@ const server = new Server(
   },
 );
 
+// ── THIS BRIDGE LIVES IN TWO PROTOCOL ERAS AT ONCE (v3.63.0) ────────────────
+//
+// MCP specification revision `2026-07-28` REMOVED the `initialize` handshake.
+// `clientInfo` is no longer a fact negotiated once per connection; it is an
+// OPTIONAL, PER-REQUEST `_meta` entry (`io.modelcontextprotocol/clientInfo`),
+// self-reported by the client, and the specification says a server SHOULD NOT
+// change behaviour or security decisions on it.
+//
+// The installed SDK is `@modelcontextprotocol/sdk@1.29.0`, which is still the
+// OLD era: its `server.getClientVersion()` returns what `initialize` carried
+// (`dist/esm/server/index.js:273, 291`). That accessor is DEPRECATED in
+// `@modelcontextprotocol/server` 2.0.0 in favour of the per-request envelope.
+//
+// So the dispatch handler in `tools/index.js` reads the name from BOTH,
+// newest era first, through `src/brain/mcp-clients.js`'s `readClientName` —
+// and the ONLY thing done with it is writing an allow-listed LABEL on one
+// session line of the usage log. Nothing here branches on it, and nothing
+// should: a `server/discover`-first client (GitHub Copilot CLI already sends
+// one) reads as `other`, which must stay a harmless label rather than a
+// refusal. The server object is passed to `registerTools` for this and for
+// nothing else new.
+//
+// NOTE FOR ANYONE MEASURING THE TWO ARMS: the app's own self-test
+// (`src/brain/mcp-exercise.js`, behind `POST /api/mcp/exercise`) drives this
+// bridge over stdio and SENDS `initialize` — it is an initialize-era client,
+// so it exercises the deprecated arm and never the `_meta` one.
 registerTools(server, storage);
 
 const transport = new StdioServerTransport();
