@@ -52,7 +52,7 @@ import * as shell from '../app.js';
 // composing the words in two places is how two model-read instruction sets
 // start disagreeing.
 import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
-// ── THE HANDOFF INTO AGENT MEMORY (P1-10) ────────────────────────────────
+// ── THE HANDOFF INTO PROJECT CONTEXT (P1-10) ─────────────────────────────
 //
 // `navigate()` takes a view name and nothing else, and the memory view's
 // arrival path picks the domain by SAVE RECENCY — so a project created a
@@ -81,6 +81,7 @@ import { requestProject } from './memory.js';
 // a hardcoded three-file list, so a copy pasted into a fourth view passed
 // unnoticed. It is a tree walk now, and mutation-proven.)
 import { goToChatScoped } from '../shared/chat-scope.js';
+import { docsLinkHtml } from '../shared/docs-links.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -149,7 +150,7 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 // ── THE OWNERSHIP CHOOSER, SHARED WITH THE AGENT-MEMORY VIEW (v3.61.0) ────
 //
 // "Where do this project's canonical documents come from" is asked here, on
-// the create form, and again in Agent memory's Foundations block for a project
+// the create form, and again in Project context's Foundations block for a project
 // that has not answered it. The store sets that ownership ONCE and refuses a
 // mismatch on every later write, so two copies of the question would be two
 // descriptions of WHICH WRITER OWNS A FILE — and a project created with one
@@ -2781,7 +2782,7 @@ const PROJECTS_INFO_HTML =
  * THE THREE FACTS on the row are the three that answer "is this the project
  * I mean?": whether the brief exists, when an agent last saved, and which
  * work-stream that save was in. Nothing else — the whole document lives one
- * click away in Agent memory, and a row that tried to summarise it would be
+ * click away in Project context, and a row that tried to summarise it would be
  * a worse version of that screen.
  *
  * EACH COPY CONTROL CARRIES ITS OWN ⓘ. Reported by the maintainer — who
@@ -3189,7 +3190,7 @@ function renderProjectLifecycleCard() {
       // BELOW THE BRIEF, and the order is the argument: the brief is what YOU
       // tell an agent, the foundations are what the PROJECT tells it. Reading
       // top to bottom is then the same order a session start reads in, which
-      // is the order the Agent memory page already puts its blocks in.
+      // is the order the Project context page already puts its blocks in.
       //
       // The sentence above the chooser is an INSTRUCTION at eight visible
       // words. What a canonical document IS, that the answer cannot be
@@ -3286,7 +3287,7 @@ function renderProjectCreated(f) {
       agentInfo.panel +
       '<div class="dm-lc-actions">' +
         '<button class="btn btn-secondary btn-xs" id="dm-proj-open-memory">' +
-          'Open in Agent memory</button>' +
+          'Open in Project context</button>' +
         '<button class="btn btn-ghost btn-xs" id="dm-proj-cancel">Done</button>' +
       '</div>' +
     '</div>'
@@ -3309,10 +3310,10 @@ const CREATE_INFO_HTML =
   'moves or changes.</p>' +
   '<p><strong>The standing brief is yours.</strong> Every agent read returns it, and saving ' +
   'replaces the whole document rather than adding to it — so send the complete text each time. ' +
-  'It is optional here and can be written later from Agent memory.</p>' +
+  'It is optional here and can be written later from Project context.</p>' +
   '<p><strong>The documents choice is answered once.</strong> A project is all mirrored from a ' +
   'folder or all kept here, never a mix, and the store refuses a change afterwards. Decide later ' +
-  'is a real answer: the Foundations block on the Agent memory page asks again.</p>';
+  'is a real answer: the Foundations block on the Project context page asks again.</p>';
 
 /**
  * WHAT WAS WRITTEN, IN ONE SENTENCE — from the SERVER'S answer (P1-10).
@@ -3387,6 +3388,65 @@ function createConsequence(f) {
     + ' from that folder.';
 }
 
+// ── THE THREE-LAYER LEGEND (v3.62.0, P1-14) ──────────────────────
+//
+// ONE PLACE TEACHES THE SET; three places teach the members. The five figures
+// this mark sits beside ARE the model in miniature — four that count the wiki
+// and one that counts PROJECTS — so a reader wondering what KIND of thing each
+// figure counts has the question in front of them here and nowhere else in the
+// app. The Project-context view teaches the three verbs one at a time, in the
+// ⓘ of the step that carries each; a second copy of the legend there would be
+// two hand-maintained descriptions of one thing, which is the rule
+// views/memory.js records for why its own header mark exists at all.
+//
+// AND IT CLOSES A NAMED GAP. v3.58.0's heading-and-ⓘ audit recorded three
+// blocks on this view with nothing to explain themselves — OVERVIEW, PAGES ·
+// THE WIKI and WIKI HEALTH. This is the first of the three, and the one worth
+// having first: the other two describe a list and a report, while this one
+// describes the app's data model.
+//
+// A FUNCTION, NOT A MODULE CONSTANT, and that is deliberate: `docsUrl()`
+// THROWS on a key that is not in the map, so composing this at module scope
+// would turn a mistyped key into a blank shell for every user rather than a
+// broken panel on one screen. Same shape views/memory.js uses for its five.
+//
+// WHAT IS NOT IN IT, and why:
+//   · No diagram. `.tx-vh-panel` is a one-column grid and CSS wraps every
+//     contiguous text run in an anonymous grid item, so an inline SVG becomes
+//     a row of its own and the prose breaks around it. The diagram exists and
+//     belongs in the guide (docs/images/curator-context-model.svg).
+//   · No control. The delegated listener toggles on the BUTTON, so anything
+//     focusable inside the fold is unreachable until the fold is open.
+//   · No warning, no cost, no irreversibility (v3.16.1). This is a
+//     DEFINITION, which is exactly what an ⓘ is for and exactly what a lede
+//     is not (docs/design-system-source.md §3).
+//
+// ONE NOUN, AND ONE DELIBERATE MISMATCH. "Canonical documents" appears here as
+// the ADJECTIVE inside the definition; the block that holds them is called
+// FOUNDATIONS everywhere it is named. And this panel says "wiki" where the
+// Project-context view's third step says "Knowledge" — because here the legend
+// is sitting on the wiki's own figures, and there the wiki is the layer rather
+// than the artefact. Both name the same thing in the same sentence at least
+// once, which is the honest fix rather than forcing one word into both places.
+//
+// Every character is written HERE, so nothing user-, provider- or
+// store-supplied is interpolated into the `{html: true}` fragment.
+function threeLayersInfoHtml() {
+  return '<p><strong>One domain, three kinds of context.</strong> The four figures on the left '
+    + 'count your <strong>wiki</strong> — the pages ingest and chat write. It '
+    + '<strong>accumulates</strong>: a new source makes an existing page richer rather than '
+    + 'adding a second copy.</p>'
+    + '<p><strong>Projects</strong> counts the other two. A project\u2019s <strong>working '
+    + 'state</strong> — its standing brief, its handoffs, its journal — '
+    + '<strong>supersedes</strong>: every save replaces the last, so a problem you solved cannot '
+    + 'come back. A project\u2019s <strong>canonical documents</strong> — its architecture, '
+    + 'decisions, conventions, roadmap — are <strong>replaced whole and read verbatim</strong>, '
+    + 'so an agent gets the document rather than a paraphrase.</p>'
+    + '<p>All three live in this one folder, sync together, and open to your agents in one '
+    + 'call.</p>'
+    + '<p>' + docsLinkHtml('domains.three-layers', 'Read more in the guide') + '</p>';
+}
+
 // ── THE ⓘ BESIDE THE DOCUMENTS FIELD ─────────────────────────────────────
 //
 // A module constant for the same reason PROJECTS_INFO_HTML is one: the suite
@@ -3412,12 +3472,12 @@ const FOUNDATIONS_INFO_HTML =
   'shown beside the path.</p>' +
   '<p><strong>Kept by The Curator.</strong> The documents live only here. Setting this up seeds ' +
   'four SKELETONS — documents that carry prompts instead of prose, which an agent is told to ' +
-  'answer rather than to believe. You fill one in on the Agent memory page, or ask an agent to; ' +
+  'answer rather than to believe. You fill one in on the Project context page, or ask an agent to; ' +
   'and you can start from files on this computer instead, or as well. Nothing is uploaded: a ' +
   'file you choose is read in this browser and shown to you before it is saved.</p>' +
   '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
   'mix, and the store refuses a change afterwards. Decide later is a real answer — and the ' +
-  'default one — because the Foundations block on the Agent memory page asks again.</p>';
+  'default one — because the Foundations block on the Project context page asks again.</p>';
 
 /**
  * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
@@ -3538,6 +3598,8 @@ function projectCount() {
  * in scripts/test-next-title-affordances.js is 0 and stays 0.
  */
 function renderStatCards(counts, pages, projects) {
+  const overviewInfo = infoMark('dm-overview-info', 'About these figures',
+    threeLayersInfoHtml(), { html: true });
   const otherCount = counts.other || 0;
   const b = activeBrowse();
   const live = !!(b && !b.loading && !b.error);
@@ -3577,7 +3639,16 @@ function renderStatCards(counts, pages, projects) {
 
   return (
     '<section class="dm-section dm-overview">' +
-      '<div class="cur-group-title dm-section-eyebrow">OVERVIEW</div>' +
+      // THE SAME HEAD ROW THE PROJECTS SECTION USES. `.dm-section-head-row`
+      // already exists for exactly this shape — eyebrow left, mark right, the
+      // eyebrow's own bottom margin zeroed — so this adds no rule to
+      // views/domains.css. The eyebrow STAYS: a group that does not name
+      // itself is worse than one with a sentence too many.
+      '<div class="dm-section-head-row">' +
+        '<div class="cur-group-title dm-section-eyebrow">OVERVIEW</div>' +
+        overviewInfo.btn +
+      '</div>' +
+      overviewInfo.panel +
       '<div class="cur-group dm-stats-group">' +
         '<div class="dm-stats-grid">' +
           // PAGES is the RESET, not a narrowing, so its name says so rather
@@ -3634,7 +3705,7 @@ const BROWSE_FOLDERS = [
   // ── THE FOURTH KIND OF MARKDOWN IN A DOMAIN (v3.50.0) ──────────────────
   // A domain's `state/` tree is markdown too — each project's standing brief
   // and each work-stream's handoff — and until now the only route to any of
-  // it was the Agent memory screen, which is organised around RESUMING work
+  // it was the Project context screen, which is organised around RESUMING work
   // rather than around reading. This is the browse route to the same files.
   //
   // ITS COUNT IS ITS OWN, and `all` deliberately does NOT include it: the
@@ -4392,7 +4463,7 @@ function freshProjectLifecycle(mode, project) {
     // view's copy of this question and this one cannot describe two different
     // choices. `allowLater: true` adds the third answer that only makes sense
     // here: on the create form the choice is one field of a bigger form and
-    // postponing it costs nothing, while the Foundations block in Agent memory
+    // postponing it costs nothing, while the Foundations block in Project context
     // IS the surface somebody opened in order to answer it.
     foundations: mode === 'create' ? freshChooser({ allowLater: true }) : null,
   };
@@ -4510,7 +4581,7 @@ async function runProjectAction() {
     //
     // A FAILED IMPORT NEVER FAILS THE CREATE. The project exists and its brief
     // is written; a document that did not land is reported by name on the
-    // banner's second line, and the owner can add it again from Agent memory.
+    // banner's second line, and the owner can add it again from Project context.
     // Refusing the whole outcome for it would be the v3.32.0 shape — a guard
     // routed around by its own error handler — one level up.
     const imported = [];
@@ -4549,7 +4620,7 @@ async function runProjectAction() {
     if (fndErr) {
       detailParts.push('The project was created, but its canonical documents were not set up: ' +
         (fndErr.message || fndErr.reason || 'the server refused it') +
-        '. Choose again from Agent memory → Foundations.');
+        '. Choose again from Project context → Foundations.');
     }
     if (failed.length) {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +
@@ -4701,7 +4772,7 @@ function bindProjectListeners() {
   if (!f) return;
   document.getElementById('dm-proj-cancel')?.addEventListener('click', closeProjectLifecycle);
 
-  // ── "Open in Agent memory" (P1-10) ──────────────────────────────────────
+  // ── "Open in Project context" (P1-10) ──────────────────────────────────
   // The request is recorded BEFORE the navigation, because the destination
   // consumes it during its own mount — which `navigate` starts synchronously.
   // Both are one gesture and neither is a write.

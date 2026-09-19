@@ -284,13 +284,29 @@ for (const v of ALL) {
   eq(cap, R.api.VIEW_META[v].caption, `${v}'s rendered caption is VIEW_META.${v}.caption`);
   ok(!/\s/.test(cap || ' '), `${v}'s caption is ONE word — a two-word caption is what forced "Shared Brain" to "Shared"`);
 }
-// The two abbreviations are the whole reason `caption` is a separate field
-// from `label` and `title`. Pin them by NAME, so shortening a third one
-// silently is not possible without this line changing.
-eq(R.api.VIEW_META.shared.caption, 'Shared', 'Shared Brain abbreviates to "Shared" on the rail');
-eq(R.api.VIEW_META.memory.caption, 'Memory', 'Agent memory abbreviates to "Memory" on the rail');
-ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Agent memory',
-  'the FULL names survive on `title` — the caption abbreviates the rail, not the app');
+// The two shortenings are the whole reason `caption` is a separate field from
+// `label` and `title`. Pin them by NAME, so shortening a third one silently is
+// not possible without this line changing.
+//
+// T1/T2 (v3.62.0): this used to read "Agent memory abbreviates to Memory".
+// Two things changed and only one of them is the rename. The VIEW is now
+// "Project context" and its caption "Context" — and "Context" is NOT an
+// abbreviation of "Project context", any more than "Shared" is one of "Shared
+// Brain". Both are SHORTENINGS: the word that is kept is a real name for the
+// thing, which is the property that lets the rail be read without the tooltip
+// and the reason the field could be re-pointed at a different word at all. An
+// abbreviation would have had to stay "Memory".
+eq(R.api.VIEW_META.shared.caption, 'Shared', 'Shared Brain shortens to "Shared" on the rail');
+eq(R.api.VIEW_META.memory.caption, 'Context', 'Project context shortens to "Context" on the rail');
+ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Project context',
+  'the FULL names survive on `title` — the caption shortens the rail, not the app');
+// THE VIEW ID DOES NOT MOVE (rename Tier C, refused). `memory` is the stored
+// `curator-next-view` value, the onboarding agent door's target, and the
+// attribute the Electron main process evaluates across a process boundary —
+// three contracts a presentation rename has no business breaking.
+ok(Object.prototype.hasOwnProperty.call(R.api.VIEW_META, 'memory')
+  && !Object.prototype.hasOwnProperty.call(R.api.VIEW_META, 'context'),
+'the VIEW ID stays `memory` — only the words a person reads changed');
 for (const v of ALL) {
   const b = buttons.find((x) => x.attrs['data-view'] === v);
   eq(b.attrs['aria-label'], R.api.VIEW_META[v].title,
@@ -338,7 +354,7 @@ if (dividers.length === 1) {
   const after = buttons.filter((b) => b.index > d.index).sort((a, b) => a.index - b.index)[0];
   eq(before.attrs['data-view'], R.api.RAIL_DIVIDER_AFTER, 'the divider follows RAIL_DIVIDER_AFTER');
   eq(before.attrs['data-view'], 'domains', 'the everyday group ends at Domains');
-  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Agent memory (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely)');
+  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Project context (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely; v3.62.0 renamed it and moved nothing)');
   eq(d.attrs['aria-hidden'], 'true', 'the divider is hidden from assistive technology');
   eq(d.attrs.role, 'presentation', 'the divider carries role="presentation" — grouping, not a landmark');
 }

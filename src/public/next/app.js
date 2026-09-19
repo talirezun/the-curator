@@ -338,19 +338,21 @@ const HOME_VIEW = 'domains';
 //             (--app-rail-w) and a two-word caption either wraps or gets
 //             clipped at the app's Largest text size, where the widest
 //             one-word caption already measures 53.27px of a 60px content
-//             box. "Shared Brain" -> "Shared",
-//             "Agent memory" -> "Memory"; every other view's name is
-//             already one word.
+//             "Shared Brain" -> "Shared", "Project context" ->
+//             "Context"; every other view's name is already one word.
+//             NOT an abbreviation in either case — a shortening: the word
+//             kept is a real word for the thing, which is why "Memory"
+//             could become "Context" without the rail losing meaning.
 // Keeping all three means widening the rail is a layout decision, never a
 // truncation decision — nothing loses its real name to fit.
 const VIEW_META = {
-  chat:     { label: 'Chat',          caption: 'Chat',     icon: 'messageSquare', title: 'Chat' },
-  domains:  { label: 'Domains',       caption: 'Domains',  icon: 'grid',          title: 'Domains' },
-  shared:   { label: 'Shared Brain',  caption: 'Shared',   icon: 'users',         title: 'Shared Brain' },
-  memory:   { label: 'Agent memory',  caption: 'Memory',   icon: 'cpu',           title: 'Agent memory' },
-  ingest:   { label: 'Ingest',        caption: 'Ingest',   icon: 'upload',        title: 'Ingest' },
-  sync:     { label: 'Sync',          caption: 'Sync',     icon: 'refresh',       title: 'Sync' },
-  settings: { label: 'Settings',      caption: 'Settings', icon: 'settings',      title: 'Settings' },
+  chat:     { label: 'Chat',             caption: 'Chat',     icon: 'messageSquare', title: 'Chat' },
+  domains:  { label: 'Domains',          caption: 'Domains',  icon: 'grid',          title: 'Domains' },
+  shared:   { label: 'Shared Brain',     caption: 'Shared',   icon: 'users',         title: 'Shared Brain' },
+  memory:   { label: 'Project context',  caption: 'Context',  icon: 'cpu',           title: 'Project context' },
+  ingest:   { label: 'Ingest',           caption: 'Ingest',   icon: 'upload',        title: 'Ingest' },
+  sync:     { label: 'Sync',             caption: 'Sync',     icon: 'refresh',       title: 'Sync' },
+  settings: { label: 'Settings',         caption: 'Settings', icon: 'settings',      title: 'Settings' },
 };
 
 // ── Icons ──────────────────────────────────────────────────────────────

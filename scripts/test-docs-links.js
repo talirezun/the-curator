@@ -63,7 +63,7 @@ function headingsOf(md) {
 section('§1  THE MAP ITSELF');
 
 const keys = Object.keys(DOCS_LINKS);
-ok(keys.length >= 14, `the map carries ${keys.length} keys (floor 14 — the two migrated links plus the Settings and Agent memory topics)`);
+ok(keys.length >= 14, `the map carries ${keys.length} keys (floor 14 — the two migrated links plus the Settings and Project-context topics; the memory.* KEY PREFIX deliberately did not follow the v3.62.0 rename, because a key names the DOCS TOPIC and working-state.md was not renamed)`);
 ok(Object.isFrozen(DOCS_LINKS), 'DOCS_LINKS is frozen — no caller can add a destination at runtime');
 ok(keys.every((k) => Object.isFrozen(DOCS_LINKS[k])),
   '…and so is every entry, so `DOCS_LINKS.x.anchor = …` cannot rewrite one either');

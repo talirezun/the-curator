@@ -9,7 +9,7 @@
 // out is by clicking it. There were two such strings in /next
 // (app.js's INSTANCE_DOCS_URL and mcp-wizard.js's MCP_GUIDE_URL) and the next
 // phase of this release adds roughly a dozen more, one per fold on Settings
-// and Agent memory. A dozen unverifiable strings is a rot surface.
+// and Project context. A dozen unverifiable strings is a rot surface.
 //
 // So the destination is DATA, and scripts/test-docs-links.js reads the real
 // markdown in docs/ and fails if any file is missing or any anchor no longer
@@ -86,7 +86,36 @@ export const DOCS_LINKS = {
   // began" means, which is the one phrase on that block nobody can guess.
   'settings.mcp-tool-map': { file: 'user-guide.md', anchor: 'the-tool-map--what-your-agents-used' },
 
-  // ── Agent memory ───────────────────────────────────────────────────────
+  // ── Domains ────────────────────────────────────────────────────────────
+  // v3.62.0. THE THREE-LAYER LEGEND, and there is exactly one of it.
+  //
+  // The OVERVIEW block's five figures ARE the model in miniature — four wiki
+  // counts and one PROJECTS count — so the one place that teaches the SET
+  // (accumulates / supersedes / replaced whole) is the ⓘ beside them. The
+  // Project-context view teaches the three verbs one at a time, in place, in
+  // the ⓘ of the step that carries each; a second copy of the legend there
+  // would be two hand-maintained descriptions of one thing, which is the rule
+  // views/memory.js records for why its own header ⓘ exists at all.
+  //
+  // THE PREFIX IS `domains.` BECAUSE THE PREFIX NAMES THE SURFACE THE LINK IS
+  // RENDERED ON — this file's own rule, above — not the topic's home file.
+  //
+  // The anchor ALREADY EXISTS: docs/user-guide.md's "### The three kinds of
+  // context it carries", chapter 1, with the three-row table this panel is the
+  // short form of. So this key resolves on the commit that adds it, which is
+  // what scripts/test-docs-links.js checks, rather than on a docs commit that
+  // has to land first. The legend says "canonical documents" where the guide's
+  // table says "Canonical documents — foundations": one noun on the screen
+  // (FOUNDATIONS is the block's name), the adjective inside the definition.
+  'domains.three-layers': { file: 'user-guide.md', anchor: 'the-three-kinds-of-context-it-carries' },
+
+  // ── Project context (the view; the KEYS keep `memory.`) ────────────────
+  // The view was renamed in v3.62.0 and these six keys deliberately did not
+  // follow. A key names the DOCS TOPIC, and their destinations —
+  // working-state.md and two user-guide anchors — were not renamed; renaming
+  // the keys would be six declarations, nine call sites and two test lines of
+  // pure churn on a module where `docsUrl()` THROWS on an unknown key, i.e.
+  // where a half-applied edit is a blank screen.
   'memory.overview': { file: 'working-state.md', anchor: null },
   // The brief is tier 1 and the one tier a human owns; the section that says
   // so by name is the one to land on, not the layout diagram.

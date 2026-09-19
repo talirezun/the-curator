@@ -312,7 +312,7 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
 {
   const m = SRC['memory.js'], s = SRC['sync.js'];
   ok('memory.js sidebar: the component, in the sidebar density',
-    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Agent memory',/.test(m));
+    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Project context',/.test(m));
   // INVERTED DELIBERATELY, and the assertion it replaces was right when it was
   // written. It pinned "eyebrow + title, NO info", because at the time a second
   // description of the three tiers behind the mark would have been a COPY of
@@ -328,7 +328,7 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   // same treatment sync.js's centre header got in v3.24.0, three assertions
   // below, for the same reason).
   ok('memory.js centre: the component, eyebrow + title + info (the mechanism, moved behind the mark)',
-    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Agent memory',\s*info: [A-Za-z][A-Za-z0-9_$]*\(\)/.test(m),
+    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Project context',\s*info: [A-Za-z][A-Za-z0-9_$]*\(\)/.test(m),
     'the centre header no longer carries an info field');
   ok('memory.js centre: ...as raw HTML, which is what lets the panel carry its list and its docs link',
     /infoHtml: true/.test(m));

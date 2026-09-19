@@ -53,6 +53,19 @@ const REPO = path.resolve(new URL('..', import.meta.url).pathname);
 const SRC = path.join(REPO, 'src/public/next/views/domains.js');
 const src = readFileSync(SRC, 'utf8');
 
+// v3.62.0 (P1-10). `goToChatScoped` MOVED out of views/domains.js into
+// shared/chat-scope.js when the Project-context view gained the same door:
+// two hand-written copies of a three-rule ritual (record, then navigate;
+// exactly one navigate; a real slug) is what v3.7.0 deleted. §11 below is
+// UNCHANGED in what it asserts — the ritual is the subject, not the file the
+// ritual happens to live in — and it is still EXECUTED, in the same sandbox,
+// against the same recorded `navigate` and `shell`. It is lifted from here
+// instead. The wrapper's own edge cases (a padded slug, a no-slug call, and a
+// tree walk refusing a second copy in any view) are driven in
+// scripts/test-next-domain-request.js §6.
+const CHAT_SCOPE_SRC = readFileSync(
+  path.join(REPO, 'src/public/next/shared/chat-scope.js'), 'utf8');
+
 let passed = 0, failed = 0;
 function ok(cond, label) {
   if (cond) { passed++; console.log(`  ✓ ${label}`); }
@@ -65,9 +78,16 @@ function ok(cond, label) {
 // missing name or a desynced match rather than returning something the
 // sandbox will fail on later with a bare SyntaxError.
 function extractFunction(source, name) {
-  const marker = new RegExp(`(?:^|\\n)(?:async\\s+)?function ${name}\\s*\\(`);
+  // `export` is accepted and then STRIPPED (it is a SyntaxError inside
+  // `new Function`), because since v3.62.0 one of the names below is lifted
+  // out of a shared MODULE rather than out of the view. The error names the
+  // source it actually searched, so a desync in either file says which.
+  const marker = new RegExp(`(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ${name}\\s*\\(`);
   const m = marker.exec(source);
-  if (!m) throw new Error(`extractFunction: "${name}" not found in domains.js`);
+  if (!m) {
+    throw new Error(`extractFunction: "${name}" not found in `
+      + (source === src ? 'domains.js' : 'the source it was asked for'));
+  }
   const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
   let p = source.indexOf('(', start);
   if (p === -1) throw new Error(`extractFunction: "${name}" has no parameter list`);
@@ -88,7 +108,7 @@ function extractFunction(source, name) {
   if (!singleLine && !/\n\}$/.test(extracted)) {
     throw new Error(`extractFunction: "${name}" does not end at a top-level closing brace — the matcher desynced`);
   }
-  return extracted;
+  return extracted.replace(/^export\s+/, '');
 }
 
 function extractConst(source, name) {
@@ -112,6 +132,10 @@ const FNS = [
   'closeLifecycle',
   'renderLifecycleCard',
   'selectDomain',
+  // Lifted from shared/chat-scope.js, not from domains.js — see the
+  // CHAT_SCOPE_SRC note above. It is in this list because the sandbox's
+  // `navigate` and `shell` are the collaborators §11 records against, and
+  // moving the drive outside would mean a second set of spies.
   'goToChatScoped',
   'filterBrowseEntries',
   'activeBrowse',
@@ -151,7 +175,8 @@ try {
   sandbox = new Function(
     PREAMBLE +
     CONSTS.map((c) => extractConst(src, c)).join('\n') + '\n' +
-    FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
+    FNS.map((n) => extractFunction(
+      n === 'goToChatScoped' ? CHAT_SCOPE_SRC : src, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, ${CONSTS.join(', ')},
        __state: () => state,
        __setState: (s) => { state = s; },
@@ -403,10 +428,13 @@ for (const [name, body5] of [['create', createSrc], ['rename', renameSrc], ['del
 }
 
 console.log('\n=== 11. Chat handoff goes through the shell, not localStorage ===');
-ok(!/localStorage\.(set|get)Item\(\s*'curator-next-chat/.test(src),
-   'the two dead chat-handoff localStorage keys are GONE — a key nothing reads still survives a reload and hijacks a later Chat entry');
-ok(!/function requestChatFirstRun/.test(src), 'requestChatFirstRun is deleted, not merely unused');
-ok(/shell\.requestChatScope\(slug\)/.test(src), 'the handoff calls app.js’s requestChatScope');
+ok(!/localStorage\.(set|get)Item\(\s*'curator-next-chat/.test(src + CHAT_SCOPE_SRC),
+   'the two dead chat-handoff localStorage keys are GONE from BOTH files — a key nothing reads still survives a reload and hijacks a later Chat entry');
+ok(!/function requestChatFirstRun/.test(src + CHAT_SCOPE_SRC), 'requestChatFirstRun is deleted, not merely unused');
+ok(/shell\.requestChatScope\(clean\)/.test(CHAT_SCOPE_SRC),
+   'the handoff calls app.js’s requestChatScope — on the CLEANED slug, because v3.62.0 guards the no-slug hazard inside the wrapper rather than at each producer');
+ok(/from '\.\.\/shared\/chat-scope\.js'/.test(src) && !/function goToChatScoped/.test(src),
+   '…and views/domains.js imports it rather than declaring a second copy');
 __setState(freshState());
 __resetCalls();
 goToChatScoped('alpha');
