@@ -1111,9 +1111,25 @@
    Deleted rather than left standing: a rule nothing can match is a claim about
    the screen that is no longer true — the same call this file made when
    `.mem-doc-head` and `.mem-doc-who` went.                                  */
+/* ── THE META WRAPS BELOW THE NAME, IT DOES NOT SHRINK INTO A COLUMN
+   (v3.62.0) ──────────────────────────────────────────────────────────────
+   SEEN IN A BROWSER at 568px, where the rail (72) and this view's own sidebar
+   (272) leave the main column 224px and the summary row 134: the meta's
+   `margin-left: auto` handed it whatever was left, which was 52px, and a
+   six-clause line stacked into NINE lines one word wide. Nothing overflowed
+   and nothing was clipped — it was simply unreadable, which is the class of
+   defect only a rendered look finds.
+
+   `flex-wrap: wrap` is the whole fix. Where the meta fits it is unchanged
+   (measured at a 543px step body: every summary one line, the longest meta
+   330px of 541 available); where it does not, it takes the next row whole and
+   `margin-left: auto` right-aligns it there — which is exactly what the 568
+   wireframe draws. The brief's 46px pencil reserve is on the summary's
+   padding and is unaffected by the wrap. */
 .mem-fold-summary {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 11px 14px;
   cursor: default;
@@ -1146,7 +1162,18 @@
    Its callers are the JOURNAL's summary (the entry count, and "empty"); the
    handoff summary's "time unknown" fallback was the other and went with the
    lead fold in v3.56.0. */
-.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
+/* `min-width: 0` is not enough on its own here: the meta has to be allowed to
+   TAKE a row rather than to be compressed into a column, so it declares a
+   basis that cannot fit beside a name at a narrow width and wraps instead. The
+   `auto` margin still right-aligns it on whichever row it lands. */
+.mem-fold-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 14ch;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
 .mem-fold-body { padding: 2px 16px 15px; }
 
 /* `.mem-quiet` IS GONE, and its removal is the point of this pass. It carried
@@ -1879,9 +1906,16 @@
      scripts/test-next-views-kit.js over every interactive class in the tree. */
   user-select: none;
   -webkit-user-select: none;
-  border: 1px solid var(--border);
+  /* `--control-edge`, NOT `--border`. Measured in both themes: the hairline
+     token reads 1.29 (light) / 1.24 (dark) against the card, under the 3:1
+     floor a non-text boundary takes — and the boundary is what says "this is a
+     control" rather than a word in a cell. `.btn-secondary` uses
+     `--control-edge` for that reason and measures 3.58; this takes the same
+     token rather than a value of its own. The STATE is never decoded from the
+     edge: the word in the button is the reading. */
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-full);
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--text-2);
   font-family: var(--font-sans);
   font-size: var(--text-2xs);
@@ -1909,7 +1943,14 @@
 .fnd-first-on {
   background: var(--accent-tint);
   border-color: var(--accent-border);
-  color: var(--accent-text);
+  /* `--text`, NOT `--accent-text`, and the shipped control two files over is
+     why: `.fnd-init-opt[aria-pressed="true"]` takes the same accent fill and
+     the same accent edge and keeps its LABEL at full contrast — measured 16.15
+     light / 16.02 dark. `--accent-text` on `--accent-tint` measured 8.08 light
+     and 2.04 dark here, which is under the 4.5 floor on the theme half the
+     app's own users are more likely to be in. The accent belongs to the fill
+     and the edge; the word is the reading and it stays legible. */
+  color: var(--text);
 }
 
 /* The budget warning, above the fold. `.tx-note` owns the face; this kills
@@ -1917,6 +1958,21 @@
    would add to the gap rather than replace it — the same call
    `.fnd-init-why` makes one file over. */
 .mem-fnd-budget { margin-top: 0; margin-bottom: var(--space-6); }
+/* ── THE `[hidden]` COUNTER-RULE, AND IT IS NOT OPTIONAL (design-system §9)
+   `.tx-note` declares `display: flex`, and an author `display` at ANY
+   specificity beats the UA's `[hidden] { display: none }` — which has none. So
+   a note emitted `hidden` renders anyway, and because its <span> is empty what
+   lands on screen is a bare ⚠ triangle under the step's lede with no sentence
+   beside it.
+
+   SEEN IN A BROWSER, on the first capture of the three steps, which is the
+   only way this class of defect is ever found: every offline assertion about
+   the markup was green, because the markup was right. `.fnd-init-why` and
+   `.fnd-init-budget` carry the identical rule one file over, for the identical
+   reason. The element is emitted in BOTH states rather than created on demand
+   because `toggleReadFirst` patches it in place — a node that must be created
+   on a tick is a node that tick has to render for. */
+.mem-fnd-budget[hidden] { display: none; }
 /* ── THE STATE COLUMN, CURATOR-OWNED ONLY (v3.61.0, P2-1) ────────────────
    It REPLACES Source and Copy, which on a curator-owned project always read
    "Curator-authored" and "—" — two columns with one value each, which is the

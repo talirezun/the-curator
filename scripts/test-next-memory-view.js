@@ -7599,6 +7599,82 @@ const fndRead = (payload) => ({
     !/btn-primary/.test(full) && (full.match(/btn-secondary btn-xs/g) || []).length === 2, full.slice(-400));
 }
 
+// ── §21f7 — EVERY `hidden` ELEMENT THIS VIEW EMITS REALLY HIDES ─────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THIS CLOSES, seen in a browser on the first capture of the three
+// steps: a bare ⚠ triangle under step ①'s lede with no sentence beside it.
+// `.tx-note` declares `display: flex`, and an AUTHOR `display` at any
+// specificity beats the UA's `[hidden] { display: none }`, which has none — so
+// the budget warning rendered in both states and its empty <span> left the
+// glyph alone on the page. Every offline assertion about the markup was green,
+// because the markup was right.
+//
+// THE SWEEP, not a named list: find every element this view emits with a
+// `hidden` attribute, take its classes, and require that ONE of them carries a
+// `[hidden] { display: none }` counter-rule in a stylesheet this app ships —
+// but ONLY when one of those classes actually declares a `display`, because a
+// counter-rule for a class that sets none would be cargo. The same shape
+// scripts/test-next-foundations-editor.js §14 uses one file over, pointed at
+// this view's own markup.
+{
+  const SHEETS = ['views/memory.css', 'shared/text.css', 'shared/foundations-init.css',
+    'shared/freshness.css', 'shell.css'];
+  const css = SHEETS.map((f) => { try { return readFileSync(join(NEXT, f), 'utf8'); } catch { return ''; } })
+    .join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const declaresDisplay = (cls) => new RegExp('(^|[,\\s>+~])\\.' + cls.replace(/[-]/g, '\\-')
+    + '(?![\\w-])[^{}]*\\{[^}]*display\\s*:', 'm').test(css);
+  const hasCounterRule = (cls) => new RegExp('\\.' + cls.replace(/[-]/g, '\\-')
+    + '(?![\\w-])[^{},]*\\[hidden\\][^{}]*\\{[^}]*display\\s*:\\s*none', 'm').test(css)
+    || new RegExp('\\[hidden\\][^{},]*\\.' + cls.replace(/[-]/g, '\\-')
+    + '(?![\\w-])[^{}]*\\{[^}]*display\\s*:\\s*none', 'm').test(css);
+
+  // Every state this view paints that can emit a `hidden` element.
+  const pages = [
+    makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+      projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+      projectRead: fndRead(fndPayload([fndDoc()])) }).renderProject(),
+    makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+      projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+      projectRead: fndRead(fndPayload([fndDoc({ bytes: 300 * 1024, readFirst: true })])) }).renderProject(),
+    makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+      projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+      projectRead: { scopes: [], brief: { present: false } } }).renderProject(),
+  ].join('\n');
+
+  // THE BARE ATTRIBUTE, not `aria-hidden`. `\bhidden\b` matches inside
+  // `aria-hidden="true"` — which is on every freshness dot and every numeral
+  // on this page — so the first version of this sweep reported five false
+  // failures before it reported the real one. The lookbehind refuses a
+  // preceding `-` or word character; the lookahead refuses a following `=`.
+  const hiddenEls = [...pages.matchAll(/<(\w+)([^>]*(?<![-\w])hidden(?![-\w=])[^>]*)>/g)]
+    .map((m) => {
+      const cls = (/class="([^"]*)"/.exec(m[2]) || [, ''])[1].split(/\s+/).filter(Boolean);
+      return { tag: m[1], classes: cls };
+    })
+    .filter((e) => e.classes.length);
+  ok('CONTROL: the sweep really found `hidden` elements (it is not vacuous)',
+    hiddenEls.length > 0, String(hiddenEls.length));
+  let checked = 0;
+  for (const el of hiddenEls) {
+    const risky = el.classes.filter(declaresDisplay);
+    if (!risky.length) continue;
+    checked++;
+    ok('`hidden` really hides <' + el.tag + ' class="' + el.classes.join(' ')
+      + '"> — one of its classes sets `display`, which DEFEATS the UA\'s '
+      + '[hidden] unless a counter-rule says otherwise',
+    el.classes.some(hasCounterRule),
+    'display set by [' + risky.join(', ') + '], no [hidden] counter-rule on any of ['
+      + el.classes.join(', ') + ']');
+  }
+  ok('CONTROL: at least one hidden element DID carry a display-setting class, '
+    + 'so the loop above ran', checked > 0, String(checked));
+  ok('CONTROL: `declaresDisplay` finds the `display` on .tx-note, which is what '
+    + 'makes the counter-rule necessary at all', declaresDisplay('tx-note'));
+  ok('CONTROL: `hasCounterRule` says NO for a class that has none',
+    !hasCounterRule('mem-project-name'));
+}
+
 // ── §21f6 — ONE NOUN: FOUNDATIONS (v3.62.0, D-K) ────────────────────────
 // ═════════════════════════════════════════════════════════════════════════
 //
