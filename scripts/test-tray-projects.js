@@ -506,7 +506,7 @@ section('§3b the display cap binds — v3.51.0, and this is the shape he saw');
   eq(asShipped.groups.length, M.MAX_GROUPS, '…under at most three headers');
   eq(asShipped.groups.map((g) => g.rows.length), [2, 2, 1],
     '…in the documented 2 + 2 + 1 shape');
-  eq(asShipped.truncatedNote, 'More in Agent Memory… (18)',
+  eq(asShipped.truncatedNote, 'More in Project Context… (18)',
     'and the 18 rows the cap hid are COUNTED, not dropped: the overflow is the only route to them');
   eq(asShipped.hiddenRows, 18, '…which is 23 minus the five on screen');
 
