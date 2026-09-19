@@ -42,6 +42,7 @@ const USAGE = `my-curator — your project's context and handoffs, from the shel
                      the harness payload arrives on stdin; its envelope leaves on stdout
   my-curator doctor  [--json] [--alias]
   my-curator resolve [--project …] [--json]
+  my-curator install-hooks <harness> [--scope user|project|local] [--dry-run] [--allow-withheld]
 
   --domains-path <dir>   read a knowledge base other than the configured one
   --help                 on any subcommand
