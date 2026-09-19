@@ -503,7 +503,23 @@ and the 501-byte measured block keep their own pins untouched.
 
 **Still open, numbered.**
 
-12. **A curator-owned excerpt beside a large mirrored document** — D19's third option, still
+12. **Step ③'s ⓘ has no docs link.** Every other ⓘ on the Project-context screen ends in one;
+    step ③'s explains the layer and stops, because the key it wants (`memory.knowledge`) was never
+    added to `shared/docs-links.js` — v3.62.0's shell package added `domains.three-layers` and no
+    other. `docsUrl()` throws on an unknown key and a hand-typed URL is the one thing
+    `scripts/test-docs-links.js` cannot check, so the gap was left open rather than papered over.
+    One key and one call site.
+
+13. **The brief template exists in three copies and they have drifted.** `briefTemplate` in
+    `src/brain/working-state.js` is authoritative and is what seeds a real `project.md`;
+    `views/memory.js` and `views/domains.js` carry their own placeholder copies, which still say
+    `## Working model` where the store says `## How I want you to work here`, and neither has
+    v3.62.0's `## Read before you…`. A user can therefore read a heading in the app's editor that
+    the seeded file does not contain. The fix is one shared constant, the same move
+    `src/brain/foundation-skeletons.js` already makes for the skeletons; it was not taken in
+    v3.62.0 because it touches two views in a release whose view package was owned elsewhere.
+
+14. **A curator-owned excerpt beside a large mirrored document** — D19's third option, still
     undesigned. It needs a schema field (an excerpt is a second body for one manifest entry, or a
     second entry pointing at the first), and it has to answer what happens to the excerpt when the
     source changes: a stale excerpt of a fresh document is a worse failure than no excerpt, and

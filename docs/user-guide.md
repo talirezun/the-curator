@@ -1376,9 +1376,12 @@ it can look things up in.
 
 ![A wireframe of the Project context screen. Across the top, a three-cell strip: CANONICAL DOCUMENTS reading "6 documents · fresh" with a green dot, WORKING STATE reading "saved 38 min ago" with a green dot, and KNOWLEDGE reading "3,445 pages · 2 days ago" with an amber dot. Below it, three numbered steps separated by hairlines. Step 1, Foundations, tagged REPLACED WHOLE, with the line "The documents an agent must not act without, kept word for word", one closed fold reading "The documents — 148 KB · mirrored · 2 read first · 4 on request", and a note that the ones marked read first reach every session with their text while the rest arrive as an index row an agent opens by name. Step 2, Working state, tagged SUPERSEDES, with the line "You write the brief; agents write handoffs and the journal", then three closed folds: "Standing brief — updated 23 hr ago · 1,309 words" with a pencil, "Work-streams — 3 work-streams · 5 saved copies", and "Recent saves — 12"; under them, "Each save replaces the last, so a problem you solved cannot come back". Step 3, Knowledge, tagged ACCUMULATES, with the line "The wiki this project draws on. Open it in Domains", and two outlined buttons, Open in Domains and Ask this domain. At the foot, "Top to bottom is the order a session start reads in".](images/curator-context-steps.svg)
 
-*The shape of the screen. Each step carries one of the three verbs — foundations are **replaced
-whole**, working state **supersedes**, knowledge **accumulates** — and the ⓘ on each step is where
-that verb is explained, in place.*
+*The screen on a mirrored project with three documents. Each step carries one of the three verbs —
+foundations are **replaced whole**, working state **supersedes**, knowledge **accumulates** — and
+the ⓘ on each step is where that verb is explained, in place. Note the card between steps ① and ②:
+warnings and readings that qualify a step sit **above its heading** and never fold.*
+
+The wireframe below is the same shape with the labels called out.
 
 **What each step is for, and what it costs you to read:**
 
@@ -1388,11 +1391,13 @@ that verb is explained, in place.*
 | ② | **Working state** | *Where did the last session stop, and what standing instructions does every agent read?* | Three summary lines. Open a fold to read one |
 | ③ | **Knowledge** | *What can an agent look things up in?* | Five figures and two doors. Nothing to open |
 
-**The strip is the "am I saved?" answer, in one line.** It sits above step ① — one reading per
-layer, each with a freshness dot **and** the word beside it, because the colour never carries a
-reading on its own. An unknown age is drawn as a **dashed ring** and the words *nothing written
-yet* / *no documents yet* / *nothing ingested yet* — never as age zero, which would read as *just
-now*. It replaced a *Status* block that had become the problem it was meant to solve: a tier-0
+**The strip is the "am I saved?" answer, in one line.** It sits above step ① — FOUNDATIONS ·
+WORKING STATE · KNOWLEDGE, the same three nouns the steps use, each with a freshness dot **and**
+the word beside it, because the colour never carries a reading on its own. An unknown age is drawn
+as a **dashed ring** and the words *nothing written yet* / *no documents yet* / *nothing ingested
+yet* — never as age zero, which would read as *just now*. While a project's own read is still in
+flight the first cell is **left out** rather than filled with a guess; you get two readings for a
+moment instead of a wrong third. It replaced a *Status* block that had become the problem it was meant to solve: a tier-0
 reading, a tier-2 reading, four warnings and a tier-1 line under one heading called *Status*. The
 warnings did not go with it — each moved to the step it qualifies, where **warnings, costs,
 refusals and outcomes are never folded**.
@@ -1413,7 +1418,7 @@ Reading one work-stream's handoff is a separate act, and since v3.56.0 it happen
 **[reader](#reading-a-handoff)** — the same right-hand panel a wiki page opens in, over a page that
 stays where it was.
 
-![TODO(A) — pre-v3.62.0 alt text (FIVE blocks). Rewritten from the re-taken screenshot of the strip and the three numbered steps once package A reports its measurements. The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS row with a Refresh link, then a second PROJECTS heading over four rows, each carrying the project name, a one-line headline and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago"; "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago" with a hollow dot; "lumina / LUMINA 09-11 CLOSED ~21:20Z: everythi… / 22 scopes · 6 days ago"; and "curator / main e18f740: all five builders merged (W… / 15 scopes · 8 min ago" with a green dot, selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The page is FIVE blocks. The first is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ; its card holds, on one line, a green square pip, the small label WORKING ON, the sentence "main e18f740: all five builders merged (WP-A/B/C/E + follow-ups), orchestrator browser-verified every item; npm test running; WP-F (docs screenshots, Sonnet) building; then row v3.58.0 + release" and, at the right edge, "8 min ago"; under it a second green pip beside "Last saved" over "8 min ago" in large monospace, with "session-2026-09-18-community-feedback · Claude Code" beneath; then one qualifying line, "Written on talis-macbook-pro-acb035 and synced here — local paths and processes may differ from what the handoff describes."; and below a hairline inside the same card, "Standing brief — 7 min ago". The second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. FIVE rows are painted, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-18-community-feedback" with a filled green dot at "8 min ago", its row tinted and carrying an accent bar down its left edge because its handoff is the one open; "session-2026-09-17-transitions-polish", amber, "11 hr ago"; "session-2026-09-17-settings-design-unification", amber, "17 hr ago"; then two filled grey rows, "session-2026-09-13-readme-video-screenshots" at "1 day ago" and "session-2026-09-14-website-seo-perf" at "3 days ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 on every row — and a harness line such as "Claude Code · claude-fable-5-1" or "Claude Code · claude-opus-5[1m]". Under the table, OUTSIDE it, sits a row reading "Show 13 more", and under that the count line "15 work-streams · 18 saved copies · showing 5 of 18". The third block is headed Standing brief over "Read by every agent, written by you." with an ⓘ, then — new in v3.58.0 — a CLOSED disclosure row: a right-pointing chevron, the summary text "The brief", and at the right edge "updated 7 min ago · 1,769 words" beside an icon-only pencil button with no visible "Edit" word and no separate toolbar line above it. The fourth block, Session journal, is reached only by its heading and lede at the very bottom edge of the frame — "One line per save, newest first. History, not the present." with an ⓘ — its own closed disclosure sitting just out of the shot below that point. There is no open handoff document, no multi-paragraph brief printed on the page, and no "Edit" label anywhere in view. A fifth block, Foundations — not pictured here; this screenshot predates v3.59.0 — sits after Standing brief and before Session journal, its summary line reading like "6 documents · 148 KB · fresh · 1 stale."](images/curator-agent-memory.png)
+![The Project context view with the "context-view" project open, dark theme. Down the left, the icon rail — Chat, Ingest, Domains, Context (highlighted and tinted) and Shared, then a sun, Sync and Settings at the foot, every icon captioned. Beside it a sidebar headed "Project context" with an ⓘ mark, a row reading PROJECTS · Refresh · + New project, then the heading ACME over two project rows: "second-project / A second project, for the switch measure… / 1 scope · 14 min ago", and "context-view / Measuring at 1370 and 568 / 3 scopes · 14 min ago", the second selected and tinted, each with a green freshness dot. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Project context", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "acme / context-view". Under a hairline sits a three-cell strip, each cell a small label over a value with a freshness dot: FOUNDATIONS "3 documents · fresh" (green), WORKING STATE "saved 14 min ago" (green), KNOWLEDGE "391 pages · 3 days ago" (grey), with one ⓘ at the right end of the row. Below it the page is THREE NUMBERED STEPS, separated by hairlines, each opening with a small round numeral beside its heading. Step 1, "Foundations", over the lede "Add the documents an agent must not act without." with an ⓘ; a single closed fold whose row reads "The documents" on the left and "3 documents · 110 bytes · mirrored · 2 read first · 1 on request · fresh" at the right edge; under it two buttons, "Refresh from repo" and "Add from folder"; and under those an unfolded note with an ⓘ glyph: "An agent’s save here is refused — this project is mirrored from a folder." Between step 1 and step 2, above the next heading, a bordered card holds a green square pip beside the small label "Last saved", the large monospace reading "14 min ago", and "browser-pass · opencode" beneath. Step 2, "Working state", over the lede "You write the brief; agents write handoffs and the journal." with an ⓘ, holds THREE CLOSED FOLDS in this order: "Work-streams", with "Measuring at 1370 and 568 · 3 work-streams · 3 saved copies" at the right edge; "The brief", with "updated 14 min ago · 126 words" and an icon-only pencil button; and "Recent saves", with "1 save · latest 14 min ago". Step 3, "Knowledge", over the lede "The wiki this project draws on. Open it in Domains." with an ⓘ, shows five readouts in a row — PAGES 391, ENTITIES 120, CONCEPTS 240, SUMMARIES 31, and LAST INGEST with a grey dot beside "3 days ago" over "Ingested · The Energy and Water Footprint of Generative AI" — and two outlined buttons, "Open in Domains" and "Ask this domain". No fold is open, no handoff document and no brief text is printed on the page, and the word "Edit" appears nowhere.](images/curator-agent-memory.png)
 
 *One project's state, open, and three of its blocks (taken before the
 fifth, **Foundations**, shipped in v3.59.0). **Status** answers
@@ -1478,10 +1483,16 @@ anything. They are **replaced whole** and read **verbatim**: an agent gets the d
 paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel) for how
 documents get in and what the two ownership modes mean.
 
-The fold's summary line is the decision to open it — *"148 KB · mirrored · 2 read first · 4 on
-request"*. Inside, one row per document: role, title, size, **read first**, its source (a path and
-the commit it came from, or *Curator-authored*), a freshness dot **and word**, and an age. Press a
+The fold's summary line is the decision to open it — *"3 documents · 110 bytes · mirrored · 2 read
+first · 1 on request · fresh"*. Inside, one row per document, in eight columns: **ROLE ·
+DOCUMENT · SIZE · READ · SOURCE · COPY · UPDATED**, plus a **Remove**. The READ cell is the control
+— a pill reading `read first` or `on request` that you press to flip it. Press anywhere else on the
 row to read the document in the reader.
+
+**The table scrolls sideways on a narrow window.** It has eight columns as of v3.62.0 — the
+read-first control is the new one — so on a phone-width window the table scrolls inside its own
+card rather than the page scrolling. That is one column worse than v3.59.0 already recorded, and it
+is the honest cost of putting the control in the row it belongs to.
 
 **The `read first` control is the one that changes what your agents get** (*new in v3.62.0*). A
 project with four documents can hand an agent all four at the start of every session. A project
@@ -1516,19 +1527,21 @@ carries.
 
 ##### ② Working state — what the last session left
 
-**Three folds, in ownership order: yours, then theirs, then history.** This layer **supersedes** —
-every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on Wednesday.
+**Three closed folds.** This layer **supersedes** — every save replaces the last, so a blocker you
+fixed on Tuesday cannot reappear on Wednesday.
 
 | Fold | Summary line | Whose it is |
 |---|---|---|
-| **Standing brief** | *updated 23 hr ago · 1,309 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
-| **Work-streams** | *`<headline>` · 3 work-streams · 5 saved copies* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-work-stream-table) |
-| **Recent saves** | *12* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded |
+| **Work-streams** | *`<headline>` · 3 work-streams · 3 saved copies* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-work-stream-table) |
+| **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
+| **Recent saves** | *1 save · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded |
 
-**The brief is first because it is the one tier a human owns**, and an agent reads it on every
-single call. The journal is last because it is **history, not the present**: any entry in it may
-since have been superseded — a blocker named in an old headline may have been fixed three saves
-ago — and the current handoff is what is true now.
+**Work-streams is first**, which is the maintainer's call and not the ownership order you might
+expect: the question a returning session actually opens with is *what did the last one leave*. The
+brief follows, because it is the one tier a human owns and an agent reads it on every single call.
+The journal is last because it is **history, not the present**: any entry in it may since have been
+superseded — a blocker named in an old headline may have been fixed three saves ago — and the
+current handoff is what is true now.
 
 **Everything that qualifies this step is above the folds and never folds itself**: content that had
 to be trimmed, a handoff that arrived by sync from another machine, newer state in a different
@@ -1550,6 +1563,9 @@ opening this screen never costs you a scan.
 **Open in Domains lands on the right domain.** That sounds like nothing and is not: this screen is
 app-wide across domains, so before v3.62.0 a jump from a project in one domain would have landed on
 whichever domain Domains happened to have open last.
+
+*(Step ③'s ⓘ explains the layer but carries **no link into these docs** this release — the docs-key
+it wants does not exist yet. Every other ⓘ on the page links out.)*
 
 #### The work-stream table
 
@@ -1605,7 +1621,7 @@ column that a wiki page opens in ([§11](#inside-the-reader)), with the rail and
 live behind it. That is exactly right for a document you are reading *about* a project you are
 still looking at.
 
-![TODO(A) — pre-v3.62.0 alt text. Rewritten from the re-taken screenshot once package A reports its measurements. The same Agent memory screen with one work-stream’s handoff open in the reader, dark theme. The icon rail and the projects sidebar stay fully lit down the left — curator still selected, "13 scopes · 5 hr ago" — while the main column behind is dimmed by a scrim, its Status card, Work-streams table and Standing brief block still legible in outline. Over it, from the right, a panel runs the full height of the window. Its header carries a small book icon, the file’s path in monospace — "state/curator/session-2026-09-17-settings-design-unification/talis…", truncated at the panel’s edge — then an "esc" keycap and an ✕ button. Below that the handoff’s own first line stands as the title, in large type over five lines: "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0". Under it a row of chips: a violet dot beside "handoff", then "work-stream: session-2026-09-17-settings-design-unification", and on a second line "machine: talis-macbook-pro-acb035" and "synced from another machine". Then the reading — the small label "Saved" over "5 hr ago" in large monospace, with "Claude Code · claude-fable-5-1 · updates live" beneath it — and no completeness badge, because this save carried none. Below that the handoff itself, rendered as Markdown: a heading "Where things stand" over two long paragraphs of build state, then the heading "Firm decisions — do not re-litigate" over bulleted decisions, the first two reading "Providers & keys is the reference; only the qualify-done build control, qualify Cancel (done) and qualify-done Close (post-merge) change inside it" and "No Co-Authored-By trailer". The document continues below the bottom edge.](images/curator-agent-memory-reader.png)
+![The reader overlay on the Project context screen — a screenshot taken before v3.62.0 renumbered the page, so the column behind it shows the older unnumbered blocks rather than the three steps; the reader itself is unchanged. The icon rail and the projects sidebar stay fully lit down the left — curator still selected, "13 scopes · 5 hr ago" — while the main column behind is dimmed by a scrim, its Status card, Work-streams table and Standing brief block still legible in outline. Over it, from the right, a panel runs the full height of the window. Its header carries a small book icon, the file’s path in monospace — "state/curator/session-2026-09-17-settings-design-unification/talis…", truncated at the panel’s edge — then an "esc" keycap and an ✕ button. Below that the handoff’s own first line stands as the title, in large type over five lines: "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0". Under it a row of chips: a violet dot beside "handoff", then "work-stream: session-2026-09-17-settings-design-unification", and on a second line "machine: talis-macbook-pro-acb035" and "synced from another machine". Then the reading — the small label "Saved" over "5 hr ago" in large monospace, with "Claude Code · claude-fable-5-1 · updates live" beneath it — and no completeness badge, because this save carried none. Below that the handoff itself, rendered as Markdown: a heading "Where things stand" over two long paragraphs of build state, then the heading "Firm decisions — do not re-litigate" over bulleted decisions, the first two reading "Providers & keys is the reference; only the qualify-done build control, qualify Cancel (done) and qualify-done Close (post-merge) change inside it" and "No Co-Authored-By trailer". The document continues below the bottom edge.](images/curator-agent-memory-reader.png)
 
 *A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the work-stream and the machine, and say that this copy was **synced from another machine**. The **Saved** reading is the same figure the Status block gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row.*
 

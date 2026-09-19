@@ -91,9 +91,9 @@ own Largest text setting (`--font-scale: 1.18`, so the rung resolves to
 
 | Caption | Width |
 |---|---|
-| Domains | 53.27px |
+| Domains | 53.26px |
 | Settings | 50.84px |
-| Memory | 50.02px |  <!-- TODO(A): renamed to "Context" in v3.62.0; re-measured at the same Largest-text rung by package A and this row rewritten with its number. -->
+| Context | 48.01px |
 | Shared | 43.36px |
 | Ingest | 38.02px |
 | Sync | 30.27px |
