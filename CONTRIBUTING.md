@@ -345,6 +345,35 @@ The comparison it performs is meaningless once there is only one copy left.
 
 **A new OFFLINE suite pins the write-registry guard on `/api/config`, `/api/sync/setup`, and domain-rename** — `test-route-write-guards.js`. These routes (API-key save/disconnect/switch, the knowledge-folder path, sync setup, domain rename) mutate state that a running ingest reads live (`getDomainsDir()` and `getProviderInfo()` both resolve fresh on every call), so changing them mid-ingest can split a document's pages across two folders or finish it on a different model. Every "the guard fires" assertion is paired with a "the guard does NOT fire while idle" assertion against the same route — a guard that always blocks is exactly as broken as one that never does, and only the negative half tells those two apart. A dedicated section also pins the routes deliberately left **unguarded** (`POST /api/config/default-domain` — it only selects which domain an unnamed MCP write assumes, and can't affect a write already in flight), so a future blanket sweep shows up as a failing assertion rather than shipping silently. It spins up the real router in-process against isolated tempdirs (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`, set before any app module is imported) and never calls `POST /api/config/update` or exercises `POST /pick-folder` outside its refused state, for the same reasons any suite in this repo avoids them (see the sections above).
 
+**A new OFFLINE suite keeps the PUBLIC spec true — `test-spec-working-state.js` (v3.63.0).**
+[`docs/spec/working-state-v1.md`](docs/spec/working-state-v1.md) publishes the on-disk format so a
+third party can write a compatible writer without this codebase, and a number in that file that has
+drifted from the code is **worse than no specification**: it is a wrong instruction given to
+somebody who cannot check it. So the suite does not read the spec for style. It **parses the spec's
+own tables** — the seven handoff headings with their order and shapes, the four brief headings,
+thirteen budget constants, the foundation slug grammar, the manifest's fields, the usage-log line
+and session-line key sets — and compares every one against the LIVE exports of
+`src/brain/working-state.js` and `src/brain/mcp-usage.js`. Then, for the two claims a table cannot
+make honestly, it **executes the store** in a temp fixture: a real save must render exactly the
+document §5 publishes (title, headline, the provenance field order, every heading once and in
+`STATE_SECTIONS` order, the observation and foundations-read line shapes, the eight journal keys)
+and must read back with `sanitisedOnRead: false` and `headingsSuspect: false` — which *is* the
+conformance claim the spec makes to a third-party writer — and a real bootstrap over one flagged
+document must take the `read-first` row of the include table, sending the flagged body and
+withholding the unflagged one.
+
+**Every parser in it carries an EXPECTED ROW COUNT**, and that is the point rather than a detail: a
+renamed heading, a reflowed table or a deleted section makes the parser find fewer rows and the
+suite **reds**, instead of quietly comparing zero rows and reporting green. That is the
+`test-frontend-null-safety.js` failure shape — a desynced parser that saw 78 of 90 declarations
+while every assertion passed — and the repo's standing answer to it: a deliberately dumb second
+measurement beside the clever one. If you change a heading string, a budget, a slug grammar or the
+line ceiling, this suite tells you which sentence in a public document now has to move with it.
+
+Isolation: both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` are pointed at a temp
+fixture **before the store is imported**, and the fixture is removed at the end. It writes nothing
+outside that directory.
+
 ---
 
 ## How tests are classified
@@ -526,6 +555,18 @@ the mistake this section exists to prevent.
 |---|---|---|
 | `CURATOR_TEST_DOMAINS_DIR` (env) / `__setDomainsDirOverride()` (`config.js`, in-process) | `domains/` only | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/`, `.env` |
 | `CURATOR_TEST_USER_DATA_DIR` (env) / `__setUserDataDirOverride()` (`src/brain/paths.js`, in-process) | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/` — unconditionally — **plus** `domains/`, unless something higher in `getDomainsDir()`'s own precedence chain overrides it (a `DOMAINS_PATH` env var, or `--domains-path` for the MCP) | **`.env`** — see below. This is a real, verified gap, not a hypothetical one. |
+
+**A THIRD seam, added in v3.63.0, and it isolates neither of those things.**
+`CURATOR_TEST_HOOK_DIR` redirects the **CLI hook's own marker directory** —
+the one piece of state `my-curator hook` keeps *outside* any fixture a suite
+controls, a file under the OS temp dir keyed by the harness's session id, which
+is how the stop ladder remembers it already asked this turn on a harness that
+offers no loop field of its own. Without the seam a suite's result depends on
+markers an earlier run left behind, and that is not hypothetical: one mutation
+in the CLI package's battery went **green** because the assertion was passing on
+a leftover file rather than on the rung it named. It is test-only, unset in
+production, and it does **not** substitute for either variable above — a suite
+that also touches the store still needs the right one of those.
 
 **The safety rule, stated plainly: if your test starts a server (spawns
 `src/server.js`, or `mcp/server.js`), set `CURATOR_TEST_USER_DATA_DIR`, not

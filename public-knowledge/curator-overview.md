@@ -154,6 +154,8 @@ It is still an **opt-in beta.** General availability is gated on a structured pi
 
 Yes — that is the third layer, called working state, shown on the Project context screen. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
 
+Since version 3.63.0 there is also a command, `my-curator`, that reads and writes the same files from a shell with the app closed; hook configuration for the harnesses that have a usable hook, where a hook may only ask and never writes a handoff itself; a reading on the Project context screen saying how many recent sessions started with the context and how many saved before stopping; and a published specification of the on-disk format, so a tool that is not The Curator can read and write it. Every harness row in the hook table currently reads "not measured": the mechanism shipped, the measurement has not been run, and the product says so rather than implying reach.
+
 There is a dedicated file in this knowledge base covering how it is structured, what belongs in it, how it is set up and what it measurably does.
 
 ## What licence is it under, and can I use it at work?
@@ -202,7 +204,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 - **It has no undo.** Not for a Wiki Health merge, not for deleting a domain, not for anything else. The recovery route is git, through Personal Sync, and only if you set that up. Browsing or reverting history from inside the app is not built.
 - **It does not sync by itself.** No timer, no background push, no background pull. Every sync is a click. Automatic sync was researched and deliberately not built.
 - **It is not multi-user and it is not a server.** Shared Brain is not real-time collaboration: it is push, administrator-run synthesis, and pull.
-- **It does not force your agent to save.** Capture is advisory and there are no hooks. A session that ends without saving leaves the previous state — stale, never corrupted. That is the fail-safe direction and the reason no enforcement was added, but it means the memory layer is inert until the continuity discipline is installed in whatever agent you use.
+- **It does not force your agent to save.** Capture is advisory. Since version 3.63.0 there are hooks, where a harness has one that can carry the ask, but a hook may only ask, inject context or record — it never writes the handoff, because a fabricated one is worse than a missing one. A session that ends without saving leaves the previous state — stale, never corrupted. That is the fail-safe direction and the reason no enforcement was added, but it means the memory layer is inert until the continuity discipline is installed in whatever agent you use.
 - **The app cannot write your handoffs.** They have exactly one writer, an agent, by design. The app reads them. The standing brief is the exception and always was the human's.
 - **The app can edit a curator-owned canonical document, but not a mirrored one.** A repository-owned document is a byte copy: the app can only refresh it, never edit it, and points you at the checkout instead. A curator-owned one can be created, edited, removed and mirrored-in from a file on your computer, in the app itself, or written by an agent on your instruction. Nothing selects what belongs in a project's foundations automatically, and nothing summarises a foundation on the way in or out.
 - **A browser-only assistant cannot use the MCP bridge.** The bridge is a local child process, so the client has to be able to start a local program. That is a limit of the transport, not a choice about vendors.
@@ -214,11 +216,12 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 - **Cross-domain wikilinks are not supported.** Domains are siloed on disk; cross-domain reasoning happens at read time.
 - **Two chat modes are designed and not built.** The chat ships Discover, which asks, and Compile, which writes; Dictate and Curate exist as designs only.
 - **Some things have shipped without a human ever looking at them.** Several recent surfaces, including parts of the desktop shell, were verified by executing their logic in tests rather than by being rendered and photographed, and the changelog says so per release. Tested and seen working end to end are different claims here.
+- **The per-harness hook table is entirely unmeasured.** Version 3.63.0 shipped the hooks and the measuring instrument; no row has yet been measured against a real harness, and every one of them says "not measured" rather than implying that it works.
 - **Small measurements are reported as shapes, not rates.** Where the project quotes a result at four runs per arm, that is the measurement it has, and it says so.
 
 ## What version is it, and is the project active?
 
-Version **3.59.0**, as of 18 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
+Version **3.62.0**, as of 19 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 

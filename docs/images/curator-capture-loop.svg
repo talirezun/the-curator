@@ -1,0 +1,116 @@
+<svg viewBox="0 0 760 520" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-capture-loop-title curator-capture-loop-desc">
+  <title id="curator-capture-loop-title">One session, and the three places capture can be asked for</title>
+  <desc id="curator-capture-loop-desc">
+    A left-to-right session bar for one agent session, with three moments marked on it. At the
+    start, a SessionStart hook runs "my-curator context" and injects the project bootstrap — the
+    brief, the latest handoff and the read-first documents — into the session. In the middle, a
+    PreCompact hook reminds the model to save before its context is cut. At the end of a turn, a
+    Stop hook checks the local usage log and, only if no save has landed this session, asks the
+    model once to call save_working_state itself. Underneath, three notes: a hook only asks,
+    injects or records and never composes a handoff; the model, not the hook, writes the state; and
+    every call the bridge answers leaves one content-free line in the usage log, which is what the
+    capture meter counts.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --accent-2: #8250df;
+      --accent-3: #1a7f37;
+      --warn: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --accent-2: #c8a6ff;
+        --accent-3: #4ac26b;
+        --warn: #d4a72c;
+      }
+    }
+    .bg { fill: var(--bg); }
+    .box { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .hookbox { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+    .askbox { fill: var(--panel); stroke: var(--accent-2); stroke-width: 2; }
+    .logbox { fill: var(--panel); stroke: var(--accent-3); stroke-width: 2; }
+    .title { font: 700 15px system-ui, sans-serif; fill: var(--text); }
+    .hooktitle { font: 700 13px ui-monospace, monospace; fill: var(--accent); }
+    .asktitle { font: 700 13px ui-monospace, monospace; fill: var(--accent-2); }
+    .logtitle { font: 700 13px ui-monospace, monospace; fill: var(--accent-3); }
+    .note { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+    .lead { font: 600 13px system-ui, sans-serif; fill: var(--text); }
+    .rule { stroke: var(--border); stroke-width: 1.5; }
+    .flow { stroke: var(--accent); stroke-width: 2; fill: none; }
+    .flow-ask { stroke: var(--accent-2); stroke-width: 2; fill: none; }
+    .flow-log { stroke: var(--accent-3); stroke-width: 2; fill: none; stroke-dasharray: 5 4; }
+  </style>
+  <defs>
+    <marker id="cl-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
+    </marker>
+    <marker id="cl-arrow-ask" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent-2)" />
+    </marker>
+    <marker id="cl-arrow-log" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent-3)" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="760" height="520" />
+
+  <!-- the session bar -->
+  <rect class="box" x="40" y="44" width="680" height="54" rx="10" />
+  <text class="title" x="60" y="68">One agent session</text>
+  <text class="note" x="60" y="87">start ─────────────────────── turns ─────────────────────── the turn ends</text>
+
+  <!-- three hook moments -->
+  <rect class="hookbox" x="40" y="146" width="204" height="104" rx="10" />
+  <text class="hooktitle" x="58" y="172">SessionStart</text>
+  <text class="note" x="58" y="194">runs `my-curator context`</text>
+  <text class="note" x="58" y="212">and INJECTS the bootstrap:</text>
+  <text class="note" x="58" y="230">brief · last handoff ·</text>
+  <text class="note" x="58" y="244">read-first documents</text>
+
+  <rect class="hookbox" x="278" y="146" width="204" height="104" rx="10" />
+  <text class="hooktitle" x="296" y="172">PreCompact</text>
+  <text class="note" x="296" y="194">REMINDS the model to save</text>
+  <text class="note" x="296" y="212">before its context is cut.</text>
+  <text class="note" x="296" y="230">On most harnesses it cannot</text>
+  <text class="note" x="296" y="244">block, and the copy says so</text>
+
+  <rect class="askbox" x="516" y="146" width="204" height="104" rx="10" />
+  <text class="asktitle" x="534" y="172">Stop</text>
+  <text class="note" x="534" y="194">reads the local log. If a save</text>
+  <text class="note" x="534" y="212">already landed → says nothing.</text>
+  <text class="note" x="534" y="230">Otherwise ASKS, once, in this</text>
+  <text class="note" x="534" y="244">harness's own shape</text>
+
+  <line class="flow" x1="142" y1="98" x2="142" y2="142" marker-end="url(#cl-arrow)" />
+  <line class="flow" x1="380" y1="98" x2="380" y2="142" marker-end="url(#cl-arrow)" />
+  <line class="flow-ask" x1="618" y1="98" x2="618" y2="142" marker-end="url(#cl-arrow-ask)" />
+
+  <!-- the model writes -->
+  <rect class="box" x="230" y="300" width="300" height="70" rx="10" />
+  <text class="title" x="250" y="326">The MODEL calls `save_working_state`</text>
+  <text class="note" x="250" y="348">A hook never composes a handoff. It asks; the model writes.</text>
+  <line class="flow-ask" x1="618" y1="250" x2="618" y2="286" />
+  <path class="flow-ask" d="M 618 286 L 618 335 L 534 335" marker-end="url(#cl-arrow-ask)" />
+
+  <!-- the log -->
+  <rect class="logbox" x="230" y="404" width="300" height="70" rx="10" />
+  <text class="logtitle" x="250" y="430">.mcp-usage.jsonl</text>
+  <text class="note" x="250" y="452">One content-free line per call: which tool, which</text>
+  <text class="note" x="250" y="468">project, did it succeed. This is what the meter counts.</text>
+  <line class="flow-log" x1="380" y1="370" x2="380" y2="400" marker-end="url(#cl-arrow-log)" />
+
+  <text class="lead" x="40" y="500">A hook may ASK, INJECT or RECORD. It may never compose, summarise or invent a handoff.</text>
+</svg>

@@ -14,6 +14,10 @@ Go here for the .dmg installer (Apple Silicon and Intel builds are published sid
 
 Go here when you want the browser install with a Dock launcher instead of the packaged app; the script is readable before you run it: https://raw.githubusercontent.com/talirezun/the-curator/main/install.sh
 
+## Where is the on-disk format documented?
+
+Go here when you want to read or write The Curator's working state from a tool that is not The Curator. It is a versioned public contract covering the file layout, the handoff's section grammar, the journal line, the foundations manifest, the size budgets and the bootstrap: https://github.com/talirezun/the-curator/blob/main/docs/spec/working-state-v1.md
+
 ## Where is the full user guide?
 
 Go here when you want the complete instructions from installation to daily use: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md
@@ -44,6 +48,7 @@ Each row links straight to that section.
 | 13b. Working state — carrying context between sessions | Agent handoffs between sessions and machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13b-working-state--carrying-context-between-sessions |
 | 13b. Foundations — canonical documents that travel | A project's architecture and decisions, held verbatim | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#foundations--canonical-documents-that-travel |
 | 13b. Start a project | Choosing where a new project's foundations live, and editing them | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#start-a-project |
+| 13c. Making capture real | The my-curator command, per-harness hooks, and the capture meter | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter |
 | 14. Daily workflow | A suggested routine for regulars | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#14-daily-workflow |
 | 15. Sync across computers | GitHub backup across your own machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15-sync-across-computers |
 | 15b. Shared Brain | Building a wiki with others | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15b-shared-brain |

@@ -108,6 +108,43 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 > construction, not by choice. And capture is **advisory**: nothing forces an agent to save, and a
 > missed save returns the *previous* state — stale, never corrupted.
 
+### Making capture real (v3.63.0)
+
+Advisory is honest, and on its own it was not enough: measured across 16 headless runs, an agent on
+one popular harness saved **0 of 4** times from the skill alone, with no error to see. Three things
+now sit around that gap.
+
+**A command, `my-curator`.** The same store, from a shell, with the app closed, no network and no
+credential: `context` prints a project's bootstrap, `save` writes a complete handoff from standard
+input, `doctor` reports what is wired on this machine, `install-hooks` wires a harness. It is a
+second **local client**, exactly as the bridge is — never a server, never reachable from a browser.
+(The binary is namespaced: `curator` belongs to Elastic's widely-installed
+`elasticsearch-curator`, and this package never links that name.)
+
+**Hooks, where a harness has a usable one.** A hook may **ask**, **inject** or **record** — it may
+never compose a handoff, because a fabricated one is worse than a missing one. Ten of thirteen
+harnesses researched have some lifecycle hook, and they disagree about everything: three accept a
+hook that **never fires**, and one caps a session-end hook at three seconds, which is not long
+enough to finish a save. So reach is **measured per harness, and unmeasured is labelled unmeasured**
+— in the product and in the docs, with the protocol that would change a row written down. Nothing
+here is described as working before it has been run.
+
+**A meter, so you can tell.** Project context now opens its Working-state step with one line —
+*"6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2 read and
+did not save"* — computed from a local, content-free log of which tools were called. In words, never
+a percentage. It reports and never blocks.
+
+**And the format is public.** [`docs/spec/working-state-v1.md`](docs/spec/working-state-v1.md) is
+the on-disk contract — layout, the machine-name rule and the merge hazard it prevents, the section
+grammar, the budgets, the manifest schema — so a tool that is not The Curator can read and write
+your working state without this codebase. A suite parses that document against the live constants on
+every test run, so it cannot quietly drift from the code.
+
+**One more thing for people with two computers:** a project's mirrored canonical documents can now
+be refreshed from the **GitHub repository** itself, not only from a checkout on the one machine that
+has it. Read-only by construction, with a separate read-only token recommended rather than reusing
+your sync credential.
+
 ---
 
 ## Demo
@@ -503,6 +540,7 @@ or research, design, a product.
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
 | [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; projects inside a domain; the foundations tier — canonical documents that travel with a project; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
+| [Working state — the on-disk format (spec v1)](docs/spec/working-state-v1.md) | The PUBLIC contract: the bytes on disk, so a tool that is not The Curator can read and write your working state without this codebase. Versioned `working-state/1`, and kept true by a suite that parses it against the live constants |
 | [Standing brief template](docs/project-brief-template.md) | A copyable `state/project.md` — the brief you write by hand so every agent on a project starts from the same instructions |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |

@@ -326,6 +326,78 @@ What the measurement does not show:
 - One task, one model, one prompt. Saves were counted as saves that reached the store; save quality was not judged.
 - The most likely confounder is skill competition. The build under test injected 19 of its own skills beside the two installed, so the continuity skill was one description among 21. A stock install with only these two may behave like opencode. That was not measured.
 
+## Is there a command I can run myself?
+
+Yes, since version 3.63.0. `my-curator` reads and writes the same files from a shell, with the app closed, no network and no credential needed.
+
+| Command | What it does |
+|---|---|
+| `my-curator context` | Prints this project's bootstrap — the standing brief, the latest handoff, your read-first documents — to standard output |
+| `my-curator save` | Reads a complete handoff as JSON on standard input and writes it. It never invents one |
+| `my-curator doctor` | Prints what is wired on this machine and writes nothing. Start here when something is not working |
+| `my-curator resolve` | Prints which project the current directory belongs to |
+| `my-curator install-hooks` | Writes hook configuration for one harness, and nothing else |
+
+It is a second local client of the same store, exactly as the bridge is. It is not the app and no web page can reach it, which is what keeps the rule that a handoff has one writer with matching provenance.
+
+The binary is called `my-curator` rather than `curator` on purpose. The short name belongs to Elastic's elasticsearch-curator, which on Debian is installed as /usr/bin/curator and runs index retention on a great many servers; quietly shadowing it could break somebody's production job. So this package never links that name. If nothing on your machine answers to `curator`, `my-curator doctor --alias` prints the one line that makes the short name yourself — and if something already does, the same command refuses and tells you what it found.
+
+The command is also the answer for a tool with no MCP client at all, such as Aider: run `my-curator context` before the session and `my-curator save` after it.
+
+## Can a hook make my agent save?
+
+A hook can ask. It can never write the handoff itself, and that limit is deliberate: a fabricated handoff is worse than a missing one, because the whole value of the store is that what is written was written by whoever it names. So `my-curator install-hooks` wires three moments — inject the context at the start, remind before a compaction, and ask once at the end of a turn if nothing has been saved this session — and the model is what calls the save tool.
+
+Whether any of that is available depends entirely on your harness, and the harnesses disagree about almost everything. Ten of the thirteen researched have some lifecycle hook; three of them accept a hook that never fires. Four words describe every row:
+
+| Word | Means |
+|---|---|
+| verified | A hook mechanism exists, takes a shell command, and its response shape is measured or documented |
+| unverified | The mechanism exists, but its exact shape or its config file has not been measured. Anything unmeasured ships withheld with its reason rather than guessed |
+| present-useless | Hooks exist and cannot carry the ask. That is a finding, not a gap |
+| none | No hook mechanism at all |
+
+Hooks are written for Claude Code, Cursor and Codex; Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
+
+One thing to be clear about: **every harness row currently reads "not measured"**. The mechanism shipped in version 3.63.0; the measurement protocol is written down and has not been run against a real harness. The product says so everywhere the question comes up, rather than implying reach it has not demonstrated.
+
+A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That paste stays yours.
+
+## How do I know whether my agents are actually saving?
+
+The Project context screen opens its Working state step with one line that answers exactly that:
+
+```
+CAPTURE   6 sessions in the last 30 days
+          4 started with the context · 4 saved before stopping · 2 read and did not save
+```
+
+Three words, defined once. A **session** is one bridge process — one run of your agent tool with The Curator connected, not a conversation and not a day. **Started with the context** means that session asked for the project's brief and state at some point before its first save. **Saved before stopping** means a save succeeded; a refused save is not a save.
+
+The uncomfortable number is written in words rather than as a percentage, on purpose: "67 percent" reads as a grade, while "2 read and did not save" reads as two sessions you could go and look at. Underneath, a closed list shows each session with its start time, the harness that connected, how many calls it made, and whether it read and saved.
+
+Three states are told apart rather than blurred: no usage log on this computer yet, a log with no session for this project in the window, and the reading itself. Only the third carries a freshness mark, and that mark is the age of the newest session — not a grade for the ratio.
+
+What it cannot see is stated on the screen. It counts what went through the bridge, so a save made with `my-curator save`, or by an agent that never connected, leaves no line and is in neither the numerator nor the denominator. The harness label is self-reported by the client and nothing in The Curator branches on it. Calls made before version 3.63.0 carry no session id and are counted separately rather than invented into sessions. The app's own tool self-test is excluded outright. And nothing here stops a session: the meter reports, it never refuses or delays anything.
+
+The same reading is available from the terminal with `my-curator doctor`.
+
+## Can another tool read and write this format?
+
+Yes, and that is now a published contract rather than an inference from the files. `docs/spec/working-state-v1.md` in the repository is the on-disk format, versioned `working-state/1`: the file layout, the machine-name rule and the merge hazard it exists to prevent, the handoff's section grammar heading by heading, the sanitisation a reader re-applies, the journal line, the foundations manifest field by field, the size budgets with the behaviour attached to each, and the bootstrap contract.
+
+It is written for somebody building a writer without this codebase, and it is kept honest by execution: a test suite parses the specification's own tables against the live constants, renders a real handoff and checks it against the grammar the document publishes. A specification that drifts from the code fails the build, which matters more here than anywhere else in the project — it is a promise made to people who cannot read the source.
+
+## Can I refresh a mirrored document from a computer that does not have the repository?
+
+Yes, since version 3.63.0. A mirrored project can record its GitHub repository, and a refresh can then read the documents from the repository itself instead of from a checkout on one particular disk. Before this, the freshness column read "source not on this computer" for ever on every machine but one.
+
+It only ever reads. The client has no way to write — no PUT, no DELETE and no path to one — so a refresh cannot alter the repository it is mirroring, whatever credential it holds. If the file listing comes back truncated it refuses loudly and changes nothing, because a silent miss would keep a stale copy while reporting success. And nothing is written until every file has been fetched, so a network failure half way leaves the mirror exactly as it was.
+
+It does not borrow your sync credential without asking. The recommended setup is a second, read-only, fine-grained GitHub token scoped to the source repository, saved as `githubReadToken` in `.curator-config.json`. Personal Sync's own token can be used instead, but only when you name it, because a classic token of that kind can read every repository you own and that permission was granted for sync rather than for this. Either way the token is never written to a log, never placed in a URL and never included in an error message; when something fails, the message names which file the token came from, which is the part you can act on.
+
+What it does not change: the copies still travel by sync, a mirror refreshed on two machines between syncs still converges to whichever saved last, and the repository is still the source of truth.
+
 ## What is "Copy agent instructions", and what does it give me?
 
 It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the header of the **Project context** screen. It puts a short block on your clipboard with your domain and project already filled in. A banner then names where to paste it.

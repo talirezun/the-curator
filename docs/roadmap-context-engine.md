@@ -113,10 +113,10 @@ basics** — they are first because they must not regress, not because they are 
 | B8 | 2 | Edit or delete a curator-owned document in the app, on raw bytes, with a human provenance stamp | v3.61.0 | in flight |
 | B9 | 2 | A cold session on any harness: one call returns the brief, the last handoff and the documents it has not seen | v3.59.0 | built |
 | B10 | 2 | An agent saves a handoff before it stops; the save overwrites, so a missed one yields the previous state | v3.59.0 (advisory) | built |
-| B11 | 2 | **A harness whose model never activates the skill saves nothing, and nothing says so** | v3.63.0 | planned |
-| B12 | 2 | Prove capture happened: sessions this week, by harness, saved / not saved | v3.63.0 (honesty meter) | planned |
-| B13 | 2 | A non-Claude tool writes the format without any skill at all | v3.63.0 (public spec + a neutral `curator` command) | planned |
-| B14 | 2 | A session ends by compaction rather than by choice, and the handoff still lands | v3.63.0 (per-harness hooks, where one exists) | planned |
+| B11 | 2 | **A harness whose model never activates the skill saves nothing, and nothing says so** | v3.63.0 | **shipped, and the last clause first**: the meter names the sessions that did not save. The hooks that ask are written; **no harness has yet been measured with them installed** |
+| B12 | 2 | Prove capture happened: sessions this week, by harness, saved / not saved | v3.63.0 (honesty meter) | **shipped**. Three states told apart — no log · a log with no session in the window · the reading — over a 30-day window |
+| B13 | 2 | A non-Claude tool writes the format without any skill at all | v3.63.0 (public spec + a neutral `my-curator` command) | **the spec is published** and pinned to the live constants by a suite. The acceptance run — a writer built by somebody without this repository — **has not been done** |
+| B14 | 2 | A session ends by compaction rather than by choice, and the handoff still lands | v3.63.0 (per-harness hooks, where one exists) | **partly**: the pre-compaction hook is written for the harnesses that have one, and the research settled that **Codex is the only harness whose pre-compaction hook can block**. Not measured on any of them |
 | B15 | 2 | Two harnesses work one project in parallel and each needs to know what the other recorded | v3.64.0 (awareness digest) | planned |
 | B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.64.0 (promote-to-foundation) | planned |
 | B17 | 2 | A mirror has gone stale, or its checkout is not on this machine: the state is visible and Refresh is withheld with its reason | v3.59.0 / v3.60.0 | built |
@@ -280,6 +280,33 @@ beside two head controls — nothing in the design pass was rendered (§F D13).
 
 ### v3.63.0 — capture guarantees
 
+> **SHIPPED — and what shipped is the mechanism, not the measurement.** The command, the adapters,
+> the public spec, the honesty meter and the GitHub mirror arm all landed. **Every harness row in
+> the matrix reads *not measured*.** The protocol that would change one is fixed and written down
+> (`scripts/measure-harness.js`'s header *is* the protocol: arms A/B/C, N=4, one task that never
+> mentions saving, an isolated fixture), and until it has been run against a real harness nothing in
+> the product or the docs describes a hook as working. Three corrections the build made to the scope
+> below, each because the code or the research said otherwise:
+>
+> - **The research doubled this release's adapter work.** The premise was that lifecycle hooks are
+>   rare. **Ten of thirteen harnesses have one**, they disagree on the event, the file, the format
+>   and the response shape, and **three accept a hook that never fires**. So `hooks.state` is four
+>   words rather than a boolean (`verified` · `unverified` · `present-useless` · `none`), and
+>   `install-hooks` has to be able to **refuse** and still be useful.
+> - **The capture point is the TURN END, not the session end.** Codex's `SessionEnd` caps at 3 s and
+>   Gemini CLI's and Cursor's are fire-and-forget: on three harnesses a session-end hook physically
+>   cannot complete a save. No `SessionEnd` hook is installed anywhere.
+> - **The meter could not be built from the shipped log**, which checklist item 5 below asked to be
+>   confirmed rather than assumed. It could not: the line had no session id and no project. The
+>   session id was unavoidable; the **project** field is a real content widening, from one
+>   user-chosen slug to two, and it was taken deliberately rather than quietly — a per-project page
+>   showing a figure aggregated over a whole domain would have been a false reading on the one
+>   screen built to prevent those. The line ceiling moved 200 → 300 bytes to pay for both, with the
+>   arithmetic re-derived rather than re-measured.
+> - **The binary is `my-curator`, not `curator`.** Elastic's `elasticsearch-curator` is ≈57k
+>   downloads a week and owns `/usr/bin/curator` on Debian; npm's `config-curator` ships a `curator`
+>   bin too. The short name is an opt-in alias that **refuses to install when it is shadowed**.
+
 **Goal.** Close the gap between *the store can hold a handoff* and *a handoff is there tomorrow*.
 This is the release the whole layer's value depends on, because a read path with no write discipline
 returns an empty store confidently.
@@ -293,7 +320,7 @@ returns an empty store confidently.
 | **A public working-state spec** | The on-disk format published so **any** tool can write it — the store's shape is already plain markdown plus append-only JSONL, and the spec makes that a contract instead of an implementation detail. A third-party writer needs the layout, the section vocabulary, the machine-segment rule and the budgets |
 | **An honesty meter, per project** | Sessions this week, grouped by harness, **saved / not saved**. The one question the memory layer exists for is *did this session start with the bootstrap and save before it stopped*, and the app should answer it without the owner reading a file. The content-free MCP usage log (v3.60.0, `src/brain/mcp-usage.js`, `GET /api/mcp/usage`) is the existing seam: it already records one line per tool call — tool, domain, outcome, duration, and nothing else |
 | **The live harness matrix** | Claude Code, Codex, Cursor and Gemini CLI, each measured for **reads** and for **unprompted saves**, published as a verified-in table with the date, the sample size and the arms |
-| **Mirror from a GitHub repository — a third ownership arm** | Sources foundations from a GitHub repo over the API instead of a local checkout, using the same personal access token Personal Sync already holds (`.sync-config.json`'s `token`, saved by `saveConfig` in [src/brain/sync.js](../src/brain/sync.js)); populates `repo.remote` — a manifest field that already exists in [src/brain/working-state.js](../src/brain/working-state.js) but today is only ever carried through or defaulted to `null`, never actively written; refreshes by blob sha. The Shared Brain adapter already speaks the shape this needs — [src/brain/sharedbrain-github-adapter.js](../src/brain/sharedbrain-github-adapter.js) does `GET`/`PUT`/`DELETE …/contents/:path` and `GET …/git/trees/:branch?recursive=1` — so this arm reuses a proven client rather than inventing one. Its value, stated honestly: it removes the "source not on this computer" state for any machine that can reach the remote. Its costs, stated honestly: network and rate limits, the PAT's scope (Personal Sync's token was never asked to cover an arbitrary foundations-source repo), and the eventual consistency the Shared Brain adapter already argues around (never read-after-write against GitHub's contents API on a correctness path). Placed here rather than in v3.62.0 because it is network-facing engine work — reliability, rate limits, honest disclosure of what a machine can and cannot reach — which is v3.63.0's register; v3.62.0's scope is shell and rail only, with no backend addition |
+| **Mirror from a GitHub repository — a third ownership arm** | Sources foundations from a GitHub repo over the API instead of a local checkout, **as shipped, using a SEPARATE read-only token by default** — `githubReadToken` in `.curator-config.json`, fine-grained and scoped to the source repository — with Personal Sync's own token available only when explicitly named, because a classic sync token can read every repository the user owns and that permission was granted for something else; populates `repo.remote` — a manifest field that already exists in [src/brain/working-state.js](../src/brain/working-state.js) but today is only ever carried through or defaulted to `null`, never actively written; refreshes by blob sha. The Shared Brain adapter already speaks the shape this needs — [src/brain/sharedbrain-github-adapter.js](../src/brain/sharedbrain-github-adapter.js) does `GET`/`PUT`/`DELETE …/contents/:path` and `GET …/git/trees/:branch?recursive=1` — so this arm reuses a proven client rather than inventing one. Its value, stated honestly: it removes the "source not on this computer" state for any machine that can reach the remote. Its costs, stated honestly: network and rate limits, the PAT's scope (Personal Sync's token was never asked to cover an arbitrary foundations-source repo), and the eventual consistency the Shared Brain adapter already argues around (never read-after-write against GitHub's contents API on a correctness path). Placed here rather than in v3.62.0 because it is network-facing engine work — reliability, rate limits, honest disclosure of what a machine can and cannot reach — which is v3.63.0's register; v3.62.0's scope is shell and rail only, with no backend addition |
 
 **What it deliberately does NOT do.**
 
@@ -461,7 +488,7 @@ Five rules that should survive this roadmap even if every release in it is re-pl
 | D11 | (was Q3) **A blockquote pass in `shared/markdown.js`**, strictly `> ` lines, ships as its own v3.62.0 item, measured against the v3.58.0 document corpus before it ships; the bold banner stays |
 | D12 | (was Q4) **No home view in v3.62.0** — judged only after the two-audience shell has been used |
 | D13 | (was Q5) **CLOSED by measurement** — the 568 px arithmetic was measured in the Browser pane during v3.61.0 (summary meta 356 px in 466 available; overflow 0 at 589 and 959 px); the Electron gap remains |
-| D14 | (was Q6) A **"session" in the honesty meter is a bridge session** (one MCP child process, initialize → exit) — the only unit a content-free log can observe; harnesses are told apart by one new bounded content-free usage-line field `client`, taken from the MCP client's own name at initialize (v3.63.0) |
+| D14 | (was Q6) A **"session" in the honesty meter is a bridge session** (one MCP child process, initialize → exit) — the only unit a content-free log can observe; harnesses are told apart by one new bounded content-free usage-line field `client`, read from the MCP client's own declared name (v3.63.0) — **as shipped it rides a once-per-process SESSION line rather than every line**, and it is read from **both protocol eras**: revision `2026-07-28` REMOVED the initialize handshake and makes `clientInfo` an optional, per-request, self-reported `_meta` entry that a server SHOULD NOT branch on, so the value is allow-listed, many-to-one, and read by nothing but a report |
 | D15 | (was Q7) **The neutral `curator` command lives in this repository**, published as a bin of the same package so it installs without the app, adapters as files beside it; split out only if adapters need their own cadence |
 | D16 | (was Q8) **Chat's project pill persists per conversation**, as a field on the conversation file (absence = none), so it travels with sync |
 | D17 | (was Q9) **"Save as foundation" is offered on a question and on an answer** — the editor opens pre-filled either way; the owner's approval in the editor is the rule, not a preview |
@@ -580,6 +607,29 @@ settle **before** an implementing session writes code.
    a privacy decision to take explicitly, not a field to add quietly.
 6. Keep the fail-safe direction: design the failure case first — what the owner sees when nothing
    saved — and make sure it is never a lost handoff.
+
+**How those six came out, since they were a checklist rather than a plan.** (1) Done, and it
+overturned the premise — §2 of the v3.63.0 design record carries thirteen harnesses, two of them
+source-verified against documentation that contradicts them. (2) Done and published; every row is
+*not measured*. (3) Taken: the command lives in this repository, works with the app closed, and is a
+second **local client** rather than anything the server can reach. (4) Frozen, and the `<machine>`
+rule is published **with its reason** — the `-X theirs` splice — because a spec that stated the rule
+without the hazard would invite a writer to simplify it away. (5) Confirmed **negative**, and the
+privacy decision was taken explicitly (above). (6) Held: capture is advisory, a hook may only ask,
+and a missed save still yields the previous state.
+
+**Two carried questions, and what the design pass recommended.** Both are recorded here as the
+**maintainer's decisions**, not as settled facts:
+
+- **Q7 — pull "Chat → canonical" forward into v3.63.0?** *Recommended against.* v3.63.0's register
+  is engine work — a command, a log schema, a public spec, a network client — and the Chat rows are
+  view work on a foundation editor that v3.62.0 had just restyled. Mixing them would have given one
+  release two unrelated must-not-regress lists. It stays at v3.64.0.
+- **Q8 — which release gets the ingest auto-split?** *Recommended for v3.64.0.* `TEXT_CAP` silently
+  drops everything past 80,000 characters, mitigated only by a warning nobody reads on a green
+  result panel. Splitting at headings is **audience 1's** work and belongs beside the ingest fork,
+  not beside a capture release. *What would change the answer: one user losing real content to the
+  cap.*
 
 **v3.64.0 — awareness and promotion**
 

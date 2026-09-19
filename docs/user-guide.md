@@ -23,6 +23,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 12. [See your knowledge graph in Obsidian](#12-see-your-knowledge-graph-in-obsidian)
 13. [Three ways to talk to your knowledge (Chat · Obsidian · MCP)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
+13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
@@ -3622,13 +3623,18 @@ harness loads every session, **3 of 4**. On **opencode**, which loads the skill 
 memory screen), puts that block on your clipboard with this project's names already in it. Paste it
 into whichever of these your tool reads:
 
-| Your tool | Paste it into |
-|---|---|
-| Claude Code | `CLAUDE.md` |
-| Codex | `AGENTS.md` |
-| opencode | `AGENTS.md` |
-| Gemini CLI | `GEMINI.md` |
-| Cursor | `.cursor/rules` |
+| Your tool | Paste it into | Watch out for |
+|---|---|---|
+| Claude Code | `CLAUDE.md` | |
+| Codex | `AGENTS.md` | the file is **cut off at 32 KiB**, silently — the block is small, a whole playbook is not |
+| opencode | `AGENTS.md` or `CLAUDE.md` | it reads both |
+| Gemini CLI | `GEMINI.md` | the filename comes from a `context.fileName` **list** in its settings; `AGENTS.md` is opt-in |
+| Cursor | `.cursor/rules` **or `AGENTS.md`** | it reads both |
+| GitHub Copilot CLI | its own instructions file, `CLAUDE.md` or `GEMINI.md` | it reads all three |
+| Zed | **`.rules`**, else `AGENTS.md`, else `CLAUDE.md` | **first match wins.** In a repository that has an `AGENTS.md`, a block in `CLAUDE.md` is never read |
+
+Unsure which applies to you? **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))
+reports the file your harness will actually read on this machine, and whether the block is in it.
 
 It does not replace the skill — the skill is what carries *how* to write a good handoff. The block
 only makes sure the agent goes and looks. The full measurement, including what it does not show
@@ -3680,6 +3686,213 @@ Reading is unaffected — chat, search, the wiki browser and every read tool kee
 One rough edge to expect: the refusal messages were written for the Shared Brain case, so a domain you marked read-only by hand is described back to you as *"a read-only Shared Brain mirror"* and pointed at a contribution flow that does not apply. The refusal is correct; the wording assumes a mirror.
 
 > 📖 **Full reference:** [docs/working-state.md](working-state.md) — the three tiers, the fields a handoff carries, size limits, when a save is refused, and the security posture.
+
+---
+
+## 13c. Making capture real — the command, the hooks and the meter
+
+Everything in §13b works **if** the agent saves. §13b's own measurement is blunt about what happens
+when it does not: on Claude Code, with the skill alone, **0 of 4** runs saved anything, and there
+was no error to see. v3.63.0 is about that gap. It does not make saving mandatory — nothing here
+can lose a handoff, and a missed save still leaves you the *previous* one — but it gives you three
+things you did not have: a **command** you can run yourself, **hooks** that ask the agent at the
+right moment on the harnesses that have them, and a **meter** that tells you whether any of it is
+working.
+
+![One agent session drawn left to right, with three moments marked on it. At the start, a
+SessionStart hook runs `my-curator context` and injects the project bootstrap — the brief, the last
+handoff and the read-first documents — into the session. In the middle, a PreCompact hook reminds
+the model to save before its context is cut, with a note that on most harnesses it cannot block and
+the wording says so. At the end of a turn, a Stop hook reads the local usage log and, only when no
+save has landed in this session, asks once in that harness's own shape. Below, an arrow from the
+Stop box to a box reading "the MODEL calls save_working_state" — a hook never composes a handoff, it
+asks and the model writes — and from there a dashed arrow down to `.mcp-usage.jsonl`, one
+content-free line per call, which is what the capture meter
+counts.](images/curator-capture-loop.svg)
+
+*A hook may **ask**, **inject** or **record**. It may never compose, summarise or invent a handoff —
+a fabricated handoff is worse than a missing one, because the whole value of the store is that what
+is written was written by whoever it names.*
+
+### The command: `my-curator`
+
+The bridge only exists while an MCP client is running. The command does not: it reads and writes the
+same files, from a shell, **with the app closed, no network and no credential**.
+
+| Command | What it does |
+|---|---|
+| `my-curator context` | Prints this project's bootstrap — the brief, the latest handoff, your read-first documents — to standard output. `--json` gives you the raw envelope |
+| `my-curator save` | Reads a complete handoff as JSON on standard input and writes it. It never invents one |
+| `my-curator doctor` | Prints what is wired on this machine, and writes nothing. Start here when something is not working |
+| `my-curator resolve` | Prints which project this directory belongs to, and nothing else |
+| `my-curator install-hooks <harness>` | Writes hook configuration for that harness. Nothing else |
+| `my-curator hook <event>` | What an installed hook actually runs. You never type this yourself |
+
+**Installing it.** It ships in the repository, so a source install already has it at
+`bin/curator.js`. To get the short command on your `PATH`, run `npm link` (or `npm install -g`) in
+your Curator folder. The binary is called **`my-curator`**, with one letter of explanation owed:
+
+> **Why not just `curator`?** Because that name is already taken by something important. Elastic's
+> `elasticsearch-curator` is installed on a great many servers — on Debian it *is* `/usr/bin/curator`
+> — where it runs index retention. Quietly shadowing it could break somebody's production job, so
+> this package never links that name: not on install, not on first run, not at all. If your machine
+> has no `curator`, `my-curator doctor --alias` prints the one-line command to make the short name
+> yourself; if something else already answers to it, the same command **refuses** and tells you what
+> it found.
+
+**Start with `doctor`.** It is read-only, it always exits successfully, and it answers the questions
+that otherwise take an afternoon:
+
+```
+$ my-curator doctor
+```
+
+- which project this directory resolves to, and how (a `--project` flag, a `.curator-project`
+  marker, or your default domain);
+- which harness configuration files exist on this machine, and whether each one names the
+  `my-curator` bridge — including whether the path baked into it has gone stale;
+- which of them carry Curator hooks, **and whether any of those hooks is one of the two that look
+  installed and do nothing** (see the table below);
+- **which instruction file this harness will actually read**, and whether your agent-instructions
+  block is in it — the only practical way to catch the two traps in the next section;
+- the capture meter, in the terminal.
+
+### Hooks: what they can do on your harness, and what they cannot
+
+A hook is a small command your agent tool runs at a fixed moment. Ten of the thirteen harnesses
+researched for this release have some hook mechanism — but they disagree about almost everything,
+and **three of them accept a hook that never fires**. So the honest answer is a table rather than a
+promise. Four words describe every row:
+
+| Word | Means |
+|---|---|
+| **verified** | The hook mechanism exists, takes a shell command, and the response shape is measured or documented. An adapter can wire it |
+| **unverified** | The mechanism exists and takes a shell command, but the exact shape — or the file it goes in — has not been measured. Anything unmeasured ships **withheld with its reason** rather than guessed |
+| **present-useless** | Hooks exist and **cannot** carry the ask. A finding, not a gap |
+| **none** | No hook mechanism at all |
+
+| Harness | Hooks | What `install-hooks` writes | Measured? |
+|---|---|---|---|
+| **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | not measured |
+| **Cursor** | verified | `sessionStart` · `preCompact` · `stop` — it *submits a message* rather than blocking, which is gentler | not measured |
+| **Codex CLI** | unverified | `PreCompact` (the one pre-compaction hook that can actually block) · `Stop`. **Never `SessionEnd`** — it is capped at 3 seconds, which is not long enough to finish a save | not measured |
+| **GitHub Copilot CLI** | unverified | Refused by default — the events exist and their shapes are unmeasured | not measured |
+| **goose** | unverified | Refused by default — same reason. The one harness with a genuinely usable session-end hook | not measured |
+| **Gemini CLI** | unverified | Nothing. `AfterAgent` is the right moment and its shape is unmeasured | not measured |
+| **Cline** | unverified | Nothing — the config path is unmeasured. **`PreCompact` is refused outright**: Cline accepts one and never fires it | not measured |
+| **DeepSeek Harness** | unverified | Nothing — the overlay path is unmeasured | not measured |
+| **OpenCode**, **Kilo** | present-useless | Nothing — hooks here are TypeScript plugins, not shell commands | not measured |
+| **Windsurf / Devin Desktop** | present-useless | Nothing — twelve hooks, and not one of them fires at a stop, a session end or a compaction | not measured |
+| **Zed** | none | Nothing — no hook mechanism exists | not measured |
+| **Claude Desktop** | none | Nothing | not measured |
+| **Aider** | none | Nothing — **it has no MCP client at all.** Your option is a shell wrapper: `my-curator context` before, `my-curator save` after | not measured |
+
+**Every row says *not measured*, and that is the truth rather than modesty.** No hook written by
+this release has yet been run by a real harness end to end. The protocol that would change a row —
+four runs per arm, one fixed task that never mentions saving, an isolated fixture — is fixed and
+written down (`scripts/measure-harness.js`), and until it has been run the product says so
+everywhere the question comes up. **A harness with no measurement is never described as working.**
+
+**What a hook will never do**, on any harness: write to `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or
+your Cursor rules — that paste stays yours — register an MCP server, touch an enterprise or managed
+policy file, or write into a file it cannot parse. And `install-hooks` writes the **full path** of
+the binary into every hook it installs, because `--scope project` writes a file you will commit, and
+a teammate without `my-curator` on their `PATH` would otherwise experience your capture hook as
+*"this repository breaks my agent"*.
+
+**Two traps you cannot see from the outside**, both worth one run of `my-curator doctor`:
+
+- **On Zed**, instruction files are resolved *first match*, and `.rules` and `AGENTS.md` rank
+  **above** `CLAUDE.md`. Paste the block into `CLAUDE.md` in a repository that has an `AGENTS.md`
+  and it is dead text — read by nothing, with no error.
+- **On Codex**, `AGENTS.md` is truncated at **32 KiB**, silently. The short agent-instructions block
+  fits easily; the full continuity playbook is about 63,500 bytes and does **not** — it belongs in a
+  skills directory, never in an instruction file.
+
+### The meter: did the session read, and did it save?
+
+Project context → step ② **Working state** now opens with one line that answers the question this
+whole layer exists for.
+
+![The Project context screen, dark theme, scrolled to step 2 "Working state". Under its lede sits a
+reading labelled CAPTURE: a green dot beside "6 sessions in the last 30 days", and under it, in
+smaller type, "4 started with the context · 4 saved before stopping · 2 read and did not save". An ⓘ
+sits at the right end of the row. Below that an unfolded notice reads "412 lines predate session ids
+and are not counted", and beneath it a quieter line, "25 self-test calls excluded". Then an open
+fold headed "Sessions", summarised at its right edge as "6 sessions · 4 read · 4 saved · 2 read and
+did not save", holding a table with the columns STARTED, HARNESS, CALLS, READ and SAVED: 12 min ago
+claude-code 3 ✓ ✓; 5 hr ago codex 3 ✓ ✓; 1 day ago gemini-cli 2 ✓ –; 2 days ago other 2 ✓ –; 6 days
+ago claude-desktop 2 – ✓; 1 week ago opencode 2 – ✓. Under it the three closed folds of step 2 —
+Work-streams, The brief and Recent saves — and then step 3,
+Knowledge.](images/curator-capture-meter.png)
+
+**Three words, defined once so the reading cannot be misread:**
+
+| | |
+|---|---|
+| **A session** | **One bridge process** — one run of your agent tool with The Curator connected. Not a conversation, not a day |
+| **Started with the context** | That session asked for this project's brief and state, at some point before its first save. Not necessarily as its very first call — an agent that lists projects first and bootstraps second has still bootstrapped |
+| **Saved before stopping** | A save succeeded. A *refused* save is not a save |
+
+**The uncomfortable number is the one in plain words.** *"2 read and did not save"* is two sessions
+that had everything and wrote nothing back — and it is printed as a count, in words, never as a
+percentage or a bar, because *"67%"* reads as a grade while *"2 read and did not save"* reads as two
+sessions you could go and look at.
+
+**Three states, told apart rather than blurred:**
+
+| What you see | What it means |
+|---|---|
+| *"no usage log on this computer yet"* | Nothing has used the bridge here. Not a failure |
+| *"no agent session in the last 30 days"* | There is a log, and no session for **this project** in the window. Also not a failure |
+| *"6 sessions in the last 30 days"* | The real reading, with its breakdown underneath |
+
+Only the third carries a freshness dot, and **that dot is the age of the newest session** — not a
+grade for the ratio. A reading and a judgement are different things, and the app does not dress one
+as the other.
+
+**What the meter cannot see, stated on the screen and not only here.** It counts what went through
+the **bridge**. A save made with `my-curator save`, or by an agent that never connected, leaves no
+line — so it neither helps nor hurts the figures, and a session that never opened the bridge is not
+in the denominator either. The **harness** column is **self-reported** by the client and nothing in
+The Curator branches on it: it labels a row and does nothing else. Calls made before v3.63.0 have no
+session id, so they are counted separately (*"412 lines predate session ids and are not counted"*)
+rather than being invented into sessions. And the app's own *Test all 24 tools* run is excluded
+outright — pressing a button on a Settings screen must never report a session that read and saved.
+
+**Nothing here stops a session.** The meter reports; it never refuses, delays or blocks anything.
+
+> The same reading is available from the terminal (`my-curator doctor`) and as a per-harness matrix
+> row (`node scripts/measure-harness.js --harness claude-code --since <date>`), from the same
+> aggregation — so the three can never disagree about one session.
+
+### Canonical documents, from the repository instead of a checkout
+
+One more piece of the same release, for anyone using **[foundations](#foundations--canonical-documents-that-travel)**
+on more than one computer. Until v3.63.0, a mirrored document's freshness could only be checked on
+the machine that had the repository cloned; everywhere else the column read *"source not on this
+computer"* for ever. A mirror can now be refreshed **from the GitHub repository itself**.
+
+**It only ever reads.** The client it uses has no way to write — no `PUT`, no `DELETE`, no path to
+one — so a refresh cannot alter the repository it is mirroring, whatever token it holds. If the file
+listing comes back truncated it refuses loudly *and changes nothing*, because a silent miss would
+quietly keep a stale copy while reporting success.
+
+**And it does not borrow your sync token without asking.** The recommended setup is a **second,
+read-only, fine-grained** GitHub token (Contents: **Read**, that repository only), saved as
+`githubReadToken` in `.curator-config.json`. Personal Sync's own token can be used instead, but only
+when explicitly named — because if yours is a *classic* token it can read **every repository you
+own**, and that permission was granted for sync, not for this. Whichever you use, the token is never
+logged, never put in a URL, and never included in an error message; when something fails, the message
+names **which file** the token came from, which is the part you can act on.
+
+**What it does not change:** the copies still travel by sync, a mirror refreshed on two machines
+between syncs still converges to whichever saved last, and the repository is still the source of
+truth. See [sync.md](sync.md#mirroring-from-github-and-the-token-that-does-not-get-reused-v3630).
+
+> 📖 **For developers:** the on-disk format is now published —
+> [docs/spec/working-state-v1.md](spec/working-state-v1.md) — so a tool that is not The Curator can
+> read and write your working state without this codebase.
 
 ---
 

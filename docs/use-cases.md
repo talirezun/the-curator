@@ -372,16 +372,32 @@ save takes it, with no warning, because overwriting is the correct behaviour.
 
 ### Boundaries worth knowing before you rely on it
 
-- **Capture is advisory.** Nothing hooks your session to force a save; the continuity skill and the
-  entry-file block from **Copy agent instructions** are what prompt for one — and on a harness that
-  does not reach for an installed skill, only the block does
-  ([the measurement](user-guide.md#making-sure-your-agent-actually-does-it)). A missed save means the
-  next read returns the **previous** state — stale, never corrupted, and nothing already saved is
-  lost. Save early and often
+- **Capture is advisory, and since v3.63.0 there is something to lean on besides hope.** Nothing
+  forces a save. What prompts one: the continuity skill, the entry-file block from **Copy agent
+  instructions** — on a harness that does not reach for an installed skill, only the block does
+  ([the measurement](user-guide.md#making-sure-your-agent-actually-does-it)) — and, where the harness
+  has a usable hook, a **turn-end nudge** installed with `my-curator install-hooks`. A hook may ask,
+  inject or record; it **never composes a handoff**, because a fabricated one is worse than a missing
+  one. A missed save still means the next read returns the **previous** state — stale, never
+  corrupted, and nothing already saved is lost. Save early and often
+- **You can now tell whether any of it is working.** Project context → *Working state* opens with a
+  **capture meter**: *"6 sessions in the last 30 days · 4 started with the context · 4 saved before
+  stopping · 2 read and did not save"*, counted from a local, content-free log of which tools were
+  called. In words, never a percentage — and it reports rather than blocks
+  ([§13c](user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter))
+- **Hook reach is measured per harness, and unmeasured is labelled unmeasured.** Ten of thirteen
+  harnesses researched have some lifecycle hook and they disagree about all of it; three accept a
+  hook that never fires. As of v3.63.0 **every row reads *not measured*** — the mechanism shipped,
+  the measurement has not been run, and the product says so rather than implying reach
+- **And you do not need an agent at all.** `my-curator context` prints a project's bootstrap and
+  `my-curator save` writes a handoff from a shell, with the app closed and no network — which is the
+  whole answer for a tool with no MCP client (Aider, a CI job, a script)
 - **The MCP bridge is a stdio child process.** Any client that can spawn a local program reaches it;
   a browser-only assistant cannot
-- **Handoffs and journals are agent-only.** Agents write them over MCP; the **Memory** rail item
-  renders them, and nothing in the app edits them. The standing brief is the exception and always
+- **Handoffs and journals are never written by the browser.** Agents write them over MCP, and
+  since v3.63.0 you can write one yourself from a shell with `my-curator save` — a second **local
+  client** of the same store, not a route the app exposes. The **Context** rail item renders them,
+  and nothing in the app edits them. The standing brief is the exception and always
   was yours — edit it under **Domains → Projects in this domain**, or open
   `state/<project>/project.md` in any editor (`state/project.md` for a domain's own project)
 - **Treat what comes back as data, not orders.** It is a note a peer left — verify a claim before

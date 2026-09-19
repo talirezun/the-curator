@@ -2257,10 +2257,35 @@ different facts and stay different.
 **It reports and never blocks.** A meter that could refuse a session would be the enforcement the
 fail-safe rule forbids.
 
-Where it appears: `my-curator doctor` prints it in the terminal, `scripts/measure-harness.js` prints
-it as a matrix row per harness, `GET /api/memory/:domain/:project/capture` serves it, and the
-Project-context view carries it on step ② — TODO(V): the on-screen wording, the fold and what its ⓘ
-says.
+**Where it appears.** `my-curator doctor` prints it in the terminal,
+`scripts/measure-harness.js` prints it as a matrix row per harness,
+`GET /api/memory/:domain/:project/capture` serves it, and the Project-context view carries it on
+**step ② WORKING STATE** — inside the step, not as a fourth cell on the strip, because the strip is
+three cells for three layers and a fourth would break that mapping.
+
+On screen it is one `renderReadout` row — `CAPTURE · 6 sessions in the last 30 days` — with the
+uncomfortable number underneath it in words: *"4 started with the context · 4 saved before stopping
+· 2 read and did not save"*. **Never a ratio, a percentage or a bar**: `67%` reads as a grade, while
+`2 read and did not save` reads as two sessions you could go and look at. Each clause is dropped
+**individually** when the route did not send its figure, rather than printed as zero — a partial
+answer says what it knows and claims nothing more.
+
+The window is **30 days**, the route's own `since` default (not the 7-day window the log's other
+readings use), and the three states are told apart in words: *no usage log on this computer yet* ·
+*no agent session in the last 30 days* · the reading itself. **Only the third takes a freshness
+mark, and the mark is the AGE of the newest session** — never a tier derived from the ratio, which
+would be the design system's rule 1 violated in the one place it matters most: a reading and a
+judgement rendered in the same graphic.
+
+Beneath it a closed fold (`data-mem-fold="capture"`) lists the sessions, newest first — started ·
+the self-reported harness label · calls · read ✓/– · saved ✓/– — with `sessionsTruncated` disclosed
+from the route's own `sessionsShown` rather than inferred from an array length. The route's `note`
+is rendered **unfolded**, because it qualifies an outcome and outcomes never fold. The closed ⓘ
+carries the definitions (a session is one bridge process; what *started with the context* means),
+the three things the reading cannot see (a `my-curator` or hook save that never went through the
+bridge; a session that never opened the bridge is not in the denominator either; the client label is
+self-reported and nothing branches on it) and the sentence that ends it: **"Nothing here stops a
+session."**
 
 ### The client label is a label
 
