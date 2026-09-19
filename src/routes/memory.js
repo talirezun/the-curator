@@ -110,7 +110,14 @@
  *                                                source file alone; only PUT
  *                                                is curator-only
  *   POST   /:domain/:project/foundations/init    set ownership ONCE
- *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?}
+ *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?,
+ *                                                source? local|remote|auto,
+ *                                                tokenSource? config|sync,
+ *                                                remote?} — v3.63.0 reads the
+ *                                                bytes from GitHub when the
+ *                                                checkout is not on this
+ *                                                machine; 409 only when BOTH
+ *                                                arms are impossible
  *   GET    /:domain/:project                 one project's brief + state
  *   GET    /:project                         DEPRECATED alias (see below)
  *
@@ -2050,13 +2057,68 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════
 // POST /api/memory/:domain/:project/foundations/refresh — re-copy the mirror
 //
-// THE ONE TIER-0 WRITE THIS APP MAKES, and the header block above this
-// section's helpers records the argument in full: a refresh is a byte copy
-// from a repository that is already the document's author, so running it
+// THE ONE TIER-0 WRITE THIS APP MAKES ON A MIRROR, and the header block above
+// this section's helpers records the argument in full: a refresh is a byte
+// copy from a repository that is already the document's author, so running it
 // makes this app a second COPIER rather than a second WRITER. It never
 // composes, never merges, never calls an LLM, and it cannot create a
 // curator-owned document — that is what the 400 below is for.
+//
+// ── THE REMOTE ARM (v3.63.0) DOES NOT WEAKEN THAT ARGUMENT ──────────────
+// It changes WHERE the bytes are read from — GitHub's API at a named commit
+// rather than a checkout on this disk — and nothing about who authored them.
+// The repository is still the author; this is still a copy; two copiers of
+// one byte string still converge rather than conflict. What it removes is the
+// accident that made the copier's machine special: `repo.root` is a path on
+// ONE computer, so on every other one the mirror read "source not on this
+// computer" for ever. The three things it adds are all refusals, not powers:
+// the client can issue no verb but GET, a truncated file listing aborts
+// before a single byte is fetched, and the token is read from a file the user
+// wrote rather than from anything that crosses this route.
+//
+// `source` picks the arm — `auto` (the default) takes the checkout when it is
+// here and GitHub when it is not, `local` and `remote` name one. A 409 means
+// BOTH were impossible, and says why for each.
+//
+// NO TOKEN CROSSES THIS ROUTE. `tokenSource` names WHICH FILE to read it
+// from (`config` = the separate read-only `githubReadToken`, the recommended
+// one; `sync` = Personal Sync's PAT, which the user is asked about because a
+// CLASSIC sync token can read every repository they own and was granted for
+// something else). A `token` in the body is not read, here or in the store.
 // ═════════════════════════════════════════════════════════════════════════
+
+/**
+ * A refresh refusal's HTTP status.
+ *
+ * The remote arm's reasons are NEW and `statusForStoreRefusal` — which is
+ * shared with every other tier-0 route — would answer 400 for all of them by
+ * its default arm. 400 is wrong for most: a rate limit is not a malformed
+ * request, and neither is GitHub having a bad afternoon. Named here, in the
+ * one handler that can produce them, rather than widened into the shared
+ * table where a future route would inherit answers nobody chose for it.
+ */
+const REFRESH_REMOTE_STATUS = new Map([
+  // The stored credential cannot read that repository. Not 401: the user is
+  // not being asked to authenticate to The Curator.
+  ['unauthorised', 403],
+  // GitHub's limit, not ours, and the one status that says "later".
+  ['rate-limited', 429],
+  // Upstream conditions. Nothing here is malformed and nothing is broken
+  // locally, which is what 502 says and what 400 would deny.
+  ['remote-tree-truncated', 502],
+  ['remote-http', 502],
+  ['remote-unreachable', 502],
+  ['remote-too-large', 502],
+  // The repository, the ref or the path is not there — or the token cannot
+  // see it, which GitHub answers identically and the message says so.
+  ['remote-not-found', 404],
+  // The request named a remote this cannot read. That one IS input.
+  ['invalid-remote', 400],
+  // No token in the named file, and no checkout either: the server's state is
+  // not one this request can act on — the same 409 an absent checkout gets.
+  ['no-token', 409],
+  ['remote-unavailable', 500],
+]);
 router.post('/:domain/:project/foundations/refresh', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -2092,12 +2154,48 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     // — "the state on this server is not one this request can act on" — never
     // a 500, because nothing is broken: the checkout is simply not here.
     const root = asked || (index && index.repo && index.repo.root) || null;
-    if (!root) {
+
+    // ── WHICH ARM (v3.63.0) ─────────────────────────────────────────────
+    // `auto` is the default and is the honest one: prefer the checkout, fall
+    // back to GitHub. `local` reproduces every pre-v3.63.0 answer exactly.
+    const source = body.source === 'remote' ? 'remote' : body.source === 'local' ? 'local' : 'auto';
+    const tokenSource = body.tokenSource === 'sync' ? 'sync' : 'config';
+    // A remote is recorded on the manifest OR named in the body. The store
+    // validates the shape and answers `invalid-remote`; this route only needs
+    // to know whether the arm is even AVAILABLE before it refuses below.
+    const namedRemote = typeof body.remote === 'string' && body.remote.trim()
+      ? body.remote.trim().slice(0, 300)
+      : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? body.remote : null);
+    const hasRemote = !!(namedRemote || (index && index.repo && index.repo.remote));
+
+    // NO PATH AND NO REPOSITORY — both arms are impossible, so both reasons
+    // are named. A 409 for the same reason it has always been one: nothing is
+    // malformed, the server's own state is simply not one the request can act
+    // on. The original sentence is kept WORD FOR WORD as the first clause,
+    // because it is the actionable half for the user who has a checkout
+    // somewhere and because a client may be matching on it.
+    if (!root && !hasRemote) {
+      return res.status(409).json({
+        ok: false, reason: 'repo_unreachable',
+        error: 'This project has no folder path recorded on this computer, so there is '
+          + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
+          + 'or pass the path. No GitHub repository is recorded for this mirror either, '
+          + 'so there is nothing to read over the network.',
+        arms: {
+          local: { possible: false, reason: 'no_root' },
+          remote: { possible: false, reason: 'no_remote' },
+        },
+      });
+    }
+    // `local` was asked for by name and there is no path: refuse rather than
+    // quietly doing the other thing. Naming an arm is a decision.
+    if (!root && source === 'local') {
       return res.status(409).json({
         ok: false, reason: 'repo_unreachable',
         error: 'This project has no folder path recorded on this computer, so there is '
           + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
           + 'or pass the path.',
+        arms: { local: { possible: false, reason: 'no_root' }, remote: { possible: hasRemote, reason: hasRemote ? null : 'no_remote' } },
       });
     }
 
@@ -2112,17 +2210,49 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     // second copy of those rules here would be a second thing to keep in
     // step, and it would decide refusals the store then decides again.
     const files = Array.isArray(body.files) ? body.files : [];
-    const out = await store.refreshFoundationsFromRepo(domain, project, root, { files });
+    const out = await store.refreshFoundationsFromRepo(domain, project, root, {
+      files,
+      source,
+      tokenSource,
+      // Forwarded ONLY when the body named one — an absent key must reach the
+      // store as absent, so the manifest's own remote stays the default.
+      ...(namedRemote ? { remote: namedRemote } : {}),
+    });
     if (!out || out.ok === false) {
       const reason = (out && out.reason) || 'repo_unreachable';
       const status = (reason === 'curator_owned' || reason === 'curator-owned') ? 400
-        : statusForStoreRefusal({ reason });
+        : REFRESH_REMOTE_STATUS.get(reason) ?? statusForStoreRefusal({ reason });
       return res.status(status).json(withErrorProse({
         ok: false, reason, domain, project, repoRoot: root, ...(out || {}),
       }));
     }
     res.json({
-      ok: true, domain, project, repoRoot: root,
+      ok: true, domain, project,
+      // The REMOTE arm reports `repoRoot: null` — no folder on this computer
+      // was read — and the local arm reports the root it resolved. Taken from
+      // the store rather than echoed from the request, so a response can
+      // never name a folder that was not the source.
+      repoRoot: out.repoRoot ?? (out.source === 'remote' ? null : root),
+      // ── WHAT THE REMOTE ARM ANSWERED (v3.63.0) ──────────────────────
+      // `remoteChecked` is the fact the view needs to choose between "source
+      // not on this computer" and "mirrored from GitHub @ <short sha>", and
+      // `remoteError` is a CODE rather than a sentence — the sentence is in
+      // `error`, and a code is what a client can branch on. Both are always
+      // present, including on the local arm where they read false/null,
+      // because an absence is not an answer.
+      source: out.source === 'remote' ? 'remote' : 'local',
+      remoteChecked: out.remoteChecked === true,
+      remoteCommit: out.remoteCommit ?? null,
+      remoteError: out.remoteError ?? null,
+      remote: out.remote && typeof out.remote === 'object' ? {
+        owner: out.remote.owner ?? null,
+        repo: out.remote.repo ?? null,
+        ref: out.remote.ref ?? null,
+        path: out.remote.path ?? null,
+      } : null,
+      // WHICH FILE THE TOKEN CAME FROM, never the token. Null on the local
+      // arm, which needs none — and that difference is worth seeing.
+      tokenSource: out.tokenSource ?? null,
       refreshed: Array.isArray(out.refreshed) ? out.refreshed : [],
       unchanged: Array.isArray(out.unchanged) ? out.unchanged : [],
       added: Array.isArray(out.added) ? out.added : [],
