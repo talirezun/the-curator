@@ -485,6 +485,11 @@ const EXPECTED_ROUTES = [
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
+  // v3.63.0 — the honesty meter (package U). READ-ONLY, and registered here
+  // rather than after the two-segment reads below for no correctness reason:
+  // a three-segment suffix route cannot shadow, or be shadowed by, either of
+  // them, so this position is simply where the file puts it.
+  ['get', '/:domain/:project/capture'],
   ['get', '/:domain/:project'],
   ['get', '/:project'],
 ];
