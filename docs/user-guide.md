@@ -3627,10 +3627,10 @@ into whichever of these your tool reads:
 |---|---|---|
 | Claude Code | `CLAUDE.md` | |
 | Codex | `AGENTS.md` | the file is **cut off at 32 KiB**, silently — the block is small, a whole playbook is not |
-| opencode | `AGENTS.md` or `CLAUDE.md` | it reads both |
+| opencode | `AGENTS.md` | it reads `CLAUDE.md` too |
 | Gemini CLI | `GEMINI.md` | the filename comes from a `context.fileName` **list** in its settings; `AGENTS.md` is opt-in |
-| Cursor | `.cursor/rules` **or `AGENTS.md`** | it reads both |
-| GitHub Copilot CLI | its own instructions file, `CLAUDE.md` or `GEMINI.md` | it reads all three |
+| Cursor | `.cursor/rules` | it reads `AGENTS.md` too |
+| GitHub Copilot CLI | its own instructions file | it reads `CLAUDE.md` and `GEMINI.md` too |
 | Zed | **`.rules`**, else `AGENTS.md`, else `CLAUDE.md` | **first match wins.** In a repository that has an `AGENTS.md`, a block in `CLAUDE.md` is never read |
 
 Unsure which applies to you? **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))

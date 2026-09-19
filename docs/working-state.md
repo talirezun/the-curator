@@ -2070,9 +2070,9 @@ installed, and it is the same text everywhere.
 |---|---|---|
 | Claude Code | `CLAUDE.md` | |
 | Codex | `AGENTS.md` | **capped at 32,768 bytes** (`project_doc_max_bytes`), and truncated silently past it |
-| opencode | `AGENTS.md` **and** `CLAUDE.md` | read walking up from the working directory |
+| opencode | `AGENTS.md` | **and `CLAUDE.md`** — both, read walking up from the working directory |
 | Gemini CLI | `GEMINI.md` | named by **`context.fileName`** — nested, and an *array*; `AGENTS.md` is opt-in and not read by default |
-| Cursor | `.cursor/rules` **and `AGENTS.md`** | |
+| Cursor | `.cursor/rules` | **and `AGENTS.md`** — Cursor reads both |
 | GitHub Copilot CLI | its own file, **plus `CLAUDE.md` and `GEMINI.md`** | |
 | Zed | **first match** of `.rules`, `AGENTS.md`, `CLAUDE.md` | `.rules` and `AGENTS.md` **outrank** `CLAUDE.md`, so a block pasted into `CLAUDE.md` beside an `AGENTS.md` is **dead text** |
 | Windsurf / Devin Desktop | rule files | capped at 6,000 / 12,000 characters |

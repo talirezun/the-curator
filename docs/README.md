@@ -99,6 +99,20 @@ paste into an assistant that needs to understand The Curator before it helps you
 
 **Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Since v3.59.0 the same one call also hands it the project's canonical documents: [the foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel), or [the plain-language version](user-guide.md#foundations--canonical-documents-that-travel) in the user guide. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
 
+**Not sure your agent is actually saving anything?** Read
+[Making capture real](user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter) —
+v3.63.0's answer to the gap §13b measures. It covers the `my-curator` command (the same store, from
+a shell, with the app closed), the per-harness hooks and what each harness can and cannot carry, and
+the capture meter that says how many recent sessions started with the context and how many saved
+before stopping. The per-harness reach is **measured, and every row currently reads *not measured***
+— the mechanism shipped; the measurement has not been run.
+
+**Writing a tool that reads or writes this format?** The on-disk contract is published:
+[`spec/working-state-v1.md`](spec/working-state-v1.md), versioned `working-state/1` — the layout,
+the machine-name rule and the merge hazard it prevents, the section grammar, the journal line, the
+foundations manifest, the budgets and the bootstrap. A suite parses it against the live constants on
+every test run, so it cannot quietly drift from the code.
+
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 
 **On a Mac?** There are two shapes and [Mac App Setup](mac-app.md) covers both: a **downloadable `.dmg` application** (Apple Silicon or Intel — it carries its own runtime, needs no Terminal, and **installs its own updates**), and the **Dock launcher** the one-line installer builds around a checkout. Neither is deprecated. The app is not notarised yet, so a first launch needs a one-time *Open Anyway*; updates it installs for itself do not. Every packaging decision — and, for each, whether code exists yet — is in [the decision record](desktop-app-decisions.md), including [what moving an existing wiki costs you](desktop-app-decisions.md#4-migration-for-existing-users) (short answer: nothing is copied or converted; you re-paste your API key, and you point the app at the folder that *contains* your domains).
