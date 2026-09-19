@@ -285,6 +285,14 @@ saved into a document every future session is told to treat as canonical is wors
 unanswered question with its banner still attached. Saving through `save_foundation` clears the
 `skeleton` mark; there is no way to re-mark a document, so save only once you actually mean it.
 
+**`read_first` is the owner's routing decision, not yours (v3.62.0).** A document marked
+`readFirst` in the index is handed to every session with its text; everything else is handed as an
+index row and opened by name (`get_project_context` with `slugs`). `save_foundation` takes an
+optional `read_first` — **omit it**, and an existing document keeps whatever the owner chose;
+pass it only when the user has said in as many words that this document should, or should no
+longer, be read before work starts. The reply's `read_first` / `was_read_first` say where the
+flag stands after the save, which is worth reading back to the user when they asked for it.
+
 > **The six working-state tools have their own playbook.** This skill covers the WIKI —
 > what knowledge to write and how to ground it. Carrying build state between sessions is a
 > different discipline (which project, when to save, what a handoff must contain, the writing
