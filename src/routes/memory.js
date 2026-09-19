@@ -110,7 +110,18 @@
  *                                                source file alone; only PUT
  *                                                is curator-only
  *   POST   /:domain/:project/foundations/init    set ownership ONCE
- *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?}
+ *   POST   /:domain/:project/foundations/refresh re-copy the mirror {files?,
+ *                                                source? local|remote|auto,
+ *                                                tokenSource? config|sync,
+ *                                                remote?} — v3.63.0 reads the
+ *                                                bytes from GitHub when the
+ *                                                checkout is not on this
+ *                                                machine; 409 only when BOTH
+ *                                                arms are impossible
+ *   GET    /:domain/:project/capture         the honesty meter — sessions,
+ *                                            read/saved, off the local usage
+ *                                            log (v3.63.0; `?since=`, `?limit=`;
+ *                                            read-only, never blocks)
  *   GET    /:domain/:project                 one project's brief + state
  *   GET    /:project                         DEPRECATED alias (see below)
  *
@@ -183,6 +194,9 @@ import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
+import {
+  readUsageLines, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
+} from '../brain/mcp-usage.js';
 
 const router = Router();
 
@@ -782,6 +796,20 @@ function foundationsWire(out) {
     } : null,
     budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
     totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
+    // ── THE FOUR REMOTE READINGS (v3.63.0), FORWARDED FIELD BY FIELD ────
+    //
+    // `listFoundations`'s own doc comment names what each means and why
+    // `remoteChecked` is always false off THIS call: a GitHub comparison
+    // happens only inside `refreshFoundationsFromRepo`, an action with a
+    // button, never on a read that rides on every project switch and on the
+    // menubar widget's summary. These four are project-level facts (whether
+    // a repo is recorded, and what the last refresh — local or remote —
+    // found), not a per-document reading, so they sit beside `repo` rather
+    // than inside a document row.
+    remoteMirror: out.remoteMirror === true,
+    remoteChecked: out.remoteChecked === true,
+    remoteCommit: out.remoteCommit ?? null,
+    remoteError: out.remoteError ?? null,
     // HOW MANY DOCUMENTS ARE STILL PROMPTS (v3.61.0). Derived from the rows
     // below rather than trusted from the store's own tally, so the summary
     // line and the table can never disagree — and computed here rather than
@@ -2050,13 +2078,68 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════
 // POST /api/memory/:domain/:project/foundations/refresh — re-copy the mirror
 //
-// THE ONE TIER-0 WRITE THIS APP MAKES, and the header block above this
-// section's helpers records the argument in full: a refresh is a byte copy
-// from a repository that is already the document's author, so running it
+// THE ONE TIER-0 WRITE THIS APP MAKES ON A MIRROR, and the header block above
+// this section's helpers records the argument in full: a refresh is a byte
+// copy from a repository that is already the document's author, so running it
 // makes this app a second COPIER rather than a second WRITER. It never
 // composes, never merges, never calls an LLM, and it cannot create a
 // curator-owned document — that is what the 400 below is for.
+//
+// ── THE REMOTE ARM (v3.63.0) DOES NOT WEAKEN THAT ARGUMENT ──────────────
+// It changes WHERE the bytes are read from — GitHub's API at a named commit
+// rather than a checkout on this disk — and nothing about who authored them.
+// The repository is still the author; this is still a copy; two copiers of
+// one byte string still converge rather than conflict. What it removes is the
+// accident that made the copier's machine special: `repo.root` is a path on
+// ONE computer, so on every other one the mirror read "source not on this
+// computer" for ever. The three things it adds are all refusals, not powers:
+// the client can issue no verb but GET, a truncated file listing aborts
+// before a single byte is fetched, and the token is read from a file the user
+// wrote rather than from anything that crosses this route.
+//
+// `source` picks the arm — `auto` (the default) takes the checkout when it is
+// here and GitHub when it is not, `local` and `remote` name one. A 409 means
+// BOTH were impossible, and says why for each.
+//
+// NO TOKEN CROSSES THIS ROUTE. `tokenSource` names WHICH FILE to read it
+// from (`config` = the separate read-only `githubReadToken`, the recommended
+// one; `sync` = Personal Sync's PAT, which the user is asked about because a
+// CLASSIC sync token can read every repository they own and was granted for
+// something else). A `token` in the body is not read, here or in the store.
 // ═════════════════════════════════════════════════════════════════════════
+
+/**
+ * A refresh refusal's HTTP status.
+ *
+ * The remote arm's reasons are NEW and `statusForStoreRefusal` — which is
+ * shared with every other tier-0 route — would answer 400 for all of them by
+ * its default arm. 400 is wrong for most: a rate limit is not a malformed
+ * request, and neither is GitHub having a bad afternoon. Named here, in the
+ * one handler that can produce them, rather than widened into the shared
+ * table where a future route would inherit answers nobody chose for it.
+ */
+const REFRESH_REMOTE_STATUS = new Map([
+  // The stored credential cannot read that repository. Not 401: the user is
+  // not being asked to authenticate to The Curator.
+  ['unauthorised', 403],
+  // GitHub's limit, not ours, and the one status that says "later".
+  ['rate-limited', 429],
+  // Upstream conditions. Nothing here is malformed and nothing is broken
+  // locally, which is what 502 says and what 400 would deny.
+  ['remote-tree-truncated', 502],
+  ['remote-http', 502],
+  ['remote-unreachable', 502],
+  ['remote-too-large', 502],
+  // The repository, the ref or the path is not there — or the token cannot
+  // see it, which GitHub answers identically and the message says so.
+  ['remote-not-found', 404],
+  // The request named a remote this cannot read. That one IS input.
+  ['invalid-remote', 400],
+  // No token in the named file, and no checkout either: the server's state is
+  // not one this request can act on — the same 409 an absent checkout gets.
+  ['no-token', 409],
+  ['remote-unavailable', 500],
+]);
 router.post('/:domain/:project/foundations/refresh', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -2092,12 +2175,48 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     // — "the state on this server is not one this request can act on" — never
     // a 500, because nothing is broken: the checkout is simply not here.
     const root = asked || (index && index.repo && index.repo.root) || null;
-    if (!root) {
+
+    // ── WHICH ARM (v3.63.0) ─────────────────────────────────────────────
+    // `auto` is the default and is the honest one: prefer the checkout, fall
+    // back to GitHub. `local` reproduces every pre-v3.63.0 answer exactly.
+    const source = body.source === 'remote' ? 'remote' : body.source === 'local' ? 'local' : 'auto';
+    const tokenSource = body.tokenSource === 'sync' ? 'sync' : 'config';
+    // A remote is recorded on the manifest OR named in the body. The store
+    // validates the shape and answers `invalid-remote`; this route only needs
+    // to know whether the arm is even AVAILABLE before it refuses below.
+    const namedRemote = typeof body.remote === 'string' && body.remote.trim()
+      ? body.remote.trim().slice(0, 300)
+      : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? body.remote : null);
+    const hasRemote = !!(namedRemote || (index && index.repo && index.repo.remote));
+
+    // NO PATH AND NO REPOSITORY — both arms are impossible, so both reasons
+    // are named. A 409 for the same reason it has always been one: nothing is
+    // malformed, the server's own state is simply not one the request can act
+    // on. The original sentence is kept WORD FOR WORD as the first clause,
+    // because it is the actionable half for the user who has a checkout
+    // somewhere and because a client may be matching on it.
+    if (!root && !hasRemote) {
+      return res.status(409).json({
+        ok: false, reason: 'repo_unreachable',
+        error: 'This project has no folder path recorded on this computer, so there is '
+          + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
+          + 'or pass the path. No GitHub repository is recorded for this mirror either, '
+          + 'so there is nothing to read over the network.',
+        arms: {
+          local: { possible: false, reason: 'no_root' },
+          remote: { possible: false, reason: 'no_remote' },
+        },
+      });
+    }
+    // `local` was asked for by name and there is no path: refuse rather than
+    // quietly doing the other thing. Naming an arm is a decision.
+    if (!root && source === 'local') {
       return res.status(409).json({
         ok: false, reason: 'repo_unreachable',
         error: 'This project has no folder path recorded on this computer, so there is '
           + 'nothing to copy from. Save state from the checkout once with `repo_root` set, '
           + 'or pass the path.',
+        arms: { local: { possible: false, reason: 'no_root' }, remote: { possible: hasRemote, reason: hasRemote ? null : 'no_remote' } },
       });
     }
 
@@ -2112,17 +2231,49 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     // second copy of those rules here would be a second thing to keep in
     // step, and it would decide refusals the store then decides again.
     const files = Array.isArray(body.files) ? body.files : [];
-    const out = await store.refreshFoundationsFromRepo(domain, project, root, { files });
+    const out = await store.refreshFoundationsFromRepo(domain, project, root, {
+      files,
+      source,
+      tokenSource,
+      // Forwarded ONLY when the body named one — an absent key must reach the
+      // store as absent, so the manifest's own remote stays the default.
+      ...(namedRemote ? { remote: namedRemote } : {}),
+    });
     if (!out || out.ok === false) {
       const reason = (out && out.reason) || 'repo_unreachable';
       const status = (reason === 'curator_owned' || reason === 'curator-owned') ? 400
-        : statusForStoreRefusal({ reason });
+        : REFRESH_REMOTE_STATUS.get(reason) ?? statusForStoreRefusal({ reason });
       return res.status(status).json(withErrorProse({
         ok: false, reason, domain, project, repoRoot: root, ...(out || {}),
       }));
     }
     res.json({
-      ok: true, domain, project, repoRoot: root,
+      ok: true, domain, project,
+      // The REMOTE arm reports `repoRoot: null` — no folder on this computer
+      // was read — and the local arm reports the root it resolved. Taken from
+      // the store rather than echoed from the request, so a response can
+      // never name a folder that was not the source.
+      repoRoot: out.repoRoot ?? (out.source === 'remote' ? null : root),
+      // ── WHAT THE REMOTE ARM ANSWERED (v3.63.0) ──────────────────────
+      // `remoteChecked` is the fact the view needs to choose between "source
+      // not on this computer" and "mirrored from GitHub @ <short sha>", and
+      // `remoteError` is a CODE rather than a sentence — the sentence is in
+      // `error`, and a code is what a client can branch on. Both are always
+      // present, including on the local arm where they read false/null,
+      // because an absence is not an answer.
+      source: out.source === 'remote' ? 'remote' : 'local',
+      remoteChecked: out.remoteChecked === true,
+      remoteCommit: out.remoteCommit ?? null,
+      remoteError: out.remoteError ?? null,
+      remote: out.remote && typeof out.remote === 'object' ? {
+        owner: out.remote.owner ?? null,
+        repo: out.remote.repo ?? null,
+        ref: out.remote.ref ?? null,
+        path: out.remote.path ?? null,
+      } : null,
+      // WHICH FILE THE TOKEN CAME FROM, never the token. Null on the local
+      // arm, which needs none — and that difference is worth seeing.
+      tokenSource: out.tokenSource ?? null,
       refreshed: Array.isArray(out.refreshed) ? out.refreshed : [],
       unchanged: Array.isArray(out.unchanged) ? out.unchanged : [],
       added: Array.isArray(out.added) ? out.added : [],
@@ -2142,6 +2293,134 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     });
   } catch (err) {
     console.error('Memory foundations refresh error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GET /api/memory/:domain/:project/capture — the honesty meter (v3.63.0)
+//
+// "Did this project's sessions start with the bootstrap, and did they save
+// before they stopped?" (the v3.63.0 design's §D). READ-ONLY and NEVER
+// BLOCKS (Decision G): `readUsageLines`/`summariseSessions`
+// (`src/brain/mcp-usage.js`) are pure reads of the local, content-free MCP
+// usage log, joined here to ONE project by the `sid`/`project`/`client`
+// fields package S's usage log added for exactly this route. Nothing here
+// writes — not the log, not the store, not a cache re-hash — so there is no
+// failure mode where asking for the meter costs the user anything.
+//
+// An ABSENT log is `logPresent: false` with zeroed totals and an empty
+// `sessions` array, never an error: silence in a rotated-away or
+// never-written log is not evidence that no agent ever worked here, and the
+// store's own rule — a fact and its absence are never the same value — holds
+// here too.
+//
+// `since` (ISO, default 30 days ago) and `limit` (default 20, max 200) are
+// both BEST-EFFORT: an unparseable `since` or an out-of-range `limit` falls
+// back to its default rather than 400ing. A malformed query string is not a
+// reason to refuse a read that costs nothing to answer, and this route's
+// only hard refusals are the ones every sibling route already makes about
+// the DOMAIN/PROJECT in the path (invalid name, unknown domain, unknown
+// project).
+//
+// `totals` is computed over EVERY session in the window, BEFORE `limit`
+// truncates the `sessions` array below it — the store's own rule
+// (`distinctScopeCount`, `savedCopies`) restated for this reading: a count
+// taken after a display cap is a cap reported as a measurement, and
+// `sessionsTruncated` is how a caller is told the list was cut without
+// having to compare lengths itself.
+//
+// The log's ON-DISK PATH is deliberately never in this envelope — the MCP
+// bridge page's own privacy panel (`GET /api/mcp/usage`'s neighbour) is
+// where a user reads that, and repeating it here would be a second place
+// for that sentence to go stale if the path ever moves.
+// ═════════════════════════════════════════════════════════════════════════
+/** `since` query param → epoch ms; anything unparseable falls back to 30 days ago. */
+const CAPTURE_DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000;
+/** `limit` query param bounds — default 20 sessions, never more than 200. */
+const CAPTURE_DEFAULT_LIMIT = 20;
+const CAPTURE_MAX_LIMIT = 200;
+
+function captureSinceMs(raw) {
+  if (typeof raw === 'string' && raw) {
+    const t = Date.parse(raw);
+    if (Number.isFinite(t)) return t;
+  }
+  return Date.now() - CAPTURE_DEFAULT_SINCE_MS;
+}
+
+function captureLimit(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return CAPTURE_DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), CAPTURE_MAX_LIMIT);
+}
+
+router.get('/:domain/:project/capture', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    const store = ws();
+    if (!validProjectName(store, project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    // Existence, decided exactly the way the sibling detail route decides it
+    // (`handleDetail` below): a NAMED project's own directory must be on
+    // disk; the domain's own project always exists (its tree IS the state
+    // root), so this can only 404 for a named one that was never created.
+    // This is a READ, like the foundations-document GET beside it — no
+    // `refuseMirror` here: a Shared Brain mirror's usage history is still
+    // real history, and `refuseMirror` (403) is reserved for this router's
+    // WRITE routes, none of which this is. `readonly` is not even carried on
+    // the envelope, for the same reason the foundations-document read
+    // doesn't: this route describes MCP call history, not domain content.
+    const state = await readState(store, domain, project, {});
+    if (!state.ok) return res.status(statusForStoreRefusal(state)).json(withErrorProse(state));
+    if (state.projectExists === false) {
+      return res.status(404).json({
+        ok: false, reason: 'project_not_found', domain, project,
+        error: `"${project}" is not a project in "${domain}".`,
+      });
+    }
+
+    const sinceMs = captureSinceMs(req.query.since);
+    const limit = captureLimit(req.query.limit);
+
+    const { present, records } = await readUsageLines();
+    const summary = summariseSessions(records, { project, since: sinceMs });
+    // UNCAPPED totals, THEN the display slice — never the other order.
+    const shown = summary.sessions.slice(0, limit).map((s) => ({
+      sid: s.sid, client: s.client, startedAt: s.startedAt, endedAt: s.endedAt,
+      calls: s.calls, read: s.read, saved: s.saved,
+    }));
+
+    // ONE note, naming whichever honest limit applies — never both, because
+    // an absent log has no lines to be legacy about.
+    let note = null;
+    if (!present) {
+      note = 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0';
+    } else if (summary.totals.legacyLines > 0) {
+      const n = summary.totals.legacyLines;
+      note = `${n} line${n === 1 ? '' : 's'} predate session ids and are not counted`;
+    }
+
+    res.json({
+      ok: true,
+      domain,
+      project,
+      since: new Date(sinceMs).toISOString(),
+      logPresent: present === true,
+      lineCeiling: MAX_LINE_BYTES,
+      lineCeilingLabel: MAX_LINE_BYTES_LABEL,
+      totals: summary.totals,
+      sessions: shown,
+      sessionsShown: shown.length,
+      sessionsTruncated: summary.sessions.length > shown.length,
+      note,
+    });
+  } catch (err) {
+    console.error('Memory capture read error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

@@ -6,6 +6,9 @@
   "license": "MIT AND LicenseRef-Curator-Enterprise",
   "type": "module",
   "main": "src/server.js",
+  "bin": {
+    "my-curator": "bin/curator.js"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",

@@ -48,21 +48,30 @@
  *     the user to wait until reset.
  */
 
-import { readFileSync } from 'fs';
 import path from 'path';
 import { SharedBrainStorageAdapter } from './sharedbrain-storage.js';
-import { appPath } from './paths.js';
+// ── v3.63.0: the HTTP plumbing moved to a shared, READ-ONLY client ────────
+//
+// `src/brain/github-read-client.js` now owns the pieces this adapter and the
+// tier-0 mirror both need: the header shape, the token-redaction patterns,
+// the per-segment path encoding, the base64 decode, the rate-limit reading,
+// the API host and the version string. This file DELEGATES to them rather
+// than holding a second copy — every behaviour below is unchanged, which is
+// what `scripts/test-sharedbrain-github-offline.js` is here to prove (it was
+// not edited for this refactor, by rule).
+//
+// What did NOT move, deliberately: `_apiGetContents`, `_apiTree`,
+// `_throwForStatus` and `_checkRateLimit`'s decisions. They are welded to
+// `this.branch` and to the `SHARED_BRAIN_*` error codes that `_writeWithRetry`,
+// synthesis and revoke match on, and moving them would either change those
+// codes or put Shared Brain's vocabulary on a foundations refusal. See that
+// file's header for the full argument.
+import {
+  GITHUB_API, curatorVersion, sanitizeDetail, encodePath,
+  decodeBase64Content, githubReadHeaders, rateLimitReading,
+} from './github-read-client.js';
 
-// ── Curator version (for User-Agent) ──────────────────────────────────────
-
-let CURATOR_VERSION = 'unknown';
-try {
-  const pkg = JSON.parse(readFileSync(appPath('package.json'), 'utf8'));
-  CURATOR_VERSION = pkg.version || 'unknown';
-} catch { /* keep "unknown" */ }
-
-const USER_AGENT = `the-curator-sharedbrain/${CURATOR_VERSION}`;
-const GITHUB_API = 'https://api.github.com';
+const USER_AGENT = `the-curator-sharedbrain/${curatorVersion()}`;
 
 // ── Validation helpers (identical semantics to local adapter) ─────────────
 
@@ -113,7 +122,7 @@ function encodeContent(str) {
 }
 
 function decodeContent(b64) {
-  return Buffer.from(b64, 'base64').toString('utf8');
+  return decodeBase64Content(b64).toString('utf8');
 }
 
 // ── Typed errors (never carry credential bytes) ──────────────────────────
@@ -127,33 +136,10 @@ class GitHubAdapterError extends Error {
   }
 }
 
-/**
- * Defence-in-depth sanitiser for response-body detail text that we
- * concatenate into thrown error messages. GitHub's own error responses
- * should never include a caller's PAT, but adversarial proxies or
- * misbehaving plugins could. Strip the known GitHub credential shapes
- * before any string ever leaves this module.
- *
- * Token prefixes documented at:
- *   https://github.blog/2021-04-05-behind-githubs-new-authentication-token-formats/
- */
-const TOKEN_PATTERNS = [
-  /github_pat_[A-Za-z0-9_]+/g,  // fine-grained PAT
-  /ghp_[A-Za-z0-9]{20,}/g,      // classic PAT
-  /gho_[A-Za-z0-9]{20,}/g,      // OAuth access token
-  /ghu_[A-Za-z0-9]{20,}/g,      // user-to-server token
-  /ghs_[A-Za-z0-9]{20,}/g,      // server-to-server token
-  /ghr_[A-Za-z0-9]{20,}/g,      // refresh token
-];
-
-function sanitizeDetail(s) {
-  if (typeof s !== 'string') return '';
-  let out = s;
-  for (const re of TOKEN_PATTERNS) {
-    out = out.replace(re, '[redacted-token]');
-  }
-  return out;
-}
+// The defence-in-depth sanitiser for response-body detail text (the GitHub
+// credential shapes, stripped before any string leaves this module) lives in
+// github-read-client.js and is imported above. It is still re-exported in
+// `__testing` below, so the token-leak audit reaches it unchanged.
 
 // ── Adapter ──────────────────────────────────────────────────────────────
 
@@ -238,13 +224,7 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
    * Build standard headers. Never log this object — it contains the PAT.
    */
   _headers(extra) {
-    return {
-      'Accept': 'application/vnd.github+json',
-      'Authorization': `Bearer ${this._pat}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': USER_AGENT,
-      ...(extra || {}),
-    };
+    return githubReadHeaders({ token: this._pat, userAgent: USER_AGENT, extra });
   }
 
   /**
@@ -252,12 +232,15 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
    * Throws if the limit has been blown.
    */
   _checkRateLimit(response, repoPath) {
-    const remaining = response.headers.get('x-ratelimit-remaining');
-    if (remaining === null) return;
-    const n = Number(remaining);
-    if (Number.isFinite(n)) {
-      if (n === 0 && (response.status === 403 || response.status === 429)) {
-        const reset = response.headers.get('x-ratelimit-reset') || 'unknown';
+    // v3.63.0: the HEADER READING is shared (github-read-client.js); every
+    // decision, threshold and sentence below is this adapter's own and is
+    // unchanged. `remaining === null` covers both an absent header and a
+    // non-numeric one, which is what the two guards here used to do.
+    const rl = rateLimitReading(response);
+    const n = rl.remaining;
+    if (n !== null) {
+      if (rl.exhausted) {
+        const reset = rl.reset || 'unknown';
         throw new GitHubAdapterError(
           'SHARED_BRAIN_RATE_LIMIT',
           `GitHub rate limit exhausted while accessing ${repoPath}. Resets at unix-ts ${reset}.`,
@@ -275,7 +258,7 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
         // HTTP calls and a warning per call would drown the real progress.
         if (this._onWarn && !this._warnedRateLimit) {
           this._warnedRateLimit = true;
-          const reset = response.headers.get('x-ratelimit-reset');
+          const reset = rl.reset;
           const resetText = reset && Number.isFinite(Number(reset))
             ? ` It resets at ${new Date(Number(reset) * 1000).toLocaleTimeString()}.`
             : '';
@@ -818,15 +801,8 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
   }
 }
 
-// ── Path encoding for the GitHub Contents API ────────────────────────────
-//
-// The Contents API takes the path as part of the URL. We encode each segment
-// so that `#`, `?`, `%`, and spaces don't break the URL, but keep `/` as the
-// segment separator. GitHub's documented rule is "URI-encode each segment".
-
-function encodePath(p) {
-  return p.split('/').map(encodeURIComponent).join('/');
-}
+// Path encoding for the GitHub Contents API ("URI-encode each segment") moved
+// to github-read-client.js in v3.63.0 and is imported at the top of this file.
 
 // Exposed for tests only.
 export const __testing = {

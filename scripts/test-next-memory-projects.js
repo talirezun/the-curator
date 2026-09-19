@@ -523,6 +523,10 @@ const EXPECTED = [
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
+  // v3.63.0. THE HONESTY METER (package U) — read-only, never blocks. A
+  // three-segment suffix route, so it cannot shadow, or be shadowed by,
+  // either two-segment read below; its position here is readability.
+  ['get', '/:domain/:project/capture'],
   ['get', '/:domain/:project'],
   ['get', '/:project'],
 ];
