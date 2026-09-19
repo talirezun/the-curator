@@ -893,7 +893,7 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   return dropped;
 }
 {
-  const { saveFoundation, refreshFoundationsFromRepo, initFoundations, getProjectContext, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME } = WS;
+  const { saveFoundation, refreshFoundationsFromRepo, initFoundations, setFoundationReadFirst, getProjectContext, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME } = WS;
   // (1) Curator-authored documents, with a save that carries `foundationsRead`.
   const P_CUR = 'zz-found-curator';
   mkDomain(P_CUR);
@@ -944,6 +944,24 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   const seeded = await initFoundations(P_SKEL, P_SKEL, { ownership: 'curator' });
   ok(seeded.ok && seeded.seeded.length === 4, 'FIXTURE: four skeletons seeded', JSON.stringify(seeded).slice(0, 160));
 
+  // (7) READ FIRST (v3.62.0). The owner's routing flag splits the tier: the
+  // marked documents arrive with their text, everything else as an index row
+  // fetched by name. Nine new fields ride the envelope for it — the per-row
+  // `readFirst`, five counts/readings, `bodySelection`, and the two
+  // `requested*` arrays — and every one of them is one explicit assignment
+  // away from being dropped, exactly like `skeletonCount` above. Two of them
+  // are worse than a mere drop if lost: a `requestedRefused` that does not
+  // survive turns "you named a slug that does not exist" into silence, and a
+  // `bodySelection` that does not survive leaves an agent unable to tell an
+  // index-only row from a document the store decided not to send.
+  const P_RF = 'zz-found-readfirst';
+  mkDomain(P_RF);
+  const rfDocA = await saveFoundation(P_RF, P_RF, { slug: 'architecture', role: 'architecture', text: `# Architecture\n\n${'- one writer per tier.\n'.repeat(40)}` });
+  const rfDocB = await saveFoundation(P_RF, P_RF, { slug: 'decisions', role: 'decisions', text: `# Decisions\n\n${'- settled.\n'.repeat(40)}` });
+  const rfSet = await setFoundationReadFirst(P_RF, P_RF, 'architecture', true);
+  ok(rfDocA.ok && rfDocB.ok && rfSet.ok && rfSet.readFirst === true,
+    'FIXTURE: two documents, one marked read-first', JSON.stringify(rfSet).slice(0, 160));
+
   const CASES = [
     ['curator documents, delta read against the handoff', P_CUR, {}],
     ['curator documents, first-session read (all)', P_CUR, { include: 'all' }],
@@ -954,6 +972,10 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
     ['ORPHAN file beside a listed document', P_ORPHAN, {}],
     ['SKELETONS, index only', P_SKEL, { include: 'index' }],
     ['SKELETONS, bodies included', P_SKEL, { include: 'all' }],
+    ['READ FIRST, the default selection', P_RF, {}],
+    ['READ FIRST, overridden with all', P_RF, { include: 'all' }],
+    ['READ FIRST + slugs fetched by name', P_RF, { include: 'index', slugs: ['decisions.md'] }],
+    ['READ FIRST + a slug that does not exist', P_RF, { slugs: ['nope.md'] }],
   ];
   let keys = 0;
   for (const [label, dom, opts] of CASES) {
@@ -961,6 +983,7 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
     const argsMcp = { project: dom };
     if (opts.include) argsMcp.include = opts.include;
     if (opts.maxBytes) argsMcp.max_bytes = opts.maxBytes;
+    if (opts.slugs) argsMcp.slugs = opts.slugs;
     const payload = JSON.parse(JSON.stringify(await getProjectContextHandler(argsMcp, storage)));
     ok(payload.ok === true, `${label}: the handler answers ok`, JSON.stringify(payload).slice(0, 200));
     const top = findDroppedFields(storeOut, payload);
@@ -1008,6 +1031,42 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
      && delta.foundations.documents.length === 1 && delta.foundations.documents[0].slug === c2.slug,
     'corpus: the delta read really defaulted to the handoff\'s hashes and returned only the unread document',
     JSON.stringify({ src: delta.foundations.seenSource, mode: delta.foundations.includeMode, docs: delta.foundations.documents.map((d) => d.slug) }));
+  // v3.62.0 — the read-first shapes are REAL in the corpus, and the two that
+  // would be silent if dropped are checked by hand on the MCP payload.
+  const rfCtx = await getProjectContext(P_RF, P_RF, {});
+  ok(rfCtx.foundations.readFirstCount === 1 && rfCtx.foundations.onRequestCount === 1
+     && rfCtx.foundations.bodySelection === 'read-first'
+     && rfCtx.foundations.documents.map((d) => d.slug).join() === 'architecture.md'
+     && rfCtx.foundations.index.filter((d) => d.readFirst).map((d) => d.slug).join() === 'architecture.md',
+    'corpus: the flagged project really sends ONLY the read-first body and flags exactly that row',
+    JSON.stringify({ sel: rfCtx.foundations.bodySelection, d: rfCtx.foundations.documents.map((x) => x.slug) }));
+  const rfPayload = JSON.parse(JSON.stringify(await getProjectContextHandler({ project: P_RF }, storage)));
+  ok(rfPayload.foundations.bodySelection === 'read-first'
+     && rfPayload.foundations.index.filter((d) => d.readFirst).length === 1
+     && rfPayload.foundations.readFirstBudgetExceeded === false,
+    'corpus: the MCP payload keeps bodySelection, the per-row flag and the budget reading',
+    JSON.stringify(rfPayload.foundations.bodySelection));
+  ok(/marked READ FIRST by the owner and 1 on request/.test(rfPayload.report || ''),
+    'corpus: …and the report SAYS so, so an index row with no text is not read as an absence',
+    String(rfPayload.report).slice(-260));
+  const namedPayload = JSON.parse(JSON.stringify(
+    await getProjectContextHandler({ project: P_RF, include: 'index', slugs: ['decisions.md'] }, storage)));
+  ok(namedPayload.foundations.requested.length === 1
+     && namedPayload.foundations.requested[0].slug === 'decisions.md'
+     && typeof namedPayload.foundations.requested[0].text === 'string'
+     && namedPayload.foundations.documents.length === 0,
+    'corpus: a document fetched BY NAME really arrives whole through the MCP handler, with no other body',
+    JSON.stringify(namedPayload.foundations.requested.map((d) => d.slug)));
+  ok(/recorded data|RECORDED DATA/i.test(namedPayload.content_is_data || ''),
+    'corpus: …and it is still labelled recorded data, although `include: index` returned no `documents`',
+    String(namedPayload.content_is_data).slice(0, 160));
+  const missPayload = JSON.parse(JSON.stringify(await getProjectContextHandler({ project: P_RF, slugs: ['nope.md'] }, storage)));
+  ok(missPayload.foundations.requestedRefused.some((r) => r.slug === 'nope.md' && r.reason === 'not-found'),
+    'corpus: a slug that does not exist is REFUSED BY NAME through the handler — never silence',
+    JSON.stringify(missPayload.foundations.requestedRefused));
+  ok(/nope\.md \(not-found\)/.test(missPayload.report || ''),
+    'corpus: …and the report names it too', String(missPayload.report).slice(-200));
+
   // Positive control for the deep detector, every run.
   const probe = { a: 1, nested: { b: 2, list: [1, 2] } };
   ok(findDroppedDeep(probe, { a: 1, nested: { b: 3, list: [1, 2] } }).some((d) => d.key === 'nested.b'),

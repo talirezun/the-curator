@@ -2427,6 +2427,21 @@ export async function saveProjectBriefText(domain, project, text, opts = {}) {
  * no text. Headings only, so the file is a prompt to the owner rather than an
  * invented claim about their project — a template that ASSERTED anything would
  * be read by every future agent as the owner's own standing instruction.
+ *
+ * ── "Read before you…" (v3.62.0), and the one caveat on it ───────────────
+ * Tier 0 can now be routed: a document flagged `readFirst` is handed to every
+ * session, and everything else rides as an index the agent opens BY NAME
+ * (`get_project_context({slugs})`). What the flag cannot express is WHICH
+ * document for WHICH KIND OF WORK — that is a sentence, not a boolean, and it
+ * belongs to the owner. This section is where it goes, and the agent
+ * instructions block (`TEMPLATE_READ_FIRST`) tells an agent to consult it.
+ *
+ * CAVEAT, stated rather than discovered: the STRUCTURED brief writer composes
+ * a document from `BRIEF_SECTIONS` only, so this heading — like the older
+ * "How I want you to work here" beside it — is dropped by a structured write.
+ * Every shipped write path (the app's PUT, `save_project_brief`) uses the
+ * WHOLE-TEXT writer, where it survives. Adding it to `BRIEF_SECTIONS` would
+ * change the brief's write shape for every caller and is not this release's.
  */
 export function briefTemplate(project) {
   return [
@@ -2439,6 +2454,16 @@ export function briefTemplate(project) {
     '## How I want you to work here',
     '',
     '_Method, not permission: delegate, test before pushing, never touch that folder._',
+    '',
+    '## Read before you…',
+    '',
+    '_Which canonical document to open for which kind of work. The foundations flagged',
+    '"read first" arrive with every session; name the rest here and an agent opens them by name._',
+    '',
+    '- _…change how anything is built: `architecture.md`_',
+    '- _…re-open a settled question: `decisions.md`_',
+    '- _…write or review code: `conventions.md`_',
+    '- _…plan what comes next: `roadmap.md`_',
     '',
     '## Firm decisions — do not re-litigate',
     '',
@@ -4327,6 +4352,11 @@ export async function readWorkingState(project, opts = {}) {
 //      unreachable sources, a malformed manifest, an orphan file.
 //   6. Reads never write. The bootstrap does not touch the handoff; the
 //      caller records `seen` on its own next save as `foundationsRead`.
+//   6b. (v3.62.0) `readFirst` is CURATOR METADATA ABOUT a document, never
+//      part of it. It lives only in the manifest, is preserved across a
+//      mirror refresh, and `setFoundationReadFirst` writes the manifest and
+//      NOTHING else — so a repo-owned project can be routed by its owner
+//      while every mirrored file stays byte-for-byte the checkout's.
 //   7. Sanitisation on READ like the brief (`neutraliseProtocol`; defang never
 //      deletes). Per-document cap MAX_FOUNDATION_BYTES (a larger save is
 //      REFUSED with the size named — a verbatim document cannot be trimmed
@@ -4625,6 +4655,17 @@ function validateManifest(obj) {
       // string from a hand edit is not evidence that a document is unfilled,
       // and the fail-safe direction is "treat it as written".
       skeleton: d.skeleton === true,
+      // v3.62.0, schema STILL v1: a second ADDITIVE optional boolean, and the
+      // owner's ROUTING instruction rather than a fact about the document.
+      // `true` means "an agent must not start work here without this one", and
+      // the bootstrap sends its body every session; absent or anything but the
+      // literal `true` means false, i.e. "index only, fetch it by name when
+      // the task calls for it". Same fail-safe direction as `skeleton`, for
+      // the mirror-image reason: a string from a hand edit is not the owner
+      // saying a document is required reading, and reading one document too
+      // few costs a fetch while reading the whole set every session costs the
+      // budget the flag exists to spend deliberately.
+      readFirst: d.readFirst === true,
     });
   }
   return { ok: true, manifest: { version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents } };
@@ -4845,7 +4886,29 @@ function indexEntry(d, freshness, fileMissing) {
   return {
     slug: d.slug, role: d.role, title: d.title, bytes: d.bytes, sha256: d.sha256,
     updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
-    freshness, fileMissing, skeleton: d.skeleton === true,
+    freshness, fileMissing, skeleton: d.skeleton === true, readFirst: d.readFirst === true,
+  };
+}
+
+/** The read-first readings every index surface carries, computed in ONE place
+ *  so the store, the routes and the view cannot each arrive at their own.
+ *
+ *  The budget compared against here is the BOOTSTRAP's reading budget
+ *  (CONTEXT_MAX_BYTES_DEFAULT, 120 KB), NOT the project budget
+ *  (FOUNDATIONS_BUDGET_BYTES, 200 KB): the read-first set is what a session is
+ *  handed every time, so the figure that matters for it is what one read can
+ *  carry. A project can sit comfortably under 200 KB and still flag more than
+ *  a bootstrap will send. `budgetBytes`/`budgetExceeded` keep meaning the
+ *  project budget; these four are their own reading and are named apart. */
+function readFirstReadings(documents) {
+  const flagged = documents.filter((d) => d.readFirst === true);
+  const readFirstBytes = flagged.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0);
+  return {
+    readFirstCount: flagged.length,
+    onRequestCount: documents.length - flagged.length,
+    readFirstBytes,
+    readFirstBudgetBytes: CONTEXT_MAX_BYTES_DEFAULT,
+    readFirstBudgetExceeded: readFirstBytes > CONTEXT_MAX_BYTES_DEFAULT,
   };
 }
 
@@ -4867,6 +4930,7 @@ export async function listFoundations(domain, project) {
     ok: true, domain, project: view.inner, present: false, ownership: null, repo: null,
     budgetBytes: FOUNDATIONS_BUDGET_BYTES, totalBytes: 0, budgetExceeded: false,
     count: 0, staleCount: 0, unreachableCount: 0, missingFileCount: 0, skeletonCount: 0,
+    ...readFirstReadings([]),
     documents: [], readingOrder: [], orphanFiles: [], manifestError: null,
   };
   const mf = await readManifest(view.paths.manifestAbs);
@@ -4908,6 +4972,7 @@ export async function listFoundations(domain, project) {
     unreachableCount: documents.filter((d) => d.freshness === 'unreachable').length,
     missingFileCount: documents.filter((d) => d.fileMissing).length,
     skeletonCount: documents.filter((d) => d.skeleton).length,
+    ...readFirstReadings(documents),
     documents,
     readingOrder: readingOrderOf(manifest),
     orphanFiles: names.filter((n) => !listed.has(n)).slice(0, 50),
@@ -4917,13 +4982,22 @@ export async function listFoundations(domain, project) {
 /** The summary `readWorkingState` carries. Derived from the index, so the two
  *  cannot disagree; never throws. */
 async function summariseFoundations(domain, project) {
-  const empty = { present: false, count: 0, totalBytes: 0, staleCount: 0, unreachableCount: 0, skeletonCount: 0, budgetExceeded: false, orphanFileCount: 0, manifestError: null };
+  const empty = {
+    present: false, count: 0, totalBytes: 0, staleCount: 0, unreachableCount: 0, skeletonCount: 0,
+    // v3.62.0 — the read-first readings ride on the SUMMARY too, so a consumer
+    // that only ever calls readWorkingState (the tray, get_working_state) can
+    // say "N read first · M on request" without a second store call.
+    readFirstCount: 0, onRequestCount: 0,
+    budgetExceeded: false, orphanFileCount: 0, manifestError: null,
+  };
   try {
     const idx = await listFoundations(domain, project);
     if (!idx.ok) return empty;
     return {
       present: idx.present, count: idx.count, totalBytes: idx.totalBytes, staleCount: idx.staleCount,
-      unreachableCount: idx.unreachableCount, skeletonCount: idx.skeletonCount, budgetExceeded: idx.budgetExceeded,
+      unreachableCount: idx.unreachableCount, skeletonCount: idx.skeletonCount,
+      readFirstCount: idx.readFirstCount, onRequestCount: idx.onRequestCount,
+      budgetExceeded: idx.budgetExceeded,
       orphanFileCount: idx.orphanFiles.length, manifestError: idx.manifestError,
     };
   } catch (err) {
@@ -4958,7 +5032,7 @@ async function readStoredDocument(domain, dirRel, d, { raw = false } = {}) {
     raw: raw === true,
     bytes: r.bytes, sha256, manifestSha256: d.sha256, shaMismatch: sha256 !== d.sha256,
     truncated: r.truncated, updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
-    skeleton: d.skeleton === true,
+    skeleton: d.skeleton === true, readFirst: d.readFirst === true,
     sanitisedOnRead: raw ? false : clean !== verbatim,
     sanitisedOnReadNote: !raw && clean !== verbatim ? READ_SANITISE_NOTE : null,
     mtime: r.mtime,
@@ -5015,6 +5089,10 @@ export async function readFoundation(domain, project, slug, opts = {}) {
  * how the refresh writes, and it is accepted here so a caller can list a
  * mirror by hand — but the ownership rule holds either way: the first save
  * SETS the project's ownership and every later save must match it.
+ *
+ * `readFirst` (v3.62.0) is optional and TRI-STATE: omitted leaves an existing
+ * entry's flag where it is (and is `false` on a new document), `true`/`false`
+ * set it. It never affects the bytes written — see the entry below.
  *
  * Refusals: an unusable slug or role; text that is not a string, is empty,
  * or is over MAX_FOUNDATION_BYTES (size named); mixed ownership; the
@@ -5132,6 +5210,17 @@ export async function saveFoundation(domain, project, input = {}) {
       // is the only thing that tells a reader which it is. Only the seeder
       // (`initFoundations`, and a caller that deliberately asks) sets it.
       skeleton: inp.skeleton === true,
+      // v3.62.0 — the OPPOSITE default to `skeleton`, and deliberately so.
+      // `skeleton` is a fact about the text, which a save changes, so a save
+      // clears it. `readFirst` is the owner's ROUTING instruction about the
+      // document, which a save does not change: an agent rewriting the
+      // architecture note has not been told the owner no longer wants it read
+      // first. So `undefined` PRESERVES the prior flag and only an explicit
+      // boolean moves it — which is also what makes `save_foundation`'s
+      // optional `read_first` safe to leave out of every ordinary call.
+      readFirst: inp.readFirst === undefined || inp.readFirst === null
+        ? (prior ? prior.readFirst === true : false)
+        : inp.readFirst === true,
     };
     const documents = prior
       ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
@@ -5159,8 +5248,94 @@ export async function saveFoundation(domain, project, input = {}) {
       bytes: buf.length, sha256: entry.sha256, replaced: !!prior, updatedAt, commit,
       ownership: next.ownership, authoredBy, source: entry.source,
       skeleton: entry.skeleton, wasSkeleton: prior ? prior.skeleton === true : false,
+      readFirst: entry.readFirst, wasReadFirst: prior ? prior.readFirst === true : false,
       totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
       notes: finaliseNotes(notes),
+    };
+  });
+}
+
+/**
+ * Flag or unflag ONE document as read-first. MANIFEST ONLY — v3.62.0.
+ *
+ * ── WHY THIS IS NOT AN ARM OF `saveFoundation` ───────────────────────────
+ * The contract asked for the flag to be settable through the app's PUT, which
+ * is `saveFoundation`. But `saveFoundation` is refused with `ownership-
+ * mismatch` for a curator write into a repo-owned project — correctly, that is
+ * what keeps a mirror byte-for-byte the checkout's — so a repo-owned project
+ * would have had NO way to flag anything from the app at all, which is most of
+ * the audience the flag exists for. The contract was wrong on the mechanism,
+ * not on the feature.
+ *
+ * It separates cleanly because `readFirst` is CURATOR METADATA ABOUT a
+ * document, never part of the document: this function writes the manifest and
+ * nothing else, so a mirrored file's bytes and its sha256 are untouched and
+ * `refreshFoundationsFromRepo` still compares sha(stored) === sha(source)
+ * afterwards. The single-writer property is unbroken for the same reason —
+ * it is one writer per FILE, and the manifest is already app-written on every
+ * refresh, init and save.
+ *
+ * It takes `withFoundationsLock` like every other tier-0 writer (this tier has
+ * no machine segment, so the MCP child and the server can target the same
+ * manifest), refuses a manifest it cannot read for the same reason every
+ * writer here does, and is a NO-OP WRITE when the flag is already what was
+ * asked for — `changed: false`, nothing touched, so a view that re-asserts
+ * state costs nothing.
+ *
+ * @param {string} domain
+ * @param {string|null} project
+ * @param {string} slug
+ * @param {boolean} readFirst  coerced with `=== true`, like the manifest reader
+ * @returns {Promise<{ok:true, domain, project, slug, readFirst, wasReadFirst,
+ *   changed:boolean, readFirstCount:number, onRequestCount:number,
+ *   readFirstBytes:number, readFirstBudgetBytes:number,
+ *   readFirstBudgetExceeded:boolean} | {ok:false, reason, message}>}
+ *   Refusals: `invalid-slug`, `no-manifest`, `not-found`, `manifest-unreadable`,
+ *   `unsafe-path`, `io`, `locked`, plus anything `checkProjectTarget` refuses
+ *   (an unknown domain or project, a read-only Shared Brain mirror).
+ */
+export async function setFoundationReadFirst(domain, project, slug, readFirst) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const s = normaliseFoundationSlug(slug);
+  if (!s) return { ok: false, reason: 'invalid-slug', message: `"${String(slug).slice(0, 80)}" is not a usable document slug.` };
+  const want = readFirst === true;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  return withFoundationsLock(domain, 'set-foundation-read-first', async () => {
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return {
+        ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
+        message: `The foundations manifest could not be read (${mf.error}). Nothing was changed — `
+          + 'rewriting a manifest this store cannot read could drop entries for documents it cannot see.',
+      };
+    }
+    if (mf.status === 'absent') {
+      return {
+        ok: false, reason: 'no-manifest',
+        message: `Project "${target.project}" has no foundations yet, so there is no document to flag.`,
+      };
+    }
+    const manifest = mf.manifest;
+    const prior = manifest.documents.find((d) => d.slug === s) || null;
+    if (!prior) {
+      return { ok: false, reason: 'not-found', message: `No foundation document "${s}" in project "${target.project}".` };
+    }
+    const wasReadFirst = prior.readFirst === true;
+    const documents = wasReadFirst === want
+      ? manifest.documents
+      : manifest.documents.map((d) => (d.slug === s ? { ...d, readFirst: want } : d));
+    if (wasReadFirst !== want) {
+      const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+      if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The manifest path resolves outside the state folder.' };
+      try { await writeManifest(manifestAbs2, { ...manifest, documents }); }
+      catch (err) { return { ok: false, reason: 'io', message: `Could not rewrite the manifest: ${scrubPaths(String(err?.message ?? err))}. Nothing was changed.` }; }
+    }
+    return {
+      ok: true, domain, project: target.project, slug: s,
+      readFirst: want, wasReadFirst, changed: wasReadFirst !== want,
+      ...readFirstReadings(documents),
     };
   });
 }
@@ -5353,6 +5528,13 @@ async function refreshCore(domain, target, paths, realRoot, files) {
         // A mirrored document is never a skeleton: it is whatever the
         // repository says, and the repository is the source of truth.
         skeleton: false,
+        // …but `readFirst` IS preserved across a re-copy (v3.62.0), and the
+        // difference is the whole distinction the flag rests on: the
+        // repository owns the BYTES, the owner owns the ROUTING. A refresh
+        // that dropped the flag would silently un-flag the architecture note
+        // the moment somebody edited it in the checkout — exactly when it
+        // most needs reading. A newly added document starts unflagged.
+        readFirst: w.entry ? w.entry.readFirst === true : false,
       };
       documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
       (w.entry ? refreshed : added).push(slug);
@@ -5815,20 +5997,62 @@ function normaliseSeen(obj) {
 
 /**
  * ONE call for a session start: the brief, the latest handoff (or the scope
- * named), and the foundations — index always, bodies by `include`:
+ * named), and the foundations — the INDEX of every document ALWAYS, bodies
+ * by `include`, the owner's `readFirst` flag and the caller's `slugs`.
  *
- *   'all'      every document, in reading order, within `maxBytes`
- *   'changed'  only documents whose sha differs from `seenHashes`
- *   'index'    no bodies
+ * ── HOW `include`, `readFirst` AND `seenHashes` COMPOSE (v3.62.0) ────────
+ * `anyReadFirst` means at least one manifest entry carries `readFirst: true`.
+ * `bodySelection` in the reply names which row of this table was taken, so a
+ * caller never has to re-derive it:
  *
- * `include` defaults to 'changed' when hashes are known — passed by the
- * caller, or recorded by the latest handoff's `## Foundations read` section
- * — and to 'all' on a first session. The reading budget applies in reading
- * order; a document that does not fit is OMITTED and named, never cut, with
- * ONE exception: when the very first document alone exceeds the budget it is
- * cut with `truncated: true`, because a caller who asked for the documents
- * and got none has been told nothing. `seen` is the map the caller should
- * record on its next save. Reads never write.
+ *   include   | anyReadFirst = false          | anyReadFirst = true
+ *   ----------|-------------------------------|------------------------------
+ *   'index'   | no bodies                     | no bodies
+ *             | bodySelection 'index'         | bodySelection 'index'
+ *   'changed' | bodies whose sha differs from | bodies of ALL read-first
+ *             | seenHashes (v3.59.0's delta)  | documents, seenHashes IGNORED;
+ *             | bodySelection 'changed'       | the rest are index only
+ *             |                               | bodySelection 'read-first'
+ *   'all'     | every body, in reading order  | every body — the flag and the
+ *             | bodySelection 'all'           | delta are both overridden
+ *             |                               | bodySelection 'all'
+ *
+ * `include` DEFAULTS to 'changed' when `anyReadFirst` OR hashes are known
+ * (passed, or recorded by the latest handoff's `## Foundations read`), and to
+ * 'all' otherwise. So when NO document is flagged the resolved `include`, the
+ * document set, the budget arithmetic and every field of this reply are
+ * byte-for-byte what v3.61.1 produced — `test-foundations.js` §8 pins that
+ * against the recorded shape, because "existing projects keep working" is a
+ * claim about bytes, not a hope.
+ *
+ * WHY READ-FIRST BODIES IGNORE `seenHashes`, which is the one real judgement
+ * here: the hash delta is an ECONOMY for a set the agent is expected to read
+ * once and remember. `readFirst` is the owner saying "do not start work here
+ * without this", which is a per-SESSION instruction — a resumed session has
+ * the hashes and none of the text, and under a delta rule would be handed an
+ * index and no orientation at all, having to know to re-fetch. The cost is
+ * re-sending a small set every session; the set is small BY CONSTRUCTION
+ * (the owner chooses it, and `readFirstBudgetExceeded` says when they have
+ * chosen more than one read can carry). `changedSinceSeen` is still reported
+ * per index row, so an agent can still see what moved.
+ *
+ * ── `slugs`: FETCH BY NAME ───────────────────────────────────────────────
+ * `opts.slugs` is the other half of the flag — "read the index, open by name
+ * what the brief or the task says". The named documents come back WHOLE in
+ * `foundations.requested`, in the order given, subject only to the 512 KB
+ * per-document cap and the MCP response guard — NOT to `maxBytes`, because a
+ * caller that named a document asked for that document. The rest of the
+ * bootstrap still rides unchanged: `slugs` ADDS bodies, it is not a mode, so
+ * one call answers "the project context, plus these two documents". A named
+ * slug is EXCLUDED from the budgeted set rather than sent twice. Anything
+ * unusable is named in `requestedRefused` with a reason — never dropped.
+ *
+ * The reading budget applies in reading order; a document that does not fit
+ * is OMITTED and named, never cut, with ONE exception: when the very first
+ * document alone exceeds the budget it is cut with `truncated: true`, because
+ * a caller who asked for the documents and got none has been told nothing.
+ * `seen` is the map the caller should record on its next save, and covers
+ * requested documents too. Reads never write.
  */
 export async function getProjectContext(domain, project, opts = {}) {
   const o = opts && typeof opts === 'object' ? opts : {};
@@ -5845,8 +6069,15 @@ export async function getProjectContext(domain, project, opts = {}) {
   else if (state.current?.present && state.current.foundationsRead) {
     seenHashes = state.current.foundationsRead; seenSource = 'handoff';
   }
+  // The owner's routing flag changes the DEFAULT as well as the selection:
+  // with a flag in play, 'all' on a first session would send every body and
+  // contradict the whole point of flagging. With no flag it is untouched.
+  const anyReadFirst = index.documents.some((d) => d.readFirst === true);
   const includeMode = o.include === 'index' || o.include === 'changed' || o.include === 'all'
-    ? o.include : (seenHashes ? 'changed' : 'all');
+    ? o.include : (seenHashes || anyReadFirst ? 'changed' : 'all');
+  const bodySelection = includeMode === 'index' ? 'index'
+    : includeMode === 'all' ? 'all'
+      : anyReadFirst ? 'read-first' : 'changed';
   const rawMax = Number(o.maxBytes);
   const maxBytes = Number.isFinite(rawMax) && rawMax > 0
     ? Math.max(1024, Math.min(Math.floor(rawMax), CONTEXT_MAX_BYTES_CAP))
@@ -5857,16 +6088,53 @@ export async function getProjectContext(domain, project, opts = {}) {
     const d = bySlug.get(slug);
     return { ...d, changedSinceSeen: !seenHashes || seenHashes[slug] !== d.sha256 };
   });
+  // ── `slugs`, resolved FIRST: every refusal named, order preserved ──────
+  const view = projectView(domain, inner);
+  const requestedRefused = [];
+  const requestedSlugs = [];
+  if (o.slugs !== undefined && o.slugs !== null) {
+    const raw = Array.isArray(o.slugs) ? o.slugs : [o.slugs];
+    const taken = new Set();
+    for (const entry of raw.slice(0, MAX_FOUNDATIONS_PER_PROJECT)) {
+      const label = String(typeof entry === 'string' ? entry : JSON.stringify(entry) ?? entry).slice(0, 80);
+      const s = normaliseFoundationSlug(entry);
+      if (!s) { requestedRefused.push({ slug: label, reason: 'invalid-slug' }); continue; }
+      if (taken.has(s)) { requestedRefused.push({ slug: s, reason: 'duplicate' }); continue; }
+      const row = indexRows.find((d) => d.slug === s);
+      if (!row) { requestedRefused.push({ slug: s, reason: 'not-found' }); continue; }
+      if (row.fileMissing) { requestedRefused.push({ slug: s, reason: 'file-missing' }); continue; }
+      taken.add(s);
+      requestedSlugs.push(s);
+    }
+  }
+  const requestedSet = new Set(requestedSlugs);
+
+  // A named document is sent WHOLE below, so it never rides the budgeted set
+  // as well — the alternative is paying for the same bytes twice.
   const wanted = includeMode === 'index' ? []
-    : indexRows.filter((d) => includeMode === 'all' || d.changedSinceSeen);
+    : indexRows.filter((d) => !requestedSet.has(d.slug)
+      && (includeMode === 'all' || (anyReadFirst ? d.readFirst === true : d.changedSinceSeen)));
 
   const documents = [];
+  const requested = [];
   const omitted = [];
   const unreadable = [];
-  let usedBytes = 0, truncated = false;
+  let usedBytes = 0, requestedBytes = 0, truncated = false;
   const seen = {};
-  const view = projectView(domain, inner);
   for (const row of indexRows) if (!row.fileMissing) seen[row.slug] = row.sha256;
+  for (const slug of requestedSlugs) {
+    const r = await readStoredDocument(domain, view.paths.dirRel, bySlug.get(slug));
+    if (!r.ok) { requestedRefused.push({ slug, reason: r.reason || 'unreadable' }); continue; }
+    seen[slug] = r.sha256;
+    requestedBytes += Buffer.byteLength(r.text, 'utf8');
+    const row = indexRows.find((d) => d.slug === slug);
+    requested.push({
+      slug: r.slug, role: r.role, title: r.title, text: r.text, sha256: r.sha256, bytes: r.bytes,
+      truncated: r.truncated, shaMismatch: r.shaMismatch, source: r.source, commit: r.commit,
+      freshness: row ? row.freshness : null, skeleton: r.skeleton, readFirst: r.readFirst,
+      sanitisedOnRead: r.sanitisedOnRead, sanitisedOnReadNote: r.sanitisedOnReadNote,
+    });
+  }
   for (const row of wanted) {
     if (row.fileMissing) { unreadable.push(row.slug); continue; }
     const r = await readStoredDocument(domain, view.paths.dirRel, bySlug.get(row.slug));
@@ -5887,7 +6155,7 @@ export async function getProjectContext(domain, project, opts = {}) {
     documents.push({
       slug: r.slug, role: r.role, title: r.title, text, sha256: r.sha256, bytes: r.bytes,
       truncated: cut, shaMismatch: r.shaMismatch, source: r.source, commit: r.commit,
-      freshness: row.freshness, skeleton: r.skeleton,
+      freshness: row.freshness, skeleton: r.skeleton, readFirst: r.readFirst,
       sanitisedOnRead: r.sanitisedOnRead, sanitisedOnReadNote: r.sanitisedOnReadNote,
     });
   }
@@ -5916,11 +6184,31 @@ export async function getProjectContext(domain, project, opts = {}) {
       // agent handed a skeleton and told nothing about it reads a list of
       // questions as a description of the project.
       skeletonCount: index.skeletonCount,
+      // v3.62.0 — the owner's routing readings, computed once in the store so
+      // no surface re-counts them. `readFirstBudget*` is measured against the
+      // BOOTSTRAP's 120 KB reading budget, not the 200 KB project budget:
+      // see `readFirstReadings`.
+      readFirstCount: index.readFirstCount,
+      onRequestCount: index.onRequestCount,
+      readFirstBytes: index.readFirstBytes,
+      readFirstBudgetBytes: index.readFirstBudgetBytes,
+      readFirstBudgetExceeded: index.readFirstBudgetExceeded,
       changedCount: indexRows.filter((d) => d.changedSinceSeen).length,
       includeMode,
+      // Which row of the include × readFirst table was taken. Named rather
+      // than left to be re-derived, because a caller re-deriving it needs
+      // `anyReadFirst`, which is exactly the thing the index rows make
+      // tedious to compute and easy to get wrong.
+      bodySelection,
       seenSource,
       index: indexRows,
       documents,
+      // The documents `slugs` named, whole and in the order given. Always an
+      // array (empty when nothing was named), so a consumer never branches on
+      // presence; `requestedRefused` names every slug that did not make it.
+      requested,
+      requestedRefused,
+      requestedBytes,
       unreadable,
       budget: { maxBytes, usedBytes, truncated, omitted },
       readingOrder: index.readingOrder,
