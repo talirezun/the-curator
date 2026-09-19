@@ -218,6 +218,7 @@ and audience 1 loses nothing.
 | **Where projects are created** | Extract the create panel to one shared module with a **single** `POST /api/memory/:domain/projects` call site inside it, hosted by the Domains group footer row **and** the memory view's empty state (with a domain `<select>` on the second host). The rule being honoured is this repo's own: a duplicated create *call site* is what v3.7.0 deleted |
 | **The Ingest drop-zone fork: ingest-or-keep** | A segmented control in the confirm grid's **decision** column. Choosing *keep it word for word* removes the whole spend half — estimate, budget cap, the `✨` and the `.btn-ai` tint — because the arm spends nothing; the primary becomes `.btn-primary` and a project + role picker appears. A PDF is refused with the reason; over 512 KB is refused with both numbers named; N files are N adds with each outcome listed |
 | **The rail-level ingest-finished badge** | The single biggest everyday defect for audience 1: the finished-ingest surfaces are Ingest-view-only, and the batch path has the identical hole. The machinery exists — the Sync pending badge's render/patch path is the shape to copy |
+| **The reading plan — the owner routes tier 0** *(added by the maintainer on 2026-09-19; closes D19, ex-Q11)* | A per-document `readFirst` flag in the manifest (schema still `1`, additive); the bootstrap returns the **index always** and the **bodies of the read-first set**, with everything else fetched by name through a new `slugs` argument on `get_project_context` (**no twenty-fifth tool**); the flag is settable on **either ownership** through `PATCH …/foundations/:slug`, because it writes the manifest and never the document; the brief's template gains a **"Read before you…"** routing section; and a **fourth** byte-pinned instructions paragraph tells an agent that an index row with no text is a document to ask for, not one that is missing. Behaviour with nothing flagged is byte-identical to v3.61.1 |
 | **The three-layer ⓘ** | One closed fold on the Domains OVERVIEW block teaching *accumulates / supersedes / replaced whole*. It closes a named v3.58.0 gap: three of the blocks audience 1 reads most cannot explain themselves |
 
 **What it deliberately does NOT do.**
@@ -233,6 +234,20 @@ and audience 1 loses nothing.
   stored choice goes stale the day the user does the other thing.
 - **No second write path anywhere.** The shared create panel has one call site; the memory host is
   a second *host*, not a second route.
+- **No change to how tier 0 syncs**, and the facts are worth restating here because the reading
+  plan makes people ask about them again. Foundations live under `state/`, so they **do** sync —
+  the copies travel to every machine, unlike `raw/`, which is gitignored. What does not travel is
+  the ability to **refresh**: `repo.root` is advisory and machine-specific, so a machine without
+  the checkout reads *source not on this computer* rather than *stale*, and the refresh control is
+  withheld with that reason. **Remove** on a mirrored document deletes the copy and its manifest
+  entry and nothing else — the file in your folder is untouched — because it is the decision to
+  stop mirroring, not a claim about the document. Two machines editing one curator-owned document
+  between syncs converge to **whichever saved last**, the `project.md` carve-out one tier down.
+  **The piece that would remove the second of those is the GitHub mirror, and it is v3.63.0's**
+  (below): sourcing from the repository rather than from one disk is what makes a refresh possible
+  from any machine, and it is placed there rather than here because it is network-facing engine
+  work — rate limits, PAT scope, eventual consistency — which is v3.63.0's register, not this
+  release's.
 
 **Acceptance, per scenario.** K5: an ingest finishing while the user is on Chat or Memory is visible
 on the rail, and the batch path is covered by the same assertion. K6: choosing the verbatim arm
@@ -332,8 +347,14 @@ a gesture for moving something from volatile to canonical.
 | **Promote-to-foundation, from a handoff decision** | A decision in a handoff is superseded by the next save. When it has stopped being volatile, the owner promotes it: the text opens in the **existing** foundation editor, unsaved, and reaches disk only through a commissioned save (`save_foundation` with `commissioned_by_owner: true`) or the owner's own `PUT`. No new write path |
 | **An MCP read tool for the skeletons** | Any harness fetches the unfilled prompts in one call instead of the owner pasting a sentence. Narrower than it looks: `get_project_context` already returns skeleton documents and marks them, per document and as a count (`getProjectContext` in [src/brain/working-state.js](../src/brain/working-state.js)), so this is a convenience for a client that does not want the whole bootstrap. It is a **25th tool**, and the tool count is a release decision — the catalogue is pinned against the `tools` array's order and the `refuseIfReadonly` census |
 | **The MCP prompts primitive** | [mcp/server.js](../mcp/server.js) declares `capabilities: { tools: {} }` — **tools only, today**. Adding `prompts` lets a client offer "draft this project's foundations" in its own UI. Client support is uneven, so the copyable sentence stays the harness-neutral floor and the prompt is an upgrade: one text, one source, two transports |
-| **Chat: "Save as foundation"** | One more per-message action in an **answer's** meta row, beside the copy control — deliberately not the thread-level Compile control, which acts on the whole conversation. It opens the ordinary editor pre-filled with that answer's raw Markdown; the owner picks project, role and slug and presses Save. Serves a builder with no repo and no agent planning in conversation, and drafting from what the domain's wiki already knows |
-| **Chat: read a project's context** | A project pill in the scope bar — where "what this conversation is about" already lives, rather than the composer row, which is about *how this message is answered*. With a project picked, the prompt is built from its foundations and standing brief under the bootstrap's own budget rules, **in addition to** the wiki retrieval `src/brain/chat.js` already does, with the two budgets stated rather than silently competing |
+| **Chat: "Save as foundation"** *(stays at v3.64.0 — a pull-forward to v3.63.0 was **recommended against** by the v3.63.0 design pass, on the grounds that v3.63.0's register is capture guarantees and network-facing engine work and this is a Chat-surface feature; the maintainer's call)* | One more per-message action in an **answer's** meta row, beside the copy control — deliberately not the thread-level Compile control, which acts on the whole conversation. It opens the ordinary editor pre-filled with that answer's raw Markdown; the owner picks project, role and slug and presses Save. Serves a builder with no repo and no agent planning in conversation, and drafting from what the domain's wiki already knows |
+| **Chat: read a project's context** *(same note — stays at v3.64.0)* | A project pill in the scope bar — where "what this conversation is about" already lives, rather than the composer row, which is about *how this message is answered*. With a project picked, the prompt is built from its foundations and standing brief under the bootstrap's own budget rules, **in addition to** the wiki retrieval `src/brain/chat.js` already does, with the two budgets stated rather than silently competing |
+
+**Proposed for this release — maintainer to confirm.**
+
+| Feature | Notes |
+|---|---|
+| **Ingest auto-split at headings for an over-cap source** | `TEXT_CAP` in [src/brain/ingest.js](../src/brain/ingest.js) is **80,000 characters** and **STAYS** — it is the one number that keeps a single ingest's cost and its output-token ladder bounded, and raising it moves both without telling anybody. What is proposed instead is a pre-ingest **split at headings**: a source over the cap is divided at its own `#`/`##` boundaries into parts, and the parts are ingested as **ONE job** — one queue item, one estimate, one result panel, one `log.md` entry — rather than as several unrelated sources the user has to re-assemble mentally. Open, and the reason this is proposed rather than scheduled: whether each part gets its own summary page or one summary spans the whole source (the second is what a reader wants and the harder one to write), what the slug of a part is, and how the estimate quotes a multiple for a source that will become N calls. Nothing here is designed; the cap's behaviour today (truncate at 80,000 and warn) is unchanged until it is |
 
 **Relation to [roadmap-chat-modes.md](roadmap-chat-modes.md).** Modes 3 (**Dictate**) and 4
 (**Curate**) are designed-but-unbuilt for the **wiki**. The two Chat rows above are their tier-0
@@ -446,18 +467,48 @@ Five rules that should survive this roadmap even if every release in it is re-pl
 | D17 | (was Q9) **"Save as foundation" is offered on a question and on an answer** — the editor opens pre-filled either way; the owner's approval in the editor is the rule, not a preview |
 | D18 | (was Q10) **The honesty meter never fails or blocks a session** — it reports, and may show a reading as a warning; capture stays advisory |
 
+| D19 | (was Q11) **The foundations budget on a mature project: the recommendation was taken, and it SHIPPED in v3.62.0.** See below |
+
+**D19 in full, because it is the one open question this roadmap closed by building it.** The
+measurement that raised it stands — on this repository's own documents, `docs/architecture.md`
+372 KB, `docs/working-state.md` 125 KB, `CONTRIBUTING.md` 70 KB, `docs/design-system-source.md`
+68 KB, `docs/roadmap-context-engine.md` 47 KB, `docs/sync.md` 37 KB (`wc -c`, 2026-09-19) —
+against a 200 KB project budget (exceeded is accepted and disclosed, never refused) and the
+bootstrap's 120 KB default reading budget, which drops document bodies last-first. Of the three
+options, **the first two shipped together** and the third stayed undesigned:
+
+| | Option | Outcome |
+|---|---|---|
+| 1 | Keep both budgets and teach that foundations are the documents an agent must not act without, not the reference manual | **Shipped** — in the user guide's "mark sparingly", in `docs/working-state.md`'s budgets table, and in the block's own over-budget disclosure |
+| 2 | A per-document "include in bootstrap" flag | **Shipped as `readFirst`** — manifest schema still `1`, additive, absent = false |
+| 3 | A curator-owned excerpt beside a large mirrored document, the owner writing it, no LLM | **Not designed.** Still needs a schema field; left open |
+
+**What shipped, precisely, is wider than the flag**, and the extra half is what makes the flag
+safe: the bootstrap now returns the **INDEX of every document, always**, so a document that is not
+marked is *named* rather than absent — and `get_project_context` gained **`slugs`** so an agent
+opens any of them whole, by name, with no twenty-fifth tool. The brief's template gained a
+**"Read before you…"** routing section, because which document suits which kind of work is a
+sentence rather than a boolean and belongs to the owner. The one real judgement recorded with it:
+**read-first bodies ignore `seen_hashes`**, because the hash delta is an economy for a set read
+once and remembered while the flag is a per-session instruction, and a resumed session holds the
+hashes and none of the text.
+
+**And one risk the flag creates, which the release had to close explicitly:** an agent reading an
+index row with no text can conclude the document does not exist — *"this project has no decision
+log"* — which is worse than the gap v3.59.0 closed, because it looks like knowledge rather than
+ignorance. Three surfaces now say otherwise in as many words: the tool description, the continuity
+skill, and a **fourth** byte-pinned paragraph in the instructions block (`TEMPLATE_READ_FIRST`, 58
+words, sha256 `907c7d9a…`), composed after `TEMPLATE_SEED` so v3.59.0's and v3.61.0's paragraphs
+and the 501-byte measured block keep their own pins untouched.
+
 **Still open, numbered.**
 
-11. **The foundations budget on a mature project.** Measured on this repository's own documents:
-    `docs/architecture.md` 372 KB, `docs/working-state.md` 125 KB, `CONTRIBUTING.md` 70 KB,
-    `docs/design-system-source.md` 68 KB, `docs/roadmap-context-engine.md` 47 KB, `docs/sync.md`
-    37 KB (`wc -c`, 2026-09-19) — against the 200 KB project budget (exceeded is accepted and
-    disclosed, never refused) and the bootstrap's 120 KB default reading budget, which drops
-    document bodies last-first. Three honest options: keep both budgets and teach that foundations
-    are the documents an agent must not act without, not the reference manual; a per-document
-    "include in bootstrap" flag; a curator-owned excerpt beside a large mirrored document, with no
-    LLM — the owner writes it. Recommendation here is the first option plus the flag; the excerpt
-    option needs a schema field and is not designed.
+12. **A curator-owned excerpt beside a large mirrored document** — D19's third option, still
+    undesigned. It needs a schema field (an excerpt is a second body for one manifest entry, or a
+    second entry pointing at the first), and it has to answer what happens to the excerpt when the
+    source changes: a stale excerpt of a fresh document is a worse failure than no excerpt, and
+    computing one without an LLM means the owner writes it, which means it can silently rot. No
+    user has asked for it yet; the flag plus the index may make it unnecessary.
 
 ---
 
