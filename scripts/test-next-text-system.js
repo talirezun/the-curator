@@ -35,6 +35,14 @@
  *  §2 ABSENT IS NOT ZERO, executed on every role: a field that was not
  *     supplied is OMITTED, never rendered as 0, a dash, or an invented
  *     default.
+ *  §2b `renderReadout`'s `markHtml` (v3.62.0): ABSENT is byte-identical to
+ *     what the ten shipped call sites rendered before the option existed,
+ *     pinned against golden strings produced by the PRE-CHANGE function;
+ *     present, the mark lands inside `.tx-readout-value` before the figure,
+ *     unescaped, while label / value / provenance stay escaped; a non-string
+ *     mark is dropped. §8 adds the three CSS declarations that make the mark
+ *     and the figure one line, and proves the `tx-`-prefix guard fires on a
+ *     stylesheet planted as a REAL FILE, not only on a string.
  *  §3 Every interpolated value is escaped; `html: true` is opt-in only.
  *  §4 A warning passed to the EXPLAINER renders OUTSIDE and BEFORE the
  *     <details>, in every combination of `open`, and there is no parameter
@@ -82,6 +90,17 @@
  *  - The `html: true` escape hatch on renderDescription/renderExplainer
  *    hands escaping back to the caller. Nothing here can check what a future
  *    caller passes through it.
+ *  - `markHtml` IS THAT SAME HATCH, on a third role. §2b proves it is not
+ *    escaped and that nothing else lost its escaping; it cannot prove a
+ *    future caller passes a `.fresh-dot` rather than something it built from
+ *    a store string. The rule is stated at the function and is a convention.
+ *  - THE THREE FLEX DECLARATIONS ARE ASSERTED, NOT MEASURED, HERE. That a
+ *    `baseline` mark stays on line one of a wrapped value, and that the ten
+ *    existing readouts are unmoved to the hundredth of a pixel, were measured
+ *    in a browser over the shipped stylesheets when the option landed; the
+ *    numbers are recorded beside the rule in text.css. This suite pins the
+ *    DECISION so it cannot be reverted silently — it does not re-measure it,
+ *    for the same reason the first NOT ENFORCED item gives.
  */
 
 import { readFileSync, readdirSync, statSync, writeFileSync, unlinkSync } from 'fs';
@@ -227,6 +246,114 @@ console.log('\n§2  READOUT - an instrument, and ABSENT IS NOT ZERO');
   ok(renderReadoutGroup([{ label: 'x' }]) === '' && renderReadoutGroup([]) === '' &&
      renderReadoutGroup(null) === '',
      'a group with nothing left renders no container at all');
+}
+
+// =======================================================================
+console.log('\n§2b  THE READOUT MARK - markHtml, the ONE unescaped field');
+// v3.62.0. The Context view's three-cell strip carries a freshness mark in
+// each cell, on the app's ONE freshness scale (shared/freshness.css) rather
+// than a fourth private mark family in a view sheet. `renderReadout` escapes
+// its value, so the mark needs a field of its own — and a field that emits
+// caller HTML into a component whose whole contract is "it escapes
+// internally" is exactly the kind of licence that has to be pinned rather
+// than described.
+{
+  const DOT = '<span class="fresh-dot fresh-today" aria-hidden="true"></span>';
+
+  // ── (i) ABSENT markHtml IS BYTE-IDENTICAL TO WHAT SHIPPED ─────────────
+  // GOLDEN LITERALS, and they are golden in the literal sense: each one was
+  // produced by running the PRE-CHANGE renderReadout (extracted from the
+  // commit before this option existed) over the real shapes at the ten
+  // shipped call sites — Domains health, the Ingest estimate, memory's
+  // Last-saved / Foundations / journal / reader, the Settings tool map, a
+  // bare figure, a real zero, and the escaping case. They are not a
+  // re-description of the current template: a template that drifts by one
+  // character goes red here naming the input, which is the property the
+  // ten existing callers are owed and the reason this is not
+  // `expect(out).toContain('tx-readout-value')`.
+  const GOLDEN = [
+    [{ label: 'Open issues', value: 12, provenance: 'scanned 10s ago' },
+     '<div class="tx-readout"><span class="tx-readout-label">Open issues</span><span class="tx-readout-value">12</span><span class="tx-readout-prov">scanned 10s ago</span></div>'],
+    [{ label: 'Entities', value: 614 },
+     '<div class="tx-readout"><span class="tx-readout-label">Entities</span><span class="tx-readout-value">614</span></div>'],
+    [{ label: 'Dismissed', value: 0 },
+     '<div class="tx-readout"><span class="tx-readout-label">Dismissed</span><span class="tx-readout-value">0</span></div>'],
+    [{ label: 'Estimated cost', value: '$0.04 – $0.11', provenance: '12 files · 340 KB · gemini-2.5-flash-lite' },
+     '<div class="tx-readout"><span class="tx-readout-label">Estimated cost</span><span class="tx-readout-value">$0.04 – $0.11</span><span class="tx-readout-prov">12 files · 340 KB · gemini-2.5-flash-lite</span></div>'],
+    [{ label: 'Last saved', value: '38 min ago', provenance: 'agent · curator-main · this machine' },
+     '<div class="tx-readout"><span class="tx-readout-label">Last saved</span><span class="tx-readout-value">38 min ago</span><span class="tx-readout-prov">agent · curator-main · this machine</span></div>'],
+    [{ label: 'Foundations', value: '4 documents · 2 skeletons to fill' },
+     '<div class="tx-readout"><span class="tx-readout-label">Foundations</span><span class="tx-readout-value">4 documents · 2 skeletons to fill</span></div>'],
+    [{ label: 'Saves shown', value: 24, provenance: 'most recent · full count unknown' },
+     '<div class="tx-readout"><span class="tx-readout-label">Saves shown</span><span class="tx-readout-value">24</span><span class="tx-readout-prov">most recent · full count unknown</span></div>'],
+    [{ label: 'Updated', value: '2 days ago', provenance: 'commit 1f2a3b4' },
+     '<div class="tx-readout"><span class="tx-readout-label">Updated</span><span class="tx-readout-value">2 days ago</span><span class="tx-readout-prov">commit 1f2a3b4</span></div>'],
+    [{ label: 'Last session start', value: 'none since this log began' },
+     '<div class="tx-readout"><span class="tx-readout-label">Last session start</span><span class="tx-readout-value">none since this log began</span></div>'],
+    [{ value: 3445 },
+     '<div class="tx-readout"><span class="tx-readout-value">3445</span></div>'],
+    [{ label: '<b>x</b>', value: '"><script>', provenance: "'&<" },
+     '<div class="tx-readout"><span class="tx-readout-label">&lt;b&gt;x&lt;/b&gt;</span><span class="tx-readout-value">&quot;&gt;&lt;script&gt;</span><span class="tx-readout-prov">&#39;&amp;&lt;</span></div>'],
+  ];
+  const drift = GOLDEN.filter(([o, want]) => renderReadout(o) !== want);
+  ok(drift.length === 0,
+     'BYTE-IDENTICAL WITHOUT THE OPTION: all ' + GOLDEN.length + ' shipped call shapes render ' +
+     'exactly the string they rendered before markHtml existed' +
+     (drift.length ? ' - DRIFTED: ' + JSON.stringify(drift[0][0]) + '\n      want: ' +
+       drift[0][1] + '\n      got:  ' + renderReadout(drift[0][0]) : ''));
+  ok(GOLDEN.every(([, want]) => !want.includes('fresh-dot') && !/<span class="tx-readout-value"><</.test(want)),
+     'CONTROL: ...and not one of those golden strings carries a mark, so the pin above is a pin ' +
+     'on the UNMARKED output rather than a tautology');
+
+  // ── (ii) THE MARK GOES INSIDE THE VALUE, BEFORE THE FIGURE ────────────
+  // Inside, because that is what puts the mark and the word it qualifies on
+  // one line (text.css makes the value an inline-flex for exactly this).
+  // BEFORE, because the mark is read first and the figure is the answer.
+  const marked = renderReadout({ label: 'Working state', value: 'saved 38 min ago', markHtml: DOT });
+  ok(marked === '<div class="tx-readout"><span class="tx-readout-label">Working state</span>' +
+                '<span class="tx-readout-value">' + DOT + 'saved 38 min ago</span></div>',
+     'the mark is emitted INSIDE .tx-readout-value and BEFORE the figure (got: ' + marked + ')');
+  ok(marked.indexOf(DOT) > marked.indexOf('tx-readout-value') &&
+     marked.indexOf(DOT) < marked.indexOf('saved 38 min ago'),
+     '...stated as an ordering rather than as one literal, so a whitespace change cannot ' +
+     'hide a mark that escaped its element');
+  const markedProv = renderReadout({ label: 'L', value: 'v', provenance: 'p', markHtml: DOT });
+  ok((markedProv.match(/fresh-dot/g) || []).length === 1 &&
+     markedProv.indexOf(DOT) < markedProv.indexOf('tx-readout-prov'),
+     'the mark appears ONCE and never inside the label or the provenance');
+
+  // ── (iii) markHtml IS NOT ESCAPED; EVERY OTHER FIELD STILL IS ─────────
+  // The one-way property: opening this door for the mark must not open it
+  // for the three fields that carry user- and store-supplied text.
+  const mixed = renderReadout({
+    label: '<b>lab</b>', value: '<i>val</i>', provenance: '<u>prov</u>', markHtml: DOT });
+  ok(mixed.includes(DOT),
+     'markHtml survives VERBATIM - it is trusted, pre-rendered HTML and the caller owns it');
+  ok(mixed.includes('&lt;b&gt;lab&lt;/b&gt;') && !mixed.includes('<b>lab</b>'),
+     '...and the LABEL is still escaped');
+  ok(mixed.includes('&lt;i&gt;val&lt;/i&gt;') && !mixed.includes('<i>val</i>'),
+     '...and the VALUE is still escaped');
+  ok(mixed.includes('&lt;u&gt;prov&lt;/u&gt;') && !mixed.includes('<u>prov</u>'),
+     '...and the PROVENANCE is still escaped');
+  ok(!renderReadout({ value: 'v', markHtml: '<img src=x onerror=alert(1)>' })
+        .includes('&lt;img'),
+     'CONTROL: the escaper is genuinely NOT applied to markHtml (an escaped mark would be a ' +
+     'literal <span> printed on the strip, which is the failure this control names)');
+
+  // ── (iv) markHtml IS TYPE-CHECKED, so the trust needs a real caller ───
+  // Through the same str() every other field uses: a number, an object or an
+  // array is DROPPED rather than coerced into markup. An object stringifies
+  // to "[object Object]" and an array JOINS its members - both would print.
+  const plain = renderReadout({ label: 'L', value: 'v' });
+  const junk = [undefined, null, '', '   ', 0, 12, true, {}, [], [DOT], { toString: () => DOT }];
+  const leaked = junk.filter((m) => renderReadout({ label: 'L', value: 'v', markHtml: m }) !== plain);
+  ok(leaked.length === 0,
+     'a markHtml that is not a non-empty string is DROPPED, and the readout is byte-identical ' +
+     'to one with no mark at all (' + junk.length + ' junk values; leaked: ' +
+     JSON.stringify(leaked) + ')');
+  ok(renderReadout({ label: 'L', markHtml: DOT }) === '',
+     'NO VALUE, NO READOUT still holds WITH a mark: a dot beside nothing is a claim that ' +
+     'there is a reading');
 }
 
 // =======================================================================
@@ -523,6 +650,72 @@ console.log('\n§8  text.css hygiene and REACHABILITY');
      'CONTROL: ...and a comment that merely NAMES one is not, which is the false positive removed');
   ok(!leaksIn('/* a\n .tx-vh-panel\n b */\n.chat-x { color: red; }'),
      'CONTROL: ...including across a multi-line comment');
+
+  // THE SAME GUARD, DRIVEN OVER THE REAL DISK PATH. The three controls above
+  // exercise the DETECTOR on strings; they say nothing about the walk, the
+  // read and the exclusion of text.css itself, which is the half that decides
+  // whether a real file in a real directory is seen. §9 plants a .js file for
+  // the same reason. Every `tx-` rule in this app is now load-bearing for a
+  // second component (the readout's mark), so this half is worth executing.
+  const plantedCss = join(NEXT, 'views', '__tx_planted_probe.css');
+  try {
+    writeFileSync(plantedCss, '.tx-readout-value { display: block; gap: 0; }\n');
+    const found = walk(NEXT, '.css')
+      .filter((p) => !p.endsWith('shared/text.css'))
+      .filter((p) => leaksIn(readFileSync(p, 'utf8')));
+    // `includes`, not `length === 1`: the assertion above already owns "no
+    // OTHER sheet leaks", and making this one depend on that too turns one
+    // planted file into two reds saying the same thing.
+    ok(found.includes(plantedCss),
+       'CONTROL: a `tx-` rule planted as a REAL FILE under /next is found by the walk-and-read ' +
+       'path, not just by the string detector (found: ' +
+       (found.map((p) => p.split('/').pop()).join(', ') || 'NOTHING') + ')');
+  } finally {
+    try { unlinkSync(plantedCss); } catch { /* already gone */ }
+  }
+  const cssStillClean = walk(NEXT, '.css')
+    .filter((p) => !p.endsWith('shared/text.css'))
+    .filter((p) => leaksIn(readFileSync(p, 'utf8')));
+  ok(cssStillClean.length === 0, 'the planted stylesheet was removed and the tree is clean again');
+
+  // ── THE READOUT VALUE CARRIES THE MARK, AND THE RULE SAYS SO ──────────
+  // v3.62.0. renderReadout's markHtml puts a `.fresh-dot` INSIDE
+  // .tx-readout-value; without these three declarations the mark and the
+  // figure are a block box and a stray inline, which is a dot on its own
+  // line. The rule is asserted here rather than trusted because the JS half
+  // is now meaningless without it and the two live in different files.
+  const declsOf = (sel) => {
+    const src = stripCssComments(textCss);
+    const re = new RegExp('(?:^|\\})\\s*\\' + sel + '\\s*\\{([^}]*)\\}');
+    const m = src.match(re);
+    return m ? m[1] : null;
+  };
+  const valDecls = declsOf('.tx-readout-value');
+  const prop = (decls, name) => {
+    const m = decls && decls.match(new RegExp('(?:^|[;{])\\s*' + name + '\\s*:\\s*([^;}]+)'));
+    return m ? m[1].trim() : null;
+  };
+  ok(valDecls !== null, '.tx-readout-value has a rule in text.css at all');
+  ok(prop(valDecls, 'display') === 'inline-flex',
+     'the readout value is `inline-flex`, so a mark and the figure sit on ONE line (reads: ' +
+     prop(valDecls, 'display') + ')');
+  ok(prop(valDecls, 'gap') === 'var(--space-3)',
+     'and the mark-to-figure gap is var(--space-3) - the same 6px .fnd-fresh already uses, ' +
+     'so two marks on one screen are not two spacings (reads: ' + prop(valDecls, 'gap') + ')');
+  ok(prop(valDecls, 'align-items') === 'baseline',
+     'and the cross-axis is `baseline`, NOT `center`: measured, a centred mark on a value that ' +
+     'WRAPPED drifts to the middle of the block (11.4-19.4px on a two-line value) while ' +
+     'baseline stays on line one (4.0-12.0px, one line or two) (reads: ' +
+     prop(valDecls, 'align-items') + ')');
+  ok(prop(valDecls, 'overflow-wrap') === 'anywhere' &&
+     prop(valDecls, 'font-family') === 'var(--font-mono)',
+     'CONTROL: the rule the three declarations were added to is still the readout FIGURE rule - ' +
+     'mono, and still allowed to wrap');
+  ok(prop('.tx-x { display: block; }', 'display') === 'block' &&
+     prop('.tx-x { align-items: center; }', 'align-items') === 'center' &&
+     prop('.tx-x { color: red; }', 'display') === null,
+     'CONTROL: the declaration reader reports a DIFFERENT value as different and an absent one ' +
+     'as null - so the three assertions above can actually fail');
 
   // REACHABILITY. v3.9.1: progress-ring.css shipped styled but UNLINKED for a
   // whole release, and both existing guards were blind - one read stylesheets

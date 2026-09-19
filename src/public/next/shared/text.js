@@ -208,7 +208,34 @@ function tone(v) {
  * nothing to display is not a quiet instrument, it is a lie about there being a
  * reading. Returns ''.
  *
- * @param {{label?:string, value:string|number, provenance?:string}} o
+ * ── `markHtml` IS THE ONE UNESCAPED INPUT IN THIS FUNCTION ──────────────────
+ *
+ * Added for the Context view's three-cell strip, whose cells each carry a
+ * freshness mark. The mark is a `<span class="fresh-dot fresh-<tier>">` from
+ * shared/freshness.css — the app's ONE freshness scale — so it is markup by
+ * construction and there is no string form of it to escape. It is emitted
+ * INSIDE `.tx-readout-value`, before the figure, which is what puts the mark
+ * and the word it qualifies on one line and on one baseline (the CSS side of
+ * this is the `inline-flex` on that rule; the measurement is in text.css).
+ *
+ * THE LICENCE IS THE SAME ONE `infoHtml` AND `renderDescription({html:true})`
+ * ALREADY HAND OUT, and it is stated here rather than discovered later: the
+ * CALLER owns the escaping of whatever it passes. `label`, `value` and
+ * `provenance` stay escaped unconditionally — there is no opt-out for them,
+ * and adding one would be a different change with its own argument.
+ *
+ * TYPE-CHECKED ANYWAY, through the same `str()` every other field uses: a
+ * number, an object or an array is DROPPED rather than coerced into markup, so
+ * the trust extends only to a caller that actually meant to pass a fragment.
+ *
+ * ABSENT `markHtml` PRODUCES BYTE-IDENTICAL OUTPUT to every call shipped
+ * before it — the ten existing call sites pass none — and
+ * scripts/test-next-text-system.js §2b pins that against a recorded corpus of
+ * their real shapes rather than against a re-description of them.
+ *
+ * @param {{label?:string, value:string|number, provenance?:string,
+ *          markHtml?:string}} o  `markHtml` is TRUSTED, PRE-RENDERED HTML and
+ *          is the only field not escaped; every other field is escaped.
  * @returns {string} HTML, or '' when there is no value
  */
 export function renderReadout(o) {
@@ -219,10 +246,12 @@ export function renderReadout(o) {
   if (value === null) return '';
   const label = str(o.label);
   const prov = str(o.provenance);
+  // TRUSTED, and the only field here that is. See the `markHtml` block above.
+  const mark = str(o.markHtml);
   return (
     '<div class="tx-readout">' +
       (label ? '<span class="tx-readout-label">' + escapeHtml(label) + '</span>' : '') +
-      '<span class="tx-readout-value">' + escapeHtml(value) + '</span>' +
+      '<span class="tx-readout-value">' + (mark || '') + escapeHtml(value) + '</span>' +
       (prov ? '<span class="tx-readout-prov">' + escapeHtml(prov) + '</span>' : '') +
     '</div>'
   );
