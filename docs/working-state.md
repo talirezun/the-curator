@@ -1,9 +1,12 @@
 # Working state — carrying build context between sessions
 
-**Status: shipped in v3.17.0; projects added in v3.48.0; the foundations tier added in v3.59.0.**
-The store (`src/brain/working-state.js`) and the MCP tool layer are live. The app's **Memory** rail
-item opens **Agent memory**, which renders the store, backed by `/api/memory` — and it is read and
-*written* by an agent over MCP, and readable by you in a text editor.
+**Status: shipped in v3.17.0; projects added in v3.48.0; the foundations tier added in v3.59.0;
+the reading plan added in v3.62.0.** The store (`src/brain/working-state.js`) and the MCP tool
+layer are live. The app's **Context** rail item opens **Project context**, which renders the store,
+backed by `/api/memory` — and it is read and *written* by an agent over MCP, and readable by you in
+a text editor. (The rail caption and the page title were renamed in v3.62.0; the view id, the
+`/api/memory` path, every `mem-*` class and every filename deliberately did not follow — a rename
+of those would be a mechanical, high-blast-radius diff for no user-visible gain.)
 
 **Canonical documents now travel with a project too.** Architecture, firm decisions, conventions
 and a roadmap have always lived in a code repository, invisible to an agent that had not checked
@@ -421,7 +424,7 @@ notice would mean re-checking the file on a timer — rejected, because it makes
 return two different folder names during one session for no visible reason.
 
 If a split has already happened, you read the orphaned half by **naming it**: pass its
-folder name as the `machine` argument to `get_working_state`. The Agent memory view's
+folder name as the `machine` argument to `get_working_state`. The Project-context view's
 Machine picker lists every folder under the scope with its own age, so that is where to
 find the name.
 
@@ -619,7 +622,8 @@ disclosed in `manifestError`, never a crash and never a silent empty result.
   "budgetBytes": 200000,
   "order": ["architecture", "decisions", "conventions", "roadmap", "api", "guide", "other"],
   "documents": [ { "slug": "…", "role": "…", "title": "…", "source": {…}, "sha256": "…",
-                   "bytes": 0, "updatedAt": "ISO", "commit": "sha or null", "authoredBy": {…} } ]
+                   "bytes": 0, "updatedAt": "ISO", "commit": "sha or null", "authoredBy": {…},
+                   "skeleton": false, "readFirst": false } ]
 }
 ```
 
@@ -634,6 +638,17 @@ disclosed in `manifestError`, never a crash and never a silent empty result.
 | `documents[].sha256` | Over the **stored bytes** — the identity a freshness check compares against, never a remembered flag |
 | `documents[].source` | `{ kind: 'repo', path: 'docs/architecture.md' }` for a mirrored document, or `{ kind: 'curator' }` for one an agent wrote |
 | `documents[].authoredBy` | `{ kind: 'human' \| 'agent', harness, model, commissionedBy }` — the same provenance shape the standing brief already records |
+| `documents[].skeleton` | `true` while the document still carries prompts rather than prose (v3.61.0). Any save clears it |
+| `documents[].readFirst` | **v3.62.0, schema still `1`.** The owner's routing instruction: `true` means a session is handed this document's text every time. Absent, or anything but the literal `true`, reads as `false` — [the reading plan](#the-reading-plan-read-first-documents-and-fetch-by-name) below |
+
+**The schema version did not move, and that is a claim about compatibility rather than laziness.**
+Both `skeleton` and `readFirst` are additive optional booleans read with `=== true`, so a manifest
+written by v3.58.0 and a manifest written by v3.62.0 are both valid version-1 manifests, and an
+older Curator reading a newer manifest ignores a field it does not know rather than refusing the
+project. The fail-safe direction is the same for both and the *reason* is mirrored: a stray string
+from a hand edit is not the owner saying a document is required reading, and reading one document
+too few costs one fetch, while reading the whole set every session costs the budget the flag
+exists to spend deliberately.
 
 ### The two ownership modes, and the one-writer rule
 
@@ -735,22 +750,156 @@ cannot be read from here at all (a different machine, a moved checkout, a reposi
 cloned on this computer). A curator-owned document reports `n/a`: there is no second copy to be
 stale against.
 
-### The bootstrap call, and the reading plan
+### The reading plan: read-first documents, and fetch by name
 
-**`get_project_context`** is the one call a session opens with. It returns the brief, the latest
-handoff (exactly as `get_working_state` would), and the foundations you have not already seen —
-in one response, so a cold session on any harness gets everything it needs to start without a
-second round trip. The reading plan it implements:
+**New in v3.62.0, and it changes what a bootstrap *sends* rather than what it *knows*.** Through
+v3.61.1 the plan was a pure economy: a first session got every document, a returning one got
+whatever had changed. That works while a project has four documents. It stops working the moment it
+has twenty — a session is then handed twenty documents at the start of every piece of work, most of
+them irrelevant to the work in front of it, and the 120 KB reading budget starts dropping documents
+nobody chose to drop.
 
-- **First session** (no `seen_hashes` supplied): `include` defaults to `all` — every foundation,
-  in `manifest.order`, up to the budget.
-- **A returning session** (its previous save's `foundations_read` map supplied, directly or via
-  `seen_hashes`): `include` defaults to `changed` — only documents whose `sha256` differs from
-  what this caller already recorded having read. A document nothing has touched since is not
-  resent.
-- **On demand, by role**: a caller can still ask for everything regardless of what it has seen,
-  or read one document by slug through `readFoundation` outside the bootstrap entirely — the
-  bootstrap's own budget is a *session-start* default, not a ceiling on what the store can answer.
+The v3.62.0 plan replaces the economy with **the owner's routing**:
+
+| | What arrives | Decided by |
+|---|---|---|
+| **The index** | **Always, every document, every call** — slug, role, title, bytes, `firstHeading`, freshness, `skeleton`, `readFirst`, and `changedSinceSeen` | the store; nothing suppresses it |
+| **Read-first bodies** | The **text** of every document the owner marked `readFirst`, in reading order, within the 120 KB budget | `manifest.documents[].readFirst` |
+| **Everything else** | An index row and nothing more, **until asked for by name** | the agent, per task |
+| **Named documents** | `slugs: ["decisions.md"]` returns those documents **whole**, in the order given, in `foundations.requested` | the caller |
+
+**The index is always returned, and that is the load-bearing half of the design.** An agent that
+receives an index row with no text has been told a document exists, what it is about and how big it
+is. What it must not conclude is that the document is *missing* — which is precisely the misreading
+this release had to defend against, because it looks like knowledge rather than like ignorance: an
+agent reporting *"this project has no decision log"* while `decisions.md` sits in the index has told
+the user something false about their own project. Three surfaces say so in as many words: the tool
+description, the continuity skill, and the fourth paragraph of the agent-instructions block
+([below](#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
+
+**How `include`, `readFirst` and `seen_hashes` compose.** `anyReadFirst` means at least one manifest
+entry carries `readFirst: true`. The reply names which row of this table it took, in
+`foundations.bodySelection`, so a caller never has to re-derive it:
+
+| `include` | nothing flagged | something flagged |
+|---|---|---|
+| `index` | no bodies · `bodySelection: 'index'` | no bodies · `'index'` |
+| `changed` *(the default)* | bodies whose sha differs from `seen_hashes` — v3.59.0's delta, unchanged · `'changed'` | bodies of **all** read-first documents, `seen_hashes` **ignored**; the rest index only · `'read-first'` |
+| `all` | every body, in reading order · `'all'` | every body — the flag and the delta are both overridden · `'all'` |
+
+`include` defaults to `changed` when **either** hashes are known (passed, or recorded by the latest
+handoff's `## Foundations read` section) **or** anything is flagged, and to `all` otherwise.
+
+**When no document is flagged, the reply is byte-for-byte what v3.61.1 produced** — the resolved
+`include`, the document set, the budget arithmetic, every field. That is a claim about bytes rather
+than a hope: `scripts/test-foundations.js` §8 pins it against the recorded shape, so an existing
+project keeps working without anybody touching it.
+
+**Why read-first bodies ignore `seen_hashes`, which is the one real judgement here.** The hash delta
+is an economy for a set the agent is expected to read once and remember. `readFirst` is the owner
+saying *do not start work here without this*, which is a per-**session** instruction — and a resumed
+session has the hashes and none of the text. Under a delta rule it would be handed an index and no
+orientation at all, and would have to know to re-fetch. The cost is re-sending a small set every
+session; the set is small **by construction**, because the owner chooses it, and
+`readFirstBudgetExceeded` says when they have chosen more than one read can carry.
+`changedSinceSeen` is still reported per index row, so what moved is still visible.
+
+**Fetch by name is the other half of the flag.** `slugs` **adds** bodies; it is not a mode and it
+does not replace the bootstrap, so one call answers *"the project context, plus these two
+documents"*. Named documents come back whole, subject only to the 512 KB per-document cap and the
+MCP response guard — **not** to `max_bytes`, because a caller that named a document asked for that
+document. A named slug is excluded from the budgeted set rather than sent twice. Anything unusable
+is named in `foundations.requestedRefused` with a reason (`invalid-slug`, `duplicate`, `not-found`,
+`file-missing`, `response-budget`) — never dropped silently. Inside the MCP response guard the
+requested documents are dropped **last**, after every unrequested body has gone: the bootstrap's own
+selection is the store's guess at what would help, and a guess yields to an instruction.
+
+`readFoundation` still reads one document by slug outside the bootstrap entirely, and the
+bootstrap's budget remains a *session-start* default rather than a ceiling on what the store can
+answer.
+
+### Setting the flag: four writers, one manifest
+
+`readFirst` is **curator metadata *about* a document, never part of it.** That sentence is what
+makes the rest of this section possible, so it is worth stating before the mechanics: the flag
+lives only in `manifest.json`. No document's bytes change when it is flagged, its `sha256` is
+untouched, and a mirrored document therefore stays byte-for-byte the checkout's — which is what the
+freshness claim `sha(stored) === sha(source)` rests on.
+
+| Writer | Surface | Ownership | Note |
+|---|---|---|---|
+| `PATCH /api/memory/:domain/:project/foundations/:slug` | the app's *read first* control in step ① | **either** — `repo` or `curator` | Body is `{readFirst: boolean}` and **nothing else**; a second key is a `400 unexpected_fields` |
+| `PUT …/foundations/:slug` | the app's document editor | curator-owned only | `readFirst?` is optional and **tri-state** — omit it and the document's current routing is left alone |
+| `save_foundation` | an agent, commissioned | curator-owned only | `read_first?`, same tri-state rule; the reply's `read_first` / `was_read_first` say where it ended up |
+| `refreshFoundationsFromRepo` | a mirror refresh | repo-owned | **Preserves** the flag across a re-copy |
+
+**Why the PATCH exists at all, rather than one `readFirst?` on the PUT.** The PUT is refused
+`repo_owned` on a mirror — correctly, since an edit there would be overwritten by the next refresh,
+because the folder is the author. A repo-owned project routed only through the PUT would therefore
+have had **no way to flag anything from the app at all**, and mirroring a checkout is the commonest
+way documents arrive. So the flag needs a writer a mirror can reach.
+
+**And a flag on a mirror is not a second writer.** The property the single-writer rule protects was
+never *"one process may write"* — it is **one writer per FILE, with provenance that matches**
+([the section above](#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file)
+sets out the full argument). `setFoundationReadFirst` writes `manifest.json` and nothing else, and
+the manifest is **already** a file this app writes on a mirror: `POST …/foundations/refresh`
+rewrites it on every re-copy, and v3.61.1's `DELETE` rewrites it to stop mirroring a document. This
+is that same file, one boolean — and the routing decision it records is the **owner's**, because who
+reads what first is not something a repository can know about the person using it.
+
+**Preserving the flag across a refresh is the same distinction read from the other end:** the
+repository owns the **bytes**, the owner owns the **routing**. A refresh that dropped the flag would
+silently un-flag the architecture note the moment somebody edited it in the checkout — which is
+exactly when it most needs reading. A newly mirrored document starts unflagged.
+
+**Tri-state, and why it is not tidiness.** On `PUT` and on `save_foundation`, an omitted `readFirst`
+reaches the store as `undefined` and **preserves** whatever the owner chose. Normalising it to
+`false` would silently un-route a document every time its text was edited, and the owner would find
+their reading plan emptying itself one save at a time with nothing to see. It is the opposite
+default to `skeleton` — which a save *clears*, because `skeleton` is a fact about the text and a
+save changes the text, while `readFirst` is an instruction about the document and a save does not
+change that. An agent rewriting the architecture note has not been told the owner no longer wants
+it read first.
+
+The cost is the one this tier already pays: no `<machine>` segment, so two machines flagging the
+same project between syncs converge to whichever saved last.
+
+**A no-op is a success.** Flagging a document that is already flagged writes nothing and answers
+`changed: false`, so a view re-asserting state costs nothing and announces nothing.
+
+### The brief's "Read before you…" section — the part a boolean cannot say
+
+A flag answers *is this document required reading*. It cannot answer **which document for which
+kind of work**, and that is a sentence rather than a boolean — it belongs to the owner, in prose,
+in the one tier the owner writes. So the standing brief's template gained a section for it in
+v3.62.0 (`briefTemplate`, `src/brain/working-state.js`), sitting between the operating directives
+and the firm decisions:
+
+```markdown
+## Read before you…
+
+_Which canonical document to open for which kind of work. The foundations flagged
+"read first" arrive with every session; name the rest here and an agent opens them by name._
+
+- _…change how anything is built: `architecture.md`_
+- _…re-open a settled question: `decisions.md`_
+- _…write or review code: `conventions.md`_
+- _…plan what comes next: `roadmap.md`_
+```
+
+It is a **routing table, not a rule** — the entries are pointers, and an agent that follows one is
+fetching a document, not being given an instruction about how to behave. The agent-instructions
+block's fourth paragraph tells an agent to consult it; the continuity skill says the same, and adds
+the fallback when it is empty: the roles in the index (architecture, decisions, conventions,
+roadmap, api, guide) are the next best signal.
+
+**One caveat, stated here because it is stated in the source rather than discovered later.** The
+**structured** brief writer composes a document from `BRIEF_SECTIONS` only, so this heading — like
+the older *"How I want you to work here"* beside it — is **dropped by a structured write**. Every
+shipped write path uses the whole-text writer (the app's `PUT`, and `save_project_brief`), where it
+survives intact; adding it to `BRIEF_SECTIONS` would change the brief's write shape for every caller
+and was deliberately left out of this release.
 
 ### The handoff's "Foundations read" section, and why reads never write
 
@@ -774,7 +923,26 @@ read would risk the opposite failure — a document marked "seen" that was never
 | Per document | 512 KB | **Refused** — a canonical document cannot be honestly trimmed, so `saveFoundation` refuses rather than truncating one |
 | Project total | 200 KB | **Accepted and disclosed** (`budgetExceeded: true`, in `notes`) — the same rule a handoff follows: a refused save loses the document outright, so an over-budget save is never refused, only flagged |
 | Bootstrap document text, by default | 120 KB | Applied in reading order; the first document is never cut mid-way except when it is the only one included, in which case it is cut with `truncated: true` disclosed |
-| MCP response, overall | 400 KB (~100k tokens) | The existing `enforceSizeLimit` guard, unchanged — a bootstrap that would exceed it degrades by dropping document **bodies**, last in reading order first, never by collapsing to a bare fallback object |
+| The **read-first set** (v3.62.0) | the same 120 KB | **Accepted and disclosed**, never refused. `readFirstBudgetExceeded: true` beside `readFirstBytes`, and the documents that do not fit are omitted and named, last in reading order first |
+| Documents named with `slugs` (v3.62.0) | **not** the 120 KB budget | Whole, subject only to the per-document 512 KB cap and the MCP response guard — a caller that named a document asked for that document |
+| MCP response, overall | 400 KB (~100k tokens) | The existing `enforceSizeLimit` guard, unchanged — a bootstrap that would exceed it degrades by dropping document **bodies**, last in reading order first, then the documents `slugs` named, never by collapsing to a bare fallback object |
+
+**Two budgets, and collapsing them would make a surface say "within budget" about the wrong one.**
+`FOUNDATIONS_BUDGET_BYTES` (200 KB, `src/brain/working-state.js:217`) is the **project** budget —
+what tier 0 may hold on disk. `CONTEXT_MAX_BYTES_DEFAULT` (120 KB, `:231`) is the **bootstrap's
+reading** budget — what one session is actually handed. The read-first readings are measured against
+the second, deliberately (`readFirstReadings`, `:4903`), because the flagged set is what a session
+receives every time: a project can sit comfortably under 200 KB on disk and still flag more than one
+read will carry. Every surface that shows them — the store, `GET /api/memory/:domain/:project`, the
+`PATCH`, the bootstrap and the app's step ① — takes the same five figures from that one function
+rather than counting the array again.
+
+| Reading | Means |
+|---|---|
+| `readFirstCount` / `onRequestCount` | how many documents arrive with their text, and how many wait to be asked for |
+| `readFirstBytes` | the flagged set's total size |
+| `readFirstBudgetBytes` | 120 KB — the **bootstrap's** budget, never the project's 200 KB |
+| `readFirstBudgetExceeded` | the flagged set is larger than one read can carry. A disclosure, never a wall |
 
 ### Sync honesty, for a tier with no machine segment
 
@@ -797,6 +965,21 @@ that regressed to an older commit through exactly this sync race — is **visibl
 Curator-owned documents share `project.md`'s carve-out exactly: no machine segment, one human-level
 writer, edit rarely, sync after.
 
+**What this means in practice, stated as four facts, because every one of them has surprised
+somebody:**
+
+| Fact | Consequence |
+|---|---|
+| **Foundations live under `state/`, so they SYNC.** Unlike `raw/`, which is gitignored and never travels | The *copies* reach every machine — a mirrored architecture document is readable on a laptop that has never cloned the repository it came from. That is the whole point of the tier |
+| **A refresh needs the SOURCE machine.** `repo.root` is advisory and machine-specific | On any other computer the freshness column reads **`source not on this computer`** rather than `stale`, and *Refresh from repo* is withheld with that reason. The copy is still readable; it is only the comparison that cannot be made |
+| **Remove on a mirrored document deletes the COPY and its manifest entry — nothing else** (v3.61.1) | It is the decision to **stop mirroring** that document. The file in your checkout is untouched (`sourceKept: true` in the reply), and re-adding it from the folder brings it back |
+| **Two machines editing one curator-owned document converge to whichever saved LAST** | No machine segment, so `pull -X theirs` has a conflicting hunk to resolve and resolves it silently. Edit rarely, then sync — the same discipline `project.md` needs |
+
+**The piece that would remove the second row is a GitHub mirror, and it is v3.63.0's**, not this
+release's: mirroring from the *repository* rather than from a checkout on one particular disk is
+what would make a refresh possible from any machine. Until then, the honest statement is the one
+above — the copy travels, the refresh does not.
+
 ### What this tier cannot do, yet
 
 - **Nothing selects what belongs in a project automatically.** You, or an agent you have asked,
@@ -813,11 +996,18 @@ writer, edit rarely, sync after.
   commissioning one on creation, shipped in v3.61.0** — see the two sections below. What the app
   still does not do: edit a **repo-owned** document (mirrored only, on purpose), or select what
   belongs in a project, or summarise anything on the way in or out.
+- **The routing is the owner's, and only the owner's (v3.62.0).** `readFirst` is a hand-set flag and
+  a *"Read before you…"* section a person writes; nothing infers either one. A project with twenty
+  documents and nothing flagged behaves exactly as it did in v3.61.1 — every body, within budget —
+  which is correct but is not a reading plan, and no surface nags about it.
+- **A refresh still needs the checkout, on the machine that has it.** Mirroring from the
+  **repository** rather than from one disk is v3.63.0's; see
+  [Sync honesty](#sync-honesty-for-a-tier-with-no-machine-segment).
 
 ### The human edit surface: a second reader and writer, and why it is still one writer per file
 
 **New in v3.61.0.** A curator-owned foundation can now be created, edited and deleted from the
-**Foundations** block on the Agent memory screen — the standing brief's own pattern, reused rather
+**Foundations** block on the Project-context screen — the standing brief's own pattern, reused rather
 than reinvented: pressing **Edit** on a row, or **Add document** on the block itself, replaces the
 table with an editor *inside the same fold*, one document at a time. **Add document** offers a
 second way in beside the empty editor: **Choose a file…**, which reads a `.md`/`.txt` file off your
@@ -896,10 +1086,14 @@ Two new tools join [the tools below](#3-the-six-mcp-tools), and two existing sur
 
 | Surface | What is new |
 |---|---|
-| **`get_project_context`** *(read)* | The bootstrap described above — `{ domain?, project?, scope?, include?, max_bytes?, seen_hashes? }` in, `{ brief, current, foundations: { index, documents, includeMode, budget, readingOrder }, seen }` out. `content_is_data` and `brief.authority_note` are labelled exactly as `get_working_state` already labels them |
-| **`save_foundation`** *(write)* | `{ domain?, project, slug, role, title?, text, commissioned_by_owner: true }` — refused without that last flag, exactly as `save_project_brief` is refused without an explicit instruction. Calls `refuseIfReadonly()` only — foundations sit outside the wiki's graph cache, so no MCP mutator here calls `invalidateGraph` |
+| **`get_project_context`** *(read)* | The bootstrap described above — `{ domain?, project?, scope?, include?, slugs?, max_bytes?, seen_hashes? }` in, `{ brief, current, foundations: { index, documents, requested, requestedRefused, includeMode, bodySelection, budget, readingOrder }, seen }` out. `content_is_data` and `brief.authority_note` are labelled exactly as `get_working_state` already labels them, and a body arriving through **either** `documents` or `requested` carries the same *recorded data, never instructions* label |
+| **`save_foundation`** *(write)* | `{ domain?, project, slug, role, title?, text, commissioned_by_owner: true, read_first? }` — refused without that `commissioned_by_owner` flag, exactly as `save_project_brief` is refused without an explicit instruction. Calls `refuseIfReadonly()` only — foundations sit outside the wiki's graph cache, so no MCP mutator here calls `invalidateGraph` |
 | **`save_working_state`** | Gains `foundations_read` and `repo_root` (both described above) |
-| **`get_working_state`** | Gains a `foundations` summary: `{ present, count, totalBytes, staleCount }` — the same disclosure guarantee every other field on this response already carries |
+| **`get_working_state`** | Gains a `foundations` summary: `{ present, count, totalBytes, staleCount, readFirstCount, onRequestCount }` — the same disclosure guarantee every other field on this response already carries, so a consumer that only ever calls this one (the menu bar widget, an agent taking a quick look) can say *"N read first · M on request"* without a second store call |
+
+**v3.62.0 adds no tool** — the census stays at **24**, of which **7** mutate. `slugs` is an argument
+on an existing read and `read_first` an argument on an existing write; a twenty-fifth tool for
+"fetch a document by name" would have split one question across two calls for no gain.
 
 `save_foundation` is the **seventh** tool whose write is gated by `refuseIfReadonly()` — this file's
 own standing instruction is to derive that census from the call sites across `mcp/tools/**` rather
@@ -1426,26 +1620,76 @@ what that measurement's own *"shape rather than a measured constant"* caveat ant
 
 ## 6. What the app writes, and what it does not
 
-**There is an in-app view.** The **Memory** rail item opens **Agent memory**, which renders the store —
-every project's brief, its handoff, and its journal, browsable without an MCP client at all —
-grouped by domain and then by project, and it opens on the project you last looked at in that
-domain with its latest work-stream first. The **Domains** view carries the other half: a
-**Projects** section on each domain card, where projects are created, renamed, deleted with a
-typed confirmation, given a standing brief, and where **Copy marker line** hands you the
-`.curator-project` line for a repository, with **Copy agent instructions** beside it.
+**There is an in-app view.** The **Context** rail item opens **Project context**, which renders the
+store — every project's canonical documents, its brief, its handoffs and its journal, browsable
+without an MCP client at all — grouped by domain and then by project, and it opens on the project
+you last looked at in that domain with its latest work-stream first. The **Domains** view carries
+the other half: a **Projects** section on each domain card, where projects are created, renamed,
+deleted with a typed confirmation, given a standing brief, and where **Copy marker line** hands you
+the `.curator-project` line for a repository, with **Copy agent instructions** beside it.
 
-![The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS row with a Refresh link, then a second PROJECTS heading over four rows, each carrying the project name, a one-line headline and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago"; "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago" with a hollow dot; "lumina / LUMINA 09-11 CLOSED ~21:20Z: everythi… / 22 scopes · 6 days ago"; and "curator / main e18f740: all five builders merged (W… / 15 scopes · 8 min ago" with a green dot, selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The page is FIVE blocks. The first is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ; its card holds, on one line, a green square pip, the small label WORKING ON, the sentence "main e18f740: all five builders merged (WP-A/B/C/E + follow-ups), orchestrator browser-verified every item; npm test running; WP-F (docs screenshots, Sonnet) building; then row v3.58.0 + release" and, at the right edge, "8 min ago"; under it a second green pip beside "Last saved" over "8 min ago" in large monospace, with "session-2026-09-18-community-feedback · Claude Code" beneath; then one qualifying line, "Written on talis-macbook-pro-acb035 and synced here — local paths and processes may differ from what the handoff describes."; and below a hairline inside the same card, "Standing brief — 7 min ago". The second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. FIVE rows are painted, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-18-community-feedback" with a filled green dot at "8 min ago", its row tinted and carrying an accent bar down its left edge because its handoff is the one open; "session-2026-09-17-transitions-polish", amber, "11 hr ago"; "session-2026-09-17-settings-design-unification", amber, "17 hr ago"; then two filled grey rows, "session-2026-09-13-readme-video-screenshots" at "1 day ago" and "session-2026-09-14-website-seo-perf" at "3 days ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 on every row — and a harness line such as "Claude Code · claude-fable-5-1" or "Claude Code · claude-opus-5[1m]". Under the table, OUTSIDE it, sits a row reading "Show 13 more", and under that the count line "15 work-streams · 18 saved copies · showing 5 of 18". The third block is headed Standing brief over "Read by every agent, written by you." with an ⓘ, then — new in v3.58.0 — a CLOSED disclosure row: a right-pointing chevron, the summary text "The brief", and at the right edge "updated 7 min ago · 1,769 words" beside an icon-only pencil button with no visible "Edit" word and no separate toolbar line above it. The fourth block, Session journal, is reached only by its heading and lede at the very bottom edge of the frame — "One line per save, newest first. History, not the present." with an ⓘ — its own closed disclosure sitting just out of the shot below that point. There is no open handoff document, no multi-paragraph brief printed on the page, and no "Edit" label anywhere in view. A fifth block, Foundations — not pictured here; this screenshot predates v3.59.0 — sits after Standing brief and before Session journal, its summary line reading like "6 documents · 148 KB · fresh · 1 stale."](images/curator-agent-memory.png)
+The view was called **Agent memory** through v3.61.1 and the rail item **Memory**. Only the
+*presentation* was renamed in v3.62.0: the view id `memory`, the `/api/memory` routes, every
+`mem-*` class and every filename are unchanged, so nothing that pointed at it has broken.
 
-**What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0).**
-It was three collapsible panels under a row of dropdowns. It is now a dashboard of
-**four unnumbered blocks**, each a heading, a one-line lede and an ⓘ:
+![TODO(A) — this alt text describes the pre-v3.62.0 FIVE-block page and is rewritten from the re-taken screenshot of the three numbered steps once package A reports its measurements. The Agent memory view with the "curator" project open, dark theme. Down the left, the icon rail with Memory highlighted and every icon captioned — Chat, Ingest, Domains, Shared, Memory, then a sun, Sync and Settings at the foot. Beside it a panel headed "Agent memory" with an ⓘ mark, a PROJECTS row with a Refresh link, then a second PROJECTS heading over four rows, each carrying the project name, a one-line headline and a status line of a freshness dot and a count: "field-notes / Ten chapters live (5afc2a4): chapter ten p… / 1 scope · 1 day ago"; "projects / Global Curator skills installed in Antigravit… / 1 scope · 2 weeks ago" with a hollow dot; "lumina / LUMINA 09-11 CLOSED ~21:20Z: everythi… / 22 scopes · 6 days ago"; and "curator / main e18f740: all five builders merged (W… / 15 scopes · 8 min ago" with a green dot, selected and tinted. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Agent memory", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "projects / curator" under a hairline. The page is FIVE blocks. The first is headed Status over the lede "Where this project stands right now, across every machine." with an ⓘ; its card holds, on one line, a green square pip, the small label WORKING ON, the sentence "main e18f740: all five builders merged (WP-A/B/C/E + follow-ups), orchestrator browser-verified every item; npm test running; WP-F (docs screenshots, Sonnet) building; then row v3.58.0 + release" and, at the right edge, "8 min ago"; under it a second green pip beside "Last saved" over "8 min ago" in large monospace, with "session-2026-09-18-community-feedback · Claude Code" beneath; then one qualifying line, "Written on talis-macbook-pro-acb035 and synced here — local paths and processes may differ from what the handoff describes."; and below a hairline inside the same card, "Standing brief — 7 min ago". The second block is headed Work-streams over "Every work-stream of this project, newest first. Open one to read its handoff." with an ⓘ, and holds a table with the column headings WORK-STREAM, WORKING ON, LAST SAVED, MACHINE and HARNESS. FIVE rows are painted, newest first, each opening with a freshness dot whose ink cools down the column: "session-2026-09-18-community-feedback" with a filled green dot at "8 min ago", its row tinted and carrying an accent bar down its left edge because its handoff is the one open; "session-2026-09-17-transitions-polish", amber, "11 hr ago"; "session-2026-09-17-settings-design-unification", amber, "17 hr ago"; then two filled grey rows, "session-2026-09-13-readme-video-screenshots" at "1 day ago" and "session-2026-09-14-website-seo-perf" at "3 days ago". Each row carries that save’s own truncated headline, its machine — talis-macbook-pro-acb035 on every row — and a harness line such as "Claude Code · claude-fable-5-1" or "Claude Code · claude-opus-5[1m]". Under the table, OUTSIDE it, sits a row reading "Show 13 more", and under that the count line "15 work-streams · 18 saved copies · showing 5 of 18". The third block is headed Standing brief over "Read by every agent, written by you." with an ⓘ, then — new in v3.58.0 — a CLOSED disclosure row: a right-pointing chevron, the summary text "The brief", and at the right edge "updated 7 min ago · 1,769 words" beside an icon-only pencil button with no visible "Edit" word and no separate toolbar line above it. The fourth block, Session journal, is reached only by its heading and lede at the very bottom edge of the frame — "One line per save, newest first. History, not the present." with an ⓘ — its own closed disclosure sitting just out of the shot below that point. There is no open handoff document, no multi-paragraph brief printed on the page, and no "Edit" label anywhere in view. A fifth block, Foundations — not pictured here; this screenshot predates v3.59.0 — sits after Standing brief and before Session journal, its summary line reading like "6 documents · 148 KB · fresh · 1 stale."](images/curator-agent-memory.png)
 
-| Block | The reading it gives |
+**What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0, renumbered in
+v3.62.0).** It was three collapsible panels under a row of dropdowns; then a dashboard of unnumbered
+blocks. It is now **three numbered steps**, read top to bottom, under a three-cell **strip** that
+answers *where does this project stand* in one line:
+
+| | Step | What it holds |
+|---|---|---|
+| ① | **Foundations** | The project's canonical documents — or, before ownership is chosen, the question that chooses it. First because a document an agent must not act without is the thing a new project does not have |
+| ② | **Working state** | Three closed folds, in ownership order: the **standing brief** (yours), the **work-streams** (theirs — a press opens that handoff in the reader), the **session journal** (history) |
+| ③ | **Knowledge** | The wiki this project draws on: pages, entities, concepts, summaries, last ingest — and two doors, *Open in Domains* and *Ask this domain* |
+
+**The strip, not a block.** It sits between the project breadcrumb and step ①, carries one reading
+per layer — canonical documents · working state · knowledge — each on the app-wide freshness scale,
+and an unknown age is a **dashed ring and the words**, never age zero. It replaced a *Status* block
+that was itself the "everything mixed together" problem: a tier-0 reading, a tier-2 reading, four
+tier-2 warnings and a tier-1 line under one heading called *Status*. Its warnings did not disappear
+with it — each one moved to the step it qualifies, where warnings, costs, refusals and outcomes are
+never folded.
+
+**Every fold ships closed, and the state is remembered per fold.** That is v3.58.0's measurement
+applied to the whole page (3,241 px → 1,278 px at 1370 px when the brief and the journal first
+closed), and each summary line carries the figure that decides whether to open it. The one thing
+never folded is a **missing** thing: on a fresh project step ① renders the ownership question
+unfolded and step ② renders one flat card saying nothing has been saved, because the missing thing
+has to be missing where you looked for it.
+
+**The two clocks, and what "last saved" does not claim.** Every age on this page comes from one of
+two clocks, and the strip's ⓘ says which. The **agent's clock** is the time the agent itself
+recorded when it saved, taken from the journal line it wrote. The **file's clock** is when the file
+last changed on this disk — and on a computer that syncs, that is when the file *arrived* here, not
+when it was written, because git rewrites file times on checkout. The agent's clock is used whenever
+there is one, and a reading that had to fall back says **"file time"** in its own provenance line,
+in words, rather than in a tooltip. And *"last saved"* is exactly that: it knows when the last save
+happened, **not** whether anything has changed since — no screen can know that — so it never says
+you are saved, and the inference stays with you.
+
+| Where | The reading it gives |
 |---|---|
-| **Status** | *Working on* — the newest save's headline, with a freshness pip and an age that ticks while you watch; *Last saved*, with the work-stream and harness that wrote it; which of the two clocks the figure came from; every qualifying line (trimmed content, a file that arrived by sync, newer state in another work-stream, **another machine that saved after this one**, two tools sharing one handoff file); and the standing brief's age |
-| **Work-streams** | One row per **(work-stream, machine)** pair, newest first: freshness dot and slug, that save's own headline, its age, the machine (tagged **this machine** only on positive evidence) and the harness · model. The newest **five** are painted, with a *Show N more* row under the table that appends the rest; pressing a row opens its handoff in the reader — which is what replaced the Work-stream and Machine dropdowns. Under the table, *"N work-streams · M saved copies"*, both taken from the store's uncapped counts, plus *"showing 5 of 16"* — counted in ROWS, so its second figure is the saved-copy total — while the window is short of the list |
-| **Standing brief** | Closed by default (v3.58.0): a fold summarising *"The brief · updated N ago · N words"*, with an icon-only **pencil** beside it — no "Edit" word, no toolbar line above it. Opening the fold reads the document; pressing the pencil opens the editor in its place — ⌘S / ⌘↵ save, Esc closes (raising an inline Discard / Keep editing bar when the draft changed), and a live *modified · words · bytes of 32768* line disables Save before the 32 KB ceiling is hit rather than after |
-| **Session journal** | Closed by default (v3.58.0): a fold titled *Recent saves*, summarising *"N saves · latest N ago"*. Opens to the same one-line-per-save list, newest first, that was on the page before |
+| **The strip**, cell ① | *Canonical documents* — the count and the freshness word, on the shared scale; `no documents yet` when there are none |
+| **The strip**, cell ② | *Working state* — `saved 38 min ago`, from the newest save across every work-stream; `nothing written yet` when there is none. This is the *"am I saved?"* answer, asked by somebody with almost no context left, and it is one line rather than a block |
+| **The strip**, cell ③ | *Knowledge* — the page count and the last ingest's day-age |
+| **Step ① Foundations** | A table of the project's canonical documents: role · title · size · **read first** · source @ commit or *Curator-authored* · freshness dot **and word** · age. A row press opens the document in the reader. The summary line counts them — *"4 documents · 12 KB · kept here · N read first · M on request"* — and the *Refresh from repo* control is **withheld with its reason** when the project is curator-owned or the checkout is not on this machine. Before ownership is chosen the table is replaced by the question that chooses it |
+| **Step ② Working state**, fold 1 | **Standing brief** — *"updated N ago · N words"*, with an icon-only **pencil** beside it — no "Edit" word, no toolbar line above it. Opening the fold reads the document; pressing the pencil opens the editor in its place — ⌘S / ⌘↵ save, Esc closes (raising an inline Discard / Keep editing bar when the draft changed), and a live *modified · words · bytes of 32768* line disables Save before the 32 KB ceiling is hit rather than after |
+| **Step ② Working state**, fold 2 | **Work-streams** — one row per **(work-stream, machine)** pair, newest first: freshness dot and slug, that save's own headline, its age, the machine (tagged **this machine** only on positive evidence) and the harness · model. The newest **five** are painted, with a *Show N more* row under the table that appends the rest; pressing a row opens its handoff in the reader. Under the table, *"N work-streams · M saved copies"*, both taken from the store's uncapped counts, plus *"showing 5 of 16"* — counted in ROWS, so its second figure is the saved-copy total — while the window is short of the list |
+| **Step ② Working state**, fold 3 | **Session journal**, a fold titled *Recent saves* summarising *"N saves · latest N ago"*. Opens to the one-line-per-save list, newest first |
+| **Step ② Working state**, notices | Everything that qualifies the state below it, never folded: trimmed content, a file that arrived by sync, newer state in another work-stream, **another machine that saved after this one**, two tools sharing one handoff file, a save that landed since this page loaded (with *Reload*), and state on disk this read did not list |
+| **Step ③ Knowledge** | Five readouts — PAGES · ENTITIES · CONCEPTS · SUMMARIES · LAST INGEST — from **one** `GET /api/domains/:domain/stats`, and two doors: *Open in Domains* and *Ask this domain*. No page list, no health report; the view pays no cold health scan to draw a summary |
+
+**"History, not the present" is a warning, not a label.** The journal is append-only and it
+accumulates, so **any entry may since have been superseded** — a blocker named in an old headline
+can have been fixed three saves ago. The current handoff is what is true now; the journal is how it
+got there. What it carries that the handoff cannot: most of its notes are ordinary normalisation — a
+value filled in and disclosed, and the line says so in words — while a note about content actually
+**lost** is the only one marked; and when two agent tools share one work-stream and overwrite each
+other's handoff, **both trails are still here**, which is how that collision is detected in the
+first place.
 
 **The handoff is not one of them.** Through v3.55.0 it was block ③, carrying the
 open work-stream's whole document between the table and the brief — so a screen
@@ -1455,8 +1699,8 @@ document in the shell's **reader**, the same right-hand overlay a wiki page open
 in, over a page that stays where it was. It is no new route and no second fetch:
 the reader composes what `GET /api/memory/:domain/:project` already returned. It
 carries the file's real path (`state/<project>/<scope>/<machine>/current.md`), the
-scope and machine as chips, the same *Saved* reading the Status block gives —
-computed by the same function, so the two can never disagree about one save — the
+scope and machine as chips, the same *Saved* reading the strip gives — computed
+by the same function, so the two can never disagree about one save — the
 `incomplete` / `summary shortened` badges on that reading, the truncation and
 read-sanitisation notes unfolded, and the rendered markdown. Esc, the scrim and
 the ✕ close it and return focus to the row that opened it.
@@ -1680,7 +1924,7 @@ harness that does.
 #### The block
 
 Paste it into your harness's entry file, with your own domain and project substituted. **Domains →
-Projects → Copy agent instructions** (and the same button on the Agent memory screen) puts exactly
+Projects → Copy agent instructions** (and the same button on the Project-context screen) puts exactly
 this on your clipboard with the names already filled in, which is the intended way to get it —
 the text is frozen because it is the thing that was measured.
 

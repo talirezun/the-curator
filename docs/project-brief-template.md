@@ -37,6 +37,17 @@ carrying its own fallback (see "Write directives that can fail loudly" below).
 - Check my reasoning rather than agree with it. If you think an instruction here
   is wrong, say so with evidence.
 
+## Read before you…
+
+Which canonical document to open for which kind of work. The foundations flagged
+"read first" reach every session on their own; name the rest here and an agent
+opens them by name. Leave it out if the project has no foundations yet.
+
+- …change how anything is built: `architecture.md`
+- …re-open a settled question: `decisions.md`
+- …write or review code: `conventions.md`
+- …plan what comes next: `roadmap.md`
+
 ## Firm decisions — do not re-litigate
 
 Settled calls, with one line of *why*, so a new session argues about something
