@@ -41,7 +41,12 @@ import { saveFoundationDefinition,           saveFoundationHandler }           f
 
 // v3.60.0 — the tool-usage log. Content-free (tool, domain, outcome, duration),
 // local-only, best-effort: it never throws to a caller and is never awaited.
+// v3.63.0 adds the session id, the resolved project slug, and — on ONE session
+// line per process — the client's declared name, read from BOTH protocol eras
+// by `readClientName` and reduced to an allow-listed label. NOTHING below
+// branches on that label; it is written and never read again in this process.
 import { appendUsage } from '../../src/brain/mcp-usage.js';
+import { readClientName } from '../../src/brain/mcp-clients.js';
 
 // THE COUNT, for every place that quotes one at a user: 24 tools as of
 // v3.59.0 (22 in v3.48.0), of which 7 call refuseIfReadonly and so MUTATE
@@ -220,6 +225,14 @@ export function registerTools(server, storage) {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const startedAt = Date.now();
+    // READ HERE, AT THE DISPATCH, AND NOWHERE ELSE. Both protocol eras are
+    // consulted (the per-request `_meta` of spec 2026-07-28 first, then the
+    // SDK's deprecated initialize-era `getClientVersion()`), and the raw value
+    // goes straight into `recordUsage` → `appendUsage`, which allow-lists it.
+    // It is never compared, never branched on, and never stored anywhere a
+    // second reader could find it — Decision I, and the specification's own
+    // instruction that a server SHOULD NOT change behaviour on this value.
+    const client = readClientName(request, server);
     const tool = tools.find(t => t.definition.name === name);
     if (!tool) {
       const response = {
@@ -229,7 +242,7 @@ export function registerTools(server, storage) {
       // `name` here is a string the CLIENT chose and nothing has validated, so
       // it is never written to the log — see mcp-usage.js on why no user
       // string goes in that file. The call still happened, so it is recorded.
-      recordUsage({ tool: 'unknown', args, result: null, threw: true, ms: Date.now() - startedAt });
+      recordUsage({ tool: 'unknown', args, result: null, threw: true, ms: Date.now() - startedAt, client });
       return response;
     }
     let result = null;
@@ -248,7 +261,7 @@ export function registerTools(server, storage) {
     }
     // AFTER the response is fully built, and never awaited. The log must not
     // be able to delay a tool call, change its answer, or fail it.
-    recordUsage({ tool: name, args, result, threw, ms: Date.now() - startedAt });
+    recordUsage({ tool: name, args, result, threw, ms: Date.now() - startedAt, client });
     return response;
   });
 }
@@ -276,12 +289,27 @@ export function registerTools(server, storage) {
  * The domain is taken from the RESULT first (the resolved one, after
  * `resolveDomainArg` has applied the configured default) and only then from
  * the arguments, and is dropped unless it looks like a slug.
+ *
+ * THE PROJECT (v3.63.0) is taken the same way and for the same reason: the
+ * working-state tools return the RESOLVED slug on their envelope
+ * (`result.project`, a string), which is the one the store actually wrote to
+ * — an argument may have been a bare name resolved across domains, or absent
+ * entirely and filled from the configured default. A tool that names no
+ * project leaves the field absent. `mcp-usage.js` bounds and shape-checks it;
+ * nothing here trusts it.
+ *
+ * THE CLIENT is passed through UNVALIDATED on purpose — `appendUsage` is the
+ * one place that allow-lists it, so there is exactly one gate rather than two
+ * that could disagree. It reaches disk only on the session line.
  */
-function recordUsage({ tool, args, result, threw, ms }) {
+function recordUsage({ tool, args, result, threw, ms, client }) {
   try {
     const obj = result && typeof result === 'object' ? result : null;
     const refused = !threw && obj ? obj.ok === false : false;
     const domain = (obj && (obj.domain || obj.project?.domain)) || (args && args.domain) || null;
+    const project = (obj && typeof obj.project === 'string' ? obj.project : null)
+      || (args && typeof args.project === 'string' ? args.project : null)
+      || null;
     // No await, and no .catch() needed: appendUsage's promise always resolves.
     appendUsage({
       tool,
@@ -289,6 +317,8 @@ function recordUsage({ tool, args, result, threw, ms }) {
       ok: !threw && !refused,
       refused,
       ms,
+      project,
+      client,
     });
   } catch { /* observability may never break a tool call */ }
 }

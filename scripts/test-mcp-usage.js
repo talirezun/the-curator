@@ -31,6 +31,23 @@
  * the child: that adding a file append to the dispatch path did not put a byte
  * on stdout, where the JSON-RPC framing lives (the v2.5.3 bug).
  *
+ * §9-§12 are v3.63.0's, and three of the four are about a reading being FALSE
+ * rather than absent, which is the class this log was built to avoid:
+ *
+ *   §9  `sid`. The meter's one grouping key. If it moves inside a process
+ *       every call is a session; if two processes share one, two sessions
+ *       merge into a session that read and saved when each did half. Driven
+ *       against the real dispatch AND by starting node twice.
+ *   §10 `client`. MCP revision 2026-07-28 REMOVED the `initialize` handshake,
+ *       so the name is read from two eras — and the app's own self-test only
+ *       ever exercises the old one. Each arm is driven ALONE, with a control
+ *       proving the other is genuinely unreachable in that case.
+ *   §11 That NOTHING branches on it (Decision I, and the specification's own
+ *       instruction). A source sweep of `mcp/**` with a planted violation.
+ *   §12 `summariseSessions`, over a hand-written log carrying every case: a
+ *       refused save, a self-test, legacy lines with no `sid`, a second
+ *       project, and a session whose session line is gone.
+ *
  * SAFETY — never touches real user data. Every path resolves through
  * `__setUserDataDirOverride` / `__setDomainsDirOverride` at a mkdtemp, and the
  * spawned child gets `CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`
@@ -101,6 +118,19 @@ const readLines = (file = LOG) => {
   if (!existsSync(file)) return [];
   return readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
 };
+/**
+ * v3.63.0 — the log now holds TWO kinds of line. A process writes ONE
+ * `{"ev":"session"}` line, in the same append as its first tool line, and a
+ * tool line per call after that. Every assertion below that is about a CALL
+ * reads tool lines; §9 is where the session line itself is asserted.
+ *
+ * NOTE `clearLog()` deliberately does NOT re-arm the session line: the module
+ * is one process for this whole file, so only the very first call in §1 writes
+ * one, and every later section sees exactly the tool lines it caused. §9 and
+ * §10 re-arm it EXPLICITLY, which is the only way it is ever written twice.
+ */
+const toolLines = (file = LOG) => readLines(file).filter((l) => JSON.parse(l).ev !== 'session');
+const sessionLines = (file = LOG) => readLines(file).filter((l) => JSON.parse(l).ev === 'session');
 /** The append is fire-and-forget; give the microtask + fs write a moment. */
 const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
 
@@ -116,10 +146,14 @@ const okRes = await call('list_domains', {});
 ok(!okRes.isError && /zz-usage/.test(okRes.content[0].text), 'list_domains answered normally');
 await settle();
 let lines = readLines();
-eq(lines.length, 1, 'one call wrote exactly one line');
-let rec = JSON.parse(lines[0]);
+eq(lines.length, 2, "a process's FIRST call writes two lines: the session line and the tool line");
+eq(JSON.parse(lines[0]).ev, 'session', '…and the session line is FIRST — they go in one append, so the order is guaranteed');
+eq(toolLines().length, 1, 'exactly one of them is a CALL');
+let rec = JSON.parse(toolLines()[0]);
 eq(Object.keys(rec).join(','), usage.LINE_KEYS_ALWAYS.join(','),
-  'the line carries EXACTLY ts,tool,domain,ok,refused,ms — in that order');
+  'the line carries EXACTLY ts,tool,domain,ok,refused,ms,sid — in that order');
+ok(usage.SID_RE.test(rec.sid), `sid is 12 lowercase hex (${rec.sid})`);
+ok(!('project' in rec), 'list_domains names no project, so the key is ABSENT — not null');
 // `via` (v3.61.0) is the ONE optional key and is ABSENT unless the app's own
 // self-test run asked for it. Absent, never `via: null`: a line written by
 // this version and a line written by v3.60.0 are byte-comparable, which is
@@ -138,7 +172,7 @@ const refusedRes = await call('get_raw_source', { domain: DOM, slug: BIG, note: 
 const refusedBody = JSON.parse(refusedRes.content[0].text);
 eq(refusedBody.ok, false, 'a 10 KB slug is refused with the `{ok:false, error}` envelope');
 await settle();
-lines = readLines();
+lines = toolLines();
 eq(lines.length, 1, 'the refused call is still recorded');
 rec = JSON.parse(lines[0]);
 eq(rec.refused, true, 'a `{ok:false}` result is logged as refused:true');
@@ -162,7 +196,7 @@ ok(typeof stringRefusal.content[0].text === 'string'
    && stringRefusal.content[0].text.startsWith('Invalid slug'),
   'get_node refuses a bad slug with a plain STRING, not the {ok:false} envelope');
 await settle();
-rec = JSON.parse(readLines()[0]);
+rec = JSON.parse(toolLines()[0]);
 eq(rec.refused, false, 'KNOWN LIMIT: a string-shaped refusal is logged refused:false…');
 eq(rec.ok, true, '…and ok:true — the log cannot see it without reading the message');
 
@@ -170,18 +204,18 @@ eq(rec.ok, true, '…and ok:true — the log cannot see it without reading the m
 clearLog();
 await call('get_node', { domain: BIG, slug: 'alpha' });
 await settle();
-rec = JSON.parse(readLines()[0]);
+rec = JSON.parse(toolLines()[0]);
 eq(rec.domain, null, 'a 10 KB `domain` argument is recorded as null, never truncated into the line');
-ok(Buffer.byteLength(readLines()[0], 'utf8') < usage.MAX_LINE_BYTES, 'that line is under the ceiling too');
+ok(Buffer.byteLength(toolLines()[0], 'utf8') < usage.MAX_LINE_BYTES, 'that line is under the ceiling too');
 
 // (d) An unknown tool name is a CLIENT string — logged as "unknown".
 clearLog();
 const unknownRes = await call(`zz_${BIG}`, {});
 ok(unknownRes.isError, 'an unknown tool still returns its error response');
 await settle();
-rec = JSON.parse(readLines()[0]);
+rec = JSON.parse(toolLines()[0]);
 eq(rec.tool, 'unknown', 'an unknown tool name is logged as "unknown", never as the client string');
-ok(!readLines()[0].includes('zz_x'), 'the client-supplied name is nowhere in the line');
+ok(!toolLines()[0].includes('zz_x'), 'the client-supplied name is nowhere in the line');
 // The 10 KB name above is ALSO caught by buildUsageLine's shape check, so on
 // its own it cannot tell the dispatch's `'unknown'` apart from that second
 // guard. A SHORT, well-shaped name that is simply not a registered tool can:
@@ -190,7 +224,7 @@ ok(!readLines()[0].includes('zz_x'), 'the client-supplied name is nowhere in the
 clearLog();
 await call('zz_not_a_tool', {});
 await settle();
-eq(JSON.parse(readLines()[0]).tool, 'unknown',
+eq(JSON.parse(toolLines()[0]).tool, 'unknown',
   'a SHORT, well-shaped but unregistered name is logged as "unknown" too (the dispatch decides, not the shape check)');
 
 // (e) A handler that THROWS is ok:false, refused:false — the third state.
@@ -202,10 +236,10 @@ const throwingStorage = {
 const throwRes = await dispatchWith(throwingStorage)('list_domains', {});
 ok(throwRes.isError, 'a throwing handler returns an isError response');
 await settle();
-rec = JSON.parse(readLines()[0]);
+rec = JSON.parse(toolLines()[0]);
 eq(rec.ok, false, 'a throw records ok:false');
 eq(rec.refused, false, '…and refused:false — a throw is not a refusal');
-ok(!readLines()[0].includes('secret-detail'), 'the error message is NOT in the log');
+ok(!toolLines()[0].includes('secret-detail'), 'the error message is NOT in the log');
 
 // (f) buildUsageLine directly — the size proof at the caps, not just in practice.
 // The WORST line the caps allow, and it must include `via` — which is why
@@ -213,11 +247,47 @@ ok(!readLines()[0].includes('secret-detail'), 'the error message is NOT in the l
 // with `via` came to 201 bytes and the ⓘ's "under 200 bytes however large the
 // call was" would have become false.
 const maxLine = usage.buildUsageLine(
-  { tool: 'a'.repeat(32), domain: 'b'.repeat(48), ok: false, refused: true, ms: 86_400_000, via: 'self-test' },
+  { tool: 'a'.repeat(32), domain: 'b'.repeat(48), project: 'c'.repeat(64),
+    sid: '0123456789ab', ok: false, refused: true, ms: 86_400_000, via: 'self-test' },
   '2026-09-18T12:34:56.789Z');
+eq(Buffer.byteLength(maxLine, 'utf8'), 291,
+  `the WORST line every cap allows is exactly 291 bytes (got ${Buffer.byteLength(maxLine, 'utf8')}) — arithmetic, not a measurement`);
 ok(Buffer.byteLength(maxLine, 'utf8') < usage.MAX_LINE_BYTES,
-  `the WORST line the caps allow — with \`via\` — is ${Buffer.byteLength(maxLine, 'utf8')} bytes (< ${usage.MAX_LINE_BYTES})`);
+  `…and that is under the ${usage.MAX_LINE_BYTES}-byte ceiling`);
+// THE CEILING IS A STATED BOUND, NOT HEADROOM. The app tells the user in as
+// many words how large a line can get, so the number has to be the one the
+// arithmetic above proves — a cap of 4096 would leave every assertion here
+// true while making the product's sentence needlessly loose, which is how a
+// figure quoted to a user stops meaning anything. (Found green: this pair is
+// what reds when the constant is widened rather than re-derived.)
+eq(usage.MAX_LINE_BYTES, 300, 'MAX_LINE_BYTES is 300 — the number the privacy ⓘ and the docs quote');
+ok(usage.MAX_LINE_BYTES - Buffer.byteLength(maxLine, 'utf8') <= 16,
+  `the ceiling sits within 16 bytes of the proven worst case (${usage.MAX_LINE_BYTES} − ${Buffer.byteLength(maxLine, 'utf8')})`);
+eq(usage.MAX_LINE_BYTES_LABEL, '300 bytes',
+  'and the label a view would print is DERIVED from it, never typed a second time');
 eq(JSON.parse(maxLine).via, 'self-test', '…and that worst line really does carry via');
+eq(JSON.parse(maxLine).project, 'c'.repeat(64), '…and a 64-character project slug, the store\'s own ceiling');
+eq(JSON.parse(maxLine).sid, '0123456789ab', '…and the session id');
+eq(Object.keys(JSON.parse(maxLine)).join(','), usage.LINE_KEYS.join(','),
+  '…with every key present, in LINE_KEYS order');
+// The WORST SESSION line, bounded by the same ceiling. A 32-character client
+// name is longer than any id the allow-list can write, so this is the widest
+// the shape permits even though nothing can actually reach it.
+const maxSession = JSON.stringify({
+  ts: '2026-09-18T12:34:56.789Z', ev: 'session', sid: '0123456789ab',
+  client: 'y'.repeat(32), via: 'self-test',
+});
+eq(Buffer.byteLength(maxSession, 'utf8'), 131,
+  `the widest session line the shape allows is 131 bytes (got ${Buffer.byteLength(maxSession, 'utf8')})`);
+ok(Buffer.byteLength(maxSession, 'utf8') < usage.MAX_LINE_BYTES, '…under the same one ceiling');
+// A 65-character project is over the store's own bound and is DROPPED, never
+// truncated — the same trade DOMAIN_SLUG_RE makes, and what keeps 291 a proof.
+ok(!('project' in JSON.parse(usage.buildUsageLine({ tool: 'x', ms: 1, project: 'p'.repeat(65) }, 'T'))),
+  'a 65-character project slug is dropped, not truncated into the line');
+eq(JSON.parse(usage.buildUsageLine({ tool: 'x', ms: 1, project: 'p'.repeat(64) }, 'T')).project, 'p'.repeat(64),
+  'CONTROL: 64 characters is accepted — the bound is a bound, not an off-by-one');
+ok(!('project' in JSON.parse(usage.buildUsageLine({ tool: 'x', ms: 1, project: '../escape' }, 'T'))),
+  'a project slug with a path segment in it is not a project slug');
 eq(JSON.parse(usage.buildUsageLine({ tool: 'a'.repeat(33), ms: 1 }, 'T')).tool, 'unknown',
   'a 33-character tool name is over the bound and is logged as "unknown" (the bound is what makes the size a proof)');
 eq(JSON.parse(usage.buildUsageLine({ tool: 'a'.repeat(32), ms: 1 }, 'T')).tool, 'a'.repeat(32),
@@ -508,13 +578,28 @@ const wireRefused = await rpc('tools/call', { name: 'get_raw_source', arguments:
 ok(/"ok": false/.test(wireRefused?.result?.content?.[0]?.text || ''), 'the oversized slug is refused over the wire');
 await settle(500);
 
-const childLines = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter(l => l.trim()) : [];
-eq(childLines.length, 2, `the child wrote one line per tool call (got ${childLines.length})`);
+const childAll = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter(l => l.trim()) : [];
+eq(childAll.length, 3, `the child wrote its session line plus one per tool call (got ${childAll.length})`);
+const childSession = childAll.map((l) => JSON.parse(l)).filter((r) => r.ev === 'session');
+eq(childSession.length, 1, 'exactly ONE session line from the child — one bridge process is one session');
+const childLines = childAll.filter((l) => JSON.parse(l).ev !== 'session');
 const childRecs = childLines.map(l => JSON.parse(l));
 eq(childRecs[0].tool, 'list_domains', 'the first line is the first call');
 eq(childRecs[1].refused, true, 'the refusal is recorded as such from the child too');
-ok(childLines.every(l => Buffer.byteLength(l, 'utf8') < usage.MAX_LINE_BYTES), 'both child lines are under the ceiling');
-ok(!childLines.some(l => l.includes('xxxx')), 'no argument text reached the child’s log');
+// The sid is a real PROCESS fact: minted in the child, identical on all three
+// of its lines, and not this process's — the property the grouping rests on.
+eq(childSession[0].sid, childRecs[0].sid, 'the session line and the tool lines share one sid');
+eq(childRecs[0].sid, childRecs[1].sid, '…and both tool lines carry it');
+ok(usage.SID_RE.test(childRecs[0].sid), 'it is 12 lowercase hex');
+ok(childRecs[0].sid !== usage.getSessionId(),
+  "and it is NOT this test process's sid — the id is minted per PROCESS");
+// The self-test client above sent clientInfo.name "curator-usage", which is in
+// no allow-list row, so it is recorded as `other` — never the caller's string.
+eq(childSession[0].client, 'other', 'an unrecognised clientInfo.name is recorded as "other"');
+ok(!childAll.some((l) => l.includes('curator-usage')),
+  'the client-supplied name itself is NOWHERE in the file');
+ok(childAll.every(l => Buffer.byteLength(l, 'utf8') < usage.MAX_LINE_BYTES), 'every child line is under the ceiling');
+ok(!childAll.some(l => l.includes('xxxx')), 'no argument text reached the child’s log');
 ok(!existsSync(path.join(DOMAINS, '.mcp-usage.jsonl'))
    && !existsSync(path.join(DOMAINS, DOM, '.mcp-usage.jsonl')),
   'nothing was written into the domains tree');
@@ -550,21 +635,24 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
 
 // ── 8a  THE LINE: absent by default, the literal or nothing ───────────────
 {
-  eq(usage.LINE_KEYS.join(','), 'ts,tool,domain,ok,refused,ms,via',
-    'LINE_KEYS names `via` last — the optional key is emitted after the six');
-  eq(usage.LINE_KEYS_ALWAYS.join(','), 'ts,tool,domain,ok,refused,ms',
-    'LINE_KEYS_ALWAYS is the six every line carries');
+  eq(usage.LINE_KEYS.join(','), 'ts,tool,domain,ok,refused,ms,sid,project,via',
+    'LINE_KEYS names the two optional keys last, `via` last of all');
+  eq(usage.LINE_KEYS_ALWAYS.join(','), 'ts,tool,domain,ok,refused,ms,sid',
+    'LINE_KEYS_ALWAYS is the seven every tool line carries');
+  eq(usage.LINE_KEYS_OPTIONAL.join(','), 'project,via', 'and the two optional ones are named apart');
+  eq(usage.SESSION_LINE_KEYS.join(','), 'ts,ev,sid,client,via', 'a session line has its own five');
   eq(usage.VIA_SELF_TEST, 'self-test', 'the literal is "self-test"');
   eq(usage.VIA_ENV_VAR, 'CURATOR_MCP_VIA', 'the environment variable is CURATOR_MCP_VIA');
 
   const plain = JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3 }, 'T'));
   ok(!('via' in plain), 'no `via` argument → the key is ABSENT, not null');
   eq(Object.keys(plain).join(','), usage.LINE_KEYS_ALWAYS.join(','),
-    '…so the line is byte-comparable with every line v3.60.0 wrote');
+    '…so an ordinary line is the seven always-keys and nothing else');
   eq(JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3, via: 'self-test' }, 'T')).via,
     'self-test', 'the literal is recorded');
   eq(Object.keys(JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 3, via: 'self-test' }, 'T'))).join(','),
-    usage.LINE_KEYS.join(','), '…last, after the six');
+    usage.LINE_KEYS.filter((k) => k !== 'project').join(','),
+    '…last — after the seven, and after `project` when there is one');
   // NOT A PATTERN. Every one of these is a string somebody could put in an
   // environment variable, and none of them may reach the file.
   for (const junk of ['agent', 'Self-Test', 'SELF-TEST', 'self-test ', ' self-test',
@@ -594,7 +682,7 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
   try {
     await call('list_domains', {});
     await settle();
-    const rec = JSON.parse(readLines()[0]);
+    const rec = JSON.parse(toolLines()[0]);
     eq(rec.via, 'self-test',
       'with CURATOR_MCP_VIA=self-test in the environment, the real dispatch handler\'s line carries it');
     // A junk value in the same variable must not reach the file.
@@ -602,13 +690,13 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
     process.env.CURATOR_MCP_VIA = 'pretend-i-am-an-agent';
     await call('list_domains', {});
     await settle();
-    ok(!('via' in JSON.parse(readLines()[0])),
+    ok(!('via' in JSON.parse(toolLines()[0])),
       'CONTROL: a junk value in the SAME variable leaves the field absent');
     clearLog();
     delete process.env.CURATOR_MCP_VIA;
     await call('list_domains', {});
     await settle();
-    ok(!('via' in JSON.parse(readLines()[0])),
+    ok(!('via' in JSON.parse(toolLines()[0])),
       'CONTROL: with the variable unset the field is absent — this is the ordinary MCP client');
   } finally {
     if (prev === undefined) delete process.env.CURATOR_MCP_VIA;
@@ -705,6 +793,525 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
   eq(r('get_tags').selfTestTotal, 0, '…with a zero self-test count');
   eq(r('get_node').lastVia, null, 'an unused tool reports lastVia: null');
   eq(r('get_node').selfTestTotal, 0, '…and selfTestTotal: 0 — never omitted');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9  `sid` — one bridge process is one session');
+// ═══════════════════════════════════════════════════════════════════════════
+// v3.63.0. The meter's ONE grouping key. Three things can go wrong, and each
+// produces a plausible-looking number that is wrong:
+//
+//   1. THE ID MOVES INSIDE ONE PROCESS. Every call would be its own session,
+//      so a session that read and saved reads as two, one of which "did not
+//      save" — the exact false reading the strip exists to avoid.
+//   2. TWO PROCESSES SHARE AN ID. Two sessions merge into one that read and
+//      saved when in fact each did half. Invisible. This is why it is not a
+//      pid: the OS recycles those.
+//   3. A CALLER SUPPLIES ONE. `sid` is the key the whole reading groups on,
+//      so a forged value merges or splits sessions at the caller's choosing.
+{
+  eq(usage.SID_RE.source, '^[0-9a-f]{12}$', 'the shape is 12 lowercase hex');
+  const mine = usage.getSessionId();
+  ok(usage.SID_RE.test(mine), `this process's sid matches it (${mine})`);
+  eq(usage.getSessionId(), mine, 'and it is STABLE — read twice, same value');
+
+  // ── 9a  IDENTICAL ACROSS ONE PROCESS'S LINES, THROUGH THE REAL DISPATCH ──
+  clearLog();
+  usage.__resetSessionLine();
+  await call('list_domains', {});
+  await call('get_node', { domain: DOM, slug: 'alpha' });
+  await call('get_index', { domain: DOM });
+  await settle();
+  const all9 = readLines().map((l) => JSON.parse(l));
+  const tools9 = all9.filter((r) => r.ev !== 'session');
+  const sess9 = all9.filter((r) => r.ev === 'session');
+  eq(tools9.length, 3, 'three calls, three tool lines');
+  eq(sess9.length, 1, '…and exactly ONE session line, however many calls follow it');
+  eq(new Set(tools9.map((r) => r.sid)).size, 1, 'all three tool lines carry ONE sid');
+  eq(tools9[0].sid, mine, '…and it is this process’s minted id');
+  eq(sess9[0].sid, mine, '…which the session line names too');
+  eq(all9[0].ev, 'session', 'the session line is first in the file');
+
+  // A SECOND burst in the same process adds NO second session line: the
+  // process is the session, and a lazily-written line is written once.
+  await call('list_domains', {});
+  await settle();
+  eq(readLines().filter((l) => JSON.parse(l).ev === 'session').length, 1,
+    'a later call in the SAME process adds no second session line');
+
+  // ── 9b  TWO PROCESSES DIFFER ────────────────────────────────────────────
+  // Measured by actually starting node twice. A mutation that replaced the
+  // random draw with a constant reds here and nowhere else.
+  const readSid = async () => {
+    const { execFileSync } = await import('node:child_process');
+    return execFileSync(process.execPath, ['-e',
+      `import('${path.join(ROOT, 'src/brain/mcp-usage.js')}').then(m => process.stdout.write(m.getSessionId()))`,
+    ], { encoding: 'utf8' }).trim();
+  };
+  const sidA = await readSid();
+  const sidB = await readSid();
+  ok(usage.SID_RE.test(sidA) && usage.SID_RE.test(sidB), `two fresh processes minted ${sidA} and ${sidB}`);
+  ok(sidA !== sidB, 'TWO PROCESSES GET DIFFERENT IDS — not a pid, not a constant, not a clock');
+  ok(sidA !== mine && sidB !== mine, '…and neither is this process’s');
+
+  // ── 9c  A CALLER'S `sid` IS NOT A sid ───────────────────────────────────
+  for (const junk of ['0123456789AB', '0123456789a', '0123456789abc', 'zzzzzzzzzzzz',
+    '', '../../etc', 'x'.repeat(10 * 1024), 42, null, {}]) {
+    const rec9 = JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 1, sid: junk }, 'T'));
+    eq(rec9.sid, mine,
+      `sid=${JSON.stringify(junk === undefined ? 'undefined' : junk).slice(0, 22)} is refused; the process’s own id is written`);
+  }
+  eq(JSON.parse(usage.buildUsageLine({ tool: 'get_node', ms: 1, sid: 'abcdef012345' }, 'T')).sid, 'abcdef012345',
+    'CONTROL: a well-shaped sid IS honoured — this is the seam the suites drive, not a dead branch');
+
+  // ── 9d  A LINE WITH NO sid IS LEGACY, NOT MALFORMED ─────────────────────
+  clearLog();
+  writeFileSync(LOG, `${JSON.stringify({ ts: '2026-09-01T00:00:00.000Z', tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 3 })}\n`, 'utf8');
+  usage.__clearUsageCache();
+  const legacyAgg = await usage.readUsage({ noCache: true });
+  eq(legacyAgg.malformedLines, 0, 'a v3.60.0 line is NOT malformed — the log reads across the upgrade');
+  eq(legacyAgg.lineCount, 1, '…and is counted as a call');
+  eq(legacyAgg.byTool.get_node.countTotal, 1, '…and lights its tile');
+
+  // ── 9e  SESSION LINES ARE NOT CALLS ─────────────────────────────────────
+  // If one reached byTool it would invent a tile called `unknown` and inflate
+  // the count the app shows as "calls recorded".
+  clearLog();
+  writeFileSync(LOG, [
+    JSON.stringify({ ts: '2026-09-01T00:00:00.000Z', ev: 'session', sid: 'aaaaaaaaaaaa', client: 'codex' }),
+    JSON.stringify({ ts: '2026-09-01T00:00:01.000Z', tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 3, sid: 'aaaaaaaaaaaa' }),
+  ].join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+  const mixAgg = await usage.readUsage({ noCache: true });
+  eq(mixAgg.lineCount, 1, 'lineCount counts CALLS only — the session line is not one');
+  eq(mixAgg.sessionLineCount, 1, '…and the session line is reported separately');
+  eq(Object.keys(mixAgg.byTool).join(','), 'get_node', 'byTool has exactly one tile — no `unknown` was invented');
+  eq(mixAgg.malformedLines, 0, '…and nothing was called malformed');
+  eq(mixAgg.logStartedAt, '2026-09-01T00:00:00.000Z',
+    'logStartedAt still comes from the first line of EITHER kind — it answers "when did this file begin"');
+  // A session line with no usable sid can be joined to nothing, so it is
+  // dropped as malformed rather than kept as a session about nobody.
+  clearLog();
+  writeFileSync(LOG, `${JSON.stringify({ ts: '2026-09-01T00:00:00.000Z', ev: 'session', client: 'codex' })}\n`, 'utf8');
+  usage.__clearUsageCache();
+  eq((await usage.readUsage({ noCache: true })).malformedLines, 1,
+    'a session line with no sid is dropped — nothing could ever join to it');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9f  `project` — the resolved slug, through the REAL dispatch');
+// ═══════════════════════════════════════════════════════════════════════════
+// The widening this release took deliberately, and the field the capture
+// meter's per-project reading is impossible without. It must come from the
+// RESOLVED envelope, not the argument: a bare project name can be resolved
+// across domains, and an absent one filled from the configured default — the
+// resolved slug is the one the store actually wrote to.
+{
+  clearLog();
+  await call('get_working_state', { domain: DOM });
+  await call('list_projects', { domain: DOM });
+  await call('get_project_context', { domain: DOM });
+  await settle();
+  const recs = toolLines().map((l) => JSON.parse(l));
+  eq(recs.length, 3, 'three calls, three lines');
+  eq(recs[0].project, DOM,
+    'get_working_state resolved the domain’s own project and the line names it');
+  ok(!('project' in recs[1]),
+    'list_projects resolves NO project, so the key is ABSENT — not null, not the domain');
+  eq(recs[2].project, DOM, 'get_project_context names it too');
+  ok(recs.every((r) => Buffer.byteLength(JSON.stringify(r), 'utf8') < usage.MAX_LINE_BYTES),
+    'all three lines are under the ceiling');
+  // And it is a SLUG, not content: nothing else from those three envelopes —
+  // which carry the standing brief, a handoff and a project list — is here.
+  ok(!toolLines().some((l) => /content_is_data|headline|resolved_by/.test(l)),
+    'none of the envelopes’ prose reached the log');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§10  `client` — two protocol eras, an allow-list, and no branch');
+// ═══════════════════════════════════════════════════════════════════════════
+// MCP revision 2026-07-28 REMOVED the `initialize` handshake: `clientInfo` is
+// now an optional, PER-REQUEST, self-reported `_meta` entry, and the spec says
+// a server SHOULD NOT change behaviour on it. The installed SDK (1.29.0) is
+// still the OLD era. So the value must be read from BOTH, and the app's own
+// self-test only ever exercises the OLD one — which is exactly why each arm is
+// driven ALONE here, each with a control proving the other is unreachable.
+{
+  const clients = await import(path.join(ROOT, 'src/brain/mcp-clients.js'));
+
+  // ── 10a  THE MAP IS MANY-TO-ONE, AND THAT IS THE POINT ──────────────────
+  eq(clients.labelForClient('codex-mcp-client'), 'codex', 'a source-verified value maps to its id');
+  eq(clients.labelForClient('gemini-cli-mcp-client'), 'gemini-cli', '…and the second one');
+  // ONE PRODUCT, TWO VALUES, SIMULTANEOUSLY (Cline: VS Code vs the SDK).
+  eq(clients.labelForClient('Cline'), 'cline', 'Cline from VS Code');
+  eq(clients.labelForClient('@cline/core'), 'cline', '…and @cline/core from the SDK — ONE harness, two current values');
+  // ONE PRODUCT, TWO VALUES, SEQUENTIALLY (Copilot CLI renamed itself).
+  eq(clients.labelForClient('github-copilot-developer'), 'copilot', 'Copilot CLI before its rename');
+  eq(clients.labelForClient('copilot-cli'), 'copilot', '…and after it — a log spanning six months carries both');
+  ok(clients.KNOWN_CLIENTS.size > new Set([...clients.KNOWN_CLIENTS.values()]).size,
+    'the map really is MANY-to-one — more raw values than canonical ids');
+
+  // Case and punctuation are normalised before the lookup, never after.
+  eq(clients.labelForClient('ZED'), 'zed', 'the lookup is case-insensitive');
+  eq(clients.labelForClient('  Windsurf  '), 'windsurf', '…and whitespace is stripped, not escaped');
+
+  // ── 10b  UNKNOWN IS `other`, NEVER THE CALLER'S STRING ──────────────────
+  for (const junk of ['not-a-real-client', '', '   ', 'x'.repeat(10 * 1024),
+    '"); DROP TABLE', '\n\n', null, undefined, 42, {}, []]) {
+    eq(clients.labelForClient(junk), 'other',
+      `client=${JSON.stringify(junk === undefined ? 'undefined' : junk).slice(0, 24)} → "other"`);
+  }
+  // The 10 KB case, end to end: a client name that size must leave the SESSION
+  // line under the ceiling, exactly as a 10 KB argument does for a tool line.
+  const bigSession = usage.buildSessionLine({ sid: '0123456789ab', client: 'x'.repeat(10 * 1024) }, 'T');
+  eq(JSON.parse(bigSession).client, 'other', 'a 10 KB clientInfo.name is recorded as "other"');
+  ok(Buffer.byteLength(bigSession, 'utf8') < usage.MAX_LINE_BYTES,
+    `…on a ${Buffer.byteLength(bigSession, 'utf8')}-byte line, under the ${usage.MAX_LINE_BYTES}-byte ceiling`);
+  ok(!bigSession.includes('xxxxx'), '…and not one byte of it reached the file');
+
+  // ── 10b2  THE ROUND TRIP: WRITE A LABEL, READ IT BACK, SAME HARNESS ────
+  // A DEFECT THIS ASSERTION FOUND. What lands on a session line is already a
+  // canonical ID, and most ids are NOT also raw names in the map — `codex` is
+  // the id, `codex-mcp-client` is the key. Putting a stored line back through
+  // the WRITE-side `labelForClient` therefore re-labelled a correctly recorded
+  // harness as `other`, silently, for six of the eleven harnesses. Read-side
+  // normalisation is its own function for exactly that reason.
+  for (const [raw, id] of [['codex-mcp-client', 'codex'], ['gemini-cli-mcp-client', 'gemini-cli'],
+    ['@cline/core', 'cline'], ['github-copilot-developer', 'copilot'],
+    ['goose-desktop', 'goose'], ['dsh-mcp-client', 'dsh'], ['claude-ai', 'claude-desktop'],
+    ['Zed', 'zed'], ['nonsense', 'other']]) {
+    const line = usage.buildSessionLine({ sid: '0123456789ab', client: raw }, 'T');
+    eq(JSON.parse(line).client, id, `${raw} is written as "${id}"`);
+    eq(clients.normaliseStoredClient(JSON.parse(line).client), id,
+      `…and reading that line back gives "${id}" again, not "other"`);
+  }
+  ok(clients.CLIENT_IDS.filter((id) => !clients.KNOWN_CLIENTS.has(id)).length >= 5,
+    'PRECONDITION: most canonical ids are NOT raw keys — which is why the two functions differ');
+  eq(clients.normaliseStoredClient('made-up-by-hand'), 'other',
+    'a hand-edited line still gets the allow-list on read');
+  eq(clients.normaliseStoredClient('other'), 'other', '…and the literal "other" survives it');
+
+  // …AND THROUGH THE PARSER, not only through the helper. `readUsageLines`
+  // is the path package U's capture route takes, and it has its own copy of
+  // the read-side decision — which is where the defect above actually lived.
+  // (Found green: the helper was asserted, the parser was not.)
+  clearLog();
+  writeFileSync(LOG, [
+    JSON.stringify({ ts: '2026-09-18T10:00:00.000Z', ev: 'session', sid: 'cccccccccccc', client: 'codex' }),
+    JSON.stringify({ ts: '2026-09-18T10:00:01.000Z', ev: 'session', sid: 'dddddddddddd', client: 'hand-edited-nonsense' }),
+    JSON.stringify({ ts: '2026-09-18T10:00:02.000Z', tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 1, sid: 'cccccccccccc' }),
+  ].join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+  const parsed10 = await usage.readUsageLines({ noCache: true });
+  const sess10 = parsed10.records.filter((r) => r.ev === 'session');
+  eq(sess10.length, 2, 'the parser returns both session lines');
+  eq(sess10[0].client, 'codex',
+    'THE PARSER keeps a stored canonical id — `codex` is an id, not a raw name, and must not be re-labelled `other`');
+  eq(sess10[1].client, 'other', '…while a hand-edited value IS reduced to "other" on read');
+
+  // ── 10c  THE TWO COMMUNITY-REPORTED ROWS ARE MARKED AS SUCH ─────────────
+  // The record wanted them withheld until measured. They ship, because an
+  // `other` row teaches a reader nothing — but `verified: false` is DATA, so a
+  // measurement pass can find them and a wrong label costs only a word.
+  const unverified = clients.CLIENT_ROWS.filter((r) => !r.verified).map((r) => r.raw).sort();
+  eq(unverified.join(','), 'claude-ai,claude-code,cursor-vscode',
+    'exactly three rows are marked unverified — the community-reported ones');
+  ok(clients.CLIENT_ROWS.every((r) => r.verified === true || r.evidence === 'community'),
+    'and `verified: false` implies `evidence: community` — no row is unverified for a second reason');
+  // `claude-ai` IS CLAUDE DESKTOP. Conflating it with Claude Code would put
+  // desktop-chat sessions in a coding harness's row.
+  eq(clients.labelForClient('claude-ai'), 'claude-desktop', 'claude-ai is Claude DESKTOP');
+  eq(clients.labelForClient('claude-code'), 'claude-code', '…and claude-code is Claude Code');
+  ok(clients.labelForClient('claude-ai') !== clients.labelForClient('claude-code'),
+    'THE TWO ARE NEVER COLLAPSED — they are different surfaces on different lifecycles');
+  ok(clients.CLIENT_IDS.every((id) => id.length <= clients.CLIENT_LABEL_MAX),
+    `every canonical id fits the ${clients.CLIENT_LABEL_MAX}-character bound the ceiling is derived from`);
+
+  // ── 10d  ARM 1: THE 2026-07-28 PER-REQUEST `_meta`, ALONE ───────────────
+  // The fake server exposes NO getClientVersion, so only `_meta` can answer.
+  const metaOnlyServer = { setRequestHandler: () => {} };
+  eq(clients.readClientName(
+    { params: { name: 'x', _meta: { 'io.modelcontextprotocol/clientInfo': { name: 'codex-mcp-client' } } } },
+    metaOnlyServer), 'codex-mcp-client',
+    'ARM 1: the per-request _meta is read when the server exposes no legacy accessor');
+  eq(clients.readClientName({ params: { name: 'x' } }, metaOnlyServer), null,
+    'CONTROL: with neither source, the answer is null — so arm 1 above was NOT vacuous');
+  eq(clients.CLIENT_META_KEY, 'io.modelcontextprotocol/clientInfo', 'the _meta key is the specification’s');
+
+  // ── 10e  ARM 2: THE DEPRECATED initialize-ERA ACCESSOR, ALONE ───────────
+  const legacyServer = { getClientVersion: () => ({ name: 'gemini-cli-mcp-client', version: '1' }) };
+  eq(clients.readClientName({ params: { name: 'x' } }, legacyServer), 'gemini-cli-mcp-client',
+    'ARM 2: getClientVersion() is read when the request carries no _meta');
+  eq(clients.readClientName({ params: { name: 'x' } }, { }), null,
+    'CONTROL: a server without the accessor answers null — so arm 2 was NOT vacuous either');
+
+  // ── 10f  NEWEST ERA WINS WHEN BOTH ARE PRESENT ──────────────────────────
+  eq(clients.readClientName(
+    { params: { name: 'x', _meta: { 'io.modelcontextprotocol/clientInfo': { name: 'copilot-cli' } } } },
+    legacyServer), 'copilot-cli',
+    'with BOTH present the per-request value wins — the era that is current');
+  // A hostile `_meta` is not an error: it falls through to the legacy arm.
+  eq(clients.readClientName({ params: { name: 'x', _meta: { 'io.modelcontextprotocol/clientInfo': 'not-an-object' } } }, legacyServer),
+    'gemini-cli-mcp-client', 'a malformed _meta falls through rather than throwing');
+  eq(clients.readClientName({ params: { name: 'x' } }, { getClientVersion: () => { throw new Error('boom'); } }), null,
+    'an SDK accessor that THROWS is not an error either — it is just no name');
+
+  // ── 10g  THE REAL DISPATCH, DRIVEN BY EACH ERA IN TURN ──────────────────
+  // The zod schema keeps `_meta` (RequestMetaSchema is a looseObject), so this
+  // is the shape a real 2026-07-28 client produces.
+  const dispatchWithServer = (srv) => {
+    const handlers = new Map();
+    registerTools({ setRequestHandler: (schema, fn) => handlers.set(schema, fn), ...srv }, storage);
+    const fn = handlers.get(CallToolRequestSchema);
+    return (name, args, meta) => fn({ params: { name, arguments: args, ...(meta ? { _meta: meta } : {}) } });
+  };
+  clearLog();
+  usage.__resetSessionLine();
+  const callMeta = dispatchWithServer({});
+  await callMeta('list_domains', {}, { 'io.modelcontextprotocol/clientInfo': { name: 'Cline' } });
+  await settle();
+  eq(JSON.parse(sessionLines()[0]).client, 'cline',
+    'THE REAL DISPATCH reads the per-request _meta and writes the allow-listed label');
+
+  clearLog();
+  usage.__resetSessionLine();
+  const callLegacy = dispatchWithServer({ getClientVersion: () => ({ name: 'goose-desktop' }) });
+  await callLegacy('list_domains', {});
+  await settle();
+  eq(JSON.parse(sessionLines()[0]).client, 'goose',
+    '…and with no _meta it reads the deprecated initialize-era accessor');
+
+  clearLog();
+  usage.__resetSessionLine();
+  await call('list_domains', {});
+  await settle();
+  eq(JSON.parse(sessionLines()[0]).client, 'other',
+    '…and with NEITHER it writes "other" — never an error, never a refusal');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§11  NOTHING BRANCHES ON `client` — Decision I, as a source guard');
+// ═══════════════════════════════════════════════════════════════════════════
+// The specification says a server SHOULD NOT change behaviour or security
+// decisions on a self-reported client name, and the observed values are
+// unstable enough that any branch would be wrong within months. The bridge is
+// the place a branch would be written, so `mcp/**` is swept for a READ of the
+// field outside the one line that hands it to the logger — with a planted
+// violation proving the sweep is not vacuous.
+{
+  const { readdirSync } = await import('node:fs');
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) return d.name === 'node_modules' ? [] : walk(full);
+    return d.name.endsWith('.js') ? [full] : [];
+  });
+  const mcpFiles = walk(path.join(ROOT, 'mcp'));
+  ok(mcpFiles.length >= 15, `PRECONDITION: the sweep sees ${mcpFiles.length} files under mcp/`);
+
+  // A READ is any of: `.client`, `['client']`, `client ===`, `client !==`,
+  // `client ==`, a switch on it, or destructuring it out of an object.
+  const READ_RE = /\.client\b|\[\s*['"]client['"]\s*\]|\bclient\s*(===|!==|==(?!=)|!=(?!=))|\bcase\s+['"]client|\{[^}\n]*\bclient\b[^}\n]*\}\s*=/;
+  const scan = (files) => {
+    const hits = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      src.split('\n').forEach((line, i) => {
+        const bare = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+        if (!READ_RE.test(bare)) return;
+        // THE ONE ALLOWED SITE: the dispatch hands the raw value to the
+        // logger. It is a WRITE of a property, not a read of the field.
+        if (/client,\s*$|client\s*\}\)/.test(bare) && f.endsWith(path.join('tools', 'index.js'))) return;
+        hits.push(`${path.relative(ROOT, f)}:${i + 1}: ${bare.trim().slice(0, 90)}`);
+      });
+    }
+    return hits;
+  };
+  const hits = scan(mcpFiles);
+  eq(hits.length, 0, hits.length
+    ? `mcp/** reads the client field outside the logger:\n        ${hits.join('\n        ')}`
+    : 'nothing under mcp/ reads `client` except the one hand-off to the logger');
+
+  // THE PLANTED VIOLATION — the control. Without it a broken regex would
+  // report a clean sweep forever, which is the v3.1.0 lesson in this repo.
+  const planted = path.join(TMP, 'planted-violation.js');
+  writeFileSync(planted, 'function h(req) {\n  if (req.client === "codex") return "special";\n  return "normal";\n}\n', 'utf8');
+  const plantedHits = scan([planted]);
+  ok(plantedHits.length === 1, `CONTROL: a planted \`req.client === "codex"\` IS caught (${plantedHits.length} hit)`);
+  const planted2 = path.join(TMP, 'planted-violation-2.js');
+  writeFileSync(planted2, 'const { client } = args;\nconsole.error(client);\n', 'utf8');
+  ok(scan([planted2]).length === 1, 'CONTROL: destructuring it out of an object is caught too');
+  rmSync(planted, { force: true });
+  rmSync(planted2, { force: true });
+
+  // And the label never reaches the tool map's envelope, which is the other
+  // place it could quietly become a behaviour.
+  clearLog();
+  writeFileSync(LOG, [
+    JSON.stringify({ ts: '2026-09-18T11:00:00.000Z', ev: 'session', sid: 'bbbbbbbbbbbb', client: 'codex' }),
+    JSON.stringify({ ts: '2026-09-18T11:00:01.000Z', tool: 'get_tags', domain: DOM, ok: true, refused: false, ms: 2, sid: 'bbbbbbbbbbbb' }),
+  ].join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+  const routes11 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  let body11 = null;
+  await routes11.usageHandler({}, { json: (o) => { body11 = o; } });
+  ok(!JSON.stringify(body11).includes('codex'),
+    'GET /api/mcp/usage does not carry the client label — the Tool map is per TOOL, not per harness');
+  eq(body11.tools.find((t) => t.name === 'get_tags').countTotal, 1,
+    'CONTROL: the tool line underneath it DID reach the envelope');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§12  summariseSessions — the honesty meter, as a pure function');
+// ═══════════════════════════════════════════════════════════════════════════
+// The reading package U's capture route serves. Built over a HAND-WRITTEN log
+// so every case is exact: a session that read and saved, one that read and did
+// not, one that neither, a REFUSED save, a self-test run, legacy lines with no
+// sid, a second project, and a sid whose session line is missing.
+{
+  const T = (min) => new Date(Date.parse('2026-09-18T12:00:00.000Z') - min * 60_000).toISOString();
+  const L = (o) => JSON.stringify(o);
+  const P = 'curator';
+  const rows = [
+    // S1 — read then saved. The good session.
+    { ts: T(300), ev: 'session', sid: '111111111111', client: 'claude-code' },
+    { ts: T(299), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 9, sid: '111111111111', project: P },
+    { ts: T(250), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 4, sid: '111111111111', project: P },
+    { ts: T(240), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 12, sid: '111111111111', project: P },
+    // S2 — read, never saved. THE READING THAT MATTERS.
+    { ts: T(200), ev: 'session', sid: '222222222222', client: 'codex' },
+    { ts: T(199), tool: 'get_working_state', domain: DOM, ok: true, refused: false, ms: 5, sid: '222222222222', project: P },
+    { ts: T(180), tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 2, sid: '222222222222', project: P },
+    // S3 — worked without bootstrapping, and its save was REFUSED.
+    { ts: T(150), ev: 'session', sid: '333333333333', client: 'cursor' },
+    { ts: T(149), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 3, sid: '333333333333', project: P },
+    { ts: T(148), tool: 'save_working_state', domain: DOM, ok: false, refused: true, ms: 1, sid: '333333333333', project: P },
+    // S4 — bootstrapped only AFTER saving: not a session that read first.
+    { ts: T(120), ev: 'session', sid: '444444444444', client: 'goose' },
+    { ts: T(119), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 8, sid: '444444444444', project: P },
+    { ts: T(118), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 8, sid: '444444444444', project: P },
+    // S5 — ANOTHER PROJECT. Must not leak into P's reading.
+    { ts: T(100), ev: 'session', sid: '555555555555', client: 'zed' },
+    { ts: T(99), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 6, sid: '555555555555', project: 'other-project' },
+    { ts: T(98), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 6, sid: '555555555555', project: 'other-project' },
+    // S6 — a SELF-TEST run. It calls both tools and must count for nothing.
+    { ts: T(60), ev: 'session', sid: '666666666666', client: 'other', via: 'self-test' },
+    { ts: T(59), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 4, sid: '666666666666', project: P, via: 'self-test' },
+    { ts: T(58), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 4, sid: '666666666666', project: P, via: 'self-test' },
+    // S7 — tool lines with NO session line (rotated away, or the append was
+    // in flight when the child was killed). A real session; unknown client.
+    { ts: T(40), tool: 'get_working_state', domain: DOM, ok: true, refused: false, ms: 5, sid: '777777777777', project: P },
+    { ts: T(39), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 7, sid: '777777777777', project: P },
+    // LEGACY — written before v3.63.0. No sid, so no session.
+    { ts: T(500), tool: 'get_project_context', domain: DOM, ok: true, refused: false, ms: 9 },
+    { ts: T(499), tool: 'save_working_state', domain: DOM, ok: true, refused: false, ms: 9 },
+  ];
+  clearLog();
+  writeFileSync(LOG, rows.map(L).join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+
+  const read12 = await usage.readUsageLines({ noCache: true });
+  eq(read12.present, true, 'readUsageLines sees the log');
+  eq(read12.records.length, rows.length, `it hands back all ${rows.length} records, both kinds`);
+  eq(read12.malformedLines, 0, '…with none malformed');
+
+  const m = usage.summariseSessions(read12.records, { project: P });
+  eq(m.totals.sessions, 5, 'five sessions touched this project (S1-S4 and S7; S5 is another project, S6 is a self-test)');
+  eq(m.totals.sessionsRead, 3, 'three of them bootstrapped BEFORE their first save (S1, S2, S7)');
+  eq(m.totals.sessionsSaved, 3, 'three saved successfully (S1, S4, S7)');
+  eq(m.totals.sessionsReadNotSaved, 1, 'ONE read and did not save — the reading that matters (S2)');
+  eq(m.totals.legacyLines, 2, 'the two pre-v3.63.0 lines are counted as legacy, never as a session');
+  eq(m.totals.selfTestLines, 3, '…and the self-test run’s three lines are counted apart');
+
+  const by = Object.fromEntries(m.sessions.map((x) => [x.sid, x]));
+  eq(Object.keys(by).length, 5, 'one row per session');
+  ok(!by['666666666666'], 'the SELF-TEST session is not in the list at all');
+  ok(!by['555555555555'], '…and neither is the other project’s');
+  eq(by['111111111111'].read, true, 'S1 read…');
+  eq(by['111111111111'].saved, true, '…and saved');
+  eq(by['111111111111'].client, 'claude-code', '…under the client its session line named');
+  eq(by['111111111111'].calls, 3, '…across three calls');
+  eq(by['111111111111'].project, P, '…about this project');
+  eq(by['222222222222'].read, true, 'S2 read…');
+  eq(by['222222222222'].saved, false, '…and did NOT save');
+  eq(by['333333333333'].read, false, 'S3 never bootstrapped…');
+  eq(by['333333333333'].saved, false, '…and its REFUSED save is not a save — ok:true is required');
+  eq(by['444444444444'].saved, true, 'S4 saved…');
+  eq(by['444444444444'].read, false,
+    '…but bootstrapped only afterwards, so it did not READ first — the definition is "before the first save"');
+  eq(by['777777777777'].saved, true, 'S7 saved…');
+  eq(by['777777777777'].client, null,
+    '…and its client is NULL, not "other": "no session line for this id" is a different fact from "a name we did not recognise"');
+
+  // "read" is AT ANY POINT before the first save, not AS the first call — the
+  // continuity skill's own ritual calls list_projects first.
+  const ritual = usage.summariseSessions([
+    { ts: T(30), tool: 'list_projects', ok: true, sid: '888888888888', project: P },
+    { ts: T(29), tool: 'get_project_context', ok: true, sid: '888888888888', project: P },
+    { ts: T(28), tool: 'save_working_state', ok: true, sid: '888888888888', project: P },
+  ], { project: P });
+  eq(ritual.totals.sessionsRead, 1,
+    'a session that called list_projects FIRST and bootstrapped second still counts as having read');
+
+  // Ordering, timestamps and the domain-wide reading.
+  eq(m.sessions[0].sid, '777777777777', 'the list is newest-first — the view shows the last N sessions');
+  eq(m.sessions[m.sessions.length - 1].sid, '111111111111', '…and oldest last');
+  eq(by['111111111111'].startedAt, T(299), 'startedAt is the session’s first CALL, not its session line');
+  eq(by['111111111111'].endedAt, T(240), 'endedAt is its last line — nothing writes an end marker');
+
+  const allProjects = usage.summariseSessions(read12.records, {});
+  eq(allProjects.totals.sessions, 6, 'with no project filter the other project’s session joins the six');
+  eq(allProjects.totals.legacyLines, 2, '…and the legacy count is the same: it is about the LOG, not one project');
+
+  // THE THREE STATES A CALLER MUST TELL APART.
+  const none = usage.summariseSessions([], { project: P });
+  eq(none.totals.sessions, 0, 'STATE 1 — no bridge session ran at all: zero sessions, not an error');
+  eq(none.sessions.length, 0, '…and an empty list');
+  const onlyLegacy = usage.summariseSessions(
+    [{ ts: T(10), tool: 'save_working_state', ok: true }], { project: P });
+  eq(onlyLegacy.totals.sessions, 0, 'a log that is ENTIRELY pre-v3.63.0 reports no sessions…');
+  eq(onlyLegacy.totals.legacyLines, 1,
+    '…but says so through legacyLines, so a caller never reads "nobody saved" off lines it cannot group');
+
+  // The window keeps a session WHOLE.
+  const windowed = usage.summariseSessions(read12.records, { project: P, since: Date.parse(T(45)) });
+  eq(windowed.totals.sessions, 1, 'a 45-minute window keeps only the session with a line inside it');
+  eq(windowed.sessions[0].sid, '777777777777', '…which is S7');
+  eq(windowed.sessions[0].read, true,
+    '…read WHOLE: a session is judged on all its lines, never only the ones inside the window');
+
+  // A SESSION THAT SPANS THE BOUNDARY is the case that tells "keep the
+  // session whole" apart from "keep the lines inside the window" — without
+  // it, dropping either reads the same. An agent that bootstrapped seven
+  // hours ago and saved two minutes ago DID read; reporting it as "did not
+  // read" would be a false reading produced by the instrument.
+  const spanning = usage.summariseSessions([
+    { ts: T(400), ev: 'session', sid: '999999999999', client: 'codex' },
+    { ts: T(399), tool: 'get_project_context', ok: true, sid: '999999999999', project: P },
+    { ts: T(398), tool: 'search_wiki', ok: true, sid: '999999999999', project: P },
+    { ts: T(20), tool: 'save_working_state', ok: true, sid: '999999999999', project: P },
+  ], { project: P, since: Date.parse(T(45)) });
+  eq(spanning.totals.sessions, 1, 'a session with one line inside the window is kept');
+  eq(spanning.totals.sessionsRead, 1,
+    'and it READ — the bootstrap six hours before the boundary still counts, because a session is judged whole');
+  eq(spanning.totals.sessionsSaved, 1, '…and saved');
+  eq(spanning.sessions[0].calls, 3, 'all three of its calls are counted, not just the one inside the window');
+  eq(spanning.sessions[0].startedAt, T(399), '…and startedAt is its real first call, outside the window');
+  eq(spanning.sessions[0].client, 'codex', '…with the client from its session line, also outside the window');
+  // CONTROL: move the boundary past its last line and the session goes.
+  eq(usage.summariseSessions([
+    { ts: T(400), ev: 'session', sid: '999999999999', client: 'codex' },
+    { ts: T(399), tool: 'get_project_context', ok: true, sid: '999999999999', project: P },
+  ], { project: P, since: Date.parse(T(45)) }).totals.sessions, 0,
+    'CONTROL: a session with NO line inside the window is excluded — the filter is not a no-op');
+
+  // Hostile input is data, not a crash.
+  eq(usage.summariseSessions(null).totals.sessions, 0, 'null records → zero sessions, no throw');
+  eq(usage.summariseSessions([null, 42, 'x', {}, { ts: 'nope', sid: '111111111111' }]).totals.sessions, 0,
+    'junk records are skipped rather than counted');
+  eq(usage.summariseSessions([{ ts: T(1), tool: 'get_node', ok: true, sid: 'NOTAHEXSID!!' }]).totals.legacyLines, 1,
+    'a malformed sid is not a session id — the line is legacy, never a forged session');
+  // The reading is PURE: it wrote nothing.
+  eq(readLines().length, rows.length, 'summarising the log left it byte-for-byte unchanged');
 }
 
 // ── Cleanup ────────────────────────────────────────────────────────────────

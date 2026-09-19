@@ -107,6 +107,15 @@ const logLines = (dir) => {
   if (!existsSync(f)) return [];
   return readFileSync(f, 'utf8').split('\n').filter((l) => l.trim());
 };
+/**
+ * v3.63.0 — a bridge process writes ONE `{"ev":"session"}` line (carrying the
+ * client label) in the same append as its first tool line, then one line per
+ * call. Everything this suite asserts is about CALLS, so it reads tool lines;
+ * the session line itself is asserted by name below and owned by
+ * `test-mcp-usage.js` §9-§10.
+ */
+const callLines = (dir) => logLines(dir).filter((l) => JSON.parse(l).ev !== 'session');
+const sessionLinesIn = (dir) => logLines(dir).filter((l) => JSON.parse(l).ev === 'session');
 
 /** A fresh, empty user-data dir for one child. */
 let udSeq = 0;
@@ -283,17 +292,30 @@ eq(run.transport.nonJsonStdout.length, 0,
 }
 
 // ── THE LOG: ONE LINE PER TOOL, `via` ON EVERY ONE ───────────────────────
-const viaLines = logLines(UD_VIA);
+const viaLines = callLines(UD_VIA);
 eq(viaLines.length, TOOL_CATALOGUE.length,
   `the child wrote exactly one line per tool (${viaLines.length} of ${TOOL_CATALOGUE.length})`);
+// ONE session line for the whole run, because one bridge process is one
+// session — and it carries `via` too, so the meter never counts the button
+// press as a session that read and saved.
+const viaSessionLines = sessionLinesIn(UD_VIA).map((l) => JSON.parse(l));
+eq(viaSessionLines.length, 1, 'and ONE session line, for the one bridge process the run spawned');
+eq(viaSessionLines[0].via, 'self-test', '…marked self-test like every other line of the run');
+eq(viaSessionLines[0].sid, JSON.parse(viaLines[0]).sid, '…sharing the sid every tool line carries');
 const viaRecs = viaLines.map((l) => JSON.parse(l));
 eq(JSON.stringify(viaRecs.map((r) => r.tool)),
   JSON.stringify(exercise.EXERCISE_PLAN.map((s) => s.tool)),
   'the log names the tools in the order they were called');
 ok(viaRecs.every((r) => r.via === 'self-test'),
   'every line carries via: "self-test"');
-eq(JSON.stringify(Object.keys(viaRecs[0])), JSON.stringify(usage.LINE_KEYS),
-  'a via line carries EXACTLY ts,tool,domain,ok,refused,ms,via — in that order');
+eq(JSON.stringify(Object.keys(viaRecs[0])),
+  JSON.stringify(usage.LINE_KEYS.filter((k) => k !== 'project')),
+  'a via line carries EXACTLY ts,tool,domain,ok,refused,ms,sid,via — in that order (list_domains names no project)');
+// …and a tool that DOES resolve a project carries the ninth key, in place.
+const projectRec = viaRecs.find((r) => 'project' in r);
+ok(projectRec, 'at least one call in the plan resolved a project');
+eq(JSON.stringify(Object.keys(projectRec)), JSON.stringify(usage.LINE_KEYS),
+  '…and that line carries all nine keys, in LINE_KEYS order');
 ok(viaLines.every((l) => Buffer.byteLength(l, 'utf8') < usage.MAX_LINE_BYTES),
   `every line is under the ${usage.MAX_LINE_BYTES}-byte ceiling (max ${
     Math.max(...viaLines.map((l) => Buffer.byteLength(l, 'utf8')))}) — the claim the app makes to the user`);
@@ -377,13 +399,15 @@ const plainRun = await exercise.exerciseAllTools({ userDataDir: UD_PLAIN });
 ok(!plainRun.error, 'the unmarked run completed too');
 eq(plainRun.results.filter((r) => !r.ok && !r.refused).length, 0,
   'every tool answered in the unmarked run as well');
-const plainLines = logLines(UD_PLAIN);
+const plainLines = callLines(UD_PLAIN);
 eq(plainLines.length, TOOL_CATALOGUE.length, 'one line per tool again');
 const plainRecs = plainLines.map((l) => JSON.parse(l));
 ok(plainRecs.every((r) => !('via' in r)),
-  'NO line carries a `via` key — absent, never `via: null`, so a pre-v3.61.0 line and this one are byte-comparable');
+  'NO line carries a `via` key — absent, never `via: null`');
+ok(sessionLinesIn(UD_PLAIN).every((l) => !('via' in JSON.parse(l))),
+  '…the session line included');
 eq(JSON.stringify(Object.keys(plainRecs[0])), JSON.stringify(usage.LINE_KEYS_ALWAYS),
-  'an unmarked line carries exactly the original six keys, in the original order');
+  'an unmarked line carries exactly the seven always-keys, in order');
 
 paths.__setUserDataDirOverride(UD_PLAIN);
 usage.__clearUsageCache();
