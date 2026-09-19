@@ -2387,6 +2387,125 @@ export function consumeChatScopeRequest() {
   return req;
 }
 
+// ── THE DOMAIN REQUEST (P1-9) ────────────────────────────────────────────
+//
+// The same shape as the chat-scope pair above, for the other direction: a
+// view that wants Domains to open ONE NAMED DOMAIN rather than whichever one
+// that view was last looking at.
+//
+// WHY IT IS NEEDED AT ALL. `navigate('domains')` takes a view name and
+// nothing else, and views/domains.js resolves its active domain like this
+// (loadDomainsList's commit, `domains.js`):
+//
+//     if (!state.activeSlug || !state.domains.some(d => d.slug === state.activeSlug))
+//       state.activeSlug = state.domains.length ? state.domains[0].slug : null;
+//
+// `state` there is MODULE-SCOPED and deliberately survives leaving the view,
+// so "Open in Domains" pressed from the Context view would land on whatever
+// was selected last — and on a first visit in the session, on
+// `state.domains[0]`, which is alphabetical and has no relationship to what
+// the user pressed. A control that lands on the right thing MOST of the time
+// is the worst property a navigation can have (the argument views/domains.js
+// records at its own `requestProject` import), so the destination is NAMED
+// rather than hoped for.
+//
+// WHY IT LIVES IN THE SHELL AND NOT IN views/domains.js. The chat-scope pair
+// is here for a reason that applies identically: a view importing a NAMED
+// export from a peer view is a hard module-load error in ESM if that export
+// is missing, which takes the whole shell to a blank page. `requestProject`
+// (memory.js) is imported by views/domains.js today and is the exception that
+// proves the cost — it needed a paragraph of justification and a hoisted
+// function declaration. Producers of THIS request are the Context view and
+// (later) any other view; the shell is the one module all of them already
+// import, so nobody has to reach across.
+//
+// THE LIFETIME IS ONE ARRIVAL, and that is the load-bearing half. This is a
+// module variable, never localStorage: a key written by a click the user then
+// abandoned survives a reload and silently hijacks the next Domains mount, an
+// hour later, with no relationship to any click that just happened. The exact
+// defect views/domains.js records having removed (`curator-next-chat-*`).
+//
+//   requestDomain(slug, opts)
+//     Records the intent. Does NOT navigate — the caller calls
+//     navigate('domains') itself, the same division of responsibility every
+//     other cross-view action in this shell uses. A falsy or non-string slug
+//     CLEARS any pending request rather than recording a blank one, because
+//     the consumer's contract is "a slug or nothing" and a request naming no
+//     domain is indistinguishable from no request at the point of use.
+//
+//     `opts.reason` is an ADVISORY string — why the request was made — and
+//     the shell attaches no meaning to it. Exactly one value is understood
+//     today, by views/domains.js and by nothing here: NEW_PROJECT_REASON
+//     below. An unrecognised reason is carried through untouched and the
+//     consumer ignores it, so a producer can never make an arrival FAIL by
+//     naming a reason the consumer has not learned yet.
+//
+//   consumeDomainRequest()
+//     Returns `{slug, reason}` and CLEARS in the SAME call, or `null` when
+//     nothing is pending. Destructive by construction, for the reason
+//     consumeChatScopeRequest states at length: if a later, unrelated Domains
+//     mount could read the same request again, every subsequent Domains entry
+//     would silently re-open a domain somebody asked for once, long ago.
+//     Reading and clearing are one adjacent pair of statements with no
+//     `await` between them, and there is no other way to observe the pending
+//     value. The SECOND call in a row returns null.
+//
+//     Callers MUST consume synchronously at the top of onEnter, before any
+//     await — see views/domains.js's onEnter for the real call site and for
+//     why the slug has to be in place BEFORE loadDomainsList's commit runs.
+//
+// The return shape is `{slug, reason} | null` rather than the chat pair's
+// always-an-object, deliberately: that pair has a SECOND meaning to express
+// (`firstRun`), so an object with a null slug says something there. Here
+// there is nothing to say about "no request" beyond its absence, and `null`
+// is the answer a caller cannot accidentally read a slug out of.
+
+/** null = nothing pending; else { slug, reason }. */
+let _pendingDomainRequest = null;
+
+/**
+ * The one value `opts.reason` carries that any consumer acts on.
+ *
+ * Exported as a CONSTANT rather than left as a literal in two files, because
+ * the producer and the consumer live in different packages and a string typed
+ * twice is a string that can be typed twice differently — the failure being a
+ * button that navigates correctly and then silently does nothing else.
+ */
+export const NEW_PROJECT_REASON = 'new-project';
+
+/**
+ * Ask the Domains view to open `slug` on its next mount.
+ *
+ * @param {string} slug a real domain slug; anything falsy clears the request
+ * @param {{reason?: string, openCreate?: boolean}} [opts] advisory
+ * @returns {void}
+ */
+export function requestDomain(slug, opts) {
+  const clean = (typeof slug === 'string' && slug.trim()) ? slug.trim() : null;
+  if (!clean) { _pendingDomainRequest = null; return; }
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  // ONE NORMALISATION, HERE, AT THE SINGLE WRITER. The design pass sketched
+  // this call as `requestDomain(domain, { openCreate: true })` while the
+  // build contract fixed the option bag as `{reason?: string}`. Both shapes
+  // reach the same consumer rather than the two packages having to agree at
+  // merge time on which sketch won — and `reason` is the one that is stored,
+  // so the consumer still reads exactly one field.
+  const reason = (typeof o.reason === 'string' && o.reason)
+    ? o.reason
+    : (o.openCreate === true ? NEW_PROJECT_REASON : null);
+  _pendingDomainRequest = { slug: clean, reason };
+}
+
+/**
+ * The pending request, once.
+ * @returns {{slug: string, reason: string|null}|null}
+ */
+export function consumeDomainRequest() {
+  const req = _pendingDomainRequest;
+  _pendingDomainRequest = null;
+  return req;
+}
+
 // ── Cross-view write gate ────────────────────────────────────────────────
 //
 // Shell-level replacement for the shipping app's window.__curatorIngestStart

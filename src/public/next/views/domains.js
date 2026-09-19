@@ -28,20 +28,21 @@
 import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure, isCurrentReader, openReader,
-  beginDomainWrite,
+  beginDomainWrite, consumeDomainRequest, NEW_PROJECT_REASON,
 } from '../app.js';
 
-// Second import of the SAME module, as a namespace, for exactly one thing:
-// the chat-scope handoff (see goToChatScoped below). A static named import
-// of an export that does not exist is a HARD MODULE-LOAD ERROR in ESM — it
-// takes the entire /next shell down to a blank page, which is the precise
-// failure class v3.1.0's boot guard exists for. The chat-scope function is
-// owned by app.js and lands in a different edit than this one, so a named
-// import here would couple "did that edit land yet" to "does the app boot
-// at all". A namespace import cannot fail that way, and the call site below
-// degrades loudly (console.warn) + usefully (unscoped Chat) rather than
-// silently, so a rename can never become an invisible dead button. The
-// module is evaluated once regardless of how many times it is imported.
+// Second import of the SAME module, as a namespace. It was added for one
+// thing — the chat-scope handoff — and the reason it is a NAMESPACE import is
+// worth keeping even now that the handoff has moved to
+// shared/chat-scope.js: a static named import of an export that does not
+// exist is a HARD MODULE-LOAD ERROR in ESM, and it takes the entire /next
+// shell down to a blank page, which is the precise failure class v3.1.0's
+// boot guard exists for. So anything reached through `shell.` here is
+// something this view can survive the ABSENCE of, and the two survivors both
+// are: `shell.isAnyWriteBusy()` is called inside a try/catch that fails OPEN
+// to the server's own guard, and `shell.navigate('memory')` sits beside a
+// `requestProject` that has already been recorded. The module is evaluated
+// once regardless of how many times it is imported.
 import * as shell from '../app.js';
 
 // The paste-into-your-entry-file block, and the banner that confirms it was
@@ -79,6 +80,7 @@ import { requestProject } from './memory.js';
 // any module it finds, in any form. (That claim used to be false — §0 tested
 // a hardcoded three-file list, so a copy pasted into a fourth view passed
 // unnoticed. It is a tree walk now, and mutation-proven.)
+import { goToChatScoped } from '../shared/chat-scope.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -746,6 +748,21 @@ function totalOpenIssues(report) {
 
 // ── Data loading ───────────────────────────────────────────────────────────
 
+// ── THE ARRIVAL REQUEST, HELD ACROSS ONE await (P1-9) ────────────────
+//
+// `onEnter` consumes app.js's domain request SYNCHRONOUSLY and writes the
+// slug straight into `state.activeSlug` (see the call site for why it has to
+// happen before `loadDomainsList` runs). What it cannot do there is CHECK the
+// slug: the domain list has not been read yet, and the whole point of the
+// early write is that it happens before that read.
+//
+// So the request's two halves separate. The slug is applied immediately and
+// VERIFIED in `loadDomainsList`'s commit, where the list finally exists. This
+// variable is what carries it across, and it is cleared at the verification
+// whether the slug was found or not — a request is spent when it has been
+// ACTED ON, not when it has been granted.
+let arrivalRequest = null;
+
 async function loadDomainsList(token) {
   // Capture the gate for THIS call. `loadGate` is module-scoped and the
   // next mount replaces it, so settling the module variable from a stale
@@ -789,8 +806,42 @@ async function loadDomainsList(token) {
     commit = () => {
       state.domains = Array.isArray(data.domains) ? data.domains : [];
       state.readonlySet = new Set(data.readonlyDomains || []);
+      // ── THE REQUESTED DOMAIN IS CHECKED HERE, AND ONLY HERE (P1-9) ────
+      //
+      // `onEnter` has already written the requested slug into
+      // `state.activeSlug`, so the ORDINARY fallback below is also the
+      // request's fallback: a slug this install does not have fails
+      // `state.domains.some(...)` and is replaced by the first row, which is
+      // exactly what an unrequested arrival does. Nothing new can go wrong.
+      //
+      // But it must not go wrong SILENTLY. A miss is disclosed on the console
+      // rather than rendered as a screen about a domain the user did not ask
+      // for, with nothing saying so. Never a throw: landing somewhere real is
+      // a worse answer than the one that was asked for and a much better one
+      // than a broken screen — the argument views/memory.js's
+      // `takePendingProject` records for the same shape, one view over.
+      const want = arrivalRequest;
+      arrivalRequest = null;
       if (!state.activeSlug || !state.domains.some((d) => d.slug === state.activeSlug)) {
+        if (want && want.slug) {
+          console.warn('[next/domains] requestDomain("' + want.slug + '") named a domain this '
+            + 'install does not have — opening '
+            + (state.domains.length ? state.domains[0].slug : 'nothing') + ' instead.'
+            + (want.reason ? ' (reason: ' + want.reason + ')' : ''));
+        }
         state.activeSlug = state.domains.length ? state.domains[0].slug : null;
+      } else if (want && want.reason === NEW_PROJECT_REASON) {
+        // THE POINTER'S SECOND HALF. `requestDomain(slug, {reason})` is a
+        // NAVIGATION, not a write: this opens the create FORM on the domain
+        // the caller named, and the POST still only ever happens from
+        // `runProjectAction`. One create path — the property
+        // docs/roadmap-context-engine.md asks a pointer to preserve.
+        //
+        // The form is built here rather than through `openProjectLifecycle`
+        // because this closure runs inside the single settled paint below and
+        // that function renders on its own, which would paint the card once
+        // without the form and again with it.
+        state.projectLc = freshProjectLifecycle('create');
       }
       state.loaded = true;
       // Measured: the domain card painted at ~15 ms and the health panel's
@@ -1396,39 +1447,18 @@ async function loadEstimates(slug, token) {
 // survives a reload, so a key written by a click the user then abandoned
 // sat there until some future Chat entry silently picked it up and scoped
 // the conversation to a domain the user had not asked about. Both keys, and
-// both writers, are gone; the handoff now goes through the shell's own
-// in-memory request/consume pair (app.js), which is cleared on read.
+// both writers, are gone; the handoff goes through the shell's own in-memory
+// request/consume pair (app.js), which is cleared on read.
 //
-// The second of those two functions (requestChatFirstRun) is deleted
-// outright rather than rewired: its only caller was the "New domain"
-// button, which punted to Chat because this view had no way to create a
-// domain. It does now — openLifecycle('create') below — so there is
-// nothing left to hand off.
-//
-// Degradation contract: if app.js's requestChatScope is missing (renamed,
-// or not landed yet), warn LOUDLY on the console and still navigate to
-// Chat unscoped. A dead button that does nothing is the failure this
-// project keeps recording; a button that works slightly less well and says
-// so in the console is not.
-function goToChatScoped(slug) {
-  // VERIFIED against app.js rather than assumed: requestChatScope(slug) only
-  // RECORDS the pending request (`_pendingChatScopeRequest = {slug, firstRun}`)
-  // — it does NOT navigate. So this call site owns the navigation, and must
-  // do it, or the button records a scope nobody goes to see. The record must
-  // happen FIRST: chat.js consumes the request synchronously at the top of
-  // its onEnter, which navigate() invokes before returning.
-  //
-  // Exactly ONE navigate() call, deliberately. navigate() does not
-  // early-return when the target view is already current — it re-mounts —
-  // and consumeChatScopeRequest() CLEARS on read, so a second navigate would
-  // find nothing pending and silently drop the scope.
-  if (typeof shell.requestChatScope === 'function') {
-    shell.requestChatScope(slug);
-  } else {
-    console.warn('[next/domains] app.js does not export requestChatScope() — opening Chat without a domain scope.');
-  }
-  navigate('chat');
-}
+// THE WRAPPER ITSELF NOW LIVES IN shared/chat-scope.js (v3.62.0, P1-10). It
+// was written here, and it stayed here for as long as this view was the only
+// producer; the Context view's step ③ gained the same door, and two hand-
+// written copies of a three-rule ritual (record, then navigate; exactly one
+// navigate; a real slug) is what v3.7.0 deleted. The function is imported
+// unchanged in every respect that this view can observe — same degradation
+// contract, same single navigate() — with the no-slug hazard app.js names at
+// the definition of `requestChatScope` now guarded once, inside it, for every
+// producer rather than by each caller happening to hold a real slug.
 
 // ── Domain lifecycle: create / rename / delete ─────────────────────────────
 //
@@ -4329,9 +4359,18 @@ function renderLifecycleCard() {
 // the same two-layer discipline the domain lifecycle uses. A form that
 // somehow survived a domain switch still could not act on the wrong domain.
 
-function openProjectLifecycle(mode, project) {
-  state.copied = null;
-  state.projectLc = {
+/**
+ * THE FORM, WITHOUT THE RENDER (extracted v3.62.0, P1-9).
+ *
+ * `openProjectLifecycle` below is this plus `state.copied = null` plus a
+ * render — which is right for a click, and wrong for the ONE other caller:
+ * `loadDomainsList`'s commit, which runs inside a single settled paint and
+ * would otherwise paint the card twice. Extracted rather than copied, because
+ * a second hand-built form object is a second place the ownership chooser's
+ * shape can drift from `shared/foundations-init.js`'s.
+ */
+function freshProjectLifecycle(mode, project) {
+  return {
     mode,
     slug: state.activeSlug,
     project: project || null,
@@ -4357,6 +4396,11 @@ function openProjectLifecycle(mode, project) {
     // IS the surface somebody opened in order to answer it.
     foundations: mode === 'create' ? freshChooser({ allowLater: true }) : null,
   };
+}
+
+function openProjectLifecycle(mode, project) {
+  state.copied = null;
+  state.projectLc = freshProjectLifecycle(mode, project);
   render(myMountToken);
 }
 
@@ -6998,6 +7042,45 @@ function render(token) {
 registerView('domains', {
   onEnter(mountToken) {
     myMountToken = mountToken;
+
+    // ── THE DOMAIN REQUEST IS CONSUMED FIRST, SYNCHRONOUSLY (P1-9) ─────
+    //
+    // BEFORE `loadGate`, before `loadDomainsList`, before any `await`, and
+    // that ordering is the whole guard. Two separate things rest on it:
+    //
+    //   1. `loadDomainsList`'s commit resolves the active domain with
+    //      `if (!state.activeSlug || !state.domains.some(...))`, so a slug
+    //      written HERE survives and a slug written any later loses to
+    //      `state.domains[0]`. `state` is module-scoped and deliberately
+    //      OUTLIVES the view (see its own comment), so without this the
+    //      request would also lose to whatever domain was open last time —
+    //      the stale-cached-list case, which is the common one.
+    //   2. `consumeDomainRequest()` CLEARS on read. onEnter runs exactly once
+    //      per mount and nothing can intervene between `navigate()` invoking
+    //      it and this line, whereas a value read after an await could race a
+    //      second, faster navigate() to the same view. The same rule app.js
+    //      states for `consumeChatScopeRequest`, for the same reason.
+    //
+    // WHAT THIS DELIBERATELY DOES NOT DO IS CLEAR ANYTHING ELSE. A request
+    // for a different domain is a domain switch, and `selectDomain` clears
+    // seven fields on one — but every one of them is ALREADY guarded against
+    // being painted under the wrong name by the stamp discipline this view
+    // was built on: `activeBrowse()` / `activeProjects()` refuse a list whose
+    // stamp does not match, `shouldKeepHealthOnReload` compares
+    // `state.healthSlug`, and the three forms that carry a target slug
+    // (`lifecycle`, `projectLc`, `confirm`) are cleared by this view's own
+    // TEARDOWN, so they are already null on any arrival. Re-typing that list
+    // here would be a second copy of a clearing rule, which is this file's
+    // most reliably repeated defect — and a copy that silently stops
+    // matching the day a field is added to one of them.
+    //
+    // The slug is NOT validated here: the domain list has not been read yet,
+    // which is exactly why the write has to come first. It is checked in the
+    // commit, which is also where a miss is disclosed. `arrivalRequest` is
+    // what carries the request across that await.
+    arrivalRequest = consumeDomainRequest();
+    if (arrivalRequest && arrivalRequest.slug) state.activeSlug = arrivalRequest.slug;
+
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });

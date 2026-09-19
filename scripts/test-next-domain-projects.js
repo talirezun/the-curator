@@ -138,6 +138,11 @@ const FNS = [
   'renderProjectRow',
   'renderProjectsPanel',
   'renderProjectLifecycleCard',
+  // v3.62.0 (P1-9). `openProjectLifecycle` is this plus a render, and the
+  // extraction has to carry BOTH or the click path throws: the form object
+  // was pulled out so `loadDomainsList` can open a create form inside its own
+  // single settled paint, without a second render.
+  'freshProjectLifecycle',
   'openProjectLifecycle',
   'closeProjectLifecycle',
   'classifyProjectError',
@@ -293,7 +298,7 @@ try {
 
 const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
-  renderProjectLifecycleCard, openProjectLifecycle, closeProjectLifecycle,
+  renderProjectLifecycleCard, freshProjectLifecycle, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
   copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
   foundationsField, createConsequence, createdOutcomeDetail, renderProjectCreated,

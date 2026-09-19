@@ -89,6 +89,12 @@ function section(t) { console.log(`\n${t}`); }
 
 const appJs = readFileSync(APP, 'utf8');
 
+// The one `opts.reason` value any consumer acts on, read from the source
+// rather than typed here: §9 asserts the NORMALISATION lands on it, and a
+// copy in this file would assert a copy.
+const newProjectReasonMatch = /export const NEW_PROJECT_REASON = '([^']+)';/.exec(appJs);
+const newProjectReasonLiteral = newProjectReasonMatch ? newProjectReasonMatch[1] : null;
+
 // ── Extraction helpers ───────────────────────────────────────────────────
 // Brace-matched so nested braces cannot truncate an extraction, and a
 // missing name THROWS rather than silently testing nothing. Same discipline
@@ -493,6 +499,124 @@ eq(family, '--font-sans', `${capFont} resolves to the SANS family — a section 
   eq(eyebrowFamily, '--font-mono',
     'CONTROL: the same resolver reads --type-eyebrow as --font-mono, so §8 distinguishes the two faces');
 }
+// ════════════════════════════════════════════════════════════════════════
+section('§9  THE DOMAIN REQUEST (P1-9) — recorded once, spent once, never stored');
+// ════════════════════════════════════════════════════════════════════════
+//
+// The shell's other cross-view handoff, and the one the Context view's "Open
+// in Domains" / "Ask this domain" / "+ New project" doors all ride on. Every
+// property below regresses SILENTLY: a request that is not cleared re-opens a
+// domain somebody asked for once, an hour later; a request that records a
+// blank slug reads to the consumer as "a domain was asked for" when none was;
+// and a `reason` the shell decided to interpret would make an arrival fail on
+// a word the producer chose.
+//
+// EXECUTED, not scanned — these are the real functions out of app.js, in a
+// sandbox with no DOM, because the pair touches nothing but one module
+// variable and that is exactly what makes it testable here.
+{
+  let reqBox;
+  try {
+    reqBox = new Function(`
+      ${extractFunction(appJs, 'requestDomain')}
+      ${extractFunction(appJs, 'consumeDomainRequest')}
+      let _pendingDomainRequest = null;
+      const NEW_PROJECT_REASON = ${JSON.stringify(newProjectReasonLiteral)};
+      return { requestDomain, consumeDomainRequest, NEW_PROJECT_REASON,
+               __peek: () => _pendingDomainRequest };
+    `)();
+  } catch (err) {
+    ok(false, `FATAL: could not build the request sandbox — ${err.message}`);
+    reqBox = null;
+  }
+
+  if (reqBox) {
+    const { requestDomain, consumeDomainRequest } = reqBox;
+
+    // ── The happy path, and the shape the consumer is promised ──────────
+    ok(consumeDomainRequest() === null,
+      'with nothing pending, consumeDomainRequest() is null — not an object with a null slug');
+    requestDomain('articles');
+    const first = consumeDomainRequest();
+    eq(first && first.slug, 'articles', 'a recorded slug comes back on the first consume');
+    eq(first && first.reason, null, '…with reason null when none was given');
+
+    // ── SELF-CLEARING. The whole reason this is module state and not a
+    //    localStorage key: a second read must find nothing, or every later
+    //    Domains mount re-applies one old click.
+    ok(consumeDomainRequest() === null,
+      'the SECOND consume in a row is null — the request is spent by reading it');
+    requestDomain('alpha');
+    consumeDomainRequest();
+    ok(reqBox.__peek() === null,
+      '…and the module variable itself is cleared, not merely reported as spent');
+
+    // ── A BLANK REQUEST IS NO REQUEST, and it also CLEARS a pending one.
+    //    The consumer's contract is "a slug or nothing"; recording
+    //    {slug: null} would make "nobody asked" indistinguishable from
+    //    "somebody asked for nothing" at the point of use.
+    requestDomain('alpha');
+    requestDomain('');
+    ok(consumeDomainRequest() === null, 'an empty slug clears a pending request rather than recording a blank one');
+    requestDomain('alpha');
+    requestDomain(null);
+    ok(consumeDomainRequest() === null, '…and so does null');
+    requestDomain('alpha');
+    requestDomain(42);
+    ok(consumeDomainRequest() === null, '…and so does a non-string, which a caller can reach through a typo');
+    requestDomain('   ');
+    ok(consumeDomainRequest() === null, '…and so does whitespace, which would otherwise pass a truthiness check');
+    requestDomain('  beta  ');
+    eq((consumeDomainRequest() || {}).slug, 'beta', 'a slug is trimmed, so a padded value still matches a real domain');
+
+    // ── LAST WRITER WINS. Two doors pressed in one task is not a queue.
+    requestDomain('alpha');
+    requestDomain('beta');
+    eq((consumeDomainRequest() || {}).slug, 'beta', 'a second request replaces the first — there is no queue to drain');
+
+    // ── `reason` IS ADVISORY, and the shell attaches no meaning to it.
+    requestDomain('alpha', { reason: 'anything-at-all' });
+    eq((consumeDomainRequest() || {}).reason, 'anything-at-all',
+      'an unrecognised reason is carried through untouched — the consumer ignores what it has not learned');
+    requestDomain('alpha', { reason: '' });
+    eq((consumeDomainRequest() || {}).reason, null, 'an empty reason is null, never the empty string');
+    requestDomain('alpha', 'not-an-object');
+    eq((consumeDomainRequest() || {}).reason, null, 'a non-object opts bag is ignored rather than thrown over');
+
+    // ── THE ONE NORMALISATION. The design pass sketched the Context view's
+    //    "+ New project" as `{openCreate: true}` while the build contract
+    //    fixed the bag as `{reason?: string}`; both reach the consumer as ONE
+    //    stored field, so the two packages cannot disagree at merge.
+    requestDomain('alpha', { openCreate: true });
+    eq((consumeDomainRequest() || {}).reason, reqBox.NEW_PROJECT_REASON,
+      '{openCreate: true} normalises to the NEW_PROJECT_REASON literal');
+    requestDomain('alpha', { openCreate: 'yes' });
+    eq((consumeDomainRequest() || {}).reason, null,
+      '…on `=== true` only, so a truthy string cannot switch a navigation into a form');
+    requestDomain('alpha', { reason: 'other', openCreate: true });
+    eq((consumeDomainRequest() || {}).reason, 'other',
+      'an explicit reason wins over the shorthand — one field is stored, and it is `reason`');
+  }
+
+  // ── THE LITERAL IS EXPORTED, AND THE CONSUMER IMPORTS IT ──────────────
+  // The producer (views/memory.js) and the consumer (views/domains.js) are
+  // different packages. A string typed in both is a string that can be typed
+  // differently in one, and the failure is a button that navigates correctly
+  // and then silently does nothing else — no error, no warning.
+  ok(/export const NEW_PROJECT_REASON = /.test(appJs),
+    'NEW_PROJECT_REASON is EXPORTED from app.js, so neither side has to re-type it');
+  {
+    const domainsJs = readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
+    const importBlock = (/import \{([\s\S]*?)\} from '\.\.\/app\.js';/.exec(domainsJs) || [])[1] || '';
+    ok(/\bNEW_PROJECT_REASON\b/.test(importBlock),
+      'views/domains.js imports it from the shell rather than typing the string');
+    ok(/\bconsumeDomainRequest\b/.test(importBlock),
+      '…alongside consumeDomainRequest, the half that spends the request');
+    ok(!/['"]new-project['"]/.test(domainsJs),
+      '…and does not carry the literal itself anywhere');
+  }
+}
+
 // And the rail column is a token, not four literals — the thing that made
 // the caption measurable in the first place.
 ok(/--app-rail-w:\s*\d+px;/.test(shellCss), 'shell.css defines --app-rail-w');
