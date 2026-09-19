@@ -809,7 +809,10 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 //                                   document can be un-mirrored without an
 //                                   editor it is not allowed to have
 //
-// SIX METHOD KEYS, FIVE ROUTES. The census stays EXACT rather than becoming a
+// SEVEN METHOD KEYS, SIX ROUTES (v3.62.0 added the "read first" PATCH — a
+// route of its own, allowed on BOTH ownerships because the flag is curator
+// METADATA ABOUT a document and never part of it, so setting it on a mirror
+// writes no byte of the copy). The census stays EXACT rather than becoming a
 // floor — a floor lets a genuinely new write arrive in silence — so a second
 // caller of an already-declared route still has to be declared, which is the
 // line above. What it must not do is reach a different URL or carry a
@@ -817,16 +820,22 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // DELETE call site rather than over the first one it finds.
 {
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly SIX mutating HTTP method keys, over five routes',
-    methods.length === 6, methods.join(','));
-  ok('...and they are DELETE, DELETE, PATCH, POST, POST and PUT, every one a LITERAL',
-    methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'POST',"
-      + "method: 'POST',method: 'PUT'",
+  ok('memory.js issues exactly SEVEN mutating HTTP method keys, over six routes',
+    methods.length === 7, methods.join(','));
+  ok('...and they are DELETE, DELETE, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
+    methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
+      + "method: 'POST',method: 'POST',method: 'PUT'",
     methods.join(','));
-  ok('...the PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
+  ok('...one PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
   ok('...and it never sends a handoff field',
     !/nowState|nextSteps|observations|traps/.test(memCode));
+  // THE OTHER PATCH SENDS ONE KEY. `text` is the document and `readFirst` is
+  // metadata about it; a PATCH carrying both would be a write to a mirror's
+  // bytes by another name.
+  ok('...the other PATCH aimed at ONE foundation, sending `readFirst` and nothing else',
+    /'\/foundations\/' \+ encodeURIComponent\(slug\)/.test(memCode)
+    && /body: JSON\.stringify\(\{ readFirst: want \}\)/.test(memCode));
   ok('...one POST aimed at the foundations REFRESH endpoint',
     /'\/foundations\/refresh'/.test(memCode));
   // THE REFRESH CARRIES A FILE LIST OR NOTHING — never a document body. That

@@ -292,7 +292,13 @@ section('§1 — ONE request per uncached switch');
 
   eq('an uncached project costs exactly ONE request', s.calls.urls.length, 1);
   ok('...and it is the combined read, not the two-step pair',
-    /\?open=newest$/.test(s.calls.urls[0]), s.calls.urls[0]);
+    /\?open=newest&as=project$/.test(s.calls.urls[0]), s.calls.urls[0]);
+  // `as=project` is D-G (v3.62.0): `GET /:domain/projects` is the project LIST,
+  // so a domain literally named `projects` collides with it and Express
+  // answers the list. The marker falls through to the detail route. The
+  // failure it prevents is SILENT — the page renders, about the wrong thing.
+  ok('...and it marks itself as the PROJECT read, so a domain named `projects` '
+    + 'is reachable at all', /[?&]as=project\b/.test(s.calls.urls[0]), s.calls.urls[0]);
   eq('the project index landed', st.projectRead && st.projectRead.scopeCount, 2);
   eq('the opened pair landed in the SAME response', st.scope, 'alpha-new');
   eq('...as a whole document, not a stub', st.detail && st.detail.current.present, true);

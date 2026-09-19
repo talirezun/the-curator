@@ -479,6 +479,9 @@ const EXPECTED_ROUTES = [
   // one-segment alias.
   ['get', '/:domain/:project/foundations/:slug'],
   ['put', '/:domain/:project/foundations/:slug'],
+  // v3.62.0: `readFirst` — curator METADATA ABOUT a document, never part of
+  // it, so it is allowed on BOTH ownerships and a mirror's bytes are untouched.
+  ['patch', '/:domain/:project/foundations/:slug'],
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
@@ -1069,6 +1072,16 @@ const LEDE_CANONICAL_SRC = strConst('LEDE_CANONICAL');
 const LEDE_STATE_SRC = strConst('LEDE_STATE');
 const LEDE_KNOWLEDGE_SRC = strConst('LEDE_KNOWLEDGE');
 
+// The store's session budget, off LIVE SOURCE for the reason BRIEF_MAX_BYTES
+// is: it is the number `get_project_context` drops bodies at, and a copy typed
+// here could agree with every assertion while the shipped block warned at a
+// different one.
+const READ_FIRST_BUDGET_SRC = (() => {
+  const m = /^const READ_FIRST_BUDGET_BYTES = ([^;]+);$/m.exec(viewSrc);
+  if (!m) throw new Error('READ_FIRST_BUDGET_BYTES not found in memory.js — §21 would be a paraphrase');
+  return m[1];
+})();
+
 const WS_WINDOW_SRC = numConst('WS_WINDOW');
 const WS_STEP_SRC = numConst('WS_STEP');
 const WS_STEP_ALL_MAX_SRC = numConst('WS_STEP_ALL_MAX');
@@ -1184,6 +1197,12 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'foundationsControlOffer', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsOwnershipWord', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsSummaryMeta', 'memory.js') + '\n' +
+    // The store's session budget, off LIVE SOURCE. `foundationsFacts` falls
+    // back to it when the server sends no `readFirstBudgetBytes`, and
+    // `foundationsBudgetWarning` quotes it — a copy typed here could agree
+    // with every assertion while the shipped block warned at another number.
+    'const READ_FIRST_BUDGET_BYTES = ' + READ_FIRST_BUDGET_SRC + ';\n' +
+    extractFunction(viewSrc, 'foundationsBudgetWarning', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndSize', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
@@ -1302,7 +1321,8 @@ function makeRenderers(stateObj) {
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
     'foundationsFacts, foundationsWord, foundationsControlOffer, foundationsDraftAsk, '
-    + 'foundationsOwnershipWord, foundationsSummaryMeta, fndSize, skeletonOf, fndRowHtml, ' +
+    + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
+    'fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, foundationsNotices, foundationReaderContent, ' +
     'renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
@@ -2368,32 +2388,57 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 // work-stream handoff or a journal: the boundary is unmoved and the assertions
 // below say so by NAMING each URL rather than by counting.
 //
-// SIX, AND THE SIXTH IS NOT A NEW ROUTE. The count is exact on purpose — a
-// floor would let a genuinely new write arrive in silence — so a second caller
-// of an already-declared route still has to be declared, which is this
-// paragraph. What it must NOT do is reach a different URL or carry a different
-// body, and the assertions below check both by name: there is one DELETE
-// SHAPE, asserted over every DELETE the view makes.
-eq('EXACTLY SIX fetches in the view carry a request init', withInit.length, 6);
+//   PATCH …/foundations/:slug           v3.62.0: the "read first" toggle. It
+//                                       writes `{readFirst}` and NOTHING else,
+//                                       and the route allows it on BOTH
+//                                       ownerships — the flag is curator
+//                                       METADATA ABOUT a document, never part
+//                                       of it, so setting it on a mirror
+//                                       touches no byte of the copy and cannot
+//                                       make the app a second author
+//
+// Every one of them is still on tier 0 or tier 1. NOTHING here can reach a
+// work-stream handoff or a journal: the boundary is unmoved and the assertions
+// below say so by NAMING each URL rather than by counting.
+//
+// SEVEN, AND ONLY ONE OF THEM IS A NEW ROUTE. The count is exact on purpose —
+// a floor would let a genuinely new write arrive in silence — so a second
+// caller of an already-declared route still has to be declared, which is the
+// DELETE paragraph above. What a write must NOT do is reach a different URL or
+// carry a different body, and the assertions below check both by name: there
+// is one DELETE SHAPE, asserted over every DELETE the view makes.
+eq('EXACTLY SEVEN fetches in the view carry a request init', withInit.length, 7);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 6,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 7,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
   const withMethod = (m) => inits.filter((x) => new RegExp("\\bmethod\\s*:\\s*'" + m + "'").test(x.init));
-  const patch = withMethod('PATCH')[0];
+  const patches = withMethod('PATCH');
+  const patch = patches.find((x) => x.url.includes("'/projects/'"));
+  const first = patches.find((x) => x.url.includes("'/foundations/'"));
   const posts = withMethod('POST');
   const put = withMethod('PUT')[0];
   const del = withMethod('DELETE')[0];
-  ok('one write uses a LITERAL PATCH — never a variable or a concatenation',
-    !!patch, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
-  ok('the PATCH targets the PROJECTS endpoint, which reaches tier 1 only',
+  eq('exactly TWO writes use a LITERAL PATCH — never a variable or a concatenation',
+    patches.length, 2, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
+  ok('the brief\'s PATCH targets the PROJECTS endpoint, which reaches tier 1 only',
     patch && patch.url.includes("'/projects/'") && patch.url.includes('/api/memory/'),
     patch ? patch.url.slice(0, 160) : 'none');
-  ok('the PATCH sends only a brief — never a handoff field',
+  ok('...and sends only a brief — never a handoff field',
     patch && /body:\s*JSON.stringify\(\{\s*brief:/.test(patch.init)
     && !/nowState|nextSteps|observations|traps|decisions/.test(patch.init),
     patch ? patch.init.slice(0, 200) : 'none');
+  // ── THE "read first" TOGGLE SENDS THE FLAG AND NOTHING ELSE ───────────
+  // The route's own rule: `text` is the document and `readFirst` is metadata
+  // about it, and a PATCH that carried both would be a write to a mirror's
+  // bytes by another name. One key, and the assertion names it.
+  ok('the second PATCH targets ONE foundation on tier 0',
+    first && first.url.includes("'/foundations/'") && first.url.includes('/api/memory/'),
+    first ? first.url.slice(0, 200) : 'none');
+  ok('...and sends `readFirst` and NOTHING else — never the document\'s text',
+    first && /body:\s*JSON.stringify\(\{\s*readFirst:\s*want\s*\}\)/.test(first.init)
+    && !/text:/.test(first.init), first ? first.init.slice(0, 200) : 'none');
   eq('exactly TWO writes use a LITERAL POST', posts.length, 2);
   const refresh = posts.find((x) => x.url.includes("'/foundations/refresh'"));
   const init = posts.find((x) => x.url.includes("'/foundations/init'"));
@@ -2475,9 +2520,9 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly SIX `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly SEVEN `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
-  JSON.stringify(methods) === JSON.stringify(["'DELETE'", "'DELETE'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
+  JSON.stringify(methods) === JSON.stringify(["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -2491,6 +2536,22 @@ for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSour
 // a prefix test would wave those through, and `/api/wiki`, `/api/health` and
 // every `…/ai-suggest` are exactly the surfaces §2.6 ruled out by cost. The
 // list is the two shapes this view may issue and nothing else.
+// ── D-G: THE PROJECT-DETAIL GET NAMES ITSELF (v3.62.0) ────────────────────
+// `GET /:domain/projects` is the PROJECT LIST, so a domain literally named
+// `projects` — the maintainer's own — collides with it: Express matches the
+// list route first and this view gets a payload with no `scopes`. The route
+// disambiguates on `?as=project`. Pinned as the QUERY OBJECT rather than as a
+// URL, because that is how this view builds it, and pinned at all because the
+// collision is silent: the page renders, it is simply about the wrong thing.
+ok('the project-detail read marks itself `as: \'project\'`, so a domain named '
+  + '`projects` is reachable at all',
+/fetchState\(domain, project, \{ open: 'newest', as: 'project' \}/.test(viewNoComments),
+viewNoComments.slice(0, 200));
+ok('CONTROL: the SCOPED read is deliberately NOT marked — it carries a `scope`, '
+  + 'which is what disambiguates it, and marking it would be a second rule',
+/fetchState\(domain, project, query, token\)/.test(viewNoComments)
+  || !/as: 'project'[\s\S]{0,40}scope:/.test(viewNoComments));
+
 ok('the view fetches only /api/memory endpoints and the ONE domain-stats read', (() => {
   const urls = [...viewNoComments.matchAll(/fetch\(\s*'([^']+)'/g)].map((m) => m[1]);
   const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(domain)");
@@ -7143,15 +7204,19 @@ const fndRead = (payload) => ({
       && !/fnd-cell-state/.test(F.fndRowHtml(fndDoc(), false)));
     // FIVE CELLS vs SIX (plus the actions cell on the curator arm only).
     const cells = (h) => (h.match(/<td /g) || []).length;
-    eq('a curator-owned row is five cells plus the actions cell', cells(curRow), 6);
+    // SIX PLUS THE ACTIONS CELL since v3.62.0: the "read first" toggle is a
+    // column of its own on BOTH arms, because the flag is curator metadata
+    // ABOUT a document and setting it writes nothing into the document — so a
+    // mirrored row gets it too.
+    eq('a curator-owned row is six cells plus the actions cell', cells(curRow), 7);
     // ── AND A MIRRORED ROW HAS AN ACTIONS CELL TOO, SINCE v3.61.1 ───────
     // It had none, because a mirror had no row control: the DELETE route
     // refused one, and a control whose only outcome is a refusal is worse
     // than no control. The route accepts removal on both ownerships now — it
     // is the decision to stop mirroring, not an edit — so the cell exists on
     // both arms and the two tables are 6 and 7 cells wide.
-    eq('...and a mirrored row is seven: its six plus the actions cell',
-      cells(F.fndRowHtml(fndDoc(), false)), 7);
+    eq('...and a mirrored row is eight: its seven plus the actions cell',
+      cells(F.fndRowHtml(fndDoc(), false)), 8);
     ok('...whose control is STOP MIRRORING, labelled and on the danger face — never the '
       + 'pencil, which would promise an edit the route refuses',
     /class="btn btn-danger btn-xs fnd-stop"/.test(F.fndRowHtml(fndDoc(), false))
@@ -7532,6 +7597,185 @@ const fndRead = (payload) => ({
     /visually-hidden">\(2026-09-16\)/.test(full) && !/title=/.test(full), full.slice(0, 900));
   ok('and neither door is the primary — neither completes a step',
     !/btn-primary/.test(full) && (full.match(/btn-secondary btn-xs/g) || []).length === 2, full.slice(-400));
+}
+
+// ── §21h — "read first": the set an agent is handed without asking ───────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// A flagged document's BODY arrives with every session; an unflagged one rides
+// as an index line the agent opens BY NAME on the standing brief's
+// instruction. So the block carries TWO budgets that are not the same number —
+// the project budget (200 KB, what may be STORED) and the session budget
+// (120 KB, what an agent RECEIVES) — and warning about the wrong one names a
+// figure nobody can act on.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null });
+  const big = (kb, over) => fndDoc({ bytes: kb * 1024, ...over });
+
+  // ── THE COUNTS ──────────────────────────────────────────────────────
+  const none = F.foundationsFacts(fndRead(fndPayload([fndDoc(), fndDoc({ slug: 'b.md' })])));
+  eq('with nothing flagged the read-first count is zero', none.readFirstCount, 0);
+  ok('...and the summary line says nothing about it — reporting the ABSENCE of '
+    + 'a decision as a decision is what "0 read first · 2 on request" would do',
+  !/read first/.test(F.foundationsSummaryMeta(none)), F.foundationsSummaryMeta(none));
+
+  const some = F.foundationsFacts(fndRead(fndPayload([
+    fndDoc({ readFirst: true }), fndDoc({ slug: 'b.md' }), fndDoc({ slug: 'c.md' })])));
+  eq('one flagged of three reads 1 · 2', some.readFirstCount + '·' + some.onRequestCount, '1·2');
+  ok('...and the summary line says both numbers',
+    /1 read first · 2 on request/.test(F.foundationsSummaryMeta(some)),
+    F.foundationsSummaryMeta(some));
+  eq('...and `readFirst` is `=== true`, so an ABSENT flag is false rather than '
+    + 'undefined-as-maybe',
+  F.foundationsFacts(fndRead(fndPayload([fndDoc({ readFirst: 1 })]))).readFirstCount, 0);
+
+  // ── THE SERVER'S FIVE READINGS WIN WHERE IT SENT THEM ────────────────
+  // The store takes them before any cap of its own; a sum over a capped row
+  // list would report a number the table cannot show.
+  const served = F.foundationsFacts(fndRead(fndPayload([fndDoc({ readFirst: true })], {
+    readFirstCount: 9, onRequestCount: 40, readFirstBytes: 1, readFirstBudgetBytes: 2,
+    readFirstBudgetExceeded: false })));
+  eq('the server\'s own count is preferred over the rows', served.readFirstCount, 9);
+  eq('...and so is its byte total and its budget',
+    served.readFirstBytes + '/' + served.readFirstBudgetBytes, '1/2');
+
+  // ── THE WARNING NAMES THE SET IT IS ABOUT ───────────────────────────
+  const overProject = F.foundationsFacts(fndRead(fndPayload([big(150), big(150, { slug: 'b.md' })])));
+  const projectWarn = F.foundationsBudgetWarning(overProject);
+  ok('with NOTHING flagged the warning is about the PROJECT budget — v3.61.0\'s '
+    + 'behaviour, because the store then sends every body it can. Quoted from '
+    + 'the facts\' own figure rather than from a literal here, so a server that '
+    + 'sends its own budget is followed rather than contradicted',
+  projectWarn.startsWith('Over the ' + F.fndSize(overProject.budgetBytes) + ' budget:'), projectWarn);
+  ok('...and it names the 120 KB a SESSION receives, which is the other budget '
+    + 'and the one the dropping happens against',
+  projectWarn.includes('agents receive 120 KB per session'), projectWarn);
+  ok('...and it names the consequence rather than the condition',
+    /the rest is dropped, last in reading order first/.test(projectWarn), projectWarn);
+
+  const overSession = F.foundationsFacts(fndRead(fndPayload([
+    big(100, { readFirst: true }), big(100, { slug: 'b.md', readFirst: true }),
+    big(300, { slug: 'c.md' })])));
+  const sessionWarn = F.foundationsBudgetWarning(overSession);
+  ok('once something IS flagged the warning is about the READ-FIRST set and the '
+    + '120 KB an agent receives — the stored total is not the figure anyone can act on',
+  /flagged “read first”/.test(sessionWarn) && /120 KB budget/.test(sessionWarn), sessionWarn);
+  ok('...naming how many documents are in that set', /^The 2 documents/.test(sessionWarn), sessionWarn);
+  ok('...and the consequence, in the same words the chooser uses',
+    /the rest is dropped, last in reading order first/.test(sessionWarn), sessionWarn);
+  eq('a read-first set INSIDE its budget warns about nothing, even when the '
+    + 'project total is over',
+  F.foundationsBudgetWarning(F.foundationsFacts(fndRead(fndPayload([
+    big(10, { readFirst: true }), big(300, { slug: 'c.md' })])))), '');
+  eq('CONTROL: and neither budget over means no warning at all',
+    F.foundationsBudgetWarning(some), '');
+
+  // ── THE WARNING REACHES THE BLOCK, UNFOLDED ─────────────────────────
+  const html = F.renderFoundations(fndRead(fndPayload([
+    big(100, { readFirst: true }), big(100, { slug: 'b.md', readFirst: true })])));
+  ok('the warning is painted, above the fold, and never inside it',
+    html.includes('mem-fnd-budget') && html.indexOf('id="mem-fnd-budget"') < html.indexOf('<details'),
+    html.slice(0, 300));
+  ok('...and it is an ELEMENT even when silent, because a tick patches it in '
+    + 'place and a node that must be created is a node a tick has to render for',
+  /id="mem-fnd-budget"[^>]*hidden/.test(F.renderFoundations(fndRead(fndPayload([fndDoc()])))),
+  F.renderFoundations(fndRead(fndPayload([fndDoc()]))).slice(0, 300));
+
+  // ── THE ROW CONTROL ─────────────────────────────────────────────────
+  const onRow = F.fndRowHtml(fndDoc({ readFirst: true }), true, false);
+  const offRow = F.fndRowHtml(fndDoc(), true, false);
+  ok('a flagged row\'s toggle is pressed and says so in WORDS, not by colour '
+    + 'alone', /aria-pressed="true"/.test(onRow) && />read first</.test(onRow), onRow);
+  ok('...and an unflagged one reads "on request" rather than an empty cell',
+    /aria-pressed="false"/.test(offRow) && />on request</.test(offRow), offRow);
+  ok('...labelled by the document it is about, with no hover-only title=',
+    /aria-label="Stop reading Architecture first"/.test(onRow) && !/title=/.test(onRow), onRow);
+  ok('a MIRRORED row gets the toggle too — the flag is metadata ABOUT a '
+    + 'document, never part of it, so setting it writes no byte of the copy',
+  /data-fnd-first="architecture\.md"/.test(F.fndRowHtml(fndDoc(), false, false)));
+  ok('...and a READ-ONLY Shared Brain mirror gets none, because every route it '
+    + 'could reach answers 403', !/fnd-first/.test(F.fndRowHtml(fndDoc(), false, true)));
+
+  // ── THE TICK PATCHES; IT DOES NOT RENDER (v3.61.1's rule) ────────────
+  //
+  // Measured one release ago on this very table: a tick that re-rendered took
+  // the fold's scrollTop from 1105 to 0, came back a different node and
+  // dropped focus. Driven against a DOM model rather than argued.
+  {
+    const mkNode = () => ({
+      _attrs: {}, _text: '', disabled: false, hidden: false, _cls: [],
+      dataset: {}, textContent: '',
+      getAttribute(k) { return this._attrs[k] === undefined ? null : this._attrs[k]; },
+      setAttribute(k, v) { this._attrs[k] = String(v); },
+      classList: { toggle() {} },
+      querySelector() { return this._span || null; },
+    });
+    const drive = async (responder, overState) => {
+      const btn = mkNode();
+      btn.dataset.fndFirst = 'architecture.md';
+      btn.setAttribute('aria-pressed', 'false');
+      const meta = mkNode();
+      const warn = mkNode();
+      warn._span = mkNode();
+      const st = {
+        activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null, projects: [],
+        projectRead: fndRead(fndPayload([fndDoc({ bytes: 200 * 1024 })])), detail: null,
+        ...overState,
+      };
+      const calls = { renders: 0, urls: [], bodies: [] };
+      const api = new Function('state', 'isCurrentMount', 'render', 'fetch', 'document',
+        'encodeURIComponent', 'screenSignature', 'foundationsFacts',
+        'foundationsSummaryMeta', 'foundationsBudgetWarning',
+        'let renderedSignature = null;\n'
+        + extractFunction(viewSrc, 'toggleReadFirst', 'memory.js')
+        + '\nreturn { toggleReadFirst, sig: () => renderedSignature };')(
+        st, () => true, () => { calls.renders++; },
+        async (url, init) => { calls.urls.push(url); calls.bodies.push(init.body); return responder(); },
+        { querySelector: (sel) => (sel.includes('mem-fold-foundations') ? meta : null),
+          getElementById: (id) => (id === 'mem-fnd-budget' ? warn : null) },
+        encodeURIComponent, () => 'SIG',
+        (read) => makeRenderers(st).foundationsFacts(read),
+        (f) => makeRenderers(st).foundationsSummaryMeta(f),
+        (f) => makeRenderers(st).foundationsBudgetWarning(f));
+      await api.toggleReadFirst(btn, 1);
+      return { btn, meta, warn, calls, st, api };
+    };
+
+    const okAnswer = () => ({ ok: true, json: async () => ({ ok: true, slug: 'architecture.md',
+      readFirst: true, wasReadFirst: false, changed: true, readFirstCount: 1, onRequestCount: 0,
+      readFirstBytes: 200 * 1024, readFirstBudgetBytes: 120 * 1024, readFirstBudgetExceeded: true }) });
+    const r = await drive(okAnswer);
+    eq('the toggle PATCHes the one document', r.calls.urls.join(','),
+      '/api/memory/acme/lumina/foundations/architecture.md');
+    eq('...sending the flag and nothing else', r.calls.bodies.join(','), '{"readFirst":true}');
+    eq('...and spends NO full render — a tick that re-renders loses the fold\'s '
+      + 'scroll position and the focus of the control being pressed',
+    r.calls.renders, 0);
+    eq('the pressed row says what it now is', r.btn.getAttribute('aria-pressed'), 'true');
+    eq('...in words as well as in state', r.btn.textContent, 'read first');
+    ok('the summary line is rewritten in place, with the counts the ROUTE '
+      + 'reported rather than a second derivation',
+    /1 read first · 0 on request/.test(r.meta.textContent), r.meta.textContent);
+    ok('...and the budget warning appears, naming the set and the consequence',
+      r.warn.hidden === false && /flagged “read first”/.test(r.warn._span.textContent),
+      r.warn._span.textContent);
+    eq('...and the signature is re-taken, so the next poll neither repaints '
+      + 'needlessly nor skips a repaint it owes', r.api.sig(), 'SIG');
+
+    // A REFUSAL IS A DISCLOSURE, and it costs the one full render that paints it.
+    const bad = await drive(() => ({ ok: false, json: async () => ({ ok: false, error: 'no_manifest' }) }));
+    eq('a refusal is recorded where the block already paints its outcomes',
+      bad.st.fnd.error, 'no_manifest');
+    eq('...and is painted, which is the one case a tick DOES render for',
+      bad.calls.renders, 1);
+    eq('...and the row is left saying what it was, never what the press intended',
+      bad.btn.getAttribute('aria-pressed'), 'false');
+
+    // STAMPED. An answer for a project the user has left touches nothing.
+    const gone = await drive(okAnswer, {});
+    ok('CONTROL: the stamped path really did write on the matching project',
+      gone.btn.getAttribute('aria-pressed') === 'true');
+  }
 }
 
 // ── §21g — the skeleton's lede is BYTE-IDENTICAL ────────────────────────
@@ -7915,6 +8159,11 @@ const EXECUTED = new Set([
   // driven through the composed page in §18i and §21f/§21f2.
   'renderLayerStrip', 'projectHeadline', 'renderWorkStreamsFold', 'renderKnowledge',
   'loadKnowledge',
+  // v3.62.0 — "read first". The budget sentence is driven over both sets
+  // (flagged and not) in §21h, and the toggle over its four outcomes against a
+  // DOM model, because a tick that re-renders is the defect v3.61.1 recorded
+  // on this very table and only an executed patch can prove it does not.
+  'foundationsBudgetWarning', 'toggleReadFirst',
   'openFoundation', 'refreshFoundations', 'bindFoundationRows',
   // v3.61.0 — tier 0 became editable. Five more LIFTED here and driven in §21:
   // the three pure decisions (the wall, the slug grammar, the shrink) and the

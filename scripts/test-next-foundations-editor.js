@@ -79,6 +79,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const NEXT = join(ROOT, 'src/public/next');
 const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
+
+// ── THE SESSION BUDGET, OFF LIVE SOURCE (v3.62.0) ─────────────────────────
+// `foundationsFacts` falls back to it when the server sends no
+// `readFirstBudgetBytes`, so every rig that lifts the facts has to inject it —
+// an undefined identifier inside a lifted function is a CRASH rather than a
+// failing assertion. NOT `FOUNDATIONS_BUDGET_BYTES`: that is what a project
+// may STORE (200 KB), this is what an agent RECEIVES in a session (120 KB).
+const READ_FIRST_BUDGET_SRC = (() => {
+  const m = /^const READ_FIRST_BUDGET_BYTES = ([^;]+);$/m.exec(viewSrc);
+  if (!m) throw new Error('READ_FIRST_BUDGET_BYTES not found in memory.js — the rigs below would crash');
+  // eslint-disable-next-line no-new-func
+  return new Function('return (' + m[1] + ');')();
+})();
 const initSrc = readFileSync(join(NEXT, 'shared/foundations-init.js'), 'utf8');
 const appSrc = readFileSync(join(NEXT, 'app.js'), 'utf8');
 const storeSrc = readFileSync(join(ROOT, 'src/brain/working-state.js'), 'utf8');
@@ -1106,13 +1119,21 @@ const renderers = (() => {
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'renderStatus',
     'renderDescription', 'renderReadout',
     'FOUNDATION_SLUG_RE', 'FOUNDATION_ROLES', 'MAX_FOUNDATION_BYTES', 'FOUNDATIONS_BUDGET_BYTES',
+    // ── THE SESSION BUDGET (v3.62.0) ──────────────────────────────────────
+    // `foundationsFacts` falls back to it when the server sends no
+    // `readFirstBudgetBytes`. It is NOT `FOUNDATIONS_BUDGET_BYTES`: that is
+    // what a project may STORE (200 KB), this is what an agent RECEIVES in a
+    // session (120 KB), and conflating them warns about the wrong set.
+    // Declared LAST, beside the value it is bound to, because these two lists
+    // are positional and a name inserted in the middle of one silently shifts
+    // every argument after it.
     'renderRoleOptions', 'renderFoundationsChooser', 'freshChooser', 'formatBytes',
     // ── ONE PREDICATE FOR THE COMMIT (v3.61.1) ────────────────────────────
     // `renderFoundationsInit` asks the SHARED module whether its primary can
     // be pressed, and paints the reason when it cannot. Passed in rather than
     // stubbed: a stub returning '' would leave the button armed in exactly the
     // state the sentence exists for, with every assertion here green.
-    'commitBlockedReason',
+    'commitBlockedReason', 'READ_FIRST_BUDGET_BYTES',
     body)(
     stateBox, escapeHtml, () => '<svg></svg>', (t) => '<md>' + escapeHtml(t) + '</md>',
     (o) => '<div class="tx-status tx-status-' + o.state + '"><b>' + escapeHtml(o.title)
@@ -1121,7 +1142,11 @@ const renderers = (() => {
     (o) => '<div class="tx-readout">' + escapeHtml(o.label) + ': ' + escapeHtml(o.value) + '</div>',
     FI.FOUNDATION_SLUG_RE, FI.FOUNDATION_ROLES, FI.MAX_FOUNDATION_BYTES,
     FI.FOUNDATIONS_BUDGET_BYTES, FI.renderRoleOptions, FI.renderFoundationsChooser,
-    FI.freshChooser, FI.formatBytes, FI.commitBlockedReason);
+    FI.freshChooser, FI.formatBytes, FI.commitBlockedReason,
+    // Off LIVE SOURCE, for the reason every other mirror here is: a copy typed
+    // in this file could agree with every assertion while the shipped block
+    // warned at another number.
+    READ_FIRST_BUDGET_SRC);
 })();
 // The sandbox's `state` is a fixed OBJECT the shipped functions read through,
 // so fields are assigned onto it rather than the binding being replaced.
@@ -1780,6 +1805,12 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     'BRIEF_TEMPLATE', 'BRIEF_MAX_BYTES', 'briefStats', 'localStorage', 'JSON', 'Promise',
     'console', 'Object', 'Array', 'Number', 'String', 'Boolean', 'Math', 'Date', 'Set', 'Map',
     'TextEncoder', 'copyAgentInstructions', 'captureFocus', 'patchOpenPair', 'wire',
+    // v3.62.0: step ③'s two doors and the sidebar's pointer. `navigate` was
+    // reached from `bindFoundationRows` before this release and is called
+    // directly by `wire()` now; `requestDomain` and `goToChatScoped` are the
+    // shell pair and the lifted chat wrapper. All three are stubbed in that
+    // suite's PREAMBLE.
+    'requestDomain', 'goToChatScoped', 'navigate',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",
@@ -1843,13 +1874,18 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     ok('...and FOCUS_FALLBACK has somewhere for ' + id + ' to send focus',
       fbk && fbk[1].includes("'" + id + "'"), 'no fallback');
   }
-  // The FOLD registry is UNTOUCHED: the editor joins the fold that already
-  // exists rather than inventing a fourth key, so scripts/test-ui-state.js's
-  // localStorage registry does not move.
+  // The EDITOR still invents no key: it joins the FOUNDATIONS fold that
+  // already exists, which is what this assertion has always been about. The
+  // list grew by one in v3.62.0 — `streams`, when the work-stream table became
+  // a fold of its own inside step ② — and the thing that must not move is the
+  // localStorage KEY (`curator-memory-folds-v1`), which is the registry
+  // scripts/test-ui-state.js holds and is untouched.
   const foldKeys = /const FOLD_KEYS = (\[[^\]]*\]);/.exec(viewSrc);
-  eq('FOLD_KEYS is still exactly the three it was — the editor reuses the foundations fold '
-    + 'rather than inventing a key, so the localStorage registry does not move',
-  foldKeys && foldKeys[1].replace(/\s+/g, ''), "['brief','journal','foundations']");
+  eq('FOLD_KEYS carries the foundations fold the editor reuses, beside the '
+    + 'other three, and no key of the editor\'s own',
+  foldKeys && foldKeys[1].replace(/\s+/g, ''), "['brief','journal','foundations','streams']");
+  ok('...and the localStorage key itself is unmoved, which is the registry that '
+    + 'matters', /const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1886,7 +1922,11 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
       'return { copyDraftingAsk };';
     // eslint-disable-next-line no-new-func
     const api = new Function('state', 'render', 'isCurrentMount', 'navigator',
-      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', body)(
+      // `READ_FIRST_BUDGET_BYTES` travels with `foundationsFacts` (v3.62.0):
+      // it is the fallback the facts use when the server sends no
+      // `readFirstBudgetBytes`, and an undefined identifier there is a CRASH
+      // rather than a failing assertion.
+      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', 'READ_FIRST_BUDGET_BYTES', body)(
       st,
       () => { calls.render++; },
       () => true,
@@ -1894,7 +1934,7 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
         if (!clipboardOk) throw new Error('denied');
         calls.clipboard.push(t);
       } } },
-      composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES);
+      composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES, READ_FIRST_BUDGET_SRC);
     return { api, st, calls };
   };
   const skel = (slug, role) => ({ slug, role, title: role, bytes: 100, skeleton: true,

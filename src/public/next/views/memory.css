@@ -1855,6 +1855,68 @@
 /* The Edit column of the foundations table. Right-aligned and no wider than
    the control, so the columns before it keep the width. */
 .fnd-cell-edit { width: 1%; white-space: nowrap; text-align: right; }
+
+/* ── "READ FIRST" — THE ONE FACT ON A ROW SOMEBODY CHANGES THEIR MIND ABOUT
+   (v3.62.0) ──────────────────────────────────────────────────────────────
+   A flagged document's BODY arrives with every session; an unflagged one rides
+   as an index line an agent opens by name. So it is a CONTROL rather than a
+   reading, and it is a toggle that stays pressed — which is what `aria-pressed`
+   means, and unlike the OVERVIEW-tile case this one really does stay.
+
+   THE WORD IS THE READING, NOT THE STATE OF THE PAINT. "read first" and "on
+   request" are two different sentences, so the two states are legible with no
+   colour at all — which is the app's rule for every mark that carries meaning.
+   What the accent adds is pre-attentive scanning down a column of twenty.
+
+   NO WIDTH: the two labels are the widest thing in the cell and `white-space:
+   nowrap` keeps them on one line, so the column takes what the longer word
+   needs and no literal has to be kept in step with the copy. */
+.fnd-cell-first { width: 1%; white-space: nowrap; }
+.fnd-first {
+  appearance: none;
+  /* Chrome that must not drag-select: this is a control, and a control whose
+     label highlights under a drag reads as text. The kit's own rule, pinned by
+     scripts/test-next-views-kit.js over every interactive class in the tree. */
+  user-select: none;
+  -webkit-user-select: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-body);
+  padding: 2px 9px;
+  cursor: default;
+  /* The 28px hit floor the kit sets for every control, bought with a
+     transparent outline rather than with height: the row is --text-xs and a
+     28px pill in it would set the table's row height. */
+  min-height: var(--hit-min);
+  transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
+}
+.fnd-first:hover:not([disabled]) { background: var(--surface-hover); color: var(--text); }
+.fnd-first:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+/* ONE DISABLED TREATMENT, from the token. A literal here would be the fifth
+   value the tree had before that pass removed four of them, and the cursor
+   travels with the dimming — a control that looks off and still says "click
+   me" is the half-disabled state scripts/test-next-disabled-state.js exists
+   to prevent. */
+.fnd-first[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+/* PRESSED. The same accent trio the chooser's selected option card takes, so
+   "this one is on" reads the same way in both places and no new colour enters
+   the view. */
+.fnd-first-on {
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+/* The budget warning, above the fold. `.tx-note` owns the face; this kills
+   only its top margin, because inside a flex column with a `gap` a margin
+   would add to the gap rather than replace it — the same call
+   `.fnd-init-why` makes one file over. */
+.mem-fnd-budget { margin-top: 0; margin-bottom: var(--space-6); }
 /* ── THE STATE COLUMN, CURATOR-OWNED ONLY (v3.61.0, P2-1) ────────────────
    It REPLACES Source and Copy, which on a curator-owned project always read
    "Curator-authored" and "—" — two columns with one value each, which is the

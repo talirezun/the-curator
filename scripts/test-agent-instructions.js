@@ -513,6 +513,7 @@ function renderKnowledge() { return '<!--KNOWLEDGE-->'; }
 function loadKnowledge() { return Promise.resolve(); }
 function requestDomain() {}
 function goToChatScoped() {}
+function navigate() {}
 const LEDE_CANONICAL = 'L1';
 const LEDE_STATE = 'L2';
 const LEDE_KNOWLEDGE = 'L3';

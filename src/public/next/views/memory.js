@@ -287,6 +287,19 @@ import {
 // would be wrong in the direction that costs the user their text.
 const BRIEF_MAX_BYTES = 32768;
 
+// ── THE SESSION BUDGET, MIRRORED (v3.62.0) ───────────────────────────────
+//
+// The store's `CONTEXT_MAX_BYTES_DEFAULT`: how many bytes of document BODIES a
+// single `get_project_context` hands an agent. It is NOT
+// `FOUNDATIONS_BUDGET_BYTES` (200 KB), which is about what a project may
+// STORE — two budgets, two questions, and conflating them warns about the
+// wrong set. Only ever a FALLBACK: `foundationsFacts` prefers the server's own
+// `readFirstBudgetBytes` wherever it sent one, for the same reason `bytes`
+// prefers `totalBytes`. Mirrored rather than imported because
+// `shared/foundations-init.js` mirrors only the project budget, and a view may
+// not add an export to a module two views share.
+const READ_FIRST_BUDGET_BYTES = 120 * 1024;
+
 // Journal page sizes. The store clamps journalLimit to [1, 50] itself
 // (MAX_JOURNAL_ENTRIES); these are just the two steps this view offers, and
 // the store stays the authority on the ceiling.
@@ -2031,7 +2044,14 @@ async function selectProject(domain, project, token, opts = {}) {
   // must agree about what a project read looks like is how the two would
   // drift.
   const startedAt = Date.now();
-  const read = await fetchState(domain, project, { open: 'newest' }, token);
+  // ── `as: 'project'` IS LOAD-BEARING (v3.62.0, D-G) ────────────────────
+  // `GET /:domain/projects` is the PROJECT LIST, and a domain literally named
+  // `projects` — the maintainer's own — collides with it: Express matches the
+  // list route first and this view gets a payload with no `scopes` in it. The
+  // route disambiguates on `?as=project`, which falls through to
+  // `GET /:domain/:project`; an unmarked call is byte-identical to every call
+  // shipped before it, and any other value is a 400.
+  const read = await fetchState(domain, project, { open: 'newest', as: 'project' }, token);
   // STALE-DROP. A reply for a project the user has already left is discarded
   // at the point of use, not merely guarded at the point of render: it must
   // never be written into state at all, or the next render would paint one
@@ -4997,6 +5017,22 @@ export const BRIEF_TEMPLATE = [
   '',
   'What this project is, and what "done" looks like.',
   '',
+  // ── THE OWNER'S ROUTING TABLE (v3.62.0) ────────────────────────────────
+  // The store's own `briefTemplate` gained this section in the same release,
+  // and the two templates are read by the same agents: the foundations flagged
+  // "read first" arrive with every session, and the rest are opened BY NAME on
+  // the brief's instruction. A template that never asks the question leaves an
+  // agent to guess which document a task needs.
+  //
+  // THE HEADING IS THE STORE'S, BYTE FOR BYTE. The prompts under it are
+  // shorter here because this template is what the pencil puts in an editor
+  // rather than what a create writes to disk.
+  '## Read before you…',
+  '',
+  'Which document to open for which kind of work.',
+  '',
+  '- ',
+  '',
   '## Firm decisions — do not re-litigate',
   '',
   '- ',
@@ -5228,7 +5264,23 @@ function foundationsFacts(read) {
   // list would report a number the table cannot show. The payload's own count
   // is the fallback for a build that sends no `skeleton` flag per row.
   let skeletons = 0;
+  // ── THE READ-FIRST SET (v3.62.0) ──────────────────────────────────────
+  // A document flagged `readFirst` is one whose BODY arrives with every
+  // session; the rest ride as an index the agent opens by name. So there are
+  // two budgets on this block and they are not the same number: the project
+  // budget (200 KB) is about what is STORED, and the read-first budget
+  // (120 KB) is about what an agent RECEIVES. Conflating them would warn about
+  // the wrong set — see `foundationsSummaryMeta`.
+  let readFirst = 0;
+  let readFirstBytes = 0;
   for (const d of docs) {
+    // `=== true` rather than truthiness, for the reason `skeletonOf` states:
+    // a build that sends no flag at all reads FALSE rather than
+    // undefined-as-maybe, and a fact and its absence stay apart.
+    if (d.readFirst === true) {
+      readFirst++;
+      readFirstBytes += Number.isInteger(d.bytes) ? d.bytes : 0;
+    }
     // THE FLAG, THROUGH THE ONE PREDICATE (P1-2). Never the banner's text.
     if (skeletonOf(d)) skeletons++;
     if (d.freshness === 'stale') stale++;
@@ -5257,6 +5309,22 @@ function foundationsFacts(read) {
     unreachable,
     unrated,
     skeletons,
+    // ── FIVE READINGS, THE SERVER'S WHERE IT SENT THEM ─────────────────
+    // The store computes all five and the route forwards them; they are
+    // preferred over the row-derived figures for the reason `bytes` prefers
+    // `totalBytes` — the store takes them before any cap of its own, and a
+    // sum over a capped row list would report a number the table cannot show.
+    // The derivation is the fallback for a build that sends none, which is
+    // also every offline fixture written before this release.
+    readFirstCount: f && Number.isInteger(f.readFirstCount) ? f.readFirstCount : readFirst,
+    onRequestCount: f && Number.isInteger(f.onRequestCount)
+      ? f.onRequestCount : Math.max(0, docs.length - readFirst),
+    readFirstBytes: f && Number.isInteger(f.readFirstBytes) ? f.readFirstBytes : readFirstBytes,
+    readFirstBudgetBytes: f && Number.isInteger(f.readFirstBudgetBytes) && f.readFirstBudgetBytes > 0
+      ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES,
+    readFirstBudgetExceeded: f && typeof f.readFirstBudgetExceeded === 'boolean'
+      ? f.readFirstBudgetExceeded
+      : (readFirst > 0 && readFirstBytes > READ_FIRST_BUDGET_BYTES),
     // The project budget is a DISCLOSURE, never a wall (D6): the store accepts
     // a save that crosses it and says so, and a UI that refused what the store
     // accepts would be the only thing standing between the owner and their
@@ -5317,15 +5385,69 @@ function foundationsSummaryMeta(facts) {
     if (facts.ownership === 'curator') return 'kept here · no documents yet';
     return 'not set up · choose how documents arrive';
   }
-  const size = facts.bytes > facts.budgetBytes
-    ? fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' budget'
-    : fndSize(facts.bytes);
+  // ── WHICH BUDGET THE SIZE CLAUSE IS ABOUT (v3.62.0) ────────────────
+  //
+  // TWO BUDGETS, AND THEY ARE NOT THE SAME NUMBER. The project budget
+  // (200 KB) is about what is STORED. The read-first budget (120 KB) is about
+  // what an agent RECEIVES in a session — and once ANY document is flagged,
+  // that is the set whose size decides whether something is dropped. Warning
+  // about the stored total there would name a figure nobody can act on: a
+  // project can hold 400 KB of documents and hand an agent 40 KB, and a
+  // project can hold 130 KB and drop half of it.
+  //
+  // WHEN NOTHING IS FLAGGED the behaviour is v3.61.0's, unchanged: the store
+  // sends every body within the session budget, so the applicable set is all
+  // documents and the applicable figure is the project budget.
+  const flagged = facts.readFirstCount > 0;
+  const size = flagged
+    ? (facts.readFirstBytes > facts.readFirstBudgetBytes
+      ? fndSize(facts.readFirstBytes) + ' read first, of a '
+        + fndSize(facts.readFirstBudgetBytes) + ' budget'
+      : fndSize(facts.bytes))
+    : (facts.bytes > facts.budgetBytes
+      ? fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' budget'
+      : fndSize(facts.bytes));
   return [
     facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's'),
     size,
     own,
+    // ── "N read first · M on request" ────────────────────────────────
+    // Withheld entirely when nothing is flagged: "0 read first · 4 on
+    // request" would report the ABSENCE of a decision as a decision, and the
+    // absence is the ordinary state of every project that predates the flag.
+    flagged
+      ? facts.readFirstCount + ' read first · ' + facts.onRequestCount + ' on request'
+      : null,
     foundationsWord(facts),
   ].filter(Boolean).join(' · ');
+}
+
+/**
+ * THE OVER-BUDGET WARNING, NAMING THE SET IT IS ABOUT (v3.62.0, §5(5)).
+ *
+ * Never folds — it is a cost, and design-system §3 (from v3.16.1) puts costs
+ * on the never-fold list. Returns '' when there is nothing to warn about, so
+ * the caller concatenates it unconditionally.
+ *
+ * The consequence is named rather than the condition: a person who reads
+ * "over budget" and shrugs is right to, and a person who reads "and the rest
+ * is dropped, last in reading order first" un-flags a document. The sentence
+ * is shared_with `shared/foundations-init.js`'s `budgetWarning`, which says the
+ * same thing about the same limit on the chooser — one wording, two hosts.
+ */
+function foundationsBudgetWarning(facts) {
+  const flagged = facts.readFirstCount > 0;
+  if (flagged) {
+    if (!facts.readFirstBudgetExceeded) return '';
+    return 'The ' + facts.readFirstCount + ' documents flagged “read first” come to '
+      + fndSize(facts.readFirstBytes) + ', over the ' + fndSize(facts.readFirstBudgetBytes)
+      + ' budget: agents receive ' + fndSize(facts.readFirstBudgetBytes)
+      + ' per session and the rest is dropped, last in reading order first.';
+  }
+  if (facts.bytes <= facts.budgetBytes) return '';
+  return 'Over the ' + fndSize(facts.budgetBytes) + ' budget: agents receive '
+    + fndSize(READ_FIRST_BUDGET_BYTES)
+    + ' per session and the rest is dropped, last in reading order first.';
 }
 
 /** Bytes, in the two units this block quotes them in. One derivation. */
@@ -5561,6 +5683,32 @@ function fndRowHtml(d, editable, readonly) {
         '</button>' +
       '</td>' +
       '<td class="fnd-cell-size">' + escapeHtml(size) + '</td>' +
+      // ── "READ FIRST" — WHAT AN AGENT IS HANDED WITHOUT ASKING ────────
+      //
+      // A flagged document's BODY arrives with every session; an unflagged one
+      // rides as an index line the agent opens BY NAME on the brief's
+      // instruction. That is the one fact on this row a person changes their
+      // mind about, so it is a control rather than a reading.
+      //
+      // ALLOWED ON BOTH OWNERSHIPS. The flag is curator METADATA ABOUT a
+      // document, never part of it, so setting it on a mirror writes nothing
+      // into the copy and cannot make the app a second author of the file. It
+      // is withheld only on a read-only Shared Brain mirror, where every route
+      // answers 403 and a control whose only outcome is a refusal is worse
+      // than none (v3.16.1).
+      //
+      // `aria-pressed` rather than a checkbox: it is a toggle that stays
+      // pressed, which is exactly what that attribute means — and unlike the
+      // OVERVIEW tiles' case, this one really does stay. The WORD is the
+      // reading; the tick is the affordance, and neither carries it alone.
+      (readonly ? '' : '<td class="fnd-cell-first">'
+        + '<button type="button" class="fnd-first' + (d.readFirst === true ? ' fnd-first-on' : '')
+        + '" data-fnd-first="' + escapeHtml(slug) + '"'
+        + ' aria-pressed="' + (d.readFirst === true ? 'true' : 'false') + '"'
+        + ' aria-label="' + escapeHtml((d.readFirst === true ? 'Stop reading ' : 'Read ')
+          + (d.title || slug) + ' first') + '">'
+        + (d.readFirst === true ? 'read first' : 'on request')
+        + '</button></td>') +
       // THE COLUMN VARIANT (P2-1). `editable` is the curator-owned arm, and it
       // is the same flag that decides whether this row gets a pencil — one
       // condition, so the head and the body cannot disagree about which table
@@ -5997,6 +6145,11 @@ function renderFoundations(read) {
           '<th scope="col">Role</th>' +
           '<th scope="col">Document</th>' +
           '<th scope="col">Size</th>' +
+          // Withheld on a read-only mirror, where the toggle is too — a head
+          // cell over a column the body does not emit makes the columns
+          // quietly stop lining up, which is the class of defect only a
+          // rendered look finds (v3.61.0's own note, one column over).
+          (readonly ? '' : '<th scope="col">Read</th>') +
           // ── FIVE COLUMNS OR SIX, BY OWNERSHIP (P2-1) ─────────────────
           // A curator-owned project's `Source` is always "Curator-authored"
           // and its `Copy` is always "—", so the two collapse into one State
@@ -6030,8 +6183,16 @@ function renderFoundations(read) {
         '<tbody>' + rows + '</tbody>' +
       '</table></div>' + renderFoundationStop(facts)
       + (adding ? renderFoundationsInit(facts) : '');
+  // ── THE BUDGET WARNING — A COST, SO IT NEVER FOLDS ────────────────────
+  // Emitted always and `hidden` when there is nothing to say, because
+  // `toggleReadFirst` patches it in place rather than re-rendering: a node
+  // that has to be CREATED on a tick is a node that tick has to render for.
+  const budgetSentence = foundationsBudgetWarning(facts);
+  const budgetNote = '<div class="tx-note mem-fnd-budget" id="mem-fnd-budget"'
+    + (budgetSentence ? '' : ' hidden') + '>' + icon('alertTriangle', 13)
+    + '<span>' + escapeHtml(budgetSentence) + '</span></div>';
   const open = (editing || adding || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
-  return '<div class="mem-fnd-row">' +
+  return budgetNote + '<div class="mem-fnd-row">' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
@@ -6504,6 +6665,102 @@ function renderFoundationEditor(facts) {
 //
 // Deleted rather than left calling nothing: a renderer nothing calls is the
 // same claim about the screen that a CSS rule nothing can match is.
+
+/**
+ * FLIP ONE DOCUMENT'S "read first" FLAG, IN PLACE.
+ *
+ * ── WHY THIS IS A PATCH AND NOT A RENDER (v3.61.1's rule) ───────────────
+ * Measured on this very table one release ago: a tick that re-rendered took
+ * the fold's `scrollTop` from 1105 to 0, came back as a different node and
+ * dropped focus. A person deciding which of twenty documents an agent should
+ * read first ticks several in a row, and each tick throwing them to the top is
+ * the defect that rule exists to prevent. So this writes the pressed row's own
+ * label and state, the summary line's counts, and the block's budget warning —
+ * every node checked before it is touched, and nothing else on the page.
+ *
+ * ── THE STATE IS UPDATED FROM THE ANSWER, NEVER FROM THE GUESS ─────────
+ * `state.projectRead` is mutated with what the route REPORTS (`readFirst`, and
+ * the five readings), not with what the click intended. The two agree on a
+ * success and only the answer is true on a refusal — and the next poll's
+ * `screenSignature` must describe what is painted, so it is re-taken here.
+ *
+ * ── A REFUSAL IS A DISCLOSURE, and it is unfolded ──────────────────────
+ * The route answers 400 `no_manifest` before init and 404 for a slug the
+ * manifest does not hold. Either way the flag on screen is put BACK where it
+ * was and the reason is rendered — a control that silently did nothing is the
+ * one outcome a toggle may not have.
+ */
+async function toggleReadFirst(btn, token) {
+  if (!btn || !btn.dataset) return;
+  const slug = btn.dataset.fndFirst;
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!slug || !domain || !project) return;
+  const want = btn.getAttribute('aria-pressed') !== 'true';
+  // Optimistic on the one node the finger is on, because the round trip is
+  // local and a control that waits 30ms to acknowledge a press reads as broken
+  // (v3.27.0). Everything else waits for the answer.
+  btn.disabled = true;
+  let out = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readFirst: want }),
+    });
+    const data = await res.json();
+    if (res.ok && data && data.ok) out = data; else error = (data && data.error) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token)) return;
+  // STAMPED AT THE POINT OF USE, like every other async result on this screen:
+  // an answer for a project the user has left must not touch this one's rows.
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  if (typeof document === 'undefined') return;
+  btn.disabled = false;
+
+  if (error) {
+    state.fnd = { domain, project, busy: false, error, result: null };
+    render(token);
+    return;
+  }
+
+  // ── ONE ROW, ONE SUMMARY LINE, ONE WARNING ─────────────────────────────
+  const now = out.readFirst === true;
+  btn.setAttribute('aria-pressed', now ? 'true' : 'false');
+  btn.textContent = now ? 'read first' : 'on request';
+  if (btn.classList) btn.classList.toggle('fnd-first-on', now);
+
+  const f = state.projectRead && state.projectRead.foundations;
+  if (f && Array.isArray(f.documents)) {
+    const row = f.documents.find((d) => d && d.slug === slug);
+    if (row) row.readFirst = now;
+    // The five readings come off the ANSWER rather than being recomputed here:
+    // the store takes them before any cap of its own, and a second derivation
+    // is a second thing that can disagree with the table.
+    f.readFirstCount = out.readFirstCount;
+    f.onRequestCount = out.onRequestCount;
+    f.readFirstBytes = out.readFirstBytes;
+    f.readFirstBudgetBytes = out.readFirstBudgetBytes;
+    f.readFirstBudgetExceeded = out.readFirstBudgetExceeded;
+  }
+  const facts = foundationsFacts(state.projectRead);
+  const meta = document.querySelector('#mem-fold-foundations .mem-fold-meta');
+  if (meta) meta.textContent = foundationsSummaryMeta(facts);
+  const warn = document.getElementById('mem-fnd-budget');
+  if (warn) {
+    const sentence = foundationsBudgetWarning(facts);
+    const span = warn.querySelector ? warn.querySelector('span') : null;
+    if (span) span.textContent = sentence;
+    warn.hidden = !sentence;
+  }
+  // The signature must always describe what is PAINTED: leaving it stale would
+  // make the next poll either repaint needlessly or skip a repaint it owed.
+  renderedSignature = screenSignature();
+}
 
 /**
  * THE READER PAYLOAD FOR ONE DOCUMENT.
@@ -7191,6 +7448,18 @@ function bindFoundationRows(root, token) {
     btn.addEventListener('click', () => {
       openFoundation(btn.dataset.fndSlug, token)
         .catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+
+  // ── THE "READ FIRST" TOGGLE — A TICK PATCHES, IT DOES NOT RENDER ──────
+  // v3.61.1's rule, from the maintainer's own hour on a 25-document mirror:
+  // "when I select or deselect a document I'm always thrown at the top". A
+  // render replaces the pane, so the fold's scroll position goes, the node
+  // changes identity and focus is lost. `toggleReadFirst` writes ONE row, the
+  // summary line and the block's warning, and nothing else.
+  root.querySelectorAll('.fnd-first[data-fnd-first]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      toggleReadFirst(btn, token).catch((err) => reportAsyncMountFailure(token, err));
     });
   });
 
@@ -8067,7 +8336,11 @@ function wire(token) {
     // NO DOMAIN, NO REQUEST — but still the pointer. A user with no project
     // selected still wants the create form; what cannot be claimed is which
     // domain it should open on.
-    if (domain) requestDomain(domain, { reason: 'new-project' });
+    // `openCreate: true` rather than a bare request: the pointer's whole job
+    // is to land on the CREATE FORM of this domain, and B's shell normalises
+    // the flag to that. A request with no flag would land on the domain and
+    // leave the person looking for the form they pressed a button to reach.
+    if (domain) requestDomain(domain, { openCreate: true });
     navigate('domains');
   });
 
