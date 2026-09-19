@@ -2,12 +2,12 @@
      aria-labelledby="curator-context-steps-title curator-context-steps-desc">
   <title id="curator-context-steps-title">The Project context screen — a strip and three numbered steps</title>
   <desc id="curator-context-steps-desc">
-    A three-cell status strip across the top, labelled Canonical documents, Working state and
+    A three-cell status strip across the top, labelled Foundations, Working state and
     Knowledge, each with a freshness dot and a one-line reading. Under it, three numbered steps
     read top to bottom. Step one, Foundations: the canonical documents this project is built
     against, kept word for word and replaced whole; the ones marked "read first" reach every
     session, the rest are opened by name. Step two, Working state: three closed folds — the
-    standing brief that you write, the work-streams that your agents write, and the session
+    work-streams that your agents write, the standing brief that you write, and the session
     journal — and this layer supersedes, so each save replaces the last. Step three, Knowledge:
     the wiki this project draws on, which accumulates, with two doors out to Domains and to Chat.
     A caption at the foot notes that the reading order top to bottom is the order a session start
@@ -67,16 +67,16 @@
   <line class="rule" x1="499" y1="30" x2="499" y2="72"/>
 
   <circle cx="46" cy="40" r="4.5" fill="var(--fresh)"/>
-  <text class="lbl" x="58" y="44">CANONICAL DOCUMENTS</text>
-  <text class="val" x="46" y="66">6 documents · fresh</text>
+  <text class="lbl" x="58" y="44">FOUNDATIONS</text>
+  <text class="val" x="46" y="66">3 documents · fresh</text>
 
   <circle cx="284" cy="40" r="4.5" fill="var(--fresh)"/>
   <text class="lbl" x="296" y="44">WORKING STATE</text>
-  <text class="val" x="284" y="66">saved 38 min ago</text>
+  <text class="val" x="284" y="66">saved 14 min ago</text>
 
   <circle cx="522" cy="40" r="4.5" fill="var(--warm)"/>
   <text class="lbl" x="534" y="44">KNOWLEDGE</text>
-  <text class="val" x="522" y="66">3,445 pages · 2 days ago</text>
+  <text class="val" x="522" y="66">391 pages · 3 days ago</text>
 
   <!-- ── STEP ① FOUNDATIONS ──────────────────────────────────────── -->
   <line class="rule" x1="24" y1="106" x2="736" y2="106"/>
@@ -88,7 +88,7 @@
 
   <rect class="fold" x="58" y="168" width="678" height="30" rx="7"/>
   <text class="foldtxt" x="72" y="187">▸  The documents</text>
-  <text class="foldmeta" x="722" y="187" text-anchor="end">148 KB · mirrored · 2 read first · 4 on request</text>
+  <text class="foldmeta" x="722" y="187" text-anchor="end">110 bytes · mirrored · 2 read first · 1 on request</text>
 
   <text class="note" x="58" y="218">The ones you mark <tspan font-weight="700" fill="var(--text)">read first</tspan> reach every session with their text; the rest arrive</text>
   <text class="note" x="58" y="236">as an index row an agent opens by name.</text>
@@ -102,16 +102,16 @@
   <text class="note" x="58" y="308">You write the brief; agents write handoffs and the journal.</text>
 
   <rect class="fold" x="58" y="320" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="338">▸  Standing brief</text>
-  <text class="foldmeta" x="722" y="338" text-anchor="end">updated 23 hr ago · 1,309 words        ✎</text>
+  <text class="foldtxt" x="72" y="338">▸  Work-streams</text>
+  <text class="foldmeta" x="722" y="338" text-anchor="end">3 work-streams · 3 saved copies</text>
 
   <rect class="fold" x="58" y="354" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="372">▸  Work-streams</text>
-  <text class="foldmeta" x="722" y="372" text-anchor="end">3 work-streams · 5 saved copies</text>
+  <text class="foldtxt" x="72" y="372">▸  The brief</text>
+  <text class="foldmeta" x="722" y="372" text-anchor="end">updated 14 min ago · 126 words        ✎</text>
 
   <rect class="fold" x="58" y="388" width="678" height="28" rx="7"/>
   <text class="foldtxt" x="72" y="406">▸  Recent saves</text>
-  <text class="foldmeta" x="722" y="406" text-anchor="end">12</text>
+  <text class="foldmeta" x="722" y="406" text-anchor="end">1 save · latest 14 min ago</text>
 
   <text class="note" x="58" y="436">Each save replaces the last, so a problem you solved cannot come back.</text>
 
