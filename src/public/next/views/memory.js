@@ -142,6 +142,14 @@ import {
   // reaches when there is no project to select — which is a pointer rather
   // than a second write path.
   navigate,
+  // ── WHICH DOMAIN THE DOMAINS VIEW SHOULD LAND ON (v3.62.0, P1-9) ──────
+  // `views/domains.js` keeps its active slug in module state and falls back
+  // to `state.domains[0]` when it is unset or gone. This view is app-wide
+  // across domains, so a bare `navigate('domains')` from a project in domain
+  // B lands on whatever Domains last had — silently, and with every figure on
+  // the screen belonging to a different wiki. The shell carries the request;
+  // `views/domains.js` consumes it in onEnter before it resolves its own slug.
+  requestDomain,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE text system in /next (shared/text.js). Imported, never re-implemented:
@@ -152,7 +160,8 @@ import { renderMarkdown } from '../shared/markdown.js';
 // asserts these imports are present AND reached, because a component that ships
 // unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadout, renderViewHeader, renderInfoMark,
+  renderDescription, renderStatus, renderReadout, renderReadoutGroup,
+  renderViewHeader, renderInfoMark,
 } from '../shared/text.js';
 // Every link out of the app into docs/ is a key in ONE table, checked offline
 // against the real markdown (shared/docs-links.js). The "How this works" panel
@@ -182,7 +191,21 @@ import { renderBlock } from '../shared/block.js';
 // and the rail rows wear the DOT (round, 8px, the shared mark); the save strip
 // and the handoff summary keep the `.mem-save-pip-s*` SQUARE, whose geometry is
 // this view's own. One scale, two silhouettes — never two ladders.
-import { freshnessStep, freshnessTier } from '../shared/age.js';
+// `formatDayAge`, `dayFreshnessTier` and `freshnessDotHtml` come with them for
+// step ③: `lastIngestDate` is a `YYYY-MM-DD` heading with no time of day, so it
+// is read on the CALENDAR-DAY ladder rather than the second-resolution one —
+// two ladders would be two scales, one ladder read two ways is the design
+// system's own arrangement (design-system-source.md §6).
+import {
+  freshnessStep, freshnessTier, formatDayAge, dayFreshnessTier, freshnessDotHtml,
+} from '../shared/age.js';
+
+// ── "ASK THIS DOMAIN", THE EXISTING WRAPPER RATHER THAN A SECOND ONE ─────
+// `requestChatScope` + `navigate('chat')` is a producer/consumer pair with a
+// documented no-slug hazard (app.js). views/domains.js has wrapped it since
+// v3.55.0; that wrapper is LIFTED to shared/ rather than copied here, so the
+// hazard stays guarded once and the two hosts cannot drift.
+import { goToChatScoped } from '../shared/chat-scope.js';
 
 // The paste-into-your-entry-file block. ONE text, shared with the Domains
 // view — see that module's header for what was measured and why the wording
@@ -506,6 +529,22 @@ function freshState() {
     // false and the provenance simply omits the clause. A reading that claims
     // to be live and is frozen is worse than a reading that never claimed it.
     ageTickerArmed: false,
+
+    // ── STEP ③'s ONE READING, AND THE DOMAIN IT BELONGS TO (v3.62.0) ────
+    //
+    // `GET /api/domains/:domain/stats` — one request, no LLM, and no read of
+    // any page's CONTENT: a CLAUDE.md read, a dirent-only recursive walk of
+    // `wiki/`, a readdir of `conversations/` and a `stat` of `log.md` that
+    // becomes a read only when it changed (src/brain/files.js). Every other
+    // surface that could answer this was ruled out by cost and the reasons are
+    // at `loadKnowledge`.
+    //
+    // STAMPED WITH ITS DOMAIN, like every other async result on this screen:
+    // this view switches domain without unmounting, and an unstamped payload
+    // would paint one wiki's page count under another wiki's project.
+    // `null` means nothing has been asked for yet, which is neither loading
+    // nor an error and must not be rendered as either.
+    knowledge: null,
   };
 }
 
@@ -551,7 +590,17 @@ const FOCUSABLE_IDS = [
   // INSIDE it deliberately do not: each carries a stable id derived from its
   // slug, and a row press causes no render at all, so there is nothing for the
   // capture/restore pass to do — see fndRowHtml.
-  'mem-fold-journal', 'mem-fold-brief', 'mem-fold-foundations',
+  // `mem-fold-streams` joined in v3.62.0 with the work-stream table's own fold.
+  'mem-fold-journal', 'mem-fold-brief', 'mem-fold-foundations', 'mem-fold-streams',
+  // ── THE STRIP'S ⓘ AND STEP ③'s TWO DOORS (v3.62.0) ───────────────────
+  // The mark explains every age on the page and is a real <button>; a render
+  // replaces the pane it sits in, so without it a keyboard user reading the
+  // panel is dropped to <body> on the next poll — the same reason the two
+  // header marks below are here. The two doors LEAVE the view, which is a
+  // render of its own; neither removes itself, so neither needs a fallback.
+  'mem-layers-info-btn', 'mem-k-domains', 'mem-k-chat',
+  // The sidebar's pointer to the one create path. It causes a view change.
+  'mem-new-project',
   // "Refresh from repo". It survives its own click (it is disabled while the
   // copy runs and comes back enabled), so it needs no fallback below — but it
   // DOES need to be captured, because the click causes two renders.
@@ -736,6 +785,18 @@ let renderedSignature = null;
 // number: a user who clicks through two hundred projects should not be
 // carrying two hundred handoff documents in memory for the life of the tab.
 const readCache = new Map();
+// ── STEP ③'s ONE READ, CACHED PER DOMAIN (v3.62.0, P1-8) ────────────────
+// Two projects of one domain draw on ONE wiki, so switching between them must
+// not re-issue the request; switching domain must not paint the previous
+// domain's figures. Unbounded on purpose: one small object per domain the user
+// has visited in this mount, and an install has tens of domains rather than
+// thousands of projects — the LRU below exists because a project read carries
+// a whole handoff document, which this does not.
+const knowledgeCache = new Map();
+// The domain a stats read is in flight for, so two project switches inside one
+// domain do not issue two requests. Cleared when that read settles.
+let knowledgeInFlight = null;
+
 const MAX_CACHE = 24;
 
 // Written across three lines rather than one because `extractFunction` in
@@ -1071,7 +1132,11 @@ function rememberProject(domain, project) {
 // v3.11.0 shape this file warns about twice). The duplicated key literal is
 // pinned against this constant by scripts/test-next-memory-view.js §19.
 const FOLDS_KEY = 'curator-memory-folds-v1';
-const FOLD_KEYS = ['brief', 'journal', 'foundations'];
+// `streams` joined in v3.62.0, when the work-stream table became a fold of its
+// own inside step ②. It is the one long list on this page that could not be put
+// away — WS_STEP_ALL_MAX is 20 rows — and v3.58.0's measurement (the page
+// 3,241 → 1,278px once the brief and the journal folded) is the reason.
+const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams'];
 
 export function readRememberedFolds() {
   try {
@@ -1335,6 +1400,47 @@ function screenSignature() {
   // notably NOT the draft text, which changes on every keystroke and is
   // written straight into state without a re-render (see wire()), exactly as
   // the Domains lifecycle form does, so that the caret survives.
+  // ── STEP ③ IS A PANE, AND ITS FIGURES COME FROM A DIFFERENT READ ──────
+  //
+  // The same lesson as every mark above it: a no-op guard that cannot see a
+  // pane is not a guard for that pane. Nothing else in this signature can see
+  // `state.knowledge` — it is filled by its own request, on a different clock
+  // from the project read — so the stats landing, or a later ingest moving the
+  // page count, would leave step ③ painting a figure that had stopped being
+  // true and the poll would skip the render that fixes it.
+  //
+  // THE FOUR FIELDS THE STEP ACTUALLY PAINTS, plus the domain stamp and the
+  // error, and nothing else: a whole payload folded in would repaint the page
+  // when `conversationCount` moved, which this step does not show.
+  // `lastIngestDate` is a `YYYY-MM-DD` string, so the day-age WORD and the
+  // day-freshness DOT both change exactly when it does — folding the rendered
+  // age in as well would be a second copy of one fact, the same call the rail
+  // rows make about their own dot.
+  //
+  // A PLAIN EXPRESSION, naming no collaborator this function does not already
+  // use. `screenSignature` is LIFTED and EXECUTED against a fixed set of
+  // injected functions (scripts/test-memory-truth.js §8b), so a call to
+  // `formatDayAge` or to `renderKnowledge` here would be a ReferenceError — a
+  // CRASH rather than a failing assertion, which is the v3.11.0 shape this
+  // file warns about four times.
+  //
+  // THE STRIP'S OTHER TWO TIERS ARE NOT FOLDED IN, and that is deliberate.
+  // Cell ①'s tier is cut on `facts.stale` / `facts.unreachable` / `facts.fresh`,
+  // every one of which is derived from `fndMark`'s per-document freshness
+  // above; cell ②'s is `freshnessTier`, which is cut on `formatAge`'s own unit
+  // bands, and `savedMark` and `newestMark` already fold that word through
+  // `formatAge`. Neither dot can change without something already in this
+  // signature changing first — folding them in would be a second copy of one
+  // fact, which is the call this function already makes about the rail's dot.
+  const kn = state.knowledge;
+  const knowledgeMark = kn
+    ? [kn.domain, kn.error || null,
+      kn.data ? [kn.data.pageCount, (kn.data.pageCounts || {}).entities,
+        (kn.data.pageCounts || {}).concepts, (kn.data.pageCounts || {}).summaries,
+        kn.data.lastIngestDate || null, kn.data.lastIngestKind || null,
+        kn.data.lastIngestTitle || null] : null]
+    : null;
+
   const editMark = state.briefEdit
     ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null,
       // Preview and the unsaved-draft bar BOTH change what is on screen and
@@ -1361,6 +1467,7 @@ function screenSignature() {
     fndActionMark,
     fndEditMark,
     fndInitMark,
+    knowledgeMark,
     editMark,
     // The DOMAIN rides in each row, because the rail groups by it: two
     // projects with the same name in two domains are two different rows, and
@@ -1900,6 +2007,13 @@ async function selectProject(domain, project, token, opts = {}) {
     // sibling, so a write landing mid-fetch is reported rather than missed.
     state.scopesFetchedAt = state.detailFetchedAt;
   }
+  // ── STEP ③'s FIGURES, ASKED FOR BEFORE THE FIRST PAINT (v3.62.0) ─────
+  // Deliberately NOT awaited, and deliberately BEFORE the render: an async
+  // function runs synchronously up to its first await, and `loadKnowledge`'s
+  // cache-hit arm has none — so moving between two projects of one domain
+  // paints step ③ filled on the frame the click lands, and only a genuine
+  // miss costs a second paint.
+  loadKnowledge(domain, token).catch((err) => reportAsyncMountFailure(token, err));
   render(token);
 
   // A user-initiated selection is the cheapest honest moment to re-ask the
@@ -2140,20 +2254,41 @@ async function loadScope(scope, machine, token, opts = {}) {
  *
  *   · the breadcrumb's `shared mirror` badge — `d.readonly`, a property of the
  *     DOMAIN, identical for every pair in a project;
- *   · block ①'s three parts, `renderSaveStatus` + `renderStaleNotice` +
+ *   · step ②'s NOTICE stack, `renderSaveStatus` + `renderStaleNotice` +
  *     `renderUnlistedNote` — PATCHED, as the one expression `renderProject`
- *     itself composes, so the two cannot drift;
+ *     itself composes, so the two cannot drift. It was block ①'s body until
+ *     v3.62.0 and is step ②'s `noticeHtml` now; the WRAPPER kept its class
+ *     (`.mem-status-stack`) precisely so this selector survived the move;
  *   · `wsShownCount` — GUARDED: if the new pair would change how many rows are
  *     painted, this refuses and a full render happens instead;
  *   · the work-stream rows — PATCHED through the same `wsRowHtml` the painter
  *     and the "Show more" append both use;
  *   · the count line — PATCHED, rebuilt whole rather than edited, for the
  *     reason `showMoreWorkStreams` records;
- *   · block ⑤'s journal — PATCHED, and its PRESENCE is guarded: a pair with no
- *     journal at all removes the block, which is a layout change this cannot
- *     make in place;
- *   · block ③ the standing brief, and block ②'s lede, ⓘ and empty card — all
- *     computed from `read` (the project index) alone, which does not move here.
+ *   · the journal fold — PATCHED, and its PRESENCE is guarded: a pair with no
+ *     journal at all removes the fold, which is a layout change this cannot
+ *     make in place. It is a fold inside step ② since v3.62.0, so the selector
+ *     is `.settings-block-context-state [data-mem-fold="journal"]`;
+ *   · the standing brief, and step ②'s lede, ⓘ and empty card — all computed
+ *     from `read` (the project index) alone, which does not move here;
+ *   · THE STRIP — proven not to move rather than patched. Cell ① reads the
+ *     foundations index, cell ③ reads the domain's stats, and cell ② reads the
+ *     NEWEST pair in the project. Opening a different row changes which pair is
+ *     OPEN and never which is newest, so no cell of the strip can move on a row
+ *     press. That is the whole reason the strip took the newest pair rather
+ *     than the open one;
+ *   · the work-stream fold's SUMMARY — proven not to move for the same reason:
+ *     its headline is `projectHeadline` (the newest pair's) and its two counts
+ *     are the store's uncapped totals.
+ *
+ * ── IT RETURNS WHY, BECAUSE THE FAILURE IS SILENT (§6.6) ───────────────
+ * Every bail is `render(token); return;` — the page stays CORRECT and the
+ * measured win (2 repaints → 0 on a row press) is quietly gone, with nothing
+ * on screen to say so. A returned reason is what lets an offline suite assert
+ * the patch path was TAKEN rather than merely that the DOM ended up right.
+ * Callers ignore it; it exists to be observable.
+ *
+ * @returns {'patched'|string} 'patched', or 'fell-back:<precondition>'.
  *
  * ANY precondition that does not hold falls through to ONE full render, which
  * is still half what the shipped code did. A partial patch is never left on
@@ -2165,35 +2300,51 @@ async function loadScope(scope, machine, token, opts = {}) {
  * repaint it owed.
  */
 function patchOpenPair(token) {
-  if (!isCurrentMount(token)) return;
+  if (!isCurrentMount(token)) return 'fell-back:unmounted';
   if (typeof document === 'undefined'
     || typeof document.getElementById !== 'function'
     || typeof document.createElement !== 'function') {
     render(token);
-    return;
+    return 'fell-back:no-dom';
   }
   const pr = state.projectRead;
   const d = state.detail;
   const tbody = document.getElementById('mem-ws-body');
   const stack = document.querySelector('.mem-status-stack');
   const scopes = (pr && Array.isArray(pr.scopes)) ? pr.scopes : null;
-  if (!tbody || !stack || !scopes || !scopes.length) { render(token); return; }
+  if (!tbody || !scopes || !scopes.length) { render(token); return 'fell-back:no-table'; }
 
   const ordered = workStreamOrder(scopes);
   const shown = wsShownCount(ordered, d, state.wsWindow);
   // The window would have to GROW (or shrink) to hold the new pair. That is a
   // structural change to the table, its footer and its count line together —
   // one full render says it once instead of three patches agreeing.
-  if (shown !== tbody.children.length) { render(token); return; }
+  if (shown !== tbody.children.length) { render(token); return 'fell-back:window'; }
 
   const statusHtml = renderSaveStatus(pr, d) + renderStaleNotice() + renderUnlistedNote(pr, d);
-  if (!statusHtml) { render(token); return; }
+  // PRESENCE, not truthiness (v3.62.0). The old form bailed whenever the new
+  // markup was empty, which was right while the standing-brief line made that
+  // stack unconditional — it never was empty. Deleting that line made an empty
+  // stack reachable, and the stack is now a `noticeHtml` that APPEARS and
+  // DISAPPEARS with its content, so the honest question is the same one the
+  // journal half asks: does what we are about to write and what is on screen
+  // agree about existing at all. Adding or removing the notice slot is a
+  // layout change this cannot make in place.
+  if (!!statusHtml !== !!stack) { render(token); return 'fell-back:status-presence'; }
 
   const journalHtml = renderJournal();
-  const journalBody = document.querySelector('.settings-block-memory-journal .settings-block-body');
-  // PRESENCE, not content: block ⑤ appears and disappears with the journal,
-  // and neither adding nor removing a whole block is an in-place edit.
-  if (!!journalHtml !== !!journalBody) { render(token); return; }
+  // ── THE JOURNAL IS A FOLD INSIDE STEP ② NOW (v3.62.0, §6.6) ───────────
+  // It was `.settings-block-memory-journal .settings-block-body` — a block
+  // that no longer exists. A selector that stops matching does not throw and
+  // does not red a suite: it bails to `render(token)` SILENTLY, leaving the
+  // page correct and v3.57.0's measured win quietly gone. Scoped to the step
+  // rather than to the document so it cannot match a fold of the same name
+  // somewhere else on the page.
+  const liveFold = document.querySelector(
+    '.settings-block-context-state [data-mem-fold="journal"]');
+  // PRESENCE, not content: the fold appears and disappears with the journal,
+  // and neither adding nor removing it is an in-place edit.
+  if (!!journalHtml !== !!liveFold) { render(token); return 'fell-back:journal-presence'; }
 
   // ── THE FOLD ELEMENT ITSELF MUST SURVIVE ───────────────────────────────
   // `wire` binds `toggle` on the `<details>`, and that listener is the only
@@ -2207,13 +2358,11 @@ function patchOpenPair(token) {
   // fold is a reason to abandon the patch and the abandonment must happen
   // before anything has been written.
   let nextFold = null;
-  const liveFold = journalBody ? journalBody.querySelector('[data-mem-fold="journal"]') : null;
   if (journalHtml) {
-    if (!liveFold) { render(token); return; }
     const parsed = document.createElement('div');
     parsed.innerHTML = journalHtml;
     nextFold = parsed.querySelector('[data-mem-fold="journal"]');
-    if (!nextFold) { render(token); return; }
+    if (!nextFold) { render(token); return 'fell-back:journal-parse'; }
   }
 
   // ── Every check has passed; write. ────────────────────────────────────
@@ -2226,7 +2375,7 @@ function patchOpenPair(token) {
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
 
-  stack.innerHTML = statusHtml;
+  if (stack) stack.innerHTML = statusHtml;
 
   const count = document.getElementById('mem-ws-count');
   if (count) count.outerHTML = workStreamCounts(pr, scopes.length, shown);
@@ -2251,6 +2400,7 @@ function patchOpenPair(token) {
   }
 
   renderedSignature = screenSignature();
+  return 'patched';
 }
 
 /** One fetch shape for both reads. Never throws; returns {data, error}. */
@@ -2690,6 +2840,16 @@ function renderSidebar(token) {
       // foundation removed for `.btn-xs`. `.mem-refresh` survives for the hit
       // target and the flex behaviour only.
       '<button type="button" class="btn btn-ghost btn-xs mem-refresh" id="mem-refresh">Refresh</button>' +
+      // ── A POINTER, NOT A SECOND CREATE PATH (D-J, P1-11) ─────────────
+      // Domains stays the ONE place a project is created: one form, one
+      // POST, one set of refusals to keep in step. What this screen owed the
+      // user is the pointer — the rail groups by domain and this list is
+      // where somebody notices a project is missing — so the control carries
+      // the domain it was pressed in, through the shell's `requestDomain`,
+      // and Domains lands on that domain rather than on whichever one it
+      // last had. `btn-ghost btn-xs`, beside Refresh: it does not act here.
+      '<button type="button" class="btn btn-ghost btn-xs mem-new-project" id="mem-new-project">'
+        + '+ New project</button>' +
     '</div>';
 
   // NO FOOT CARD. The lock glyph and its sentence are the header's info panel
@@ -2985,6 +3145,403 @@ async function copyDraftingAsk(token) {
  * click is not a warning, which is why the stale notice, the unlisted note and
  * every save verdict are in block ①'s BODY and not in its fold.
  */
+// ═════════════════════════════════════════════════════════════════════════
+// THREE NUMBERED STEPS, AND THE NUMERAL IS THE ARGUMENT (v3.62.0, P1-1)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Until this release the page was FIVE unnumbered blocks — Status,
+// Work-streams, Standing brief, Foundations, Session journal — and
+// scripts/test-next-memory-view.js §18i pinned that by name: "a numeral is an
+// argument for SEQUENCE, and these five are readings about one project rather
+// than steps." That was a true description of the page as built, and the page
+// as built was the complaint: five readings in no stated order, with the
+// documents an agent must not act without in position four.
+//
+// The three steps ARE an order, and it is the order a session start reads in:
+//
+//   ①  FOUNDATIONS     what the PROJECT tells an agent   — replaced whole
+//   ②  WORKING STATE   what the last session left        — supersedes
+//   ③  KNOWLEDGE       what the wiki has compounded      — accumulates
+//
+// Step ① leads because a document an agent must not act without is the thing a
+// new project does not have: on a fresh project it is the only step that can
+// do anything, which is the Providers block-1 test verbatim.
+//
+// THE LEDES ARE CONSTANTS because `renderProjectSkeleton` paints the same
+// three blocks while the read is in flight, and the whole point of that frame
+// is that the block chrome does not move between the two paints. Two
+// hand-typed copies is how they would drift; one const cannot.
+const LEDE_CANONICAL = 'Add the documents an agent must not act without.';
+const LEDE_STATE = 'You write the brief; agents write handoffs and the journal.';
+const LEDE_KNOWLEDGE = 'The wiki this project draws on. Open it in Domains.';
+
+/**
+ * THE THREE-CELL STRIP — one reading per layer, above the three steps.
+ *
+ * ── IT REPLACES THE STATUS BLOCK, AND REPLACES IS THE WORD ──────────────
+ * Block ① used to be a section titled "Status" whose lede — "Where this
+ * project stands right now, across every machine" — described the PAGE rather
+ * than a layer of it, and whose body mixed a tier-0 reading, a tier-2 reading,
+ * four tier-2 warnings and a tier-1 line. One block, four layers' worth of
+ * content: it was the "everything mixed together" complaint in one place. Its
+ * readings are here, its notices are on the step each one qualifies, and
+ * nothing was dropped.
+ *
+ * The documented reason it came FIRST is preserved and made cheaper: it
+ * answers "am I saved?", asked by someone with almost no context left, so it
+ * must not sit under two conditional notes and a table. Three cells answer it
+ * in one line instead of a block — and answer it for all three layers rather
+ * than for one.
+ *
+ * ── IT IS NOT A NUMBERED BLOCK, BECAUSE IT IS NOT A STEP ────────────────
+ * It is an instrument about the page. It sits between the breadcrumb and step
+ * ① as a `.mem-section`, so `.mem-section + .settings-job-block` already
+ * spaces it and the page has exactly one unnumbered element above the steps.
+ *
+ * ── THE DOT PAINTS A COMPARISON, AND ONLY WHERE ONE WAS MADE ────────────
+ * `markHtml` on the shared readout (v3.62.0's one kit change) puts the app's
+ * freshness dot inside `.tx-readout-value`. The dot carries NO reading on its
+ * own — it is aria-hidden and the word beside it is the reading — and no tier
+ * is ever painted as a colour without its word. An age nobody could take is
+ * the dashed unknown ring and the words that say so, NEVER age zero.
+ *
+ * A curator-owned document set takes no dot at all, exactly as its row in the
+ * table does: there is no upstream to be fresh against, and a grey dot beside
+ * "written" reads as a stale one at a glance.
+ *
+ * `read` is null while the project read is in flight. Cell ① is then OMITTED
+ * rather than guessed — "no reading, no instrument" is the readout kit's own
+ * rule, and "not set up yet" is a claim that frame cannot make.
+ */
+function renderLayerStrip(read) {
+  const cells = [];
+
+  // ── CELL ① — FOUNDATIONS ──────────────────────────────────────────────
+  if (read) {
+    const facts = foundationsFacts(read);
+    let value = null;
+    let tier = null;
+    if (facts.manifestError) { value = 'manifest unreadable'; tier = 'unknown'; } else if (!facts.present) { value = 'not set up yet'; tier = 'unknown'; } else if (!facts.count) { value = 'no documents yet'; tier = 'unknown'; } else {
+      value = facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
+        + ' · ' + foundationsWord(facts);
+      // The same three-way mapping `fndRowHtml` uses, taken over the SET: a
+      // stale copy is the thing to act on, a checkout that is not here is a
+      // reading nobody could take, and everything else compared clean. A set
+      // with no comparison in it at all (curator-owned) gets no mark.
+      tier = facts.stale ? 'week'
+        : facts.unreachable ? 'unknown'
+          : facts.fresh ? 'recent' : null;
+    }
+    // OPTION OBJECTS, not rendered strings: `renderReadoutGroup` maps
+    // `renderReadout` over what it is given, and a string reaching that
+    // function is dropped (it is not an object) — an empty strip, silently,
+    // with nothing on screen to say a cell was lost. Found by §14's branch
+    // battery the first time it ran.
+    cells.push({
+      label: 'FOUNDATIONS',
+      value,
+      markHtml: tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '',
+    });
+  }
+
+  // ── CELL ② — WORKING STATE ────────────────────────────────────────────
+  // The NEWEST pair in the project, not the open one: this is the project's
+  // answer, and the table inside step ② gives every row its own. Falling back
+  // to the index row covers the frame in which `projectRead` has not landed.
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const newest = newestPair(scopes);
+  const indexRow = (state.projects || []).find(
+    (p) => p && p.domain === state.activeDomain && p.project === state.activeProject) || null;
+  const savedEff = effectiveSave(newest || indexRow || {});
+  const savedAge = formatAge(savedEff.seconds);
+  cells.push({
+    label: 'WORKING STATE',
+    value: savedAge ? 'saved ' + savedAge : 'nothing saved yet',
+    markHtml: '<span class="fresh-dot fresh-'
+      + (savedAge ? freshnessTier(savedEff.seconds) : 'unknown') + '" aria-hidden="true"></span>',
+  });
+
+  // ── CELL ③ — KNOWLEDGE ────────────────────────────────────────────────
+  // Omitted until the one request lands. A cell reading "—" while a fetch is
+  // in flight is an instrument claiming a reading it does not have; step ③
+  // below carries the loading and the error, where there is room to say why.
+  const k = state.knowledge && state.knowledge.domain === state.activeDomain
+    && state.knowledge.data ? state.knowledge.data : null;
+  if (k) {
+    const pages = Number.isInteger(k.pageCount) ? k.pageCount : 0;
+    const day = formatDayAge(k.lastIngestDate);
+    cells.push({
+      label: 'KNOWLEDGE',
+      value: pages.toLocaleString('en-US') + ' page' + (pages === 1 ? '' : 's')
+        + ' · ' + (day || 'nothing ingested yet'),
+      // The CALENDAR-DAY ladder, because `lastIngestDate` is a `YYYY-MM-DD`
+      // heading with no time of day in it. A null date resolves to the dashed
+      // unknown ring through `dayFreshnessTier`'s own null arm.
+      markHtml: freshnessDotHtml(k.lastIngestDate),
+    });
+  }
+
+  const group = renderReadoutGroup(cells.filter(Boolean));
+  if (!group) return '';
+  // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
+  // It explains every age on this page — the two clocks, and what "last
+  // saved" does not claim — so it sits on the thing that shows them all. The
+  // words are the deleted Status block's own, moved rather than rewritten.
+  const info = renderInfoMark('mem-layers-info', 'About the readings on this page',
+    '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
+    + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
+    + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
+    + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
+    + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
+    + 'than in a tooltip.</p>'
+    + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
+    + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
+    + 'with you.</p>'
+    + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
+    + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
+    + 'ring and the words beside it, never a zero.</p>'
+    + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+    { html: true });
+  // A WRAPPER OF THIS VIEW'S OWN around the kit's group, rather than a rule on
+  // `.tx-readout-group`: shared/text.css owns the `tx-` prefix outright and
+  // scripts/test-next-memory-ingest-text.js fails any `tx-` selector declared
+  // in this file. The wrapper class is how a view asks for flex behaviour
+  // around a kit component without naming it — the same call
+  // `.mem-fnd-init-wrap` records for a gap.
+  return '<div class="mem-layers mem-section">'
+    + '<div class="mem-layers-cells">' + group + '</div>'
+    + '<div class="mem-layers-info">' + info.btn + info.panel + '</div></div>';
+}
+
+/**
+ * THE HEADLINE THE NEWEST SAVE CARRIED — one derivation, two readers.
+ *
+ * It was the first line of the Status block ("Working on: …") and it is now
+ * the leading clause of the work-stream fold's summary, which is where the row
+ * that wrote it lives. THE PROJECT'S ANSWER, not the open row's: the fold is
+ * about every work-stream, and each row in the table carries its own.
+ *
+ * Falls back to the index row, which covers the frame before `projectRead` has
+ * landed — the skeleton paints this summary too.
+ */
+function projectHeadline(read) {
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const newest = newestPair(scopes);
+  const indexRow = (state.projects || []).find(
+    (p) => p && p.domain === state.activeDomain && p.project === state.activeProject) || null;
+  return (newest && newest.headline) || (indexRow && indexRow.headline) || null;
+}
+
+/**
+ * THE WORK-STREAM TABLE, IN A FOLD OF ITS OWN (v3.62.0, P1-6).
+ *
+ * ── WHY IT FOLDS NOW, WHEN IT DID NOT ─────────────────────────────────
+ * It is the one long list on this page that could not be put away:
+ * `WS_STEP_ALL_MAX` is 20 rows, and v3.58.0's measurement — the page
+ * 3,241 → 1,278px once the brief and the journal became closed folds — is the
+ * whole argument, applied to the section that release missed.
+ *
+ * ── THE SUMMARY CARRIES THE DECISION TO OPEN ──────────────────────────
+ * `Work-streams · <headline> · 3 work-streams · 5 saved copies`. The headline
+ * is what the Status block's "Working on" line carried, and the two counts are
+ * `workStreamCounts`' own two facts. It names ITSELF rather than restating the
+ * step above it — the step is "Working state", the fold is the work-streams —
+ * which is the v3.50.0 "a section that names itself twice" rule the journal's
+ * summary already followed and its two siblings did not.
+ *
+ * ── THE MISSING THING IS STILL MISSING WHERE YOU LOOKED FOR IT ────────
+ * A project with nothing saved gets the FLAT card (no chevron), exactly as
+ * `renderBrief` and `renderFoundations` do in their empty states: hiding the
+ * sentence that explains what is missing behind a chevron is v3.17.1 read
+ * backwards.
+ */
+function renderWorkStreamsFold(read, d) {
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const unlisted = unlistedCount(read);
+  const hasBrief = !!(read && read.brief && read.brief.present);
+  if (!scopes.length) {
+    return '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">'
+      + (hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted))
+      + '</div></div>';
+  }
+  const shown = wsShownCount(workStreamOrder(scopes), d, state.wsWindow);
+  const headline = projectHeadline(read);
+  const streams = read && Number.isInteger(read.distinctScopeCount)
+    ? read.distinctScopeCount : null;
+  const pairs = read && Number.isInteger(read.savedCopies) ? read.savedCopies : scopes.length;
+  const meta = [
+    headline || null,
+    streams === null ? null : streams + ' work-stream' + (streams === 1 ? '' : 's'),
+    pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'),
+  ].filter(Boolean).join(' · ');
+  const open = (state.openFolds && state.openFolds.streams) ? ' open' : '';
+  return (
+    '<details class="mem-fold" data-mem-fold="streams"' + open + '>'
+      + '<summary class="mem-fold-summary" id="mem-fold-streams">' + icon('chevronRight', 14)
+        + '<span>Work-streams</span>'
+        + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
+      + '</summary>'
+      + '<div class="mem-fold-body">'
+        + renderWorkStreams(scopes, d, state.wsWindow)
+        + workStreamCounts(read, scopes.length, shown)
+      + '</div>'
+    + '</details>'
+  );
+}
+
+/**
+ * STEP ③ — THE WIKI THIS PROJECT DRAWS ON, IN FIVE FIGURES AND TWO DOORS.
+ *
+ * ── IT IS A SUMMARY AND A DOOR, AND NOTHING ELSE (P1-8) ────────────────
+ * No page list, no health report, no chips. The page list belongs to Domains
+ * and is three thousand rows on a real domain; the health scan is 735-800 ms
+ * cold and a view that issues no health request today must not start paying
+ * one to draw a summary. Both doors LEAVE this view.
+ *
+ * ── ONE REQUEST, AND NO LLM ───────────────────────────────────────────
+ * Every figure comes from `GET /api/domains/:domain/stats` — see
+ * `loadKnowledge` for what that costs and for the four surfaces that were
+ * ruled out by name.
+ *
+ * ── THE VERB COMES FROM THE LOG, NEVER FROM THE VIEW'S NAME ───────────
+ * `lastIngestKind` is 'ingest' | 'compile' | null, and a null renders the
+ * neutral "Last write" rather than a guessed "Ingested". The producer states
+ * that a consumer must treat a null as "not known" and never invent a verb
+ * from the date's existence.
+ *
+ * ── NEITHER DOOR IS THE PRIMARY ───────────────────────────────────────
+ * Neither completes a step, so both are `btn-secondary btn-xs`. "Ask this
+ * domain" is `.btn-primary` on Domains only because it is that card's one
+ * commit; here it is one of two ways out.
+ */
+function renderKnowledge() {
+  // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the figures
+  // failed to arrive: a domain's wiki does not stop existing because a stats
+  // read did, and a door withheld for the duration of a failed fetch is a
+  // control that disappears exactly when somebody wants to go and look.
+  const doors =
+    '<div class="mem-k-doors">'
+      + '<button type="button" class="btn btn-secondary btn-xs" id="mem-k-domains">'
+      + 'Open in Domains</button>'
+      + '<button type="button" class="btn btn-secondary btn-xs" id="mem-k-chat">'
+      + 'Ask this domain</button>'
+    + '</div>';
+
+  const k = state.knowledge && state.knowledge.domain === state.activeDomain
+    ? state.knowledge : null;
+  if (!k || (!k.data && !k.error)) {
+    // RESERVE THE HEIGHT, exactly as the project skeleton does one level up:
+    // the figures land in one local request, and a column that empties and
+    // refills is the defect that frame exists to remove.
+    return '<div class="mem-k-wrap" aria-busy="true">'
+      + '<div class="mem-ghost mem-ghost-line"></div></div>' + doors;
+  }
+  if (k.error) {
+    return renderStatus({
+      state: 'danger',
+      title: 'Could not read this domain’s wiki',
+      detail: k.error,
+    }) + doors;
+  }
+
+  const d = k.data;
+  const counts = (d && d.pageCounts) || {};
+  const num = (n) => (Number.isInteger(n) ? n : 0).toLocaleString('en-US');
+  const day = formatDayAge(d.lastIngestDate);
+  const verb = d.lastIngestKind === 'ingest' ? 'Ingested'
+    : d.lastIngestKind === 'compile' ? 'Compiled' : 'Last write';
+  // THE ABSOLUTE DATE, KEPT AND REACHABLE — visually hidden rather than a
+  // `title=`, which is hover-only and therefore invisible to keyboard and to
+  // touch. This view's hover-only ceiling is pinned elsewhere and must not
+  // rise. It rides inside `markHtml`, the readout kit's one trusted slot, so
+  // it lands inside the value element it qualifies rather than beside it;
+  // `.visually-hidden` is absolutely positioned, so it takes no part in the
+  // value's inline-flex gap.
+  const lastMark = freshnessDotHtml(d.lastIngestDate)
+    + (d.lastIngestDate
+      ? '<span class="visually-hidden">(' + escapeHtml(String(d.lastIngestDate)) + ')</span>'
+      : '');
+  // THE OVERVIEW VOCABULARY, VERBATIM — the same five words the Domains
+  // screen's own tiles use, so the two screens name one thing once.
+  const figures = renderReadoutGroup([
+    { label: 'PAGES', value: num(d.pageCount) },
+    { label: 'ENTITIES', value: num(counts.entities) },
+    { label: 'CONCEPTS', value: num(counts.concepts) },
+    { label: 'SUMMARIES', value: num(counts.summaries) },
+    {
+      label: 'LAST INGEST',
+      value: day || 'nothing ingested yet',
+      markHtml: lastMark,
+      provenance: d.lastIngestDate
+        ? [verb, d.lastIngestTitle || null].filter(Boolean).join(' · ')
+        : undefined,
+    },
+  ]);
+  return '<div class="mem-k-wrap">' + figures + '</div>' + doors;
+}
+
+/**
+ * THE FIVE FIGURES, FROM ONE REQUEST (P1-8).
+ *
+ * ── WHAT IT COSTS, MEASURED AT THE PRODUCER ───────────────────────────
+ * `GET /api/domains/:domain/stats` is one `CLAUDE.md` read, one dirent-only
+ * recursive walk of `wiki/` (`countWikiPages` reads no file's CONTENT), one
+ * `readdir` of `conversations/`, and one `stat` of `log.md` that becomes a
+ * `readFile` only when `mtimeNs:size` changed. `pageCount === entities +
+ * concepts + summaries + other` is an invariant the producer states, so the
+ * five figures cannot disagree with each other.
+ *
+ * ── AND WHAT WAS RULED OUT, BY NAME ───────────────────────────────────
+ *   · `GET /api/wiki/:domain` — reads EVERY page's full content; ~14 MB on
+ *     the real `articles` domain.
+ *   · `GET /api/wiki/:domain/list` — cheap, but a 3,300-entry ~300 KB payload
+ *     whose only use here would be to recount what `pageCounts` carries.
+ *   · `GET /api/health/:domain` — 735-800 ms cold. A view that issues no
+ *     health request must not start paying a cold scan to draw a summary.
+ *   · every `…/ai-suggest`, `…/semantic-dupes/scan`, `…/broken-links/plan`,
+ *     `…/orphans/plan` — LLM calls. This step never makes one.
+ *
+ * ── CACHED PER DOMAIN, AND STAMPED ────────────────────────────────────
+ * Switching between two projects of one domain must not re-fetch; switching
+ * domain must not paint the previous domain's figures. The Map is keyed by
+ * domain and every write checks the stamp, the same discipline the project
+ * read cache already follows. An in-flight domain is recorded so two project
+ * switches in the same domain do not issue two requests.
+ *
+ * NEVER THROWS, and a failure is a DISCLOSURE rather than a blank: the step
+ * says it could not read, and both doors stay offered.
+ */
+async function loadKnowledge(domain, token) {
+  if (!domain) return;
+  const hit = knowledgeCache.get(domain);
+  if (hit) {
+    state.knowledge = { domain, data: hit, error: null };
+    return;
+  }
+  if (knowledgeInFlight === domain) return;
+  knowledgeInFlight = domain;
+  state.knowledge = { domain, data: null, error: null };
+  let next;
+  try {
+    const res = await fetch('/api/domains/' + encodeURIComponent(domain) + '/stats');
+    const data = await res.json();
+    next = res.ok
+      ? { domain, data, error: null }
+      : { domain, data: null, error: data && data.error ? data.error : 'HTTP ' + res.status };
+  } catch (err) {
+    next = { domain, data: null, error: err.message };
+  }
+  if (knowledgeInFlight === domain) knowledgeInFlight = null;
+  if (!isCurrentMount(token)) return;
+  // STAMPED AT THE POINT OF USE. This view switches domain without
+  // unmounting, so a reply for a domain the user has already left must never
+  // be written into state at all.
+  if (state.activeDomain !== domain) return;
+  if (next.data) knowledgeCache.set(domain, next.data);
+  state.knowledge = next;
+  render(token);
+}
+
 function renderProject() {
   const read = state.projectRead;
   const d = state.detail;
@@ -3032,150 +3589,37 @@ function renderProject() {
   }
 
   const scopes = (read && read.scopes) || [];
-  const hasBrief = !!(read && read.brief && read.brief.present);
-  const unlisted = unlistedCount(read);
+  const fndFacts = foundationsFacts(read);
 
-  // ── BLOCK ① — STATUS ─────────────────────────────────────────────────────
-  // FIRST, ABOVE EVERYTHING IT COULD BE QUALIFIED BY, and that placement is
-  // the feature. It answers "am I saved?" — asked by someone with almost no
-  // context left — so it must not sit under two conditional notes and a table
-  // on the days those appear.
+  // ── STEP ① — FOUNDATIONS ─────────────────────────────────────────────────
   //
-  // The stale notice renders directly beneath the reading, so when a save has
-  // landed since the page loaded the figure and the offer to reload read as one
-  // block; the unlisted note sits with them because it qualifies every claim
-  // the page is about to make. NONE of the three is inside the fold.
-  const saveStatus = renderSaveStatus(read, d);
-  const staleNote = renderStaleNotice();
-  const unlistedNote = renderUnlistedNote(read, d);
-  // TIER 0's ONE LINE, and it is a READING rather than a warning — so it goes
-  // with the save reading above the two notes, which are there to qualify
-  // everything below them. Silent on a project with no foundations: see
-  // renderFoundationsStatus.
-  const statusBody = saveStatus + renderFoundationsStatus(read) + staleNote + unlistedNote;
-  const statusBlock = statusBody
-    ? renderBlock({
-      num: null,
-      id: 'memory-status',
-      title: 'Status',
-      ledeHtml: 'Where this project stands right now, across every machine.',
-      infoText:
-        '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
-        + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
-        + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
-        + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
-        + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
-        + 'than in a tooltip.</p>'
-        + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
-        + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
-        + 'with you.</p>'
-        + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
-      infoHtml: true,
-      bodyHtml: '<div class="mem-status-stack">' + statusBody + '</div>',
-    })
-    : '';
-
-  // ── BLOCK ② — WORK-STREAMS ───────────────────────────────────────────────
-  //
-  // ── IT ABSORBED BLOCK ③ ────────────────────────────────────────────────
-  // "Current handoff" was its own block, carrying the whole document when
-  // there was one and the "nothing saved yet" card when there was not. The
-  // document opens in the reader now (see handoffReaderContent), and the two
-  // empty cards moved HERE rather than disappearing with it — the missing
-  // thing has to be missing in the place you looked for it (v3.17.1), and the
-  // place you look for a work-stream is the block called Work-streams. A
-  // project with nothing saved therefore still gets this block, with a card
-  // instead of a table and a lede that says which of the two it is.
-  const wsEmpty = hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted);
-  const wsShown = scopes.length ? wsShownCount(workStreamOrder(scopes), d, state.wsWindow) : 0;
-  const streamsBlock = renderBlock({
-    num: null,
-    id: 'memory-streams',
-    title: 'Work-streams',
-    ledeHtml: scopes.length
-      ? 'Every work-stream of this project, newest first. Open one to read its handoff.'
-      : 'One row per work-stream, once an agent has saved one.',
-    infoText:
-      '<p>A <b>work-stream</b> is one thread of work — the files call it a <i>scope</i>, and the slug is '
-      + 'still shown as one. Parallel threads get their own, so they never overwrite each other.</p>'
-      + '<p>Press a row to read that work-stream’s <b>handoff</b> — what the last session left for the '
-      + 'next one — in the reader. It is <b>overwritten</b> on every save rather than appended to, which '
-      + 'is the whole point: state has to be able to say “no longer true”, and a store that only '
-      + 'accumulates cannot. Your agents write it through the <span class="mono">my-curator</span> MCP '
-      + 'tools and this screen never does; it is plain markdown on disk, so a text editor works too.</p>'
-      + '<p>Each machine writes to its OWN folder inside a work-stream, which is what makes two computers '
-      + 'safe over sync: no two of them ever touch one file. So one work-stream can appear here as several '
-      + 'rows — one saved copy per machine — and the count below the table says both numbers.</p>'
-      + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one machine '
-      + 'can, and they overwrite each other, because the folder has no harness segment. Block ① names that '
-      + 'explicitly when the journal shows it, and the remedy is to give each tool its own work-stream.</p>'
-      + '<p>The five most recently saved are shown; the row under the table shows the rest. Only the most '
-      + 'recently saved copies are LISTED at all when a project has a great many, and the count line says '
-      + 'so and gives the real total.</p>'
-      + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
-    infoHtml: true,
-    bodyHtml: scopes.length
-      ? renderWorkStreams(scopes, d, state.wsWindow) + workStreamCounts(read, scopes.length, wsShown)
-      : wsEmpty,
-  });
-
-  // ── BLOCK ③ — STANDING BRIEF ─────────────────────────────────────────────
-  //
-  // ── THE LEDE LOST ITS DEFINITION (v3.58.0) ──────────────────────────────
-  // It read "Your goals, firm decisions and working model — read by every
-  // agent, written by you.": fifteen words, of which the first eight DEFINE
-  // what a standing brief is. A definition is what the ⓘ is for, and this
-  // block's ⓘ already carries that exact sentence one paragraph down, so the
-  // lede was paying eight words to say something twice. What is left is the
-  // half that is an instruction — who reads it, who owns it — at seven words.
-  //
-  // IT MUST STAY BYTE-IDENTICAL to the skeleton's copy in
-  // renderProjectSkeleton: the skeleton exists so the block chrome does not
-  // move between the two paints, and a lede that changed on arrival would be
-  // the jump it was built to remove. Pinned by executing BOTH renderers and
-  // comparing the emitted ledes (test-next-memory-view.js §20).
-  //
-  // AND IT MUST NOT REPEAT THE FOLD'S SUMMARY, which now carries the first
-  // glance: "The brief · updated 23 hr ago · 1,309 words" is the age and the
-  // size, the lede is ownership. No word is in both.
-  const briefBlock = renderBlock({
-    num: null,
-    id: 'memory-brief',
-    title: 'Standing brief',
-    ledeHtml: 'Read by every agent, written by you.',
-    infoText:
-      '<p>This is the one tier a human owns. Agents READ it on every call and, unless you ask one to, '
-      + 'never write it; you edit it here with the pencil, or open '
-      + '<span class="mono">state/&lt;project&gt;/project.md</span> in any text editor.</p>'
-      + '<p>Saving <b>replaces the whole document</b> — it is not merged with what was there — so send the '
-      + 'complete brief rather than an addition. That is the same rule a handoff save follows, and for the '
-      + 'same reason.</p>'
-      + '<p>It is the part that rarely changes: the goal, the firm decisions not to re-litigate, the working '
-      + 'model, and pointers to where the depth lives. An OLD brief is not a stale one, which is why it '
-      + 'carries a date and deliberately no freshness mark.</p>'
-      + '<p>' + docsLinkHtml('memory.standing-brief', 'Read more in the guide') + '</p>',
-    infoHtml: true,
-    bodyHtml: renderBrief(read),
-  });
-
-  // ── BLOCK ④ — FOUNDATIONS ────────────────────────────────────────────────
-  //
-  // AFTER THE BRIEF, BEFORE THE JOURNAL, and the position is the argument: the
-  // brief is what YOU tell an agent, the foundations are what the PROJECT tells
-  // it, and the journal is history. Reading top to bottom is then the same
-  // order a session start reads in.
+  // FIRST, and the position is the argument — the argument this block has been
+  // making from position four since v3.59.0: the brief is what YOU tell an
+  // agent, the foundations are what the PROJECT tells it, and the journal is
+  // history. Reading top to bottom is then the same order a session start
+  // reads in. The step order makes that true rather than aspirational.
   //
   // THE LEDE IS AN INSTRUCTION, NOT A DEFINITION (the v3.58.0 rule): what a
   // canonical document IS lives in the ⓘ, along with the two ways one arrives.
-  const foundationsBlock = renderBlock({
-    num: null,
-    id: 'memory-foundations',
+  // The "Start here." prefix drops the moment one document exists and the tail
+  // is BYTE-IDENTICAL either way — Providers block 1's own rule, so the
+  // sentence a returning user reads is the sentence they read last time with
+  // one clause gone, rather than a different sentence.
+  //
+  // THE FOUR NEVER-FOLD NOTICES ARE IN `noticeHtml` (P1-7), which puts them
+  // above the heading inside the block's wrapper rather than inside the body's
+  // 32px prose indent. That slot is what `shared/block.js` built them for, and
+  // no block on this page had ever passed one.
+  const canonicalBlock = renderBlock({
+    num: 1,
+    id: 'context-canonical',
     title: 'Foundations',
-    ledeHtml: 'Read first by every agent, in one call.',
+    ledeHtml: (fndFacts.count ? '' : '<b>Start here.</b> ') + LEDE_CANONICAL,
     infoText:
       '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
-      + 'bytes, so an agent reads what you would read.</p>'
+      + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
+      + 'write and never merged, which is what makes it quotable.</p>'
       + '<p>Until now those lived only inside a code repository, which meant an agent without a '
       + 'checkout could not see them, and an ingested copy did not travel because source files are '
       + 'not synced. These do travel, beside the brief and the handoffs.</p>'
@@ -3203,34 +3647,111 @@ function renderProject() {
       + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + ' · '
       + docsLinkHtml('memory.foundations-edit', 'Starting a project') + '</p>',
     infoHtml: true,
+    noticeHtml: foundationsNotices(read),
     bodyHtml: renderFoundations(read),
   });
 
-  // ── BLOCK ⑤ — SESSION JOURNAL ────────────────────────────────────────────
-  const journalBody = renderJournal();
-  const journalBlock = journalBody
-    ? renderBlock({
-      num: null,
-      id: 'memory-journal',
-      title: 'Session journal',
-      ledeHtml: 'One line per save, newest first. History, not the present.',
-      infoText:
-        '<p>The journal is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN SUPERSEDED — a '
-        + 'blocker named in an old headline can have been fixed three saves ago. The current handoff above '
-        + 'is what is true now.</p>'
-        + '<p>Each line carries when, which harness, which model and the save’s own headline, plus any '
-        + 'NOTES the store recorded about that save. Most notes are ordinary normalisation — a value filled '
-        + 'in and disclosed — and the line says so in words; a note about content actually lost is the only '
-        + 'one marked.</p>'
-        + '<p>It survives things the handoff cannot: two agent tools writing one work-stream overwrite each '
-        + 'other’s handoff, and both trails are still here.</p>'
-        + '<p>' + docsLinkHtml('memory.session-journal', 'Read more in the guide') + '</p>',
-      infoHtml: true,
-      bodyHtml: journalBody,
-    })
-    : '';
+  // ── STEP ② — WORKING STATE ───────────────────────────────────────────────
+  //
+  // THREE FOLDS, IN OWNERSHIP-AND-RECENCY ORDER: what the last session left,
+  // then what you told it, then the history. All three CLOSED by default and
+  // remembered per fold — v3.58.0's measurement (3,241 → 1,278px) is the
+  // reason, and re-opening any of them by default re-opens that defect.
+  //
+  // THE STATUS BLOCK'S NOTICES LIVE IN `noticeHtml`, unfolded, above the
+  // heading. That is the whole of the deleted block's second half — the save
+  // reading for the pair you are looking at, the two-harnesses collision, the
+  // newer-state-elsewhere lines, the stale-write Reload offer and the
+  // unlisted-entries note — and every one of them is a warning, a cost or an
+  // outcome, which v3.16.1 says may never fold.
+  //
+  // WHAT IS NOT HERE any more: the "Working on" line (the strip carries its
+  // age, the work-stream fold's summary carries its words) and the "Standing
+  // brief — updated …" line, which the brief fold's own summary already says.
+  // A figure in a sentence that the card below already shows is the
+  // de-duplication `views/domains.js` performs on the domain header.
+  //
+  // `.mem-status-stack` IS THE SAME WRAPPER under the same class, and that is
+  // deliberate rather than incidental: `patchOpenPair` writes into it by that
+  // selector, so keeping the name keeps v3.57.0's targeted row-press patch
+  // working through the restructure. The expression below is the one
+  // `patchOpenPair` re-composes; the two are compared byte-for-byte by
+  // scripts/test-next-memory-switch.js §8.
+  const statusHtml = renderSaveStatus(read, d) + renderStaleNotice() + renderUnlistedNote(read, d);
+  const stateBlock = renderBlock({
+    num: 2,
+    id: 'context-state',
+    title: 'Working state',
+    ledeHtml: LEDE_STATE,
+    infoText:
+      '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
+      + 'it, which is the whole point: state has to be able to say “no longer true”, and a store '
+      + 'that only accumulates cannot.</p>'
+      + '<p>You own the <b>standing brief</b> — the one tier a human owns. Agents READ it on every '
+      + 'call and, unless you ask one to, never write it; you edit it here with the pencil, or open '
+      + '<span class="mono">state/&lt;project&gt;/project.md</span> in any text editor. Saving '
+      + 'replaces the whole document, so send the complete brief rather than an addition. It is the '
+      + 'part that <b>rarely changes</b>: the goal, the firm decisions not to re-litigate, the '
+      + 'working model, and pointers to where the depth lives — so an OLD brief is not a stale one, '
+      + 'which is why it carries a date and deliberately no freshness mark.</p>'
+      + '<p>Agents own the rest. A <b>work-stream</b> is one thread of work — the files call it a '
+      + '<i>scope</i>, and the slug is still shown as one — and parallel threads get their own, so '
+      + 'they never overwrite each other. Press a row to read that work-stream’s <b>handoff</b>, '
+      + 'what the last session left for the next one. Each machine writes to its OWN folder inside '
+      + 'a work-stream, which is what makes two computers safe over sync: no two of them ever touch '
+      + 'one file. So one work-stream can appear as several rows — one saved copy per machine — and '
+      + 'the count under the table says both numbers.</p>'
+      + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one '
+      + 'machine can, and they overwrite each other, because the folder has no harness segment. '
+      + 'This step says so above the heading when the journal shows it, and the remedy is to give '
+      + 'each tool its own work-stream.</p>'
+      + '<p>The <b>journal</b> is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN '
+      + 'SUPERSEDED — a blocker named in an old headline can have been fixed three saves ago. It '
+      + 'survives what a handoff cannot: two agent tools writing one work-stream overwrite each '
+      + 'other’s handoff, and both trails are still here.</p>'
+      + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
+      + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
+      + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
+    infoHtml: true,
+    noticeHtml: statusHtml ? '<div class="mem-status-stack">' + statusHtml + '</div>' : '',
+    bodyHtml:
+      '<div class="mem-state-stack">'
+        + renderWorkStreamsFold(read, d)
+        + renderBrief(read)
+        + renderJournal()
+      + '</div>',
+  });
 
-  return header + statusBlock + streamsBlock + briefBlock + foundationsBlock + journalBlock;
+  // ── STEP ③ — KNOWLEDGE ───────────────────────────────────────────────────
+  //
+  // THE ONE LAYER THIS PROJECT READS RATHER THAN OWNS. The wiki belongs to the
+  // DOMAIN — every project in the domain draws on the same one — so this step
+  // is a summary and two doors, and both doors leave the view.
+  //
+  // NO DOCS LINK YET, and that is a stated gap rather than an oversight: the
+  // key this panel wants (`memory.knowledge`) lives in shared/docs-links.js,
+  // which this release's shell package owns. A hand-typed URL here would be
+  // the one thing scripts/test-docs-links.js cannot check.
+  const knowledgeBlock = renderBlock({
+    num: 3,
+    id: 'context-knowledge',
+    title: 'Knowledge',
+    ledeHtml: LEDE_KNOWLEDGE,
+    infoText:
+      '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
+      + 'rather than adding a copy beside them — which is the difference between this layer and the '
+      + 'two above it, where a save replaces what was there and a foundation is carried word for '
+      + 'word.</p>'
+      + '<p>Ingest and chat write it; nothing on this page does. It belongs to the <b>domain</b> '
+      + 'rather than to this project, so every project in this domain draws on the same wiki and '
+      + 'these figures move when you ingest, not when an agent saves.</p>'
+      + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
+      + 'model is called to draw them — opening this screen costs nothing.</p>',
+    infoHtml: true,
+    bodyHtml: renderKnowledge(),
+  });
+
+  return header + renderLayerStrip(read) + canonicalBlock + stateBlock + knowledgeBlock;
 }
 
 /**
@@ -3272,19 +3793,6 @@ function renderProjectSkeleton() {
   const row = state.projects.find((p) => p && p.domain === state.activeDomain
     && p.project === state.activeProject) || null;
 
-  // ── BLOCK ① — THE REAL RENDERER, WITH THE HALF OF THE DATA WE HAVE ────
-  //
-  // `renderSaveStatus(null, null)` is not a trick: the function was already
-  // written to fall back to the index row for the "Working on" line, because
-  // `projectRead` legitimately has not landed yet at this exact moment, and
-  // with no project read and no open pair every OTHER line it can emit is
-  // correctly silent — the "Last saved" figure, the save verdict, the
-  // shared-harness warning, the brief's own age. So the skeleton claims
-  // exactly the one fact it holds and invents nothing, through the same code
-  // that will paint the finished block, which is why the two cannot say it
-  // differently.
-  const statusBody = renderSaveStatus(null, null) || '<div class="mem-ghost mem-ghost-line"></div>';
-
   // ONE GHOST PER SAVED COPY, capped at the window the table itself paints, so
   // the reserved height is the height the table will actually take. Never
   // fewer than one: a project in this branch has been selected, and a table
@@ -3296,54 +3804,55 @@ function renderProjectSkeleton() {
   let rows = '';
   for (let i = 0; i < ghostRows; i++) rows += '<div class="mem-ghost mem-ghost-row"></div>';
 
-  // The three blocks are the SAME component, with the same ids, titles and
+  // THE THREE STEPS ARE THE SAME COMPONENT, with the same numerals, ids and
   // ledes as the real ones — so the skeleton and the fill differ only in their
   // bodies and the block chrome does not move at all between the two paints.
-  // The ⓘ folds are deliberately omitted: a help panel a user could open and
-  // have torn away 30ms later is worse than one that arrives with the content.
+  // The ledes are the shared constants rather than second copies, which is why
+  // they cannot drift. The ⓘ folds are deliberately omitted: a help panel a
+  // user could open and have torn away 30ms later is worse than one that
+  // arrives with the content.
+  //
+  // ── THE STRIP PAINTS FOR REAL, WITH THE HALF OF THE DATA WE HAVE ──────
+  // `GET /api/memory` has ALREADY told this view, for every project, when the
+  // last save landed — so `renderLayerStrip(null)` paints cell ② off the index
+  // row rather than a spinner over a fact it is holding in its hand, and cell
+  // ③ too when the domain's figures are already cached. Cell ① is OMITTED: the
+  // index carries nothing at all about foundations, and "not set up yet" is a
+  // claim this frame cannot make. It arrives with the read, which is the one
+  // small growth this frame allows and the honest one.
   return (
+    renderLayerStrip(null) +
     renderBlock({
-      num: null, id: 'memory-status', title: 'Status',
-      ledeHtml: 'Where this project stands right now, across every machine.',
-      bodyHtml: '<div class="mem-status-stack" aria-busy="true">' + statusBody + '</div>',
-    }) +
-    renderBlock({
-      num: null, id: 'memory-streams', title: 'Work-streams',
-      ledeHtml: 'Every work-stream of this project, newest first. Open one to read its handoff.',
-      bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>',
-    }) +
-    // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
-    // brief that does not exist would make the column shrink on arrival, which
-    // is the jump this whole function exists to remove, in the other direction.
-    (row && row.hasBrief
-      ? renderBlock({
-        // BYTE-IDENTICAL to renderProject's, deliberately — see the note there.
-        num: null, id: 'memory-brief', title: 'Standing brief',
-        ledeHtml: 'Read by every agent, written by you.',
-        bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
-          + '<div class="mem-ghost mem-ghost-para"></div></div>',
-      })
-      : '') +
-    // ── TIER 0, RESERVED UNCONDITIONALLY ─────────────────────────────────
-    //
-    // Unlike the brief above it, this block is painted on EVERY project — and
-    // that is not an inconsistency, it is the same rule applied to different
-    // knowledge. `GET /api/memory` carries `hasBrief` per row, so the skeleton
-    // KNOWS whether a brief is coming and reserves accordingly. It carries
-    // nothing at all about foundations, so the honest options are to reserve
-    // the block or to leave the column to jump by its height on arrival. The
-    // block chrome is one line of heading plus one lede either way — a
-    // project with no documents lands on the flat "none yet" card of almost
-    // exactly this height — so reserving it is the small error and omitting it
-    // is the visible one.
-    //
-    // The lede is BYTE-IDENTICAL to renderProject's, which is the whole point
-    // of a skeleton and is pinned by executing both renderers.
-    renderBlock({
-      num: null, id: 'memory-foundations', title: 'Foundations',
-      ledeHtml: 'Read first by every agent, in one call.',
+      num: 1, id: 'context-canonical', title: 'Foundations',
+      ledeHtml: LEDE_CANONICAL,
       bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
         + '<div class="mem-ghost mem-ghost-line"></div></div>',
+    }) +
+    renderBlock({
+      num: 2, id: 'context-state', title: 'Working state',
+      ledeHtml: LEDE_STATE,
+      bodyHtml: '<div class="mem-state-stack">'
+        + '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>'
+        // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
+        // brief that does not exist would make the column shrink on arrival,
+        // which is the jump this whole function exists to remove, in the other
+        // direction. `hasBrief` rides on every index row, so this is knowledge
+        // rather than a guess.
+        + (row && row.hasBrief
+          ? '<div class="mem-ghost-wrap" aria-busy="true">'
+            + '<div class="mem-ghost mem-ghost-para"></div></div>'
+          : '')
+        + '</div>',
+    }) +
+    // ── STEP ③ IS NOT RESERVED, IT IS PAINTED ───────────────────────────
+    // Its figures belong to the DOMAIN, not to the project being read, so on
+    // a switch inside one domain they are already in hand and the step lands
+    // filled on the first frame. `renderKnowledge` reserves its own height
+    // when they are not.
+    renderBlock({
+      num: 3, id: 'context-knowledge', title: 'Knowledge',
+      ledeHtml: LEDE_KNOWLEDGE,
+      bodyHtml: renderKnowledge(),
     })
   );
 }
@@ -3430,7 +3939,6 @@ function renderStaleNotice() {
  */
 function renderSaveStatus(read, d) {
   const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
-  const brief = read && read.brief;
   const doc = d && d.current && d.current.present ? d.current : null;
 
   // ── THE READING SURVIVES A SCOPE SWITCH ──────────────────────────────────
@@ -3453,41 +3961,14 @@ function renderSaveStatus(read, d) {
   const lines = [];
   let primary = '';
 
-  // ── "WORKING ON:" — THE WIDGET'S HEADLINE, IN THE APP ────────────────────
+  // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
   //
-  // The menubar widget leads with it and this screen never showed it at all,
-  // although every read carried it: `scopes[].headline` is the one-line summary
-  // the agent wrote into its own save, and the index row carries the project's.
-  //
-  // THE PROJECT'S ANSWER, NOT THE OPEN ROW'S. This is the top of a block
-  // titled "Status" whose lede says "where this project stands right now", so
-  // it takes the NEWEST pair's headline even when you are reading an older
-  // work-stream — the table below gives every row its own. Falling back to the
-  // index row covers the moment `projectRead` has not landed yet.
-  //
-  // The pip and the age are the newest pair's too, for the same reason and
-  // from the same `effectiveSave`, so the mark, the words and the sentence
-  // cannot name three different saves.
-  const newestForHead = newestPair(scopes);
-  const indexRow = (state.projects || []).find(
-    (p) => p && p.domain === state.activeDomain && p.project === state.activeProject) || null;
-  const headline = (newestForHead && newestForHead.headline)
-    || (indexRow && indexRow.headline) || null;
-  if (headline) {
-    const hEff = effectiveSave(newestForHead || indexRow || {});
-    const hStep = freshnessStep(hEff.seconds);
-    const hAge = formatAge(hEff.seconds);
-    primary +=
-      '<div class="mem-working"' +
-        (hAge && hEff.at ? ' data-mem-age-at="' + escapeHtml(hEff.at) + '"' : '') + '>' +
-        '<span class="mem-save-pip' +
-          (hStep === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + hStep) +
-          '" aria-hidden="true"></span>' +
-        '<span class="mem-working-label">Working on</span>' +
-        '<span class="mem-working-text">' + escapeHtml(headline) + '</span>' +
-        (hAge ? '<span class="mem-age-words mem-working-age">' + escapeHtml(hAge) + '</span>' : '') +
-      '</div>';
-  }
+  // It was the first line here: the newest save's headline, pip and age, under
+  // a block titled "Status". That block is gone. The AGE is the strip's cell ②
+  // and the WORDS are the work-stream fold's summary, where the row that wrote
+  // them lives — `projectHeadline` is the one derivation both read, so the two
+  // cannot name different saves. What is left in this function is the reading
+  // for the pair you are LOOKING AT, and the warnings that qualify it.
 
   if (cur) {
     const eff = effectiveSave(cur);
@@ -3506,10 +3987,12 @@ function renderSaveStatus(read, d) {
     const kind = cur.lastSaveKind || null;
 
     if (age) {
-      // `+=`, NOT `=`. The "Working on" line is written into `primary` above
-      // this branch, and a plain assignment here silently DELETED it — caught
-      // by §18g the first time it ran, which is the whole argument for driving
-      // the rendered output rather than reading the source.
+      // `+=` SURVIVES THE DELETION OF THE LINE ABOVE IT, deliberately. The
+      // "Working on" line used to be written into `primary` here and a plain
+      // assignment silently DELETED it — caught by §18g the first time it ran,
+      // which is the whole argument for driving the rendered output rather
+      // than reading the source. `primary` is written once now; the operator
+      // stays so that re-introducing a leading reading cannot reopen it.
       primary +=
         '<div class="mem-save-main">' +
           '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
@@ -3647,15 +4130,17 @@ function renderSaveStatus(read, d) {
       + '. Pull before you continue, or that work will be waiting there.', true));
   }
 
-  // ── THE STANDING BRIEF — always, and on its own terms ───────────────────
-  if (read) {
-    const briefAge = brief && brief.present
-      ? formatAge(effectiveSave({ savedAt: brief.updatedAt }).seconds) : null;
-    lines.push(saveLine('', 'brief',
-      'Standing brief — ' + (brief && brief.present
-        ? escapeHtml(briefAge || 'updated at an unknown time')
-        : 'not written yet'), true));
-  }
+  // ── THE STANDING-BRIEF LINE IS DELETED (v3.62.0) ────────────────────────
+  //
+  // It read "Standing brief — updated 23 hr ago" / "— not written yet", and
+  // the brief fold's own summary one step down says exactly that, from the
+  // same two fields. A figure in a sentence that the card below already shows
+  // is the de-duplication views/domains.js performs on the domain header: no
+  // figure in the sentence that the cards do not already show. Deleted rather
+  // than moved, because there was nowhere to move it that did not already
+  // carry it.
+  //
+  // `brief` is still read above for nothing else, so it goes with the line.
 
   if (!primary && !lines.length) return '';
   // NO `.mem-section` ANY MORE. This is the body of block ① now, not a
@@ -5276,14 +5761,25 @@ function fndShrinkWarn(e) {
  * warning — and all three are warnings or the results of an action the user
  * just took.
  */
-function renderFoundations(read) {
+/**
+ * THE FOUR THINGS THAT NEVER FOLD, AND NOW SIT WHERE THEY BELONG (P1-7).
+ *
+ * A manifest that will not parse, files in the folder with no manifest entry,
+ * the outcome of a re-copy, and the refusal of an ownership choice. Every one
+ * of them is a warning, an outcome or a refusal, which design-system §3 (from
+ * v3.16.1) says may never fold — and until this release all four were emitted
+ * at the top of the block's BODY, inside its 32px prose indent, because the
+ * slot built for them had never been used by any block on this page.
+ *
+ * They are step ①'s `noticeHtml` now: above the heading, inside the block's
+ * own wrapper, which is what `shared/block.js` documents that slot for. Split
+ * into a function of its own rather than returned as a second value, because
+ * `renderBlock` takes the two through two different arguments and a renderer
+ * that returned a pair would have one caller and one shape.
+ */
+function foundationsNotices(read) {
   const facts = foundationsFacts(read);
-  // A READ-ONLY SHARED BRAIN MIRROR (P1-3). Read exactly where `renderBrief`
-  // reads it, off the same two fields, so the two blocks cannot disagree about
-  // whether this domain may be written to.
   const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
-
-  // ── THE THINGS THAT NEVER FOLD ────────────────────────────────────────
   let notes = '';
   if (facts.manifestError) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
@@ -5331,6 +5827,20 @@ function renderFoundations(read) {
   if (ini && Array.isArray(ini.refused) && ini.refused.length) {
     notes += renderRefusedList(ini.refused);
   }
+  return notes;
+}
+
+function renderFoundations(read) {
+  const facts = foundationsFacts(read);
+  // A READ-ONLY SHARED BRAIN MIRROR (P1-3). Read exactly where `renderBrief`
+  // reads it, off the same two fields, so the two blocks cannot disagree about
+  // whether this domain may be written to.
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
+  // THE REFRESH OUTCOME'S STAMP, read again here because the control row below
+  // needs its `busy` flag. `foundationsNotices` owns the WORDS; this owns the
+  // control's state, and the two read the same stamped object.
+  const fnd = state.fnd && state.fnd.domain === state.activeDomain
+    && state.fnd.project === state.activeProject ? state.fnd : null;
 
   // ── THE CONTROL ROW (P1-4, P1-8, P2-8) ────────────────────────────────
   //
@@ -5392,8 +5902,7 @@ function renderFoundations(read) {
     // so the choice is not the user's to make here. The note takes its place
     // and the summary line still says what is there.
     if (readonly) {
-      return notes +
-        '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
+      return '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
           escapeHtml('A read-only mirror — documents here are copied in, never edited.') +
         '</span></div>' +
         '<div class="mem-fnd-row"><div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
@@ -5409,7 +5918,7 @@ function renderFoundations(read) {
     // question away from the one control that answers it. The pointer
     // belongs to `renderNoProjects()`, where a project genuinely does not
     // exist yet (§8(e)).
-    return notes + renderFoundationsInit(facts);
+    return renderFoundationsInit(facts);
   }
   // ── AND WITHHELD ON AN UNREADABLE MANIFEST (P1-3) ────────────────────
   // An unreadable manifest is a PRESENT manifest: `…/foundations/init`
@@ -5418,8 +5927,7 @@ function renderFoundations(read) {
   // what is withheld here is the chooser, and the summary says
   // "manifest unreadable" rather than a count nothing can stand behind.
   if (facts.manifestError) {
-    return notes +
-      '<div class="mem-fnd-row">' +
+    return '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
           renderDescription('Nothing below the manifest can be trusted, so no choice is '
             + 'offered here. Fix or remove the manifest file and re-open this project.') +
@@ -5432,7 +5940,7 @@ function renderFoundations(read) {
   // choice is withheld (it cannot be made) and what is left is the one action
   // that puts documents in — "Add from repository".
   if (!facts.count && facts.ownership === 'repo' && !readonly) {
-    return notes + renderFoundationsInit(facts);
+    return renderFoundationsInit(facts);
   }
 
   // ── NO DOCUMENTS, NO FOLD ─────────────────────────────────────────────
@@ -5451,8 +5959,7 @@ function renderFoundations(read) {
       ? 'Mirrored from ' + ((facts.repo && facts.repo.root) || 'a folder on this Mac')
         + '. Nothing copied yet.'
       : 'Kept here. No documents yet. Write the first one yourself, or ask an agent to draft them.';
-    return notes +
-      '<div class="mem-fnd-row">' +
+    return '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
           (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
         '</div></div>' +
@@ -5524,8 +6031,7 @@ function renderFoundations(read) {
       '</table></div>' + renderFoundationStop(facts)
       + (adding ? renderFoundationsInit(facts) : '');
   const open = (editing || adding || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
-  return notes +
-    '<div class="mem-fnd-row">' +
+  return '<div class="mem-fnd-row">' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
@@ -5980,30 +6486,24 @@ function renderFoundationEditor(facts) {
   );
 }
 
-/**
- * THE STATUS BLOCK'S ONE LINE ABOUT TIER 0.
- *
- * Block ① answers "where does this project stand", and from this release that
- * question includes whether the documents an agent will read at the start of
- * its next session still match the repository they came from. One line, on the
- * same readout instrument every other figure in that block uses, so the two
- * cannot be told apart by their treatment.
- *
- * SILENT WHEN THERE IS NOTHING TO SAY. A project that has never had a
- * foundation gets no line at all rather than "none yet" — block ⑤ below says
- * that in the place somebody would look for it, and a dash in the status strip
- * is noise on every project in the app that has not adopted the tier.
- */
-function renderFoundationsStatus(read) {
-  const facts = foundationsFacts(read);
-  if (!facts.present && !facts.manifestError) return '';
-  if (!facts.count && !facts.manifestError) return '';
-  const value = facts.manifestError
-    ? 'manifest unreadable'
-    : facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
-      + ' · ' + foundationsWord(facts);
-  return renderReadout({ label: 'Foundations', value });
-}
+// ── `renderFoundationsStatus` IS GONE (v3.62.0) ──────────────────────────
+// It was the Status block's one line about tier 0 — `4 documents · fresh` on
+// the shared readout — and the Status block is REPLACED by the three-cell
+// strip, whose cell ① is that same reading with the app's freshness dot beside
+// it. The old line could not carry the dot at all: `renderReadout` escaped its
+// value until v3.62.0's one kit change added `markHtml`, which is why the
+// shipped line was the only figure on this page with no mark.
+//
+// One behaviour changed with the move and it is deliberate. The line was
+// SILENT on a project with no documents ("a dash in the status strip is noise
+// on every project that has not adopted the tier") — right for a line inside a
+// four-line block, wrong for one of three readings the page exists to give: a
+// missing cell is a fourth thing to wonder about. `renderLayerStrip` says
+// "not set up yet" and "no documents yet" instead, which are different states
+// and now read differently.
+//
+// Deleted rather than left calling nothing: a renderer nothing calls is the
+// same claim about the screen that a CSS rule nothing can match is.
 
 /**
  * THE READER PAYLOAD FOR ONE DOCUMENT.
@@ -7535,6 +8035,40 @@ function wire(token) {
 
   document.getElementById('mem-fnd-refresh')?.addEventListener('click', () => {
     refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+
+  // ── STEP ③'s TWO DOORS, AND THE SIDEBAR'S POINTER (v3.62.0) ──────────
+  //
+  // BOTH DOORS NAME THE DOMAIN. This view is app-wide across domains and
+  // views/domains.js keeps its active slug in module state, falling back to
+  // its first row when that slug is unset or gone — so a bare
+  // `navigate('domains')` from a project in domain B lands on whatever
+  // Domains last had, silently, with every figure on the screen belonging to
+  // a different wiki. `requestDomain` is the shell pair that removes the
+  // PATH rather than the symptom, and it is consumed once, in that view's
+  // onEnter, before it resolves its own slug.
+  //
+  // `goToChatScoped` is the EXISTING wrapper, lifted to shared/ rather than
+  // copied: `requestChatScope` has a documented no-slug hazard and it stays
+  // guarded once, in one function, for both hosts.
+  document.getElementById('mem-k-domains')?.addEventListener('click', () => {
+    const domain = state.activeDomain;
+    if (!domain) return;
+    requestDomain(domain, { reason: 'knowledge' });
+    navigate('domains');
+  });
+  document.getElementById('mem-k-chat')?.addEventListener('click', () => {
+    const domain = state.activeDomain;
+    if (!domain) return;
+    goToChatScoped(domain);
+  });
+  document.getElementById('mem-new-project')?.addEventListener('click', () => {
+    const domain = state.activeDomain;
+    // NO DOMAIN, NO REQUEST — but still the pointer. A user with no project
+    // selected still wants the create form; what cannot be claimed is which
+    // domain it should open on.
+    if (domain) requestDomain(domain, { reason: 'new-project' });
+    navigate('domains');
   });
 
   document.getElementById('mem-copy-agent')?.addEventListener('click', () => {

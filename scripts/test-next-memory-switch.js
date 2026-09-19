@@ -147,7 +147,10 @@ ok('the view\'s own constants were read off disk, not typed here',
  * under test.
  */
 function makeSwitcher(stateObj, responder, opts = {}) {
-  const calls = { urls: [], renders: 0, patches: 0, scopeLoads: [] };
+  // `knowledgeAsks` records step ③'s read (v3.62.0). A SPY rather than the
+  // real `loadKnowledge`: what this harness is about is the SWITCH, and the
+  // real one is driven against a fake fetch in test-next-memory-view.js §21f2.
+  const calls = { urls: [], renders: 0, patches: 0, scopeLoads: [], knowledgeAsks: [] };
   let mounted = opts.mounted === undefined ? true : opts.mounted;
 
   const body =
@@ -173,7 +176,7 @@ function makeSwitcher(stateObj, responder, opts = {}) {
   const api = new Function(
     'state', 'isCurrentMount', 'render', 'rememberProject', 'refreshIndex',
     'reportAsyncMountFailure', 'fetch', 'URLSearchParams', 'encodeURIComponent',
-    'JOURNAL_PAGE', 'WS_WINDOW', 'patchOpenPair', 'Date', body)(
+    'JOURNAL_PAGE', 'WS_WINDOW', 'patchOpenPair', 'loadKnowledge', 'Date', body)(
     stateObj,
     () => mounted,
     () => { calls.renders++; },
@@ -186,6 +189,7 @@ function makeSwitcher(stateObj, responder, opts = {}) {
     },
     URLSearchParams, encodeURIComponent, JOURNAL_PAGE, WS_WINDOW,
     () => { calls.patches++; },
+    async (domain) => { calls.knowledgeAsks.push(domain); },
     // A controllable clock, so "the mark is the READ's time, not now" is a
     // measurement rather than a race with the wall clock.
     opts.Date || Date);
@@ -724,15 +728,21 @@ section('§8 — patchOpenPair writes what a full render would paint');
   const stack = el('div');
   const count = el('div');
   const fold = el('details');
-  const journalBody = el('div');
-  journalBody.querySelector = (sel) => (sel.includes('mem-fold') ? fold : null);
   const parsedNodes = [];
 
   const doc = {
     getElementById: (id) => ({ 'mem-ws-body': tbody, 'mem-ws-count': count }[id] || null),
+    // ── THE JOURNAL'S SELECTOR MOVED (v3.62.0, §6.6) ──────────────────
+    // It was `.settings-block-memory-journal .settings-block-body` and that
+    // block does not exist: the journal is a FOLD inside step ②. A selector
+    // that stops matching does not throw and does not red a suite — it bails
+    // to one full render, silently, leaving the page correct and v3.57.0's
+    // measured win quietly gone. This model answers the NEW selector and
+    // nothing else, so the old one would fall through to null and the
+    // returned reason below would say so.
     querySelector: (sel) => {
       if (sel.includes('mem-status-stack')) return stack;
-      if (sel.includes('memory-journal')) return journalBody;
+      if (sel.includes('context-state') && sel.includes('data-mem-fold="journal"')) return fold;
       return null;
     },
     createElement: () => {
@@ -799,15 +809,23 @@ section('§8 — patchOpenPair writes what a full render would paint');
 
   let fellBack = 0;
   const bound = [];
-  api.patchOpenPair(1);
+  // ── THE RETURNED REASON (v3.62.0, §6.6) ─────────────────────────────
+  // Every bail in `patchOpenPair` is `render(token); return;` — the page stays
+  // CORRECT and the win is gone with nothing to say so. Counting renders
+  // catches a bail only because this harness knows a full render is wrong
+  // here; the reason says WHICH precondition, which is what makes a broken
+  // selector diagnosable rather than merely visible.
+  const outcome = api.patchOpenPair(1);
 
   eq('every precondition held, so no full render was needed', fellBack, 0);
+  eq('...and it SAYS it patched, rather than leaving the caller to infer it '
+    + 'from a render that did not happen', outcome, 'patched');
   ok('the table was repainted from the SAME row renderer the painter uses',
     tbody.innerHTML.includes('data-mem-scope="alpha-old"')
     && tbody.innerHTML.includes('mem-ws-row-open'), tbody.innerHTML.slice(0, 200));
   eq('...and its rows were re-bound, scoped to the tbody', bound[0], tbody);
-  ok('the Status block was rewritten through the SAME expression renderProject '
-    + 'composes, so the two cannot drift',
+  ok('step ②\'s notice stack was rewritten through the SAME expression '
+    + 'renderProject composes, so the two cannot drift',
   stack.innerHTML === api.renderSaveStatus(st.projectRead, st.detail)
     + api.renderStaleNotice() + api.renderUnlistedNote(st.projectRead, st.detail),
   stack.innerHTML.slice(0, 160));
@@ -848,9 +866,11 @@ section('§8 — patchOpenPair writes what a full render would paint');
     doc, () => true, () => { renders++; },
     (x) => x, () => 1, () => 'S', () => '', () => '', () => '', () => '<tr></tr>',
     () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
-  api.patchOpenPair(1);
+  const why = api.patchOpenPair(1);
   eq('a precondition that does not hold falls back to exactly ONE full render',
     renders, 1);
+  eq('...and NAMES the precondition, so a selector that has silently stopped '
+    + 'matching is diagnosable rather than merely invisible', why, 'fell-back:no-table');
   eq('...and does not leave a signature claiming a paint that did not happen',
     api.sig(), null);
 }
@@ -893,9 +913,10 @@ section('§8 — patchOpenPair writes what a full render would paint');
     () => 2,
     () => 'S', () => '', () => '', () => '', () => '<tr></tr>',
     () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
-  api.patchOpenPair(1);
+  const whyWindow = api.patchOpenPair(1);
   eq('a press that would STRETCH the window falls back to one full render',
     renders, 1);
+  eq('...naming the window as the precondition that failed', whyWindow, 'fell-back:window');
   eq('...and writes nothing into the table on the way', wrote, 0);
 }
 
@@ -903,16 +924,24 @@ section('§8 — patchOpenPair writes what a full render would paint');
 section('§9 — The skeleton reserves the height and invents no reading');
 // ═════════════════════════════════════════════════════════════════════════
 {
+  // ── THREE COLLABORATORS INSTEAD OF ONE (v3.62.0) ─────────────────────
+  // The skeleton no longer asks `renderSaveStatus` for the one reading it can
+  // paint — that line moved to the STRIP, which reads the index row itself.
+  // So the spies are the strip, step ③ and the three lede constants, and what
+  // this harness still asks is unchanged: what does the skeleton RESERVE, and
+  // does it claim anything it cannot know.
   const mkSkeleton = (stateObj) => new Function(
-    'state', 'renderBlock', 'renderSaveStatus', 'WS_WINDOW',
+    'state', 'renderBlock', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
+    'LEDE_CANONICAL', 'LEDE_STATE', 'LEDE_KNOWLEDGE',
     lift('renderProjectSkeleton') + '\nreturn { renderProjectSkeleton };')(
     stateObj,
-    (o) => '<section data-block="' + o.id + '" data-lede="' + (o.ledeHtml || '')
-      + '">' + (o.bodyHtml || '') + '</section>',
-    // The REAL one is driven in §8 and in test-next-memory-view.js; here the
-    // question is what the skeleton ASKS it for, so a spy is honest.
-    (read, d) => '<!--save:' + JSON.stringify([read, d]) + '-->',
-    WS_WINDOW).renderProjectSkeleton();
+    (o) => '<section data-block="' + o.id + '" data-num="' + (o.num === undefined ? '' : o.num)
+      + '" data-lede="' + (o.ledeHtml || '') + '">' + (o.bodyHtml || '') + '</section>',
+    // The REAL ones are driven in test-next-memory-view.js; here the question
+    // is what the skeleton ASKS them for, so spies are honest.
+    (read) => '<!--strip:' + JSON.stringify(read) + '-->',
+    () => '<!--knowledge-->',
+    WS_WINDOW, 'L1', 'L2', 'L3').renderProjectSkeleton();
 
   const withRow = mkSkeleton({
     activeDomain: 'acme', activeProject: 'alpha',
@@ -920,14 +949,19 @@ section('§9 — The skeleton reserves the height and invents no reading');
   });
   eq('it reserves ONE row per saved copy, so the table lands at the height it '
     + 'was given', (withRow.match(/mem-ghost-row/g) || []).length, 3);
-  ok('the Status block is the REAL renderer, asked with what is actually in hand',
-    withRow.includes('<!--save:[null,null]-->'), withRow.slice(0, 200));
-  ok('...and the three blocks carry the same ids the filled ones do, so the '
-    + 'block chrome does not move between the two paints',
-  withRow.includes('data-block="memory-status"')
-    && withRow.includes('data-block="memory-streams"')
-    && withRow.includes('data-block="memory-brief"'));
-  ok('every reserved region says it is still filling', (withRow.match(/aria-busy="true"/g) || []).length >= 3);
+  ok('the strip is the REAL renderer, asked with what is actually in hand — a '
+    + 'null project read, because that is the state this frame is in',
+  withRow.includes('<!--strip:null-->'), withRow.slice(0, 200));
+  ok('...and the three STEPS carry the same ids AND numerals the filled ones '
+    + 'do, so the block chrome does not move between the two paints',
+  withRow.includes('data-block="context-canonical" data-num="1"')
+    && withRow.includes('data-block="context-state" data-num="2"')
+    && withRow.includes('data-block="context-knowledge" data-num="3"'), withRow.slice(0, 400));
+  ok('...and the ledes are the shared constants rather than second copies, '
+    + 'which is what makes drifting impossible rather than merely unlikely',
+  withRow.includes('data-lede="L1"') && withRow.includes('data-lede="L2"')
+    && withRow.includes('data-lede="L3"'), withRow.slice(0, 400));
+  ok('every reserved region says it is still filling', (withRow.match(/aria-busy="true"/g) || []).length >= 2);
 
   const many = mkSkeleton({
     activeDomain: 'acme', activeProject: 'alpha',
@@ -935,15 +969,20 @@ section('§9 — The skeleton reserves the height and invents no reading');
   });
   eq('a project with forty saved copies reserves the WINDOW, not forty rows — '
     + 'the table paints five', (many.match(/mem-ghost-row/g) || []).length, WS_WINDOW);
+  // THE BRIEF IS A FOLD INSIDE STEP ② NOW, so what is reserved is its GHOST
+  // PARAGRAPH rather than a block of its own. The property is unchanged:
+  // reserving space for a brief that does not exist makes the column shrink on
+  // arrival, which is the jump this function exists to remove, in the other
+  // direction. `hasBrief` rides on every index row, so this is knowledge.
   ok('...and reserves NO standing brief when the index says there is none, or '
-    + 'the column would SHRINK on arrival', !many.includes('data-block="memory-brief"'));
+    + 'the column would SHRINK on arrival', !many.includes('mem-ghost-para'));
 
   const unknown = mkSkeleton({ activeDomain: 'acme', activeProject: 'ghost', projects: [] });
   eq('a project the index does not carry still reserves one row rather than '
     + 'implying the EMPTY state, which is a different screen',
   (unknown.match(/mem-ghost-row/g) || []).length, 1);
   ok('...and claims no standing brief it cannot know about',
-    !unknown.includes('data-block="memory-brief"'));
+    !unknown.includes('mem-ghost-para'));
 
   // NO MOTION. This frame lives 15-40ms; a pulse says "wait" for less time
   // than it takes to read the word, and memory.css has carried a header

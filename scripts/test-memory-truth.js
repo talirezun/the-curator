@@ -725,15 +725,30 @@ section('§8 — The strip answers the other three questions, and only when true
   ok('CONTROL: no sharing, no line',
     !/Two tools are writing/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
 
-  // THE STANDING BRIEF — always, on its own clock, and with NO freshness pip.
+  // ── THE STANDING-BRIEF LINE IS DELETED (v3.62.0) ────────────────────────
+  //
+  // It read "Standing brief — 6 days ago" / "— not written yet", and the brief
+  // fold's own summary one step down says exactly that, from the same two
+  // fields (`views/memory.js`'s `renderBrief`: "updated 23 hr ago · 1,309
+  // words" / "not written yet"). A figure in a sentence that the card below
+  // already shows is the de-duplication `views/domains.js` performs on the
+  // domain header. Deleted rather than moved, because there was nowhere to
+  // move it that did not already carry it.
+  //
+  // INVERTED, NOT REMOVED: what these two assertions protected was that the
+  // brief half of "am I saved?" is ALWAYS answered and never answered with an
+  // age it does not have. That property now lives on the fold summary, and
+  // what belongs here is the other half of the de-duplication — that this
+  // function no longer says it at all, so the two cannot both claim it.
   const withBrief = lifted({}).renderSaveStatus(baseRead, baseDetail());
-  ok('the standing brief is always stated', /Standing brief — 6 days ago/.test(withBrief),
-    withBrief.slice(-400));
-  ok('...and gets NO freshness pip: an old brief is not a stale one',
+  ok('the save reading no longer states the standing brief — the fold summary '
+    + 'below it carries that, from the same two fields',
+  !/Standing brief/.test(withBrief), withBrief.slice(-400));
+  ok('...and it still gets NO freshness pip anywhere: an old brief is not a stale one',
     (withBrief.match(/<span class="mem-save-pip/g) || []).length === 1, withBrief.slice(0, 400));
   const noBrief = lifted({}).renderSaveStatus({ ...baseRead, brief: { present: false } }, baseDetail());
-  ok('a missing brief is said as its own fact, never as an age',
-    /Standing brief — not written yet/.test(noBrief), noBrief.slice(-300));
+  ok('...and a missing brief is not stated here either, in either direction',
+    !/Standing brief/.test(noBrief), noBrief.slice(-300));
 
   // THE READING SURVIVES A SCOPE SWITCH. loadScope drops state.detail before
   // it paints, so without the index-row fallback the figure would blink out
@@ -758,8 +773,10 @@ section('§8 — The strip answers the other three questions, and only when true
   const nothing = lifted({}).renderSaveStatus(null, null);
   eq('with nothing to report the strip renders nothing at all', nothing, '');
   const noHandoff = lifted({}).renderSaveStatus({ scopes: [], brief: { present: false } }, null);
-  ok('a project with no handoff still answers the brief half and invents no age',
-    /Standing brief — not written yet/.test(noHandoff) && !/Last saved/.test(noHandoff), noHandoff);
+  eq('a project with no handoff and nothing to warn about renders NOTHING here '
+    + '— the three-cell strip above answers "am I saved?" now, and an empty '
+    + 'notice slot is what lets the step\'s wrapper disappear with it',
+  noHandoff, '');
 
   // ESCAPING. Scope names, machine ids and harness names all arrive from disk
   // and can arrive over sync from another machine.

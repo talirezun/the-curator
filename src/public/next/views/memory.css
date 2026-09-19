@@ -58,6 +58,56 @@
    one spaces a card and a block. */
 .mem-section + .settings-job-block { margin-top: var(--space-12); }
 
+/* ── THE THREE-CELL STRIP (v3.62.0, P1-4) ─────────────────────────────────
+   One reading per layer, between the breadcrumb and step ①. It is NOT a block
+   — it is an instrument about the page — so it takes `.mem-section` and the
+   existing `.mem-section + .settings-job-block` bridge spaces it into the
+   first step at exactly the rhythm every later step gets.
+
+   THE CELLS ARE `.tx-readout-group`, which is already a wrapping flex row
+   owned by shared/text.css (`flex-wrap: wrap`, `gap: 14px 26px`), so the strip
+   needs NO media query: at a narrow container the third cell wraps under the
+   first two by itself. Nothing here restates a `tx-` rule — shared/text.js
+   owns that prefix outright and scripts/test-next-text-system.js fails any
+   other stylesheet that declares one.
+
+   The ⓘ rides at the end of the row on `margin-left: auto` and is pushed to
+   its own line when the cells fill the width — `align-items: flex-start`
+   rather than baseline, because a readout is two stacked lines and a mark
+   aligned to the second one sits below the figures it explains. */
+.mem-layers {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+/* A WRAPPER OF THIS VIEW'S OWN around the kit's group. shared/text.css owns
+   the `tx-` prefix outright — scripts/test-next-memory-ingest-text.js fails any
+   `tx-` selector declared in this file, and it is right to: the kit owns the
+   TYPE and GEOMETRY of its roles and a view may only place them. */
+.mem-layers-cells { flex: 1 1 auto; min-width: 0; }
+.mem-layers-info { flex: none; margin-left: auto; }
+
+/* ── THE FOLDS INSIDE A STEP (v3.62.0) ────────────────────────────────────
+   Step ② holds three: the work-streams, the standing brief and the journal.
+   16px (`--space-8`) is the kit's GROUP step, one rung under the 24px block
+   step — which is the right reading, because three folds about one project's
+   state are parts of one step rather than three sections. One declaration on
+   the stack rather than a margin on each child, for the reason
+   `.mem-fnd-init-wrap` records: a gap is a property of the stack, and six
+   margins on six children is how six unrelated spacings happen. */
+.mem-state-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* ── STEP ③ — THE WIKI'S FIGURES AND ITS TWO DOORS (v3.62.0, P1-8) ────────
+   The readouts are the shared group again; only the gap to the doors below
+   them belongs to this view. Both doors are `btn-secondary btn-xs` and wrap
+   as a row, so nothing here paints a button — `shell.css`'s taxonomy does. */
+.mem-k-wrap { margin-bottom: var(--space-8); }
+.mem-k-doors { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+
 /* ── INSIDE A BLOCK, THE GAP IS SMALLER — AND THAT IS THE WHOLE POINT ──────
    Block ① stacks the Last-saved reading, the Reload offer and the "state on
    disk we are not reading" note. Those three belong TOGETHER: each qualifies
@@ -844,63 +894,20 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 
-/* ── "Working on:" — block ①'s headline line ───────────────────────
-   The menubar widget's lead reading, which this screen never carried although
-   every read has always contained it. It sits ABOVE the Last-saved strip: what
-   the project is doing is the question, when it was last written down is the
-   qualification. */
-.mem-working {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-5);
-}
-/* The pip is a 12px block on a baseline row, so it needs its own alignment or
-   it rides the text baseline and sits a third of its height too low. */
-.mem-working .mem-save-pip { align-self: center; }
-.mem-working-label {
-  font: var(--weight-medium) var(--text-2xs)/1 var(--font-sans);
-  letter-spacing: var(--track-body);
-  text-transform: uppercase;
-  color: var(--text-2);
-}
-/* ── IT IS A READING, NOT A TITLE ────────────────────────────────────────
-   BODY size and MEDIUM weight, capped at two lines. The headline an agent
-   wrote is the most interesting sentence on this screen and the temptation
-   is to set it like a heading; it must not be one. It is arbitrary-length
-   text from a file (MAX_HEADLINE_CHARS in working-state.js lets it run to
-   200 characters), so at a title rung a long one becomes three or four lines
-   of bold that dwarf the block title above it and push the Last-saved strip
-   off the first screen. --text-md / --weight-medium is the same treatment a
-   sidebar row's ACTIVE name gets: legible, emphasised, not a heading.
+/* ── `.mem-working*` IS GONE (v3.62.0) ───────────────────────────────────
+   Five rules painting the "Working on:" line at the top of the deleted Status
+   block — a label, a two-line-clamped headline at --text-md, an age and the
+   pip's own baseline correction. The line itself is split in two now: its AGE
+   is the strip's WORKING STATE cell and its WORDS are the work-stream fold's
+   summary, both of which are painted by rules that already existed
+   (`.tx-readout-*` and `.mem-fold-meta`).
 
-   TWO LINES, not one: measured at 1400px the Status block gives this line
-   about 900px, and a 200-character headline needs roughly two of them — a
-   one-line clamp would ellipsise the majority of real headlines, and the
-   whole point of the line is that you can read it without opening anything.
-   `-webkit-line-clamp` with `-webkit-box` is the only cross-browser form
-   that ellipsises a multi-line clamp; `line-clamp` is set alongside it so
-   the rule moves to the standard property without a second edit. */
-.mem-working-text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  color: var(--text);
-  line-height: var(--leading-snug);
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-.mem-working-age {
-  flex: none;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  font-variant-numeric: var(--numeric-tabular);
-}
+   Deleted rather than left standing: a rule nothing can match is a claim about
+   the screen that is no longer true — the same call this file made for
+   `.mem-block-toolbar`, `.mem-fold-lead`, `.mem-doc-head` and `.mem-doc-who`.
+   The measurement that produced the two-line clamp (a 200-character headline
+   needing ~900px at 1400px) is recorded in the history, not here, because the
+   element it measured does not exist. */
 
 /* ── The handoff document ────────────────────────────────────────────── */
 
@@ -1823,12 +1830,27 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
-  /* `.mem-fold-flat > .mem-fold-body` reserves 46px on the right for the
-     brief card's pencil. THIS card has no control in that corner, and the
-     reserve was 32px of the chooser's own width spent on nothing — measured:
-     the chooser rendered 908px wide inside a 970px card. */
-  padding-right: 14px;
 }
+/* ── D-L: THE RESERVE WAS NEVER DROPPED, BECAUSE THE SELECTOR LOST ───────
+   The rule above used to carry `padding-right: 14px` with a comment saying it
+   "drops the 46px right reserve `.mem-fold-flat` keeps for the brief's
+   pencil". It never did. `.mem-fold-flat > .mem-fold-body` is two classes and
+   a child combinator; `.mem-fnd-init-body` is one class on the SAME element,
+   so the reserve won every time and the comment described an intention rather
+   than a computed style.
+
+   What that looks like on screen is the v3.61.1 production finding: the
+   chooser's accent-tinted arm (`.fnd-init-arm`, a background, so its edge is
+   visible) stops 32px short of the card's right edge while the fold's own
+   summary row and the documents table beside it stop at 14px — a sub-panel
+   that reads as cut short of the block it belongs to.
+
+   The fix is the SPECIFICITY, not a new literal: the same two-class form the
+   reserve is written in, so the declaration this card always meant to make is
+   the one that applies. 14px is the value the other three edges of
+   `.mem-fold-flat > .mem-fold-body` already take, so the card is symmetric
+   rather than merely wider. */
+.mem-fold-flat > .mem-fold-body.mem-fnd-init-body { padding-right: 14px; }
 
 /* The Edit column of the foundations table. Right-aligned and no wider than
    the control, so the columns before it keep the width. */

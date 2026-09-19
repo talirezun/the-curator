@@ -495,9 +495,27 @@ function renderBrief() { return '<!--BRIEF-->'; }
 // functions would throw on a free identifier, so each is stubbed with a named
 // marker -- an undefined collaborator is a crash, not a failing assertion.
 function renderFoundations() { return '<!--FOUNDATIONS-->'; }
-function renderFoundationsStatus() { return '<!--FNDSTATUS-->'; }
 function bindFoundationRows() {}
 function refreshFoundations() {}
+// v3.62.0: the page became three numbered STEPS. renderProject composes the
+// three-cell strip, step (1)'s never-fold notices, the work-stream fold, step
+// (3) and its read; wire() binds two doors and the sidebar's pointer. None is
+// exercised here, but both lifted functions would throw on a free identifier,
+// so each is stubbed with a named marker -- an undefined collaborator is a
+// crash, not a failing assertion. renderFoundationsStatus went with the Status
+// block it was the one line of. (No backticks in this block -- the whole
+// PREAMBLE is a template literal, and one would end it.)
+function foundationsFacts() { return { count: 0, present: false }; }
+function foundationsNotices() { return '<!--FNDNOTES-->'; }
+function renderLayerStrip() { return '<!--STRIP-->'; }
+function renderWorkStreamsFold() { return '<!--WSFOLD-->'; }
+function renderKnowledge() { return '<!--KNOWLEDGE-->'; }
+function loadKnowledge() { return Promise.resolve(); }
+function requestDomain() {}
+function goToChatScoped() {}
+const LEDE_CANONICAL = 'L1';
+const LEDE_STATE = 'L2';
+const LEDE_KNOWLEDGE = 'L3';
 function keyOf(d, p) { return d + '/' + p; }
 function activeKey() { return keyOf(state.activeDomain, state.activeProject); }
 function selectProject() {}
@@ -552,8 +570,12 @@ const memState = (over) => ({
   ok('...labelled in the words the docs use', html.includes('Copy agent instructions'));
   ok('...in the header\'s sanctioned ACTION slot, not floating in the breadcrumb row',
     /tx-vh-actions[\s\S]{0,160}id="mem-copy-agent"/.test(html), html.slice(0, 400));
+  // `<!--EMPTY-->` was `renderEmptyProject`, which renderProject called
+  // directly until v3.62.0; it is inside `renderWorkStreamsFold` now (step
+  // (2)'s first fold), so the marker that proves the body rendered is the
+  // fold's. Same property, one level in.
   ok('CONTROL -- the rest of the page really did render, so the check is not vacuous',
-    html.includes('<!--EMPTY-->') && html.includes('<!--ABOUT-->'));
+    html.includes('<!--WSFOLD-->') && html.includes('<!--ABOUT-->'));
   ok('CONTROL -- and the breadcrumb row itself no longer carries it',
     !memBox.renderProject().includes('id="mem-copy-agent"'));
 
