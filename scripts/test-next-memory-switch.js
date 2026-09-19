@@ -150,7 +150,10 @@ function makeSwitcher(stateObj, responder, opts = {}) {
   // `knowledgeAsks` records step ③'s read (v3.62.0). A SPY rather than the
   // real `loadKnowledge`: what this harness is about is the SWITCH, and the
   // real one is driven against a fake fetch in test-next-memory-view.js §21f2.
-  const calls = { urls: [], renders: 0, patches: 0, scopeLoads: [], knowledgeAsks: [] };
+  // `captureAsks` records the honesty meter's read (v3.63.0), a spy for the
+  // same reason and recording the PAIR — the reading is per project.
+  const calls = { urls: [], renders: 0, patches: 0, scopeLoads: [],
+    knowledgeAsks: [], captureAsks: [] };
   let mounted = opts.mounted === undefined ? true : opts.mounted;
 
   const body =
@@ -176,7 +179,7 @@ function makeSwitcher(stateObj, responder, opts = {}) {
   const api = new Function(
     'state', 'isCurrentMount', 'render', 'rememberProject', 'refreshIndex',
     'reportAsyncMountFailure', 'fetch', 'URLSearchParams', 'encodeURIComponent',
-    'JOURNAL_PAGE', 'WS_WINDOW', 'patchOpenPair', 'loadKnowledge', 'Date', body)(
+    'JOURNAL_PAGE', 'WS_WINDOW', 'patchOpenPair', 'loadKnowledge', 'loadCapture', 'Date', body)(
     stateObj,
     () => mounted,
     () => { calls.renders++; },
@@ -190,6 +193,7 @@ function makeSwitcher(stateObj, responder, opts = {}) {
     URLSearchParams, encodeURIComponent, JOURNAL_PAGE, WS_WINDOW,
     () => { calls.patches++; },
     async (domain) => { calls.knowledgeAsks.push(domain); },
+    async (domain, project) => { calls.captureAsks.push(domain + '/' + project); },
     // A controllable clock, so "the mark is the READ's time, not now" is a
     // measurement rather than a race with the wall clock.
     opts.Date || Date);

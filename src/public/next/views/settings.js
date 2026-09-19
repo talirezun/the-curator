@@ -9025,12 +9025,29 @@ function renderToolMap() {
   // leading comma. So the name is written as text, and the sentence is built
   // so nothing depends on it being set apart. The trailing link is the one
   // element here, and it is SUPPOSED to take its own row.
+  // ── THE NUMBER AND THE FIELD LIST ARE A CONTRACT (corrected v3.63.0) ───
+  // This sentence said "under 200 bytes" and named four fields. Both became
+  // FALSE the moment the log grew `sid`, `project` and its session line: the
+  // ceiling is MAX_LINE_BYTES in src/brain/mcp-usage.js and it is 300. The app
+  // telling a user a number is a contract, so it moves when the number does.
+  //
+  // WRITTEN OUT RATHER THAN IMPORTED, and the reason is a real constraint, not
+  // laziness: `src/brain/mcp-usage.js` imports `crypto`, `fs/promises` and
+  // `./paths.js`, so it cannot be loaded in a browser — and `GET
+  // /api/mcp/usage`, which is the only payload this block has, does not carry
+  // the ceiling either (the capture route added for the memory view does, but
+  // that route is per project and this block is app-wide). The literal is
+  // therefore pinned against the module's own export by
+  // scripts/test-next-capture-meter.js §5, which fails the day MAX_LINE_BYTES
+  // moves and this sentence does not.
   const info =
     'Every call the bridge answers appends one line to .mcp-usage.jsonl — a file beside your ' +
     'settings, never inside your knowledge folder, so nothing here is ever synced. The line ' +
-    'carries the tool’s name, the domain it touched, whether it succeeded, and how long it ' +
-    'took. Never an argument, never a result, never a file path, never an error message, so a ' +
-    'line stays under 200 bytes however large the call was. A line written by the button here ' +
+    'carries the tool’s name, the domain and the project it touched, whether it succeeded, ' +
+    'how long it took, and a random id for the bridge session it belonged to. Never an argument, ' +
+    'never a result, never a file path, never an error message, so a line stays under 300 bytes ' +
+    'however large the call was. Each run of the bridge also writes one session line — that id, ' +
+    'and the harness name the client reported for itself. A line written by the button here ' +
     'carries one extra field, via, whose only value is self-test — that is what puts the word ' +
     'self-test on a tile, and why a run never counts as a session start or a save. The file ' +
     'rotates at 1 MB keeping one previous copy, and deleting it only restarts the map. ' +
