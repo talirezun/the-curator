@@ -926,6 +926,55 @@ section('§8 — patchOpenPair writes what a full render would paint');
   eq('...and writes nothing into the table on the way', wrote, 0);
 }
 
+{
+  // ── THE STATUS HALF'S PRESENCE GUARD, ON ITS OWN (v3.62.0, §6.6) ────────
+  //
+  // THE GAP THIS CLOSES, found by mutation: replacing that guard with `false`
+  // left every assertion here GREEN. The notice stack is `noticeHtml` now and
+  // it APPEARS and DISAPPEARS with its content — deleting the standing-brief
+  // line is what made an empty stack reachable at all — so the honest question
+  // is the journal half's question: do the markup and the DOM agree about
+  // existing? Without the guard, a pair that HAS warnings arriving on a page
+  // that has no stack element writes them nowhere and reports success: the
+  // page keeps the previous pair's notices, or none, and nothing says so.
+  let renders = 0;
+  const doc = {
+    getElementById: (id) => (id === 'mem-ws-body' ? tbodyNoStack : null),
+    // No `.mem-status-stack` in the DOM, and the journal fold present.
+    querySelector: (sel) => (sel.includes('data-mem-fold="journal"') ? foldNoStack : null),
+    createElement: () => ({ set innerHTML(v) { this._h = v; },
+      querySelector: () => ({ innerHTML: '' }) }),
+  };
+  const tbodyNoStack = {
+    _html: '<tr></tr>',
+    get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = String(v); },
+    get children() { return (this._html.match(/<tr\b/g) || []).map(() => ({})); },
+    addEventListener() {},
+  };
+  const foldNoStack = { tagName: 'details', innerHTML: '', querySelector: () => null };
+  const api = new Function('state', 'document', 'isCurrentMount', 'render',
+    'workStreamOrder', 'wsShownCount', 'renderSaveStatus', 'renderStaleNotice',
+    'renderUnlistedNote', 'renderJournal', 'wsRowHtml', 'bindWorkStreamRows',
+    'workStreamCounts', 'screenSignature', 'reportAsyncMountFailure', 'loadScope',
+    'JOURNAL_MORE',
+    'let renderedSignature = null;\n' + lift('patchOpenPair')
+    + '\nreturn { patchOpenPair };')(
+    { projectRead: { scopes: [{ scope: 'a', machine: 'm' }] },
+      detail: { scope: 'a', machine: 'm' }, wsWindow: 5 },
+    doc, () => true, () => { renders++; },
+    (x) => x, () => 1,
+    // A pair WITH something to warn about: the markup exists, the element does
+    // not, and that disagreement is the whole case.
+    () => '<section class="mem-save">trimmed</section>', () => '', () => '',
+    () => '<details data-mem-fold="journal"></details>', () => '<tr></tr>',
+    () => {}, () => '', () => 'SIG', () => {}, async () => {}, 50);
+  const why = api.patchOpenPair(1);
+  eq('warnings with nowhere to go fall back to one full render', renders, 1);
+  eq('...naming the notice slot as the precondition that failed, rather than '
+    + 'writing them nowhere and reporting success', why, 'fell-back:status-presence');
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 section('§9 — The skeleton reserves the height and invents no reading');
 // ═════════════════════════════════════════════════════════════════════════

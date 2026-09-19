@@ -7599,6 +7599,274 @@ const fndRead = (payload) => ({
     !/btn-primary/.test(full) && (full.match(/btn-secondary btn-xs/g) || []).length === 2, full.slice(-400));
 }
 
+// ── §21f6 — ONE NOUN: FOUNDATIONS (v3.62.0, D-K) ────────────────────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE GAP THIS CLOSES, found by mutation: renaming step ① back to "Canonical
+// documents" left the whole offline run GREEN. The design pass called the step
+// that, the maintainer's addendum D-K overruled it — one noun everywhere, the
+// same word the block, the docs chapter and the MCP tool use — and the
+// adjective "canonical documents" survives ONLY inside the ⓘ definition, where
+// it describes what a foundation IS rather than naming the thing.
+//
+// Two rules, and the second is the one that would rot: the STEP and the STRIP
+// must say the same word, and the retired noun must not creep back into a
+// heading or a label.
+{
+  const st = {
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+    projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+    projectRead: fndRead(fndPayload([fndDoc()])),
+  };
+  const page = makeRenderers(st).renderProject();
+  ok('step ① is titled FOUNDATIONS',
+    /<h2 class="settings-job-title">Foundations<\/h2>/.test(page), page.slice(0, 400));
+  ok('...and the strip\'s cell ① carries the same word, so the reading and the '
+    + 'step it summarises cannot be read as two things',
+  /tx-readout-label">FOUNDATIONS</.test(page), page.slice(0, 600));
+  // THE ADJECTIVE SURVIVES, IN THE ⓘ AND NOWHERE ELSE. Checked over the
+  // PANELS' own contents rather than by offset, the same way §18i checks the
+  // never-fold rule: renderBlock emits the fold before the body.
+  const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
+    .map((m) => m[1]).join('\n');
+  const outside = page.split(/<div class="tx-vh-panel"[^>]*hidden>[\s\S]*?<\/div>/).join(' ');
+  ok('"canonical document" is still DEFINED, behind the mark',
+    /canonical document/i.test(panels), panels.slice(0, 200));
+  ok('...and appears NOWHERE outside a panel — not as a heading, not as a label, '
+    + 'not in a lede', !/canonical document/i.test(outside),
+  (outside.match(/.{0,60}canonical document.{0,60}/i) || [''])[0]);
+  // And the skeleton says it too, or the chrome moves between the two paints.
+  ok('the skeleton titles step ① the same way',
+    /<h2 class="settings-job-title">Foundations<\/h2>/.test(makeRenderers(st).renderProjectSkeleton()));
+}
+
+// ── §21f5 — THE STRIP: three readings, and an unknown one says so ───────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE GAP THIS CLOSES, found by mutation: rendering a project with nothing
+// saved as "saved just now" on the LIVE tier left the whole offline run GREEN.
+// That is the single rule design-system §6 states about this scale — an age
+// nobody could take is the dashed unknown ring and the words that say so,
+// NEVER age zero — and it is the rule this view exists to keep, because "am I
+// saved?" is the question the strip replaced a whole block to answer.
+{
+  const F = (over) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', projects: [], openFolds: {},
+    wsWindow: WS_WINDOW_SRC, ...over });
+
+  // ── CELL ②, THE ONE THAT ANSWERS THE QUESTION ───────────────────────
+  const nothing = F({}).renderLayerStrip({ scopes: [], brief: { present: false } });
+  ok('a project with nothing saved says so in WORDS',
+    /nothing saved yet/.test(nothing), nothing);
+  ok('...and takes the DASHED UNKNOWN ring, never a fresh one — a reading '
+    + 'nobody could take is not a recent reading',
+  /fresh-dot fresh-unknown/.test(nothing) && !/fresh-live|fresh-recent/.test(nothing), nothing);
+  const saved = F({}).renderLayerStrip({
+    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }], brief: { present: false } });
+  ok('CONTROL: a project that HAS been saved reads an age and a real tier',
+    /saved 2 min ago/.test(saved) && /fresh-dot fresh-recent/.test(saved), saved);
+
+  // ── AND THE MARK NEVER CARRIES THE READING ALONE ────────────────────
+  // Every dot is aria-hidden and every cell's word is the reading, which is
+  // what "the strip never uses colour alone" means in markup.
+  for (const html of [nothing, saved]) {
+    const dots = [...html.matchAll(/<span class="fresh-dot[^"]*"([^>]*)>/g)].map((m) => m[1]);
+    ok('every dot in the strip is aria-hidden — the WORD beside it is the reading',
+      dots.length > 0 && dots.every((a) => /aria-hidden="true"/.test(a)), JSON.stringify(dots));
+  }
+  ok('...and no `--fresh-*` token is named as a COLOUR anywhere in this view, '
+    + 'which is what keeps one ladder one ladder',
+  !/color:\s*var\(--fresh-/.test(viewCss), 'a --fresh-* colour was declared here');
+
+  // ── CELL ③: ABSENT IS ABSENT ────────────────────────────────────────
+  ok('with no figures in hand the KNOWLEDGE cell is omitted, not filled with a '
+    + 'dash — no reading, no instrument',
+  !/KNOWLEDGE/.test(F({ knowledge: { domain: 'acme', data: null, error: null } })
+    .renderLayerStrip({ scopes: [] })));
+  const known = F({ knowledge: { domain: 'acme', error: null, data: {
+    pageCount: 3445, pageCounts: {}, lastIngestDate: null } } }).renderLayerStrip({ scopes: [] });
+  ok('...and a wiki with pages but nothing ingested says THAT rather than a zero age',
+    /3,445 pages · nothing ingested yet/.test(known) && /fresh-unknown/.test(known), known);
+
+  // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
+  ok('with no project read the FOUNDATIONS cell is omitted — "not set up yet" '
+    + 'is a claim that frame cannot make',
+  !/FOUNDATIONS/.test(F({}).renderLayerStrip(null)));
+  ok('...but the WORKING STATE cell still paints, from the index row the page '
+    + 'is already holding',
+  /WORKING STATE/.test(F({ projects: [{ domain: 'acme', project: 'lumina',
+    writtenAgeSeconds: 300 }] }).renderLayerStrip(null)));
+}
+
+// ── §21f4 — EVERY FOLD SHIPS CLOSED, and it is remembered per fold ──────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE GAP THIS CLOSES, found by mutation: forcing the work-stream fold open
+// (`const open = ' open';`) left the whole offline run GREEN. That is v3.58.0's
+// measurement being silently reversed — the brief and the journal became
+// closed folds and the page went 3,241px → 1,278px at 1370px on this repo's
+// own project, the brief block alone 2,100 → 137 — and P1-6 applies it to the
+// one long list that release missed: `WS_STEP_ALL_MAX` is 20 rows.
+//
+// DRIVEN THROUGH THE COMPOSED PAGE, over both arms of `state.openFolds`, so
+// what is pinned is what a user is SERVED rather than what a renderer was
+// asked for.
+{
+  const stFor = (openFolds) => ({
+    activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
+    detailLoading: false, staleWrite: false, journalLimit: 10, openFolds, projects: [],
+    wsWindow: WS_WINDOW_SRC,
+    projectRead: {
+      scopes: [{ scope: 'main', machine: 'boxa', headline: 'x', writtenAgeSeconds: 120 }],
+      savedCopies: 1, distinctScopeCount: 1,
+      brief: { present: true, text: '# B\n\n## Goal\n\nShip.', updatedAt: new Date().toISOString() },
+      foundations: { present: true, ownership: 'curator', totalBytes: 100, orphanFiles: [],
+        manifestError: null,
+        documents: [{ slug: 'architecture.md', title: 'A', role: 'architecture', bytes: 100 }] },
+    },
+    detail: { scope: 'main', machine: 'boxa', machines: [],
+      current: { present: true, writtenAgeSeconds: 120, text: '## Where\n\nx' },
+      journal: { returned: 1, total: 1, totalUnknown: false,
+        entries: [{ at: new Date().toISOString(), headline: 'h', harness: 'cc', rejections: [] }] } },
+  });
+  const shut = makeRenderers(stFor({})).renderProject();
+  const FOLDS = ['foundations', 'streams', 'brief', 'journal'];
+  for (const key of FOLDS) {
+    ok('the `' + key + '` fold is really emitted (the scan is not vacuous)',
+      shut.includes('data-mem-fold="' + key + '"'), shut.slice(0, 200));
+    ok('...and it ships CLOSED — v3.58.0 measured this page at 3,241px with its '
+      + 'folds open and 1,278 with them shut',
+    !new RegExp('data-mem-fold="' + key + '"\\s+open').test(shut),
+    shut.slice(shut.indexOf('data-mem-fold="' + key + '"') - 40, 160));
+  }
+  // AND EACH OPENS FROM ITS OWN KEY, which is what "remembered per fold"
+  // means: one key opening two folds would make a user's decision about one
+  // section a decision about another.
+  for (const key of FOLDS) {
+    const one = makeRenderers(stFor({ [key]: true })).renderProject();
+    ok('`' + key + '` opens from its own key', new RegExp('data-mem-fold="' + key + '" open').test(one));
+    for (const other of FOLDS) {
+      if (other === key) continue;
+      ok('...and opens nothing else — `' + other + '` stays shut',
+        !new RegExp('data-mem-fold="' + other + '"\\s+open').test(one));
+    }
+  }
+  // THE MISSING THING IS STILL MISSING WHERE YOU LOOKED FOR IT (v3.17.1).
+  // A project with nothing saved gets the FLAT card, no chevron: hiding the
+  // sentence that explains what is missing behind a disclosure is that rule
+  // read backwards, and it is why `streams` is a fold only when there is a
+  // table to put away.
+  const empty = makeRenderers({ ...stFor({}), detail: null,
+    projectRead: { scopes: [], brief: { present: false } } }).renderProject();
+  ok('a project with nothing saved gets a FLAT card rather than an empty fold',
+    !empty.includes('data-mem-fold="streams"') && empty.includes('mem-fold-flat'),
+    empty.slice(0, 300));
+}
+
+// ── §21f3 — screenSignature can see STEP ③ (v3.62.0, P1-15) ─────────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE GAP THIS CLOSES, found by mutation: deleting `knowledgeMark` from the
+// signature's return array left this suite, test-memory-truth.js and the whole
+// offline run GREEN. Nothing else in the signature can see `state.knowledge` —
+// it is filled by its own request, on a different clock from the project read
+// — so the figures landing, or a later ingest moving the page count, would
+// leave step ③ painting a figure that had stopped being true and the poll
+// would skip the render that fixes it. That is P1-15's whole sentence, and
+// until this section it was a promise rather than a measurement.
+//
+// LIFTED AND EXECUTED, with the same fixed injection set test-memory-truth.js
+// §8b uses: `screenSignature` may name no collaborator outside it, because a
+// free identifier there is a CRASH rather than a failing assertion (the
+// v3.11.0 shape). That property is asserted below too.
+{
+  const SIG = ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
+    'projectMetaLine', 'screenSignature'];
+  const sigOf = (st) => new Function('state', 'WS_WINDOW',
+    SIG.map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
+    + '\nreturn screenSignature();')(st, WS_WINDOW_SRC);
+
+  const stats = (over) => ({
+    pageCount: 3445, pageCounts: { entities: 614, concepts: 2780, summaries: 51, other: 0 },
+    lastIngestDate: '2026-09-16', lastIngestKind: 'ingest', lastIngestTitle: 'The Footprint',
+    ...(over || {}),
+  });
+  const st = (knowledge) => ({
+    activeDomain: 'acme', activeProject: 'proj', staleWrite: false, indexError: null,
+    scope: 'main', machine: 'boxa', projects: [], wsWindow: WS_WINDOW_SRC,
+    projectRead: { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
+      brief: { present: false } },
+    detail: { scope: 'main', machine: 'boxa',
+      current: { present: true, writtenAgeSeconds: 120, lastSaveKind: 'complete' } },
+    knowledge,
+  });
+
+  const none = sigOf(st(null));
+  const landed = sigOf(st({ domain: 'acme', data: stats(), error: null }));
+  ok('the figures ARRIVING repaints — until they do, step ③ is a reserved '
+    + 'height, and nothing else in the signature can see them', none !== landed);
+  ok('an ingest moving the page count repaints — the figure has stopped being true',
+    sigOf(st({ domain: 'acme', data: stats({ pageCount: 3446 }), error: null })) !== landed);
+  ok('...and so does a per-type count, which is four fifths of the step',
+    sigOf(st({ domain: 'acme', data: stats({ pageCounts: { entities: 615 } }), error: null })) !== landed);
+  ok('a NEW last-ingest date repaints — the day-age WORD and the freshness DOT '
+    + 'are both cut on it, so folding the rendered age in as well would be a '
+    + 'second copy of one fact',
+  sigOf(st({ domain: 'acme', data: stats({ lastIngestDate: '2026-09-17' }), error: null })) !== landed);
+  ok('...and so does the VERB, which is read off the log and never guessed',
+    sigOf(st({ domain: 'acme', data: stats({ lastIngestKind: 'compile' }), error: null })) !== landed);
+  ok('...and the source title, which the step prints beside it',
+    sigOf(st({ domain: 'acme', data: stats({ lastIngestTitle: 'Another' }), error: null })) !== landed);
+  ok('a failure repaints — the step goes from a reserved height to a disclosure',
+    sigOf(st({ domain: 'acme', data: null, error: 'boom' })) !== landed);
+  ok('the DOMAIN stamp repaints, because the same figures under another domain '
+    + 'are a different screen',
+  sigOf(st({ domain: 'other', data: stats(), error: null })) !== landed);
+  eq('CONTROL: the same payload twice is the same signature — a guard that '
+    + 'fires on everything closes an open ⓘ on every poll',
+  sigOf(st({ domain: 'acme', data: stats(), error: null })), landed);
+  ok('CONTROL: a field the step does NOT paint moves nothing — folding a whole '
+    + 'payload in would repaint the page when `conversationCount` changed',
+  sigOf(st({ domain: 'acme', data: stats({ conversationCount: 9 }), error: null })) === landed);
+
+  // THE STRIP'S OTHER TWO TIERS ARE NOT FOLDED IN, AND THAT IS CORRECT.
+  // Cell ①'s tier is cut on `facts.stale`/`unreachable`/`fresh`, all of which
+  // ride in `fndMark`; cell ②'s is `freshnessTier`, cut on `formatAge`'s own
+  // bands, which `savedMark` already folds the word through. Proved rather
+  // than argued: move each underlying fact and watch the signature move.
+  const withFnd = (freshness) => st(null);
+  const fndState = (freshness) => ({ ...withFnd(), projectRead: {
+    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
+    brief: { present: false },
+    foundations: { present: true, ownership: 'repo', totalBytes: 10,
+      documents: [{ slug: 'a.md', bytes: 10, freshness }] } } });
+  ok('a document going stale moves the signature, so cell ①\'s dot cannot paint '
+    + 'a comparison that has stopped being true',
+  sigOf(fndState('fresh')) !== sigOf(fndState('stale')));
+  ok('the newest save ageing into the next band moves it, so cell ②\'s dot '
+    + 'cannot freeze — both are already covered, which is why neither tier is '
+    + 'folded in a second time',
+  sigOf(st(null)) !== sigOf({ ...st(null), projectRead: {
+    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 7200 }],
+    brief: { present: false } } }));
+
+  // AND IT NAMES NO COLLABORATOR OUTSIDE ITS SET. A free identifier inside a
+  // lifted function is a CRASH, not a failing assertion — the v3.11.0 shape
+  // this file warns about, and the reason the knowledge mark is a plain
+  // expression rather than a call to `formatDayAge`.
+  {
+    const body = extractFunction(viewSrc, 'screenSignature', 'memory.js');
+    const called = new Set([...body.replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+      .matchAll(/(?<![.\w$'"])([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)].map((m) => m[1]));
+    const allowed = new Set([...SIG, 'if', 'for', 'while', 'switch', 'catch', 'return',
+      'typeof', 'map', 'filter', 'slice', 'join', 'find', 'stringify', 'isArray', 'keys']);
+    const free = [...called].filter((n) => !allowed.has(n));
+    eq('screenSignature names no collaborator its harness does not inject',
+      JSON.stringify(free), '[]');
+  }
+}
+
 // ── §21h — "read first": the set an agent is handed without asking ───────
 // ═════════════════════════════════════════════════════════════════════════
 //
