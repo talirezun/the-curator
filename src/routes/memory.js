@@ -118,6 +118,10 @@
  *                                                checkout is not on this
  *                                                machine; 409 only when BOTH
  *                                                arms are impossible
+ *   GET    /:domain/:project/capture         the honesty meter — sessions,
+ *                                            read/saved, off the local usage
+ *                                            log (v3.63.0; `?since=`, `?limit=`;
+ *                                            read-only, never blocks)
  *   GET    /:domain/:project                 one project's brief + state
  *   GET    /:project                         DEPRECATED alias (see below)
  *
@@ -190,6 +194,9 @@ import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
+import {
+  readUsageLines, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
+} from '../brain/mcp-usage.js';
 
 const router = Router();
 
@@ -789,6 +796,20 @@ function foundationsWire(out) {
     } : null,
     budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
     totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
+    // ── THE FOUR REMOTE READINGS (v3.63.0), FORWARDED FIELD BY FIELD ────
+    //
+    // `listFoundations`'s own doc comment names what each means and why
+    // `remoteChecked` is always false off THIS call: a GitHub comparison
+    // happens only inside `refreshFoundationsFromRepo`, an action with a
+    // button, never on a read that rides on every project switch and on the
+    // menubar widget's summary. These four are project-level facts (whether
+    // a repo is recorded, and what the last refresh — local or remote —
+    // found), not a per-document reading, so they sit beside `repo` rather
+    // than inside a document row.
+    remoteMirror: out.remoteMirror === true,
+    remoteChecked: out.remoteChecked === true,
+    remoteCommit: out.remoteCommit ?? null,
+    remoteError: out.remoteError ?? null,
     // HOW MANY DOCUMENTS ARE STILL PROMPTS (v3.61.0). Derived from the rows
     // below rather than trusted from the store's own tally, so the summary
     // line and the table can never disagree — and computed here rather than
@@ -2272,6 +2293,134 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     });
   } catch (err) {
     console.error('Memory foundations refresh error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GET /api/memory/:domain/:project/capture — the honesty meter (v3.63.0)
+//
+// "Did this project's sessions start with the bootstrap, and did they save
+// before they stopped?" (the v3.63.0 design's §D). READ-ONLY and NEVER
+// BLOCKS (Decision G): `readUsageLines`/`summariseSessions`
+// (`src/brain/mcp-usage.js`) are pure reads of the local, content-free MCP
+// usage log, joined here to ONE project by the `sid`/`project`/`client`
+// fields package S's usage log added for exactly this route. Nothing here
+// writes — not the log, not the store, not a cache re-hash — so there is no
+// failure mode where asking for the meter costs the user anything.
+//
+// An ABSENT log is `logPresent: false` with zeroed totals and an empty
+// `sessions` array, never an error: silence in a rotated-away or
+// never-written log is not evidence that no agent ever worked here, and the
+// store's own rule — a fact and its absence are never the same value — holds
+// here too.
+//
+// `since` (ISO, default 30 days ago) and `limit` (default 20, max 200) are
+// both BEST-EFFORT: an unparseable `since` or an out-of-range `limit` falls
+// back to its default rather than 400ing. A malformed query string is not a
+// reason to refuse a read that costs nothing to answer, and this route's
+// only hard refusals are the ones every sibling route already makes about
+// the DOMAIN/PROJECT in the path (invalid name, unknown domain, unknown
+// project).
+//
+// `totals` is computed over EVERY session in the window, BEFORE `limit`
+// truncates the `sessions` array below it — the store's own rule
+// (`distinctScopeCount`, `savedCopies`) restated for this reading: a count
+// taken after a display cap is a cap reported as a measurement, and
+// `sessionsTruncated` is how a caller is told the list was cut without
+// having to compare lengths itself.
+//
+// The log's ON-DISK PATH is deliberately never in this envelope — the MCP
+// bridge page's own privacy panel (`GET /api/mcp/usage`'s neighbour) is
+// where a user reads that, and repeating it here would be a second place
+// for that sentence to go stale if the path ever moves.
+// ═════════════════════════════════════════════════════════════════════════
+/** `since` query param → epoch ms; anything unparseable falls back to 30 days ago. */
+const CAPTURE_DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000;
+/** `limit` query param bounds — default 20 sessions, never more than 200. */
+const CAPTURE_DEFAULT_LIMIT = 20;
+const CAPTURE_MAX_LIMIT = 200;
+
+function captureSinceMs(raw) {
+  if (typeof raw === 'string' && raw) {
+    const t = Date.parse(raw);
+    if (Number.isFinite(t)) return t;
+  }
+  return Date.now() - CAPTURE_DEFAULT_SINCE_MS;
+}
+
+function captureLimit(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return CAPTURE_DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), CAPTURE_MAX_LIMIT);
+}
+
+router.get('/:domain/:project/capture', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    const store = ws();
+    if (!validProjectName(store, project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    // Existence, decided exactly the way the sibling detail route decides it
+    // (`handleDetail` below): a NAMED project's own directory must be on
+    // disk; the domain's own project always exists (its tree IS the state
+    // root), so this can only 404 for a named one that was never created.
+    // This is a READ, like the foundations-document GET beside it — no
+    // `refuseMirror` here: a Shared Brain mirror's usage history is still
+    // real history, and `refuseMirror` (403) is reserved for this router's
+    // WRITE routes, none of which this is. `readonly` is not even carried on
+    // the envelope, for the same reason the foundations-document read
+    // doesn't: this route describes MCP call history, not domain content.
+    const state = await readState(store, domain, project, {});
+    if (!state.ok) return res.status(statusForStoreRefusal(state)).json(withErrorProse(state));
+    if (state.projectExists === false) {
+      return res.status(404).json({
+        ok: false, reason: 'project_not_found', domain, project,
+        error: `"${project}" is not a project in "${domain}".`,
+      });
+    }
+
+    const sinceMs = captureSinceMs(req.query.since);
+    const limit = captureLimit(req.query.limit);
+
+    const { present, records } = await readUsageLines();
+    const summary = summariseSessions(records, { project, since: sinceMs });
+    // UNCAPPED totals, THEN the display slice — never the other order.
+    const shown = summary.sessions.slice(0, limit).map((s) => ({
+      sid: s.sid, client: s.client, startedAt: s.startedAt, endedAt: s.endedAt,
+      calls: s.calls, read: s.read, saved: s.saved,
+    }));
+
+    // ONE note, naming whichever honest limit applies — never both, because
+    // an absent log has no lines to be legacy about.
+    let note = null;
+    if (!present) {
+      note = 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0';
+    } else if (summary.totals.legacyLines > 0) {
+      const n = summary.totals.legacyLines;
+      note = `${n} line${n === 1 ? '' : 's'} predate session ids and are not counted`;
+    }
+
+    res.json({
+      ok: true,
+      domain,
+      project,
+      since: new Date(sinceMs).toISOString(),
+      logPresent: present === true,
+      lineCeiling: MAX_LINE_BYTES,
+      lineCeilingLabel: MAX_LINE_BYTES_LABEL,
+      totals: summary.totals,
+      sessions: shown,
+      sessionsShown: shown.length,
+      sessionsTruncated: summary.sessions.length > shown.length,
+      note,
+    });
+  } catch (err) {
+    console.error('Memory capture read error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
