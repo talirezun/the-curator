@@ -1,4 +1,4 @@
-# Roadmap — the context engine (v3.61.0 → v3.64.0)
+# Roadmap — the context engine (v3.61.0 → v3.65.0)
 
 > **Read this like the other roadmap documents in this folder.** Same convention as
 > [roadmap-chat-modes.md](roadmap-chat-modes.md), [roadmap-menubar-widget.md](roadmap-menubar-widget.md)
@@ -51,7 +51,7 @@ verbatim — the original *is* the product. Full design record of the three laye
 
 | | Audience 1 — the knowledge builder | Audience 2 — the builder working with agent harnesses |
 |---|---|---|
-| What they came for | A second brain, or a shared/company brain: ingest → wiki → chat → share | A context machine: their project's context surviving a change of session, harness, model or machine |
+| What they came for | A second brain, or a shared/company brain: ingest → wiki → chat → share | A context engine: their project's context surviving a change of session, harness, model or machine |
 | Their unit of work | A **domain** | A **project** inside a domain |
 | Layer they live in | Domain knowledge | Foundations + agent memory |
 | First minute today | Coherent end to end and must not be disturbed | Four things are wrong for them (§C, v3.62.0) |
@@ -117,12 +117,12 @@ basics** — they are first because they must not regress, not because they are 
 | B12 | 2 | Prove capture happened: sessions this week, by harness, saved / not saved | v3.63.0 (honesty meter) | **shipped**. Three states told apart — no log · a log with no session in the window · the reading — over a 30-day window |
 | B13 | 2 | A non-Claude tool writes the format without any skill at all | v3.63.0 (public spec + a neutral `my-curator` command) | **the spec is published** and pinned to the live constants by a suite. The acceptance run — a writer built by somebody without this repository — **has not been done** |
 | B14 | 2 | A session ends by compaction rather than by choice, and the handoff still lands | v3.63.0 (per-harness hooks, where one exists) | **partly**: the pre-compaction hook is written for the harnesses that have one, and the research settled that **Codex is the only harness whose pre-compaction hook can block**. Not measured on any of them |
-| B15 | 2 | Two harnesses work one project in parallel and each needs to know what the other recorded | v3.64.0 (awareness digest) | planned |
-| B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.64.0 (promote-to-foundation) | planned |
+| B15 | 2 | Two harnesses work one project in parallel and each needs to know what the other recorded | v3.65.0 (awareness digest) | planned |
+| B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.65.0 (promote-to-foundation) | planned |
 | B17 | 2 | A mirror has gone stale, or its checkout is not on this machine: the state is visible and Refresh is withheld with its reason | v3.59.0 / v3.60.0 | built |
 | B18 | 2 | Their first minute tells them to get an API key the memory layer does not need | v3.62.0 | planned |
 | B19 | 2 | Their unit of work is five clicks deep, below an "advanced" divider, in a view that cannot create it | v3.61.0 pointer · v3.62.0 rail order + shared create panel | in flight / planned |
-| B20 | 2 | Plan a project in Chat with no repo and no agent, then save one answer as a canonical document | v3.64.0 | designed |
+| B20 | 2 | Plan a project in Chat with no repo and no agent, then save one answer as a canonical document | v3.65.0 | designed |
 | B21 | 2 | A Chat conversation that starts from the project's canonical documents instead of a keyword search over them | v3.64.0 | designed |
 | B22 | 2 | Extend an existing mirror with a fifth document — Add and Refresh are not mutually exclusive | v3.61.0 | in flight |
 | B23 | 2 | The domain's **own** project (which cannot be renamed or deleted) gets foundations like any other | v3.61.0 | in flight |
@@ -361,7 +361,413 @@ the neutral command ships as part of this repository or beside it (§F D15).
 
 ---
 
-### v3.64.0 — awareness and promotion
+### v3.64.0 — the shell for two audiences, the docs and the website
+
+**Recorded into this roadmap 2026-09-19**, the day after v3.63.0's tag, from two same-day read-only
+design passes — one over the app shell (the rail, the domain page, Chat), one over the website and
+the documentation narrative — taken against `main` = `d10b27f` = tag **v3.63.0**. Neither pass
+edited code; this section records what they decided, not what has shipped. **The three-entry rail
+was "designed, not scheduled" as recently as the day this pass started** (the website design pass's
+own premise-check found no scheduled release for it); the maintainer scheduled it here, at v3.64.0,
+which is what makes this section possible to write with one release number rather than two.
+
+**Goal.** Two goals, inward and outward, shipped together because the outward half's design pass
+concluded the two cannot be split cleanly (see (g)). Inward: the shell stops being drawn for one
+audience — three rail entries instead of five, Ingest and Shared Brain re-hosted (never removed) as
+sections of the domain page they already describe, and Chat can read a project's canonical context
+in addition to the wiki it already retrieves from. Outward: the website and the documentation stop
+describing an app three-plus releases behind, "context machine" retires everywhere it is a product
+claim, and neither surface may say more about agent capture than v3.63.0's instrument has actually
+measured.
+
+**(a) Positioning.** The category line **"The Curator — the context engine"** sits above the
+unchanged tagline, **"Your brain. Your team's brain. Your agents' brain."** — neither the tagline
+nor the positioning it expresses is up for revision here. "Engine" replaces "machine" everywhere it
+is a product claim, in both repositories, in one landing (§F **D20**). One exemption survives in the
+app repo: `CLAUDE.md`'s frozen `v3.59.0` changelog row, which this repository keeps byte-for-byte and
+never rewrites — a changelog row is evidence of what was said at the time. **This roadmap's own prior
+exemption (its audience-2 table cell, quoting what audience 2 came for) is withdrawn by the
+maintainer's instruction that produced this section** — see the retirement above in §A. The
+one-paragraph description, quoted verbatim from the design pass:
+
+> A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
+> your projects' context — foundations, working state, knowledge — so any agent, in any harness,
+> resumes where the last one stopped. Plain markdown, in your own repo.
+
+This paragraph lives in the meta description, the JSON-LD and `llms.txt` — never on the page itself,
+where the hero stays a headline and at most two short lines (hard cap 30 words). The site's
+`featureList` gains one clause for the `my-curator` command and one for the capture meter, and drops
+one release note that was never a feature.
+
+**(b) The rail.** `NAV_VIEWS` becomes three entries — **Chat · Domains · Context**, read as *ask ·
+knowledge · context* (§F **D21**) — with no divider (`RAIL_DIVIDER_AFTER = null`): the divider's
+existing meaning is *"advanced, not for everyone"*, which contradicts a shell built for two
+first-class audiences. **Home stays `domains`** (§F **D22**); the logo/Home redundancy this creates
+is accepted, not fixed, and is left for the v3.65.0 Home dashboard to resolve. Ingest and Shared
+Brain leave the rail but not the app: a new `HOSTED_VIEWS = ['ingest', 'shared']` array widens
+`ALL_VIEWS` so both view ids stay registered, restorable from the stored `curator-next-view` last-
+view key, and navigable by name; `VIEW_META` keeps both entries in full (captions, titles, icons)
+because other surfaces still read them — a mount-error card, and a model-read MCP refusal string
+keyed to `VIEW_META.shared.caption`.
+
+*What the design pass found about the tray.* No view id and no URL crosses the Electron main/
+renderer process boundary — the tray's only two live couplings to the shell are
+`document.querySelector('[data-view="memory"]')` and the `settings` equivalent, driven by
+`executeJavaScript` clicks through the DOM, never a deep link or a query string. So the tray was
+never the reason `ingest`/`shared` had to keep a rail button; the real reasons are three others that
+genuinely are: the Sync view's "Open Shared Brain" button (`navigate('shared')`), the knowledge
+door's third onboarding step, and the stored last-view key, which a user who quit on Ingest or
+Shared Brain depends on. `navigate()`'s own gate is the view **registry**, not the rail array, and an
+unknown name is a silent no-op with no warning — precisely why `HOSTED_VIEWS` keeps both ids
+registered rather than merely dropping them from `NAV_VIEWS`.
+
+*What the design pass found about Shared Brain.* The enable toggle is an **install-level** fact
+(`GET /api/sharedbrain/feature-flag`; `#btn-sb-enable` POSTs `/api/sharedbrain/enable-flag`), not a
+per-domain one, and the standing invariant is *"one control, one place, and nowhere else"* — pinned
+by a suite that asserts the Settings view mentions no Shared Brain at all. Rendering that off-state
+on N domain pages would put the one control in N places, the literal negation of the invariant, so
+**the toggle does not move** (§F **D23**): it stays on the Shared Brain view's own off-state, and a
+domain page's SHARED BRAIN section, when the flag is off, renders one line and a door — *"Shared
+Brain is off on this install."* plus "Open Shared Brain" — never a second off-state. A connection is
+not one-to-one with a domain in either direction (one connection carries an array of contributing
+domains, and separately a derived, never-stored, mirror domain), so the section needs a lens the code
+does not have today: a domain page belongs to a connection when it contributes to it, or when it
+*is* that connection's mirror.
+
+**(c) The domain page's section order and the re-hosting rule.** Six sections, in order: OVERVIEW ·
+**ADD SOURCES** (was the Ingest view, a closed fold) · PAGES · THE WIKI · PROJECTS IN THIS DOMAIN ·
+**SHARED BRAIN** (was the Shared Brain view, lensed to this domain, a closed fold) · WIKI HEALTH. ADD
+SOURCES sits above the wiki because it is how the wiki gets its contents, continuing the v3.49.0
+ordering argument that a page states first what a domain *holds*; SHARED BRAIN sits between PROJECTS
+and WIKI HEALTH because it is a fact *about* the domain, like Projects, and stays above the
+maintenance report for the same reason Projects does. Neither insertion touches the one adjacency a
+page-order suite pins today — the eyebrow immediately preceding its own browse list. On a `shared-*`
+mirror domain there is **no ADD SOURCES section at all** (ingest already refuses mirrors as
+destinations) — absent, never merely disabled — and the Shared Brain section becomes one read-only
+strip naming the connection and its last synthesis.
+
+The re-hosting rule (§F **D24**): **one panel, two hosts, and the seam is additive.**
+`views/ingest.js` keeps its full-page view registration and gains a small set of exported entry
+points (a mount function, an unmount function, a busy predicate) that the domain page calls as a
+section host; `views/shared.js` gains the same shape. **No function moves file, and no function is
+renamed** — several existing suites cut named functions out of both files by brace-matching their
+own source, so a "tidy while moving" refactor does not fail softly on this seam, it throws. Two of
+those suites are owned by nobody in this release and serve as the tripwire: if the seam stays
+additive, both stay green, untouched.
+
+Page length is managed by folds and jump controls, never by cutting: both new sections are closed on
+first paint, remembered per domain, and the OVERVIEW stat tiles double as jump-and-open controls,
+gaining two new tiles (SOURCES, and — when a connection exists — SHARED).
+
+*The drop-zone hazard, ranked the release's highest risk.* v3.46.0's real defect, in this exact code:
+`dragover` fired continuously, the first one triggered a re-render, and the drop target was destroyed
+mid-drag — drag-and-drop simply did not work in the Mac app. The fix living inside `views/ingest.js`
+is *"while a drag is in progress this view mutates, it never re-renders."* Hosting that drop zone
+inside a page with its own stale-while-revalidate cycle puts a second, unrelated re-render source
+above that rule. So while a hosted panel reports itself busy, the domain page's re-render **patches
+instead of replacing** `#view-root`'s children. This is the one obligation in this release that
+**cannot be verified offline** — no sandbox reproduces a destroyed node identity under a real drag —
+and it is required, mandatory work, not a confirmation: measured in a real browser, with the drop
+target proven to be the same node object before and after a drag held while a health revalidation
+returns.
+
+A mandatory browser re-measurement set, five items: the existing no-repaint figures still hold on a
+cached switch; the domain page's length at 1370 px and 568 px, both fold states, overflow required to
+be 0; the drag-hazard proof above; a live ingest batch survives a visit to WIKI HEALTH and back with
+its SSE stream re-attached; contrast on every new surface, both themes, against the 4.5 floor.
+
+**(d) Chat with a project.** A **project pill** joins the scope bar as a second group — eyebrow
+PROJECT, one listbox pill, and, when the project has more than one work-stream, a smaller scope pill
+defaulting to `latest` — to the left of the existing domain scope group, which stays first and stays
+the one selector that decides which wiki pages are in scope. Persisted **per device** in
+`localStorage`, not per conversation (which reopens the question this file's D16 answered the other
+way — see §F **Q17**).
+
+The **second retrieval source over `state/`**: with a project pinned, `src/brain/chat.js` calls
+`getProjectContext(domain, project, {scope, include: 'changed', maxBytes:
+PROJECT_CONTEXT_BUDGET_CHARS})` from `src/brain/working-state.js` **in-process** — no new HTTP route,
+no second assembly of the bootstrap. (There was never an HTTP route serving this shape: the app's own
+surface reaches the same store through a differently-shaped `GET /api/memory/:domain/:project`, and
+the MCP tool is the only existing caller of `getProjectContext`.) A new
+**`PROJECT_CONTEXT_BUDGET_CHARS = 40,000`** constant sits beside, and is additive to, the existing
+wiki budgets (`CONTENT_BUDGET_CHARS = 60,000`, `CATALOGUE_BUDGET_CHARS = 12,000`) — smaller than the
+MCP bootstrap's 120 KB default because one chat turn already carries 60 KB of wiki, a catalogue and
+conversation history. Both budgets are stated to the user under the composer, and every omission
+`getProjectContext` discloses reaches the user as a line, never a stderr entry. The wiki-only path is
+byte-identical when no project is pinned.
+
+What is read, and in what order, mirrors the MCP bootstrap's own selection rule and its own
+serialisation order — the content-is-data framing first, the standing brief with its authority note
+first inside it, then the latest handoff, then read-first foundations in reading order, then other
+foundations by keyword match against the same query context the wiki retrieval already builds. The
+reason for reusing the order, not just the strings: that order is commented as load-bearing where the
+MCP composes it, and a second, differently-ordered rendering of the same content is a second thing
+that has to stay true. **The framing extraction** (part of package (h) below) moves those constants
+down into a new `src/brain/context-framing.js`, byte-identical, so `src/brain/chat.js` can build the
+same injection defence without `src/brain/` ever importing from `mcp/` — the dependency runs the
+other way, and always has.
+
+**Chat never writes to state (§F D25).** The app stays read-only over tiers 2 and 3 by standing
+invariant, and tier 0 stays writable only through the owner's own edit or a commissioned
+`save_foundation`. Chat-reads-a-project needs none of that. **"Save as foundation" — a write surface
+with its own approval flow and its own editor — is explicitly NOT in this release**: a rail change,
+two re-hosts and a retrieval change is already the most one release can carry and still be verified
+in a single browser pass. It lands in v3.65.0 beside the Home dashboard, where the editor it opens
+into is already the subject (see the renamed v3.65.0 section below).
+
+A project pinned in Chat that is then deleted answers a **400 with a named reason before the stream
+opens** — never a silently wiki-only answer.
+
+**(e) First run.** The two doors (`DOORS`/`STEP_SETS`) are unchanged — both already land on
+`domains` and `memory`, both of which survive the three-entry rail unchanged. Two small edits: the
+knowledge door's third step keeps the view id `ingest` in its target table (so the mapping change is
+a suite change, never a silent one) but its **navigation** becomes "Open Domains", landing on the ADD
+SOURCES fold; and the Context view's empty state gains one sentence naming who the layer is for —
+work that outlives one session: a book, a research programme, a codebase — because a reader with no
+agents now sees a rail button called *Context* with no rail caption to explain it (captions are one
+word; the rail cannot carry prose).
+
+**(f) The docs narrative.** **README** front door: the "Curator is a context machine" sentence
+becomes "the context engine," and the centred website line above Quick Start gains the category line
+and the tagline as a two-line centred block above it; a new `### Two audiences` subsection sits under
+the existing three-kinds table, naming both audiences in the same two rows the website's routing
+section carries, so the two never say different things. **User guide chapter 1** gains a closing
+routing table (four rows) sending each audience to its first chapter, and the guide's **table of
+contents is regrouped** under three captions — ASK (chapters 1–7), KNOWLEDGE (8–13, 17), CONTEXT
+(13b, 13c, 15, 15b), REFERENCE (14, 16, 16b, 18–21) — **with NO chapter renumbered** (§F **D26**). A
+census across both repositories found **33 distinct `user-guide.md` anchors** referenced from the
+website alone and 69 from the app repo, 11 of them pinned `DOCS_LINKS` keys a suite fails on if they
+move, plus a second, independently hand-maintained anchor table in
+`public-knowledge/curator-links.md` — renumbering even one chapter would therefore not be a
+documentation edit, it would be a breaking change to four consumers, two of them outside this
+repository. The one heading that does move is the file's single un-numbered `## Read before you…`
+heading, which breaks the numbered grammar every other chapter follows: it is demoted to a `###`
+inside chapter 13b, where it already lives topically, after confirming nothing links to its anchor.
+**`docs/product-overview.md`** gets four surgical edits (its version line, the positioning paragraph,
+the three-write-rules wording aligned with the other three files that carry it, and a "where it
+stands" update naming v3.62.0/v3.63.0 under the same honest-reach language as (i)) rather than the
+full reconciliation an eighteen-release-stale, 18,203-word file actually needs — that reconciliation
+is carried forward as its own open question (§F **Q26**). **The Lumina set**
+(`public-knowledge/curator-*.md`) gains the noun change and two new topics in `curator-overview.md`
+only — *"which of the two things is it for me"* and *"do my agents actually save, and how would I
+know"* — per the set's own rule that a fact lives in exactly one file; `curator-agent-memory.md`'s
+one non-question heading is renamed to match the set's own convention. The set has room: even before
+these additions it sits at roughly half of its ~95,000-token design target.
+
+**(g) The website.** The home page grows from 10 sections to **13**: three new sections (`ways`,
+`context`, `bridge`) are inserted, none is deleted, and `install` moves down one slot so the routing
+section reads first.
+
+| # | `data-section` | Headline | Status |
+|---|---|---|---|
+| 01 | `ask` | Your brain. Your team's brain. Your agents' brain. | hero rewritten to two lines |
+| 02 | `ways` | Two ways in. The same files underneath. | **new** — routes the two audiences |
+| 03 | `install` | Install in the way that fits your machine. | moved down one slot, unchanged |
+| 04 | `brains` | The same markdown files serve you, your team and your agents. | cards rewritten to equal length |
+| 05 | `context` | The context a project runs on, carried between sessions. | **new** + a second animation |
+| 06 | `how` | Two short paths through the same files. | rewritten — two four-step paths, not eight cards |
+| 07 | `bridge` | One bridge, two front doors. | **new** — the 24 MCP tools, the CLI, the honesty statement |
+| 08 | `app` | Same app on the Mac and in the browser. | lede corrected now (W1); rail lede + screenshots wait for W2 |
+| 09–13 | `widget` · `files` · `compounding` · `people` · `star` | unchanged | eyebrow numerals only |
+
+**The word budgets, before → after, quoted from the design pass:**
+
+| Family | Row | Budget per card | Ratio cap | Before | After |
+|---|---|---|---|---|---|
+| Hero body | §01 | 30 words total, ≤ 2 lines | — | 60 (one paragraph) | **24** |
+| Section lede | all | 26 words, 1–2 sentences | — | 62 (two ledes on one section) | **≤ 26** |
+| Two-ways card | §02 | 24–34 | 1.35× | — | 30 · 32 → **1.07×** |
+| Kind-of-context card | §04 | 18–26 | 1.35× | 21 · 21 · 36 → 1.71× | 21 · 21 · 20 → **1.05×** |
+| Brain card | §04 | 30–40, one paragraph | 1.35× | 43 · 30 · 133 → 4.43× | 34 · 30 · 36 → **1.20×** |
+| Context block | §05 | 20–28 | 1.35× | — | 27 · 25 · 22 → **1.23×** |
+| How-it-works step | §06 | 14–20 | 1.35× | 16·25·16·17·20·19·18·45 → 2.81× | 16·16·15·19·17·17·17·18 → **1.27×** |
+| Bridge card | §07 | 24–32 | 1.35× | — | 30 · 32 · 27 → **1.19×** |
+
+**The 1.35× copy-budget rule (§F D28):** a row of peer cards may vary by at most 1.35× in word count
+(measured over the card's body text, after stripping tags), and no card carries more than one
+paragraph. 1.35 is not arbitrary — it is the ratio the site's already-good rows already sit under.
+Enforced by a script, `site/scripts/check-copy-budget.mjs`, shipped with a planted-defect control
+that must fail (re-inflate one card and require red) — never by review alone, because the defect this
+rule exists to catch (a hero paragraph at 60 words beside neighbours at 21 and 30; a brain-card row
+spread 4.43×) survived every prior release's review.
+
+**The second animation, `buildContextLoop()`.** The existing knowledge-path animation
+(`buildPipeline`, ~3.4 KB) is kept, unmoved; one label changes, `AGENTS VIA MCP` →
+`AGENTS · MCP + CLI`, because the CLI is now a second front door. A **second, new** animation draws
+the context layer as a **cycle** — foundations feeding two sessions in two different harnesses, each
+session's handoff *replaced whole*, the next session reading it — rather than as a fourth output box
+on the existing knowledge-flow graphic. A fourth output box would say "agents are a fourth reader of
+the wiki," which is precisely the pre-context-engine story the positioning retires. Six frames over a
+10-second cycle, budgeted at ≤ 3,600 bytes (hard ceiling 4,000; over it, the counter frame is dropped
+and the cut reported, never the code compressed).
+
+**The reduced-motion fix.** All seven of the site's SMIL-based graphics (six existing plus the new
+one) keep animating today for a visitor who asked for none — the existing reduced-motion CSS block
+cannot reach `<animate>` elements, which are not CSS animations, and no pause mechanism exists
+anywhere in the site. The fix is one helper (pausing every `<svg>` root at a chosen rest frame) called
+at mount and again on the media query's own change event, verified per graphic as a number (paused
+state and current time) rather than "looks static."
+
+**W1 ships now; W2 waits for the release that tags the three-entry rail (§F D27).** The website lands
+in two parts, split at the dependency rather than at a version number, because the website design
+pass's own premise-check found the rail *"designed, not scheduled"* the same day the maintainer
+scheduled it here — closing that gap is what makes a single release number possible for the copy that
+depends on it. **W1 — the catch-up** describes the app as it is at v3.63.0 (the noun, the hero, the
+card budgets, the two-ways-in section, the context section and its animation, the two how-it-works
+paths, the bridge section, the corrected five-view rail lede, the version strings, the Lumina
+re-copy) and may land as soon as it is verified, independent of whether this release has shipped yet.
+**W2 — the shell** (the three-entry rail lede, three re-taken screenshots, the site-map's new rows)
+lands only after this release's own Tests workflow is green. A site that advertises a rail nobody can
+see yet is exactly the same defect as a site that claims a harness nobody has measured — this file's
+§F **D20** carries the noun, and (i) below carries the reach discipline the sentence borrows from.
+
+**The Lumina copies have already drifted.** `site/lumina-knowledge/curator-*.md` are documented as
+byte-identical reproducibility copies of `public-knowledge/*.md`; a diff taken during the design pass
+found all four differ, because the site's copy sits at v3.60.0 while the app's is at v3.63.0. The fix
+is a `cp` plus a `shasum -a 256`-verified copy on both sides, never an in-place edit, and the
+maintainer's manual re-upload to Lumina is carried in the release report as an unchecked box — no
+builder can perform it.
+
+**(h) Packages and landing order across both repos, the two seams.** In the app repo, ten packages:
+**A** the rail · **B** the Ingest host seam · **C** the Shared Brain host seam · **D** the domain page
+· **K** the framing extraction · **L** Chat reads a project · **G** desktop/tray strings ·
+**E** docs + public knowledge · **M** the measurement campaign · **X** release. Landing order: **K**
+and **A** first, independent of the host seams; **B** and **C** before **D** (which imports the
+signatures **B**/**C** fix); **D** and **G** feed **E**, which reads every other package's report;
+**M** runs first in wall-clock time and gates nothing in the tree. In the website repository, five
+packages: **A** the noun (spans both repositories, in two commits, and lands first, alone) ·
+**W1** the site's sections and copy · **N** the animations (parallel with **W1**) · **W2** the shell
+(gated on the rail) · **D** the app-side docs (rides the app release) · **W-verify** the two new
+guards (after **W1** and **N**). **A file appears in exactly one package's ownership row** on either
+side; a builder who needs a file it does not own reports it rather than editing it. Two seams the
+orchestrator resolves at merge, never a builder: the `OFFLINE` suite-array tail in
+`scripts/run-tests.js` gains two entries (a domain-sections suite, a chat-project-context suite), and
+`CONTRIBUTING.md`'s checked (not hand-maintained) suite-count line moves by two.
+
+**(i) The measurement campaign — this release's first job, regardless.** v3.63.0 shipped the
+instrument (`scripts/measure-harness.js`) and every `measured` field in
+`src/brain/harness-adapters.js` still reads `null`. Nothing in the product or the docs may describe a
+hook as working until a verdict word exists, and this campaign runs **before** anything else in this
+release that touches copy claiming reach. Three arms — **A** skill only · **B** skill + instructions
+block · **C** skill + block + adapter hooks (what v3.63.0 built) — N = 4 neutral runs per arm per
+harness, one fixed task on a throwaway fixture project that never mentions saving, ending naturally,
+plus one compaction-ending variant for arm C. Against the real install, not the test-isolation
+environment — the point is to measure what a real harness actually does. Start with Claude Code, then
+`my-curator doctor` to see which of the others are actually wired on this machine before assuming any
+of them are. Only after a run produces a verdict word (`not-measured` / `measured-no` /
+`measured-partial` / `measured-yes`) may the adapter table, `doctor.js`, or any doc's "not measured"
+language move — never from inference, and never in advance of a run.
+
+**What it deliberately does NOT do.**
+
+| Item | Where it goes instead | Why |
+|---|---|---|
+| The Home dashboard — every project's three-layer strip, capture and freshness | **v3.65.0** | The maintainer's decision; it is also the only thing that resolves the logo/Domains redundancy (d), so the two land together rather than the redundancy being papered over twice |
+| Chat "Save as foundation" (B20) | **v3.65.0**, beside the Home dashboard | It is a **write** surface into tier 0 with an owner-approval flow; this release already carries a rail change, two re-hosts and a retrieval change |
+| The cross-scope digest (B15) | **v3.65.0** | It is a change to `getProjectContext`'s envelope, which package L reads here; changing a contract and its first new consumer in one release means neither can be the control for the other |
+| Promote-to-foundation (B16) | **v3.65.0**, with "Save as foundation" | Same editor, same approval flow, same suite — two gestures, one design |
+| An MCP read tool for the skeletons (a 25th tool) | **v3.65.0 or later** | A tool-count decision — the catalogue, the usage-log driver and the Tool map must move in the same commit, and nothing here touches `mcp/tools/index.js` |
+| The MCP `prompts` capability | Unscheduled | Client support is uneven; the copyable sentence remains the harness-neutral floor |
+| The Ingest drop-zone fork (ingest-or-keep) | **v3.65.0** | It is a *feature* in the confirm grid, independent of the re-host; landing it here would make the section's first version its second design |
+| The ingest auto-split at headings (Q8, this file) | **Still proposed; v3.65.0** | Nothing about it is designed yet; `TEXT_CAP = 80,000` stays, unchanged, until it is |
+| The rail-level ingest-finished badge (K5) | **Kept, and its shape changes** | There is no longer an Ingest rail button to badge — it moves to the **Domains** entry, on the Sync-badge's own render/patch idiom; recommended for v3.65.0, with the dashboard |
+| Renaming `/api/memory` (Tier C) | Refused, again | The view id, two `localStorage` keys, six docs-links keys and every `mem-*`/`fnd-*` class all still depend on it |
+
+**Acceptance, per scenario.** The rail: three buttons, no divider, the logo still lands on Domains,
+and a stored `ingest`/`shared` last-view still restores. K5 (audience 1's everyday loop): a user
+drops a source on the domain page, sees the free estimate before spend, starts it, visits WIKI HEALTH
+and returns to find the panel still live. The drag hazard: proven in a real browser, not argued —
+same drop-target node before and after a drag held through a health revalidation. Shared Brain: on a
+contributing domain, only that domain's connections appear, still through the per-connection
+in-flight registry; on a mirror, ADD SOURCES is absent and `#btn-sb-enable` exists in exactly one
+file in the tree. B21 (Chat reads a project): with a project pinned, the answer is built from the
+canonical documents and the brief, both budgets are stated, and an omission is named; with no project
+pinned, the prompt is byte-identical to v3.63.0's. The injection defence: the framing sentence is
+emitted before any project text, the authority note precedes the brief, and the caveat body is
+byte-identical to the string the MCP tool holds today, asserted from the new shared module. A stale
+pin: a project pinned in Chat and then deleted answers a 400 with a named reason before the stream
+opens. Positioning: `grep -rn "context machine"` over the app repo returns exactly one hit (the
+frozen `v3.59.0` changelog row) and zero hits in `README.md`, `docs/**` and `public-knowledge/**`.
+The campaign: at least one harness carries a real verdict word from a real run, and every row that
+does not still reads `not-measured`.
+
+**Protected basics it must not regress.** Every row of audience 1's must-not-regress list from
+earlier releases, plus, load-bearing here specifically: Chat stays domain-scoped and single-select
+with the live pages-in-scope readout, extended (not rewritten) by the project pill; the Shared Brain
+enable toggle stays on that view's own off-state and nowhere else, the census widening to
+`views/domains.js`; the domain page's page list keeps its absence of a loading gate even while a
+hosted panel is busy — the busy-quiesce **patches**, it never skips a repaint the loading gate
+expects; Send and Stop stay one element, one id, one listener; Compile-to-Wiki stays a thread item
+with no `max-height`/`overflow` of its own; the per-message copy control stays visible at rest; on
+the bridge, any new tool still needs a `refuseIfReadonly()` call site with the catalogue and the
+usage-log driver moved in the same commit; a foundation is still stored and returned verbatim, no
+summarisation on the way in or out; no `## ` heading in `docs/user-guide.md` changes except the one
+demotion named in (f); the three "context engine" sentences across `README.md`, `docs/README.md` and
+`docs/user-guide.md` stay byte-identical to each other; `node scripts/test-docs-links.js` and
+`node scripts/test-public-knowledge.js` stay green.
+
+**Risks, ranked.**
+
+1. **The drop zone inside a page that re-renders itself** — the highest risk, because it has already
+   happened once, in this exact code, at v3.46.0. Mitigated by the busy-quiesce rule in (c), verified
+   only in a real browser under a real drag; the de-risking fallback, named in advance, is that ADD
+   SOURCES renders a destination, the activity and an "Open Ingest" door instead of the full drop
+   zone, for one more release, if the measurement fails.
+2. **The domain page becomes the "four audiences' worth of card" page it was already warned about**
+   before this release adds two more sections. Mitigated by closed folds, jump tiles, and a mandatory
+   overflow-zero measurement at both 1370 px and 568 px; the honest residual is that a user with a
+   connection, a project and a health report still has a long page even folded, and the real answer
+   is v3.65.0's Home dashboard.
+3. **A re-host that quietly becomes a rewrite.** Both hosted views are thousands of lines long and
+   several suites cut named functions out of them by brace-matching source; a "tidy while moving"
+   refactor throws rather than failing softly. Mitigated by the additive-seam rule in (c) and the two
+   untouched tripwire suites.
+4. **A silent unreachability.** `navigate()`'s gate is the registry, and an unknown view name is a
+   silent no-op with no warning; a divider naming a view outside `NAV_VIEWS` renders nothing, also
+   silently. Mitigated by a new assertion that executes view registration against a stub for every
+   `HOSTED_VIEWS` name, and by re-checking both Electron `[data-view]` selectors against a
+   three-entry rail.
+5. **The injection defence weakening in transit.** The caveat body is the memory layer's defence
+   against a handoff carrying text shaped like an instruction, and it was measured once, live: planted
+   state was never obeyed, but in 3 of 10 live runs a model reproduced a hostile command as a
+   recommended next step. Chat is a new consumer of that text, on a surface where the user reads
+   prose rather than a JSON envelope. Mitigated by moving the framing constants byte-identical and
+   reusing the MCP's own serialisation order, with a negative control that a wrongly-ordered prompt
+   must red.
+6. **The site deploys on merge, with no staging, and this release rewrites roughly a third of it.**
+   The only post-deploy gate is a curl for 200 and a canonical tag, which a page that renders as one
+   broken line would still pass. Mitigated by a mandatory pre-merge browser pass with a
+   zero-console-errors requirement, and by splitting the site packages so no single commit carries
+   both template and animation-logic changes.
+7. **A copy pass is exactly where an unmeasured claim gets written**, because a marketing sentence is
+   shorter than an honest one ("works with Claude Code, Codex and Cursor" is eight words; the true
+   sentence is thirty). Mitigated by the forbidden-sentence list the website design pass wrote out
+   verbatim (no percentage or success figure about capture; no "your agent will save"; no "never
+   loses context"; no user/install/star counts) and by marking the bridge section's third card as
+   unsoftenable.
+8. **A heading edit breaks a link nobody clicks until a stranger does.** 33 website-referenced
+   anchors, 11 pinned `DOCS_LINKS` keys and a second hand-maintained anchor table exist outside this
+   repository's own test coverage. Mitigated by renumbering nothing (D26), by a set-equality check
+   over the guide's headings before and after, and by a new anchor-resolution guard on the website
+   side that is the first thing that has ever checked the site's own links into the docs at all.
+
+**Open questions carried out of it.** See §F **Q15–Q27** below — both design passes' open questions,
+deduplicated and numbered continuing this file's sequence. One item the website design pass posed as
+a question — which release ships the three-entry rail — is **not** among them: the maintainer's
+2026-09-19 instruction that produced this section answers it (v3.64.0, this one), so it is recorded
+above as fact rather than carried forward as open. Whether the second animation in (g) gets built at
+all (as opposed to a static diagram) is still genuinely open — see **Q22**.
+
+---
+
+### v3.65.0 — closing the loops
+
+**Retitled 2026-09-19.** This section carried the title *"v3.64.0 — awareness and promotion"* through
+this file's prior revision. The shell design pass that produced the section above moved this
+release's number to v3.65.0 and, per its own §8 (reproduced in the section above's "What it
+deliberately does NOT do" table), took **one** of this section's six original rows — *"Chat: read a
+project's context"* (B21) — out of it and into v3.64.0, where it now ships as (d) above. The other
+five rows, and the goal they serve, are otherwise unchanged from this file's prior revision.
 
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.
@@ -374,8 +780,7 @@ a gesture for moving something from volatile to canonical.
 | **Promote-to-foundation, from a handoff decision** | A decision in a handoff is superseded by the next save. When it has stopped being volatile, the owner promotes it: the text opens in the **existing** foundation editor, unsaved, and reaches disk only through a commissioned save (`save_foundation` with `commissioned_by_owner: true`) or the owner's own `PUT`. No new write path |
 | **An MCP read tool for the skeletons** | Any harness fetches the unfilled prompts in one call instead of the owner pasting a sentence. Narrower than it looks: `get_project_context` already returns skeleton documents and marks them, per document and as a count (`getProjectContext` in [src/brain/working-state.js](../src/brain/working-state.js)), so this is a convenience for a client that does not want the whole bootstrap. It is a **25th tool**, and the tool count is a release decision — the catalogue is pinned against the `tools` array's order and the `refuseIfReadonly` census |
 | **The MCP prompts primitive** | [mcp/server.js](../mcp/server.js) declares `capabilities: { tools: {} }` — **tools only, today**. Adding `prompts` lets a client offer "draft this project's foundations" in its own UI. Client support is uneven, so the copyable sentence stays the harness-neutral floor and the prompt is an upgrade: one text, one source, two transports |
-| **Chat: "Save as foundation"** *(stays at v3.64.0 — a pull-forward to v3.63.0 was **recommended against** by the v3.63.0 design pass, on the grounds that v3.63.0's register is capture guarantees and network-facing engine work and this is a Chat-surface feature; the maintainer's call)* | One more per-message action in an **answer's** meta row, beside the copy control — deliberately not the thread-level Compile control, which acts on the whole conversation. It opens the ordinary editor pre-filled with that answer's raw Markdown; the owner picks project, role and slug and presses Save. Serves a builder with no repo and no agent planning in conversation, and drafting from what the domain's wiki already knows |
-| **Chat: read a project's context** *(same note — stays at v3.64.0)* | A project pill in the scope bar — where "what this conversation is about" already lives, rather than the composer row, which is about *how this message is answered*. With a project picked, the prompt is built from its foundations and standing brief under the bootstrap's own budget rules, **in addition to** the wiki retrieval `src/brain/chat.js` already does, with the two budgets stated rather than silently competing |
+| **Chat: "Save as foundation"** *(moved here from v3.64.0 by the 2026-09-19 shell design pass's Decision D-O: the read half of Chat-and-a-project ships at v3.64.0 as (d); this write half is deferred so a release carrying a rail change, two re-hosts and a retrieval change is not also carrying a write surface with its own approval flow)* | One more per-message action in an **answer's** meta row, beside the copy control — deliberately not the thread-level Compile control, which acts on the whole conversation. It opens the ordinary editor pre-filled with that answer's raw Markdown; the owner picks project, role and slug and presses Save. Serves a builder with no repo and no agent planning in conversation, and drafting from what the domain's wiki already knows |
 
 **Proposed for this release — maintainer to confirm.**
 
@@ -384,10 +789,12 @@ a gesture for moving something from volatile to canonical.
 | **Ingest auto-split at headings for an over-cap source** | `TEXT_CAP` in [src/brain/ingest.js](../src/brain/ingest.js) is **80,000 characters** and **STAYS** — it is the one number that keeps a single ingest's cost and its output-token ladder bounded, and raising it moves both without telling anybody. What is proposed instead is a pre-ingest **split at headings**: a source over the cap is divided at its own `#`/`##` boundaries into parts, and the parts are ingested as **ONE job** — one queue item, one estimate, one result panel, one `log.md` entry — rather than as several unrelated sources the user has to re-assemble mentally. Open, and the reason this is proposed rather than scheduled: whether each part gets its own summary page or one summary spans the whole source (the second is what a reader wants and the harder one to write), what the slug of a part is, and how the estimate quotes a multiple for a source that will become N calls. Nothing here is designed; the cap's behaviour today (truncate at 80,000 and warn) is unchanged until it is |
 
 **Relation to [roadmap-chat-modes.md](roadmap-chat-modes.md).** Modes 3 (**Dictate**) and 4
-(**Curate**) are designed-but-unbuilt for the **wiki**. The two Chat rows above are their tier-0
-siblings, and the boundary is the one that document already draws by its own logic: Dictate and
-Curate write pages that **accumulate**; these write documents that are **replaced whole**. The two
-roadmaps should be read together and neither should grow a copy of the other's design.
+(**Curate**) are designed-but-unbuilt for the **wiki**. "Save as foundation" above is their tier-0
+sibling (its read-side sibling, Chat reading a project's context, ships at v3.64.0 as (d) and is
+covered there instead), and the boundary is the one that document already draws by its own logic:
+Dictate and Curate write pages that **accumulate**; this writes documents that are **replaced
+whole**. The two roadmaps should be read together and neither should grow a copy of the other's
+design.
 
 **What it deliberately does NOT do.**
 
@@ -406,8 +813,8 @@ naming both, bounded, with truncation disclosed and the bootstrap's budget uncha
 promoted decision arrives in the editor unsaved, and nothing reaches disk without an explicit save;
 the resulting document carries the right `authoredBy` for whoever pressed Save. B20: a saved answer
 goes through the same 512 KB wall, the same budget disclosure and the same human stamp as any other
-curator-owned document. B21: with a project picked, the answer is built from the canonical documents
-and the brief, and both budgets are stated.
+curator-owned document. (B21 — Chat reads a project's context — shipped at v3.64.0; its acceptance is
+recorded there.)
 
 **Protected basics it must not regress.** Compile to Wiki stays a thread item with an
 estimate/confirm and no `max-height` or `overflow` of its own (`scripts/test-next-chat-compile.js`);
@@ -418,10 +825,10 @@ rest (`scripts/test-next-chat-copy.js`). On the bridge: any new tool must add a
 with it in the same commit (`scripts/test-mcp-usage.js`). A foundation is still stored and returned
 **verbatim** — no summarisation on the way in or out.
 
-**Open questions carried out of it.** Whether the project pill persists per conversation or per
-session — the conversation JSON syncs, so per conversation makes it travel *and* makes it a schema
-field (§F D16). Whether "Save as foundation" should be offered on a **question** as well as an
-answer (§F D17).
+**Open questions carried out of it.** Whether "Save as foundation" should be offered on a
+**question** as well as an answer (§F D17 — already decided: on both). **D16 is contested, not
+settled**, by the 2026-09-19 shell design pass, which built the v3.64.0 pill on **per device**
+persistence rather than D16's "per conversation" — see §F **Q17**.
 
 ---
 
@@ -496,6 +903,20 @@ Five rules that should survive this roadmap even if every release in it is re-pl
 
 | D19 | (was Q11) **The foundations budget on a mature project: the recommendation was taken, and it SHIPPED in v3.62.0.** See below |
 
+**Decided 2026-09-19, from the two same-day design passes behind the v3.64.0 section above.**
+
+| | Decision |
+|---|---|
+| D20 | **Positioning: "The Curator — the context engine"** above the unchanged tagline; "engine" replaces "machine" everywhere either word is a product claim, in both repositories, in one landing. One exemption survives — `CLAUDE.md`'s frozen `v3.59.0` changelog row — and this file's own prior exemption (its audience-2 table cell) is **withdrawn**: see the retirement in §A |
+| D21 | **The rail becomes three entries — Chat · Domains · Context** (*ask · knowledge · context*), no divider; Ingest and Shared Brain leave the rail but stay reachable, registered and restorable as `HOSTED_VIEWS`, because `navigate()`'s gate is the view registry, not the rail array, and an unknown name is a silent no-op |
+| D22 | **`HOME_VIEW` stays `domains`.** The logo/Home redundancy this creates is accepted, not fixed, and is left for the v3.65.0 Home dashboard |
+| D23 | **The Shared Brain enable toggle stays on that view's own off-state, install-level, and does not move to the domain page** — a per-domain copy of it would put one control in N places, the literal negation of "one control, one place, nowhere else"; a domain page's Shared Brain section reads the connection through a lens instead |
+| D24 | **Re-hosting Ingest and Shared Brain into the domain page is additive, never a rewrite: one panel, two hosts, no function moves file or is renamed.** Two existing suites that cut named functions from both views by brace-matching source are the tripwire — green and untouched is the proof the seam held |
+| D25 | **Chat reads a project's canonical context in-process, but never writes to it.** "Save as foundation" is a write surface with its own approval flow and is explicitly deferred to v3.65.0, alongside the Home dashboard whose editor it will open into |
+| D26 | **The user guide's spine (ask · knowledge · context) is delivered without renumbering a single chapter** — a table of contents regrouped under three captions, plus a routing table at the end of chapter 1. A census found 33 website-referenced anchors, 11 pinned `DOCS_LINKS` keys and a second, independently hand-maintained anchor table outside this repository; renumbering even one chapter would be a breaking change to four consumers, two of them external |
+| D27 | **The website lands in two parts, split at the dependency rather than at a version number:** W1 (the catch-up, describing the app as it is at v3.63.0) ships as soon as it is verified; W2 (the three-entry-rail lede and screenshots) waits for this release's own Tests workflow to go green |
+| D28 | **A row of peer cards on the website may vary by at most 1.35× in word count, and no card carries more than one paragraph** — enforced by a script with a planted-defect control, never by review alone, because review had already let a 4.43× spread and a 60-word hero paragraph ship |
+
 **D19 in full, because it is the one open question this roadmap closed by building it.** The
 measurement that raised it stands — on this repository's own documents, `docs/architecture.md`
 372 KB, `docs/working-state.md` 125 KB, `CONTRIBUTING.md` 70 KB, `docs/design-system-source.md`
@@ -552,6 +973,81 @@ and the 501-byte measured block keep their own pins untouched.
     source changes: a stale excerpt of a fresh document is a worse failure than no excerpt, and
     computing one without an LLM means the owner writes it, which means it can silently rot. No
     user has asked for it yet; the flag plus the index may make it unnecessary.
+
+**Carried from the two 2026-09-19 design passes behind the v3.64.0 section above, deduplicated —
+each with the pass's own recommendation, where it gave one.**
+
+15. **The rail divider.** D21 removes it, on the grounds that "advanced" contradicts "both audiences
+    first-class." Keeping `RAIL_DIVIDER_AFTER = 'domains'` would be the lower-churn option, and it
+    would still fall between Domains and Context either way. *Recommendation: remove it. Cost of
+    being wrong: one line, either direction.*
+
+16. **The onboarding "Open Ingest" step.** Should the knowledge door's third step keep navigating to
+    the full-page Ingest view — a screen with no rail button, which a user cannot find again — or
+    navigate to Domains and open the ADD SOURCES fold? *Recommendation: Domains plus the fold; a
+    first-run step that teaches an unreachable screen is worse than one extra click.*
+
+17. **The project pill's lifetime, and D16's reopening.** D16 recorded "per conversation." The
+    2026-09-19 shell design pass built the v3.64.0 pill **per device** instead, on the grounds that a
+    conversation JSON syncs, so a per-conversation field could pin a project on a machine where it
+    does not resolve. *Recommendation: per device now (as shipped); revisit per-conversation when the
+    conversation schema next changes for another reason.* **This is the one place a prior decision
+    (D16) and a later design pass disagree; the maintainer's word settles which stands.**
+
+18. **The ingest auto-split at headings**, still nothing about it designed: whether each part gets
+    its own summary page or one summary spans the source, what a part's slug is, how the estimate
+    quotes a multiple for a source that becomes N calls. *Recommendation: v3.65.0, after those three
+    questions have answers.*
+
+19. **The ingest-finished badge, now that there is no Ingest rail button to badge.** It moves to the
+    Domains entry (the Sync-badge's own render/patch idiom). Is a badge on Domains — which also means
+    "your domains changed" — the right signal, or does it want the Home dashboard first?
+    *Recommendation: v3.65.0, with the dashboard.*
+
+20. **Three items carried from v3.63.0, still unresolved:** the npm package name (`the-curator` vs
+    `my-curator`); the licence on `src/brain/github-read-client.js` (built MIT, unconfirmed); and
+    whether `COPY_SUCCESS_BANNER` should point at `my-curator doctor` instead of the harnesses it
+    names today — a byte-pinned, model-read constant, so this is a decision, not a docs edit.
+
+21. **The three brief templates** (the store's, `views/memory.js`'s, `views/domains.js`'s) were
+    aligned on one heading in v3.62.0 but not unified. Package D of the v3.64.0 shell work touches
+    `domains.js` again. Should it unify on the store's template, or is that a separate release?
+    *Recommendation: separate — it is a data-shape change wearing a copy change's clothes.*
+
+22. **Does the website's second animation (`buildContextLoop`) get built, or is the budget better
+    spent on a static diagram?** A static SVG is cheaper, raises no reduced-motion question, and a
+    still frame can be reused in the user guide. *Recommendation: build the animation, and export a
+    still frame at its rest second for the docs in the same pass* — the animation earns the section
+    and the still costs one extra step.
+
+23. **13 website sections, or 12?** The one merge worth making is folding `#widget` into `#app` as a
+    second panel behind the existing tab row, which would hold the section count at 12; it is real
+    work and is not scheduled in any package. *Recommendation: ship 13 now and revisit the merge when
+    `#app`'s screenshots are re-taken for W2* — one measurement of that section instead of two.
+
+24. **Does the website get a "for agent users" landing path** — a second page or a deep link that
+    opens with the audience-2 card pre-selected? *Recommendation: no, not this release* — the
+    two-ways-in section already routes in one screen, and the site has no build step, so a second
+    page is a second hand-maintained large file. *What would change the answer:* a measurable share
+    of arrivals from an agent-tooling context, which nothing on the site currently measures.
+
+25. **Does the ask panel's fourth topic chip rename from "agent memory" to "project context"?** The
+    app renamed the view in v3.62.0, but the Lumina document stays `curator-agent-memory.md` on
+    purpose (the set is uploaded by filename, and its budget is keyed on that name).
+    *Recommendation: rename the chip, keep the filename* — a label a visitor reads and an upload
+    identity answer to different constraints.
+
+26. **Is `docs/product-overview.md` worth a full reconciliation, or should it be retired?** Eighteen
+    releases of capability have landed since its self-declared "current as of" line. (f) above takes
+    four surgical edits now rather than the real reconciliation the file needs.
+    *Recommendation: take the four edits now and put the full reconciliation on this roadmap.* *What
+    would change the answer:* if the maintainer no longer hands this file to models, retiring it and
+    letting `docs/README.md` plus the Lumina overview carry the job is the honest move.
+
+27. **Should the website carry a Content-Security-Policy?** Out of scope for a copy-and-shell
+    release, and it can break the ask widget, Google Fonts and the CDN scripts it currently loads
+    cross-origin without an allow-list written and tested first. *Recommendation: not this release;
+    keep it on the roadmap beside the site's other infrastructure items. Not a builder's call.*
 
 ---
 
@@ -631,7 +1127,27 @@ and a missed save still yields the previous state.
   not beside a capture release. *What would change the answer: one user losing real content to the
   cap.*
 
-**v3.64.0 — awareness and promotion**
+**v3.64.0 — the shell for two audiences, the docs and the website**
+
+1. Run the measurement campaign first, in wall-clock time — it gates nothing in the build tree, but
+   nothing in this release's copy may claim reach ahead of a real verdict word.
+2. Land the framing extraction (K) and the rail package (A) before either host seam (B, C); land both
+   host seams before the domain page (D), which imports the signatures they fix.
+3. Before any builder touches `views/ingest.js` or `views/shared.js`: confirm the two tripwire suites
+   this release owns nobody, and re-read them after the seam lands — green and untouched is the only
+   proof the additive rule held.
+4. Take the drag-hazard measurement (§3.7 item 3 of the shell design pass) in a real browser before
+   declaring the domain page done; no offline sandbox reproduces a destroyed drop-target node.
+5. Freeze the user guide's table-of-contents regrouping and the routing table's four rows before
+   touching a single `## ` heading; confirm the anchor set is unchanged by set equality, not by eye.
+6. Decide W1 vs W2's gate explicitly: W1 may ship the moment it is verified; W2 waits for this
+   release's own Tests workflow, not for a date.
+7. Ship the copy-budget guard (`check-copy-budget.mjs`) with its planted-defect control before
+   trusting any card's word count — a guard that has never failed has not been shown to work.
+8. Confirm the caveat-body / injection-defence string moved byte-identical into the new shared
+   module, with the negative control (a wrongly-ordered prompt must red) exercised before merge.
+
+**v3.65.0 — closing the loops**
 
 1. Settle the digest's budget against the bootstrap's existing one (120 KB default, truncation
    disclosed) before adding a field; two budgets competing silently is the defect to avoid.
@@ -639,11 +1155,10 @@ and a missed save still yields the previous state.
    the tool map in the same commit as any new tool.
 3. Decide whether the `prompts` capability ships at all; if it does, keep **one** text with the
    copyable sentence as the harness-neutral floor.
-4. Settle Q8 (pill persistence) before touching the conversation schema.
-5. Confirm that nothing in either Chat row writes to tier 0 except through the existing editor and
-   the existing save.
-6. Read [roadmap-chat-modes.md](roadmap-chat-modes.md) alongside this section and keep the boundary
-   explicit: Dictate and Curate write pages that accumulate; these write documents replaced whole.
+4. Confirm that "Save as foundation" writes tier 0 only through the existing editor and the existing
+   save — no second write path, even a partial one.
+5. Read [roadmap-chat-modes.md](roadmap-chat-modes.md) alongside this section and keep the boundary
+   explicit: Dictate and Curate write pages that accumulate; this writes documents replaced whole.
 
 ---
 
