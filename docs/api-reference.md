@@ -2433,11 +2433,12 @@ at 500 chars) when it sent one.
 
 ---
 
-## Working state — Agent memory (`/api/memory`)
+## Working state — Project context (`/api/memory`)
 
 Working state (`domains/<domain>/state/`, v3.17.0; **projects inside a domain since v3.48.0**) is
-the store behind the `/next` shell's **Agent memory** view and the Domains view's **Projects**
-sub-section: a standing brief per project, a per-`(work-stream, machine)` handoff, and an
+the store behind the `/next` shell's **Project context** view (called *Agent memory* through
+v3.61.1 — the view's visible name changed in v3.62.0, **the path did not**) and the Domains view's
+**Projects** sub-section: a standing brief per project, a per-`(work-stream, machine)` handoff, and an
 append-only journal of saves. Served from `src/routes/memory.js` over
 `src/brain/working-state.js`.
 
@@ -2457,12 +2458,13 @@ collision (see below the table).
 |---|---|---|
 | `GET` | `/api/memory` | Every project in every domain, newest first |
 | `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0**, candidates gain `modifiedAt` **in v3.61.1**. Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
-| `GET` | `/api/memory/:domain/projects` | One domain's projects |
+| `GET` | `/api/memory/:domain/projects` | One domain's projects — **unless `?as=project`** (v3.62.0), which makes this handler decline so the detail route below can answer about a project literally called `projects` |
 | `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
 | `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
-| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror |
+| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror. Gains an optional, **tri-state** `readFirst` in v3.62.0 |
+| `PATCH` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.62.0.** The reading plan and nothing else — `{readFirst}` — on **either** ownership |
 | `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
 | `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) |
@@ -2482,8 +2484,47 @@ keeps its own, narrower set** (`project.md`, `journal.jsonl`, `current.md`, `fou
 names of its own on-disk entries), so a project directory literally named `repo-scan` created out
 of band (by an agent writing state directly, say) is refused by the router's create/rename routes
 but not by the store's `initFoundations` — it would still be listed and still readable by every MCP
-tool; only its own detail URL on this router is unreachable. That is a real, small, permanent hole,
-and hiding it would be worse than the hole.
+tool. Since v3.62.0 its detail URL is reachable too: `repo-scan` has always had a two-segment detail
+URL that the one-segment alias never shadowed, and `projects` is now reachable through `?as=project`
+(below). What reserving the name still buys is that this app never *mints* such a project.
+
+#### `?as=project` — one path, two resources, and the caller names which (v3.62.0)
+
+The second segment `projects` is genuinely ambiguous, and reserving a name could never fix the one
+case that mattered. A domain's **own** project is not minted — it exists because the domain does,
+and its slug **is the domain name** — so a domain called `projects` has a project called `projects`,
+and `/api/memory/projects/projects` is one URL naming two live resources: the Domains view needs the
+list, the Project-context view needs the detail. v3.57.0 recorded it and v3.61.0 recorded it again,
+each time imprecisely as *"a project literally named after its domain is unreachable on the
+2-segment read"*. **That was wider than the truth.** `/alpha/alpha` has always resolved, because the
+literal in the route is `projects`, not `alpha`; the unreachable set was exactly *any project named
+`projects`* — which, for the domain's own project, means the domain called `projects`, the
+maintainer's own.
+
+| Request | Answers |
+|---|---|
+| `GET /articles/projects` | the list — **unchanged** |
+| `GET /projects/projects` | the list — **unchanged** |
+| `GET /projects/projects?as=project` | the **detail read** of the project called `projects` |
+| `GET /articles/projects?as=project` | the detail read of a project called `projects` in `articles`; **404 `project_not_found`** when there is none |
+| `GET /articles/projects?as=list` | the list, said explicitly |
+| `GET /articles/projects?as=projct` | **400 `invalid_as`** |
+
+`as=project` makes the list handler call `next()` and Express continues to
+`GET /:domain/:project`, which re-parses its own params. **The default is byte-identical to what
+shipped**, on every domain, so no existing caller can now be answered differently; the only way to
+reach the other resource is to ask for it by name.
+
+**An unrecognised value is a 400 rather than an ignored field**, deliberately unlike `?open=newest`,
+which this router *does* ignore when it does not recognise it. The difference is what a mistake
+costs: `open` picks how much of one resource to send, while `as` picks **which resource** — so
+silently serving the list to somebody who typed `as=projct` is the exact failure this parameter
+exists to remove. The two accepted values are exported as `AS_LIST` / `AS_PROJECT`
+(`src/routes/memory.js:1279`) so a suite pins the literal rather than re-typing it.
+
+A new path (`…/project/…`) was refused instead: it would be a second public shape for a read that
+already has one, on a router already carrying one deprecated alias it is trying to retire. `as` is
+additive — no existing URL changes meaning.
 
 ### Which tiers the app may write
 
@@ -2925,8 +2966,18 @@ document** (empty editor or **Choose a file…**) for a new one.
 **Body**
 
 ```json
-{ "text": "# Architecture\n…", "title": "Architecture", "role": "architecture" }
+{ "text": "# Architecture\n…", "title": "Architecture", "role": "architecture", "readFirst": true }
 ```
+
+**`readFirst` (v3.62.0) is optional and TRI-STATE, and the omitted case is the important one.**
+Omit it and the document's current reading plan is left exactly where it is; send `true` or `false`
+and it moves. A normalised `false` on every omitted field would silently un-route a document each
+time its text was edited, and the owner would watch their reading plan empty itself one save at a
+time with nothing to see — so the route allow-lists the field and forwards an absent key as an
+absent key. Anything that is not a boolean is `400 invalid_read_first`. The response echoes
+`readFirst` and `wasReadFirst`, because a save that *preserved* a flag and a save that *moved* one
+are different facts. To change only the flag — including on a **mirror**, where this route is
+refused — use [`PATCH`](#patch-apimemorydomainprojectfoundationsslug) below.
 
 **`title` and `role` are both optional, on creation as well as on replacement** — the store
 (`saveFoundation`) derives whatever is omitted rather than refusing, and it does so **unconditionally
@@ -2949,7 +3000,7 @@ act on.
   "document": { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
     "bytes": 41200, "sha256": "…", "skeleton": false, "…": "…" },
   "totalBytes": 148230, "budgetBytes": 200000, "budgetExceeded": false,
-  "wasSkeleton": true, "notes": []
+  "wasSkeleton": true, "readFirst": true, "wasReadFirst": false, "notes": []
 }
 ```
 
@@ -2967,6 +3018,71 @@ document.
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | Unknown domain or project |
 | `409` | `locked` — another write to this project's foundations is in flight (the cross-process `.write-lock`, the one tier-0 exception to "no lock is taken" — see [working-state.md § 2](working-state.md#concurrency-this-tier-is-the-one-exception-to-no-lock-is-taken)) |
+
+### PATCH /api/memory/:domain/:project/foundations/:slug
+
+**New in v3.62.0.** Flag one document **read first**, or unflag it — the reading plan and nothing
+else. `setFoundationReadFirst` over HTTP. **Works on EITHER ownership**, which is the whole reason
+it is not an arm of the `PUT`.
+
+**Body: `{ readFirst: boolean }`, and nothing else.**
+
+```json
+{ "readFirst": true }
+```
+
+**Why a separate route.** The `PUT` is refused `repo_owned` on a mirror — correctly, since an edit
+there would be overwritten by the next refresh, because the folder is the author. A repo-owned
+project routed only through the `PUT` would therefore have had **no way to flag anything from the
+app at all**, and mirroring a checkout is the commonest way documents arrive.
+
+**And why a flag on a mirror is not a second writer.** The property the single-writer rule protects
+was never *"one process may write"*; it is **one writer per FILE, with provenance that matches**.
+`readFirst` is curator metadata *about* a document, never part of it: this route writes
+`foundations/manifest.json` and **nothing else**, so every mirrored `.md` stays byte-for-byte the
+checkout's and `sha(stored) === sha(source)` — the claim the whole freshness reading rests on — is
+untouched. The manifest is **already** a file this app writes on a mirror: `…/foundations/refresh`
+rewrites it on every re-copy, and `DELETE` rewrites it to stop mirroring a document. This is that
+same file, one boolean. Who reads what first is a decision a repository cannot make for its owner.
+
+**A second body key is a `400`, not an ignored field.** That is not tidiness: this route is
+reachable on a mirror, so a body that quietly ignored a `text` key would be a write path to a
+mirrored document wearing the wrong method. Refusing the whole request is what keeps *"this route
+writes the manifest and nothing else"* checkable from outside.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true, "domain": "acme", "project": "lumina", "slug": "decisions.md",
+  "readFirst": true, "wasReadFirst": false, "changed": true,
+  "readFirstCount": 2, "onRequestCount": 4,
+  "readFirstBytes": 38400, "readFirstBudgetBytes": 122880,
+  "readFirstBudgetExceeded": false
+}
+```
+
+`changed: false` is a **success** — the document is already in the state you asked for, nothing was
+written, and saying so is what lets a view avoid announcing a change nobody made.
+
+The five readings are forwarded from the store rather than recomputed here, so the block's summary
+line (*"N read first · M on request"*) can be patched in place without re-reading the project.
+**`readFirstBudgetBytes` is not `budgetBytes`**: the first is the **bootstrap's** 120 KB reading
+budget — what one session is actually handed — and the second is the **project's** 200 KB disk
+budget. A project can sit comfortably under 200 KB and still flag more than a bootstrap will send,
+so collapsing them would make a view say "within budget" about the wrong budget.
+`readFirstBudgetExceeded` is a **disclosure, never a wall**.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_read_first` — the body's `readFirst` is missing or is not a boolean. `unexpected_fields` — any key besides `readFirst`, with the offending names listed. `no_manifest` — no ownership has been set yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `manifest_unreadable` — a manifest exists but this store cannot parse it, and rewriting one it cannot read could drop entries for documents it cannot see. `invalid_slug`, `invalid_project`, `unsafe_path` |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain, or `foundation_not_found` — no document of that slug is listed in the manifest |
+| `409` | `locked` — another write to this project's foundations is in flight |
+
+The store's own gate is the only one applied — this route deliberately does **not** pre-read the
+index with `requireManifest` / `requireCuratorOwned`, because that would be a second copy of the
+same decision, taken outside the lock the store takes, and able to disagree with it.
 
 ### DELETE /api/memory/:domain/:project/foundations/:slug
 
@@ -3154,9 +3270,11 @@ directory entries the store will not address, counted rather than silently skipp
 **New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
 `foundations` field — the **index only**, never document bodies, matching `listFoundations` through
 this file's own `foundationsWire()` allow-list, which carries exactly `present`, `ownership`,
-`repo`, `budgetBytes`, `totalBytes`, `skeletonCount`, `documents`, `orphanFiles` and `manifestError`
-— **no `count` and no `staleCount`** (those two exist only on the MCP `get_working_state` tool's own
-foundations summary, a different, smaller object built by different code; see below):
+`repo`, `budgetBytes`, `totalBytes`, `skeletonCount`, `readFirstCount`, `onRequestCount`,
+`readFirstBytes`, `readFirstBudgetBytes`, `readFirstBudgetExceeded`, `documents`, `orphanFiles` and
+`manifestError` — **no `count` and no `staleCount`** (those two exist only on the MCP
+`get_working_state` tool's own foundations summary, a different, smaller object built by different
+code; see below):
 
 ```json
 "foundations": {
@@ -3167,11 +3285,17 @@ foundations summary, a different, smaller object built by different code; see be
   "budgetBytes": 200000,
   "totalBytes": 148230,
   "skeletonCount": 0,
+  "readFirstCount": 2,
+  "onRequestCount": 4,
+  "readFirstBytes": 38400,
+  "readFirstBudgetBytes": 122880,
+  "readFirstBudgetExceeded": false,
   "documents": [
     { "slug": "architecture.md", "role": "architecture", "title": "Architecture",
       "bytes": 41200, "sha256": "…", "updatedAt": "2026-09-10T08:00:00.000Z",
       "commit": "9623343", "source": { "kind": "repo", "path": "docs/architecture.md" },
-      "authoredBy": { "kind": "human" }, "freshness": "fresh", "skeleton": false }
+      "authoredBy": { "kind": "human" }, "freshness": "fresh", "skeleton": false,
+      "readFirst": true }
   ],
   "manifestError": null,
   "orphanFiles": []
@@ -3189,13 +3313,30 @@ when false — a Foundations block reading "N skeletons to fill" needs both a po
 answer from every row, not an absence to interpret. Filling a skeleton in and saving it (from the
 app or through `save_foundation`) clears the mark on the very next read.
 
+**`readFirst` and the five read-first readings are new in v3.62.0.** `documents[].readFirst` is the
+owner's routing instruction — `true` means every session is handed that document's **text**, and
+everything else rides as an index row an agent opens by name. It follows `skeleton`'s rules exactly:
+`=== true`, **always present** rather than omitted when false, because a table with a *read first*
+column needs a negative answer from every row rather than an absence to interpret. It is curator
+metadata *about* a document rather than part of it, which is why it exists on a mirror at all — the
+manifest moves, the copied bytes do not. Set it with
+[`PATCH …/foundations/:slug`](#patch-apimemorydomainprojectfoundationsslug).
+
+The five counts are **forwarded from the store, never derived here** — the same figures
+`setFoundationReadFirst` and `get_project_context` answer with, so three surfaces cannot each arrive
+at their own. An absent fact becomes `0` / `false`, so a consumer can tell *"the store looked and
+there was nothing"* from *"this server does not know the field"*. **`readFirstBudgetBytes` is not
+`budgetBytes`**: 120 KB is the **bootstrap's reading** budget — what one session is handed — while
+200 KB is the **project** budget — what tier 0 may hold on disk. A project can sit comfortably under
+200 KB and still flag more than a bootstrap will send.
+
 #### `?open=newest` — the index and one handoff in a single answer
 
 A client that wants to *show a project* needs both halves: the work-stream index, which only the
 scope-less form produces, and one pair's `current.md`, which only the scope-targeted form
 produces. Until v3.57.0 that meant two requests **in series**, because the second URL is not
 knowable until the first has answered. Measured in a browser on a real store, one project switch
-in the Agent-memory view cost three requests, three whole-column repaints and a column that
+in the Project-context view cost three requests, three whole-column repaints and a column that
 collapsed from 5,062 px to 215 px for a frame in between.
 
 `?open=newest` adds an `open` object to the scope-less response:
@@ -3610,7 +3751,7 @@ and no IPC. A route would be a second surface over the same store, gaining nothi
 second thing to keep in step.
 
 It is a **projection**, not a second inventory: it calls the same `listWorkingScopes()` that
-`GET /api/memory` calls, so the widget and the Agent memory view cannot disagree about what is on
+`GET /api/memory` calls, so the widget and the Project-context view cannot disagree about what is on
 disk. It costs what `GET /api/memory` costs. It makes **no** network call — it does not import
 `src/brain/sync.js` at all, so no edit to it can reach a `git fetch` without adding an import a
 reviewer will see.

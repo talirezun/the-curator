@@ -49,7 +49,7 @@ My Curator exposes **twenty-four tools** to whichever client you connect — fou
 | `get_raw_source` | Retrieve the *original* document a summary was built from — extracted text, never binary (v3.5.0) |
 | `list_projects` | List the projects you have working state for, across every domain or inside one: newest work-stream, how long ago, which tool, whether it has a standing brief (v3.48.0) |
 | `get_working_state` | Resume a previous session's handoff — brief, decisions, next steps, journal — possibly left by a different tool, model, or machine. Takes a project name, and `scope: "latest"` for its most recent work-stream |
-| `get_project_context` | The session-start bootstrap (v3.59.0) — the brief, the latest handoff, AND the project's foundations you have not already seen, in one call. Prefer this over `get_working_state` at the start of a session. Some of what it returns may be a **skeleton** — a document seeded with prompts rather than facts, e.g. from the [start-a-project flow](user-guide.md#start-a-project) — and the tool says so per document, so Claude reads those as questions you want answered rather than as settled fact |
+| `get_project_context` | The session-start bootstrap (v3.59.0) — the brief, the latest handoff, AND the project's foundations, in one call. Prefer this over `get_working_state` at the start of a session. Since v3.62.0 it returns the **index of every document, always**, and the **text** of the ones you marked *read first*; everything else is an index row Claude opens **by name** with `slugs`. Some of what it returns may be a **skeleton** — a document seeded with prompts rather than facts, e.g. from the [start-a-project flow](user-guide.md#start-a-project) — and the tool says so per document, so Claude reads those as questions you want answered rather than as settled fact |
 
 ### Write tools (v2.5.2+)
 
@@ -64,7 +64,7 @@ My Curator exposes **twenty-four tools** to whichever client you connect — fou
 | `undismiss_wiki_issue` | Restore a dismissed issue |
 | `save_working_state` | Write this session's handoff (Track 7) so the next session — possibly a different tool, model, or machine — can resume cold |
 | `save_project_brief` | Replace a project's standing brief, and create the project if you ask it to. **Only on your explicit instruction** — nothing writes a brief as a by-product of a session, and the file records that an agent wrote it, at your request (v3.48.0) |
-| `save_foundation` | Write or replace one canonical document (v3.59.0) — architecture, decisions, conventions, roadmap, or anything else you name. **Only on your explicit instruction**, exactly like `save_project_brief`: the call is refused outright without `commissioned_by_owner: true`. This is also how a skeleton gets filled in — Claude answers the prompts under its headings only when you have asked it to, never on its own initiative |
+| `save_foundation` | Write or replace one canonical document (v3.59.0) — architecture, decisions, conventions, roadmap, or anything else you name. **Only on your explicit instruction**, exactly like `save_project_brief`: the call is refused outright without `commissioned_by_owner: true`. This is also how a skeleton gets filled in — Claude answers the prompts under its headings only when you have asked it to, never on its own initiative. An optional `read_first` (v3.62.0) marks or unmarks the document as one every session must be handed; **omitting it leaves your choice alone**, so an ordinary save never quietly changes your reading plan |
 
 The key idea: a frontier model doesn't just *read* your wiki — it can *traverse* it AND *grow* it. Hubs, clusters, tags, and bidirectional links are exposed as first-class structured data, so the model can reason about your knowledge as a graph; and the write tools mean a research session in Claude Desktop can end with the conclusions saved permanently — no need to switch to The Curator app to commit them.
 
@@ -142,7 +142,7 @@ reads or validates `claude_desktop_config.json` — see Troubleshooting below.
 
 ## The My Curator Claude skill — best results out of the box (v2.5.7+)
 
-The MCP exposes 22 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
+The MCP exposes 24 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
 
 The **My Curator skill** packages that playbook into a single markdown file you install once. After install, every Claude conversation that touches the my-curator MCP automatically follows the rules — no detailed prompting needed.
 
@@ -269,7 +269,7 @@ handoff, size limits, and the security posture.
 > ⚠️ **Without this skill the write half never runs.** Nothing in The Curator forces an agent to
 > save — capture is skill-instructed, deliberately, because a skill works in every MCP host while
 > a hook has to be rebuilt per harness. An agent that has not been told the discipline simply
-> never writes, so the store stays empty and the app's **Agent memory** view has nothing to show.
+> never writes, so the store stays empty and the app's **Project context** view has nothing to show.
 > If you want working state at all, install this.
 >
 > The inverse is the answer to *"how do I turn the memory layer off?"* — removing this skill

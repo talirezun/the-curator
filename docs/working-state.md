@@ -1939,6 +1939,27 @@ brief before acting. SAVE with `save_working_state` under project "widget", scop
 before you stop; a save overwrites, so send the complete state each time.
 ```
 
+#### What the Copy control adds beside it
+
+The measured block above is **frozen** — 501 bytes, sha256 `85dc8f97…`, unchanged since v3.52.0,
+because it is the thing that was measured and re-wording it would throw the measurement away. Every
+addition since has therefore been a **separate, separately pinned paragraph**, composed after it,
+so each one keeps matching its own text alone and *"the measured block is untouched"* stays a claim
+you can check with a hash rather than one you have to take on trust. **Copy agent instructions**
+puts all four on your clipboard:
+
+| Paragraph | Since | What it tells an agent |
+|---|---|---|
+| The measured block | v3.52.0 | Which project, read at the start, save often and completely |
+| `TEMPLATE_FOUNDATIONS` | v3.59.0 | That the project carries canonical documents, and to read them |
+| `TEMPLATE_SEED` | v3.61.0 | What a **skeleton** is — prompts to answer, not facts to believe — and to fill them through a commissioned `save_foundation` |
+| `TEMPLATE_READ_FIRST` | **v3.62.0** | That read-first documents arrive with their text and the rest arrive as an index; to open those by name with `slugs`; that the brief's *"Read before you…"* section says which; and that **an index entry with no text is a document waiting to be asked for, not one that is missing** |
+
+The fourth paragraph exists because the first three all assumed the whole set arrives every session,
+which is what the bootstrap did until v3.62.0. An agent given no instruction about the change reads
+an index row with no text as an **absence** — *"there is no decision log"* — which is a worse
+failure than the gap v3.59.0 closed, because it looks like knowledge.
+
 #### Where it goes
 
 The block is plain prose in a file each of these already reads on its own. Nothing needs to be

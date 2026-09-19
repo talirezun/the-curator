@@ -93,7 +93,7 @@ own Largest text setting (`--font-scale: 1.18`, so the rung resolves to
 |---|---|
 | Domains | 53.27px |
 | Settings | 50.84px |
-| Memory | 50.02px |
+| Memory | 50.02px |  <!-- TODO(A): renamed to "Context" in v3.62.0; re-measured at the same Largest-text rung by package A and this row rewritten with its number. -->
 | Shared | 43.36px |
 | Ingest | 38.02px |
 | Sync | 30.27px |
@@ -574,13 +574,20 @@ is a blank screen in development rather than a dead link in production.
 `scripts/test-docs-links.js` reads the real markdown in `docs/` and fails if a
 file is missing or an anchor no longer matches a heading in it — **so renaming a
 heading that a key points at is a red suite, on the commit that renames it.**
-Fourteen keys are live today, across Settings and Agent memory.
+**Eighteen** keys are live today: ten on Settings, six on Project context, one on
+Domains (`domains.three-layers`, the three-layer legend, v3.62.0) and one on the
+shell. **A key's prefix names the surface it is RENDERED on, not the doc it
+points into** — which is why the legend's key is `domains.*` even though its
+destination is the user guide, and why the six `memory.*` keys deliberately did
+NOT follow the v3.62.0 rename: they name a docs topic whose destinations
+(`working-state.md` and two user-guide anchors) were not renamed, and `docsUrl()`
+throws on an unknown key, so a half-applied rename is a blank screen.
 
 ### 4. The content cap: 1200px, and cap the prose, never the cards
 
 `.main-inner` moved **900px → 1200px** (a 1144px content box at 28px of side
 padding). Reported with screenshots on a 2000px window: Ingest, Shared Brain,
-Agent memory and Settings "sit in a narrow strip and look squeezed" while Chat
+Project context and Settings "sit in a narrow strip and look squeezed" while Chat
 fills the window — because `views/chat.css` had already cancelled the cap
 outright so its scope bar and composer could reach the window edges. One view
 had opted out and five had not, which is what made it read as an inconsistency
@@ -636,7 +643,7 @@ clocks on purpose.**
 
 | Function | Resolution | Why it is separate |
 |---|---|---|
-| `formatAge(seconds)` | second | The ladder Agent memory and the menubar tray already speak. **Byte-identical** to the bodies in `views/memory.js` and `desktop/lib/tray-model.js`; the three are extracted from source and compared byte for byte by `scripts/test-sidebar-status-rows.js` |
+| `formatAge(seconds)` | second | The ladder Project context and the menubar tray already speak. **Byte-identical** to the bodies in `views/memory.js` and `desktop/lib/tray-model.js`; the three are extracted from source and compared byte for byte by `scripts/test-sidebar-status-rows.js` |
 | `formatDayAge(dateStr)` | calendar day, local time | `lastIngestDate` is a `YYYY-MM-DD` heading with **no time of day**, and `log.md`'s mtime is rewritten by Personal Sync on every pull. Feeding a fabricated midnight into `formatAge` would print "7 hr ago" for a write that happened at any hour of today |
 
 **The mark and the word are cut on the same bands.** `dayFreshnessStep` reads
@@ -659,7 +666,7 @@ discarded — it travels in the row's accessible name through
 invisible to keyboard and touch.
 
 `freshnessStep(seconds)` is a **five**-step ladder cut on `formatAge`'s unit
-bands (just now / minutes / hours / days / weeks), because Agent memory measures
+bands (just now / minutes / hours / days / weeks), because Project context measures
 a save that can be seconds old. It is a different *resolution*, not a second
 tuning of the same scale — and as of v3.55.0 it lives in `shared/age.js` beside
 `formatAge`, with both halves relabelled onto one named scale (§6 below).
@@ -667,7 +674,7 @@ tuning of the same scale — and as of v3.55.0 it lives in `shared/age.js` besid
 ### 6. The freshness scale (v3.55.0) — one ladder, six named tiers
 
 v3.54.0 gave the two sidebars one *anatomy* (§5) and left them with two
-byte-identical-modulo-prefix *ladders*, and a third in Agent memory. All three
+byte-identical-modulo-prefix *ladders*, and a third in Project context. All three
 painted the **brand violet**, which in this app means identity and primary
 action — so "saved a week ago" was drawn in the same ink as the Ingest button —
 and none of them agreed with the menu bar tray a user sees in the same glance.
@@ -801,7 +808,7 @@ kind of thing nobody finds twice.
 
 **`panelWide` — the opt-in that became the default.** `renderViewHeader` used to
 cap its ⓘ panel's BOX at `68ch`. v3.55.0 added `panelWide: true` as the one
-escape, for Agent memory, a dashboard whose sections all run the column's width
+escape, for Project context, a dashboard whose sections all run the column's width
 and where a help panel stopping at 47% of it was the most visible remnant of the
 four-widths page v3.54.0 started removing. The same complaint then arrived for
 the block-level marks — Domains' **PROJECTS** ⓘ measured **556.8px in a 959px
@@ -945,7 +952,7 @@ throughout, and proved nothing.
 **A list on the page, and a press opens one item in the right-hand overlay.**
 The wiki settled this years ago: `views/domains.js` lists pages and opens one in
 the shell's reader, and has opened *memory* rows the same way since v3.50.0.
-v3.56.0 made it the rule rather than one view's habit — Agent memory's work-stream
+v3.56.0 made it the rule rather than one view's habit — Project context's work-stream
 table is now an index, and its handoff document, which had been a full-width block
 on the page, opens in the same overlay.
 

@@ -601,7 +601,7 @@ being reachable through OpenRouter.
 | The semantic-duplicate scan | The structural Health scan and every deterministic repair |
 | Compile to Wiki | Settings, key management, updates |
 | | Every cost estimate — all are computed locally with no model call |
-| | The MCP bridge itself, Agent memory, and the menu bar icon |
+| | The MCP bridge itself, Project context, and the menu bar icon |
 
 Three paid actions quote a cost and ask before spending: batch ingest, the semantic-duplicate
 scan, and Compile to Wiki. Single-file ingest and chat do not — they are the two you invoke
@@ -850,7 +850,7 @@ rules, the agent is told to **say so and ask you** rather than resolve it silent
 direction — which is what keeps this from being a way to plant orders.
 
 **7. There is exactly one writer, and the app is deliberately read-only over state.** You can
-browse every project's brief, handoff and journal in the app's **Agent memory** view without an
+browse every project's brief, handoff and journal in the app's **Project context** view without an
 MCP client at all — but you cannot write there. A browser write path would make the app a
 second writer to the same files, which would break the layout guarantee that keeps two
 computers from destroying each other's handoffs, and a human edit would arrive wearing the last
@@ -924,7 +924,7 @@ document is rendered in one place only.
 | **3. Rows grouped by project** | at most three groups and five rows in total, newest first throughout, each row with a recency mark and a submenu. Two rows per group is a floor: unclaimed rows are handed back, so one project still fills all five |
 | **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
 | **4. Notices, only when true** | handoffs waiting on GitHub from another computer; **another computer having saved after this one**; two agent tools colliding on one work-stream |
-| **5. Actions** | Open Agent memory · Open The Curator · Settings |
+| **5. Actions** | Open Project context · Open The Curator · Settings |
 | **6. A freshness stamp** | *"Updated 14:32"* — when the reading itself was last drawn |
 | **7. Quit** | |
 
