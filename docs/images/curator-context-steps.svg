@@ -1,0 +1,132 @@
+<svg viewBox="0 0 760 560" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-context-steps-title curator-context-steps-desc">
+  <title id="curator-context-steps-title">The Project context screen — a strip and three numbered steps</title>
+  <desc id="curator-context-steps-desc">
+    A three-cell status strip across the top, labelled Canonical documents, Working state and
+    Knowledge, each with a freshness dot and a one-line reading. Under it, three numbered steps
+    read top to bottom. Step one, Foundations: the canonical documents this project is built
+    against, kept word for word and replaced whole; the ones marked "read first" reach every
+    session, the rest are opened by name. Step two, Working state: three closed folds — the
+    standing brief that you write, the work-streams that your agents write, and the session
+    journal — and this layer supersedes, so each save replaces the last. Step three, Knowledge:
+    the wiki this project draws on, which accumulates, with two doors out to Domains and to Chat.
+    A caption at the foot notes that the reading order top to bottom is the order a session start
+    reads in.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --accent-2: #8250df;
+      --accent-3: #1a7f37;
+      --fresh: #1a7f37;
+      --warm: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --accent-2: #c8a6ff;
+        --accent-3: #4ac26b;
+        --fresh: #4ac26b;
+        --warm: #d29922;
+      }
+    }
+    .bg { fill: var(--bg); }
+    .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .cell { fill: none; stroke: var(--border); stroke-width: 1.5; }
+    .rule { stroke: var(--border); stroke-width: 1.5; }
+    .num { fill: var(--accent); }
+    .numtxt { font: 700 13px system-ui, sans-serif; fill: var(--bg); }
+    .h { font: 700 16px system-ui, sans-serif; fill: var(--text); }
+    .lbl { font: 700 10px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .08em; }
+    .val { font: 600 13px system-ui, sans-serif; fill: var(--text); }
+    .note { font: 400 12.5px system-ui, sans-serif; fill: var(--text-2); }
+    .verb { font: 700 11px system-ui, sans-serif; letter-spacing: .06em; }
+    .fold { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .foldtxt { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .foldmeta { font: 400 11.5px system-ui, sans-serif; fill: var(--text-2); }
+    .door { fill: none; stroke: var(--accent); stroke-width: 1.4; }
+    .doortxt { font: 600 11.5px system-ui, sans-serif; fill: var(--accent); }
+    .cap { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="560"/>
+
+  <!-- ── THE STRIP ───────────────────────────────────────────────── -->
+  <rect class="card" x="24" y="20" width="712" height="62" rx="10"/>
+  <line class="rule" x1="261" y1="30" x2="261" y2="72"/>
+  <line class="rule" x1="499" y1="30" x2="499" y2="72"/>
+
+  <circle cx="46" cy="40" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="58" y="44">CANONICAL DOCUMENTS</text>
+  <text class="val" x="46" y="66">6 documents · fresh</text>
+
+  <circle cx="284" cy="40" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="296" y="44">WORKING STATE</text>
+  <text class="val" x="284" y="66">saved 38 min ago</text>
+
+  <circle cx="522" cy="40" r="4.5" fill="var(--warm)"/>
+  <text class="lbl" x="534" y="44">KNOWLEDGE</text>
+  <text class="val" x="522" y="66">3,445 pages · 2 days ago</text>
+
+  <!-- ── STEP ① FOUNDATIONS ──────────────────────────────────────── -->
+  <line class="rule" x1="24" y1="106" x2="736" y2="106"/>
+  <circle class="num" cx="36" cy="130" r="11"/>
+  <text class="numtxt" x="36" y="134.5" text-anchor="middle">1</text>
+  <text class="h" x="58" y="135">Foundations</text>
+  <text class="verb" x="196" y="134" fill="var(--accent-2)">REPLACED WHOLE</text>
+  <text class="note" x="58" y="156">The documents an agent must not act without, kept word for word.</text>
+
+  <rect class="fold" x="58" y="168" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="187">▸  The documents</text>
+  <text class="foldmeta" x="722" y="187" text-anchor="end">148 KB · mirrored · 2 read first · 4 on request</text>
+
+  <text class="note" x="58" y="218">The ones you mark <tspan font-weight="700" fill="var(--text)">read first</tspan> reach every session with their text; the rest arrive</text>
+  <text class="note" x="58" y="236">as an index row an agent opens by name.</text>
+
+  <!-- ── STEP ② WORKING STATE ────────────────────────────────────── -->
+  <line class="rule" x1="24" y1="258" x2="736" y2="258"/>
+  <circle class="num" cx="36" cy="282" r="11"/>
+  <text class="numtxt" x="36" y="286.5" text-anchor="middle">2</text>
+  <text class="h" x="58" y="287">Working state</text>
+  <text class="verb" x="206" y="286" fill="var(--accent)">SUPERSEDES</text>
+  <text class="note" x="58" y="308">You write the brief; agents write handoffs and the journal.</text>
+
+  <rect class="fold" x="58" y="320" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="338">▸  Standing brief</text>
+  <text class="foldmeta" x="722" y="338" text-anchor="end">updated 23 hr ago · 1,309 words        ✎</text>
+
+  <rect class="fold" x="58" y="354" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="372">▸  Work-streams</text>
+  <text class="foldmeta" x="722" y="372" text-anchor="end">3 work-streams · 5 saved copies</text>
+
+  <rect class="fold" x="58" y="388" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="406">▸  Recent saves</text>
+  <text class="foldmeta" x="722" y="406" text-anchor="end">12</text>
+
+  <text class="note" x="58" y="436">Each save replaces the last, so a problem you solved cannot come back.</text>
+
+  <!-- ── STEP ③ KNOWLEDGE ────────────────────────────────────────── -->
+  <line class="rule" x1="24" y1="458" x2="736" y2="458"/>
+  <circle class="num" cx="36" cy="482" r="11"/>
+  <text class="numtxt" x="36" y="486.5" text-anchor="middle">3</text>
+  <text class="h" x="58" y="487">Knowledge</text>
+  <text class="verb" x="178" y="486" fill="var(--accent-3)">ACCUMULATES</text>
+  <text class="note" x="58" y="508">The wiki this project draws on. Open it in Domains.</text>
+
+  <rect class="door" x="58" y="518" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="124" y="535.5" text-anchor="middle">Open in Domains</text>
+  <rect class="door" x="200" y="518" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="266" y="535.5" text-anchor="middle">Ask this domain</text>
+
+  <text class="cap" x="736" y="536" text-anchor="end">Top to bottom is the order a session start reads in.</text>
+</svg>
