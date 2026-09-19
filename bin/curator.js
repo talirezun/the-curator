@@ -78,9 +78,7 @@ if (!command || command === 'help' || parsed.flags.help === true && !command) {
     hook: async () => (await import('../src/cli/hook.js')).runHook,
     doctor: async () => (await import('../src/cli/doctor.js')).runDoctor,
     resolve: async () => (await import('../src/cli/resolve.js')).runResolve,
-    // `install-hooks` is package H's. Named here so an early adopter gets a
-    // sentence rather than the generic unknown-command refusal.
-    'install-hooks': null,
+    'install-hooks': async () => (await import('../src/cli/install-hooks.js')).runInstallHooks,
   };
 
   if (!(command in RUNNERS)) {
