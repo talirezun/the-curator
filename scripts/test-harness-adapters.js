@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OFFLINE — the per-harness adapter table.
+ * OFFLINE — the per-harness adapter table and `my-curator install-hooks`.
  *
  * WHAT THIS SUITE EXISTS TO STOP
  * ──────────────────────────────
@@ -30,19 +30,31 @@
  *      compared for SET EQUALITY.
  *   §5 THE ENVELOPES, AGAINST `hook.js`. Same rule, other table: every id and
  *      every emittable arm in `HARNESS_HOOKS` must exist here.
- *   §6 THE FIVE REFUSALS, each driven as a first-class outcome, with the whole
- *      fixture tree fingerprinted — a refusal that writes a file is this
- *      package's worst outcome.
+ *   §6 THE FIVE REFUSALS, each driven as a first-class outcome.
+ *   §7 INSTALL-HOOKS, as a CHILD PROCESS: a fresh write, a byte-identical
+ *      re-run, a foreign hook that survives, a corrupt file REFUSED with
+ *      nothing written, an absolute command in every entry, `--dry-run`
+ *      writing nothing, `--uninstall` removing only ours, and every refusing
+ *      arm fingerprinted.
+ *   §8 NO INSTRUCTION FILE IS EVER OPENED FOR WRITING. A planted CLAUDE.md,
+ *      AGENTS.md, GEMINI.md, .cursor/rules and .rules are sha256'd before and
+ *      after every arm above.
  *
- * The hook WRITERS are package H2 and join this same file when they land; this
- * commit is the table, the MCP entries, the snippets and the refusals — which
- * is already what makes `my-curator doctor` and the matrix honest.
+ * WHY A CHILD PROCESS FOR §7. Exit codes, stdout-vs-stderr and "nothing was
+ * written" are properties of the PROCESS. `bin/curator.js` is package C's file
+ * and its `install-hooks` runner is a reserved `null` there, so this suite
+ * drives the same runner through a three-line driver that mirrors that
+ * dispatch — and §7.0 asserts the name is RESERVED in the real binary, so the
+ * day the dispatch line lands nothing here has to move.
  *
- * SAFETY — never touches real user data or a real harness config. Nothing here
- * writes at all, and §6 proves it by fingerprinting the whole fixture tree
- * across every refusal. `CURATOR_TEST_DOMAINS_DIR` and
- * `CURATOR_TEST_USER_DATA_DIR` are pinned to a tempdir. No network.
+ * SAFETY — never touches real user data or a real harness config. HOME is
+ * pointed at a fixture directory for every child (so `~/.claude`, `~/.cursor`,
+ * `~/.codex`, `~/.gemini`, `~/.copilot` and `~/.agents` can only ever be the
+ * fixture's), `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` are
+ * pinned to a tempdir, and provider/GitHub credentials are stripped from every
+ * child. No network.
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, statSync, readdirSync,
@@ -53,6 +65,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
+const BIN = path.join(REPO_ROOT, 'bin', 'curator.js');
 
 let passed = 0;
 let failed = 0;
@@ -68,7 +81,8 @@ const DOMAINS_DIR = path.join(ROOT, 'domains');
 const USER_DATA_DIR = path.join(ROOT, 'userdata');
 const FAKE_HOME = path.join(ROOT, 'home');
 const WORK = path.join(ROOT, 'work');
-for (const d of [DOMAINS_DIR, USER_DATA_DIR, FAKE_HOME, WORK]) mkdirSync(d, { recursive: true });
+const DEEP = path.join(WORK, 'src', 'deep');
+for (const d of [DOMAINS_DIR, USER_DATA_DIR, FAKE_HOME, DEEP]) mkdirSync(d, { recursive: true });
 writeFileSync(path.join(WORK, '.curator-project'), 'zzh-alpha/lumina\n');
 
 // The five model-read instruction files Decision K forbids this command to
@@ -105,13 +119,39 @@ function treeFingerprint(dir) {
   return rows.join('\n');
 }
 
-// Pinned even though nothing here spawns a child yet: the fixture's whole
-// point is that no real harness configuration can be reached.
-process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS_DIR;
-process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA_DIR;
+// The driver — mirrors bin/curator.js's dispatch for the one runner package C
+// reserved. Three lines, and §7.0 proves the reservation is real.
+const DRIVER = path.join(ROOT, 'drive.mjs');
+writeFileSync(DRIVER, [
+  `import { parseArgv } from ${JSON.stringify(path.join(REPO_ROOT, 'src', 'cli', 'resolve.js'))};`,
+  `import { runInstallHooks } from ${JSON.stringify(path.join(REPO_ROOT, 'src', 'cli', 'install-hooks.js'))};`,
+  'const parsed = parseArgv(process.argv.slice(2));',
+  'process.exitCode = (await runInstallHooks(parsed)) ?? 0;',
+  '',
+].join('\n'));
+
+const BASE_ENV = (() => {
+  const e = { ...process.env };
+  for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
+    'GITHUB_TEST_REPO', 'GITHUB_TEST_PAT', 'DOMAINS_PATH', 'LLM_MODEL']) delete e[k];
+  e.CURATOR_TEST_DOMAINS_DIR = DOMAINS_DIR;
+  e.CURATOR_TEST_USER_DATA_DIR = USER_DATA_DIR;
+  e.HOME = FAKE_HOME;
+  e.USERPROFILE = FAKE_HOME;
+  return e;
+})();
+
+/** Run install-hooks through the driver. Returns {code, out, err}. */
+function run(args, extraEnv = {}) {
+  const r = spawnSync(process.execPath, [DRIVER, ...args], {
+    cwd: WORK, env: { ...BASE_ENV, ...extraEnv }, encoding: 'utf8', timeout: 30000,
+  });
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
 
 // ── Modules under test ─────────────────────────────────────────────────────
 const A = await import('../src/brain/harness-adapters.js');
+const IH = await import('../src/cli/install-hooks.js');
 const { HARNESS_HOOKS } = await import('../src/cli/hook.js');
 const { harnessTargets } = await import('../src/cli/doctor.js');
 const { composeAgentInstructionsFull } = await import('../src/public/next/shared/agent-instructions.js');
@@ -399,6 +439,18 @@ section('§5  THE ENVELOPES — agreement with hook.js\'s HARNESS_HOOKS');
   ok(A.adapterFor('gemini-cli').hooks.events.stop === 'AfterAgent',
     '…while still naming AfterAgent as the viable capture point, for the day it is measured');
 
+  // The plan is derived from HARNESS_HOOKS, not from a second opinion.
+  const codexPlan = IH.planEvents(A.adapterFor('codex'));
+  ok(codexPlan.write.map((w) => w.event).sort().join(',') === 'PreCompact,Stop',
+    `Codex plans exactly Stop and PreCompact (${codexPlan.write.map((w) => w.event).join(', ')})`);
+  ok(codexPlan.skipped.some((s) => s.event === 'SessionEnd' && s.measured === true),
+    "…and SessionEnd is skipped as a MEASURED refusal, not an unmeasured one");
+  const gooseDefault = IH.planEvents(A.adapterFor('goose'));
+  ok(gooseDefault.write.length === 0,
+    'goose plans NOTHING by default — every envelope it has is withheld, so an entry would be inert');
+  const gooseForced = IH.planEvents(A.adapterFor('goose'), { allowWithheld: true });
+  ok(gooseForced.write.length > 0 && gooseForced.write.every((w) => typeof w.withheld === 'string'),
+    '…and --allow-withheld carries the reason onto every entry it does write');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -436,6 +488,242 @@ section('§6  THE FIVE REFUSALS — first-class outcomes, and nothing writes');
   }
   ok(Object.isFrozen(r1) && Object.isFrozen(r5), 'every refusal is frozen — a caller cannot edit one into an approval');
   ok(treeFingerprint(ROOT) === before, 'NOT ONE BYTE was written by any of the five refusals');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§7  INSTALL-HOOKS — as a process');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  // §7.0 — the seam. `bin/curator.js` is package C's; this asserts the name is
+  // RESERVED there, so a dispatch line landing later changes nothing here.
+  const r0 = spawnSync(process.execPath, [BIN, 'install-hooks'], {
+    cwd: WORK, env: BASE_ENV, encoding: 'utf8', timeout: 30000,
+  });
+  ok(!/unknown command/i.test(r0.stderr || ''),
+    '7.0 the real binary RESERVES `install-hooks` — it is never an unknown command');
+
+  const CC_PROJECT = path.join(WORK, '.claude', 'settings.json');
+
+  // ── a fresh write ────────────────────────────────────────────────────────
+  const w1 = run(['claude-code', '--scope', 'project', '--json']);
+  ok(w1.code === 0, `a fresh write exits 0 (got ${w1.code}) — ${w1.err.split('\n')[0]}`);
+  ok(existsSync(CC_PROJECT), '…and the file exists at .claude/settings.json');
+  let doc = JSON.parse(readFileSync(CC_PROJECT, 'utf8'));
+  const events = Object.keys(doc.hooks || {}).sort();
+  ok(events.join(',') === 'PreCompact,SessionStart,Stop',
+    `…with SessionStart, PreCompact and Stop (${events.join(', ')})`);
+  ok(!('SessionEnd' in (doc.hooks || {})),
+    '…and NO SessionEnd: a hook cannot close a bridge session it has no handle on');
+
+  const commands = Object.values(doc.hooks).flatMap((g) => g.flatMap((x) => x.hooks.map((h) => h.command)));
+  ok(commands.length === 3 && commands.every((c) => c.startsWith('/')),
+    `…and every command is an ABSOLUTE path (${commands.length} of 3)`);
+  ok(commands.every((c) => /--harness claude-code/.test(c)),
+    '…each carrying --harness, so the CLI never has to guess who invoked it');
+  ok(commands.some((c) => /hook stop /.test(c)) && commands.some((c) => /hook session-start /.test(c)),
+    '…and the canonical event name the CLI knows');
+  ok(Object.values(doc.hooks).every((g) => g.every((x) => x.hooks.every((h) => String(h.statusMessage || '').startsWith('Curator: ')))),
+    '…and the Curator marker on every entry');
+
+  // ── idempotence, by sha ──────────────────────────────────────────────────
+  const sha1 = shaOf(CC_PROJECT);
+  const w2 = run(['claude-code', '--scope', 'project']);
+  ok(w2.code === 0 && shaOf(CC_PROJECT) === sha1,
+    'a second run is byte-identical — idempotent, not appending a second copy');
+  doc = JSON.parse(readFileSync(CC_PROJECT, 'utf8'));
+  ok(Object.values(doc.hooks).flatMap((g) => g).length === 3, '…still three groups, not six');
+
+  // ── a foreign hook survives ──────────────────────────────────────────────
+  doc.hooks.Stop.unshift({ matcher: 'Bash', hooks: [{ type: 'command', command: '/usr/local/bin/my-linter --fix' }] });
+  doc.otherTool = { keep: 'me' };
+  writeFileSync(CC_PROJECT, `${JSON.stringify(doc, null, 2)}\n`);
+  const w3 = run(['claude-code', '--scope', 'project']);
+  const after = JSON.parse(readFileSync(CC_PROJECT, 'utf8'));
+  ok(w3.code === 0 && after.otherTool?.keep === 'me', 'a re-run preserves unrelated top-level keys');
+  const foreign = after.hooks.Stop.filter((g) => g.hooks.some((h) => h.command.includes('my-linter')));
+  ok(foreign.length === 1 && foreign[0].matcher === 'Bash',
+    "…and a foreign hook survives with its own `matcher` intact");
+  ok(after.hooks.Stop.length === 2, '…beside exactly one Curator group, not two');
+
+  // ── --uninstall removes only ours ────────────────────────────────────────
+  const w4 = run(['claude-code', '--scope', 'project', '--uninstall']);
+  const un = JSON.parse(readFileSync(CC_PROJECT, 'utf8'));
+  const left = Object.values(un.hooks || {}).flatMap((g) => g).flatMap((x) => x.hooks || []);
+  ok(w4.code === 0 && left.length === 1 && left[0].command.includes('my-linter'),
+    '--uninstall removes only the Curator entries and leaves the foreign one');
+  ok(un.otherTool?.keep === 'me', '…and still preserves unrelated keys');
+  const shaUn = shaOf(CC_PROJECT);
+  run(['claude-code', '--scope', 'project', '--uninstall']);
+  ok(shaOf(CC_PROJECT) === shaUn, '…and a second --uninstall is byte-identical too');
+
+  // ── Decision L: a file that does not parse ───────────────────────────────
+  writeFileSync(CC_PROJECT, '{ "hooks": { "Stop": [ }\n');
+  const shaCorrupt = shaOf(CC_PROJECT);
+  const w5 = run(['claude-code', '--scope', 'project', '--json']);
+  ok(w5.code === 1, `an unparseable config exits 1 (got ${w5.code})`);
+  ok(shaOf(CC_PROJECT) === shaCorrupt, '…and NOTHING was written — the file is byte-identical');
+  ok(/config_unparseable/.test(w5.out) && /could not be parsed/.test(w5.err),
+    '…with the reason on stdout under --json and the sentence on stderr');
+  ok(w5.err.includes(CC_PROJECT), '…naming the file');
+
+  // ── a shape that is not ours ─────────────────────────────────────────────
+  writeFileSync(CC_PROJECT, `${JSON.stringify({ hooks: ['not', 'an', 'object'] }, null, 2)}\n`);
+  const shaShape = shaOf(CC_PROJECT);
+  const w6 = run(['claude-code', '--scope', 'project', '--json']);
+  ok(w6.code === 1 && /config_shape_mismatch/.test(w6.out) && shaOf(CC_PROJECT) === shaShape,
+    'a `hooks` that is an array is refused with nothing written');
+  rmSync(path.join(WORK, '.claude'), { recursive: true, force: true });
+
+  // ── --dry-run writes nothing ─────────────────────────────────────────────
+  const beforeDry = treeFingerprint(ROOT);
+  const w7 = run(['cursor', '--scope', 'project', '--dry-run']);
+  ok(w7.code === 0 && treeFingerprint(ROOT) === beforeDry, '--dry-run writes NOTHING (whole tree fingerprinted)');
+  let dryDoc = null;
+  try { dryDoc = JSON.parse(w7.out); } catch { /* handled below */ }
+  ok(dryDoc && dryDoc.hooks && Object.keys(dryDoc.hooks).sort().join(',') === 'preCompact,sessionStart,stop',
+    '…and prints the EXACT document it would write, on stdout');
+  ok(dryDoc && dryDoc.hooks.stop[0].loop_limit === 1,
+    "…with Cursor's loop_limit pinned to 1, not the documented default of 5");
+
+  // ── Cursor for real, and its own format ──────────────────────────────────
+  const CURSOR = path.join(WORK, '.cursor', 'hooks.json');
+  const w8 = run(['cursor', '--scope', 'project']);
+  const cdoc = JSON.parse(readFileSync(CURSOR, 'utf8'));
+  ok(w8.code === 0 && cdoc.version === 1 && cdoc.hooks.stop.length === 1,
+    "Cursor's flat hooks.json is written in its own shape");
+  const cSha = shaOf(CURSOR);
+  run(['cursor', '--scope', 'project']);
+  ok(shaOf(CURSOR) === cSha, '…and is idempotent on that shape too');
+  ok(shaOf(path.join(WORK, '.cursor', 'rules')) === shaOf(path.join(WORK, '.cursor', 'rules')),
+    '…while `.cursor/rules` beside it is never opened for writing');
+  // The FLAT-array strip is a second code path from Claude Code's nested one,
+  // and a foreign hook has to survive BOTH. (Found by a mutation that broke
+  // only the flat branch and stayed green: every foreign-hook assertion above
+  // ran through the nested branch.)
+  const cdoc2 = JSON.parse(readFileSync(CURSOR, 'utf8'));
+  cdoc2.hooks.stop.unshift({ command: '/usr/local/bin/other-tool run' });
+  writeFileSync(CURSOR, `${JSON.stringify(cdoc2, null, 2)}\n`);
+  run(['cursor', '--scope', 'project']);
+  const cdoc3 = JSON.parse(readFileSync(CURSOR, 'utf8'));
+  ok(cdoc3.hooks.stop.filter((h) => h.command.includes('other-tool')).length === 1
+    && cdoc3.hooks.stop.filter((h) => IH.isCuratorHookCommand(h.command)).length === 1,
+  '…and a foreign entry in the FLAT array survives beside exactly one of ours');
+
+  // ── a harness whose every envelope is withheld ───────────────────────────
+  const beforeGoose = treeFingerprint(ROOT);
+  const w9 = run(['goose', '--scope', 'user', '--json']);
+  ok(w9.code === 1 && /all_events_withheld/.test(w9.out),
+    'goose is refused by default — an entry would invoke a command that emits nothing');
+  ok(treeFingerprint(ROOT) === beforeGoose, '…with nothing written');
+  const w10 = run(['goose', '--scope', 'user', '--allow-withheld', '--json']);
+  const GOOSE = path.join(FAKE_HOME, '.agents', 'plugins', 'my-curator', 'hooks', 'hooks.json');
+  ok(w10.code === 0 && existsSync(GOOSE), '--allow-withheld writes it, into goose\'s own plugin tree');
+  const gdoc = JSON.parse(readFileSync(GOOSE, 'utf8'));
+  const gEntry = gdoc.hooks.Stop[0];
+  ok(path.isAbsolute(gEntry.cmd) && Array.isArray(gEntry.args)
+    && gEntry.args.includes('hook') && gEntry.args.includes('--harness') && gEntry.envs !== undefined,
+  "…in goose's cmd/args/envs vocabulary, with an absolute cmd and no shell quoting at all");
+  ok(/emit nothing|withheld|unverified/i.test(w10.err), '…and says on stderr that it stays inert until measured');
+  const gSha = shaOf(GOOSE);
+  run(['goose', '--scope', 'user', '--allow-withheld']);
+  ok(shaOf(GOOSE) === gSha, '…and that write is idempotent as well');
+  // The cmd/args strip is the THIRD code path, and it recognises ours by the
+  // joined command rather than by a string field — a foreign entry must
+  // survive it too.
+  const gdoc2 = JSON.parse(readFileSync(GOOSE, 'utf8'));
+  gdoc2.hooks.Stop.unshift({ cmd: '/usr/bin/true', args: ['--their-flag'], envs: {} });
+  writeFileSync(GOOSE, `${JSON.stringify(gdoc2, null, 2)}\n`);
+  run(['goose', '--scope', 'user', '--allow-withheld']);
+  const gdoc3 = JSON.parse(readFileSync(GOOSE, 'utf8'));
+  ok(gdoc3.hooks.Stop.filter((e) => e.cmd === '/usr/bin/true').length === 1
+    && gdoc3.hooks.Stop.length === 2,
+  '…and a foreign cmd/args entry survives beside exactly one of ours');
+
+  // ── Copilot's directory-of-files target ──────────────────────────────────
+  const w11 = run(['copilot-cli', '--scope', 'project', '--allow-withheld']);
+  const COPILOT = path.join(WORK, '.github', 'hooks', 'curator.json');
+  ok(w11.code === 0 && existsSync(COPILOT), "Copilot's entry lands in .github/hooks/curator.json — a file of our own");
+  ok(JSON.parse(readFileSync(COPILOT, 'utf8')).hooks.agentStop[0].command.startsWith('/'),
+    '…with an absolute command');
+
+  // ── the refusals that have nothing to write ──────────────────────────────
+  const beforeRefusals = treeFingerprint(ROOT);
+  const arms = [
+    ['zed', 'no hook mechanism exists'],
+    ['windsurf', 'NONE of them is a stop'],
+    ['opencode', 'TypeScript plugins'],
+    ['kilo', 'TypeScript plugins'],
+    ['aider', 'no hook mechanism and no MCP client'],
+    ['cline', 'not measured'],
+    ['gemini-cli', 'unmeasured'],
+    ['dsh', 'not measured'],
+    ['claude-desktop', 'no hook mechanism'],
+  ];
+  let armBad = [];
+  for (const [id, phrase] of arms) {
+    const r = run([id, '--scope', 'project', '--json']);
+    if (r.code !== 1) armBad.push(`${id}: exit ${r.code}`);
+    else if (!r.err.includes(phrase)) armBad.push(`${id}: reason did not name "${phrase}" — ${r.err.trim().slice(0, 120)}`);
+  }
+  ok(armBad.length === 0, `all nine non-writable harnesses refuse with their measured reason${armBad.length ? `:\n    ${armBad.join('\n    ')}` : ''}`);
+  ok(treeFingerprint(ROOT) === beforeRefusals, 'NOT ONE BYTE was written by any refusing arm');
+
+  // ── unknown harness, bad scope, bad bin, no project root ─────────────────
+  const u1 = run(['emacs-agent', '--json']);
+  ok(u1.code === 2 && /unknown_harness/.test(u1.out), 'an unknown harness is a USAGE error (exit 2), not a write refusal');
+  const u2 = run(['claude-code', '--scope', 'enterprise']);
+  ok(u2.code === 2 && /--scope must be/.test(u2.err), 'an unknown scope is a usage error and names the three');
+  const u3 = run(['claude-code', '--scope', 'project', '--bin', '/nope/my-curator', '--json']);
+  ok(u3.code === 1 && /bin_not_resolved/.test(u3.out), 'a --bin that does not resolve is refused, and nothing is written');
+  const beforeNoRoot = treeFingerprint(ROOT);
+  const u4 = spawnSync(process.execPath, [DRIVER, 'claude-code', '--scope', 'project', '--json'], {
+    cwd: os.tmpdir(), env: BASE_ENV, encoding: 'utf8', timeout: 30000,
+  });
+  ok(u4.status === 1 && /no_project_root/.test(u4.stdout || ''),
+    'a project scope outside any marked repository is REFUSED — a committed file is never guessed at');
+  ok(treeFingerprint(ROOT) === beforeNoRoot, '…and that refusal wrote nothing either');
+
+  // ── the user scope, and a binary path with a space ───────────────────────
+  const spaced = path.join(ROOT, 'My Tools');
+  mkdirSync(spaced, { recursive: true });
+  const spacedBin = path.join(spaced, 'my-curator');
+  writeFileSync(spacedBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const w12 = run(['claude-code', '--scope', 'user', '--bin', spacedBin]);
+  const CC_USER = path.join(FAKE_HOME, '.claude', 'settings.json');
+  ok(w12.code === 0 && existsSync(CC_USER), '--scope user writes into the fixture HOME, never a project file');
+  const userCmd = JSON.parse(readFileSync(CC_USER, 'utf8')).hooks.Stop[0].hooks[0].command;
+  ok(userCmd.startsWith(`'${spacedBin}'`) || userCmd.startsWith(`"${spacedBin}"`),
+    `…and a path containing a space is SHELL-QUOTED (${userCmd.slice(0, 60)}…)`);
+
+  // ── --print-instructions prints and never writes ─────────────────────────
+  const beforePrint = treeFingerprint(ROOT);
+  const p1 = run(['codex', '--print-instructions', '--project', 'zzh-alpha/lumina']);
+  ok(p1.code === 0 && p1.out === composeAgentInstructionsFull({ domain: 'zzh-alpha', project: 'lumina' }),
+    '--print-instructions puts the composed block, byte for byte, on stdout');
+  ok(/AGENTS\.md/.test(p1.err) && /32,768/.test(p1.err), '…and names the file and the cap on stderr');
+  ok(treeFingerprint(ROOT) === beforePrint, '…and writes nothing at all');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§8  DECISION K — no instruction file was ever opened for writing');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  ok(instructionFingerprint() === INSTRUCTIONS_AT_START,
+    'CLAUDE.md, AGENTS.md, GEMINI.md, .cursor/rules and .rules are byte-identical after every arm above');
+  ok(INSTRUCTIONS_AT_START.split('\n').length === 5, '…and five of them were actually planted (the control)');
+
+  // The other direction, scanned over the module: no write call may name an
+  // instruction file. Comments are stripped first, because this file's own
+  // docblock names all five.
+  const src = readFileSync(path.join(REPO_ROOT, 'src', 'cli', 'install-hooks.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const named = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.cursor/rules', '.rules']
+    .filter((n) => src.includes(n));
+  ok(named.length === 0, `no instruction filename appears in the module's code${named.length ? ` — ${named.join(', ')}` : ''}`);
+  ok(/writeFileAtomicSync/.test(src), '…and the module does contain a write call (the scan\'s own control)');
+  const writers = IH.HOOK_WRITERS;
+  ok(writers.length === 5 && writers.every((id) => A.adapterFor(id)?.hooks?.writer === id),
+    `five hook writers ship, each matching its adapter (${writers.join(', ')})`);
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────
