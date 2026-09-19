@@ -28,12 +28,12 @@
  *   3  up to TWO rows               newest scope first, each with a recency mark
  *                                   in its icon gutter and a four-item submenu
  *   -  … up to THREE such groups, five rows in total
- *   3b the overflow                 "More in Agent Memory… (6)" — clickable
+ *   3b the overflow                 "More in Project Context… (6)" — clickable
  *   -  separator
  *   4  notices, only when true      waiting handoffs; a machine that saved
  *                                   after this one; harness collisions
  *   -  separator
- *   5  Open Agent memory…  ·  Open The Curator  ·  Settings…
+ *   5  Open Project Context…  ·  Open The Curator  ·  Settings…
  *   -  separator
  *   6  "Updated 14:32"              the reading's own freshness
  *   -  separator
@@ -168,7 +168,7 @@ export const ID_QUIT = 'tray-quit';
  *  like an error. It says what the surface is for and how something gets into
  *  it — nothing else. It is also why the whole feature is off by default: on a
  *  fresh install this is the only thing it can ever show. */
-export const EMPTY_LABEL = 'No agent memory yet';
+export const EMPTY_LABEL = 'No project context yet';
 export const EMPTY_HINT = 'A coding agent writes here through the my-curator MCP';
 
 /** Shown instead of the hint when the read itself failed. A failure to READ is
@@ -307,7 +307,7 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // ── 1 + 2. The headline answer ──────────────────────────────────────────
   template.push({
     id: ID_HEADLINE,
-    label: headline ? headline.text : 'Agent memory could not be read',
+    label: headline ? headline.text : 'Project context could not be read',
     // Enabled even in the empty state: it is the route to the screen that
     // explains the emptiness, and a dimmed first line reads as a broken app.
     enabled: true,
@@ -501,7 +501,7 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // is no arrangement of data in which the menu stops offering a way back to
   // the app or a way to quit it.
   template.push(sep);
-  template.push({ id: ID_OPEN_MEMORY, label: 'Open Agent Memory…', click: onOpenMemory });
+  template.push({ id: ID_OPEN_MEMORY, label: 'Open Project Context…', click: onOpenMemory });
   template.push({ id: ID_OPEN_APP, label: 'Open ' + appName, click: onOpenApp });
   template.push({ id: ID_SETTINGS, label: 'Settings…', click: onOpenSettings });
 

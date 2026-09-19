@@ -2487,7 +2487,7 @@ export function buildTrayModel(summary, opts = {}) {
       domain: null, project: null, projectLabel: null, projectFull: null, route: null,
       // The empty state is the FIRST thing a new user sees and it must not
       // read like an error. A failed read is a different sentence again.
-      text: ok ? 'No agent memory yet' : 'Agent memory could not be read',
+      text: ok ? 'No project context yet' : 'Project context could not be read',
       who: null,
       where: null,
       bucket: 'unknown',
@@ -2510,7 +2510,7 @@ export function buildTrayModel(summary, opts = {}) {
   // counted BEFORE its own slice, and `all.length` is the honest fallback when
   // it supplied none.
   const truncatedNote = hiddenRows > 0
-    ? 'More in Agent Memory… (' + hiddenRows + ')' : null;
+    ? 'More in Project Context… (' + hiddenRows + ')' : null;
 
   const deduped = dedupeAgainstSuppliedWarnings(
     readWarnings(summary), collisionNotices(rows), truncatedNote !== null);
