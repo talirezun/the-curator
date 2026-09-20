@@ -6982,6 +6982,19 @@ const fndRead = (payload) => ({
       + 'binder, one navigation, never a second write path',
     noneSaved.includes('id="mem-fnd-to-domains"')
       && /Create a project in Domains/.test(noneSaved), noneSaved.slice(-400));
+    // ── WHO IT IS FOR, ON BOTH ARMS (v3.64.0, §5.2) ────────────────────
+    // The rail cannot carry prose, so a researcher with no agents meets a
+    // button called "Context" and can only find out what it is by pressing
+    // it. This is where they land, and the sentence must therefore be on
+    // EVERY arm of this screen rather than on the one the author happened
+    // to be looking at.
+    for (const [arm, html] of [['no domains', noDomains], ['nothing saved', noneSaved]]) {
+      ok('the ' + arm + ' arm says who project context is for — "work that '
+        + 'outlives one session: a book, a research programme, a codebase"',
+      /work that outlives one session/.test(html)
+        && /a book, a research programme, a codebase/.test(html), html.slice(0, 500));
+    }
+
     const unknownCount = makeRenderers({ domainsScanned: null }).renderNoProjects();
     ok('...and it does not depend on the server having answered the count '
       + 'either — an unreported `domainsScanned` still gets it',
@@ -7624,6 +7637,56 @@ const fndRead = (payload) => ({
     + 'wiki does not stop existing because a stats read did',
   /Could not read/.test(failedK) && /id="mem-k-domains"/.test(failedK)
     && /id="mem-k-chat"/.test(failedK) && !failedK.includes('<details'), failedK.slice(0, 300));
+  // ── THE CHAT DOOR CARRIES THE OPEN PROJECT (v3.64.0, §4.1) ────────────
+  // EXECUTED, not scanned. This door is pressed FROM a project's page, and
+  // dropping the project on the way would make somebody re-choose, on the
+  // next screen, the thing they were already looking at — a failure that is
+  // completely invisible from either side (the button navigates, Chat
+  // mounts, the domain is right, and only the pill is missing). So the real
+  // listener body is lifted out of the binder by brace-match on its own
+  // marker and run against a recording `goToChatScoped`.
+  {
+    /** The body of the mem-k-chat click listener, from memory.js itself. */
+    function liftChatDoorListener(src) {
+      const marker = "document.getElementById('mem-k-chat')?.addEventListener('click', () => {";
+      const idx = src.indexOf(marker);
+      if (idx === -1) throw new Error('mem-k-chat listener not found in memory.js');
+      let i = src.indexOf('{', idx + marker.length - 1);
+      let depth = 0;
+      for (; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+      }
+      return src.slice(src.indexOf('{', idx + marker.length - 1), i);
+    }
+
+    const runDoor = (st) => {
+      const calls = [];
+      const body = liftChatDoorListener(viewSrc);
+      new Function('state', 'goToChatScoped',
+        '(() => ' + body + ')();')(st, (...a) => calls.push(a));
+      return calls;
+    };
+
+    const inProject = runDoor({ activeDomain: 'acme', activeProject: 'lumina' });
+    eq('the chat door fires exactly once', inProject.length, 1);
+    eq('...with the active domain', inProject[0] && inProject[0][0], 'acme');
+    eq('...and the OPEN PROJECT, so Chat can pin it without asking again',
+      inProject[0] && inProject[0][1] && inProject[0][1].project, 'lumina');
+
+    const domainOnly = runDoor({ activeDomain: 'acme', activeProject: null });
+    eq('on the domain-level arm it still fires', domainOnly.length, 1);
+    eq('...with the domain', domainOnly[0] && domainOnly[0][0], 'acme');
+    eq('...and a NULL project rather than an invented one — app.js’s single '
+      + 'writer drops a project that names nothing, so this is one shape in both states',
+      domainOnly[0] && domainOnly[0][1] && domainOnly[0][1].project, null);
+
+    // The guard that was already there, and must stay: no domain, no
+    // navigation. A door that opens Chat unscoped from a screen that knows
+    // which domain it is on is the hazard shared/chat-scope.js exists for.
+    eq('no active domain, no call at all', runDoor({ activeDomain: null, activeProject: 'x' }).length, 0);
+  }
+
   const full = K({ domain: 'acme', data: { pageCount: 3445,
     pageCounts: { entities: 614, concepts: 2780, summaries: 51, other: 0 },
     lastIngestDate: '2026-09-16', lastIngestKind: 'ingest', lastIngestTitle: 'The Footprint' } });

@@ -3093,6 +3093,15 @@ function renderNoProjects() {
         : 'Nothing has been saved yet. ') +
       'Project context lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
       'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
+  // ── WHO THIS IS FOR, SAID ON THE SCREEN WHERE THE QUESTION IS ASKED ───
+  // v3.64.0, §5.2. The rail cannot carry prose — its captions are one word
+  // — and `title`/`aria-label` already read "Project context", which names
+  // the thing without saying who needs it. So a researcher with no agents
+  // meets a third rail button and has no way to find out what it is for
+  // except by pressing it. This is where they land when they do, and it is
+  // the one sentence that answers them: the second audience is the first
+  // audience's future, said once, here.
+  const audience = 'Project context is for work that outlives one session: a book, a research programme, a codebase.';
   // ── §8(e): THE POINTER LIVES WHERE THE MISSING THING IS A PROJECT ──────
   // Moved here from `renderFoundations`'s no-manifest arm (v3.62.0): that
   // state is reached INSIDE a project that has already been selected — the
@@ -3106,7 +3115,7 @@ function renderNoProjects() {
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">' + title + '</div>' +
-      renderDescription(body, { html: true }) +
+      renderDescription(body + ' ' + audience, { html: true }) +
       '<div class="mem-fnd-elsewhere">' +
         '<button type="button" class="btn btn-secondary btn-xs" id="mem-fnd-to-domains">' +
         'Create a project in Domains</button>' +
@@ -8804,7 +8813,18 @@ function wire(token) {
   document.getElementById('mem-k-chat')?.addEventListener('click', () => {
     const domain = state.activeDomain;
     if (!domain) return;
-    goToChatScoped(domain);
+    // ── AND THE PROJECT, WHEN ONE IS OPEN (v3.64.0, §4.1) ──────────────
+    // This door is pressed FROM a project's page. Handing Chat the domain
+    // and dropping the project on the way would make the user re-choose,
+    // on the next screen, the thing they were already looking at — and the
+    // project is what Chat's pill needs in order to read the standing
+    // brief, the latest handoff and the read-first foundations alongside
+    // the wiki. `state.activeProject` is null on the domain-level arm of
+    // this view, and app.js's single writer drops a null rather than
+    // recording a project that names nothing, so this is one shape in both
+    // states. Still exactly one navigate(), still record-then-navigate —
+    // the wrapper owns that ritual and this passes through it.
+    goToChatScoped(domain, { project: state.activeProject });
   });
   document.getElementById('mem-new-project')?.addEventListener('click', () => {
     const domain = state.activeDomain;

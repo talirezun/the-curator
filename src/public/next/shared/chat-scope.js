@@ -55,12 +55,25 @@ import { navigate } from '../app.js';
 import * as shell from '../app.js';
 
 /**
- * Open Chat scoped to one domain.
+ * Open Chat scoped to one domain, and optionally to one project inside it.
+ *
+ * ── THE SECOND ARGUMENT IS PURE FORWARDING (v3.64.0, §4.1) ───────────────
+ * It is handed to `requestChatScope` untouched and is NOT validated here.
+ * That is deliberate and it is this module's whole rule applied to a new
+ * field: the three ways to get the RITUAL wrong are guarded once, here; the
+ * shape of what is recorded is guarded once, at app.js's single writer,
+ * which trims, type-checks and drops a project that names nothing. A second
+ * copy of that normalisation in this file is the two-hand-written-copies
+ * shape the module exists to delete.
+ *
+ * Omitting it produces a request byte-identical to every pre-v3.64.0 one,
+ * so the existing call sites did not change and did not need to.
  *
  * @param {string} slug a real domain slug
+ * @param {{project?: string, scope?: string}} [opts] optional, forwarded as-is
  * @returns {void}
  */
-export function goToChatScoped(slug) {
+export function goToChatScoped(slug, opts) {
   // RULE 3, and it is a guard rather than an assertion because the honest
   // outcome of a missing slug is still "open Chat" — the user pressed a
   // button that says so. What must not happen is recording a request that
@@ -77,7 +90,12 @@ export function goToChatScoped(slug) {
   // RULE 1: record, then navigate. RULE 2: exactly one navigate() on every
   // path through this function, including the degraded one above.
   if (typeof shell.requestChatScope === 'function') {
-    shell.requestChatScope(clean);
+    // `opts` is passed through only when the caller supplied an object, so a
+    // one-argument call reaches app.js as a ONE-ARGUMENT call rather than as
+    // `(slug, undefined)`. The two are equivalent today; passing the
+    // explicit `undefined` would make this file depend on that staying true.
+    if (opts && typeof opts === 'object') shell.requestChatScope(clean, opts);
+    else shell.requestChatScope(clean);
   } else {
     console.warn('[next/chat-scope] app.js does not export requestChatScope() — '
       + 'opening Chat without a domain scope.');

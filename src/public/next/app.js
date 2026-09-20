@@ -2436,9 +2436,54 @@ export function escapeHtml(s) {
 //     views/chat.js's onEnter for the real call site.
 let _pendingChatScopeRequest = null; // null = nothing pending; else { slug, firstRun }
 
-export function requestChatScope(slug) {
+/**
+ * Ask Chat to scope itself to `slug` on its next mount.
+ *
+ * ── WIDENED ADDITIVELY IN v3.64.0 (§4.1) ────────────────────────────────
+ * The second argument is optional, and every existing single-argument call
+ * site (`shared/chat-scope.js`, reached from views/domains.js and
+ * views/memory.js) is BYTE-UNCHANGED in what it produces. That is not a
+ * politeness: `test-next-chat-compile.js` §1 pins the consumed object by
+ * exact `JSON.stringify` on two of its paths, and those two paths are the
+ * ones this widening must not move.
+ *
+ * ── THE SHAPE IS A HIERARCHY, AND THAT IS WHY A FIELD CAN BE ABSENT ─────
+ * `slug` → `project` → `scope`. Each field is recorded only when the one
+ * above it is, because without it the field NAMES NOTHING: a project inside
+ * no domain is not a project, and a work-stream scope inside no project is
+ * not a scope. So:
+ *
+ *   requestChatScope('demo')                    -> { slug, firstRun:false, project:null }
+ *   requestChatScope('demo', {project:'p'})     -> { …, project:'p', scope:null }
+ *   requestChatScope('demo', {project:'p', scope:'s'}) -> { …, scope:'s' }
+ *   requestChatScope()  /  (null) / ('') / (42) -> { slug:null, firstRun:true }
+ *
+ * The two `slug: null` cases keep exactly the shape they had before this
+ * release. A consumer reads `slug` first — with no slug there is nothing to
+ * apply and nothing to pin — so `project` is present on every path where a
+ * consumer could act on it, which is the contract package L needs.
+ *
+ * @param {string} slug a domain slug; anything falsy produces firstRun: true
+ * @param {{project?: string, scope?: string}} [opts] optional, advisory
+ * @returns {void}
+ */
+export function requestChatScope(slug, opts) {
   const clean = (typeof slug === 'string' && slug) ? slug : null;
-  _pendingChatScopeRequest = { slug: clean, firstRun: !clean };
+  const req = { slug: clean, firstRun: !clean };
+  if (clean) {
+    // Trimmed and type-checked at the SINGLE WRITER — the requestDomain()
+    // rule. A consumer must never have to ask whether a padded value or a
+    // non-string arrived through a typo, and `null` is the one answer it
+    // cannot accidentally read a project name out of.
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    const project = (typeof o.project === 'string' && o.project.trim()) ? o.project.trim() : null;
+    req.project = project;
+    if (project) {
+      const scope = (typeof o.scope === 'string' && o.scope.trim()) ? o.scope.trim() : null;
+      req.scope = scope;
+    }
+  }
+  _pendingChatScopeRequest = req;
 }
 
 export function consumeChatScopeRequest() {

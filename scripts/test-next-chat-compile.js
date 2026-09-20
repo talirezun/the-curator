@@ -131,7 +131,7 @@ function assertStrippedSane(stripped, label, mustContain) {
   return stripped;
 }
 const appCode = assertStrippedSane(stripComments(app), 'app.js',
-  ['export function requestChatScope(slug)', 'export function consumeChatScopeRequest()']);
+  ['export function requestChatScope(slug', 'export function consumeChatScopeRequest()']);
 const chatCode = assertStrippedSane(stripComments(chat), 'chat.js',
   ['function resolveBootDomain(', 'function compileStillTargetsActive(', 'async function runCompile()']);
 
@@ -283,6 +283,55 @@ section('1. requestChatScope()/consumeChatScopeRequest() — the handoff state m
   requestChatScope('a');
   requestChatScope('b');
   eq(consumeChatScopeRequest().slug, 'b', 'a second request before any consume replaces the first, not accumulates');
+
+  // ── THE PROJECT RIDES ALONG (v3.64.0, §4.1) ──────────────────────────
+  // Widened ADDITIVELY so Chat can be handed a project as well as a domain:
+  // package L pins the project pill from it, which is what lets "Ask this
+  // domain", pressed from a project's page in the Context view, arrive with
+  // that project already chosen instead of asking again on the next screen.
+  //
+  // THE SHAPE IS A HIERARCHY — slug → project → scope — and a field is
+  // recorded only when the one above it is, because without it the field
+  // NAMES NOTHING: a project inside no domain is not a project. That is
+  // also exactly what keeps the two `slug: null` paths above byte-identical
+  // to every pre-v3.64.0 request, which the four JSON.stringify assertions
+  // in this section are pinning.
+  requestChatScope('demo');
+  const noProject = consumeChatScopeRequest();
+  eq(noProject.slug, 'demo', 'a one-argument call still carries the slug');
+  eq(noProject.project, null,
+    'and reports project NULL rather than omitting it — a consumer reading req.project on a real request never sees undefined');
+  eq(noProject.firstRun, false, 'and firstRun is still false');
+
+  requestChatScope('demo', { project: 'lumina' });
+  const withProject = consumeChatScopeRequest();
+  eq(withProject.slug, 'demo', 'a two-argument call carries the slug');
+  eq(withProject.project, 'lumina', 'and the project');
+  eq(withProject.scope, null, 'and a scope of null, since none was asked for');
+
+  requestChatScope('demo', { project: 'lumina', scope: 'session-2026-09-20' });
+  eq(consumeChatScopeRequest().scope, 'session-2026-09-20', 'a work-stream scope rides on the project');
+
+  // NORMALISED AT THE SINGLE WRITER, the requestDomain() rule: a consumer
+  // must never have to ask whether a padded value or a non-string arrived
+  // through a typo.
+  requestChatScope('demo', { project: '  lumina  ' });
+  eq(consumeChatScopeRequest().project, 'lumina', 'a padded project is trimmed');
+  requestChatScope('demo', { project: 42 });
+  eq(consumeChatScopeRequest().project, null, 'a non-string project is dropped, never carried forward');
+  requestChatScope('demo', { project: '   ' });
+  eq(consumeChatScopeRequest().project, null, 'a whitespace project is dropped — it would pass a truthiness check');
+  requestChatScope('demo', 'not-an-object');
+  eq(consumeChatScopeRequest().project, null, 'a non-object opts bag is ignored rather than thrown over');
+  requestChatScope('demo', { scope: 'orphan' });
+  eq(consumeChatScopeRequest().scope, undefined,
+    'a scope with NO project is not recorded at all — inside no project it names nothing');
+
+  // AND THE TWO SLUG-LESS PATHS ARE UNTOUCHED, which is the compatibility
+  // claim stated as a measurement rather than as a comment.
+  requestChatScope(null, { project: 'lumina' });
+  eq(JSON.stringify(consumeChatScopeRequest()), JSON.stringify({ slug: null, firstRun: true }),
+    'a project handed in with NO domain records nothing about the project — the first-run shape is exactly what it always was');
 
   // ── Mutation proof: consume WITHOUT clearing ──────────────────────────
   // Reproduces the exact bug the "decisive proof" above exists to catch:
@@ -505,7 +554,18 @@ section('5. Source-level guards — app.js (chat scope handoff)');
     'the pending request is MODULE state, not localStorage (grep confirms no localStorage key exists for it)');
   ok(!/localStorage[\s\S]{0,80}[Cc]hatScope/.test(appCode) && !/[Cc]hatScope[\s\S]{0,80}localStorage/.test(appCode),
     'no localStorage key is used anywhere near the scope-handoff functions — module state only');
-  ok(/export function requestChatScope\(slug\)/.test(appCode), 'requestChatScope has the frozen one-argument signature');
+  // ── THE SIGNATURE WAS FROZEN AT ONE ARGUMENT UNTIL v3.64.0 ──────────
+  // It now takes an OPTIONAL second (§4.1: Chat can be handed a project as
+  // well as a domain). The property this line existed to protect was never
+  // the arity itself — it was that a single-argument caller keeps producing
+  // exactly what it produced before, and §1 above proves that BEHAVIOURALLY
+  // on every path, by exact JSON.stringify. So the source read is narrowed
+  // to what a source read is actually good for: `slug` is still the FIRST
+  // parameter, and anything after it is optional.
+  ok(/export function requestChatScope\(slug\b/.test(appCode),
+    'requestChatScope still takes the domain slug as its first parameter');
+  ok(!/export function requestChatScope\(\s*\{/.test(appCode),
+    '…and has NOT been turned into an options-bag-only signature, which would break every existing caller silently');
   ok(/export function consumeChatScopeRequest\(\)/.test(appCode), 'consumeChatScopeRequest takes no arguments');
 }
 
