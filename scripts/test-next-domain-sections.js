@@ -60,6 +60,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
 const CSS = readFileSync(join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+// v3.64.2 — the OVERVIEW card's own rules moved to the shared component's
+// stylesheet when the Project-context view adopted the same card.
+const OV_CSS = readFileSync(join(ROOT, 'src/public/next/shared/overview.css'), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -153,6 +156,7 @@ function docOrder(root) {
 // HOSTED sections are rendered for real, because they are what moved.
 // ═════════════════════════════════════════════════════════════════════════
 const { docsLinkHtml } = await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 const PREAMBLE = `
 let state = {};
@@ -196,7 +200,7 @@ const document = { getElementById: () => null, querySelector: () => null, queryS
 
 let box;
 try {
-  box = new Function('docsLinkHtml',
+  box = new Function('docsLinkHtml', 'renderOverview',
     PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -224,7 +228,7 @@ try {
        __setState: (s) => { state = s; }, __state: () => state, __calls: () => calls,
        __setRender: (fn) => { render = fn; },
        __reset: () => { calls.setMain.length = 0; calls.jumps.length = 0; } };`
-  )(docsLinkHtml);
+  )(docsLinkHtml, renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -282,9 +286,20 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // The eyebrows name the blocks. INGEST, not "ADD SOURCES" (the maintainer's
     // decision, 2026-09-20): the section is the act, and SOURCES stays the
     // OVERVIEW tile's word because there it is a count.
-    ok('the INGEST fold is labelled INGEST', /dm-fold-title">INGEST</.test(html));
-    ok('the SHARED BRAIN fold is labelled SHARED BRAIN', /dm-fold-title">SHARED BRAIN</.test(html));
+    // v3.64.2: the title left the `<summary>` for a head row above the card,
+    // like the other three sections' — so the label is asserted where it now
+    // lives, and the summary is required to carry the ACCESSIBLE name that a
+    // chevron-and-a-date row would otherwise lack.
+    ok('the Ingest fold is labelled Ingest',
+      /dm-section-eyebrow">Ingest</.test(html), html.slice(0, 900));
+    ok('the Shared Brain fold is labelled Shared Brain',
+      /dm-section-eyebrow">Shared Brain</.test(html), html.slice(0, 900));
     ok('...and neither section says "ADD SOURCES"', !/ADD SOURCES/.test(html));
+    ok('each fold\'s summary carries an accessible name, because a chevron and '
+      + 'a date is not a label',
+    /<summary class="dm-fold-summary" aria-label="Ingest">/.test(html)
+      && /<summary class="dm-fold-summary" aria-label="Shared Brain">/.test(html),
+    html.slice(0, 900));
     // The panels own these elements and this page never writes into them again.
     ok('each fold carries exactly one empty host element for its panel',
       (html.match(/id="dm-sources-host"><\/div>/g) || []).length === 1
@@ -317,7 +332,7 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     eq('the three sections this sandbox renders carry a numeral', nums.length, 3);
     eq('...in reading order', nums.join(''), '124');
     ok('③ is emitted immediately above the PROJECTS title',
-      /<span class="dm-section-num" aria-hidden="true">3<\/span>' \+\s*\n\s*'<div class="cur-group-title dm-section-eyebrow">PROJECTS IN THIS DOMAIN<\/div>/
+      /<span class="dm-section-num" aria-hidden="true">3<\/span>' \+\s*\n\s*'<div class="cur-group-title dm-section-eyebrow">Projects in this domain<\/div>/
         .test(SRC), 'not found in domains.js');
     {
       // ⑤ WIKI HEALTH, EXECUTED — the wrapper is a pure function of its inner
@@ -325,13 +340,32 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       const wrap = new Function(extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')();
       const out = wrap('<div class="dm-health-card">x</div>');
       ok('the health section carries numeral 5 beside its title',
-        /<span class="dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title dm-section-eyebrow">WIKI HEALTH<\/div>/
+        /<span class="dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title dm-section-eyebrow">Wiki health<\/div>/
           .test(out), out);
       ok('...and the title keeps the classes an unowned suite pins by name',
-        /class="cur-group-title dm-section-eyebrow">WIKI HEALTH</.test(out), out);
+        /class="cur-group-title dm-section-eyebrow">Wiki health</.test(out), out);
+      // ── THE CARD NO LONGER TITLES ITSELF (v3.64.2) ────────────────────
+      // "Wiki health" written twice, eight pixels apart, was the duplicate
+      // the maintainer reported. The SECTION names the card; the card's own
+      // head row exists for the Rescan control and nothing else.
+      ok('the card emits no second "Wiki health" title of its own',
+        !/dm-health-title/.test(SRC), 'dm-health-title is still emitted by views/domains.js');
+      ok('CONTROL -- the rule stays in views/domains.css, where an unowned type suite reads it',
+        /\.dm-health-title\s*\{/.test(CSS));
       eq('CONTROL -- an empty body still renders nothing at all', wrap(''), '');
     }
-    for (const [n, word] of [['1', 'INGEST'], ['2', 'PAGES'], ['4', 'SHARED BRAIN']]) {
+    // ── ONE HEADING RULE, ONE x (v3.64.2) ───────────────────────────────
+    // Every numeral is the first child of a `.dm-section-hd`, and every head
+    // is a TOP-LEVEL sibling rather than a row inside a `<summary>` — which
+    // is what put ① and ④ a few pixels right of ② ③ ⑤ in v3.64.1. Title case
+    // on all five, matching the Context view's steps.
+    ok('no numeral sits inside a fold summary any more',
+      !/dm-fold-summary[\s\S]{0,200}dm-section-num/.test(html), html.slice(0, 900));
+    eq('...and every numeral opens a head row',
+      (html.match(/<div class="dm-section[^"]*dm-section-hd"><span class="dm-section-num"/g) || []).length
+      + (html.match(/<div class="dm-section-hd"><span class="dm-section-num"/g) || []).length,
+      3);
+    for (const [n, word] of [['1', 'Ingest'], ['2', 'Pages'], ['4', 'Shared Brain']]) {
       const at = html.indexOf('>' + n + '</span>');
       const title = html.indexOf(word, at);
       ok('numeral ' + n + ' is the one beside ' + word,
@@ -351,11 +385,18 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // own pin `.cur-group-title.dm-section-eyebrow` and `.dm-recent-eyebrow`
     // by name, so the numeral and the larger face are added AROUND the
     // element rather than by replacing it.
-    ok('the PAGES title still carries the classes two other suites pin by name',
-      /class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">PAGES</.test(html), html.slice(0, 600));
+    ok('the Pages title still carries the classes two other suites pin by name',
+      /class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</.test(html), html.slice(0, 600));
     ok('...and the two eyebrow classes are now ONE treatment, inside one head',
-      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">PAGES<\/div><\/div>/
+      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages<\/div><\/div>/
         .test(html), html.slice(0, 600));
+    // TITLE CASE, LIKE THE CONTEXT VIEW'S STEPS. An ALL-CAPS title beside
+    // "① Foundations" next door is two designs for one heading — the second
+    // half of the maintainer's report.
+    for (const shout of ['>INGEST<', '>PAGES<', '>PROJECTS IN THIS DOMAIN<',
+      '>SHARED BRAIN<', '>WIKI HEALTH<']) {
+      ok('no section title SHOUTS any more: ' + shout, !SRC.includes(shout));
+    }
   }
 }
 {
@@ -384,6 +425,23 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
   }
   eq('the head\'s gap matches too', decl(CSS, '.dm-section-hd', 'gap'),
     decl(shellCss, '.settings-block-hd', 'gap'));
+
+  // ── THE RHYTHM SURVIVES THE HEAD LEAVING THE SUMMARY (v3.64.2) ─────────
+  // The column's ONE gap rule is `.dm-section + .dm-section`. A head that is
+  // its own sibling breaks that chain twice, and both breaks are SILENT: the
+  // head would be 24px above its own card, and the section AFTER a fold would
+  // be flush against it — which is the "Projects glued to Wiki health" defect
+  // v3.49.1 measured, re-created one release later by a different cause.
+  const bareCss = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('a head sits tight above its own card, whichever element that card is',
+    /\.dm-section-hd \+ \.dm-section,\s*\n\.dm-section-hd \+ \.dm-fold\s*\{\s*margin-top:\s*0;?\s*\}/
+      .test(bareCss), 'rule not found in views/domains.css');
+  ok('...and a fold hands the section gap to whatever follows it, which '
+    + '`.dm-section + .dm-section` can no longer do',
+  /\.dm-fold \+ \.dm-section\s*\{\s*margin-top:\s*var\(--space-12\);?\s*\}/.test(bareCss),
+  'rule not found in views/domains.css');
+  eq('CONTROL -- and that IS the gap the one rule uses',
+    decl(CSS, '.dm-section + .dm-section', 'margin-top'), 'var(--space-12)');
   const titleRule = /\n\.dm-section-hd \.dm-section-eyebrow,\n\.dm-section-hd \.dm-fold-title\s*\{([^}]*)\}/.exec(CSS);
   ok('CONTROL -- one rule paints every section title', !!titleRule, String(titleRule));
   const titleProp = (p2) => {
@@ -1624,9 +1682,9 @@ section('S7 -- THE TWO JUMP TILES');
   // `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY -- v3.62.0
   // shipped an empty warning chip that painted anyway on exactly this shape.
   ok('views/domains.css carries the counter-rule that makes `hidden` real',
-    /\.dm-jump-card\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(CSS));
+    /\.cur-ov-jump\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(OV_CSS));
   ok('CONTROL -- the tile really does declare a display of its own',
-    /\.dm-jump-card\s*\{[^}]*display:\s*flex/.test(CSS));
+    /\.cur-ov-jump\s*\{[^}]*display:\s*flex/.test(OV_CSS));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -484,20 +484,26 @@
   text-transform: none;
   color: var(--text);
 }
-/* THE TWO FOLD SUMMARIES CARRY THE SAME HEAD WITHOUT A WRAPPER. A `<summary>`
-   is already the flex row `.dm-section-hd` would be, and nesting one inside
-   it would put the chevron and the numeral on different rows at 568px. So the
-   numeral sits in the summary beside the chevron and the title takes the same
-   face by its own selector. */
-.dm-fold-summary .dm-section-num { transform: none; }
-.dm-fold-summary .dm-fold-title {
-  font-family: var(--font-sans);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
-  text-transform: none;
-  color: var(--text);
-}
+/* ── THE FOLD'S HEAD LEFT THE SUMMARY (v3.64.2) ───────────────────────────
+   v3.64.1 put the numeral and the title INSIDE each fold's `<summary>`,
+   beside the chevron and inside the summary's own 14px padding — so the two
+   folded sections' numerals sat a few pixels to the RIGHT of the three
+   unfolded ones, which is exactly what the maintainer reported next. The head
+   is now a SIBLING above the card, identical for all five sections, and the
+   summary is the card's first ROW: a chevron and the one reading that decides
+   whether to open it.
+
+   THE HEAD IS NOT A WRAPPER around the `<details>`, and that is a correctness
+   rule rather than a layout choice — views/domains.js's renderMain says why
+   (`patchMainAroundHosts` finds a hosted fold by id among the column's
+   TOP-LEVEL children). So the head carries `.dm-section` for the column
+   rhythm and the rule below removes the gap between it and its own card. */
+.dm-section-hd + .dm-section,
+.dm-section-hd + .dm-fold { margin-top: 0; }
+/* And the card hands the gap back to the section AFTER it, which used to come
+   from `.dm-section + .dm-section` and cannot any more: a `<details>` that is
+   no longer a `.dm-section` is not the adjacent sibling that rule matches. */
+.dm-fold + .dm-section { margin-top: var(--space-12); }
 
 /* An eyebrow with an ⓘ mark beside it. The mark's own class belongs to
    shared/text.css and this file may not name it — that prefix is owned
@@ -579,20 +585,6 @@
    own section chrome. */
 .dm-host { min-width: 0; }
 
-/* ── Stat cards ───────────────────────────────────────────────────────── */
-
-.dm-stats-grid {
-  display: grid;
-  /* MEDIUM-2 fix: was a fixed repeat(4, 1fr) — the fifth "OTHER" card
-     (rendered only when a domain has stray, non-canonical pages) needs a
-     grid that can gracefully hold either 4 or 5 equal-width cards without
-     a second, conditional CSS rule. auto-fit with this minmax renders
-     identically to the old fixed 4-column layout whenever there are
-     exactly 4 cards (this container is comfortably wider than 4 * 110px),
-     and simply adds a 5th column when OTHER is present. */
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 10px;
-}
 /* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
    ONE thing: `.dm-path-eyebrow`, and it keeps it because an EYEBROW is a
    mono idiom in this design system (`--type-eyebrow` is defined as a mono
@@ -617,159 +609,20 @@
    views/ingest.css's `.ing-name` and views/memory.css's `.mem-name`. */
 .dm-name { color: var(--text); font-weight: var(--weight-medium); }
 
-.dm-stat-card {
-  /* 14 -> --space-8 (16px), on the 4pt grid. */
-  padding: var(--space-8);
-  border-radius: var(--radius-lg);
-}
-/* ── THE FIGURES ARE ONE CARD, NOT FIVE (v3.50.0) ──────────────────────────
-   Reported: "the top number cards float without a card". They did — five
-   bordered tiles on the view background, with no group around them and no
-   eyebrow saying what they were, so the first thing on the domain card was an
-   unlabelled row of numbers while every other section was a captioned group.
+/* ── THE OVERVIEW CARD'S INK, AND ONLY ITS INK (v3.64.2) ──────────────────
+   The card itself — the group, the grid, the tile, the figure, the jump row
+   and every state on them — MOVED to shared/overview.css, because the
+   Project-context view renders the same component now and a rule a second
+   view depends on may not live in this file (index.html links the view sheets
+   last, so its place in the cascade would be unknowable from there).
 
-   The group is now the kit's own `.cur-group` (see `.dm-stats-group`), and the
-   tiles inside it drop their individual border, surface and elevation: a card
-   inside a card is two objects where the design has one, and a border repeated
-   five times inside a bordered container is the "gap between bordered cards is
-   a web form" shape shell.css records against. The tile keeps its PADDING and
-   its radius, so the grid geometry and the hover targets are unchanged. */
-.dm-stats-group { padding: var(--space-2); }
-.dm-stats-group .dm-stat-card {
-  border: 0;
-  background: none;
-  box-shadow: none;
-}
-
-/* ── THE FIGURE AS A CONTROL ───────────────────────────────────────────────
-   Four of the five tiles are `<button>`s that select the chip of the same
-   name under PAGES · THE WIKI, and PROJECTS scrolls to its section (see
-   renderStatCards for why). The GEOMETRY must not move when a tile changes
-   tag: a `<button>` brings a UA border, background, centred text, its own
-   font and `box-sizing: border-box` — the padding and radius above already
-   apply to it by class, so only the chrome is removed here.
-
-   `cursor: default` is this app's chrome pointer, the same call
-   `.dm-browse-tab` and `.dm-proj-footer` make. */
-.dm-stats-group button.dm-stat-card {
-  display: block;
-  width: 100%;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
-}
-.dm-stats-group button.dm-stat-card:hover { background: var(--surface-hover); }
-.dm-stats-group button.dm-stat-card:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus);
-}
-/* SELECTED — the same vocabulary the chip uses (`--accent-tint` fill,
-   `--accent-border` edge), so the two controls over one filter state read as
-   the same state. The edge is an INSET box-shadow rather than a border
-   because a real border on a tile inside a five-track grid would reflow every
-   tile by 2px the moment one became selected. Ink contrast on the composited
-   tint is measured in scripts/test-next-domain-pages.js.
-
-   DECLARED AFTER `:hover`, which it TIES with at (0,3,1) — so hovering a
-   selected figure keeps the selected fill instead of flashing back to the
-   neutral one. That is the chip's behaviour too: `.dm-browse-tab.active` has
-   no hover variant either, and two controls over one state should not
-   disagree about what hovering means. */
-.dm-stats-group button.dm-stat-card[aria-pressed="true"] {
-  background: var(--accent-tint);
-  box-shadow: inset 0 0 0 1px var(--accent-border);
-}
-/* THE PRESS IS LAST, AND IT CARRIES BOTH SELECTORS FOR A MEASURED REASON.
-   A bare `:active` ties with the selected rule above at (0,3,1) and loses on
-   order, so pressing an ALREADY-SELECTED figure would change nothing but the
-   1px nudge. `[aria-pressed]` — attribute PRESENT, true or false — scores
-   (0,3,2) and outranks it; the bare `:active` stays in the list because the
-   PROJECTS figure jumps rather than toggling and carries no aria-pressed at
-   all. One rule, so the press cannot come to mean two things.
-
-   The first cut of this block used `[aria-pressed="true"]:hover` for the
-   selected hover and was correctly refused by
-   scripts/test-next-press-motion.js §6: that rule outranks a bare `:active`,
-   which is the shape where a press silently never paints. */
-.dm-stats-group button.dm-stat-card:active,
-.dm-stats-group button.dm-stat-card[aria-pressed]:active {
-  background: var(--surface-active);
-  transform: translateY(var(--press-shift));
-}
-/* PAGES carries no ink class and takes --text; so does PROJECTS, because both
-   are totals rather than one of the three wiki types. Named rather than left
-   classless so the suite can address it. */
-/* ── THE TWO JUMPS (v3.64.0) ───────────────────────────────────────────────
-   A SECOND ROW INSIDE THE SAME GROUP, and a class of its own. These are not
-   figures: they carry a date and a state and they open a fold further down
-   the page. Sharing `.dm-stat-card` would have said they are more of the same
-   number — the self-contradicting-figures shape this card has been fixed for
-   twice — and would have put them inside `.dm-stats-grid`'s equal-width
-   tracks, where a five-track row would become seven and every count would
-   narrow to make room for two words.
-
-   The chrome is deliberately the SAME as a figure-control's (transparent
-   until hover, the kit's focus ring, the press nudge) so the row reads as
-   part of the group rather than as a toolbar bolted under it. */
-.dm-jump-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: 0 var(--space-8) var(--space-6);
-}
-/* `[hidden]` LOSES TO AN AUTHOR `display` AT ANY SPECIFICITY, which is how
-   v3.62.0 shipped an empty warning chip that painted anyway. The SHARED tile
-   is rendered on every paint and revealed without a repaint, so this
-   counter-rule is what makes the hidden state real. A swept class rather than
-   a named list: the next tile to be conditionally hidden gets it for free. */
-.dm-jump-card[hidden] { display: none; }
-.dm-jump-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-4) var(--space-6);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
-}
-.dm-jump-card:hover { background: var(--surface-hover); }
-.dm-jump-card:focus-visible { outline: none; box-shadow: var(--ring-focus); }
-.dm-jump-card:active {
-  background: var(--surface-active);
-  transform: translateY(var(--press-shift));
-}
-/* A WORD OR A DATE, NOT A COUNT — so it takes the body size rather than
-   `.dm-stat-value`'s --text-2xl, which would make "3 days ago" the largest
-   thing in the group. */
-.dm-jump-value {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--text);
-}
+   These four classes stayed, and the reason is the token they read:
+   `--dm-ink-*` is THIS VIEW's derived ramp, declared 350 lines above beside
+   the row dots that share it. A shared stylesheet reaching into a view's
+   token set would be exactly the dependency the move removes. The kit takes
+   them as `toneClass`, a class name the HOST owns — so the figure's colour
+   stays this file's decision and its geometry stops being. */
 .dm-stat-project { color: var(--text); }
-.dm-stat-value {
-  font-size: var(--text-2xl);
-  font-weight: var(--weight-semibold);
-  color: var(--text);
-  margin-top: 4px;
-  /* Four counts sitting in a row of equal-width cards. Tabular figures so
-     `3,416` and `2,717` occupy the same width and the four numbers line up
-     down the row instead of drifting with their digits. */
-  font-variant-numeric: var(--numeric-tabular);
-}
 /* ── THESE ARE TEXT, AND ON LIGHT THEY FAILED AA ──────────────────────────
    The three type counts took the raw `--type-*` token. Recomputed from the
    shipped tokens against the card's own `--surface` (#FFFFFF on light):
@@ -2142,10 +1995,8 @@
      travels with the control instead of being restated per view. */
   .dm-browse-row:active,
   .dm-browse-more:active,
-  .dm-stats-group button.dm-stat-card:active,
-  .dm-stats-group button.dm-stat-card[aria-pressed]:active,
-  /* v3.64.0's two OVERVIEW jumps take the same press as a figure-control, so
-     they take the same escape from it. */
-  .dm-jump-card:active,
+  /* The OVERVIEW figures and their two jump tiles took their press — and
+     therefore their escape from it — to shared/overview.css with the rest of
+     the card in v3.64.2. Listed there, beside the rules they cancel. */
   .reader-source-reveal:active:not(:disabled) { transform: none; }
 }

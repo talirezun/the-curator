@@ -58,34 +58,15 @@
    one spaces a card and a block. */
 .mem-section + .settings-job-block { margin-top: var(--space-12); }
 
-/* ── THE THREE-CELL STRIP (v3.62.0, P1-4) ─────────────────────────────────
-   One reading per layer, between the breadcrumb and step ①. It is NOT a block
-   — it is an instrument about the page — so it takes `.mem-section` and the
-   existing `.mem-section + .settings-job-block` bridge spaces it into the
-   first step at exactly the rhythm every later step gets.
-
-   THE CELLS ARE `.tx-readout-group`, which is already a wrapping flex row
-   owned by shared/text.css (`flex-wrap: wrap`, `gap: 14px 26px`), so the strip
-   needs NO media query: at a narrow container the third cell wraps under the
-   first two by itself. Nothing here restates a `tx-` rule — shared/text.js
-   owns that prefix outright and scripts/test-next-text-system.js fails any
-   other stylesheet that declares one.
-
-   The ⓘ rides at the end of the row on `margin-left: auto` and is pushed to
-   its own line when the cells fill the width — `align-items: flex-start`
-   rather than baseline, because a readout is two stacked lines and a mark
-   aligned to the second one sits below the figures it explains. */
-.mem-layers {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
-/* A WRAPPER OF THIS VIEW'S OWN around the kit's group. shared/text.css owns
-   the `tx-` prefix outright — scripts/test-next-memory-ingest-text.js fails any
-   `tx-` selector declared in this file, and it is right to: the kit owns the
-   TYPE and GEOMETRY of its roles and a view may only place them. */
-.mem-layers-cells { flex: 1 1 auto; min-width: 0; }
-.mem-layers-info { flex: none; margin-left: auto; }
+/* ── THE OVERVIEW CARD'S PLACEMENT, AND NOTHING ELSE (v3.64.2) ────────────
+   The three readings above the three steps were a flex row of `renderReadout`s
+   with the ⓘ pushed to the right by `margin-left: auto`. They are now the
+   SAME component the domain page's OVERVIEW is (shared/overview.js +
+   shared/overview.css), which owns every rule about the card; this file keeps
+   only the section's place in the column, and `.mem-section` two rules above
+   already provides it. The class exists so this view can address its own
+   overview without naming the kit's. */
+.mem-overview { min-width: 0; }
 
 /* ── THE FOLDS INSIDE A STEP (v3.62.0) ────────────────────────────────────
    Step ② holds three: the work-streams, the standing brief and the journal.
@@ -102,7 +83,7 @@
 }
 
 /* ── THE HONESTY METER, FIRST INSIDE STEP ② (v3.63.0) ────────────────────
-   The reading and its ⓘ share a row, the same arrangement `.mem-layers` makes
+   The reading and its ⓘ share a row, the same arrangement the overview card's head makes
    one level up: the instrument takes the width and the mark sits at the right
    edge of the step it belongs to. The stack below it — the route's note, the
    two lines this reading does not count, and the session fold — is a column,
@@ -122,7 +103,7 @@
    to shrink (`min-width: 0`) so a long provenance wraps inside the column
    rather than pushing the mark off it. `align-items: flex-start` keeps the
    mark on the reading's FIRST line when the provenance wraps to a second —
-   the same call `.mem-layers` makes and for the same reason. */
+   the same call the overview card's head makes and for the same reason. */
 .mem-capture-head {
   display: flex;
   align-items: flex-start;
@@ -630,15 +611,42 @@
   border: 1px solid var(--border);
   background: var(--surface);
 }
+/* ── THE READING IS A ROW'S META NOW (v3.64.2) ────────────────────────────
+   It was a highlighted card with a readout in it, sitting above a bare CAPTURE
+   readout in a third design, above three fold rows — "the worst UX", on the
+   maintainer's screenshot of step ②. It is the meta slot of a `.mem-fold` row
+   now, so it inherits that row's type and colour and carries only its own
+   arrangement: the pip, the age, the pair and tool that wrote it, and the
+   completeness badge, on one line that wraps as a whole.
+
+   `min-width: 0` for the same reason `.mem-ctl` needs it — the provenance
+   carries a machine id, which is long and hex-suffixed. */
 .mem-save-main {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  /* min-width: 0 for the same reason .mem-ctl needs it — the readout's
-     provenance carries a machine id, which is long and hex-suffixed. */
+  gap: 6px 8px;
   min-width: 0;
 }
+/* The age is the figure a one-second glance is looking for, so it is the one
+   thing in the row at full ink. */
+.mem-save-age { color: var(--text); font-weight: var(--weight-medium); }
+/* And the pair and the tool that wrote it stay at the row's own --text-2,
+   which `.mem-fold-summary` already sets — declared so the rule is nameable
+   and the two halves cannot be recoloured together by accident. */
+.mem-save-prov { color: var(--text-2); }
+/* The FLAT case: a reading with nothing to explain is the same row without a
+   chevron, rather than a fold that opens on nothing. Same padding as every
+   other flat body; the title and the meta arrange exactly as a summary's do. */
+.mem-save-flat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.mem-save-flat .mem-fold-meta { margin-left: auto; }
 
 /* THE PIP — five discrete steps, and NOT a bar.
 

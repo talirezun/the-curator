@@ -736,6 +736,16 @@ section('§8 — patchOpenPair writes what a full render would paint');
 
   const tbody = el('tbody');
   const stack = el('div');
+  // ── THE "Last saved" ROW LIVES IN THE STACK NOW (v3.64.2) ────────────
+  // The patch writes the stack WHOLESALE, so the row that replaces the old
+  // one has no `toggle` listener — `wire` binds those once per render and
+  // this patch deliberately does not render. Without the re-bind the row
+  // silently stops remembering itself, which is the same class of silent
+  // loss the journal fold's element-preserving swap exists to prevent. The
+  // stack therefore answers for its own fold here, so the re-bind is
+  // OBSERVABLE rather than assumed.
+  const savedFold = el('details');
+  stack.querySelector = (sel) => (sel.includes('data-mem-fold="saved"') ? savedFold : null);
   const count = el('div');
   const fold = el('details');
   const parsedNodes = [];
@@ -830,6 +840,10 @@ section('§8 — patchOpenPair writes what a full render would paint');
   eq('every precondition held, so no full render was needed', fellBack, 0);
   eq('...and it SAYS it patched, rather than leaving the caller to infer it '
     + 'from a render that did not happen', outcome, 'patched');
+  // v3.64.2 — see the stub's own note.
+  ok('the "Last saved" row that the patch just wrote gets its toggle listener '
+    + 'back, or it stops remembering itself with nothing on screen to say so',
+  savedFold._listeners === 1, 'listeners: ' + savedFold._listeners);
   ok('the table was repainted from the SAME row renderer the painter uses',
     tbody.innerHTML.includes('data-mem-scope="alpha-old"')
     && tbody.innerHTML.includes('mem-ws-row-open'), tbody.innerHTML.slice(0, 200));

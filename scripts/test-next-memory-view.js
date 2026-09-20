@@ -250,6 +250,7 @@ function cleanup() {
 }
 
 const { __setDomainsDirOverride } = await import('../src/brain/config.js');
+const { renderOverview: realRenderOverview } = await import('../src/public/next/shared/overview.js');
 __setDomainsDirOverride(DOMAINS);
 
 function makeDomain(slug, extraCLAUDE) {
@@ -1383,7 +1384,13 @@ function makeRenderers(stateObj) {
     // only <a> this page emits.
     'docsLinkHtml',
     // The CALENDAR-DAY ladder, real. See the import.
-    'formatDayAge', 'dayFreshnessTier', 'freshnessDotHtml', body)(
+    'formatDayAge', 'dayFreshnessTier', 'freshnessDotHtml',
+    // The REAL overview component (v3.64.2): `renderLayerStrip` builds the
+    // three cards' DESCRIPTIONS and shared/overview.js emits the markup —
+    // the same function the domain page's OVERVIEW goes through. Injected
+    // real rather than stubbed, so every assertion below about the three
+    // readings is an assertion about the component the app ships.
+    'renderOverview', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
     // composes all five of this page's sections through it, so a stub would
@@ -1398,7 +1405,8 @@ function makeRenderers(stateObj) {
     renderInfoMark,
     COPY_SUCCESS_BANNER,
     docsLinkHtml,
-    realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml);
+    realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
+    realRenderOverview);
 }
 
 const hostileDetail = {
@@ -3764,10 +3772,10 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
   const classAt = (out, cls) => out.search(new RegExp('class="[^"]*\\b' + cls + '\\b'));
   for (const [name, out] of [['FULL', full], ['BRIEF-ONLY', briefOnly], ['EMPTY', empty]]) {
     ok('the three-cell strip reaches the ' + name + ' branch',
-      classAt(out, 'mem-layers') !== -1, out.slice(0, 200));
+      classAt(out, 'mem-overview') !== -1, out.slice(0, 200));
     ok('...and it is painted ABOVE the reload notice there',
-      classAt(out, 'mem-layers') < classAt(out, 'mem-stale'),
-      classAt(out, 'mem-layers') + ' vs ' + classAt(out, 'mem-stale'));
+      classAt(out, 'mem-overview') < classAt(out, 'mem-stale'),
+      classAt(out, 'mem-overview') + ' vs ' + classAt(out, 'mem-stale'));
     ok('...and it always carries the WORKING STATE cell, which is the one that '
       + 'answers the question the deleted block existed for',
     /WORKING STATE/.test(out), out.slice(0, 200));
@@ -6196,7 +6204,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // AND THE AGE IS THE STRIP'S, with the shared dot and a LIVE hook.
   const stripHtml = mkHead({}).renderLayerStrip(headRead);
   ok('the strip carries the newest save\'s age under WORKING STATE',
-    /WORKING STATE<\/span><span class="tx-readout-value">[\s\S]*?saved 2 min ago</.test(stripHtml),
+    /WORKING STATE<\/div><div class="cur-ov-value[^"]*">[\s\S]*?saved 2 min ago</.test(stripHtml),
     stripHtml.slice(0, 600));
   ok('...with the shared freshness dot inside the value, on the same step the '
     + 'work-stream rows are cut on', /fresh-dot fresh-recent/.test(stripHtml), stripHtml.slice(0, 600));
@@ -7640,12 +7648,20 @@ const fndRead = (payload) => ({
   // non-greedy `</span>` stops at the DOT's closing tag rather than the
   // value's. Take a window and strip the tags instead — found by writing the
   // naive form first and watching it return the empty dot span.
+  // v3.64.2 — the strip became the shared OVERVIEW card, so the reading is a
+  // `.cur-ov-value` with an optional `.cur-ov-sub` under it. Both lines are
+  // taken, because the figure and its qualifier ("24 documents" / "4 stale")
+  // were one cell before and are two lines now; what this helper has always
+  // returned is WHAT THE CARD SAYS.
   const cellOf = (html) => {
     const i = html.indexOf('>FOUNDATIONS<');
     if (i === -1) return null;
-    const j = html.indexOf('<span class="tx-readout-value">', i);
+    const j = html.indexOf('<div class="cur-ov-value', i);
     if (j === -1) return null;
-    return html.slice(j, j + 400).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    const end = html.indexOf('</button>', j);
+    return html.slice(j, end === -1 ? j + 400 : end)
+      .replace(/<\/div>/g, ' \u00b7 ').replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ').replace(/ \u00b7 $/, '').trim();
   };
   ok('a project that has never had a foundation SAYS SO, rather than going silent '
     + '— the strip is three readings, and a missing one is a fourth thing to '
@@ -7655,7 +7671,7 @@ const fndRead = (payload) => ({
     + 'different state', /no documents yet/.test(String(cellOf(F.renderLayerStrip(fndRead(fndPayload([])))))));
   const line = F.renderLayerStrip(fndRead(fndPayload([fndDoc(), fndDoc({ slug: 'b.md' })])));
   ok('with documents it reads on the same instrument every other figure on this '
-    + 'page uses', line.includes('tx-readout') && line.includes('>FOUNDATIONS<'), line.slice(0, 300));
+    + 'page uses', line.includes('cur-ov-card') && line.includes('>FOUNDATIONS<'), line.slice(0, 300));
   ok('...and quotes the same word the fold\'s summary does',
     String(cellOf(line)).includes('2 documents · fresh'), String(cellOf(line)));
   ok('...with the shared freshness dot INSIDE the value, which the deleted line '
@@ -7943,7 +7959,7 @@ const fndRead = (payload) => ({
     /<h2 class="settings-job-title">Foundations<\/h2>/.test(page), page.slice(0, 400));
   ok('...and the strip\'s cell ① carries the same word, so the reading and the '
     + 'step it summarises cannot be read as two things',
-  /tx-readout-label">FOUNDATIONS</.test(page), page.slice(0, 600));
+  /cur-eyebrow">FOUNDATIONS</.test(page), page.slice(0, 600));
   // THE ADJECTIVE SURVIVES, IN THE ⓘ AND NOWHERE ELSE. Checked over the
   // PANELS' own contents rather than by offset, the same way §18i checks the
   // never-fold rule: renderBlock emits the fold before the body.
@@ -8006,7 +8022,8 @@ const fndRead = (payload) => ({
   const known = F({ knowledge: { domain: 'acme', error: null, data: {
     pageCount: 3445, pageCounts: {}, lastIngestDate: null } } }).renderLayerStrip({ scopes: [] });
   ok('...and a wiki with pages but nothing ingested says THAT rather than a zero age',
-    /3,445 pages · nothing ingested yet/.test(known) && /fresh-unknown/.test(known), known);
+    /3,445 pages<\/div><div class="cur-ov-sub">nothing ingested yet/.test(known)
+    && /fresh-unknown/.test(known), known);
 
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
   ok('with no project read the FOUNDATIONS cell is omitted — "not set up yet" '
@@ -8050,6 +8067,10 @@ const fndRead = (payload) => ({
         entries: [{ at: new Date().toISOString(), headline: 'h', harness: 'cc', rejections: [] }] } },
   });
   const shut = makeRenderers(stFor({})).renderProject();
+  // `saved` is NOT in this list, and that is the correct answer rather than an
+  // omission: with nothing to explain it is a FLAT row and emits no fold at
+  // all (§21f6 drives both arms). A key listed here that the fixture cannot
+  // produce would be a vacuous pin.
   const FOLDS = ['foundations', 'streams', 'brief', 'journal'];
   for (const key of FOLDS) {
     ok('the `' + key + '` fold is really emitted (the scan is not vacuous)',
@@ -8873,6 +8894,119 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   pendingDocsKeys.size === 0,
   'unresolved: ' + JSON.stringify([...pendingDocsKeys]) +
   ' — add the key to src/public/next/shared/docs-links.js (owned by the docs work package)');
+
+// ═════════════════════════════════════════════════════════════════════════
+// §21f6 — THE STEP-BODY RULE (v3.64.2)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
+// "Last saved" card, then a bare CAPTURE readout in a different design
+// outside any card, then three fold rows. Three designs stacked inside one
+// step. The rule now: inside a numbered step every part is the SAME row —
+// a title on the left, a one-line summary on the right, a chevron where
+// there is something to open.
+//
+// AND THE ONE PLACE THE RULE STOPS, which is why this section exists rather
+// than a source scan: v3.16.1 says a WARNING, a COST or an OUTCOME may not
+// sit behind a chevron. So the explanations fold and the loud lines do not,
+// and a future tidy-up that swept them into the row would be removing a
+// warning from the screen while making the screen more uniform.
+{
+  const baseSt = (over) => ({
+    activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
+    detailLoading: false, staleWrite: false, journalLimit: 10, openFolds: {}, projects: [],
+    wsWindow: WS_WINDOW_SRC, ...over,
+  });
+
+  // ── "Last saved" WITH NOTHING TO EXPLAIN IS A FLAT ROW ────────────────
+  const healthy = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      current: { present: true, writtenAgeSeconds: 120 } });
+  ok('the healthy reading is a ROW in the same chrome as the folds under it',
+    /class="mem-fold mem-fold-flat"/.test(healthy), healthy.slice(0, 400));
+  ok('...titled on the left, like every other row on this page',
+    /<span>Last saved<\/span>/.test(healthy), healthy.slice(0, 400));
+  ok('...with the age in the meta slot every other row uses',
+    /class="mem-fold-meta">[\s\S]*?mem-save-age">2 min ago</.test(healthy), healthy.slice(0, 500));
+  ok('...and NO chevron, because an empty chevron invites a click that does '
+    + 'nothing — the call renderCaptureMeter already makes for its idle state',
+  !/data-mem-fold="saved"/.test(healthy), healthy.slice(0, 400));
+
+  // ── WITH SOMETHING TO EXPLAIN IT IS A FOLD, AND IT SHIPS CLOSED ───────
+  const fsOnlyRow = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      // NO `writtenAgeSeconds`, so `effectiveSave` falls back to the FILE's
+      // own timestamp — which is the state the explanation exists for.
+      current: { present: true, savedAt: new Date(Date.now() - 120000).toISOString() } });
+  const isFold = /data-mem-fold="saved"/.test(fsOnlyRow);
+  ok('an explanation makes it a FOLD with this view\'s own hook', isFold, fsOnlyRow.slice(0, 400));
+  if (isFold) {
+    ok('...shipping CLOSED, like every other fold on the page',
+      !/data-mem-fold="saved"\s+open/.test(fsOnlyRow), fsOnlyRow.slice(0, 400));
+    ok('...with the explanation INSIDE it, not printed under the reading',
+      fsOnlyRow.indexOf('own’s') === -1
+      && fsOnlyRow.indexOf('timestamp') > fsOnlyRow.indexOf('mem-fold-body'),
+      fsOnlyRow.slice(0, 900));
+    ok('...and the clock named in the summary too, so the closed row does not '
+      + 'hide WHICH clock the figure came from',
+    /mem-save-prov">[^<]*file time/.test(fsOnlyRow), fsOnlyRow.slice(0, 700));
+  }
+
+  // ── A WARNING NEVER FOLDS (v3.16.1) ──────────────────────────────────
+  const trimmedRow = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      // BOTH AT ONCE, and that is the whole point of the fixture: a trimmed
+      // save (loud) whose time came from the FILE (an explanation). With only
+      // the loud line the row is flat, there is no fold to be outside of, and
+      // a guard written against that fixture passes whatever the code does —
+      // which is exactly what the first version of this assertion did, and
+      // what the mutation that swept `lines` into the fold body proved.
+      current: { present: true, lastSaveKind: 'trimmed', lastSaveNotes: ['budget'],
+        savedAt: new Date(Date.now() - 120000).toISOString() } });
+  const loudAt = trimmedRow.indexOf('mem-save-line-loud');
+  ok('CONTROL -- a trimmed save really does produce a loud line', loudAt !== -1,
+    trimmedRow.slice(0, 400));
+  const foldEnd = trimmedRow.lastIndexOf('</details>');
+  ok('CONTROL -- this fixture really does produce a fold to be outside of',
+    foldEnd !== -1, trimmedRow.slice(0, 500));
+  ok('a loud warning is OUTSIDE the fold — an outcome may not sit behind a '
+    + 'chevron (v3.16.1), which is the one place the step-body rule stops',
+  loudAt !== -1 && foldEnd !== -1 && loudAt > foldEnd, loudAt + ' vs ' + foldEnd);
+  ok('...and it still carries the badge on the READING, where a one-second '
+    + 'glance reaches it',
+  /mem-badge-attn">incomplete</.test(trimmedRow), trimmedRow.slice(0, 700));
+
+  // ── STEP ③ IS ONE ROW ────────────────────────────────────────────────
+  const kn = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: null, data: {
+    pageCount: 767, pageCounts: { entities: 400, concepts: 300, summaries: 67 },
+    lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } } })).renderKnowledge();
+  ok('step ③ is one row with this view\'s own hook',
+    /<details class="mem-fold" data-mem-fold="knowledge"/.test(kn), kn.slice(0, 300));
+  ok('...shipping CLOSED', !/data-mem-fold="knowledge"\s+open/.test(kn), kn.slice(0, 300));
+  ok('...titled Pages', /<span>Pages<\/span>/.test(kn), kn.slice(0, 400));
+  ok('...and its summary carries the page count, the age and the DOMAIN the '
+    + 'wiki belongs to — the one layer this project reads rather than owns',
+  /mem-fold-meta">[\s\S]*?767 pages · [^<]*· acme</.test(kn), kn.slice(0, 600));
+  ok('...with the other four figures and both doors behind the chevron',
+    kn.indexOf('mem-k-doors') > kn.indexOf('mem-fold-body')
+    && kn.indexOf('ENTITIES') > kn.indexOf('mem-fold-body'), kn.slice(0, 900));
+  // A READING THAT HAS NOT ARRIVED, AND ONE THAT FAILED, ARE NOT ROWS.
+  const knLoading = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: null, data: null } }))
+    .renderKnowledge();
+  ok('a reading still in flight is NOT a row — a chevron over a ghost opens a ghost',
+    !/data-mem-fold="knowledge"/.test(knLoading) && /aria-busy="true"/.test(knLoading),
+    knLoading.slice(0, 300));
+  const knFailed = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: 'boom', data: null } }))
+    .renderKnowledge();
+  ok('...and a FAILURE is not one either (v3.16.1)',
+    !/data-mem-fold="knowledge"/.test(knFailed) && /tx-status/.test(knFailed), knFailed.slice(0, 300));
+  ok('...but both still offer the two doors, because a domain\'s wiki does not '
+    + 'stop existing because a stats read did',
+  /mem-k-doors/.test(knLoading) && /mem-k-doors/.test(knFailed));
+}
 
 // ── Done ─────────────────────────────────────────────────────────────────
 

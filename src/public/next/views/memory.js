@@ -175,6 +175,14 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // names shared/block.js's header explains) lives in shell.css, so a view can
 // rely on it without depending on another view's stylesheet.
 import { renderBlock } from '../shared/block.js';
+// ── THE OVERVIEW CARD (v3.64.2) ────────────────────────────────────────────
+// The three readings above the three steps used to be a three-cell mono strip
+// of `renderReadout`s with a lone ⓘ pushed to the right, while the domain page
+// answered the same question — "what are the readings about this screen?" —
+// with a grid of stat cards under an eyebrow with an ⓘ. The maintainer's
+// question was the whole brief: "how are these the same?" They are one
+// component now, and the domain page's card is the design that won.
+import { renderOverview } from '../shared/overview.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -1237,7 +1245,11 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // 3,241 → 1,278px once the brief and the journal folded) is the reason.
 // `capture` joined in v3.63.0 with the honesty meter's session list. The
 // READING above it never folds (v3.16.1) — only the per-session detail does.
-const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture'];
+// `saved` joined in v3.64.2, when "Last saved" stopped being a highlighted card
+// of its own and became the step's first ROW, in the same chrome as the four
+// below it. Its WARNINGS stay unfolded beside the row — the same v3.16.1 split
+// `capture` makes one line above.
+const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
 
 export function readRememberedFolds() {
   try {
@@ -2551,7 +2563,39 @@ function patchOpenPair(token) {
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
 
-  if (stack) stack.innerHTML = statusHtml;
+  if (stack) {
+    stack.innerHTML = statusHtml;
+    // ── THE "Last saved" ROW IS A FOLD NOW, AND THIS WRITE REPLACES IT ────
+    // `wire` binds `toggle` on every `[data-mem-fold]` once per render, and
+    // this patch deliberately does not render — so the row that just replaced
+    // the old one has no listener and would stop remembering itself. The
+    // journal fold solves the same problem by keeping its ELEMENT and writing
+    // its innards; that is not available here, because the reading and the
+    // warnings beside it are one expression the two call sites compare
+    // byte-for-byte (scripts/test-next-memory-switch.js §8). So the listener
+    // is re-attached instead, and `open` needs no copying: `renderSaveStatus`
+    // derives it from `state.openFolds`, which is the same source the toggle
+    // writes to.
+    //
+    // INLINE, and the duplication of the key literal is the same one `wire`
+    // documents: neither function may name a module-level helper, because
+    // both are lifted by brace-matching and executed against fixed stub
+    // lists. scripts/test-next-memory-view.js pins the copies against
+    // `FOLDS_KEY`.
+    const savedFold = stack.querySelector('[data-mem-fold="saved"]');
+    if (savedFold) {
+      savedFold.__memFoldWas = !!savedFold.open;
+      savedFold.addEventListener('toggle', () => {
+        if (!state.openFolds) state.openFolds = {};
+        if (!!savedFold.open === savedFold.__memFoldWas) return;
+        savedFold.__memFoldWas = !!savedFold.open;
+        state.openFolds.saved = !!savedFold.open;
+        try {
+          localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+        } catch { /* storage refused: forget, never break */ }
+      });
+    }
+  }
 
   const count = document.getElementById('mem-ws-count');
   if (count) count.outerHTML = workStreamCounts(pr, scopes.length, shown);
@@ -3399,16 +3443,20 @@ const LEDE_KNOWLEDGE = 'The wiki this project draws on. Open it in Domains.';
  * rule, and "not set up yet" is a claim that frame cannot make.
  */
 function renderLayerStrip(read) {
-  const cells = [];
+  const cards = [];
 
-  // ── CELL ① — FOUNDATIONS ──────────────────────────────────────────────
+  // ── CARD ① — FOUNDATIONS ──────────────────────────────────────────────
   if (read) {
     const facts = foundationsFacts(read);
     let value = null;
+    let sub = null;
     let tier = null;
     if (facts.manifestError) { value = 'manifest unreadable'; tier = 'unknown'; } else if (!facts.present) { value = 'not set up yet'; tier = 'unknown'; } else if (!facts.count) { value = 'no documents yet'; tier = 'unknown'; } else {
-      value = facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
-        + ' · ' + foundationsWord(facts);
+      // THE FIGURE AND ITS QUALIFIER, ON TWO LINES RATHER THAN ONE. They were
+      // "24 documents · 4 stale" in a single mono cell; the card has a second
+      // line for exactly this, and the figure is what the eye is looking for.
+      value = facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's');
+      sub = foundationsWord(facts);
       // The same three-way mapping `fndRowHtml` uses, taken over the SET: a
       // stale copy is the thing to act on, a checkout that is not here is a
       // reading nobody could take, and everything else compared clean. A set
@@ -3417,19 +3465,17 @@ function renderLayerStrip(read) {
         : facts.unreachable ? 'unknown'
           : facts.fresh ? 'recent' : null;
     }
-    // OPTION OBJECTS, not rendered strings: `renderReadoutGroup` maps
-    // `renderReadout` over what it is given, and a string reaching that
-    // function is dropped (it is not an object) — an empty strip, silently,
-    // with nothing on screen to say a cell was lost. Found by §14's branch
-    // battery the first time it ran.
-    cells.push({
+    cards.push({
       label: 'FOUNDATIONS',
       value,
+      sub,
       markHtml: tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '',
+      jump: 'context-canonical',
+      name: 'Foundations, ' + value + ' — go to step 1',
     });
   }
 
-  // ── CELL ② — WORKING STATE ────────────────────────────────────────────
+  // ── CARD ② — WORKING STATE ────────────────────────────────────────────
   // The NEWEST pair in the project, not the open one: this is the project's
   // answer, and the table inside step ② gives every row its own. Falling back
   // to the index row covers the frame in which `projectRead` has not landed.
@@ -3439,15 +3485,22 @@ function renderLayerStrip(read) {
     (p) => p && p.domain === state.activeDomain && p.project === state.activeProject) || null;
   const savedEff = effectiveSave(newest || indexRow || {});
   const savedAge = formatAge(savedEff.seconds);
-  cells.push({
+  const savedValue = savedAge ? 'saved ' + savedAge : 'nothing saved yet';
+  cards.push({
     label: 'WORKING STATE',
-    value: savedAge ? 'saved ' + savedAge : 'nothing saved yet',
+    value: savedValue,
+    // WHICH work-stream that save belongs to. A save age with no work-stream
+    // beside it is the reading the work-stream fold had to be opened to
+    // resolve; it is one field on the row that produced the age.
+    sub: newest && typeof newest.scope === 'string' && newest.scope ? newest.scope : null,
     markHtml: '<span class="fresh-dot fresh-'
       + (savedAge ? freshnessTier(savedEff.seconds) : 'unknown') + '" aria-hidden="true"></span>',
+    jump: 'context-state',
+    name: 'Working state, ' + savedValue + ' — go to step 2',
   });
 
-  // ── CELL ③ — KNOWLEDGE ────────────────────────────────────────────────
-  // Omitted until the one request lands. A cell reading "—" while a fetch is
+  // ── CARD ③ — KNOWLEDGE ────────────────────────────────────────────────
+  // Omitted until the one request lands. A card reading "—" while a fetch is
   // in flight is an instrument claiming a reading it does not have; step ③
   // below carries the loading and the error, where there is room to say why.
   const k = state.knowledge && state.knowledge.domain === state.activeDomain
@@ -3455,47 +3508,83 @@ function renderLayerStrip(read) {
   if (k) {
     const pages = Number.isInteger(k.pageCount) ? k.pageCount : 0;
     const day = formatDayAge(k.lastIngestDate);
-    cells.push({
+    const pagesValue = pages.toLocaleString('en-US') + ' page' + (pages === 1 ? '' : 's');
+    cards.push({
       label: 'KNOWLEDGE',
-      value: pages.toLocaleString('en-US') + ' page' + (pages === 1 ? '' : 's')
-        + ' · ' + (day || 'nothing ingested yet'),
+      value: pagesValue,
+      // THE DOMAIN IS NAMED, because this is the one layer the project READS
+      // rather than owns: every project in the domain draws on the same wiki,
+      // and a figure with no owner beside it reads as the project's own.
+      sub: [day || 'nothing ingested yet', state.activeDomain || null].filter(Boolean).join(' · '),
       // The CALENDAR-DAY ladder, because `lastIngestDate` is a `YYYY-MM-DD`
       // heading with no time of day in it. A null date resolves to the dashed
       // unknown ring through `dayFreshnessTier`'s own null arm.
       markHtml: freshnessDotHtml(k.lastIngestDate),
+      jump: 'context-knowledge',
+      name: 'Knowledge, ' + pagesValue + ' — go to step 3',
     });
   }
 
-  const group = renderReadoutGroup(cells.filter(Boolean));
-  if (!group) return '';
+  if (!cards.length) return '';
+
+  // ── THE CAPTURE JUMP ──────────────────────────────────────────────────
+  // A jump tile rather than a fourth card, and the distinction is the one the
+  // Domains page already draws: the three cards are the three LAYERS, and a
+  // fourth would break that mapping. CAPTURE is a reading ABOUT whether
+  // sessions used them, so it sits in the jump row with the other doors.
+  // Rendered only once the meter's own request has landed — a door to a
+  // reading that does not exist yet is the control-with-no-outcome rule.
+  const cap = state.capture && state.capture.domain === state.activeDomain
+    && state.capture.project === state.activeProject && state.capture.data
+    ? state.capture.data : null;
+  const capTotals = cap && cap.totals && typeof cap.totals === 'object' ? cap.totals : null;
+  const capSessions = capTotals && Number.isInteger(capTotals.sessions) ? capTotals.sessions : null;
+  const jumps = cap
+    ? [{
+      key: 'capture',
+      label: 'CAPTURE',
+      value: capSessions === null
+        ? 'not counted'
+        : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's'),
+      name: 'Capture — open the session reading in step 2',
+    }]
+    : [];
+
   // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
   // It explains every age on this page — the two clocks, and what "last
-  // saved" does not claim — so it sits on the thing that shows them all. The
-  // words are the deleted Status block's own, moved rather than rewritten.
-  const info = renderInfoMark('mem-layers-info', 'About the readings on this page',
-    '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
-    + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
-    + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
-    + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
-    + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
-    + 'than in a tooltip.</p>'
-    + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
-    + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
-    + 'with you.</p>'
-    + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
-    + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
-    + 'ring and the words beside it, never a zero.</p>'
-    + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
-    { html: true });
-  // A WRAPPER OF THIS VIEW'S OWN around the kit's group, rather than a rule on
-  // `.tx-readout-group`: shared/text.css owns the `tx-` prefix outright and
-  // scripts/test-next-memory-ingest-text.js fails any `tx-` selector declared
-  // in this file. The wrapper class is how a view asks for flex behaviour
-  // around a kit component without naming it — the same call
-  // `.mem-fnd-init-wrap` records for a gap.
-  return '<div class="mem-layers mem-section">'
-    + '<div class="mem-layers-cells">' + group + '</div>'
-    + '<div class="mem-layers-info">' + info.btn + info.panel + '</div></div>';
+  // saved" does not claim — so it sits on the thing that shows them all, on
+  // the eyebrow, which is where the domain page's OVERVIEW has always put it.
+  return renderOverview({
+    id: 'mem-layers-info',
+    eyebrow: 'OVERVIEW',
+    sectionClass: 'mem-section mem-overview',
+    // THE THREE VALUES HERE ARE PHRASES, not counts — "24 documents", "saved
+    // 12 min ago", "767 pages" — so they take the kit's `phrase` rung. See
+    // the component for the measurement that decided it.
+    figure: 'phrase',
+    infoLabel: 'About the readings on this page',
+    infoText:
+      '<p>These three are the project’s three layers of context, and pressing one goes to the '
+      + 'step that owns it. They are READINGS, not a filter — nothing on this page narrows when '
+      + 'you press one, unlike the figures on a domain page, which also select what the list '
+      + 'below them shows.</p>'
+      + '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
+      + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
+      + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
+      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
+      + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
+      + 'than in a tooltip.</p>'
+      + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
+      + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
+      + 'with you.</p>'
+      + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
+      + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
+      + 'ring and the words beside it, never a zero.</p>'
+      + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+    infoHtml: true,
+    cards,
+    jumps,
+  });
 }
 
 /**
@@ -3662,7 +3751,34 @@ function renderKnowledge() {
         : undefined,
     },
   ]);
-  return '<div class="mem-k-wrap">' + figures + '</div>' + doors;
+  // ── STEP ③ IS ONE ROW (v3.64.2) ─────────────────────────────────
+  //
+  // THE STEP-BODY RULE: inside a numbered step every part is the SAME row —
+  // a title on the left, a one-line summary on the right, a chevron, and the
+  // detail behind it. Step ③ was five readouts and two buttons loose in the
+  // block body, which was a third design on a screen that already had two.
+  //
+  // The SUMMARY is the reading somebody came for — "767 pages · 1 week ago ·
+  // <domain>", the same three facts the OVERVIEW card's KNOWLEDGE figure
+  // carries, from the same payload — and the other four figures and both
+  // doors are what opens. The DOMAIN IS NAMED because this is the one layer
+  // the project READS rather than owns: every project in the domain draws on
+  // the same wiki, and a page count with no owner beside it reads as this
+  // project's own.
+  const pagesText = num(d.pageCount) + ' page' + (d.pageCount === 1 ? '' : 's');
+  const meta = [pagesText, day || 'nothing ingested yet', state.activeDomain || null]
+    .filter(Boolean).join(' · ');
+  const open = (state.openFolds && state.openFolds.knowledge) ? ' open' : '';
+  return '<details class="mem-fold" data-mem-fold="knowledge"' + open + '>'
+    + '<summary class="mem-fold-summary" id="mem-fold-knowledge">' + icon('chevronRight', 14)
+      + '<span>Pages</span>'
+      + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
+        + escapeHtml(meta) + '</span>'
+    + '</summary>'
+    + '<div class="mem-fold-body">'
+      + '<div class="mem-k-wrap">' + figures + '</div>' + doors
+    + '</div>'
+  + '</details>';
 }
 
 /**
@@ -4547,7 +4663,13 @@ function renderSaveStatus(read, d) {
     : null;
   const cur = doc || row;
 
+  // TWO LISTS, because v3.16.1 splits them. `lines` are the WARNINGS — loud,
+  // unfolded, below the row. `detail` is the EXPLANATION — which clock the
+  // figure came from, that the file arrived later than it was written, what
+  // "summary shortened" means — and it expands, because a paragraph beside a
+  // reading is the thing the maintainer's screenshot was pointing at.
   const lines = [];
+  const detail = [];
   let primary = '';
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
@@ -4582,15 +4704,36 @@ function renderSaveStatus(read, d) {
       // which is the whole argument for driving the rendered output rather
       // than reading the source. `primary` is written once now; the operator
       // stays so that re-introducing a leading reading cannot reopen it.
+      // ── IT IS A ROW NOW, NOT A CARD (v3.64.2) ─────────────────────────
+      //
+      // THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
+      // "Last saved" card, then a bare CAPTURE readout in a different design
+      // outside any card, then three fold rows. Three designs, stacked, for
+      // one step's contents. The rule now: inside a numbered step EVERY part
+      // is the same row — title on the left, a one-line summary on the right,
+      // a chevron where there is something to open.
+      //
+      // So the reading moves into a `.mem-fold-summary`: "Last saved" on the
+      // left, and the age, the pair that wrote it and the tool that wrote it
+      // on the right, in the meta slot every other row on this page uses. The
+      // pip goes with it — the mark belongs beside the age it qualifies.
+      //
+      // WHAT IS IN THE BODY, AND WHAT MAY NEVER BE. The explanations — which
+      // clock the figure came from, that the file arrived later than it was
+      // written, what "summary shortened" means — expand. The WARNINGS do
+      // not: v3.16.1's rule is that a warning, a cost or an outcome may not
+      // sit behind a chevron, so every `loud` line stays unfolded BELOW the
+      // row, where it is today. That is the one place this row deliberately
+      // does not follow "everything is a row".
       primary +=
         '<div class="mem-save-main">' +
           '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
             '" aria-hidden="true"></span>' +
-          renderReadout({
-            label: 'Last saved',
-            value: age,
-            provenance: [prov, clock].filter(Boolean).join(' · ') || undefined,
-          }) +
+          '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
+          ((prov || clock)
+            ? '<span class="mem-save-prov">'
+              + escapeHtml([prov, clock].filter(Boolean).join(' · ')) + '</span>'
+            : '') +
           // The badge is on the READING, not in a note underneath it. A
           // completeness caveat that lives below the figure is a caveat the
           // one-second glance never reaches.
@@ -4620,7 +4763,7 @@ function renderSaveStatus(read, d) {
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      lines.push(saveLine('', '',
+      detail.push(saveLine('', '',
         'The handoff itself was written in full. What got shortened is a label attached to the save '
         + '— most often its one-line summary — not the handoff’s content. That label matters because '
         + 'it is the only thing a future session sees before deciding whether to open this state. '
@@ -4632,7 +4775,7 @@ function renderSaveStatus(read, d) {
     }
 
     if (eff.source === 'filesystem') {
-      lines.push(saveLine('alertTriangle', '',
+      detail.push(saveLine('alertTriangle', '',
         'No journal entry carried a save time for this handoff, so the reading above is the file’s own '
         + 'timestamp. On a computer that syncs, that is when the file arrived here, not when it was written.'));
     } else {
@@ -4642,7 +4785,7 @@ function renderSaveStatus(read, d) {
       // the agent wrote it, which is what a pull looks like.
       const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
       if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        lines.push(saveLine('', '',
+        detail.push(saveLine('', '',
           'This file arrived on this computer ' + (formatAge(arrived.seconds) || 'recently')
           + ' — the reading above is the agent’s own clock, not the file’s.'));
       }
@@ -4695,7 +4838,7 @@ function renderSaveStatus(read, d) {
   // tooltip on a non-focusable span, so the one sentence explaining why the
   // steps below may not apply reached neither keyboard nor touch users.
   if (d && d.machineIsThisMachine === false) {
-    lines.push(saveLine('', '',
+    detail.push(saveLine('', '',
       'Written on <span class="mem-name">' + escapeHtml(d.machine || 'another machine')
       + '</span> and synced here — local paths and processes may differ from what the handoff describes.',
       true));
@@ -4731,13 +4874,39 @@ function renderSaveStatus(read, d) {
   //
   // `brief` is still read above for nothing else, so it goes with the line.
 
-  if (!primary && !lines.length) return '';
-  // NO `.mem-section` ANY MORE. This is the body of block ① now, not a
+  if (!primary && !lines.length && !detail.length) return '';
+  // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
+  // An empty chevron invites a click that does nothing, which is the call
+  // `renderCaptureMeter` already makes for its own idle state — so with no
+  // explanation to open, the reading is a FLAT row in the identical chrome
+  // (`.mem-fold-flat`, the shape `renderWorkStreamsFold` uses for an empty
+  // project) rather than a fold that opens on nothing.
+  //
+  // `open` is derived from `state.openFolds`, the same way every other fold
+  // on this page derives it — so the row survives `patchOpenPair` replacing
+  // the stack it lives in, which re-binds the toggle rather than preserving
+  // the element.
+  const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
+  const savedRow = primary
+    ? (detail.length
+      ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
+        + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
+          + '<span>Last saved</span>'
+          + '<span class="mem-fold-meta">' + primary + '</span>'
+        + '</summary>'
+        + '<div class="mem-fold-body">' + detail.join('') + '</div>'
+      + '</details>'
+      : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
+        + '<span>Last saved</span>'
+        + '<span class="mem-fold-meta">' + primary + '</span>'
+      + '</div></div>')
+    : detail.join('');
+  // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
   // top-level sibling, so the page's adjacency rule must not put 24px between
   // it and the two notices beside it — `.mem-status-stack` in memory.css owns
   // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
   // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + primary + lines.join('') + '</section>';
+  return '<section class="mem-save" aria-label="Save status">' + savedRow + lines.join('') + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -9121,6 +9290,58 @@ function wire(token) {
   // v3.11.0 shape. `patchOpenPair` keeps the <details> ELEMENT alive across
   // its swap precisely so only ONE of the two listeners below has to be
   // re-attached there, and that one names this block.
+  // ── THE OVERVIEW'S DOORS (v3.64.2) ──────────────────────────────────────
+  // Each of the three cards above the steps opens the step that owns its
+  // layer, and the CAPTURE jump opens the session reading inside step ②.
+  //
+  // WRITTEN INLINE, WITH NO HELPER, for this function's standing reason:
+  // `wire` is LIFTED by brace-matching and EXECUTED by
+  // scripts/test-agent-instructions.js against a hand-written set of stubs,
+  // so any module-level helper named here is an undefined identifier there —
+  // a CRASH rather than a failing assertion. Every global it touches is
+  // `typeof`-guarded for the same reason: that stand-in document has
+  // getElementById and querySelectorAll and not necessarily querySelector.
+  //
+  // BOUND ONCE PER NODE, through an EXPANDO rather than an attribute: a
+  // `data-*` mark would appear in the live node's outerHTML and never in a
+  // freshly-composed one, so any markup comparison would find the section
+  // different on every paint.
+  //
+  // THE FOCUS MOVES TO THE STEP'S OWN HEADING, not to the block, because a
+  // scroll that does not move focus leaves a keyboard user where they were
+  // and a screen reader saying nothing. `preventScroll` so the focus call
+  // cannot fight the smooth scroll it follows.
+  document.querySelectorAll('[data-ov-jump]').forEach((btn) => {
+    if (btn.__ovBound) return;
+    btn.__ovBound = true;
+    btn.addEventListener('click', () => {
+      const where = btn.dataset && btn.dataset.ovJump;
+      if (!where) return;
+      const q = typeof document.querySelector === 'function'
+        ? (sel) => document.querySelector(sel) : () => null;
+      const block = q('.settings-block-' + (where === 'capture' ? 'context-state' : where));
+      // The capture meter is the one target that is not a whole step: it is a
+      // reading INSIDE step ②, so the jump lands on the reading when it is on
+      // screen and on the step that holds it when it is not.
+      const target = (where === 'capture' && q('.mem-capture')) || block;
+      if (!target) return;
+      let reduce = false;
+      try {
+        reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      } catch { reduce = false; }
+      if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+      }
+      const head = block && typeof block.querySelector === 'function'
+        ? block.querySelector('.settings-job-title') : null;
+      if (head && typeof head.focus === 'function') {
+        if (typeof head.setAttribute === 'function') head.setAttribute('tabindex', '-1');
+        try { head.focus({ preventScroll: true }); } catch { head.focus(); }
+      }
+    });
+  });
+
   document.querySelectorAll('[data-mem-fold]').forEach((el) => {
     // ── THE PAINT'S OWN ECHO IS NOT A PRESS (v3.64.1) ────────────────────
     // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML

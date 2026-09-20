@@ -1893,9 +1893,9 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   // scripts/test-ui-state.js holds and is untouched.
   const foldKeys = /const FOLD_KEYS = (\[[^\]]*\]);/.exec(viewSrc);
   eq('FOLD_KEYS carries the foundations fold the editor reuses, beside the '
-    + 'other four, and no key of the editor\'s own',
+    + 'other six, and no key of the editor\'s own',
   foldKeys && foldKeys[1].replace(/\s+/g, ''),
-  "['brief','journal','foundations','streams','capture']");
+  "['brief','journal','foundations','streams','capture','saved','knowledge']");
   ok('...and the localStorage key itself is unmoved, which is the registry that '
     + 'matters', /const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc));
 }

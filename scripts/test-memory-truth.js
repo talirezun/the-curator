@@ -619,10 +619,14 @@ const baseDetail = (over = {}) => {
 {
   const clean = lifted({}).renderSaveStatus(baseRead, baseDetail());
   ok('the healthy reading is a Last saved instrument with a freshness pip',
-    /mem-save-pip mem-save-pip-s3/.test(clean) && /tx-readout-label">Last saved</.test(clean), clean.slice(0, 400));
-  ok('...with the age as the figure', /tx-readout-value">2 min ago</.test(clean), clean.slice(0, 500));
+    /mem-save-pip mem-save-pip-s3/.test(clean) && />Last saved</.test(clean), clean.slice(0, 400));
+  // v3.64.2 — the reading is the meta of a `.mem-fold` row now, not a
+  // highlighted card with a readout in it: "Last saved" on the left, the pip,
+  // the age and the provenance on the right, in the same chrome as the four
+  // rows under it. The FACTS are unchanged and each is still asserted.
+  ok('...with the age as the figure', /mem-save-age">2 min ago</.test(clean), clean.slice(0, 500));
   ok('...and the scope and harness as its provenance',
-    /tx-readout-prov">main · claude-code</.test(clean), clean.slice(0, 600));
+    /mem-save-prov">main · claude-code</.test(clean), clean.slice(0, 600));
   ok('...carrying NO incomplete badge and no warning line',
     !/incomplete/.test(clean) && !/mem-save-line-loud/.test(clean));
   ok('THE LABEL IS "Last saved", NEVER "saved" — this screen cannot know whether '
@@ -668,7 +672,7 @@ section('§8 — The strip answers the other three questions, and only when true
     current: { writtenAt: null, writtenAgeSeconds: null },
   }));
   ok('a filesystem-time reading is LABELLED as one on the instrument',
-    /tx-readout-prov">[^<]*file time/.test(fsOnly), fsOnly.slice(0, 700));
+    /mem-save-prov">[^<]*file time/.test(fsOnly), fsOnly.slice(0, 700));
   ok('...and explained, because "file time" alone does not say what goes wrong',
     /when the file arrived here, not when it was written/.test(fsOnly), fsOnly.slice(0, 1200));
   ok('CONTROL: an agent-clock reading says neither', !/file time/.test(
@@ -684,7 +688,7 @@ section('§8 — The strip answers the other three questions, and only when true
     },
   }));
   ok('a handoff written hours ago and pulled seconds ago states BOTH',
-    /tx-readout-value">3 hr ago</.test(synced) && /arrived on this computer just now/i.test(synced),
+    /mem-save-age">3 hr ago</.test(synced) && /arrived on this computer just now/i.test(synced),
     synced.slice(0, 900));
   ok('CONTROL: when the two clocks agree, no arrival line appears',
     !/arrived on this computer/i.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
@@ -760,7 +764,7 @@ section('§8 — The strip answers the other three questions, and only when true
     brief: { present: false },
   }, null);
   ok('with the scoped read still in flight the reading is served from the index row',
-    /tx-readout-value">2 min ago</.test(midSwitch) && /tx-readout-prov">main · claude-code</.test(midSwitch),
+    /mem-save-age">2 min ago</.test(midSwitch) && /mem-save-prov">main · claude-code</.test(midSwitch),
     midSwitch.slice(0, 500));
   ok('...and the completeness verdict comes with it, so a trim cannot vanish mid-switch',
     /incomplete/.test(lifted({ scope: 'main', machine: 'boxa' }).renderSaveStatus({

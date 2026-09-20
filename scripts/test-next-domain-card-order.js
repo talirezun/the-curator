@@ -59,6 +59,7 @@ import { fileURLToPath } from 'node:url';
 // mistyped key a FATAL here instead of a blank panel in the browser.
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -209,7 +210,7 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
-    'docsLinkHtml',
+    'docsLinkHtml', 'renderOverview',
     // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
     // so the legend text and the shared docs table are collaborators of it.
     // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
@@ -239,7 +240,7 @@ try {
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )(docsLinkHtml);
+  )(docsLinkHtml, renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -321,8 +322,11 @@ section('S1 -- THE WIKI IS NOT BURIED: card order, by DOM position');
   // three lenses -- and the LENS ROW under the eyebrow is what now says, in
   // three words, which inventory is on screen.
   const html = renderCard();
-  ok('the Pages group is labelled "PAGES", with no second noun welded to it',
-    /dm-recent-eyebrow[^>]*>PAGES</.test(html) && !html.includes('PAGES · THE WIKI'), html.slice(0, 200));
+  // v3.64.2 — Title case on all five section headings, matching the Context
+  // view's steps; the eyebrow face is gone and the word is the same.
+  ok('the Pages group is labelled "Pages", with no second noun welded to it',
+    /dm-recent-eyebrow[^>]*>Pages</.test(html) && !/Pages · [Tt]he wiki/i.test(html),
+    html.slice(0, 200));
   const root = parseHtmlToChildren(html);
   const eyebrows = flatten(root).filter((n) => hasClass(n, 'cur-eyebrow'));
   ok('CONTROL -- the stat cards really do carry their own eyebrows too (' + eyebrows.length + ')',
@@ -360,7 +364,7 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
   ok('with nothing loaded yet the panel shows a LOADER, not a button',
     html.includes('Loading pages…') && !html.includes('dm-browse-load-btn'));
   ok('...under the same eyebrow, so the group does not appear from nowhere',
-    /dm-recent-eyebrow[^>]*>PAGES</.test(html));
+    /dm-recent-eyebrow[^>]*>Pages</.test(html));
 }
 {
   // THE RENDER CAP SURVIVED. It is what keeps a 3,300-page domain from
@@ -395,7 +399,7 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
   ok('another domain\'s page list is not painted under this domain',
     !html.includes('data-browse-path'), 'stale rows rendered');
   ok('...and the panel still renders SOMETHING rather than vanishing',
-    /dm-recent-eyebrow[^>]*>PAGES</.test(html));
+    /dm-recent-eyebrow[^>]*>Pages</.test(html));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

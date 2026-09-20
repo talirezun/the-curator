@@ -249,6 +249,7 @@ const {
 // the key resolves to a real heading; this proves the view asks for it.
 const { docsLinkHtml, DOCS_LINKS } =
   await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 // The two spies the handoff needs. Module-scoped so the assertions below read
 // them directly: what is under test is that the control records the pair
@@ -273,6 +274,12 @@ try {
     // driven in test-next-memory-switch.js.
     'requestProject', 'shell', 'infoMark2',
     'docsLinkHtml',
+    // v3.64.2. `renderStatCards` builds DESCRIPTIONS and shared/overview.js
+    // emits the markup, so the component is a collaborator of it. The REAL
+    // function is injected rather than a stub: S16's assertions about the
+    // OVERVIEW card are then assertions about the component the app ships,
+    // which a stub would quietly stop being.
+    'renderOverview',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -311,7 +318,8 @@ try {
     (d, p2) => { handoff.push([d, p2]); },
     { navigate: (v) => { navigations.push(v); } },
     null,
-    docsLinkHtml);
+    docsLinkHtml,
+    renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -2160,12 +2168,15 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
   // THE SHARED HEAD ROW, not a new one. `.dm-section-head-row` is the class
   // the PROJECTS section already uses for eyebrow-plus-mark, so adopting it
   // is what keeps this from needing a rule of its own in views/domains.css.
+  // v3.64.2: the head row is emitted by shared/overview.js now, which puts
+  // its own `cur-ov-head` first and keeps `dm-section-head-row` beside it as
+  // an alias. The class TOKEN is what this assertion was ever about.
   ok('...inside the SAME head row the PROJECTS section uses',
-    card.includes('<div class="dm-section-head-row">'), card.slice(0, 900));
+    /<div class="[^"]*\bdm-section-head-row\b[^"]*">/.test(card), card.slice(0, 900));
   ok('CONTROL: the projects panel uses that same class, so the line above is '
     + 'about REUSE rather than about a string',
-  /dm-section-head-row/.test(SRC.slice(SRC.indexOf('PROJECTS IN THIS DOMAIN') - 400,
-    SRC.indexOf('PROJECTS IN THIS DOMAIN'))), 'renderProjectsPanel head');
+  /dm-section-head-row/.test(SRC.slice(SRC.indexOf('Projects in this domain') - 400,
+    SRC.indexOf('Projects in this domain'))), 'renderProjectsPanel head');
   // NO `title=`. This view's ceiling in test-next-title-affordances.js is 0
   // and the mark's accessible name is on the button.
   ok('the mark carries an aria-label',
