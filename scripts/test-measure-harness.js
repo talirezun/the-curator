@@ -17,13 +17,18 @@
  * self-test exclusion; the legacy (no-`sid`) bucket; a mis-labelled client
  * counted separately rather than merged into the row it doesn't belong to; a
  * `mixed`-client session (a bug in the field itself, surfaced rather than
- * silently resolved one way); the `--since` window's inclusive/exclusive
- * edge, to the millisecond; rotated-log-file merging; every CLI validation
- * path exiting 0 with a named error (never a silent wrong answer, never a
- * process that fails a caller's script); `--json` stdout purity (nothing on
- * stdout that is not the one JSON value); and a POSITIVE CONTROL — a fixture
- * built so the tool is EXPECTED to report `measured-no`, proving this suite
- * would notice if the script always said yes.
+ * silently resolved one way); the `--since` window's inclusive edge and the
+ * `--until` window's EXCLUSIVE edge, both to the millisecond; rotated-log-file
+ * merging; every CLI validation path exiting 0 with a named error (never a
+ * silent wrong answer, never a process that fails a caller's script); `--json`
+ * stdout purity (nothing on stdout that is not the one JSON value); a
+ * POSITIVE CONTROL — a fixture built so the tool is EXPECTED to report
+ * `measured-no`, proving this suite would notice if the script always said
+ * yes; and, in §14, the real 2026-09-20 campaign log (copied verbatim into
+ * `scripts/test-fixtures/` — it is content-free by design, so nothing needed
+ * stripping) replaying the exact bleed the campaign found: an open-ended
+ * `--since`-only window for one arm silently swallows a later arm's sessions
+ * once that later arm has also run, and `--until` closes it.
  *
  * SAFETY — never touches the real usage log. Every fixture is a tempfile
  * this suite writes and removes; the one test of the DEFAULT log-path
@@ -153,6 +158,21 @@ section('§2  bucketLines — self-test excluded, legacy excluded, window is [si
   ], sinceMs);
   eq(boundary.sessionsBySid.size, 1, 'inclusive lower bound: the line AT since counts, the line 1ms before does not');
   ok(boundary.sessionsBySid.has('x'), 'the surviving session is the one at the boundary, not the one before it');
+
+  // --until: EXCLUSIVE upper bound, to the millisecond, and optional.
+  const untilMs = Date.parse('2026-09-20T00:05:00.000Z');
+  const untilBoundary = bucketLines([
+    line('u1', 'get_project_context', { ts: '2026-09-20T00:04:59.999Z' }),  // 1ms before until — IN
+    line('u2', 'get_project_context', { ts: '2026-09-20T00:05:00.000Z' }),  // exactly at until — OUT
+    line('u3', 'get_project_context', { ts: '2026-09-20T00:05:00.001Z' }),  // 1ms after until — OUT
+  ], sinceMs, untilMs);
+  eq(untilBoundary.sessionsBySid.size, 1, 'exclusive upper bound: the line 1ms before until counts, the line AT until does not');
+  ok(untilBoundary.sessionsBySid.has('u1'), 'the surviving session is the one just before the boundary, not the one at it');
+
+  const noUntil = bucketLines([line('later', 'get_project_context', { ts: '2026-09-25T00:00:00.000Z' })], sinceMs);
+  eq(noUntil.sessionsBySid.size, 1, 'omitting untilMs (the default) still runs to the end of the log — the pre-`--until` behaviour is unchanged');
+  const explicitInfinity = bucketLines([line('later2', 'get_project_context', { ts: '2026-09-25T00:00:00.000Z' })], sinceMs, null);
+  eq(explicitInfinity.sessionsBySid.size, 1, 'untilMs === null also means "no upper bound", not "everything excluded"');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -295,6 +315,9 @@ section('§9  CLI argument validation — every path exits 0 (this script REPORT
     { args: ['--all', '--since', '2026-01-01', '--min-sessions', '0'], want: /positive integer/ },
     { args: ['--all', '--since', '2026-01-01', '--min-sessions', 'abc'], want: /positive integer/ },
     { args: ['--all', '--since', '2026-01-01', '--wat'], want: /unrecognised argument/ },
+    { args: ['--harness', 'x', '--since', '2026-01-01', '--until', 'not-a-date'], want: /--until is not a parseable date/ },
+    { args: ['--harness', 'x', '--since', '2026-01-02', '--until', '2026-01-01'], want: /--until must be after --since/ },
+    { args: ['--harness', 'x', '--since', '2026-01-01T00:00:00Z', '--until', '2026-01-01T00:00:00Z'], want: /--until must be after --since/ },
   ];
   for (const c of cases) {
     const res = await run(c.args);
@@ -374,6 +397,66 @@ section('§13  default log path honours CURATOR_TEST_USER_DATA_DIR (never the re
   eq(payload.logPath, defaultLog, 'with no --log, the default path resolves under CURATOR_TEST_USER_DATA_DIR, exactly as getMcpUsageLogPath() promises');
   eq(payload.sessions, 1, '…and it actually read that file');
   rmSync(userData, { recursive: true, force: true });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§14  the real 2026-09-20 campaign log, and the bleed --until closes');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // scripts/test-fixtures/mcp-usage-claude-code-2026-09-20.jsonl is a VERBATIM
+  // copy of the real .mcp-usage.jsonl produced by the 2026-09-20 Claude Code
+  // measurement campaign (MEASUREMENT-claude-code-2026-09-20.md) — 18 lines,
+  // 7 sessions. Nothing is stripped: the usage log is content-free BY DESIGN
+  // (tool name, domain slug, ok/refused, timing, sid/client/project — never an
+  // argument or a result), so there is nothing in it to redact. The three
+  // windows below are the campaign's own recorded `--since` values from its
+  // "Verdicts" section; `--until` is added here as each arm's own next
+  // `--since`, which is exactly the fix this package ships.
+  const FIXTURE = path.join(ROOT, 'scripts', 'test-fixtures', 'mcp-usage-claude-code-2026-09-20.jsonl');
+  ok(readFileSync(FIXTURE, 'utf8').trim().split('\n').length === 18, 'the fixture is the full 18-line campaign log, copied verbatim');
+
+  const SINCE_C = '2026-09-20T07:12:22Z';
+  const SINCE_B = '2026-09-20T07:18:34Z';
+  const SINCE_A = '2026-09-20T07:23:11Z';
+
+  // THE BLEED, reproduced exactly: arm C's own recorded command, run with NO
+  // --until, against the log AS IT STOOD AFTER THE WHOLE CAMPAIGN (arms B and
+  // A included) — the shape the campaign report warns about, where a verdict
+  // computed early and one re-run later against the same open window disagree.
+  const bled = await run(['--harness', 'claude-code', '--since', SINCE_C, '--log', FIXTURE, '--json']);
+  const bledPayload = JSON.parse(bled.stdout);
+  eq(bledPayload.sessions, 6, 'without --until, arm C\'s window bleeds forward and picks up 6 sessions total — including ones from arm A, run over ten minutes later');
+  eq(bledPayload.untilIso, null, '…and the payload discloses no upper bound was applied, rather than silently having one');
+
+  // THE FIX: bound arm C's window at arm B's own --since. The compaction-probe
+  // session that genuinely ran during arm C's own time window is still
+  // counted (5, not 4 — this suite is not re-deriving the campaign's N=4 core
+  // count, only proving the CROSS-ARM bleed is gone); what's gone is the
+  // session that starts after arm B's window opens.
+  const armC = await run(['--harness', 'claude-code', '--since', SINCE_C, '--until', SINCE_B, '--log', FIXTURE, '--json']);
+  const armCPayload = JSON.parse(armC.stdout);
+  eq(armCPayload.sessions, 5, 'bounded at arm B\'s --since, arm C\'s window drops to 5 sessions — the true count for arm C\'s own time span');
+  eq(armCPayload.untilIso, '2026-09-20T07:18:34.000Z', 'the applied upper bound is disclosed verbatim');
+  ok(armCPayload.sessions < bledPayload.sessions, 'and critically: bounding the window can only ever REMOVE sessions relative to the open-ended read, never add one');
+
+  // Arm B: zero MCP bridge sessions were ever logged for it (Finding 4 — every
+  // agent that attempted a save either never called the tool or fabricated a
+  // shell command instead), so its row reads not-measured whether or not
+  // --until is supplied — a real absence, not an artifact of the window.
+  const armB = await run(['--harness', 'claude-code', '--since', SINCE_B, '--until', SINCE_A, '--log', FIXTURE, '--json']);
+  const armBPayload = JSON.parse(armB.stdout);
+  eq(armBPayload.sessions, 0, 'arm B: zero sessions in its own window, bounded or not — matches the campaign\'s own not-measured verdict');
+  eq(armBPayload.verdict, VERDICTS.NOT_MEASURED, 'arm B verdict: not-measured');
+
+  // Arm A: exactly the one clean save (A-3) the campaign report names, and
+  // nothing after it in the fixture, so this window is unaffected either way
+  // — asserted anyway so a future fixture edit that adds a later session would
+  // be caught here rather than only in the open-ended arm C case above.
+  const armA = await run(['--harness', 'claude-code', '--since', SINCE_A, '--log', FIXTURE, '--json']);
+  const armAPayload = JSON.parse(armA.stdout);
+  eq(armAPayload.sessions, 1, 'arm A: exactly one session — A-3, the campaign\'s one clean MCP save');
+  eq(armAPayload.sessionsBoth, 1, '…and it both read and saved');
+  eq(armAPayload.verdict, VERDICTS.PARTIAL, 'arm A verdict: measured-partial (1 of 1, below the default min-sessions gate of 4)');
 }
 
 // ── Cleanup ──────────────────────────────────────────────────────────────

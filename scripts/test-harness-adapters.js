@@ -193,15 +193,49 @@ section('§1  THE TABLE — every fact flagged, every state a word from the list
     // mcpConfig may be null — and exactly one harness has no MCP client.
     if (a.mcpConfig !== null && (typeof a.mcpConfig.verified !== 'boolean')) flagBad.push(`${id}.mcpConfig`);
     if (!A.isHookState(a.hooks?.state)) stateBad.push(`${id}: ${a.hooks?.state}`);
-    if (a.measured !== null) measuredBad.push(id);
+    // v3.64.0 (package M): `claude-code` is the ONE row with a real
+    // measurement now — §E's protocol has been run once, against a real
+    // harness. Every OTHER row must still read null, or a harness nobody ran
+    // would silently start implying reach.
+    if (id === 'claude-code') { if (a.measured === null) measuredBad.push(`${id}: still null`); }
+    else if (a.measured !== null) measuredBad.push(id);
     if (!CLASSES.has(a.captureClass)) classBad.push(`${id}: ${a.captureClass}`);
   }
   ok(shapeBad.length === 0, `every entry carries every fact block${shapeBad.length ? ` — missing ${shapeBad.join(', ')}` : ''}`);
   ok(flagBad.length === 0, `every fact's \`verified\` is derived from its \`source\`${flagBad.length ? ` — ${flagBad.join(', ')}` : ''}`);
   ok(stateBad.length === 0, `every hook state is one of the four words${stateBad.length ? ` — ${stateBad.join(', ')}` : ''}`);
   ok(measuredBad.length === 0,
-    `\`measured\` is null on every row — nothing implies reach${measuredBad.length ? ` — ${measuredBad.join(', ')}` : ''}`);
+    `\`measured\` is null on every row except claude-code — nothing else implies reach${measuredBad.length ? ` — ${measuredBad.join(', ')}` : ''}`);
   ok(classBad.length === 0, `every captureClass is one of the four${classBad.length ? ` — ${classBad.join(', ')}` : ''}`);
+
+  // §1b THE SHAPE of claude-code's non-null `measured` — pure data, matching
+  // the module's own header-comment contract, so a future measurement pass
+  // has one shape to fill rather than inventing its own.
+  {
+    const m = A.adapterFor('claude-code').measured;
+    ok(m && typeof m === 'object', 'claude-code.measured is an object');
+    ok(typeof m.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.date), 'measured.date is a YYYY-MM-DD string');
+    ok(typeof m.harnessVersion === 'string' && m.harnessVersion.length > 0, 'measured.harnessVersion is a non-empty string');
+    ok(typeof m.model === 'string' && m.model.length > 0, 'measured.model is a non-empty string');
+    ok(Number.isInteger(m.n) && m.n > 0, 'measured.n is a positive integer (a shape, never a rate)');
+    ok(typeof m.protocol === 'string' && m.protocol.length > 0, 'measured.protocol is a non-empty string');
+    ok(m.arms && typeof m.arms === 'object', 'measured.arms is an object');
+    ok(m.verdicts && typeof m.verdicts === 'object', 'measured.verdicts is an object');
+    const VERDICT_WORDS = new Set(['not-measured', 'measured-no', 'measured-partial', 'measured-yes']);
+    for (const letter of Object.keys(m.arms)) {
+      const arm = m.arms[letter];
+      for (const k of ['sessions', 'read', 'readViaHook', 'saved', 'skillActivated']) {
+        ok(Number.isInteger(arm[k]) && arm[k] >= 0, `measured.arms.${letter}.${k} is a non-negative integer`);
+      }
+      ok(VERDICT_WORDS.has(m.verdicts[letter]), `measured.verdicts.${letter} is one of the four verdict words (got ${JSON.stringify(m.verdicts[letter])})`);
+    }
+    ok(Array.isArray(m.notes) && m.notes.every((n) => typeof n === 'string'), 'measured.notes is an array of strings');
+    // No percentage anywhere in the recorded numbers — CLAUDE.md's rule for
+    // this campaign ("N=4 is a shape").
+    ok(!JSON.stringify(m).includes('%'), 'no percentage sign anywhere in the measured record');
+    ok(Object.isFrozen(m) && Object.isFrozen(m.arms) && Object.isFrozen(m.verdicts) && Object.isFrozen(m.notes),
+      'measured and its nested objects are frozen — pure data, never mutated in place');
+  }
 
   // The four states each have at least one harness, or the vocabulary is
   // decorative. This is what makes "exists and is useless" a real state.
