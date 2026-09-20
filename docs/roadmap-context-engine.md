@@ -908,6 +908,21 @@ two disconnected fields. It also found a store gap while reading `initFoundation
 remote mirror, although the refresh arm already reads over the network once one exists — unfixed,
 carried below.
 
+**What v3.64.2 handed it, 2026-09-20.** That vocabulary shipped in part, not in whole (full row in
+CLAUDE.md): **one overview card**, shared by the domain page and the Context page rather than two
+builds of the same idea; **one section-heading rule**, closing the "12 distinct treatments" finding
+above for the five numbered sections specifically; and **the step-body rule** — a step's body is
+uniform fold rows, with the explanation only in the ⓘ, never inline — applied to two readings
+("Last saved", step ③ Knowledge) and left unfinished on four more, carried into this release's
+scope alongside the GitHub-mirror setup form and the per-project knowledge-domains work above: the
+**CAPTURE reading as a row** (blocked on a placement pin in `test-next-capture-meter.js` that needs
+moving from "before the first `<details>`" to "visible while the row is closed" — same rule, new
+shape); **step ① Foundations' own budget warning and head controls**, still outside its row because
+that block also hosts the editor and the ownership chooser; the **`.mem-save-pip` → `.fresh-dot`
+unification** (two freshness-mark geometries, two ladders, one fact — pinned by name in two suites
+that must move with it); and **the domain page's own section bodies** (Wiki health's Scan row,
+Quick maintenance as a row, Projects' head-row "New project"), not started.
+
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.
 

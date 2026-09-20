@@ -110,7 +110,7 @@ A small **Getting started** panel appears in the corner and asks which of two th
 |---|---|
 | Add an AI key | Opens **Settings**. Needed for ingest and chat; project context and the bridge work without one. |
 | Point at a wiki, or start one | Opens **Domains**. Choose the folder your knowledge base already lives in, or create a domain — one subject area with its own wiki. |
-| Ingest your first source | Opens **Domains**, on the **INGEST** section. Drop in a PDF, Markdown or text file. |
+| Ingest your first source | Opens **Domains**, on the **Ingest** section. Drop in a PDF, Markdown or text file. |
 
 **Give your agents memory** — your agents read and write project context, and no AI key is needed:
 
@@ -219,13 +219,13 @@ Four things are not rail destinations. **Reading a wiki page** is an overlay tha
 
 At the top: the folder path in monospace, the display name with an information mark beside it, and **Rename**, **Delete** and **Ask this domain**, the last of which jumps to Chat already scoped to it.
 
-Then an unnumbered **OVERVIEW** (the counts, and when the domain was last written to) followed by five numbered sections, in the order the work runs in: ① **INGEST** (drop a file here), ② **PAGES** (everything readable, behind a Wiki / Context / All lens), ③ **PROJECTS IN THIS DOMAIN**, ④ **SHARED BRAIN** (the connections this domain contributes to) and ⑤ **WIKI HEALTH**. The numerals arrived in v3.64.1.
+Then an **OVERVIEW** card (the counts, and when the domain was last written to) followed by five numbered sections, in the order the work runs in: 1 **Ingest** (drop a file here), 2 **Pages** (everything readable, behind a Wiki / Context / All lens), 3 **Projects in this domain**, 4 **Shared Brain** (the connections this domain contributes to) and 5 **Wiki health**. The numerals arrived in v3.64.1; as of v3.64.2 all five sit at one fixed position and all five titles are Title case rather than full capitals.
 
-**OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names.
+**OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names. Since v3.64.2 this is the same card the Project-context page draws its own three readings in — one shared component, not two builds of the same idea.
 
-INGEST and SHARED BRAIN are closed folds that remember whether you opened them — since v3.64.1 as one preference for the whole install, not per domain, so closing one on a domain closes it everywhere. Two exceptions: on a domain with nothing ingested yet, INGEST opens by itself; and on a read-only Shared Brain mirror there is no INGEST section at all, because an ingest into a mirror has never been possible.
+Ingest and Shared Brain are closed folds that remember whether you opened them — since v3.64.1 as one preference for the whole install, not per domain, so closing one on a domain closes it everywhere. Two exceptions: on a domain with nothing ingested yet, Ingest opens by itself; and on a read-only Shared Brain mirror there is no Ingest section at all, because an ingest into a mirror has never been possible.
 
-The **PAGES** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
+The **Pages** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
 
 The list loads with the domain, so there is nothing to press. On a large domain the first 150 matching rows are painted, with **"Showing 150 of 3,410"** under the list and a **Show 150 more** row. Press it and the next 150 are added to what is already there; the last press offers only the remainder, and when everything matching is on screen the row and the count both disappear. Typing in the filter, or switching facet, starts the window fresh at 150.
 
@@ -279,14 +279,14 @@ Only text-based PDFs work. A scanned PDF is an image of a page and has no extrac
 
 ## How do I ingest a document?
 
-1. Click **Domains** in the rail, pick your destination domain, and open its **INGEST** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
+1. Click **Domains** in the rail, pick your destination domain, and open its **Ingest** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
 2. Confirm the destination domain. In the section it is the domain whose page you are on; in the full-page view it comes from the picker above the drop zone or from the destination list in the panel beside it. That list shows one row per domain with its page count and when it was last written to — "last write" rather than "last ingest", because compiling a conversation writes to a domain too.
 3. Drag your file onto the drop zone, which reads **"Drop a source here"**, **"or browse your files"**, **"Accepts .txt · .md · .pdf"**, with **"2 or more files at once starts a batch"** underneath. Or click **browse your files**. A cross beside the file name removes it before you ingest.
 4. Click **Ingest**.
 5. A progress bar names the current step with a percentage and a running timer. This usually takes 15 to 60 seconds. Do not close the browser or refresh.
 6. You get a specific result — for example "Wrote 7 new pages · updated 4 existing · +6.1 KB" — followed by the full list of pages created or updated.
 
-Dragging from Finder works anywhere in the full-page Ingest view, not only on the drop zone exactly. In the **INGEST** section of a domain's page the target is the section itself: a file dropped elsewhere on that page is refused rather than opened, because dropping a file on a web page normally navigates away from the app. Dropping two or more files at once starts a batch, exactly as picking several from the file browser does.
+Dragging from Finder works anywhere in the full-page Ingest view, not only on the drop zone exactly. In the **Ingest** section of a domain's page the target is the section itself: a file dropped elsewhere on that page is refused rather than opened, because dropping a file on a web page normally navigates away from the app. Dropping two or more files at once starts a batch, exactly as picking several from the file browser does.
 
 What actually happens: the document is saved untouched to `raw/`, its text is extracted, and the AI plans and writes pages into three folders — `entities/` for people, tools, companies and frameworks, `concepts/` for ideas and techniques, and `summaries/` for one page per source document. Existing pages are **merged**, not duplicated: a second document about the same person adds to the one page that exists. Links are then repaired and made two-way, and the domain's index and log are updated.
 
@@ -373,7 +373,7 @@ Below the change list a small footer reports the real usage for that ingest, not
 
 ## How do I open and read a wiki page?
 
-Reading a page is not a place you navigate to. It is an overlay that slides over whatever you were doing. Two ways in: click a citation under a chat answer, or click a row in **PAGES** on a domain's page. Close it with **Escape**, a click on the dimmed area outside it, or its cross. It never survives moving to another rail item.
+Reading a page is not a place you navigate to. It is an overlay that slides over whatever you were doing. Two ways in: click a citation under a chat answer, or click a row in **Pages** on a domain's page. Close it with **Escape**, a click on the dimmed area outside it, or its cross. It never survives moving to another rail item.
 
 The overlay shows the page's path, its title, a coloured type badge reading `entity`, `concept` or `summary`, its tags, and the body rendered as proper formatted text rather than raw markdown. Below the body is a **BACKLINKS** list of every page that links to this one, and clicking a backlink loads that page in the same overlay, so you can walk the graph without leaving it. Links inside the page body are highlighted but not clickable in the reader today — use the backlinks list, or open Obsidian, to follow links forward.
 
@@ -570,7 +570,7 @@ Shared Brain is an opt-in beta, and a different feature from Personal Sync. Pers
 
 **Two primitives that are easy to confuse.** An **invite token**, starting `sbi_`, is created once by the admin, contains metadata only — repository, brain name, branch, folder — grants no access at all, and is safe to share with the whole cohort over Slack or email. A **Personal Access Token**, starting `github_pat_`, is a GitHub credential and is your identity: each contributor creates their own and shares it with nobody. The admin never shares theirs.
 
-**To join.** Open the **SHARED BRAIN** section of any domain's page and press through to the full Shared Brain view (through version 3.63.0 it was a rail item of its own). On a fresh install it says "Shared Brain is off on this install" — click **Enable Shared Brain (beta)**. Turning it on connects you to nothing; it only unlocks the view. Then choose **I have an invite token → Join**, paste the token your admin sent, and create your own GitHub Personal Access Token when the wizard asks. Invite tokens are GitHub-only; a token describing any other backend is refused at the first step with an explanation.
+**To join.** Open the **Shared Brain** section of any domain's page and press through to the full Shared Brain view (through version 3.63.0 it was a rail item of its own). On a fresh install it says "Shared Brain is off on this install" — click **Enable Shared Brain (beta)**. Turning it on connects you to nothing; it only unlocks the view. Then choose **I have an invite token → Join**, paste the token your admin sent, and create your own GitHub Personal Access Token when the wizard asks. Invite tokens are GitHub-only; a token describing any other backend is refused at the first step with an explanation.
 
 **To start one.** Choose **I'm starting a new Shared Brain → Set up** and follow the wizard. The admin token it shows you is shown once and never again, so save it then.
 

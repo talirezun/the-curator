@@ -1065,15 +1065,19 @@ title of the block containing it.**
 
 #### The one deliberate exception: the Domains OVERVIEW tiles
 
-`.dm-stat-value` stays at **`--text-2xl` (22 / 600, sans)** rather than joining
-the readout rung, and it is the only size in the table that is not shared with
-another view. Those five tiles are a **display** readout: the figure *is* the
-content of its own group, it sits alone under a one-word eyebrow with nothing to
-compete with, and the group's whole job is to answer "how big is this domain" at
-a glance. Its sans face is also left alone — the mono/sans split in
-`tokens/typography.css` would argue for mono, but changing the face of the
-screen's headline figures is a design change with its own proof, not a side
-effect of a sizing pass.
+`.dm-stat-value` (an alias of `.cur-ov-stat-value` since v3.64.2 — see
+[§12, the overview card](#12-the-overview-card-v3642), below) stays at
+**`--text-2xl` (22 / 600, sans)** rather than joining the readout rung. Through
+v3.64.1 it was the only size in the table not shared with another view; since
+v3.64.2 the same rung is shared by the Project-context page's three readings,
+one rung down (`--text-lg`, via the component's `figure: 'phrase'` option) when
+a value reads as a sentence rather than a count. Those tiles are a **display**
+readout: the figure *is* the content of its own group, it sits alone under a
+one-word eyebrow with nothing to compete with, and the group's whole job is to
+answer "how big is this domain" (or "am I saved") at a glance. Its sans face is
+also left alone — the mono/sans split in `tokens/typography.css` would argue
+for mono, but changing the face of the screen's headline figures is a design
+change with its own proof, not a side effect of a sizing pass.
 
 #### The Memory "Working on" line is a reading, not a title
 
@@ -1099,6 +1103,92 @@ sidebar beside it rendered 11 px / 500 **mono**: one role, two faces, on one
 screen. `tokens/typography.css`'s own header reserves mono for "everything the
 machine owns" and names *eyebrow labels* in that list, so the sans was the
 deviation. Nothing else about the caption moved.
+
+### 12. The overview card (v3.64.2)
+
+**One component, two hosts.** `renderOverview()` in `shared/overview.js`, rules
+in `shared/overview.css` (`cur-ov-` prefix), is the readings *about* a screen —
+a grid of equal-width tiles, each a small mono caption over a figure, with an
+optional second line and an optional freshness mark, plus a row of jump tiles
+below the grid — under one `.cur-group` eyebrow with one info mark. A tile is a
+`<button>` only when it has somewhere to go: a filter facet (which carries
+`aria-pressed` read straight off the filter state) or a jump, and the geometry
+is identical either way, so nothing moves when an answer lands. It is never
+numbered — the numbered sections below it are the sequence, and the card is the
+instrument above them, on both hosts: the domain page's **OVERVIEW** and the
+Project-context page's three layers.
+
+The two hosts may differ in exactly **three** ways, enumerated by
+`test-next-overview-kit.js` rather than left open-ended:
+
+- **`alias: 'dm'`** — the domain page's nine historical `dm-` class names
+  (`dm-stats-grid`, `dm-stat-card`, `dm-stat-value`, `dm-stats-group`,
+  `dm-jump-row`, `dm-jump-card`, `dm-jump-value`, `dm-section-head-row`,
+  `dm-section-eyebrow`) ride the *same elements* as the kit-neutral `cur-ov-*`
+  classes, opt-in, because four existing suites and the view's own listeners
+  and column-patch walk still address them by name. No `dm-` string reaches
+  `views/memory.js` — the kit suite reds if one does.
+- **A second line under a card's figure** — the domain page's tiles are a bare
+  figure over a label; the Project-context cards add a qualifier ("saved 12 min
+  ago" needs to say *which* work-stream and *which* tool).
+- **`figure: 'phrase'`** — drops the display figure one rung, `--text-2xl` →
+  `--text-lg` (22 px → 17 px). Measured cause: at `--text-2xl` in a three-track
+  grid at 1370 px, "saved 57 min ago" broke after "min" and "24 documents"
+  broke after "24" — a value that reads as a **phrase** rather than a bare
+  **count** needs the smaller rung to stay on one line. `--text-2xl` is still
+  the type standard's one deliberate exception (§11, above); `figure` is the
+  only option key beyond content and host classes.
+
+**Two trusted fields, both named, everything else escaped or class-filtered.**
+`markHtml` (a freshness mark) and `infoText` with `infoHtml: true` are the only
+two call-sites allowed to hand the component raw markup; every label, value,
+sub-line, accessible name, facet key and jump key is a caller string and is
+escaped. `toneClass` (a card's colour, read off that view's own `--dm-ink-*`
+ramp) is a class **name**, filtered to the class alphabet rather than
+escaped-and-hoped — an attribute value that can carry a quote is how a class
+slot becomes an attribute injection.
+
+**Never a percentage or a ratio.** Both hosts answer "where does this stand",
+and a `4/6` would imply a target neither card claims.
+
+**The direction of the adoption is the Domains grid's** — the shared rules
+moved out of `views/domains.css` into `shared/overview.css` unchanged in
+value, and `views/domains.css` now declares none of them; Context adopted the
+component, not the other way round. The three ink classes (`toneClass`) stayed
+where they were, because they read that view's own `--dm-ink-*` tokens, and a
+shared stylesheet reaching into one view's token set is exactly the dependency
+the move removes.
+
+### 13. The section-heading rule (v3.64.2)
+
+Every numbered section heading on the domain page and the Context view is the
+same shape: a 20 px numeral badge, then a Title-case title at the block-title
+face (§11's `--type-h3` rung), above the card it names and **never inside
+it** — the head is a sibling of the card or fold, not a wrapper around it.
+Through v3.64.1 the five domain-page headings sat at two different numeral
+positions (measured: `1@413 2@380 3@380 4@413 5@380`) and rendered in full
+capitals; both are now one rule, one x position (380 px), Title case (Ingest ·
+Pages · Projects in this domain · Shared Brain · Wiki health). A fold's
+`<summary>` carries the chevron and one meta reading, with the section's own
+word as its `aria-label` — a `<summary>` whose only visible content is a
+chevron and a date has no accessible name on its own.
+
+### 14. The step-body rule (v3.64.2, partial)
+
+**A step's body is uniform fold rows; the explanation lives in the ⓘ, never
+in the row.** Two readings moved onto this rule this release: "Last saved" (a
+card, previously) is now a row like the three folds beside it on the
+Project-context page's step ②, flat with no chevron when there is nothing to
+explain; and step ③'s five figures and two doors collapsed into one summary
+row that opens to the rest. **The rule has one standing exception, stated in
+v3.16.1 and unmoved**: a warning, a cost or an outcome may never sit behind a
+chevron — every "loud" line (a trimmed handoff, two harnesses overwriting one
+file, a budget warning) stays unfolded below its row. Not yet applied this
+release: the CAPTURE reading (blocked on a placement pin in
+`test-next-capture-meter.js` — see CLAUDE.md's v3.64.2 row), step ①
+Foundations' own budget warning and head controls, the `.mem-save-pip` →
+`.fresh-dot` unification, and the domain page's own section bodies (Wiki
+health's Scan row, Quick maintenance, Projects' head-row "New project").
 
 
 ## Things the app deliberately does not take from the bundle

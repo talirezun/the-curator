@@ -1334,11 +1334,11 @@ including the largest.
 
 **Wiki Health** lives **inside a domain**. Open **Domains**, pick a domain, and the **Wiki health** panel is right there on that domain's page — because a health problem is always a problem with one specific wiki, not with the app. See [§17](#17-wiki-health).
 
-**Ingest** lives inside a domain too, as of v3.64.0 — the **INGEST** section of the domain page,
+**Ingest** lives inside a domain too, as of v3.64.0 — the **Ingest** section of the domain page,
 where the files land. It is the same panel, not a copy of it, and the full-page Ingest view is
 still there behind the section's own door and still opens if it was the last screen you used.
 
-**Shared Brain** is the same shape: the **SHARED BRAIN** section of each domain page shows the
+**Shared Brain** is the same shape: the **Shared Brain** section of each domain page shows the
 connections *that* domain contributes to, and its full view — the only place you turn the feature
 on, join a cohort or set one up — is one press away. See [§7b](#7b-the-three-places--ask-knowledge-context).
 
@@ -1409,11 +1409,11 @@ If you used The Curator before this release, this is the whole map:
 | The old tab | Where it is now |
 |---|---|
 | **Chat** | **Chat** in the rail, first. Picking a domain is now the **DOMAINS** pill row above the thread (eyebrow SCOPE → DOMAINS, v3.64.1), not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
-| **Ingest** | Gone as a rail destination since v3.64.0. It is the **INGEST** section of each domain's page in **Domains** — the same panel, on the page that names where the file will land. The full-page view is still there, one press from the section. |
-| **Wiki** | Gone as a destination. Open pages from the **PAGES** list, the third section on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
+| **Ingest** | Gone as a rail destination since v3.64.0. It is the **Ingest** section of each domain's page in **Domains** — the same panel, on the page that names where the file will land. The full-page view is still there, one press from the section. |
+| **Wiki** | Gone as a destination. Open pages from the **Pages** list, the third section on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
 | **Domains** | **Domains** in the rail. Now the hub, and since v3.64.0 the host of everything that acts on one domain: overview, ingest, pages, projects, Shared Brain and wiki health. |
-| **Shared Brain** | Gone as a rail destination since v3.64.0. Each domain page carries a **SHARED BRAIN** section for the connections *that* domain contributes to; the full view — where you enable the feature, join a cohort or set one up — is one press away. |
+| **Shared Brain** | Gone as a rail destination since v3.64.0. Each domain page carries a **Shared Brain** section for the connections *that* domain contributes to; the full view — where you enable the feature, join a cohort or set one up — is one press away. |
 | **Sync** | **Sync**, in the rail *footer*. |
 | **Settings** | **Settings**, in the rail *footer*. |
 
@@ -1436,19 +1436,26 @@ them. Three things are yours to change here: the **standing brief** (a pencil), 
 document** you keep in The Curator rather than in a repository, and which documents are marked
 **read first**.
 
-Since v3.62.0 the page is **three numbered steps**, read top to bottom, under a three-cell strip.
-The numbering is an argument rather than decoration: this is the order a session start reads in, so
-step ① is what the project tells an agent, step ② is what the last session left, and step ③ is what
-it can look things up in.
+Since v3.62.0 the page is **three numbered steps**, read top to bottom, under an **overview card**.
+**Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
+in** ([§7b](#7b-the-three-places--ask-knowledge-context)) — through v3.64.1 this page built its own
+separate three-cell strip. Both places open the same way: a card of readings *about* the screen,
+under one OVERVIEW caption with one info mark, and then the numbered sections — knowing where to
+look on one screen means knowing where to look on the other. The numbering is an argument rather
+than decoration: this is the order a session start reads in, so step ① is what the project tells an
+agent, step ② is what the last session left, and step ③ is what it can look things up in.
 
 ![A wireframe of the Project context screen. Across the top, a three-cell strip: CANONICAL DOCUMENTS reading "6 documents · fresh" with a green dot, WORKING STATE reading "saved 38 min ago" with a green dot, and KNOWLEDGE reading "3,445 pages · 2 days ago" with an amber dot. Below it, three numbered steps separated by hairlines. Step 1, Foundations, tagged REPLACED WHOLE, with the line "The documents an agent must not act without, kept word for word", one closed fold reading "The documents — 148 KB · mirrored · 2 read first · 4 on request", and a note that the ones marked read first reach every session with their text while the rest arrive as an index row an agent opens by name. Step 2, Working state, tagged SUPERSEDES, with the line "You write the brief; agents write handoffs and the journal", then three closed folds: "Standing brief — updated 23 hr ago · 1,309 words" with a pencil, "Work-streams — 3 work-streams · 5 saved copies", and "Recent saves — 12"; under them, "Each save replaces the last, so a problem you solved cannot come back". Step 3, Knowledge, tagged ACCUMULATES, with the line "The wiki this project draws on. Open it in Domains", and two outlined buttons, Open in Domains and Ask this domain. At the foot, "Top to bottom is the order a session start reads in".](images/curator-context-steps.svg)
 
-*The screen on a mirrored project with three documents. Each step carries one of the three verbs —
-foundations are **replaced whole**, working state **supersedes**, knowledge **accumulates** — and
-the ⓘ on each step is where that verb is explained, in place. Warnings and readings that qualify a
-step sit **at that step**, unfolded, rather than in a separate block — the **Last saved** card among
-them: it sat between steps ① and ② through v3.64.0, and since v3.64.1 is the first row inside step
-②, directly above the CAPTURE reading (below).*
+*The screen on a mirrored project with three documents — **a photograph of the screen before
+v3.64.2**, kept for the shape it still shows: three numbered steps, one verb per step (foundations
+are **replaced whole**, working state **supersedes**, knowledge **accumulates**), and the ⓘ on each
+step where that verb is explained, in place. The strip pictured has since become the overview card
+described above, and the **Last saved** reading — pictured here between steps ① and ② — is since
+v3.64.2 a fold row **like the ones below it**: one line carrying the age, which work-stream it
+belongs to and which tool wrote it, with the detail behind its own chevron. A warning about a save
+is never behind that chevron — it stays on the page, unfolded, under the row. Warnings and readings
+that qualify a step sit **at that step**, unfolded, rather than in a separate block.*
 
 The wireframe below is the same shape with the labels called out.
 
@@ -1457,19 +1464,23 @@ The wireframe below is the same shape with the labels called out.
 | | Step | The question it answers | Cost to read it |
 |---|---|---|---|
 | ① | **Foundations** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
-| ② | **Working state** | *Where did the last session stop, and what standing instructions does every agent read?* | Three summary lines. Open a fold to read one |
-| ③ | **Knowledge** | *What can an agent look things up in?* | Five figures and two doors. Nothing to open |
+| ② | **Working state** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows — Last saved, then three folds. Open one to read it |
+| ③ | **Knowledge** | *What can an agent look things up in?* | One summary row. Open the fold for the four figures and the two doors |
 
-**The strip is the "am I saved?" answer, in one line.** It sits above step ① — FOUNDATIONS ·
-WORKING STATE · KNOWLEDGE, the same three nouns the steps use, each with a freshness dot **and**
-the word beside it, because the colour never carries a reading on its own. An unknown age is drawn
-as a **dashed ring** and the words *nothing written yet* / *no documents yet* / *nothing ingested
-yet* — never as age zero, which would read as *just now*. While a project's own read is still in
-flight the first cell is **left out** rather than filled with a guess; you get two readings for a
-moment instead of a wrong third. It replaced a *Status* block that had become the problem it was meant to solve: a tier-0
-reading, a tier-2 reading, four warnings and a tier-1 line under one heading called *Status*. The
-warnings did not go with it — each moved to the step it qualifies, where **warnings, costs,
-refusals and outcomes are never folded**.
+**The overview card is the "am I saved?" answer, in one line each.** It sits above step ① —
+FOUNDATIONS, WORKING STATE and KNOWLEDGE, the same three nouns the steps use, each with its figure,
+the qualifier under it and a freshness mark **and** the word beside it, because the colour never
+carries a reading on its own. Press a card and the page goes to the step that owns it — **they are
+readings, not a filter: nothing narrows when you press one**, which is the one difference from the
+same card's use on a domain page, where the figures also filter the page list beneath them. CAPTURE
+joins the card's row as a fourth door once the session reading described [below](#the-meter-did-the-session-read-and-did-it-save) has landed.
+An unknown age is drawn as a **dashed ring** and the words *nothing written yet* / *no documents
+yet* / *nothing ingested yet* — never as age zero, which would read as *just now*. While a project's
+own read is still in flight the first card is **left out** rather than filled with a guess; you get
+two readings for a moment instead of a wrong third. The card replaced a *Status* block that had
+become the problem it was meant to solve: a tier-0 reading, a tier-2 reading, four warnings and a
+tier-1 line under one heading called *Status*. The warnings did not go with it — each moved to the
+step it qualifies, where **warnings, costs, refusals and outcomes are never folded**.
 
 **Every fold ships closed, and stays how you leave it.** That is v3.58.0's measurement applied to
 the whole page: on this repository's own `curator` project at a 1370px window, the page was
@@ -1603,16 +1614,23 @@ carries.
 
 ##### ② Working state — what the last session left
 
-**Three closed folds.** This layer **supersedes** — every save replaces the last, so a blocker you
-fixed on Tuesday cannot reappear on Wednesday.
+**A Last-saved row, then three closed folds.** This layer **supersedes** — every save replaces the
+last, so a blocker you fixed on Tuesday cannot reappear on Wednesday.
 
-| Fold | Summary line | Whose it is |
+**Since v3.64.2, "Last saved" is a row like the three folds under it**, not a card of its own: the
+age, which work-stream it belongs to and which tool wrote it, on one line. It ships **flat**, with
+no chevron, when there is nothing to explain; open it for the detail — which clock the figure came
+from, and whether the file arrived here long after it was written. A warning about a save is never
+behind that chevron — it stays on the page, unfolded, under the row.
+
+| Row / fold | Summary line | Whose it is |
 |---|---|---|
+| **Last saved** | *14 min ago · session-2026-09-20-… · claude-code*, with a freshness pip | Your agents'. Flat when there is nothing to explain; a chevron only when there is |
 | **Work-streams** | *`<headline>` · 3 work-streams · 3 saved copies* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-work-stream-table) |
 | **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
 | **Recent saves** | *1 save · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded |
 
-**Work-streams is first**, which is the maintainer's call and not the ownership order you might
+**Work-streams is first among the folds**, which is the maintainer's call and not the ownership order you might
 expect: the question a returning session actually opens with is *what did the last one leave*. The
 brief follows, because it is the one tier a human owns and an agent reads it on every single call.
 The journal is last because it is **history, not the present**: any entry in it may since have been
@@ -1627,12 +1645,16 @@ not list.
 
 ##### ③ Knowledge — what an agent can look things up in
 
-**The wiki this project draws on**, in five figures — PAGES · ENTITIES · CONCEPTS · SUMMARIES ·
-LAST INGEST — and two doors: **Open in Domains** and **Ask this domain**. This layer
+**One summary row**, since v3.64.2 — *"Pages · 767 pages · 1 week ago · articles"* — that opens to
+the rest: five figures — PAGES · ENTITIES · CONCEPTS · SUMMARIES · LAST INGEST — and two doors:
+**Open in Domains** and **Ask this domain**. Through v3.64.1 all of that sat open on the page with
+nothing to fold; the row now carries the one reading worth seeing at a glance, and the domain named
+in it is what the wiki's own figures are missing that Foundations' and Working state's rows already
+had. A reading still in flight, or a failed one, is **not** turned into a row — this layer
 **accumulates**: a new source makes an existing page richer rather than adding a second copy of it.
 
 The wiki is what the project *reads*, not part of the project, which is why this step is a summary
-and a door and nothing else. There is no page list here and no health report: both live in
+row and nothing else until opened. There is no page list here and no health report: both live in
 **Domains**, and the figures come from one cheap request that reads no page content at all, so
 opening this screen never costs you a scan.
 
@@ -1929,9 +1951,9 @@ you left off, and are each one press from their section.
 
 ### One panel, two hosts
 
-The **INGEST** section of a domain page and the full-page **Ingest** view are the *same panel* —
+The **Ingest** section of a domain page and the full-page **Ingest** view are the *same panel* —
 one piece of code with two places to live, not two copies that can drift apart. The same is true
-of **SHARED BRAIN** and the full Shared Brain view. That is worth knowing for two reasons:
+of **Shared Brain** and the full Shared Brain view. That is worth knowing for two reasons:
 
 - **Whatever you start in one, you see in the other.** Start a batch in the section, press through
   to the full view, and the job is there, live. Come back, and it is still there.
@@ -1946,36 +1968,45 @@ answer to a question already answered. The full view keeps its own.
 
 ### The domain page, top to bottom
 
-Open **Domains** and pick a domain. Its page is an unnumbered **OVERVIEW** followed by five
-numbered sections, in the order the work runs in *(numbering added in v3.64.1 — one section-title
-rule at 16 px / 600 with a 20 px numeral, replacing six earlier heading treatments)*:
+Open **Domains** and pick a domain. Its page opens with an **OVERVIEW** card, then five numbered
+sections in the order the work runs in. **As of v3.64.2, every section carries a number and a
+title in the same place** — a 20 px numeral at one fixed x position, then a Title-case title at
+the block-title size, above the card it names and never inside it: 1 Ingest, 2 Pages, 3 Projects
+in this domain, 4 Shared Brain, 5 Wiki health. Through v3.64.1 the numerals sat at two different x
+positions depending on which section, and the five titles were rendered in full capitals — both
+fixed this release. Ingest's and Shared Brain's own fold still carries the chevron and the one
+reading that tells you whether to open it — the last ingest, or the connection:
 
 | | Section | What it is |
 |---|---|---|
-| | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Alongside the four page counts and PROJECTS, two tiles jump rather than filter: **SOURCES**, carrying the last ingest, opens INGEST; **SHARED**, present only when this domain has a connection, opens SHARED BRAIN. |
-| ① | **INGEST** | Where sources go in. Drop a PDF, Markdown or text file. Same panel as the full Ingest view. |
-| ② | **PAGES** | Every document in the domain, behind three lenses (below). |
-| ③ | **PROJECTS IN THIS DOMAIN** | Unchanged: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
-| ④ | **SHARED BRAIN** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
-| ⑤ | **WIKI HEALTH** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
+| | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Alongside the four page counts and PROJECTS, two tiles jump rather than filter: **SOURCES**, carrying the last ingest, opens Ingest; **SHARED**, present only when this domain has a connection, opens Shared Brain. |
+| 1 | **Ingest** | Where sources go in. Drop a PDF, Markdown or text file. Same panel as the full Ingest view. |
+| 2 | **Pages** | Every document in the domain, behind three lenses (below). |
+| 3 | **Projects in this domain** | Unchanged: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
+| 4 | **Shared Brain** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
+| 5 | **Wiki health** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
 
-**INGEST opens by itself on a domain you have never ingested into**, and stays closed once you
-close it. **SHARED BRAIN is closed unless you open it.** Through v3.64.0 each fold's open/closed
+**Ingest opens by itself on a domain you have never ingested into**, and stays closed once you
+close it. **Shared Brain is closed unless you open it.** Through v3.64.0 each fold's open/closed
 state was remembered per domain; **since v3.64.1 it is one preference for the whole install** —
-close INGEST on one domain and it stays closed on every domain you open next, on this computer. A
-domain you have never ingested into still opens INGEST for itself and writes nothing until you
+close Ingest on one domain and it stays closed on every domain you open next, on this computer. A
+domain you have never ingested into still opens Ingest for itself and writes nothing until you
 act, so the one preference never hides the one section a brand-new domain needs.
 
-Two things about a `shared-*` mirror: there is **no INGEST section at all** — absent, not disabled,
+Two things about a `shared-*` mirror: there is **no Ingest section at all** — absent, not disabled,
 because a mirror is a read-only copy of a cohort's wiki and an ingest into it has never been
-possible — and its SHARED BRAIN section is one read-only strip naming the cohort that produced it.
+possible — and its Shared Brain section is one read-only strip naming the cohort that produced it,
+reading *"not connected"* only once that strip has actually reported, never as a guess while it is
+still checking.
 
 **The switch that turns Shared Brain on for the whole install stays on the Shared Brain page**,
 where it has always been. It is a fact about your install, not about one domain, so it is not on a
 domain's page and never will be.
 
-**WIKI HEALTH keeps its name**, because it scans the wiki and nothing else. It does not look at
-your briefs, your handoffs or your canonical documents.
+**Wiki health keeps its name**, because it scans the wiki and nothing else. It does not look at
+your briefs, your handoffs or your canonical documents. Its own fold head now carries only the one
+control it has (Rescan); the loading state, which has no control, no longer prints a second,
+duplicate title above the card's own.
 
 **Every page still opens in the reader on the right**, whichever section found it.
 
@@ -2003,7 +2034,7 @@ of 800 rows was teaching neither. See [the three kinds of context](#the-three-ki
 
 The two first-run doors are unchanged. *Build a second brain* still walks you through an API key,
 a domain and a first source — its third step's button now reads **Open Domains** and opens the
-**INGEST** section for you, rather than sending you to a view that is no longer in the rail.
+**Ingest** section for you, rather than sending you to a view that is no longer in the rail.
 *Give your agents memory* still walks domain → project → bridge → API key, with the key marked
 optional, because the context layer and the MCP bridge do not need one.
 
@@ -2057,9 +2088,9 @@ flowchart TD
 
 ![The Ingest view with a two-file batch staged, dark theme. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a filled "+ Choose files" button, and a DESTINATION list of two domains. The first, ticked as the current destination, reads "Demo" over "2 pages ·" a dashed ring, a small clock and "nothing written yet". The second reads "Projects" over "0 pages ·" a filled dot, a clock and "1 week ago", with a second line underneath: "Ingested · Lumina Project Overview and Multi-…". The main column opens with the eyebrow "THE WAY MATERIAL GETS IN" over the title "Ingest", then the heading "Batch ingest — 2 files" over "1.3 KB total · gemini · gemini-2.5-flash-lite". Below that the screen is two columns. The left column holds a "Domain" label over a dropdown set to Demo, then a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started", then the heading "WILL BE INGESTED (LARGEST FIRST)" over two rows — "retrieval-vs-compilation.md 674 B" and "wikilinks-as-a-relevance-signal.md 621 B" — each with an × to remove it. The right column opens with a card: the label "Estimated cost" over "$0.0016" in large monospace, then two monospaced lines of provenance — "Sized against this wiki's real page list, not a flat rate. Actual spend can land above the range." — then "Estimated tokens" over "2,869 in / 3,334 out", and at the foot of the card the link-like line "How this range was worked out" with an ⓘ beside it. Under the card, "Budget cap (optional)" over an empty field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and a row of three controls: a violet-tinted "✦ Start batch", an outlined "Add more files" and a plain "Clear all".](images/curator-ingest.png)
 
-*The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). The rail down the left is the pre-v3.64.0 one, with an **Ingest** button on it; the panel itself is unchanged, and it is now reached from the **INGEST** section of a domain page. **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
+*The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). The rail down the left is the pre-v3.64.0 one, with an **Ingest** button on it; the panel itself is unchanged, and it is now reached from the **Ingest** section of a domain page. **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
 
-1. Open **Domains**, pick your destination domain, and open its **INGEST** section (or the full-page **Ingest** view, if that is where you left off)
+1. Open **Domains**, pick your destination domain, and open its **Ingest** section (or the full-page **Ingest** view, if that is where you left off)
 2. Confirm the **destination domain**. In the section it is the domain whose page you are on; in the full-page view it comes from the picker or the **destination list** in the panel beside the rail
 3. Drag your file onto the drop zone — *"Drop a source here / or browse your files"*, with *"2 or more files at once starts a batch"* underneath — or click **browse your files** to pick one. Changed your mind? A **×** beside the file name removes it before you ingest, so you can pick a different one — including the same file again — without reloading the page.
 4. Click **Ingest**
@@ -2165,7 +2196,7 @@ Three things are worth knowing about that reading:
 
 **The drop zone answers two different questions.** Hovering it looks one way — *you could drop here* — and dragging a file over it looks another, louder way — *let go and this happens*. They are deliberately distinct states, not one highlight doing double duty.
 
-**Dragging from Finder works, and you don't have to hit the zone exactly.** Drop a file **anywhere in the full-page Ingest view** — the drop zone, the destination list beside it, the space around them — and it lands in the same place as if you had aimed at the zone. In the **INGEST** section of a domain page the same convenience is scoped to the section: a drop inside it counts, and a drop elsewhere on the page is refused rather than opened. Dropping **two or more files at once starts a batch**, exactly as picking several from the file browser does; the two routes go through the same code, so anything true of one is true of the other.
+**Dragging from Finder works, and you don't have to hit the zone exactly.** Drop a file **anywhere in the full-page Ingest view** — the drop zone, the destination list beside it, the space around them — and it lands in the same place as if you had aimed at the zone. In the **Ingest** section of a domain page the same convenience is scoped to the section: a drop inside it counts, and a drop elsewhere on the page is refused rather than opened. Dropping **two or more files at once starts a batch**, exactly as picking several from the file browser does; the two routes go through the same code, so anything true of one is true of the other.
 
 > **If you are on a version before v3.46 and drag does nothing, that is a known defect, not your machine.** Dragging over the zone destroyed the very element you were dragging onto, so the drop never registered — and because nothing then handled the drop, the app could navigate itself to the file and appear to vanish. Both halves are fixed: the zone now stays put for the whole drag, and the Mac app refuses to navigate away from itself. Until you update, **browse your files** / **Choose files** is the reliable route and handles multi-file batches perfectly well.
 
@@ -2429,7 +2460,7 @@ If you find an ingested page looks incomplete, or you've updated The Curator and
 
 **How to re-ingest a single source:**
 
-1. Open the same domain's **INGEST** section in **Domains**
+1. Open the same domain's **Ingest** section in **Domains**
 2. Drop in the same file again (or browse to it) and click **Ingest**
 3. The Curator recognises it and stops before spending anything: *"**&lt;filename&gt;** has already been ingested into this domain."*
 4. Click **Re-ingest & update wiki** to proceed, or **Cancel** to back out
@@ -2504,7 +2535,7 @@ The message box has its controls tucked along its own bottom edge, to the left o
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
 - **Model** — pick the exact model that answers your chat messages. Each row shows its id, its price per 1M tokens as billed today, and one plain line: any warning reason first, then how fast it answered when measured. With no key saved there is nothing to choose and the picker is hidden. Full explanation of the markers: [§16b](#16b-choosing-your-ai-model).
-- There is **no attach button** — you can't ingest a file from the chat box. Use the **INGEST** section of the domain's page in **Domains**.
+- There is **no attach button** — you can't ingest a file from the chat box. Use the **Ingest** section of the domain's page in **Domains**.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
 #### The menu shows a working set, not two hundred rows
@@ -2907,23 +2938,25 @@ Above the list are **New domain** and **Use existing folder** — the second poi
 - Its display name, with an **ⓘ** mark beside it — click that for the one-line explanation of what a domain *is*; **Esc** closes it. (This used to be a generated sentence printed under the title — *"A compounding wiki of 3,336 pages — 600 entities…"* — and it was removed in v3.50.0 because every figure in it is one of the OVERVIEW figures below, said twice. What was left was an explanation, and explanations go behind the mark.) If the domain is a mirror, a **read-only mirror** pill sits here too — that one stays in the open, because it is a data-loss notice rather than an explanation.
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 
-Then an unnumbered **OVERVIEW** followed by **five numbered sections** (four, unnumbered, through
-v3.63.0; numbered since v3.64.1), each in its own card under its own heading, in this order — the
-order the work runs in. [§7b](#7b-the-three-places--ask-knowledge-context) has the shape of the
-whole page; this is what each section holds:
+Then an **OVERVIEW** card followed by **five numbered sections** (four, unnumbered, through
+v3.63.0; numbered since v3.64.1; **since v3.64.2 all five numerals sit at one x position and all
+five titles are Title case**, where through v3.64.1 the numerals were at two different positions
+and the titles were in full capitals), each above its own card, in this order — the order the work
+runs in. [§7b](#7b-the-three-places--ask-knowledge-context) has the shape of the whole page; this
+is what each section holds:
 
 | Section | What it is |
 |---|---|
-| **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *Since v3.58.0* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. *New in v3.64.0:* two tiles that **jump rather than filter** — **SOURCES** carries the last ingest and opens INGEST, and **SHARED** appears only when this domain has a connection and opens SHARED BRAIN |
-| ① **INGEST** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have. Through v3.64.0 that was remembered per domain; **since v3.64.1 it is one preference for the whole install**. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
-| ② **PAGES** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them, remembered for the whole install since v3.64.1. See [§11](#11-read-a-wiki-page) |
-| ③ **PROJECTS IN THIS DOMAIN** | Unchanged. See just below |
-| ④ **SHARED BRAIN** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**; since v3.64.1 that too is one preference for the whole install rather than per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
-| ⑤ **WIKI HEALTH** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
+| **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *Since v3.58.0* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. *New in v3.64.0:* two tiles that **jump rather than filter** — **SOURCES** carries the last ingest and opens Ingest, and **SHARED** appears only when this domain has a connection and opens Shared Brain. *Since v3.64.2* this card is the same shared component ([§7b](#one-panel-two-hosts)) the Project-context page draws its own three readings in |
+| 1 **Ingest** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have. Through v3.64.0 that was remembered per domain; **since v3.64.1 it is one preference for the whole install**. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
+| 2 **Pages** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them, remembered for the whole install since v3.64.1. See [§11](#11-read-a-wiki-page) |
+| 3 **Projects in this domain** | Unchanged. See just below |
+| 4 **Shared Brain** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**; since v3.64.1 that too is one preference for the whole install rather than per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
+| 5 **Wiki health** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
 
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of two domains, each with a coloured identity dot, its name and its page count — Articles 3,445 pages (with a small amber dot on the right marking open health issues) and Projects 767 pages and selected. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 4 — the PAGES tile sits inside its own violet-bordered box, because it is also the button for the "All" filter and that filter is the one currently selected. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 46; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ and no loose sentence beneath the heading, four project rows: "field-notes", "projects" (labelled "the domain's own project — it cannot be renamed or deleted"), "lumina" and "curator", each with a "Standing brief" pill, a "last save … · newest work-stream …" line, and the buttons "Copy marker line" and "Copy agent instructions" — each of the two now carrying its own ⓘ mark beside it.](images/curator-domains.png)
 
-*The sections in order, on a real domain, photographed before v3.64.0 added INGEST and SHARED BRAIN as folds, shortened the `PAGES · THE WIKI` eyebrow to **PAGES**, and put the Wiki · Context · All lens row above the list: the counts, then the wiki itself, then the projects built with it. **Wiki health** sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
+*The sections in order, on a real domain, photographed before v3.64.0 added INGEST and SHARED BRAIN as folds, shortened the `PAGES · THE WIKI` eyebrow to **Pages**, and put the Wiki · Context · All lens row above the list: the counts, then the wiki itself, then the projects built with it. **Wiki health** sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -3038,7 +3071,7 @@ Reading a page is not a place you navigate to — it's an **overlay** that opens
 
 **From a chat answer.** Click any `[source: …]` citation. The page the answer drew from opens immediately, so you can check the claim without losing the conversation underneath.
 
-**From a domain's page list.** Open **Domains** and pick a domain. The list is under **PAGES**,
+**From a domain's page list.** Open **Domains** and pick a domain. The list is under **Pages**,
 and it is already open — before v3.49.0 it sat at the bottom of the page behind a **Browse pages**
 button. You get:
 
@@ -3174,7 +3207,7 @@ If you already had wiki pages before this update, those older files do not yet h
 
 **To update existing pages, simply re-ingest the same source file:**
 
-1. Open **Domains**, pick the domain, and open its **INGEST** section
+1. Open **Domains**, pick the domain, and open its **Ingest** section
 2. Drop the same original document in again (PDF, txt, etc.)
 3. The app detects it has been ingested before, asks, and — on **Re-ingest & update wiki** — *updates* the existing wiki pages rather than duplicating them
 
@@ -3297,7 +3330,7 @@ available — the app says **the reading was not taken**, with the reason. It ne
 
 All three read the same `domains/` folder. Nothing to sync between them. The intended daily flow:
 
-1. Feed the app new documents (the **INGEST** section of a domain's page)
+1. Feed the app new documents (the **Ingest** section of a domain's page)
 2. Quick lookups → built-in **Chat**
 3. Visual exploration → **Obsidian**
 4. Deep research / synthesis across years of notes → frontier model via **My Curator MCP**
@@ -3702,8 +3735,9 @@ already required an explicit instruction for the standing brief. A session that 
 correctly all the way through never has to call it.
 
 **How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①** on the Project-context screen
-— the first thing on the page, above step ② *Working state* and its three folds (*Work-streams*,
-*The brief*, *Recent saves*) — and its own fold is closed by default like theirs. Its summary
+— the first thing on the page, above step ② *Working state* and its **Last saved** row (*since
+v3.64.2*) and three folds (*Work-streams*, *The brief*, *Recent saves*) — and its own fold is closed
+by default like theirs. Its summary
 line reads *"N documents · M KB · fresh · 2 read first · 4 on request"*, or names how many are
 stale, unreachable from this machine, or Curator-authored, whichever applies. Each row in the
 opened table carries a **read first** control and a freshness dot on the same
@@ -4219,7 +4253,7 @@ Here is the recommended way to use The Curator day-to-day:
 
 1. Save the article/chapter/notes as a `.txt` or `.pdf` file
 2. Open The Curator (the Mac app, or click the Dock icon / go to `http://localhost:3333`)
-3. Open **Domains**, click the right domain, open its **INGEST** section, drop the file in, click **Ingest**
+3. Open **Domains**, click the right domain, open its **Ingest** section, drop the file in, click **Ingest**
 4. In Obsidian, press `Cmd/Ctrl + R` to see the new pages appear in the graph
 
 ### When you want to recall something
@@ -4401,7 +4435,7 @@ Two completely different concepts that beginners often confuse. Get this right a
 
 ### Getting started
 
-**Shared Brain lives on the domain page, and has since v3.64.0.** Open **Domains** in the rail, click a domain, and open its **SHARED BRAIN** section — a closed fold between the Projects group and Wiki health. The full view is one press from that section's own door, and it is still where you enable the feature, join a cohort or set one up. (Through v3.63.0 Shared Brain was a rail entry of its own, below a dividing line that no longer exists.) On a fresh install the view says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
+**Shared Brain lives on the domain page, and has since v3.64.0.** Open **Domains** in the rail, click a domain, and open its **Shared Brain** section — a closed fold between the Projects group and Wiki health. The full view is one press from that section's own door, and it is still where you enable the feature, join a cohort or set one up. (Through v3.63.0 Shared Brain was a rail entry of its own, below a dividing line that no longer exists.) On a fresh install the view says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
 
 Turning it on connects you to nothing. It only unlocks the view; nothing leaves your machine until you configure a brain and push a domain to it. Once enabled you choose your path:
 
