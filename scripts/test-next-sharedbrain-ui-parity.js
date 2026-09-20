@@ -744,6 +744,465 @@ section('4. The OFF STATE joins the button taxonomy and the kit');
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+section('5. The HOST SEAM and the LENS (v3.64.0)');
+// ═══════════════════════════════════════════════════════════════════════
+//
+// v3.64.0 takes Shared Brain off the rail and gives the panel a SECOND host:
+// the domain page's SHARED BRAIN section. Three properties are new and all
+// three are guarded here:
+//
+//   D-E  the seam is ADDITIVE — three fixed exports, no function moved or
+//        renamed, and section mode renders no sidebar;
+//   D-G  the enable toggle does NOT move. It stays renderDisabled()'s, and
+//        the section renders ONE LINE AND A DOOR, never a second off-state.
+//        views/domains.js joins views/settings.js in the "hosts no enable
+//        control" census;
+//   D-H  the LENS — which connections belong to one domain page. A
+//        connection is not one-to-one with a domain in either direction, so
+//        this is a real function with real cases, not a filter inline in a
+//        renderer.
+//
+// The lens and the section renderers are EXECUTED. The seam's lifecycle is
+// EXECUTED too, with its five collaborators injected as recorders — which is
+// what lets "the teardown closes the wizard" be a measurement rather than a
+// grep for the identifier.
+
+// ── The lens + the section renderers, in one sandbox ────────────────────
+// renderCard and gatedLoader are STUBBED to markers: renderCard reaches
+// renderTokenCheck, renderActions, renderCohort and renderAdmin, and lifting
+// that whole tree would make this a test of the card rather than of the
+// lens. Everything the section itself decides is REAL.
+const SEC_FNS = [
+  'inSection', 'sectionDomain', 'mirrorDomainFor', 'sharedLensFor',
+  'renderSection', 'renderSectionDoor', 'renderMirrorStrip', 'formatRelativeTime',
+];
+const secBox = new Function(
+  'let state = {};\n' +
+  'let loadGate = null;\n' +
+  'let hostCtx = { mode: "section", el: {}, domain: "" };\n' +
+  extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
+  ICON_STUB +
+  'function gatedLoader() { return "<div class=\\"STUB-loader\\"></div>"; }\n' +
+  'function renderCard(c) { return "<div class=\\"STUB-card\\" data-conn-id=\\"" + escapeHtml(c.id) + "\\"></div>"; }\n' +
+  SEC_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+  `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; } };`
+)();
+
+{
+  // ── D-H: the lens, EXECUTED over every shape the wire can send ────────
+  const lens = secBox.sharedLensFor;
+  const cA = conn({ id: 'a', shared_brain_slug: 'cohort', local_domains: ['research', 'notes'] });
+  const cB = conn({ id: 'b', shared_brain_slug: 'lab', local_domains: ['lab-notes'] });
+
+  const contributing = lens([cA, cB], 'research');
+  ok(contributing.kind === 'contributing' && contributing.contributing.length === 1 &&
+     contributing.contributing[0] === cA && contributing.mirrors.length === 0,
+    'lens: a domain in a connection\'s local_domains is CONTRIBUTING, and only that connection comes back');
+  const byNotes = lens([cA, cB], 'notes').contributing;
+  ok(byNotes.length === 1 && byNotes[0].id === 'a',
+    '…and a connection spanning several contributing domains answers for EACH of them');
+
+  const mirror = lens([cA, cB], 'shared-cohort');
+  ok(mirror.kind === 'mirror' && mirror.mirrors.length === 1 && mirror.mirrors[0] === cA &&
+     mirror.contributing.length === 0,
+    'lens: the derived shared-<slug> domain is the MIRROR of the connection that produced it');
+  const labMirror = lens([cA, cB], 'shared-lab').mirrors;
+  ok(labMirror.length === 1 && labMirror[0].id === 'b',
+    '…derived per connection, never from a stored field');
+
+  ok(lens([cA, cB], 'somewhere-else').kind === 'none',
+    'lens: a domain in neither list is NONE — the section has an empty state of its own');
+
+  // One domain, several connections — the direction P6 says is also not 1:1.
+  const two = lens([cA, conn({ id: 'c', shared_brain_slug: 'x', local_domains: ['research'] })], 'research');
+  ok(two.contributing.length === 2,
+    'lens: one domain contributing to SEVERAL connections returns all of them');
+
+  // Disjointness. Nothing in the store forbids a connection listing its own
+  // mirror as a contributing domain; the buckets must still not double-count,
+  // or `kind` stops being deterministic.
+  const both = lens([conn({ id: 'd', shared_brain_slug: 'k', local_domains: ['shared-k'] })], 'shared-k');
+  ok(both.contributing.length === 1 && both.mirrors.length === 0 && both.kind === 'contributing',
+    'lens: a connection that both contributes to and mirrors one domain is counted ONCE, as contributing');
+
+  // Totality — the lens runs on every paint of a page whose data may not
+  // have arrived, so every degenerate input must answer rather than throw.
+  for (const [conns, slug, why] of [
+    [null, 'research', 'a null connection list'],
+    [undefined, 'research', 'an absent connection list'],
+    [[cA], null, 'a null slug'],
+    [[cA], '', 'an empty slug'],
+    [[null, 3, 'x'], 'research', 'junk entries in the list'],
+    [[{ id: 'z' }], 'research', 'a connection with neither field'],
+  ]) {
+    let out = null, threw = false;
+    try { out = lens(conns, slug); } catch { threw = true; }
+    ok(!threw && out && out.kind === 'none' && out.contributing.length === 0 && out.mirrors.length === 0,
+      `lens: ${why} answers NONE rather than throwing`);
+  }
+  // Anti-vacuity: the "none" answers above must not be how it answers
+  // everything.
+  ok(lens([cA], 'research').kind === 'contributing',
+    '(control) …and a real pair still answers contributing, so "none" is a verdict and not a constant');
+}
+
+{
+  // ── D-G: ONE DOOR, ZERO ENABLE CONTROLS, in every section state ───────
+  const cA = conn({ id: 'a', shared_brain_slug: 'cohort', local_domains: ['research'],
+    last_synthesis_at: null, last_pull_at: null });
+  const base = { loading: false, enabled: true, flagError: null, listError: null, connections: [cA], cards: {} };
+  const setup = (over, domain) => {
+    secBox.__setState(Object.assign({}, base, over || {}));
+    secBox.__setDomain(domain === undefined ? 'research' : domain);
+    return secBox.renderSection();
+  };
+
+  const STATES = {
+    loading:      () => setup({ loading: true }),
+    flagError:    () => setup({ flagError: 'boom' }),
+    off:          () => setup({ enabled: false }),
+    listError:    () => setup({ listError: 'nope' }),
+    none:         () => setup({}, 'unrelated'),
+    mirror:       () => setup({}, 'shared-cohort'),
+    contributing: () => setup({}),
+  };
+  const rendered = {};
+  for (const [name, fn] of Object.entries(STATES)) rendered[name] = fn();
+
+  // THE CENSUS, state by state. `btn-sb-enable` is the id; `enable-flag` is
+  // the route. Both are asserted because a second off-state could be built
+  // out of either half alone.
+  for (const [name, html] of Object.entries(rendered)) {
+    ok(!/btn-sb-enable/.test(html) && !/enable-flag/.test(html),
+      `section ${name}: renders NO enable control — the toggle is install-level and stays on the view's own off state`);
+  }
+  for (const [name, html] of Object.entries(rendered)) {
+    const doors = (html.match(/id="btn-sb-open-view"/g) || []).length;
+    ok(doors === 1, `section ${name}: renders EXACTLY ONE door back to the full view (found ${doors})`);
+  }
+
+  // The off state specifically — D-G's sentence, and nothing more.
+  ok(/Shared Brain is off on this install\./.test(rendered.off),
+    'section off state: says the flag is off ON THIS INSTALL, which is the level the fact lives at');
+  ok(!/STUB-card/.test(rendered.off) && !/sb-sec-mirror/.test(rendered.off),
+    '…and renders no connection material it could not have loaded');
+  // CONTROL, and it is the whole point of the pair: the toggle still exists,
+  // in exactly one renderer, and this suite reads it there.
+  ok(/btn-sb-enable/.test(sharedBox.renderDisabled()),
+    '(control) renderDisabled() — the VIEW\'s own off state — still carries the one enable control');
+
+  // Contributing vs mirror vs none.
+  ok(/STUB-card/.test(rendered.contributing) && (rendered.contributing.match(/STUB-card/g) || []).length === 1,
+    'section contributing: renders this domain\'s connection card, with its push/pull/synthesize controls');
+  ok(!/sb-sec-mirror/.test(rendered.contributing),
+    '…and no mirror strip, because this domain is not the mirror');
+
+  ok(/sb-sec-mirror/.test(rendered.mirror) && !/STUB-card/.test(rendered.mirror),
+    'section mirror: a shared-* mirror domain gets the read-only strip and NOT the operating card');
+  ok(/Cohort/.test(rendered.mirror),
+    '…naming the connection that produced it');
+  ok(/never — ask your admin to run synthesis/.test(rendered.mirror),
+    '…and its last synthesis, in the same honest never-label the card uses');
+  ok(!/data-sb-action="push|data-sb-action="pull|data-sb-action="synthesize/.test(rendered.mirror),
+    '…with no push, pull or synthesize control anywhere in it — the strip reports, it does not operate');
+
+  ok(!/STUB-card/.test(rendered.none) && !/sb-sec-mirror/.test(rendered.none) &&
+     /not part of any Shared Brain/.test(rendered.none),
+    'section none: a domain in neither list says so, rather than rendering an install-wide list');
+
+  // Anti-vacuity: seven states, seven different strings. Without this every
+  // assertion above could be about one constant with a door in it.
+  const distinct = new Set(Object.values(rendered));
+  ok(distinct.size === Object.keys(rendered).length,
+    `(control) all ${Object.keys(rendered).length} section states render differently (got ${distinct.size})`);
+  // …and the loading state really went through the gate rather than falling
+  // to a branch that happens to look empty.
+  ok(/STUB-loader/.test(rendered.loading),
+    '(control) the loading state renders the delay-gated loader, not an empty box');
+  ok(/boom/.test(rendered.flagError) && /nope/.test(rendered.listError),
+    '(control) both error states render the message they were given');
+  ok(/btn-sb-retry-list/.test(rendered.listError),
+    '…and the list error keeps its retry, so a transient failure is not a dead end in the section either');
+}
+
+{
+  // ── D-G: the census widens to views/domains.js ────────────────────────
+  // views/settings.js is held to "mentions Shared Brain nowhere" (§1 P4).
+  // views/domains.js cannot be: from v3.64.0 it HOSTS the section, and it
+  // already names Shared Brain mirrors in six places. The property that
+  // transfers is the narrow one — it hosts no ENABLE CONTROL — and that is
+  // what is asserted, on the two halves such a control would need.
+  const domainsSrc = R('src/public/next/views/domains.js');
+  const domainsCodeLocal = assertStrippedSane(stripComments(domainsSrc), 'domains.js',
+    ['function renderMain(', 'Shared Brain']);
+  ok(!/btn-sb-enable/.test(domainsCodeLocal),
+    'domains.js hosts NO enable control: the button id appears nowhere in it');
+  ok(!/enable-flag/.test(domainsCodeLocal),
+    '…and it posts to the feature-flag endpoint nowhere either');
+  // The detector fires — without this the two assertions above are satisfied
+  // by any string that does not happen to contain those words.
+  const planted = stripComments(domainsSrc + '\nconst x = \'<button id="btn-sb-enable">\';\n');
+  ok(/btn-sb-enable/.test(planted),
+    '(control) the census detects a planted enable control in that same file');
+  // And the section it WILL host is the one built here, not a second copy.
+  ok(/mirrorDomainFor/.test(sharedCode) && !/mirrorDomainFor/.test(domainsCodeLocal),
+    'the lens lives in views/shared.js; domains.js does not re-derive a mirror domain of its own');
+}
+
+{
+  // ── D-E: the three fixed exports, with the signatures the host imports ─
+  // The host package (D) was written against these before this file landed,
+  // so the names and parameter lists are a CONTRACT, not an implementation
+  // detail. A source guard, and it says so: the module cannot be imported
+  // in Node (it reaches app.js, which reaches the DOM at module scope).
+  for (const [sig, why] of [
+    ['export function mountSharedSection(el, opts)', 'the host mounts the panel into an element it owns'],
+    ['export function unmountSharedSection()', 'and takes it down on its own teardown'],
+    ['export function sharedSectionBusy()', 'and asks before it re-renders (D-J)'],
+    ['export function sharedLensFor(connections, domainSlug)', 'the lens is exported, so the page can ask what this domain has'],
+  ]) {
+    ok(sharedCode.includes(sig), `shared.js exports \`${sig}\` — ${why}`);
+  }
+  // Section mode renders NO sidebar: the domain page owns it.
+  const renderBody = bodyOf(sharedCode, 'render');
+  ok(/if \(!inSection\(\)\) renderSidebar\(token\)/.test(renderBody),
+    'shared.js: render() skips the sidebar in section mode — the domain page owns that column');
+  ok(/preserveMainScroll\(\(\) => \{/.test(renderBody),
+    '(control) …and still goes through the one reading-position chokepoint in both modes');
+  // The view's own main write and the section's go through ONE function.
+  ok(!/\n\s*setMain\(/.test(bodyOf(sharedCode, 'renderMain')),
+    'shared.js: renderMain writes through hostSetMain, not setMain — one chokepoint, two hosts');
+  ok(/setMain\(html, token\)/.test(bodyOf(sharedCode, 'hostSetMain')),
+    '…and in VIEW mode hostSetMain delegates to the shell\'s setMain unchanged');
+}
+
+{
+  // ── D-E: the seam's LIFECYCLE, executed with recording collaborators ───
+  // Five things the teardown must do live in stopShared(); the one that is
+  // load-bearing is closeSharedBrainWizardIfOpen(), which is what stops a
+  // PAT-holding overlay outliving its mount. Grepping for the identifier
+  // would prove it is typed; running the teardown proves it is reached.
+  const SEAM_FNS = [
+    'inSection', 'hostSetMain', 'sectionDomain', 'mirrorDomainFor', 'sharedLensFor',
+    'lensSummary', 'notifyHost', 'sharedSectionBusy',
+    'mountSharedSection', 'unmountSharedSection', 'startShared', 'stopShared',
+  ];
+  function seamHarness() {
+    const log = [];
+    const gates = [];
+    const box = new Function(
+      'freshState', 'createLoadingGate', 'onWriteGateChange', 'isCurrentMount',
+      'reportAsyncMountFailure', 'closeSharedBrainWizardIfOpen', 'isSharedBrainWizardOpen',
+      'setMain', 'render', 'loadAll', 'log',
+      'let state = freshState();\n' +
+      'let loadGate = null;\n' +
+      'let unsubscribeWriteGate = null;\n' +
+      'let myMountToken = 0;\n' +
+      extractConst(shared, 'SHELL_HOST', 'shared.js') + '\n' +
+      'let hostCtx = SHELL_HOST;\n' +
+      'let viewMounted = false;\n' +
+      'let lastReportedBusy = false;\n' +
+      'let lastReportedLens = \'\';\n' +
+      SEAM_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+      `return { ${SEAM_FNS.join(', ')}, __state: () => state, __host: () => hostCtx, __gate: () => loadGate };`
+    )(
+      () => ({ loading: true, enabled: false, connections: [], cards: {} }),
+      () => { const g = { begun: false, cancelled: false, begin() { this.begun = true; }, cancel() { this.cancelled = true; log.push('gate.cancel'); } }; gates.push(g); log.push('gate.create'); return g; },
+      () => { log.push('subscribe'); return () => log.push('unsubscribe'); },
+      () => true,
+      () => {},
+      () => log.push('wizard.close'),
+      () => false,
+      (html) => log.push('setMain:' + String(html).length),
+      () => log.push('render'),
+      async () => { log.push('loadAll'); },
+      log
+    );
+    return { box, log, gates };
+  }
+
+  /** The same harness with isSharedBrainWizardOpen pinned, and nothing else
+   *  busy — so a true reading can only have come from the wizard. */
+  function seamHarnessWithWizard(open) {
+    const box = new Function(
+      'freshState', 'isSharedBrainWizardOpen',
+      'let state = freshState();\n' +
+      'let hostCtx = { mode: "section", el: {}, domain: "d", onBusyChange: null, onLensChange: null };\n' +
+      ['inSection', 'sharedSectionBusy'].map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+      'return { sharedSectionBusy };'
+    )(
+      () => ({ cards: { c1: { acting: null, shownAdminToken: null, inviteOpen: false, revokeOpen: false } } }),
+      () => open
+    );
+    return box;
+  }
+
+  {
+    const { box, log, gates } = seamHarness();
+    const el = { innerHTML: 'previous' };
+    box.mountSharedSection(el, { domain: 'research', token: 7 });
+    ok(box.__host().mode === 'section' && box.__host().el === el && box.__host().domain === 'research',
+      'mountSharedSection: the panel adopts the host element and the domain it was handed');
+    ok(log.includes('gate.create') && log.includes('render') && log.includes('loadAll') && log.includes('subscribe'),
+      '…and runs the SAME entry sequence the full-page view runs — gate, first paint, load, write-gate subscription');
+    ok(gates[0].begun, '…with the delay-gated loader armed');
+
+    // A second mount on the SAME element is a domain switch, not a remount:
+    // it must not tear down an attached stream or a shown-once token.
+    const before = log.length;
+    box.mountSharedSection(el, { domain: 'notes', token: 7 });
+    const during = log.slice(before);
+    ok(box.__host().domain === 'notes',
+      'mountSharedSection on the SAME element re-points the lens at the new domain');
+    ok(during.includes('render') && !during.includes('gate.cancel') && !during.includes('wizard.close'),
+      '…and re-renders WITHOUT tearing down — which is what lets a running push survive a domain switch');
+
+    // A different element IS a remount.
+    const el2 = { innerHTML: '' };
+    const before2 = log.length;
+    box.mountSharedSection(el2, { domain: 'lab', token: 7 });
+    const during2 = log.slice(before2);
+    ok(during2.includes('gate.cancel') && during2.includes('unsubscribe') && during2.includes('wizard.close'),
+      'mountSharedSection on a DIFFERENT element tears the old mount down first, wizard included');
+    ok(during2.includes('gate.create') && box.__host().el === el2,
+      '…and starts a fresh one on the new element');
+
+    // Teardown.
+    const before3 = log.length;
+    box.unmountSharedSection();
+    const during3 = log.slice(before3);
+    ok(during3.includes('gate.cancel'), 'unmountSharedSection: the delay timer is cancelled — an armed timer would paint into the next view');
+    ok(during3.includes('unsubscribe'), '…the cross-view write-gate subscription is released');
+    ok(during3.includes('wizard.close'), '…and closeSharedBrainWizardIfOpen() is REACHED, so no PAT-holding overlay outlives the mount');
+    ok(el2.innerHTML === '', '…and the host\'s element is emptied rather than left holding a dead panel');
+    ok(box.__host().mode === 'view', '…and the panel is back on the shell host');
+    // Idempotent: a second teardown must not run the sequence again.
+    const before4 = log.length;
+    box.unmountSharedSection();
+    ok(log.length === before4, '…and a second unmount does nothing at all');
+  }
+
+  {
+    // ── D-J: sharedSectionBusy() answers about what a host re-render would
+    // DESTROY, not about what is merely happening.
+    const { box } = seamHarness();
+    const el = { innerHTML: '' };
+    ok(box.sharedSectionBusy() === false, 'sharedSectionBusy: false before anything is mounted');
+    box.mountSharedSection(el, { domain: 'research', token: 7 });
+    ok(box.sharedSectionBusy() === false, '…and false on a freshly mounted, idle section');
+    const cases = [
+      ['acting', { acting: 'push' }, 'an SSE action is attached'],
+      ['shownAdminToken', { shownAdminToken: 'sbat_x' }, 'a shown-once admin token is on screen'],
+      ['invite', { inviteOpen: true, inviteToken: 'abc' }, 'an invite token is displayed'],
+      ['revoke typed', { revokeOpen: true, revokeTyped: 'REVOKE-ab12' }, 'a revoke confirmation is typed'],
+      ['revoke token', { revokeOpen: true, revokeTokenPresent: true }, 'a revoke admin token is in the DOM input'],
+    ];
+    for (const [name, card, why] of cases) {
+      box.__state().cards = { c1: Object.assign({ acting: null }, card) };
+      ok(box.sharedSectionBusy() === true, `sharedSectionBusy: TRUE while ${why} (${name})`);
+    }
+    box.__state().cards = { c1: { acting: null } };
+    ok(box.sharedSectionBusy() === false,
+      '(control) …and false again once none of those hold — so it is a reading, not a latch');
+
+    // ── AN OPEN WIZARD IS BUSY, AND THE PROOF IS IN TWO HALVES ──────────
+    // The overlay holds a GitHub PAT and, in admin mode, an admin token, in
+    // DOM inputs the wizard deliberately never mirrors into state — and this
+    // section's own teardown closes it. A host that re-rendered while it was
+    // open would destroy a half-typed credential. The harness above injects
+    // isSharedBrainWizardOpen as a stub, so that half proves only that
+    // sharedSectionBusy CONSULTS it; the other half executes the wizard's
+    // real reporter against its real `root`. Neither alone is the property.
+    const wizardBusyBox = seamHarnessWithWizard(true);
+    ok(wizardBusyBox.sharedSectionBusy() === true,
+      'sharedSectionBusy: TRUE while the setup wizard is open, with no card busy at all');
+    ok(seamHarnessWithWizard(false).sharedSectionBusy() === false,
+      '(control) …and false with the same idle cards when it is closed');
+
+    box.unmountSharedSection();
+    box.__state().cards = { c1: { acting: 'push' } };
+    ok(box.sharedSectionBusy() === false,
+      'sharedSectionBusy: false once unmounted, even mid-operation — the flag is about the HOSTED panel');
+  }
+
+  {
+    // ── The wizard's own reporter, EXECUTED against its real `root`.
+    // This is the half the seam harness cannot reach: above, the stub says
+    // what sharedSectionBusy does with the answer; here, the real function
+    // says where the answer comes from.
+    const wizBusy = new Function(
+      'let root = null;\n' +
+      extractFunction(wizard, 'isSharedBrainWizardOpen', 'shared-brain-wizard.js') + '\n' +
+      'return { isSharedBrainWizardOpen, setRoot: (r) => { root = r; } };'
+    )();
+    ok(wizBusy.isSharedBrainWizardOpen() === false,
+      'wizard: isSharedBrainWizardOpen() is false with no overlay mounted');
+    wizBusy.setRoot({ nodeType: 1 });
+    ok(wizBusy.isSharedBrainWizardOpen() === true,
+      '…and TRUE once its detached subtree exists — it reads `root`, the same thing closeSharedBrainWizardIfOpen reads');
+    wizBusy.setRoot(null);
+    ok(wizBusy.isSharedBrainWizardOpen() === false,
+      '…and false again after a close, so it is DOM presence and not a latch');
+    // It must report presence and nothing else: a boolean, never a credential.
+    ok(typeof wizBusy.isSharedBrainWizardOpen() === 'boolean',
+      '…answering with a boolean, never with anything the overlay holds');
+  }
+
+  {
+    // ── The busy callback fires on CHANGE, not on every frame. This view
+    // re-renders on every SSE frame; a host that repainted on each one
+    // would be the re-render storm D-J exists to prevent.
+    const { box } = seamHarness();
+    const seen = [];
+    box.mountSharedSection({ innerHTML: '' }, { domain: 'research', token: 7, onBusyChange: (b) => seen.push(b) });
+    box.notifyHost(); box.notifyHost();
+    box.__state().cards = { c1: { acting: 'pull' } };
+    box.notifyHost(); box.notifyHost(); box.notifyHost();
+    box.__state().cards = { c1: { acting: null } };
+    box.notifyHost();
+    ok(JSON.stringify(seen) === JSON.stringify([true, false]),
+      `onBusyChange fires once per real change, not once per render (got ${JSON.stringify(seen)})`);
+  }
+
+  {
+    // ── hostSetMain: the two hosts, and the token guard on both.
+    const { box, log } = seamHarness();
+    const el = { innerHTML: '' };
+    box.mountSharedSection(el, { domain: 'research', token: 7 });
+    box.hostSetMain('<p>x</p>', 7);
+    ok(el.innerHTML === '<p>x</p>', 'hostSetMain in section mode writes the host element');
+    ok(!log.some((l) => l.startsWith('setMain:')), '…and never calls the shell\'s setMain while section-mounted');
+    box.unmountSharedSection();
+    ok(el.innerHTML === '', '(control) the teardown really emptied it');
+  }
+  {
+    const { box, log } = seamHarness();
+    // Same harness, but isCurrentMount is the one collaborator we re-point.
+    const staleBox = new Function(
+      'freshState', 'createLoadingGate', 'onWriteGateChange', 'isCurrentMount',
+      'reportAsyncMountFailure', 'closeSharedBrainWizardIfOpen', 'isSharedBrainWizardOpen',
+      'setMain', 'render', 'loadAll', 'log',
+      'let state = freshState();\nlet loadGate = null;\nlet unsubscribeWriteGate = null;\nlet myMountToken = 0;\n' +
+      extractConst(shared, 'SHELL_HOST', 'shared.js') + '\n' +
+      'let hostCtx = { mode: "section", el: arguments[11], domain: "research", onBusyChange: null, onLensChange: null };\n' +
+      'let viewMounted = false;\nlet lastReportedBusy = false;\nlet lastReportedLens = \'\';\n' +
+      ['inSection', 'hostSetMain'].map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+      'return { hostSetMain };'
+    );
+    const el = { innerHTML: 'untouched' };
+    const fn = staleBox(
+      () => ({ cards: {} }), () => ({ begin() {}, cancel() {} }), () => () => {},
+      () => false,           // the mount is NO LONGER current
+      () => {}, () => {}, () => false, () => log.push('setMain'), () => {}, async () => {}, log, el
+    );
+    fn.hostSetMain('<p>late</p>', 7);
+    ok(el.innerHTML === 'untouched',
+      'hostSetMain refuses to write when the host\'s mount token is no longer current — a late SSE frame paints nothing');
+    ok(box.__host().mode === 'view', '(control) the other harness is untouched by this one');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) {

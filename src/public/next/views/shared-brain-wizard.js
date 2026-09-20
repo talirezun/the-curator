@@ -602,6 +602,23 @@ export function closeSharedBrainWizardIfOpen() {
   if (root) closeWizard();
 }
 
+/**
+ * Is a wizard mounted right now? (v3.64.0.)
+ *
+ * The one caller is views/shared.js's sharedSectionBusy(), which the domain
+ * page consults before it re-renders the SHARED BRAIN section it hosts. An
+ * open wizard holds a GitHub PAT and, in admin mode, a Shared Brain admin
+ * token, in DOM inputs this module deliberately never mirrors into state —
+ * and a host re-render unmounts the section, whose teardown calls
+ * closeSharedBrainWizardIfOpen() above. So a host that re-rendered while this
+ * was open would destroy a half-typed credential with no warning and no way
+ * to recover it. Reporting `root !== null` is the whole job: a boolean about
+ * DOM presence, never anything about what is typed into it.
+ */
+export function isSharedBrainWizardOpen() {
+  return root !== null;
+}
+
 function closeWizard() {
   if (!root) return;
   wizardGen += 1; // any in-flight handler from this session is now stale — see the file header

@@ -167,6 +167,50 @@
 
 .sb-add-more { display: flex; gap: var(--space-5); margin-top: var(--space-7); flex-wrap: wrap; }
 
+/* ── The domain page's SHARED BRAIN section (v3.64.0) ─────────────────────
+   views/shared.js's SECTION host. The same panel as the full-page view, in
+   an element views/domains.js owns, lensed to one domain.
+
+   NO CARD CHROME OF ITS OWN. The domain page already wraps this in a
+   `.dm-section` fold; a second border and a second raised surface inside it
+   would be a box in a box — the shape the composer fix (v3.12.0) and the
+   Foundations block (v3.61.0) both had to undo. So this is layout only:
+   spacing, a line role, and the door's own row. Every colour here is a token
+   at or above the text floor (--text, --text-2); the strip reuses
+   `.sb-card-stats` and `.sb-pill-readonly`, which the contrast ratchet
+   already measures. */
+.sb-sec { display: flex; flex-direction: column; gap: var(--space-7); }
+
+/* The one sentence each empty/off/mirror state gets. Same role, same size as
+   every other description in the app (13px, --text-2) — not a private
+   smaller size, which is the defect v3.58.0 removed from the CTA cards. */
+.sb-sec-line {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  max-width: 68ch;
+}
+
+/* The door row. Left-aligned under whatever it follows: it is a route out,
+   not the section's primary action — the section has none. */
+.sb-sec-door { display: flex; gap: var(--space-5); flex-wrap: wrap; }
+
+/* A `shared-*` mirror domain's read-only strip. Inset rather than raised:
+   it reports, it does not act. */
+.sb-sec-mirror {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-8);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-inset);
+}
+.sb-sec-mirror-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* The strip's stats row is the card's, minus the card's bottom gap — this is
+   the last thing in the strip and the strip supplies its own padding. */
+.sb-sec-mirror .sb-card-stats { margin-bottom: 0; }
+
 /* ── Cards container ──────────────────────────────────────────────────── */
 
 /* NO max-width, and that is now a decision rather than an omission: a
