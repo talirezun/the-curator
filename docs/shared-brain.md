@@ -31,7 +31,7 @@ Personal Sync (the existing feature in v2.x) and Shared Brain (new in v3.0.0-bet
 | Visible in Curator | Pages are part of your personal wiki | Pages appear as a separate `shared-<slug>/` domain in your local app |
 | Required infrastructure | A private GitHub repo + your own PAT | A private GitHub repo + per-contributor PATs + an admin's PAT |
 
-The two features are separate rail items: **Sync** covers Personal Sync only, and **Shared Brain** has its own view. (They shared one "Sync tab" in the old shell, which was deleted in v3.41.0.)
+The two features are separate surfaces: **Sync** covers Personal Sync only and sits in the rail's footer, while **Shared Brain** is a section of each domain's page with its own full view behind it (through v3.63.0 it was a rail item of its own). (They shared one "Sync tab" in the old shell, which was deleted in v3.41.0.)
 
 > **The `shared-` domain-name prefix is reserved (v3.43.0).** It always belonged to Shared Brain
 > mirrors, and three places already refused to *contribute from* one — but domain CREATION did not

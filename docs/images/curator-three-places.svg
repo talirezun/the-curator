@@ -1,0 +1,126 @@
+<svg viewBox="0 0 760 500" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-three-places-title curator-three-places-desc">
+  <title id="curator-three-places-title">The three places — ask, knowledge, context</title>
+  <desc id="curator-three-places-desc">
+    On the left, the icon rail: three entries, Chat, Domains and Context, with Sync and Settings
+    separated at the foot. There is no dividing line between the three. Each entry is joined to a
+    column naming what it is for. Chat is "ask": one domain's wiki, and optionally one project's
+    context. Domains is "knowledge": one subject at a time, and the column lists the domain page's
+    six sections in order — Overview, Ingest, Pages with a Wiki, Context and All lens, Projects,
+    Shared Brain, and Wiki health. Context is the project layer: canonical documents, working
+    state and the capture meter. Two of the sections, Ingest and Shared Brain, are marked as
+    having a second host: a full-page view still reachable one press from the section, the same
+    panel rather than a copy of it. A caption at the foot reads: one panel, two hosts — the
+    section and the full view are the same code, so they can never drift apart.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --accent-2: #8250df;
+      --accent-3: #1a7f37;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --accent-2: #c8a6ff;
+        --accent-3: #4ac26b;
+      }
+    }
+    .bg { fill: var(--bg); }
+    .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .rail { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .slot { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .slot-on { fill: var(--bg); stroke: var(--accent); stroke-width: 1.8; }
+    .rule { stroke: var(--border); stroke-width: 1.5; }
+    .link { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+    .h { font: 700 15px system-ui, sans-serif; fill: var(--text); }
+    .cap { font: 700 9.5px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .1em; }
+    .ask { font: 700 11px system-ui, sans-serif; letter-spacing: .08em; }
+    .sec { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .meta { font: 400 11.5px system-ui, sans-serif; fill: var(--text-2); }
+    .badge { fill: none; stroke: var(--accent-2); stroke-width: 1.3; }
+    .badgetxt { font: 600 10px system-ui, sans-serif; fill: var(--accent-2); }
+    .foot { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="500"/>
+
+  <!-- ── THE RAIL ────────────────────────────────────────────────── -->
+  <rect class="rail" x="20" y="20" width="76" height="400" rx="12"/>
+
+  <rect class="slot-on" x="34" y="42" width="48" height="42" rx="9"/>
+  <text class="cap" x="58" y="100" text-anchor="middle">CHAT</text>
+
+  <rect class="slot" x="34" y="122" width="48" height="42" rx="9"/>
+  <text class="cap" x="58" y="180" text-anchor="middle">DOMAINS</text>
+
+  <rect class="slot" x="34" y="202" width="48" height="42" rx="9"/>
+  <text class="cap" x="58" y="260" text-anchor="middle">CONTEXT</text>
+
+  <!-- the footer, separated by a gap and NOT by a line -->
+  <rect class="slot" x="40" y="312" width="36" height="30" rx="8"/>
+  <text class="cap" x="58" y="356" text-anchor="middle">SYNC</text>
+  <rect class="slot" x="40" y="368" width="36" height="30" rx="8"/>
+  <text class="cap" x="58" y="412" text-anchor="middle">SETTINGS</text>
+
+  <!-- ── COLUMN ① CHAT ───────────────────────────────────────────── -->
+  <path class="link" d="M96 63 H126"/>
+  <rect class="card" x="130" y="28" width="606" height="72" rx="10"/>
+  <text class="h" x="148" y="54">Chat</text>
+  <text class="ask" x="212" y="53" fill="var(--accent)">ASK</text>
+  <text class="meta" x="148" y="76">One domain's wiki — and, with a project pinned, that project's brief,</text>
+  <text class="meta" x="148" y="91">its latest handoff and its read-first documents. A reading, never a save.</text>
+
+  <!-- ── COLUMN ② DOMAINS ────────────────────────────────────────── -->
+  <path class="link" d="M96 143 H126"/>
+  <rect class="card" x="130" y="112" width="606" height="200" rx="10"/>
+  <text class="h" x="148" y="138">Domains</text>
+  <text class="ask" x="232" y="137" fill="var(--accent-3)">KNOWLEDGE</text>
+  <text class="meta" x="148" y="159">One subject at a time. Everything that acts on a domain is on its page:</text>
+
+  <line class="rule" x1="148" y1="170" x2="718" y2="170"/>
+
+  <text class="sec" x="148" y="190">OVERVIEW</text>
+  <text class="meta" x="300" y="190">counts, last ingest, the jump tiles</text>
+
+  <text class="sec" x="148" y="212">INGEST</text>
+  <text class="meta" x="300" y="212">drop a PDF, Markdown or text file</text>
+  <rect class="badge" x="596" y="201" width="122" height="16" rx="8"/>
+  <text class="badgetxt" x="657" y="212.5" text-anchor="middle">also a full view</text>
+
+  <text class="sec" x="148" y="234">PAGES</text>
+  <text class="meta" x="300" y="234">Wiki · Context · All</text>
+
+  <text class="sec" x="148" y="256">PROJECTS</text>
+  <text class="meta" x="300" y="256">create, rename, brief, marker line</text>
+
+  <text class="sec" x="148" y="278">SHARED BRAIN</text>
+  <text class="meta" x="300" y="278">this domain's connections</text>
+  <rect class="badge" x="596" y="267" width="122" height="16" rx="8"/>
+  <text class="badgetxt" x="657" y="278.5" text-anchor="middle">also a full view</text>
+
+  <text class="sec" x="148" y="300">WIKI HEALTH</text>
+  <text class="meta" x="300" y="300">broken links, orphans, duplicates</text>
+
+  <!-- ── COLUMN ③ CONTEXT ────────────────────────────────────────── -->
+  <path class="link" d="M96 223 C112 223 112 368 126 368"/>
+  <rect class="card" x="130" y="324" width="606" height="96" rx="10"/>
+  <text class="h" x="148" y="350">Project context</text>
+  <text class="ask" x="286" y="349" fill="var(--accent-2)">CONTEXT</text>
+  <text class="meta" x="148" y="372">① the canonical documents · ② the working state your agents read and</text>
+  <text class="meta" x="148" y="387">write · ③ the knowledge it draws on — plus the capture meter, which</text>
+  <text class="meta" x="148" y="402">says whether sessions actually read and actually saved.</text>
+
+  <text class="foot" x="20" y="452">One panel, two hosts: a section and its full view are the same code, so they cannot drift apart.</text>
+  <text class="foot" x="20" y="472">Sync and Settings sit at the foot of the rail. There is no dividing line — three places need no grouping.</text>
+</svg>

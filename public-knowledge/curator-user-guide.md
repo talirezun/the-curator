@@ -188,20 +188,29 @@ There are no tabs. Everything is reached from a narrow icon rail down the left e
 
 At the top of the rail, the mark is a button: it takes you **Home**, which is **Domains**.
 
-| Rail item | Caption | What it is for |
-|---|---|---|
-| Chat | Chat | Ask questions of one domain's wiki. |
-| Ingest | Ingest | Drop in PDFs, Markdown or text files. |
-| Domains | Domains | Your knowledge one domain at a time — counts, the page list, Projects, Wiki health. This is Home. |
-| *a dividing line* | | Everything below it is the advanced half. |
-| Shared Brain | Shared | Collective wikis you contribute to with a cohort or team. Off by default. |
-| Project context | Context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over the MCP bridge. Called Agent memory before v3.62.0. |
+Since version 3.64.0 the rail is **three** places, read as *ask, knowledge, context*. There is no dividing line.
+
+| Rail item | Caption | The question | What it is for |
+|---|---|---|---|
+| Chat | Chat | ask | Ask questions of one domain's wiki — and, with a project pinned, that project's context as well. |
+| Domains | Domains | knowledge | One subject at a time, and everything that acts on it: counts, ingest, the page list, Projects, Shared Brain and Wiki health. This is Home. |
+| Project context | Context | context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over the MCP bridge. Called Agent memory before v3.62.0. |
 
 At the bottom of the rail, separated by a gap: the sun/moon **theme toggle**, **Sync**, and **Settings**.
 
+**Ingest and Shared Brain left the rail in version 3.64.0 and did not leave the app.** Each acts on exactly one domain, so each is now a section of that domain's page — and each still has its own full-page view, one press from the section, still reachable and still restored if it is where you left off. It is one panel with two hosts, not two copies, so a batch you start in one is live in the other.
+
 The first time you open The Curator it lands on **Domains**. After that it opens wherever you left off, remembered per browser. Two exceptions: a screen that failed to load last time is not restored, and a screen an update has removed or renamed is ignored. You get Domains in both cases.
 
-Two things are not rail destinations. **Reading a wiki page** is an overlay that slides over the main column; close it with Escape, a click outside it, or its cross. **Wiki health** lives inside a domain, on that domain's page.
+Four things are not rail destinations. **Reading a wiki page** is an overlay that slides over the main column; close it with Escape, a click outside it, or its cross. **Wiki health**, **Ingest** and **Shared Brain** all live inside a domain, on that domain's page.
+
+## What is on a domain's page?
+
+Six sections, in the order the work runs in: **OVERVIEW** (the counts, and when the domain was last written to), **INGEST** (drop a file here), **PAGES** (everything readable, behind a Wiki / Context / All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (the connections this domain contributes to) and **WIKI HEALTH**.
+
+INGEST and SHARED BRAIN are closed folds that remember whether you opened them, per domain. Two exceptions: on a domain with nothing ingested yet, INGEST opens by itself; and on a read-only Shared Brain mirror there is no INGEST section at all, because an ingest into a mirror has never been possible.
+
+The **PAGES** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader.
 
 ## What is a domain, and how do I create one?
 
@@ -268,8 +277,8 @@ Only text-based PDFs work. A scanned PDF is an image of a page and has no extrac
 
 ## How do I ingest a document?
 
-1. Click **Ingest** in the rail.
-2. Pick a destination domain, from the picker above the drop zone or from the destination list in the panel beside the rail. That list shows one row per domain with its page count and when it was last written to — "last write" rather than "last ingest", because compiling a conversation writes to a domain too.
+1. Click **Domains** in the rail, pick your destination domain, and open its **INGEST** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
+2. Confirm the destination domain. In the section it is the domain whose page you are on; in the full-page view it comes from the picker above the drop zone or from the destination list in the panel beside it. That list shows one row per domain with its page count and when it was last written to — "last write" rather than "last ingest", because compiling a conversation writes to a domain too.
 3. Drag your file onto the drop zone, which reads **"Drop a source here"**, **"or browse your files"**, **"Accepts .txt · .md · .pdf"**, with **"2 or more files at once starts a batch"** underneath. Or click **browse your files**. A cross beside the file name removes it before you ingest.
 4. Click **Ingest**.
 5. A progress bar names the current step with a percentage and a running timer. This usually takes 15 to 60 seconds. Do not close the browser or refresh.
@@ -362,7 +371,7 @@ Below the change list a small footer reports the real usage for that ingest, not
 
 ## How do I open and read a wiki page?
 
-Reading a page is not a place you navigate to. It is an overlay that slides over whatever you were doing. Two ways in: click a citation under a chat answer, or click a row in **PAGES · THE WIKI** on a domain's page. Close it with **Escape**, a click on the dimmed area outside it, or its cross. It never survives moving to another rail item.
+Reading a page is not a place you navigate to. It is an overlay that slides over whatever you were doing. Two ways in: click a citation under a chat answer, or click a row in **PAGES** on a domain's page. Close it with **Escape**, a click on the dimmed area outside it, or its cross. It never survives moving to another rail item.
 
 The overlay shows the page's path, its title, a coloured type badge reading `entity`, `concept` or `summary`, its tags, and the body rendered as proper formatted text rather than raw markdown. Below the body is a **BACKLINKS** list of every page that links to this one, and clicking a backlink loads that page in the same overlay, so you can walk the graph without leaving it. Links inside the page body are highlighted but not clickable in the reader today — use the backlinks list, or open Obsidian, to follow links forward.
 
@@ -559,7 +568,7 @@ Shared Brain is an opt-in beta, and a different feature from Personal Sync. Pers
 
 **Two primitives that are easy to confuse.** An **invite token**, starting `sbi_`, is created once by the admin, contains metadata only — repository, brain name, branch, folder — grants no access at all, and is safe to share with the whole cohort over Slack or email. A **Personal Access Token**, starting `github_pat_`, is a GitHub credential and is your identity: each contributor creates their own and shares it with nobody. The admin never shares theirs.
 
-**To join.** Click **Shared** in the rail. On a fresh install it says "Shared Brain is off on this install" — click **Enable Shared Brain (beta)**. Turning it on connects you to nothing; it only unlocks the view. Then choose **I have an invite token → Join**, paste the token your admin sent, and create your own GitHub Personal Access Token when the wizard asks. Invite tokens are GitHub-only; a token describing any other backend is refused at the first step with an explanation.
+**To join.** Open the **SHARED BRAIN** section of any domain's page and press through to the full Shared Brain view (through version 3.63.0 it was a rail item of its own). On a fresh install it says "Shared Brain is off on this install" — click **Enable Shared Brain (beta)**. Turning it on connects you to nothing; it only unlocks the view. Then choose **I have an invite token → Join**, paste the token your admin sent, and create your own GitHub Personal Access Token when the wizard asks. Invite tokens are GitHub-only; a token describing any other backend is refused at the first step with an explanation.
 
 **To start one.** Choose **I'm starting a new Shared Brain → Set up** and follow the wizard. The admin token it shows you is shown once and never again, so save it then.
 

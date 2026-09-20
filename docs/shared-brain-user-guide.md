@@ -31,7 +31,8 @@ Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New in
 3. Click **"Enable Shared Brain (beta)"**.
 
 > **Where this lives has moved twice — this guide describes the current interface.**
-> Since the v3.9.0 cutover, Shared Brain is its own rail item and **everything**
+> Since the v3.9.0 cutover, Shared Brain has had its own view — a rail item through v3.63.0, and
+> since v3.64.0 a **section of each domain's page** with that view one press behind it. **Everything**
 > — enabling, joining, setting up, pushing, pulling, synthesis and admin actions
 > — happens there. The **Sync** view covers Personal Sync only; it reports Shared
 > Brain activity but no longer hosts any of its controls.

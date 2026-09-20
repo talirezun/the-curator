@@ -872,6 +872,8 @@ the full contract.
 | `provider` | `gemini` \| `anthropic` \| `openrouter` | No | Per-chat provider override. Honoured **only** if that provider has a key saved in Settings; otherwise the global active provider answers. |
 | `model` | string | No | Per-chat model override. Allow-listed inside `getProviderInfo()`; anything not offerable on the resolved provider falls back to that provider's default rather than erroring. |
 | `stream` | boolean | No | **`=== true` and nothing looser.** A string `"true"`, a `1`, or a truthy object takes the JSON path. |
+| `project` | string | No | **New in v3.64.0.** A project in this domain whose standing brief, latest handoff, journal and read-first canonical documents are added to the answer's context, within a **separate 40 KB budget** (`PROJECT_CONTEXT_BUDGET_CHARS`). An unusable name is `400 invalid_project`, a reserved name `400 reserved_project`, and a project this domain does not have `400 project_not_found` — all refused **before the response stream opens**, never a silently wiki-only answer. |
+| `scope` | string | No | **New in v3.64.0.** The work-stream within that project. Ignored without `project`, and passed to the store **verbatim** — the store is the only thing that knows what `latest` means, and resolving it twice is what was deleted rather than fixed twice. |
 
 None of `responseStyle` / `provider` / `model` is validated at the route,
 deliberately: the model allow-list is applied at `getProviderInfo()`, the single
@@ -929,6 +931,14 @@ of the guard.
   **persisted on the assistant message**, appended after `usage`, so a reopened
   thread labels the same chip the same way; assistant messages written before
   v3.46.0 do not carry it and are not migrated.
+- `projectContext` (v3.64.0) is what the pinned project actually contributed to
+  **that turn**, or `null` when no project was pinned:
+  `{project, domain, scope, chars, briefPresent, briefAuthority, handoffPresent,
+  journalEntries, documents, budgetChars, extraStoreCalls, notes}`. `notes` names
+  everything that was omitted — a document dropped at the budget, a refused
+  request, a journal slice — so the surface above can say what was left out
+  rather than implying nothing was. It rides the same `done` frame on the
+  streaming path.
 - `provider` is what was **asked for** — `null` means "the global active
   provider was used".
 - `model` is the model that **answered**, read out of the provider's own usage
@@ -1211,7 +1221,7 @@ Reads are allowed on read-only Shared Brain mirror domains, matching `/page` —
 
 | Parameter | Description |
 |-----------|-------------|
-| `include` | Comma-separated. The only recognised value is `memory` (v3.50.0). Anything else is ignored. |
+| `include` | Comma-separated. The recognised value is `memory` (v3.50.0), which since v3.64.0 also carries the projects' **foundations** in the same inventory. Anything else is ignored. |
 
 **Success response** `200 OK`
 
@@ -1237,7 +1247,12 @@ Capped at 20,000 entries (`truncated: true` beyond that; `count` is the number a
 
 ### `?include=memory` — the domain's memory pages (v3.50.0)
 
-A domain's `state/` tree is markdown too: each project's **standing brief** and each work-stream's **handoff** (`current.md`). With `?include=memory` the response gains four additive fields:
+A domain's `state/` tree is markdown too: each project's **standing brief**, each work-stream's **handoff** (`current.md`) and — since v3.64.0 — each project's **canonical documents** under `foundations/`. With `?include=memory` the response gains four additive fields:
+
+<!-- D-PENDING --> *Package D owns this route's v3.64.0 widening. Take the exact field names, the
+foundation entries' shape and the note about how a foundation opens (through
+`GET /api/memory/:domain/:project/foundations/:slug`, not through the wiki page route) from D's
+report before merge; the sentence above states only the fact the contract fixes.*
 
 ```json
 {
@@ -2288,6 +2303,7 @@ that setter, so its own resolution is unchanged. See
 | `GET /api/mcp/claude-full-config` | Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
 | `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
 | `POST /api/mcp/write-config` | **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
+| `GET /api/mcp/config` *(two additive fields, v3.64.0)* | `bridge_processes: {checked, reason, running, stale: [{pid, startedAt, ageMs}], codeChangedAt, serverPath}` and `bridge_stale_remedy`. A **read-only** reading, taken from `ps` over a fixed argv with no shell: it lists processes running *this install's own* `mcp/server.js` and calls one **stale** when it started before the code on disk last changed. An MCP client keeps its bridge alive until the client itself is restarted, so a bridge launched before an update carries on serving the tools it was launched with — measured on one machine as two days and five updates, offering 22 tools while the files on disk offered 24. **`checked: false` means the reading was not taken** (not macOS, `ps` unavailable, an error) and carries `reason`; it must never be rendered as "no stale bridge". `bridge_stale_remedy` names the act and the actor — restart the app that launched it, usually Claude Desktop — and deliberately does not name The Curator, because restarting The Curator is exactly what does not help. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
 | `GET /api/mcp/usage` *(v3.60.0)* | Backs **Settings → MCP bridge → The tool map**. Reads the local, content-free call log at `getMcpUsageLogPath()` (`<user-data>/.mcp-usage.jsonl`, never under `domains/`) and returns per-tool aggregates plus two session-level readings. Cheap by construction — the log is capped at ~1 MB before it rotates, so a full parse on every call stays inexpensive; the route additionally caches its result by the log file's mtime + size. See the response shape below. |

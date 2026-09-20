@@ -2,7 +2,7 @@
 
 ## What is The Curator?
 
-The Curator is a context machine you run on your own computer. It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — and carries all three across sessions, machines, AI tools and models.
+The Curator is the context engine, and you run it on your own computer. It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — and carries all three across sessions, machines, AI tools and models.
 
 The building half is what you touch first. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
 
@@ -22,7 +22,7 @@ Everything The Curator holds for you is one of three kinds. They are all plain m
 |---|---|---|
 | Compounded knowledge — the wiki | Entities, concepts and summaries, cross-linked into a graph | Accumulates: a new source updates existing pages instead of duplicating them |
 | Volatile state — the standing brief, the handoff, the journal | Where a piece of work stands, per project | Supersedes: each save replaces the last, so a resolved blocker cannot come back |
-| Canonical documents — foundations, added in version 3.59.0 | A project's architecture, firm decisions, conventions, roadmap, held verbatim | Replaced whole: mirrored byte-for-byte from a code repository, or written by an agent on your explicit instruction |
+| Canonical documents — foundations, added in version 3.59.0 | A project's architecture, decisions, conventions and roadmap, held verbatim | Replaced whole: never merged, never paraphrased, never summarised by a model. Mirrored byte-for-byte from a code repository, or written by an agent on your explicit instruction |
 
 **Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the rule to learn before using it. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
 
@@ -78,6 +78,16 @@ The tradeoff is real. The writing pass costs money and time up front, and ingest
 | Anyone orchestrating agents across sessions, tools and machines — building code, most often, or research, design, a product | Carrying where the work stands from one session, tool, model or computer to the next |
 | Educational cohorts, research teams, consultancies and product teams | Building one collective wiki together through Shared Brain, without merging anyone's private notes |
 | Independent experts, educators and consultancies | Selling recurring access to a curated brain they maintain |
+
+## Which of the two things is it for me?
+
+Most people arrive for one of two things, and both write the same markdown files. Neither is a mode you switch into.
+
+If you **read a lot and want to keep what you read**, you want a domain: drop in PDFs, Markdown and text files, and The Curator writes a linked wiki you can chat with, open in Obsidian, sync to your own private repository, and share with a cohort. Start with ingesting one source.
+
+If you **work across sessions with agent harnesses**, you want a project: add the documents that project is built against, and let agents read them and save a handoff at the end of a session. The next session — any harness, any model, any machine — starts where the last one stopped. Start with creating a project and choosing where its documents come from.
+
+These are not two products, and you do not have to pick. A book, a thesis or a research programme outlives any one session, which is the day the second becomes the first's future.
 
 ## What platforms does it run on?
 
@@ -154,9 +164,17 @@ It is still an **opt-in beta.** General availability is gated on a structured pi
 
 Yes — that is the third layer, called working state, shown on the Project context screen. An agent writes where a piece of work stands at the end of a session over the local MCP bridge, and reads it back at the start of the next one, so the work survives a change of session, agent, model, tool or machine. Since version 3.59.0 the same one call also hands it the project's canonical documents — its architecture, decisions and conventions, kept verbatim — so an agent on a machine that has never checked the code out still starts from them.
 
-Since version 3.63.0 there is also a command, `my-curator`, that reads and writes the same files from a shell with the app closed; hook configuration for the harnesses that have a usable hook, where a hook may only ask and never writes a handoff itself; a reading on the Project context screen saying how many recent sessions started with the context and how many saved before stopping; and a published specification of the on-disk format, so a tool that is not The Curator can read and write it. Every harness row in the hook table currently reads "not measured": the mechanism shipped, the measurement has not been run, and the product says so rather than implying reach.
+Since version 3.63.0 there is also a command, `my-curator`, that reads and writes the same files from a shell with the app closed; hook configuration for the harnesses that have a usable hook, where a hook may only ask and never writes a handoff itself; a reading on the Project context screen saying how many recent sessions started with the context and how many saved before stopping; and a published specification of the on-disk format, so a tool that is not The Curator can read and write it. Version 3.64.0 then ran the measurement for the first time, against one harness: with the hooks installed, Claude Code received the project's context in 4 of 4 runs and saved in 4 of 4, while its stop hook never fired at all in that mode. Thirteen of the fourteen harness rows still read "not measured", and the product says so rather than implying reach.
 
 There is a dedicated file in this knowledge base covering how it is structured, what belongs in it, how it is set up and what it measurably does.
+
+## Do my agents actually save, and how would I know?
+
+Nothing forces an agent to save. The discipline is carried by a skill, an instruction block you paste into your harness's entry file, and — where a harness has a usable lifecycle hook — a hook The Curator can install for you. All three are advisory: a session that ends without saving leaves the previous handoff in place, which is stale rather than damaged.
+
+So the app measures it instead of promising it. Project context opens its Working-state step with one line, computed from a local, content-free log of which tools were called: how many sessions in the last 30 days, how many started with the project's context, how many saved before stopping, and how many read and did not save. It is stated in words, never as a percentage, and it reports rather than blocks.
+
+As of 20 September 2026 exactly one harness has been measured against the protocol — Claude Code, four runs per arm. With the hook installed, the context reached the agent in 4 of 4 sessions and 4 of 4 saved before stopping; in that same headless mode the stop hook never fired at all. Every other harness reads "not measured", in the product and in the documentation.
 
 ## What licence is it under, and can I use it at work?
 
@@ -210,18 +228,18 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 - **A browser-only assistant cannot use the MCP bridge.** The bridge is a local child process, so the client has to be able to start a local program. That is a limit of the transport, not a choice about vendors.
 - **Two agent tools on one computer will overwrite each other** in a shared work-stream. Give each one its own scope.
 - **A handoff does not bind the next session.** It reliably tells the next session what it does not know; measurably, it does not stop a model deciding it knows better.
-- **Chat is single-domain and bounded.** It talks to one domain at a time, never reads your other conversations, sends only the recent part of the current thread, and loads a bounded slice of the wiki per question. It cannot ingest a file you drop into it.
+- **Chat is single-domain and bounded.** It talks to one domain at a time, never reads your other conversations, sends only the recent part of the current thread, and loads a bounded slice of the wiki per question. It cannot ingest a file you drop into it. Since version 3.64.0 it can also read one pinned project's context beside the wiki, within a separate budget — but only read it: chat never writes to a project.
 - **A chat inside a read-only Shared Brain mirror is not saved.** You can ask a mirror questions, but the thread lives only in memory while the app is running, and the answer says so.
 - **Free is not unlimited.** The free provider tier is rate-limited — enough to try the product, not enough to work in it all day.
 - **Cross-domain wikilinks are not supported.** Domains are siloed on disk; cross-domain reasoning happens at read time.
 - **Two chat modes are designed and not built.** The chat ships Discover, which asks, and Compile, which writes; Dictate and Curate exist as designs only.
 - **Some things have shipped without a human ever looking at them.** Several recent surfaces, including parts of the desktop shell, were verified by executing their logic in tests rather than by being rendered and photographed, and the changelog says so per release. Tested and seen working end to end are different claims here.
-- **The per-harness hook table is entirely unmeasured.** Version 3.63.0 shipped the hooks and the measuring instrument; no row has yet been measured against a real harness, and every one of them says "not measured" rather than implying that it works.
+- **Thirteen of the fourteen per-harness hook rows are unmeasured.** Version 3.63.0 shipped the hooks and the measuring instrument; version 3.64.0 ran the protocol once, against Claude Code. Every other row says "not measured" rather than implying that it works. Even the measured row is partial: the session-start hook fired in 4 of 4 runs, and the stop hook never fired at all in headless mode.
 - **Small measurements are reported as shapes, not rates.** Where the project quotes a result at four runs per arm, that is the measurement it has, and it says so.
 
 ## What version is it, and is the project active?
 
-Version **3.63.0**, as of 19 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
+Version **3.64.0**, as of 20 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 

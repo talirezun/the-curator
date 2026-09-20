@@ -87,9 +87,11 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
-**Outstanding for v3.60.0** (the MCP tool map and the widget's stale-foundations mark):
-`curator-user-guide.md` and `curator-agent-memory.md` both changed and need re-uploading after
-this release lands — see **Uploading to Lumina**, below. Remove this note once both are done.
+**Outstanding for v3.64.0** (the three-place shell, Chat reading a project, and the first real
+harness measurement): **all three of `curator-overview.md`, `curator-user-guide.md` and
+`curator-agent-memory.md` changed** and need re-uploading after this release lands — see
+**Uploading to Lumina**, below. `curator-links.md` is unchanged. Remove this note once all three
+are done; a stale note left here is how this file stops being read.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
 webhook and no sync: Lumina serves the copy it was given, so a release that

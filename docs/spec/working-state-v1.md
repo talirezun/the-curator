@@ -569,10 +569,13 @@ same family and because a reader may encounter the file: The Curator's MCP bridg
 - **Tool line:** `ts`, `tool`, `domain`, `ok`, `refused`, `ms`, `sid` always; `project` and `via`
   optional. **Nothing else, ever** — no arguments, no results, no paths, no error text.
 - **Session line:** written once per bridge process, `ev: "session"`, carrying the `sid` and the
-  client label so the label does not ride on every line.
+  client label so the label does not ride on every line. It is written **when the client identifies
+  itself**, rather than before the first tool call, so a bridge that is opened and never asked for
+  a tool still records that a session happened.
 - `sid` is `^[0-9a-f]{12}$` — a minted random id, once per process. One bridge process is one
   session.
-- `client` is an **allow-listed label** for reporting only. The MCP specification's
+- `client` is **optional** on the session line — absent when no client had identified itself — and
+  is an **allow-listed label** for reporting only. The MCP specification's
   revision `2026-07-28` makes `clientInfo` optional, per-request and self-reported, and says a
   server **SHOULD NOT** change behaviour on it. Nothing does.
 - Every line is at most `300` bytes (`MAX_LINE_BYTES`), which is arithmetic over each field's bound

@@ -374,6 +374,25 @@ Isolation: both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` are 
 fixture **before the store is imported**, and the fixture is removed at the end. It writes nothing
 outside that directory.
 
+**Three new OFFLINE suites in v3.64.0**, each pinning something a reviewer cannot see by reading:
+
+- **`test-mcp-stale-bridge.js`** — the stale-bridge reading and the three surfaces that render it.
+  The failure it exists to stop is the quiet one: `checked: false` (we did not look) rendered as
+  *no stale bridge* (we looked and it is fine). Every refusal arm is driven and both consumers are
+  required to stay silent. It also asserts the `ps` argv as a fixed array and the import as
+  `execFile` and nothing else — this is the only place in the app that reads a process list, and a
+  path is not allowed to become a program.
+- **`test-next-domain-sections.js`** — the domain page's six sections, the two new folds and their
+  per-domain memory, and the busy-quiesce rule: while a hosted panel is busy, the page **patches**
+  and never re-renders, because a re-render under a live drag destroys the drop target (the real
+  v3.46.0 defect, one layer up).
+- **`test-chat-project-context.js`** — Chat reading a project. Offline end to end through a
+  test-only store seam. The two halves that matter: with no project pinned the prompt is compared
+  against **nine sha256 digests of the pre-v3.64.0 prompt**, taken by executing the previous
+  revision rather than by trusting a same-function comparison; and the injection-defence ordering
+  is asserted **and then re-asserted over the same strings deliberately mis-ordered**, so a green
+  result is about order and not about presence.
+
 ---
 
 ## How tests are classified

@@ -1,12 +1,25 @@
 # User Guide — The Curator
 
+**The Curator — the context engine**
+*Your brain. Your team's brain. Your agents' brain.*
+
+A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
+your projects' context — foundations, working state and knowledge — so any agent, in any harness,
+resumes where the last one stopped. Plain markdown, in your own repo.
+
 This guide covers everything from first-time setup to daily use. No technical background is required.
 
 ---
 
 ## Table of contents
 
+The app is three places — **ask · knowledge · context** — and the chapters follow that order.
+Nothing has been renumbered; only grouped.
+
+**ASK — what it is, getting it running, and the shell**
+
 1. [What is this app?](#1-what-is-this-app)
+1b. [Who this is for](#1b-who-this-is-for)
 1c. [Nothing here is locked to one AI, one tool, or one company](#1c-nothing-here-is-locked-to-one-ai-one-tool-or-one-company)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
@@ -16,20 +29,30 @@ This guide covers everything from first-time setup to daily use. No technical ba
 6. [Starting and quitting](#6-starting-and-quitting)
 6b. [The menu bar icon (Mac app)](#6b-the-menu-bar-icon-mac-app)
 7. [Finding your way around](#7-finding-your-way-around)
+7b. [The three places — ask, knowledge, context](#7b-the-three-places--ask-knowledge-context)
+
+**KNOWLEDGE — building a wiki and asking it questions**
+
 8. [Ingest a source](#8-ingest-a-source)
 9. [Chat with your brain](#9-chat-with-your-brain)
 10. [Manage your domains](#10-manage-your-domains)
 11. [Read a wiki page](#11-read-a-wiki-page)
 12. [See your knowledge graph in Obsidian](#12-see-your-knowledge-graph-in-obsidian)
 13. [Three ways to talk to your knowledge (Chat · Obsidian · MCP)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
+17. [Wiki Health](#17-wiki-health)
+
+**CONTEXT — what a project gives an agent, and how it travels**
+
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
-14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
+
+**REFERENCE**
+
+14. [Daily workflow](#14-daily-workflow)
 16. [Settings](#16-settings)
 16b. [Choosing your AI model](#16b-choosing-your-ai-model)
-17. [Wiki Health](#17-wiki-health)
 18. [Troubleshooting](#18-troubleshooting)
 19. [API keys, cost & free tier (read this before serious use)](#19-api-keys-cost--free-tier)
 20. [Install with a coding agent (Claude Code, Cursor, Augment, Cline)](#20-install-with-a-coding-agent)
@@ -39,7 +62,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 
 ## 1. What is this app?
 
-**The Curator is a context machine.** It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — as plain markdown files on your own computer, and carries all three across sessions, machines, AI tools and models.
+**The Curator is the context engine.** It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — as plain markdown files on your own computer, and carries all three across sessions, machines, AI tools and models.
 
 The building half is what you touch first. You feed it documents — articles, PDFs, notes — and it:
 
@@ -98,6 +121,21 @@ Nothing below is required on day one. It is the shape of a full day once all thr
 5. **Whenever you like — it all travels.** One **Sync** click pushes the wiki, the conversations and the state to your own private GitHub repository, and pulls them down on the other machine. *(→ [§15](#15-sync-across-computers))*
 
 Step 3 is the one that used to be impossible. Working state and the wiki already travelled; a project's canonical documents lived only inside a code checkout, so an agent on another machine — or in another tool, or simply started in the wrong folder — could not see them at all.
+
+### Two ways in
+
+Most people arrive for one of these. Both write the same markdown, and neither is a mode you
+switch into.
+
+| If you | Start at | And then |
+|---|---|---|
+| read a lot and want to keep what you read | [§8 Ingest a source](#8-ingest-a-source) | chat with it (§9), see it in Obsidian (§12), share it with a cohort (§15b) |
+| work across sessions with agent harnesses | [§13b Working state](#13b-working-state--carrying-context-between-sessions) | add the project's canonical documents, then make capture real (§13c) |
+| are just installing it | [§3 Installation](#3-installation) | and [§4](#4-get-your-api-key-gemini-claude-or-openrouter) for the API key |
+| want to know what it costs first | [§19 API keys, cost & free tier](#19-api-keys-cost--free-tier) | — |
+
+These are not two products. A book, a thesis or a research programme outlives any one session —
+which is the day the second becomes the first's future.
 
 ### Where to go deep
 
@@ -1201,17 +1239,23 @@ go **Home**, which is the **Domains** overview: every domain you have, its page
 and conversation counts, and its projects. Wherever you are in the app, the
 logo takes you back to the thing the app is about.
 
-The rail, top to bottom. **Every icon carries its name underneath it** — you do
-not have to hover and wait to find out what something is:
+**The rail is three places, and they are the three questions** (since v3.64.0 — it was five, with
+a dividing line, through v3.63.0). **Every icon carries its name underneath it** — you do not have
+to hover and wait to find out what something is:
 
-| Rail item | Caption | What it's for |
-|---|---|---|
-| **Chat** | Chat | Ask questions of one domain's wiki. |
-| **Ingest** | Ingest | Drop in PDFs, Markdown or text files. |
-| **Domains** | Domains | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. This is **Home**, and where a first launch opens. |
-| — a thin dividing line — | | Everything below it is the advanced half. |
-| **Shared Brain** | Shared | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Project context** | Context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
+| Rail item | Caption | The question | What it's for |
+|---|---|---|---|
+| **Chat** | Chat | *ask* | Ask questions of one domain's wiki — and, with a project pinned, of that project's context as well. |
+| **Domains** | Domains | *knowledge* | One subject at a time: its overview, its sources, its pages, its projects, its Shared Brain connections and its wiki health. This is **Home**, and where a first launch opens. |
+| **Project context** | Context | *context* | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
+
+There is **no dividing line** any more. Three places do not need grouping, and the old line said
+"everything below this is advanced" about a screen half this app's users came for.
+
+**Ingest and Shared Brain left the rail and did not leave the app.** Both are now **sections of
+the domain page** — the page that already describes the domain they act on — and each still has
+its own full-page view, one press from its section, and still restores if it was the screen you
+last had open. See [§7b](#7b-the-three-places--ask-knowledge-context).
 
 Then, at the **bottom of the rail**, separated by a gap:
 
@@ -1221,9 +1265,9 @@ Then, at the **bottom of the rail**, separated by a gap:
 | **Sync** | Sync | Back your wiki up to a private GitHub repository. |
 | **Settings** | Settings | Keys, MCP bridge, scan limits, knowledge base folder, version. |
 
-Two captions are shortened to fit the column — **Shared Brain** reads *Shared*
-and **Project context** reads *Context*. Hovering any rail icon still shows its
-full name, and that is also the name a screen reader announces.
+One caption is shortened to fit the column — **Project context** reads
+*Context*. Hovering the rail icon still shows its full name, and that is also
+the name a screen reader announces.
 
 > **The main column got wider in v3.54.0 — 900px to 1200px.** On a large
 > monitor, Ingest, Shared Brain, Project context and Settings used to sit in a
@@ -1254,6 +1298,19 @@ week in Chat, you open in Chat. Two deliberate exceptions:
 Nothing is remembered across machines; this is a per-browser preference, not
 part of your wiki.
 
+### What changed in v3.64.0, and why
+
+The rail went from five entries and a divider to **three and no divider**. The reason is the
+second audience: a person who came here to give their agents context saw a rail whose first three
+buttons were all about building a wiki, and a line telling them the part they wanted was the
+"advanced half". Meanwhile **Ingest** and **Shared Brain** both act on *one domain* and both made
+you leave the domain you were looking at to use them — so they moved onto that page, as sections
+of it, where the domain is already in front of you.
+
+Nothing was removed. Both full-page views still exist, still answer to their own addresses, and
+still restore if one of them is where you left off. What changed is where you reach for them
+first.
+
 ### What changed in v3.49.0, and why
 
 All three came from one long-time user's report, and each is worth stating
@@ -1271,11 +1328,19 @@ because you may have built habits around the old behaviour:
 The rail is slightly wider than before to hold the captions at every text size,
 including the largest.
 
-### Two things are not rail destinations
+### Four things are not rail destinations
 
 **Reading a wiki page** happens in an **overlay** that slides over the main column. You open it by clicking a `[source: …]` citation in a chat answer, or from a domain's page list. Press **Esc**, click the dimmed area outside it, or click its **✕** to close it. It never survives moving to another rail item. See [§11](#11-read-a-wiki-page).
 
 **Wiki Health** lives **inside a domain**. Open **Domains**, pick a domain, and the **Wiki health** panel is right there on that domain's page — because a health problem is always a problem with one specific wiki, not with the app. See [§17](#17-wiki-health).
+
+**Ingest** lives inside a domain too, as of v3.64.0 — the **INGEST** section of the domain page,
+where the files land. It is the same panel, not a copy of it, and the full-page Ingest view is
+still there behind the section's own door and still opens if it was the last screen you used.
+
+**Shared Brain** is the same shape: the **SHARED BRAIN** section of each domain page shows the
+connections *that* domain contributes to, and its full view — the only place you turn the feature
+on, join a cohort or set one up — is one press away. See [§7b](#7b-the-three-places--ask-knowledge-context).
 
 ### How help works in the app
 
@@ -1344,10 +1409,11 @@ If you used The Curator before this release, this is the whole map:
 | The old tab | Where it is now |
 |---|---|
 | **Chat** | **Chat** in the rail, first. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
-| **Ingest** | **Ingest** in the rail, second since v3.49.0. Unchanged otherwise. |
-| **Wiki** | Gone as a destination. Open pages from the **PAGES · THE WIKI** list, the second group on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
+| **Ingest** | Gone as a rail destination since v3.64.0. It is the **INGEST** section of each domain's page in **Domains** — the same panel, on the page that names where the file will land. The full-page view is still there, one press from the section. |
+| **Wiki** | Gone as a destination. Open pages from the **PAGES** list, the third section on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
-| **Domains** | **Domains** in the rail. Now the hub: stats, health, page list, and the create/rename/delete controls. |
+| **Domains** | **Domains** in the rail. Now the hub, and since v3.64.0 the host of everything that acts on one domain: overview, ingest, pages, projects, Shared Brain and wiki health. |
+| **Shared Brain** | Gone as a rail destination since v3.64.0. Each domain page carries a **SHARED BRAIN** section for the connections *that* domain contributes to; the full view — where you enable the feature, join a cohort or set one up — is one press away. |
 | **Sync** | **Sync**, in the rail *footer*. |
 | **Settings** | **Settings**, in the rail *footer*. |
 
@@ -1789,9 +1855,11 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 > is what teaches it: resume from state at the start of a session, save early and often, and what
 > belongs in a handoff. Install it alongside the My Curator skill — **and paste the block from Copy
 > agent instructions into the file your tool loads every session**, because a harness can hold an
-> installed skill and never reach for it. Measured, an agent on Claude Code saved in **0 of 4**
-> headless runs with the skill alone and **3 of 4** with the block, while opencode — which loads
-> skills itself — was **4 of 4 either way**
+> installed skill and never reach for it. Measured on **2026-09-10**, an agent on Claude Code saved
+> in **0 of 4** headless runs with the skill alone and **3 of 4** with the block, while opencode —
+> which loads skills itself — was **4 of 4 either way**. A second campaign on **2026-09-20** added
+> the arm the first could not run: with the adapter **hooks** installed as well, Claude Code
+> started with its context and saved in **4 of 4**
 > ([§13b](#making-sure-your-agent-actually-does-it)).
 
 > 💡 **On a Mac you can watch this without opening the app.** The optional
@@ -1813,6 +1881,104 @@ whichever machine has that checkout — or, for a document an agent wrote rather
 
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
+
+---
+
+## 7b. The three places — ask, knowledge, context
+
+**New in v3.64.0.** The rail used to be five entries with a dividing line across it. It is now
+three, and each one answers a different question:
+
+| Place | The question | What lives there |
+|---|---|---|
+| **Chat** | *ask* | One domain's wiki, and — with a project pinned — that project's context too |
+| **Domains** | *knowledge* | One subject at a time: everything that acts on a domain, on the domain's own page |
+| **Context** | *context* | One project's canonical documents, its working state, and whether your agents are actually reading and saving |
+
+![A diagram of the three-entry rail — Chat, Domains and Context, with Sync and Settings separated at the foot and no dividing line between the three — each joined to a column naming what it is for. Chat is "ask": one domain's wiki, and, with a project pinned, that project's brief, its latest handoff and its read-first documents; a reading, never a save. Domains is "knowledge": one subject at a time, with the domain page's six sections listed in order — OVERVIEW (counts, last ingest, the jump tiles), INGEST (drop a PDF, Markdown or text file), PAGES (Wiki, Context, All), PROJECTS (create, rename, brief, marker line), SHARED BRAIN (this domain's connections) and WIKI HEALTH (broken links, orphans, duplicates). INGEST and SHARED BRAIN each carry a small badge reading "also a full view". Context is the project layer: the canonical documents, the working state agents read and write, the knowledge it draws on, and the capture meter. Two lines at the foot read: one panel, two hosts — a section and its full view are the same code, so they cannot drift apart; and Sync and Settings sit at the foot of the rail, with no dividing line, because three places need no grouping.](images/curator-three-places.svg)
+
+### Why three
+
+The two things people come to The Curator for are *"turn what I read into something that
+compounds"* and *"give my agents context that outlives the session"*. The five-entry rail put
+**Ingest** and **Shared Brain** in the way of both: each acts on exactly **one domain**, and each
+made you leave the domain you were looking at in order to use it. So they moved to the page that
+already names that domain. And the dividing line — the one that said *everything below here is the
+advanced half* — was pointing at **Context**, which is the whole reason half this app's users
+installed it.
+
+**Nothing was removed.** Both full-page views still exist, still restore if one of them is where
+you left off, and are each one press from their section.
+
+### One panel, two hosts
+
+The **INGEST** section of a domain page and the full-page **Ingest** view are the *same panel* —
+one piece of code with two places to live, not two copies that can drift apart. The same is true
+of **SHARED BRAIN** and the full Shared Brain view. That is worth knowing for two reasons:
+
+- **Whatever you start in one, you see in the other.** Start a batch in the section, press through
+  to the full view, and the job is there, live. Come back, and it is still there.
+- **A behaviour you learn once holds in both.** The free estimate before any spend, the batch
+  queue that survives a closed tab, the per-connection controls that refuse to run two operations
+  at once — all of it is the behaviour described in [§8](#8-ingest-a-source) and
+  [§15b](#15b-shared-brain), wherever you meet it.
+
+One difference, and it is deliberate: **the section has no side panel.** The domain page already
+tells you which domain you are on, so a destination list beside the section would be a second
+answer to a question already answered. The full view keeps its own.
+
+### The domain page, top to bottom
+
+Open **Domains** and pick a domain. Its page is six sections, in the order the work runs in:
+
+| | Section | What it is |
+|---|---|---|
+| ① | **OVERVIEW** | The counts — pages, entities, concepts, summaries, projects — and when this domain was last written to. The counts double as jump tiles into the page list. <!-- D-PENDING --> *(Package D adds two further tiles here: SOURCES, carrying the last ingest, and SHARED, shown only when this domain has a connection. Confirm both names and what each jumps to against D's report.)* |
+| ② | **INGEST** | Drop a PDF, Markdown or text file here. Same panel as the full Ingest view. |
+| ③ | **PAGES** | Everything this domain holds that you can read, behind a three-way lens (below). |
+| ④ | **PROJECTS** | The projects in this domain: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
+| ⑤ | **SHARED BRAIN** | The cohort connections *this* domain contributes to, with their Push, Pull and Synthesize controls. |
+| ⑥ | **WIKI HEALTH** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
+
+**INGEST and SHARED BRAIN are folds, closed by default**, and each remembers whether you had it
+open — per domain, on this computer. Two exceptions worth knowing:
+
+- **On a domain with nothing ingested yet, INGEST opens by itself.** A brand-new domain's only
+  useful next action is putting something in it, and a closed fold is a worse answer to that than
+  an open one.
+- **On a `shared-*` mirror there is no INGEST section at all.** It is *absent*, not disabled — a
+  mirror is a read-only copy of a cohort's wiki, and an ingest into it has never been possible.
+  The SHARED BRAIN section on a mirror is one read-only strip naming the cohort that produced it.
+
+**WIKI HEALTH keeps its name**, because it scans the wiki and nothing else. It does not look at
+your briefs, your handoffs or your canonical documents.
+
+### The PAGES lens — Wiki · Context · All
+
+The page list used to be the wiki plus, since v3.50.0, your memory pages mixed in with it. It now
+has three chips above it:
+
+| Chip | Shows |
+|---|---|
+| **Wiki** | Entities, concepts and summaries — the compounding wiki |
+| **Context** | Standing briefs, handoffs and a project's canonical documents |
+| **All** | Both |
+
+The lens is remembered per domain, like the folds. **Every page still opens in the right-side
+reader**, whichever lens found it and whichever kind it is — a wiki page, a brief, a handoff or a
+foundation. That rule has not moved since v3.49.0 and is not going to.
+
+The reason for the split is the same one the rail change came from: a wiki page and a handoff are
+different *kinds* of thing — one accumulates, one supersedes — and a single undifferentiated list
+of 800 rows was teaching neither. See [the three kinds of context](#the-three-kinds-of-context-it-carries).
+
+### Where first run sends you
+
+The two first-run doors are unchanged. *Build a second brain* still walks you through an API key,
+a domain and a first source — its third step's button now reads **Open Domains** and opens the
+**INGEST** section for you, rather than sending you to a view that is no longer in the rail.
+*Give your agents memory* still walks domain → project → bridge → API key, with the key marked
+optional, because the context layer and the MCP bridge do not need one.
 
 ---
 
@@ -1866,12 +2032,25 @@ flowchart TD
 
 *The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
 
-1. Click **Ingest** in the rail
-2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
+1. Open **Domains**, pick your destination domain, and open its **INGEST** section (or the full-page **Ingest** view, if that is where you left off)
+2. Confirm the **destination domain**. In the section it is the domain whose page you are on; in the full-page view it comes from the picker or the **destination list** in the panel beside the rail
 3. Drag your file onto the drop zone — *"Drop a source here / or browse your files"*, with *"2 or more files at once starts a batch"* underneath — or click **browse your files** to pick one. Changed your mind? A **×** beside the file name removes it before you ingest, so you can pick a different one — including the same file again — without reloading the page.
 4. Click **Ingest**
 5. Wait. A progress bar names the current step ("AI is analyzing the document…") with a percentage and a running timer beside it. This usually takes **15–60 seconds** depending on the document length. Do not close the browser or refresh the page. See *Understanding the progress bar* below if it looks like it's stuck.
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
+
+> **Where a drop counts (v3.64.0).** A file dropped **anywhere else on the page** is still refused
+> rather than opened — dropping a file on a web page normally navigates away from the app, losing
+> whatever you had in progress. Only a file dropped **inside the INGEST section** (or on the
+> full-page view's own zone) is added to the ingest.
+> <!-- D-PENDING --> *(If package D's page-level drop forward shipped, this paragraph gains: "A
+> drop anywhere on the domain page is forwarded into the section." If it was deferred, this stands
+> as written.)*
+
+> **While something is being dragged, or an ingest or batch is running, the domain page stops
+> refreshing itself underneath the panel** and updates in place instead. That is not a nicety: a
+> re-render under a live drag replaces the very element you are dropping onto, and the drop goes
+> nowhere. It happened once, in this code, in v3.46.0.
 
 > The chat sidebar also shows a drop zone. It is **not connected** — it says so on itself, and clicking **Ingest** on it brings you here. Ingesting from chat isn't wired up yet.
 
@@ -2119,12 +2298,12 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"The AI invented N extra summary page(s) (...) — merged into the canonical summary '...' instead of creating duplicates"* | ℹ Info | The AI wrote its content for a second, differently-named summary page instead of the one the file name always produces for this source. | Merged the extra summary's content into the canonical one and never wrote the duplicate to disk. | Nothing. Re-ingesting this same source will keep updating the one canonical summary, as intended. |
 | *"Page path '...' was missing the .md extension — wrote it as '...'"* | ℹ Info | The AI returned a page path with no file extension (e.g. `concepts/some-idea` instead of `concepts/some-idea.md`). | Added the extension and wrote the page normally — previously this page would have been silently dropped. | Nothing. |
 | *"N page paths came back from the AI without the '.md' extension and were written correctly (a, b, c, …and N more)"* (v3.0.17, the grouped form — appears once 3 or more pages hit this in one ingest, see "When one line represents many pages" above) | ℹ Info | Same issue as the row above, happening on 3 or more pages in this ingest. | Same fix, applied to every affected page — grouped into one line instead of listing it N times. | Nothing. Every affected page is still listed individually, with its full path, in the change list above the warnings. |
-| *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → PAGES · THE WIKI**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
+| *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → PAGES**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
 | *"N pages had to be rewritten more briefly: the AI's first attempt at each came back unusable... (examples). These are real content, but they are briefer than the rest..."* (v3.0.17, grouped form) | ⚠ For review | Same as the row above, happening on 3 or more pages in this ingest. | Same brevity retry, applied to each page, grouped into one line. | Same as above — check the pages named as examples, or anything in the change list that reads unusually thin. |
 | *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **✨ Find duplicate pages** under QUICK MAINTENANCE. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
 | *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open **Domains → the domain → Wiki health** → expand Broken links → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
 | *"Stub page created: `<path>` — AI failed to write content for this page"* | ⚠ For review | The LLM failed to generate content for a planned page even after the page-by-page fallback and the v3.0.17 brevity retry above. | Wrote a clearly-marked stub with the LLM's planned summary preserved. | Re-ingest the source. The stub page has a `stub` tag so you can find it. |
-| *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES · THE WIKI**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
+| *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
 | *"Refused an unsafe/malformed page path '...' — nothing was written"* | ⚠ Attention | The AI returned a page path that can never be a valid wiki page (e.g. empty, a folder with no filename, or containing characters that aren't allowed). This is rare and is a hard safety refusal, not an auto-correction. | Refused to write that one page — every other page from the same ingest still wrote normally. | That one page's content was lost. Re-ingest the source; if it recurs on the same source, open an issue — this shouldn't normally happen. |
@@ -2225,7 +2404,7 @@ If you find an ingested page looks incomplete, or you've updated The Curator and
 
 **How to re-ingest a single source:**
 
-1. Open **Ingest** in the rail and pick the same domain
+1. Open the same domain's **INGEST** section in **Domains**
 2. Drop in the same file again (or browse to it) and click **Ingest**
 3. The Curator recognises it and stops before spending anything: *"**&lt;filename&gt;** has already been ingested into this domain."*
 4. Click **Re-ingest & update wiki** to proceed, or **Cancel** to back out
@@ -2258,6 +2437,35 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 >
 > **This is what makes chat work on large mature domains** (3,000+ pages, multi-megabyte wikis). Earlier versions hard-truncated wiki content at 90 KB and dropped 98% of pages on large domains; beta.11 added keyword scoring; beta.13 added entity-pivot + author metadata + intent detection.
 
+### Pin a project, and the answer reads its context too (v3.64.0)
+
+Chat's scope bar sits above the composer and has always carried one control: **which domain** the
+answer is drawn from. It now carries a second, beside it — **which project**.
+
+Pin a project and the answer also draws on that project's **standing brief**, its **latest
+handoff** and the canonical documents you marked **read first** — on top of the domain's wiki,
+never instead of it. A slice of the project's journal and any other foundation that matches your
+question come in as well, the same way the bootstrap an agent gets chooses them. Under the
+composer, the readout says what was actually used: the pages in scope, and beside them what the
+project contributed.
+
+Three things are worth knowing before you rely on it.
+
+- **It is a reading, not a save.** Chat never writes to your project. Nothing you ask here changes
+  a brief, a handoff or a document.
+- **The project's text is handed to the model as recorded data to verify, never as instructions**
+  — the same defence the MCP uses, from the same source, word for word. A handoff that happens to
+  contain a sentence shaped like an order is treated as something an earlier session wrote down,
+  not as something to obey.
+- **Two budgets, not one.** The wiki keeps the budget it always had; the project gets its own
+  separate one, so pinning a project never quietly costs you wiki pages. When something does not
+  fit, the answer says what was left out.
+
+The pin is remembered **on this computer**, per domain — it does not travel with your synced
+conversations, because a project pinned on one machine may not exist on another. If you delete the
+project, the pin clears itself. And if you pin a project this domain does not have, Chat says so
+plainly before it starts answering, rather than quietly answering from the wiki alone.
+
 ### Best practices for asking the chat questions
 
 - **Mention specific entities** when you want comprehensive coverage: *"What articles do I have by Dr. Tali Rezun?"* triggers entity pivot. *"What articles do I have?"* doesn't.
@@ -2271,7 +2479,7 @@ The message box has its controls tucked along its own bottom edge, to the left o
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
 - **Model** — pick the exact model that answers your chat messages. Each row shows its id, its price per 1M tokens as billed today, and one plain line: any warning reason first, then how fast it answered when measured. With no key saved there is nothing to choose and the picker is hidden. Full explanation of the markers: [§16b](#16b-choosing-your-ai-model).
-- There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
+- There is **no attach button** — you can't ingest a file from the chat box. Use the **INGEST** section of the domain's page in **Domains**.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
 #### The menu shows a working set, not two hundred rows
@@ -2638,7 +2846,7 @@ If you hit step 3, the fix is to compile a shorter thread (or break a sprawling 
 **Tips**
 
 - Give the conversation a focused topic before compiling. A wide-ranging chat compiles into a noisy summary.
-- Re-read the summary page after compile (**Domains → PAGES · THE WIKI**) — you can edit it directly in any text editor or in Obsidian if you want to refine it.
+- Re-read the summary page after compile (**Domains → PAGES**) — you can edit it directly in any text editor or in Obsidian if you want to refine it.
 - The conversation itself stays in the Chat sidebar after compile — compile doesn't delete it.
 
 ---
@@ -2673,18 +2881,22 @@ Above the list are **New domain** and **Use existing folder** — the second poi
 - Its display name, with an **ⓘ** mark beside it — click that for the one-line explanation of what a domain *is*; **Esc** closes it. (This used to be a generated sentence printed under the title — *"A compounding wiki of 3,336 pages — 600 entities…"* — and it was removed in v3.50.0 because every figure in it is one of the OVERVIEW figures below, said twice. What was left was an explanation, and explanations go behind the mark.) If the domain is a mirror, a **read-only mirror** pill sits here too — that one stays in the open, because it is a data-loss notice rather than an explanation.
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 
-Then **four sections**, each in its own card under its own heading, in this order:
+Then **six sections** (four through v3.63.0), each in its own card under its own heading, in this
+order — the order the work runs in. [§7b](#7b-the-three-places--ask-knowledge-context) has the
+shape of the whole page; this is what each section holds:
 
 | Section | What it is |
 |---|---|
 | **OVERVIEW** | Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *New in v3.58.0:* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. The tabs are unchanged |
-| **PAGES · THE WIKI** | The page list itself, **open**, with its filter box and its All / Entities / Concepts / Summaries / **Memory** tabs. See [§11](#11-read-a-wiki-page) |
+| **INGEST** *(v3.64.0)* | The ingest panel, on the page that names where the file will land. A **closed fold**, remembered per domain — except on a domain with nothing ingested yet, where it opens by itself. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
+| **PAGES** | The page list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and — new in v3.64.0 — a **Wiki · Context · All** lens above them. See [§11](#11-read-a-wiki-page) |
 | **PROJECTS IN THIS DOMAIN** | See just below |
-| **WIKI HEALTH** | See [§17](#17-wiki-health) |
+| **SHARED BRAIN** *(v3.64.0)* | The cohort connections *this* domain contributes to, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. A **closed fold**, remembered per domain. Turning the feature on, joining a cohort and setting one up all still happen in the full Shared Brain view, one press away. See [§15b](#15b-shared-brain) |
+| **WIKI HEALTH** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
 
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of two domains, each with a coloured identity dot, its name and its page count — Articles 3,445 pages (with a small amber dot on the right marking open health issues) and Projects 767 pages and selected. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 4 — the PAGES tile sits inside its own violet-bordered box, because it is also the button for the "All" filter and that filter is the one currently selected. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 46; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ and no loose sentence beneath the heading, four project rows: "field-notes", "projects" (labelled "the domain's own project — it cannot be renamed or deleted"), "lumina" and "curator", each with a "Standing brief" pill, a "last save … · newest work-stream …" line, and the buttons "Copy marker line" and "Copy agent instructions" — each of the two now carrying its own ⓘ mark beside it.](images/curator-domains.png)
 
-*The four sections in order, on a real domain: the counts, then the wiki itself, then the projects built with it. **Wiki health** is the fourth and sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
+*The sections in order, on a real domain, photographed before v3.64.0 added INGEST and SHARED BRAIN as folds: the counts, then the wiki itself, then the projects built with it. **Wiki health** sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -2799,13 +3011,19 @@ Reading a page is not a place you navigate to — it's an **overlay** that opens
 
 **From a chat answer.** Click any `[source: …]` citation. The page the answer drew from opens immediately, so you can check the claim without losing the conversation underneath.
 
-**From a domain's page list.** Open **Domains** and pick a domain. The list is under
-**PAGES · THE WIKI**, directly beneath the stat cards, and it is already open — before v3.49.0 it
-sat at the bottom of the page behind a **Browse pages** button. You get:
+**From a domain's page list.** Open **Domains** and pick a domain. The list is under **PAGES**,
+and it is already open — before v3.49.0 it sat at the bottom of the page behind a **Browse pages**
+button. You get:
 
+- a **Wiki · Context · All** lens above the list (new in v3.64.0) — **Wiki** is entities, concepts
+  and summaries; **Context** is standing briefs, handoffs and a project's canonical documents;
+  **All** is both. The choice is remembered per domain
 - a **Filter by name…** box that narrows the list as you type
 - tabs — **All · Entities · Concepts · Summaries · Memory** — each with its own count (**Memory** lists standing briefs and handoffs and is not included in **All**, see [§10](#memory-pages-in-the-list))
 - one row per page, colour-dotted by type, with its full path in monospace
+
+**Every one of them opens in the same reader** — a wiki page, a standing brief, a handoff or a
+canonical document. There is no second way to read a page in this app, and that is deliberate.
 
 Click a row to open it. Very large lists render 150 rows at a time with a **Show 150 more** row at the bottom that appends the next 150 until every match is shown; *Showing N of M* tracks it.
 
@@ -2929,7 +3147,7 @@ If you already had wiki pages before this update, those older files do not yet h
 
 **To update existing pages, simply re-ingest the same source file:**
 
-1. Open **Ingest** in the rail
+1. Open **Domains**, pick the domain, and open its **INGEST** section
 2. Drop the same original document in again (PDF, txt, etc.)
 3. The app detects it has been ingested before, asks, and — on **Re-ingest & update wiki** — *updates* the existing wiki pages rather than duplicating them
 
@@ -3009,6 +3227,19 @@ You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings �
 
 Everything stays local — the MCP server only sees your wiki folder, and writes go through the same safety pipeline (path-traversal guards, hard caps, idempotency, audit log) the app uses.
 
+**A green self-test does not prove your client is on the current version (v3.64.0).** The
+self-test spawns a *new* bridge; it cannot see the one your client already has open. An MCP client
+keeps its bridge process alive until the client itself is restarted, so a bridge started before an
+update carries on serving the tools it was launched with — on one machine here, a bridge ran for
+two days across five updates, offering 22 tools while the files on disk offered 24. The **MCP
+bridge** section now reports any such process it finds, with its age and the one thing that fixes
+it: **restart the app that launched it — usually Claude Desktop.** Restarting The Curator does not
+help, and nothing in The Curator can restart your client for you; the process belongs to it.
+
+Where the reading cannot be taken at all — a machine that is not a Mac, or no process listing
+available — the app says **the reading was not taken**, with the reason. It never renders that as
+"no stale bridge". `my-curator doctor` prints the same reading in a terminal.
+
 **Two setup-wizard improvements in v3.6.1:**
 
 - **If your `claude_desktop_config.json` has a JSON syntax error, the wizard now stops instead of offering to overwrite it.** Previously the "your file after" preview showed a config containing *only* My Curator — so a user with three other MCP servers and one stray comma was shown a merged preview that, if pasted, would have deleted them. The wizard now says the file can't be read, tells you to fix the syntax error first, and still gives you the entry-only snippet to add by hand.
@@ -3039,7 +3270,7 @@ Everything stays local — the MCP server only sees your wiki folder, and writes
 
 All three read the same `domains/` folder. Nothing to sync between them. The intended daily flow:
 
-1. Feed the app new documents (**Ingest** in the rail)
+1. Feed the app new documents (the **INGEST** section of a domain's page)
 2. Quick lookups → built-in **Chat**
 3. Visual exploration → **Obsidian**
 4. Deep research / synthesis across years of notes → frontier model via **My Curator MCP**
@@ -3722,15 +3953,23 @@ same files, from a shell, **with the app closed, no network and no credential**.
 | Command | What it does |
 |---|---|
 | `my-curator context` | Prints this project's bootstrap — the brief, the latest handoff, your read-first documents — to standard output. `--json` gives you the raw envelope |
-| `my-curator save` | Reads a complete handoff as JSON on standard input and writes it. It never invents one |
+| `my-curator save` | Reads a complete handoff as JSON on standard input, or from a file with `-f`, and writes it. It never invents one |
 | `my-curator doctor` | Prints what is wired on this machine, and writes nothing. Start here when something is not working |
 | `my-curator resolve` | Prints which project this directory belongs to, and nothing else |
 | `my-curator install-hooks <harness>` | Writes hook configuration for that harness. Nothing else |
 | `my-curator hook <event>` | What an installed hook actually runs. You never type this yourself |
 
+**Two short flags, and no scheme behind them (v3.64.0).** `-f` means `--file` and `-h` means
+`--help`; nothing else has a short form, and a bare `-` still means standard input. Before v3.64.0
+the parser read `--` flags only, so `my-curator save -f handoff.json` put the flag among the
+positional arguments and then waited on standard input **forever** — a hang rather than a usage
+error, which is why the two are now handled at the parser.
+
 **Installing it.** It ships in the repository, so a source install already has it at
 `bin/curator.js`. To get the short command on your `PATH`, run `npm link` (or `npm install -g`) in
-your Curator folder. The binary is called **`my-curator`**, with one letter of explanation owed:
+your Curator folder. **The downloadable Mac app does not carry it** — the app ships the bridge and
+no command-line launcher, so `install-hooks` runs from a checkout or an npm install; `doctor` says
+so in one line when it finds itself inside the app with no `my-curator` on your `PATH`. The binary is called **`my-curator`**, with one letter of explanation owed:
 
 > **Why not just `curator`?** Because that name is already taken by something important. Elastic's
 > `elasticsearch-curator` is installed on a great many servers — on Debian it *is* `/usr/bin/curator`
@@ -3755,13 +3994,24 @@ $ my-curator doctor
   installed and do nothing** (see the table below);
 - **which instruction file this harness will actually read**, and whether your agent-instructions
   block is in it — the only practical way to catch the two traps in the next section;
-- the capture meter, in the terminal.
+- the capture meter, in the terminal;
+- **any stale bridge process** this install started that is older than the code on disk (v3.64.0);
+- **whether this computer has minted two identities** (v3.64.0) — see just below.
+
+**One computer, two machine names — and why that is normal on a developer's Mac.** A git checkout
+and the installed `.app` resolve different user-data folders by design, so each keeps its own
+install id and therefore its own machine name in `state/<scope>/<machine>/`. Handoffs saved through
+the bridge and through the command then land in **different folders** and do not supersede one
+another; asking for the latest work-stream answers with whichever was written last. `doctor` prints
+both ids and both usage logs when they differ, and readers take the **union** of the logs, so a save
+made through one install is visible to the other. Nothing is merged and nothing is renamed on your
+behalf — if you only ever use one of the two, you will never see this.
 
 ### Hooks: what they can do on your harness, and what they cannot
 
-A hook is a small command your agent tool runs at a fixed moment. Ten of the thirteen harnesses
-researched for this release have some hook mechanism — but they disagree about almost everything,
-and **three of them accept a hook that never fires**. So the honest answer is a table rather than a
+A hook is a small command your agent tool runs at a fixed moment. Eleven of the fourteen harnesses
+in the table below have some hook mechanism — but they disagree about almost everything, and
+**three of them accept a hook that never fires**. So the honest answer is a table rather than a
 promise. Four words describe every row:
 
 | Word | Means |
@@ -3773,7 +4023,7 @@ promise. Four words describe every row:
 
 | Harness | Hooks | What `install-hooks` writes | Measured? |
 |---|---|---|---|
-| **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | not measured |
+| **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | **measured 2026-09-20 — headless `-p` only** |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` — it *submits a message* rather than blocking, which is gentler | not measured |
 | **Codex CLI** | unverified | `PreCompact` (the one pre-compaction hook that can actually block) · `Stop`. **Never `SessionEnd`** — it is capped at 3 seconds, which is not long enough to finish a save | not measured |
 | **GitHub Copilot CLI** | unverified | Refused by default — the events exist and their shapes are unmeasured | not measured |
@@ -3787,11 +4037,34 @@ promise. Four words describe every row:
 | **Claude Desktop** | none | Nothing | not measured |
 | **Aider** | none | Nothing — **it has no MCP client at all.** Your option is a shell wrapper: `my-curator context` before, `my-curator save` after | not measured |
 
-**Every row says *not measured*, and that is the truth rather than modesty.** No hook written by
-this release has yet been run by a real harness end to end. The protocol that would change a row —
-four runs per arm, one fixed task that never mentions saving, an isolated fixture — is fixed and
-written down (`scripts/measure-harness.js`), and until it has been run the product says so
-everywhere the question comes up. **A harness with no measurement is never described as working.**
+**Thirteen of the fourteen rows say *not measured*, and that is the truth rather than modesty.**
+The protocol that would change a row — four runs per arm, one fixed task that never mentions
+saving — is fixed and written down (`scripts/measure-harness.js`), and until it has been run the
+product says so everywhere the question comes up. **A harness with no measurement is never
+described as working.**
+
+**The one row that has been run — Claude Code, 2026-09-20 — came back mixed, and the mixture is
+the useful part.** Four runs per arm, Claude Code CLI 2.1.275 in headless `-p` mode on
+`claude-haiku-4-5`, one neutral task that never mentioned saving:
+
+- **`SessionStart` works.** In all four runs of the full arm (skill + instructions block + hooks)
+  the hook injected the standing brief, the last handoff and the journal before the agent's first
+  turn, and all four saved a handoff before stopping.
+- **`Stop` never fired in that mode** — not once across six headless sessions. If you drive Claude
+  Code with `claude -p` in a script, the end-of-session ask does not reach you. `PreCompact` did
+  fire under `-p --resume "/compact"`.
+- **Without the hook, the agent mostly did not manage to call the tool at all.** In five of the
+  six attempts across the two hook-free arms it found `save_working_state` by name and then ran
+  something that looked like a shell command named after it, instead of calling it — a fake
+  `mcp call …`, a shell function wrapping the tool's own name, or a JSON payload written to a file
+  and never sent. One attempt called the tool properly. The skill and the block were present in
+  every one of those runs.
+
+Two limits of the instrument, so the counts are not over-read: a session that never lands a real
+tool call writes **no session line at all**, so a failed attempt is indistinguishable from silence;
+and the context a hook injects arrives before the bridge is reachable, so a hook-fed read is
+**invisible** to the usage log. Both are why the full arm reads *measured-partial* rather than
+*measured-yes*.
 
 **What a hook will never do**, on any harness: write to `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or
 your Cursor rules — that paste stays yours — register an MCP server, touch an enterprise or managed
@@ -3854,7 +4127,10 @@ as the other.
 **What the meter cannot see, stated on the screen and not only here.** It counts what went through
 the **bridge**. A save made with `my-curator save`, or by an agent that never connected, leaves no
 line — so it neither helps nor hurts the figures, and a session that never opened the bridge is not
-in the denominator either. The **harness** column is **self-reported** by the client and nothing in
+in the denominator either. And a session that **opened** the bridge but never landed a real tool
+call still writes nothing but its session line, which is exactly what the 2026-09-20 measurement
+ran into: one whole arm recorded zero sessions not because four sessions failed to save, but
+because no session ever reached the bridge at all. The **harness** column is **self-reported** by the client and nothing in
 The Curator branches on it: it labels a row and does nothing else. Calls made before v3.63.0 have no
 session id, so they are counted separately (*"412 lines predate session ids and are not counted"*)
 rather than being invented into sessions. And the app's own *Test all 24 tools* run is excluded

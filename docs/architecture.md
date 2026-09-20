@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Curator is a context machine: it builds and keeps the three kinds of context a piece of work runs on — compounded knowledge (the wiki, which accumulates), volatile state (the standing brief, handoff and journal, which supersede) and canonical documents (foundations, replaced whole and read verbatim) — and carries all three across sessions, machines, harnesses and models. Concretely it is a local Node.js web application. It has no external database — all of that is plain markdown files on disk. An LLM is the only external dependency at runtime, reached through one of three providers — Google Gemini, Anthropic Claude, or OpenRouter — selected by which API key is configured.
+The Curator is the context engine: it builds and keeps the three kinds of context a piece of work runs on — compounded knowledge (the wiki, which accumulates), volatile state (the standing brief, handoff and journal, which supersede) and canonical documents (foundations, replaced whole and read verbatim) — and carries all three across sessions, machines, harnesses and models. Concretely it is a local Node.js web application. It has no external database — all of that is plain markdown files on disk. An LLM is the only external dependency at runtime, reached through one of three providers — Google Gemini, Anthropic Claude, or OpenRouter — selected by which API key is configured.
 
 ### Core design philosophy: Curation, not retrieval
 
@@ -179,7 +179,7 @@ It takes **no imports** and touches no `document`/`window`, so — like `shared/
 
 It deliberately does **not** call `fetch`, inspect `res.status`/`res.headers`, or fall back to `res.json()` for a non-SSE error response — every real caller does something structurally different with that case, so the decision stays at the call site. Its header carries an explicit NOT-ENFORCED list: no multi-line `data:` continuation, no `event:`/`id:`/`retry:` support, an unparseable `data:` payload silently skipped, and no trailing no-argument `decoder.decode()` flush. Each is safe **only** because every producer in this codebase writes `data: ${JSON.stringify(x)}\n\n`, whose payload can never contain a raw newline. See [chat-streaming.md](chat-streaming.md#36-reading-frames).
 
-### Cross-view navigation: two self-clearing handoffs in the shell
+### Cross-view navigation: three self-clearing handoffs in the shell
 
 A view that sends you to **another** view usually has to say something about *what* to open there,
 and a bare `navigate()` cannot. `src/public/next/app.js` answers that with a producer/consumer pair
@@ -188,11 +188,15 @@ reads it **once and clears it**, so a stale request can never resurface on a lat
 
 | Pair | Producer → consumer | What it fixes |
 |---|---|---|
-| `requestChatScope(slug)` → `consumeChatScopeRequest()` | Domains and Project context → `views/chat.js`, consumed once in its `onEnter` | *Ask this domain* lands in Chat scoped to that domain rather than to whatever Chat last had |
+| `requestChatScope(slug, opts?)` → `consumeChatScopeRequest()` | Domains and Project context → `views/chat.js`, consumed once in its `onEnter` | *Ask this domain* lands in Chat scoped to that domain rather than to whatever Chat last had. Since v3.64.0 `opts` may also carry a `project` and, only alongside one, a `scope`, so Project context can hand Chat the project the user was reading |
 | **`requestDomain(slug, opts?)` → `consumeDomainRequest()`** (v3.62.0) | Project context → `views/domains.js`, consumed in `onEnter` **before** `loadDomainsList` resolves `activeSlug` | *Open in Domains* lands on the named domain. Without it, `state.activeSlug` falls back to `state.domains[0]`, so the jump from a project in domain **B** would land silently on whatever Domains last had |
 
+| **`requestDomainFold(foldId)` → `consumeDomainFoldRequest()`** (v3.64.0) | First-run guidance → `views/domains.js` | *Open Domains* opens the **INGEST** section, rather than landing on the page with the section shut. It is a request and not a click because clicking a `<summary>` **toggles**: the fold is remembered per domain, so a user who already had it open would have it clicked shut by the affordance meant to open it. `ADD_SOURCES_FOLD` is exported as a constant so the producer and the consumer cannot spell the id differently |
+
 The ordering on the second one is the whole of it: consumed *after* `loadDomainsList` resolved, the
-request would be overwritten by the fallback it exists to prevent.
+request would be overwritten by the fallback it exists to prevent. All three degrade the same way:
+a request nobody consumes leaves the user on the page they asked for, which is most of what the
+request was trying to reach.
 
 `goToChatScoped(slug)` — the wrapper that pairs `requestChatScope` with `navigate('chat')` and
 guards the no-slug case — was lifted out of `views/domains.js` into
@@ -232,9 +236,10 @@ the-curator/
 │   ├── cli/                    The command's subcommands (v3.63.0) — a SECOND LOCAL CLIENT of the
 │   │   │                       store, never an Express caller. src/routes/** imports neither this
 │   │   │                       directory nor bin/.
-│   │   ├── resolve.js          argv, output discipline, exit codes, the one project resolver
+│   │   ├── resolve.js          argv (two short flags: -f = --file, -h = --help, and no others),
+│   │   │                       output discipline, exit codes, the one project resolver
 │   │   ├── context.js          `my-curator context` — the bootstrap to stdout
-│   │   ├── save.js             `my-curator save` — a complete handoff from stdin
+│   │   ├── save.js             `my-curator save` — a complete handoff from stdin (a bare `-`) or -f
 │   │   ├── hook.js             `my-curator hook` — the capture policy and the per-harness envelopes
 │   │   ├── install-hooks.js    `my-curator install-hooks` — hook CONFIG only, never an instruction file
 │   │   └── doctor.js           `my-curator doctor` — prints, writes nothing, exits 0 always
@@ -254,12 +259,17 @@ the-curator/
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
+│   │   ├── mcp-bridge-status.js Read-only detection of bridge processes this install started
+│   │   │                       (v3.64.0): `ps` over the fixed argv, no shell, and one is STALE
+│   │   │                       when it began before the code on disk last changed. Any failure
+│   │   │                       answers checked: false with a reason — never "none found".
 │   │   ├── mcp-clients.js      clientInfo.name → a canonical harness id, MANY-to-one, allow-listed
 │   │   │                       (v3.63.0). PURE DATA, imports nothing — it sits on the MCP child's
 │   │   │                       import graph. A LABEL for a report: nothing branches on it.
 │   │   ├── harness-adapters.js The per-harness table (v3.63.0) — 14 entries, each fact carrying its
-│   │   │                       own source + verified, hooks.state in four words, measured: null on
-│   │   │                       every row. Pure data + pure functions, no Node builtin, so a view
+│   │   │                       own source + verified, hooks.state in four words. `measured` is
+│   │   │                       null on thirteen rows and carries a real result on claude-code
+│   │   │                       (v3.64.0). Pure data + pure functions, no Node builtin, so a view
 │   │   │                       can import it.
 │   │   ├── github-read-client.js  READ-ONLY GitHub plumbing (v3.63.0), extracted from the Shared
 │   │   │                       Brain adapter so there is one implementation, not two. GET only; the
@@ -303,7 +313,14 @@ the-curator/
 │   │   │                       surface (three brief templates already exist with no drift guard),
 │   │   │                       and a fifth copy of a skeleton is not how this one is added.
 │   │   │                       Imported only by working-state.js; never reaches the LLM.
-│   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
+│   │   ├── context-framing.js  The injection-defence framing the memory layer's prose carries —
+│   │   │                       CAVEAT_BODY and its siblings, briefAuthorityNote,
+│   │   │                       composeContentIsData (v3.64.0). Moved BYTE-IDENTICAL out of
+│   │   │                       mcp/tools/working-state.js, which imports it back, so Chat and
+│   │   │                       the MCP tool cannot drift apart. Zero imports of its own; it is
+│   │   │                       on the MCP child's import graph, so it must never write stdout.
+│   │   ├── chat.js             Chat pipeline (multi-turn, persistent; since v3.64.0 it may also
+│   │   │                       read ONE project's context, in-process, within its own budget)
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
 │   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
@@ -325,9 +342,12 @@ the-curator/
 │           │                    byte-identity guard that pinned them to it (test-next-ingest-logic-drift.js)
 │           │                    markdown.js — the ONE Markdown renderer of this shell, used by chat.js + domains.js
 │           │                    (v3.8.0; guarded by scripts/test-next-markdown.js — see above)
-│           └── views/          One file + one same-named CSS file per rail item (chat, domains, ingest,
-│                                memory, settings, shared, sync — all real; memory is READ-ONLY over the
-│                                working-state store, which agents write over MCP — see routes/memory.js).
+│           └── views/          One file + one same-named CSS file per registered VIEW (chat, domains,
+│                                ingest, memory, settings, shared, sync — all real). Since v3.64.0 only
+│                                three of them are rail entries: ingest and shared are HOSTED_VIEWS,
+│                                mounted as sections of the domain page and still reachable as full
+│                                views. memory is READ-ONLY over the working-state store, which agents
+│                                write over MCP — see routes/memory.js.
 │                                views/README.md documents the contract for adding a new one.
 ├── mcp/                        My Curator MCP — read+write surface to the wiki for Claude Desktop / any MCP client
 │   ├── server.js               stdio entry point (spawned as child process by the MCP client)
@@ -2221,6 +2241,18 @@ src/cli/doctor.js       PRINTS, writes nothing, exits 0 ALWAYS — a doctor
 **Exit codes:** `0` fine · `1` the **store** refused (its own reason and message, verbatim) · `2` a
 usage error, an ambiguous project, **and** the `stop` hook's deliberate block.
 
+**Short flags: exactly two, and they are not the start of a general scheme.** `SHORT_FLAGS` in
+`src/cli/resolve.js` maps `-f` to `--file` and `-h` to `--help`, and nothing else; a bare `-` still
+means standard input. Before v3.64.0 the parser recognised `--` flags only, so `my-curator save -f
+handoff.json` put `-f` and the filename among the positionals and then **waited on stdin forever**
+— the failure looked like a hang rather than a usage error, which is why the two are now accepted
+at the parser rather than at one subcommand.
+
+**The `.app` ships no CLI launcher.** The installed bundle carries `bin/my-curator-mcp` — the
+bridge — and no `my-curator`, so `install-hooks` runs from a git checkout or an npm install, never
+from the app alone. `doctor` says so in one line when it finds itself in bundle mode with no
+`my-curator` on `PATH`, rather than reporting a hook target it has no way to write.
+
 **A CLI read never touches the usage log.** A read here opens no bridge, so recording one would make
 the honesty meter count sessions that never existed — the instrument measuring itself.
 
@@ -2239,9 +2271,12 @@ collapsing any two would make the table lie in the user's favour: `verified`, `u
 `present-useless` (OpenCode and Kilo take TypeScript plugins, not shell commands; Windsurf has twelve
 hooks and not one of them is a stop, session-end or pre-compaction hook) and `none`.
 
-**`measured` is `null` on every entry in this release, and that is the point.** The protocol in
-`scripts/measure-harness.js` has not been run, so nothing here may imply reach; a harness with no
-measurement row renders as **not measured** everywhere it appears.
+**`measured` is `null` on thirteen of the fourteen entries, and that is the point.** The protocol
+in `scripts/measure-harness.js` was run for the first time on 2026-09-20, against Claude Code, and
+that one row carries the result — date, harness version, model, `n`, the protocol sentence, a count
+per arm and a verdict word, every figure a COUNT out of a stated `n` and never a percentage. Every
+other harness still renders as **not measured** everywhere it appears, and `measured: null` is what
+makes that true without a second flag.
 
 It never composes the bridge's launch line — `mcpEntryFor(id, launch)` takes `{command, args}` from
 `buildCuratorEntry()`, **the** one launch line — and it never hand-writes prose a model reads:
@@ -2680,10 +2715,45 @@ normalizeChatModel(provider, model) → '<id>' | null
   // provider having a key SAVED IN SETTINGS (getApiKeys, never getEffectiveKey).
   // Anything else → null → the provider's default model. Never throws.
 
+loadProjectContext(domain, project, opts = {})   // v3.64.0
+  // opts: { scope, queryContext, getProjectContext (TEST-ONLY seam) }
+  → { ok: true, block, summary } | { ok: false, reason, message }
+
 listConversations(domain)   → Promise<ConversationMeta[]>
 readConversation(domain, id) → Promise<Conversation | null>
 deleteConversation(domain, id) → Promise<void>
 ```
+
+**Chat may read ONE project's context, in-process (v3.64.0).** With a project pinned,
+`sendMessage` calls `getProjectContext(domain, project, …)` from `src/brain/working-state.js`
+**directly** — the same bootstrap the MCP's `get_project_context` serves, not a second retrieval
+path and not an HTTP hop back into the app. The envelope is rendered into the prompt in the MCP's
+own order — `content_is_data` → the brief (its `authority_note` first) → the latest handoff → the
+journal → the foundations — because that order is load-bearing: the framing has to be read before
+the text it frames.
+
+- **Two budgets, named apart and never competing.** The wiki budgets are untouched
+  (`CONTENT_BUDGET_CHARS` 60,000 · `CATALOGUE_BUDGET_CHARS` 12,000 · `MAX_PAGES_LOADED` 50). The
+  project's is new, separate and additive: `PROJECT_CONTEXT_BUDGET_CHARS` = **40,000**, passed to
+  the store as `maxBytes`. With no project pinned the prompt is byte-identical to v3.63.0's.
+- **What is always read, and what is selected.** Always: the standing brief with its authority
+  note, the latest handoff of the chosen scope (or `latest`), and every **read-first** foundation
+  in reading order. Then, by keyword match against the same query context `buildPrompt` already
+  composes: other foundations and a bounded slice of the journal — the bootstrap's own selection
+  rule, not a second one.
+- **There can be a second store call, and only in one case.** When the owner has flagged read-first
+  documents, the store sends those bodies and leaves the rest as index rows; the keyword pass then
+  names the ones it wants and fetches them with the store's own `slugs` door. With nothing flagged
+  the bodies already arrived and there is one call — today's shape for every existing project.
+- **It is a read, and only a read.** No Express route reaches a memory-layer write, and neither
+  `src/routes/chat.js` nor `src/brain/chat.js` imports one. The pin is a reading, not a save.
+- **The injection defence travels with the text.** `CAVEAT_BODY` and its siblings live in
+  `src/brain/context-framing.js` (v3.64.0), moved **byte-identical** out of
+  `mcp/tools/working-state.js`, which imports them back. One string, two consumers: a weakening in
+  transit is impossible because there is nothing to weaken separately.
+- **A bad pin is refused before the stream opens** — `400 invalid_project` /
+  `400 reserved_project` / `400 project_not_found` — never a silently wiki-only answer that looks
+  like a good one.
 
 ### `src/routes/config.js`
 
@@ -2759,7 +2829,7 @@ Not because the wiki fits in one context window — a mature domain long ago sto
 Domain context shapes how the LLM categorises knowledge. An AI/Tech wiki uses different entity types and concept hierarchies than a Personal Growth wiki. Per-domain schemas give each wiki a specialist, not a generalist.
 
 **Why vanilla JS instead of React/Vue?**
-The UI is a left rail (Chat · Ingest · Domains · Project context · Shared Brain, with Sync and Settings in the footer — `NAV_VIEWS` in `src/public/next/app.js`, with the divider drawn after Domains); Wiki is an Esc-dismissible reader overlay and Health is a panel inside a domain. The pre-redesign frontend (deleted in v3.41.0) had the original seven tabs (Chat · Ingest · Wiki · Health · Domains · Sync · Settings) and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
+The UI is a left rail of three places — Chat · Domains · Project context, read as *ask · knowledge · context*, with Sync and Settings in the footer (`NAV_VIEWS` in `src/public/next/app.js`; there is no divider). Ingest and Shared Brain are `HOSTED_VIEWS`: still registered, still navigable and still restorable from the stored last view, but reached as sections of the domain page rather than from the rail. Wiki is an Esc-dismissible reader overlay and Health is a panel inside a domain. The pre-redesign frontend (deleted in v3.41.0) had the original seven tabs (Chat · Ingest · Wiki · Health · Domains · Sync · Settings) and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
 
 **Why JSON mode for ingest but not chat?**
 Ingest requires structured output (pages + index as a JSON object) that must be machine-parsed. Chat returns free-form markdown prose; JSON mode would constrain the writing style unnecessarily.

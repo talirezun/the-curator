@@ -90,7 +90,7 @@ basics** — they are first because they must not regress, not because they are 
 | K2 | 1 | Point the app at a wiki folder that already exists, or create the first domain | shipped (`views/domains.js`) | built |
 | K3 | 1 | Ingest one source; read the created / updated / unchanged split | shipped (`views/ingest.js`) | built |
 | K4 | 1 | Drop 2+ files: a batch, a free estimate before the spend, an optional USD cap, sequential execution | shipped | built |
-| K5 | 1 | An ingest finishes while they are on another view — **nothing tells them** | v3.62.0 (rail-level badge) | planned |
+| K5 | 1 | An ingest finishes while they are on another view — **nothing tells them** | v3.65.0 (there is no Ingest rail button left to badge — it moves to the Domains entry) | planned |
 | K6 | 1 | They drop a `.md` they wanted kept verbatim; it is billed, atomized, and the original lands in gitignored `raw/` | v3.61.0 pointer note · v3.62.0 the full ingest-or-keep fork | in flight / designed |
 | K7 | 1 | Browse a domain, filter the page list from the OVERVIEW tiles, open a page in the reader, follow a backlink | shipped | built |
 | K8 | 1 | Ask a question and get an answer citing their own pages, with a per-answer cost and a reasoning breakdown | shipped (v3.58.0) | built |
@@ -121,9 +121,9 @@ basics** — they are first because they must not regress, not because they are 
 | B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.65.0 (promote-to-foundation) | planned |
 | B17 | 2 | A mirror has gone stale, or its checkout is not on this machine: the state is visible and Refresh is withheld with its reason | v3.59.0 / v3.60.0 | built |
 | B18 | 2 | Their first minute tells them to get an API key the memory layer does not need | v3.62.0 | planned |
-| B19 | 2 | Their unit of work is five clicks deep, below an "advanced" divider, in a view that cannot create it | v3.61.0 pointer · v3.62.0 rail order + shared create panel | in flight / planned |
+| B19 | 2 | Their unit of work is five clicks deep, below an "advanced" divider, in a view that cannot create it | v3.61.0 pointer · v3.62.0 rail order · **v3.64.0 the divider is gone and Context is one of three** | built |
 | B20 | 2 | Plan a project in Chat with no repo and no agent, then save one answer as a canonical document | v3.65.0 | designed |
-| B21 | 2 | A Chat conversation that starts from the project's canonical documents instead of a keyword search over them | v3.64.0 | designed |
+| B21 | 2 | A Chat conversation that starts from the project's canonical documents instead of a keyword search over them | v3.64.0 | built |
 | B22 | 2 | Extend an existing mirror with a fifth document — Add and Refresh are not mutually exclusive | v3.61.0 | in flight |
 | B23 | 2 | The domain's **own** project (which cannot be renamed or deleted) gets foundations like any other | v3.61.0 | in flight |
 | B24 | 2 | The menu bar icon marks a project whose mirrored documents are behind their source | v3.60.0 | built |
@@ -361,7 +361,81 @@ the neutral command ships as part of this repository or beside it (§F D15).
 
 ---
 
-### v3.64.0 — the shell for two audiences, the docs and the website
+### v3.64.0 — the shell for two audiences, the docs and the website *(built — 2026-09-20)*
+
+**Status: built.** This section was written on 2026-09-19 as a plan and is kept below as the
+record of what was decided. What follows first is what **shipped**, with numbers, and what moved
+to v3.65.0. The plan's own wording after this block is unedited except where a decision was taken
+differently — those are named here, not silently rewritten.
+
+**What shipped.**
+
+| | Shipped | The number that says so |
+|---|---|---|
+| **(a)** | Positioning: *"The Curator — the context engine"* above the unchanged tagline. "Engine" replaces the old noun in every product claim | Zero occurrences of the retired noun in `README.md`, `docs/**` and `public-knowledge/**`; the two surviving occurrences are historical `v3.59.0` changelog rows, kept byte-for-byte |
+| **(b)** | The rail is **three** entries — Chat · Domains · Context — with **no divider**. `HOSTED_VIEWS` keeps `ingest` and `shared` registered, navigable and restorable | `NAV_VIEWS.length === 3`, `RAIL_DIVIDER_AFTER === null`, `ALL_VIEWS` still set-equal to `Object.keys(VIEW_META)` (7) |
+| **(c)** | The domain page hosts **six** sections. INGEST and SHARED BRAIN are closed folds, remembered per domain, and each is one panel with two hosts rather than a copy | No function in `views/ingest.js` or `views/shared.js` renamed or moved; the two unowned tripwire suites green, untouched |
+| **(d)** | Chat reads one project in-process, within its own **40,000-character** budget, on top of the wiki's unchanged 60,000 / 12,000 / 50 | Nine sha256 digests of the pre-v3.64.0 prompt reproduced exactly with no project pinned |
+| **(e)** | First run unchanged, with the knowledge door's third step now opening the INGEST section rather than a rail entry that no longer exists | `requestDomainFold` / `ADD_SOURCES_FOLD`, the third self-clearing shell handoff |
+| **(f)** | The docs spine — a regrouped table of contents, a routing table in chapter 1, and a new chapter for the three places | **Exactly one** `## ` heading added to `docs/user-guide.md` (`7b`); zero removed, zero renumbered |
+| **(i)** | **The measurement campaign ran.** Claude Code, 2026-09-20, three arms, N = 4 | Below |
+
+**(i), as run.** Claude Code CLI 2.1.275, headless `-p`, `claude-haiku-4-5-20251001`, API-key auth,
+one neutral task per run that never mentioned saving or The Curator, on a throwaway fixture project
+in the real store. Verdict words, from the instrument's own output:
+
+| Arm | Sessions | Read at start | Saved before stopping | Verdict |
+|---|---|---|---|---|
+| **C** — skill + block + hooks | 4 | 1 via a tool call, **4 via the `SessionStart` hook** | 4 | `measured-partial` |
+| **B** — skill + block, no hooks | 0 | 0 | 0 | `not-measured` |
+| **A** — skill only | 1 | 1 | 1 | `measured-partial` |
+
+**Two limits of the instrument, named so the counts are not over-read.** (1) A bridge process that
+never receives a real tool call writes **no session line at all**, so arm B's zero means *no session
+ever started*, not *four sessions started and failed to save* — and a failed attempt is
+indistinguishable from silence. (2) Arm C's hook-injected read happens **before** the MCP servers
+are reachable, so it is not a tool call the usage log can record; `measured-partial` is correct by
+the script's read-tool-only definition and is a different claim from *"3 of 4 ignored their state"*.
+The first limit is partly closed in this release: the session line now rides the client's own
+identification rather than the first tool call.
+
+**The finding nobody predicted.** Without the `SessionStart` hook, in **5 of 6** save attempts
+across arms B and A the agent found `save_working_state` by name and then ran something shaped like
+a shell command named after it — a fabricated `mcp call …`, a shell function wrapping the tool's
+own name, a JSON payload written to a file and never sent — instead of issuing the call. The skill
+and the instruction block were present in every one of those runs. The hook is what works.
+`Stop` hooks **never fired** in headless `-p` mode, across all six arm-C sessions; `PreCompact` did
+fire under `-p --resume`, leaving only an embedded standard-output line as evidence.
+
+**Codex, Cursor and Gemini CLI remain `not measured`**, and every one of the thirteen other rows in
+the adapter table still reads `null`.
+
+**Decided differently from the plan below.** Two items:
+
+- **The `## Read before you…` demotion named in (f) was not made, and should not be.** Both
+  occurrences — `docs/user-guide.md` and `docs/working-state.md` — sit **inside fenced code
+  blocks**: they are examples of what a standing brief looks like, and the store writes that
+  section at `##`. Demoting them would falsify the example. The heading census counts them only
+  because its scanner is fence-unaware, which is a property of the scanner recorded in the same
+  design pass.
+- **The `memory.knowledge` docs-links key was not added.** The key lives in
+  `src/public/next/shared/docs-links.js` and would need a view to render it; neither file belongs
+  to the docs package. Carried to v3.65.0. The table stays at **eighteen** keys.
+
+**What moved to v3.65.0**, unchanged from the table further down this section: the **Home
+dashboard**, Chat's **Save as foundation**, the **cross-scope digest**, **promote-to-foundation**,
+a **25th MCP tool** for the skeletons, the **ingest auto-split at headings**, and the
+**ingest-finished badge** — which now belongs on the Domains rail entry, there being no Ingest
+entry left to badge.
+
+**Still open for the maintainer.** The npm package name (`the-curator` vs `my-curator`); the
+licence on `github-read-client.js`; `COPY_SUCCESS_BANNER` naming harnesses this build cannot
+reach; whether two machine ids on one computer should be reconciled or left as they are; and
+whether the website's second animation is worth its budget. See §F.
+
+---
+
+#### The plan, as written on 2026-09-19
 
 **Recorded into this roadmap 2026-09-19**, the day after v3.63.0's tag, from two same-day read-only
 design passes — one over the app shell (the rail, the domain page, Chat), one over the website and
@@ -376,7 +450,7 @@ concluded the two cannot be split cleanly (see (g)). Inward: the shell stops bei
 audience — three rail entries instead of five, Ingest and Shared Brain re-hosted (never removed) as
 sections of the domain page they already describe, and Chat can read a project's canonical context
 in addition to the wiki it already retrieves from. Outward: the website and the documentation stop
-describing an app three-plus releases behind, "context machine" retires everywhere it is a product
+describing an app three-plus releases behind, the retired noun — "context machine" — goes everywhere it is a product
 claim, and neither surface may say more about agent capture than v3.63.0's instrument has actually
 measured.
 
@@ -527,8 +601,8 @@ work that outlives one session: a book, a research programme, a codebase — bec
 agents now sees a rail button called *Context* with no rail caption to explain it (captions are one
 word; the rail cannot carry prose).
 
-**(f) The docs narrative.** **README** front door: the "Curator is a context machine" sentence
-becomes "the context engine," and the centred website line above Quick Start gains the category line
+**(f) The docs narrative.** **README** front door: the front-door sentence naming what The Curator
+is becomes "the context engine," and the centred website line above Quick Start gains the category line
 and the tagline as a two-line centred block above it; a new `### Two audiences` subsection sits under
 the existing three-kinds table, naming both audiences in the same two rows the website's routing
 section carries, so the two never say different things. **User guide chapter 1** gains a closing
@@ -686,8 +760,11 @@ pinned, the prompt is byte-identical to v3.63.0's. The injection defence: the fr
 emitted before any project text, the authority note precedes the brief, and the caveat body is
 byte-identical to the string the MCP tool holds today, asserted from the new shared module. A stale
 pin: a project pinned in Chat and then deleted answers a 400 with a named reason before the stream
-opens. Positioning: `grep -rn "context machine"` over the app repo returns exactly one hit (the
-frozen `v3.59.0` changelog row) and zero hits in `README.md`, `docs/**` and `public-knowledge/**`.
+opens. Positioning: the retired noun has **zero** hits in `README.md`, `docs/**` and
+`public-knowledge/**`, and survives only in the frozen `v3.59.0` changelog row — which, since that
+row was archived, now exists in **two** places rather than one (`CHANGELOG-ARCHIVE.md`'s full row
+and `CLAUDE.md`'s one-line index entry for it). Both are evidence of what was said at the time and
+neither is edited; the acceptance is the zero, not a repository-wide count of one.
 The campaign: at least one harness carries a real verdict word from a real run, and every row that
 does not still reads `not-measured`.
 
@@ -768,6 +845,16 @@ release's number to v3.65.0 and, per its own §8 (reproduced in the section abov
 deliberately does NOT do" table), took **one** of this section's six original rows — *"Chat: read a
 project's context"* (B21) — out of it and into v3.64.0, where it now ships as (d) above. The other
 five rows, and the goal they serve, are otherwise unchanged from this file's prior revision.
+
+**What v3.64.0 handed it, 2026-09-20.** Seven items, all named in that release's own deferral
+table and all still `planned`: the **Home dashboard** (which is also the only real answer to the
+logo/Domains redundancy, and to a domain page that is long even folded); Chat's **Save as
+foundation**; the **cross-scope digest**; **promote-to-foundation** from a handoff decision; a
+**25th MCP tool** for the skeletons; the **ingest auto-split at headings**, still undesigned; and
+the **ingest-finished badge**, which changed shape rather than moving — there is no Ingest rail
+button left to badge, so it belongs on the **Domains** entry via the Sync badge's own render/patch
+idiom. Two smaller carries joined them: the `memory.knowledge` docs-links key, and reconciling (or
+deliberately not reconciling) the two machine ids one computer mints.
 
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.

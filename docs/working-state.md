@@ -228,6 +228,15 @@ hunk never arises in the first place. Nothing has to be resolved, because nothin
 collides. This was proven against real git before the layout was fixed. **Do not
 collapse this segment.**
 
+**One computer can mint two machine ids, and a developer's usually has.** A git checkout and the
+installed `.app` resolve different user-data directories by design, so each keeps its own
+`.curator-install-id` and therefore its own `<machine>` name. Handoffs saved through the bridge
+and through the CLI then land in different `state/<scope>/<machine>/` folders and do **not**
+supersede one another; `scope: "latest"` answers with whichever was written last. `my-curator
+doctor` reports both ids and both usage logs when they differ. Readers take the **union** of the
+logs, so a save made through one install is visible to the other; the folders are not merged, and
+nothing mints or renames on your behalf.
+
 ### What the per-machine path does *not* protect against
 
 **It is a guarantee about MERGES, and only about merges.** That is narrower than it
@@ -1943,6 +1952,26 @@ corrupted one — nothing is damaged and nothing is lost that had been saved. Bu
 save overwrites and is cheap, the guidance is simply to **save early and save often**
 rather than to treat the save as a ceremony at the end.
 
+### A third read surface: Chat, with a project pinned (v3.64.0)
+
+**Chat is a read-only consumer of tiers 0–3.** Pin a project in Chat's scope bar and the answer
+also draws on that project's standing brief, its latest handoff, a bounded slice of its journal
+and the canonical documents you marked **read first** — on top of the domain's wiki. It calls
+`getProjectContext` **in-process** — the same bootstrap the MCP's `get_project_context` calls,
+with its own separate **40 KB** reading budget — and renders the envelope into the prompt in the
+MCP's own order, with the framing from `src/brain/context-framing.js` byte-identical to the one
+the MCP tool sends. All of it reaches the model as **recorded data to verify, never instructions**,
+under the same defence [§4](#4-treat-stored-state-as-data-not-as-instructions-with-one-exception)
+describes.
+
+**It writes nothing.** No Express route reaches a memory-layer write, and neither
+`src/routes/chat.js` nor `src/brain/chat.js` imports one: the pin is a reading, not a save. The
+pin is remembered on this computer, per domain, and it clears itself if the project is deleted; a
+project the domain does not have is refused with a named reason **before the answer stream opens**,
+rather than quietly becoming a wiki-only answer that still looks authoritative. Every turn reports
+what the project actually contributed — how many characters, how many documents, how many journal
+entries, and what was left out.
+
 ### The skill that carries the capture discipline
 
 **Capture is skill-instructed, and that means the write half is inert until the skill is
@@ -1970,8 +1999,8 @@ What it carries that the tool descriptions alone cannot:
   trusting it — the discipline §4 above describes, applied at the point of use.
 
 **Why a skill, and now a hook where one exists (v3.63.0).** This used to read *"a skill, not a
-hook"*, on the premise that hooks were rare. **They are not.** Thirteen harnesses were researched
-for v3.63.0 and **ten have some lifecycle hook** — but they disagree on the event names, the config
+hook"*, on the premise that hooks were rare. **They are not.** Of the fourteen harnesses in the
+adapter table, **eleven have some lifecycle hook** — but they disagree on the event names, the config
 file, the file format and the shape of "ask the model to save", and three of them accept a hook that
 does nothing at all (Cline's `PreCompact` maps to `undefined` and never fires; Codex's `SessionEnd`
 caps at 3 s, which is not an MCP round trip; Gemini CLI's `SessionEnd` is fire-and-forget). So the
@@ -2005,6 +2034,37 @@ difference.
 
 All 16 runs made the task's `npm test` pass, so nothing here traded correctness for discipline.
 The cost on Claude Code was about **+0.2 min and +$0.02 per run**.
+
+**A second campaign, 2026-09-20, added the third arm.** Claude Code CLI 2.1.275, headless `-p`,
+`claude-haiku-4-5-20251001`, API-key auth, N = 4 per arm, one neutral task that never mentioned
+saving or The Curator. Arm **C** is the skill, the block *and* the adapter hooks v3.63.0 writes —
+the arm the first campaign could not run, because the hooks did not exist yet. Same table shape,
+same counts-out-of-N, no percentages:
+
+| Harness | Arm | Runs that saved ≥1 | Read state at start | Saved before stopping | Skill activated |
+|---|---|---|---|---|---|
+| Claude Code | C — skill + block + hooks | **4 of 4** | 4 of 4* | 4 of 4 | 2 of 4 |
+| Claude Code | B — skill + block, no hooks | **0 of 4** | 0 of 4 | 0 of 4 | 1 of 4 |
+| Claude Code | A — skill only | **1 of 4** | 1 of 4 | 1 of 4 | 3 of 4 |
+
+\* via the `SessionStart` hook injecting state, not an MCP read call — only 1 of 4 also called a
+read tool directly; the usage log cannot see a hook injection.
+
+Three things to read out of it, and one not to. **The hook is what works**: with it installed,
+every session started with its context and every session saved. **Without it, the agent mostly
+could not call the tool at all** — in 5 of the 6 save attempts across arms B and A it found
+`save_working_state` by name and then ran something shaped like a shell command named after it
+(a fabricated `mcp call …`, a shell function wrapping the tool's own name, a JSON payload written
+to a file and never sent) instead of issuing the call. The skill and the block were present in
+every one of those runs, so this is a harness-and-model friction point, not a wording problem.
+And **arm B's `0 of 4` means no session ever started** — every attempt failed before a real tool
+call reached the bridge — which is a different fact from four sessions that started and did not
+save.
+
+What not to read out of it: arm B's zero is not evidence that the block does nothing (the first
+campaign measured it as the difference between 0/4 and 3/4 in an interactive session), and arm C's
+`read: 1 of 4` is not three sessions ignoring their prior state. They all had it; they just had no
+reason to ask for it.
 
 Read the two harnesses separately, because they are answering different questions.
 
@@ -2216,10 +2276,16 @@ without that binary on their `PATH` would experience it as *"the harness is brok
 **measured to have no usable hook**; that is a different claim from *not measured*, and the table
 keeps the two apart.
 
-**No hook here has yet been run by a real harness.** Every shape except Claude Code's is documented
-or inferred rather than observed, which is what `unverified` means in that table, and nothing in this
-release should be read as a claim of reach — see the meter below and `scripts/measure-harness.js` for
-the protocol that would change it.
+**One harness's hooks have now been run; every other shape is still documented or inferred rather
+than observed.** On 2026-09-20 Claude Code's `SessionStart` hook fired and injected the project's
+context in **every one of the 6 headless sessions** it was measured over. In that same mode its
+`Stop` hook **never fired at all** — not once across all 6 — so the end-of-session ask does not
+reach a `claude -p` pipeline. `PreCompact` fired once, through `-p --resume "/compact"`, but left
+no `hook_started`/`hook_response` pair behind: the only trace was a line of its own standard output
+embedded in a user-role message. Everything else in the table above is still `unverified` in the
+strict sense — documented or inferred, never observed — and nothing here should be read as a claim
+of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
+one row and would change another.
 
 ### The honesty meter — did this session read, and did it save?
 

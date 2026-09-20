@@ -2,7 +2,7 @@
 
 ## What is The Curator?
 
-**The Curator is a context machine.** It builds and keeps the context your work runs on — what you
+**The Curator is the context engine.** It builds and keeps the context your work runs on — what you
 have read, where the work stands, and the documents a project is built against — as plain markdown
 files on your own machine. Any editor opens them, your own private GitHub repo syncs them, and any
 local MCP client reads and writes them.
@@ -18,7 +18,7 @@ the files *are* the product, and the app is a convenience over them.
 |---|---|---|---|
 | **Compounded knowledge** | The wiki — entities, concepts, summaries, cross-linked | **Accumulates**: a new source updates existing pages rather than duplicating them | `domains/<d>/wiki/` |
 | **Volatile state** | The standing brief, the handoff, the journal — where a piece of work stands | **Supersedes**: each save replaces the last, so a resolved blocker cannot come back | `domains/<d>/state/<project>/` |
-| **Canonical documents** *(v3.59.0)* | Foundations — architecture, decisions, conventions, roadmap, held verbatim | **Replaced whole**: mirrored byte-for-byte from a repository, or written by an agent you asked | `domains/<d>/state/<project>/foundations/` |
+| **Canonical documents** *(v3.59.0)* | Foundations — a project's architecture, decisions, conventions and roadmap, held verbatim | **Replaced whole** — never merged, never paraphrased, never summarised by a model. Mirrored byte-for-byte from a repository, or written by an agent you asked | `domains/<d>/state/<project>/foundations/` |
 
 Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim
 — [the decision table](working-state.md#1-the-problem-it-solves) says which is which, and
@@ -104,8 +104,10 @@ paste into an assistant that needs to understand The Curator before it helps you
 v3.63.0's answer to the gap §13b measures. It covers the `my-curator` command (the same store, from
 a shell, with the app closed), the per-harness hooks and what each harness can and cannot carry, and
 the capture meter that says how many recent sessions started with the context and how many saved
-before stopping. The per-harness reach is **measured, and every row currently reads *not measured***
-— the mechanism shipped; the measurement has not been run.
+before stopping. The per-harness reach is **measured per harness, and unmeasured is
+labelled unmeasured**: as of v3.64.0 exactly **one** row carries a real result (Claude Code,
+2026-09-20 — the session-start hook reached the agent in 4 of 4 runs, and the stop hook never fired
+at all in headless mode), and the other thirteen still read *not measured*.
 
 **Writing a tool that reads or writes this format?** The on-disk contract is published:
 [`spec/working-state-v1.md`](spec/working-state-v1.md), versioned `working-state/1` — the layout,
@@ -168,7 +170,7 @@ first group applies to all three.
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) | **This project's memory.** Every release row older than the newest six, moved out of `CLAUDE.md` **byte-for-byte** — the measurements, traps and "KNOWN AND UNFIXED" items that explain why the code is shaped the way it is. `CLAUDE.md` keeps the newest six in full plus a one-line index of every entry here. Read the full row before changing anything with a history. It lives at the repo **root**, not in `docs/`, and that is load-bearing — the preserved rows carry root-relative links; see the note at the top of the file |
 | [roadmap-chat-modes.md](roadmap-chat-modes.md) | Design context for Chat Modes 3 (**Dictate**) and 4 (**Curate**) — **designed but never built**. Nothing in it describes shipped behaviour; read it before implementing either mode |
-| [roadmap-context-engine.md](roadmap-context-engine.md) | The v3.61.0 → v3.64.0 roadmap for the context engine (foundations, working state, Shared Brain awareness) — a status table per row (`built` / `in flight` / `designed` / `planned`), not a description of what has shipped. Written against `main` after v3.60.0; read it before proposing anything in this area, and check the row's own status before trusting it |
+| [roadmap-context-engine.md](roadmap-context-engine.md) | The v3.61.0 → v3.65.0 roadmap for the context engine (foundations, working state, Shared Brain awareness), **and the v3.64.0 website-and-docs narrative** — a status table per row (`built` / `in flight` / `designed` / `planned`), not a description of what has shipped. Its v3.64.0 section opens with what that release actually shipped, with numbers, and what moved to v3.65.0. Read it before proposing anything in this area, and check the row's own status before trusting it |
 | [roadmap-menubar-widget.md](roadmap-menubar-widget.md) | The design pass behind the Mac menu bar icon. **Phase 1 shipped; Phases 2–3 did not.** §0a is the exact boundary — what is built, the five places the build deviated from the plan and why, and what has never been rendered. The rest is the reasoning, deliberately left as written |
 | [roadmap-automatic-sync.md](roadmap-automatic-sync.md) | Whether Personal Sync should run by itself. **Researched, not built** — automatic push is structurally incapable of destroying a local file, automatic pull is not, so the recommendation is opt-in push with pull left as a decision. Read it before proposing any background sync |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |

@@ -333,7 +333,7 @@ Yes, since version 3.63.0. `my-curator` reads and writes the same files from a s
 | Command | What it does |
 |---|---|
 | `my-curator context` | Prints this project's bootstrap — the standing brief, the latest handoff, your read-first documents — to standard output |
-| `my-curator save` | Reads a complete handoff as JSON on standard input and writes it. It never invents one |
+| `my-curator save` | Reads a complete handoff as JSON on standard input, or from a file with `-f`, and writes it. It never invents one |
 | `my-curator doctor` | Prints what is wired on this machine and writes nothing. Start here when something is not working |
 | `my-curator resolve` | Prints which project the current directory belongs to |
 | `my-curator install-hooks` | Writes hook configuration for one harness, and nothing else |
@@ -344,11 +344,13 @@ The binary is called `my-curator` rather than `curator` on purpose. The short na
 
 The command is also the answer for a tool with no MCP client at all, such as Aider: run `my-curator context` before the session and `my-curator save` after it.
 
+Two practical notes. Only two short flags exist — `-f` for `--file` and `-h` for `--help`; a bare `-` still means standard input. And the downloadable Mac app does not ship the command: it carries the bridge only, so `my-curator` comes from a git checkout or an npm install, and `doctor` says so when it finds itself inside the app with nothing on your PATH.
+
 ## Can a hook make my agent save?
 
 A hook can ask. It can never write the handoff itself, and that limit is deliberate: a fabricated handoff is worse than a missing one, because the whole value of the store is that what is written was written by whoever it names. So `my-curator install-hooks` wires three moments — inject the context at the start, remind before a compaction, and ask once at the end of a turn if nothing has been saved this session — and the model is what calls the save tool.
 
-Whether any of that is available depends entirely on your harness, and the harnesses disagree about almost everything. Ten of the thirteen researched have some lifecycle hook; three of them accept a hook that never fires. Four words describe every row:
+Whether any of that is available depends entirely on your harness, and the harnesses disagree about almost everything. Eleven of the fourteen in the table have some lifecycle hook; three of them accept a hook that never fires. Four words describe every row:
 
 | Word | Means |
 |---|---|
@@ -359,7 +361,9 @@ Whether any of that is available depends entirely on your harness, and the harne
 
 Hooks are written for Claude Code, Cursor and Codex; Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
 
-One thing to be clear about: **every harness row currently reads "not measured"**. The mechanism shipped in version 3.63.0; the measurement protocol is written down and has not been run against a real harness. The product says so everywhere the question comes up, rather than implying reach it has not demonstrated.
+One thing to be clear about: **thirteen of the fourteen harness rows read "not measured"**. The mechanism shipped in version 3.63.0 and the protocol was run for the first time in version 3.64.0, against one harness.
+
+That measurement — Claude Code, 20 September 2026, four runs per arm, headless mode — came back mixed, and the mixture is the useful part. With the hooks installed, the session-start hook injected the project's context before the agent's first turn in 4 of 4 runs, and 4 of 4 saved a handoff before stopping. In that same headless mode the stop hook never fired at all, across six sessions. And without the hook, five of six save attempts ran something shaped like a shell command named after the tool instead of calling it — with the skill and the instruction block present in every one of those runs. The hook is what works. Every other harness still reads "not measured", and the product says so everywhere the question comes up rather than implying reach it has not demonstrated.
 
 A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That paste stays yours.
 
@@ -381,6 +385,14 @@ Three states are told apart rather than blurred: no usage log on this computer y
 What it cannot see is stated on the screen. It counts what went through the bridge, so a save made with `my-curator save`, or by an agent that never connected, leaves no line and is in neither the numerator nor the denominator. The harness label is self-reported by the client and nothing in The Curator branches on it. Calls made before version 3.63.0 carry no session id and are counted separately rather than invented into sessions. The app's own tool self-test is excluded outright. And nothing here stops a session: the meter reports, it never refuses or delays anything.
 
 The same reading is available from the terminal with `my-curator doctor`.
+
+## Can I ask Chat about a project, instead of an agent?
+
+Yes, since version 3.64.0. Chat's scope bar carries a project pill beside the domain: pin a project and the answer draws on that project's standing brief, its latest handoff, a slice of its journal and the canonical documents you marked "read first" — on top of the domain's wiki, never instead of it.
+
+Three things are worth knowing. It is a reading and never a save: chat writes nothing to a project. The project's text reaches the model as recorded data to verify, never as instructions, under the same defence the MCP bridge uses, from the same source. And the two budgets are separate, so pinning a project never quietly costs you wiki pages; when something does not fit, the answer says what was left out.
+
+The pin is remembered on that computer, per domain, and clears itself if the project is deleted. Pinning a project the domain does not have is refused with a plain reason before the answer starts, rather than quietly answering from the wiki alone.
 
 ## Can another tool read and write this format?
 
@@ -490,6 +502,8 @@ The segment is not a bare hostname. It was, and that was measured to fail: two c
 
 The folder name is remembered rather than recomputed, for a related reason: macOS re-derives the hostname from the network, so one laptop alternated between two names and owned two folders under one work-stream, fragmenting its own append-only journal.
 
+One computer can also mint two machine names on purpose, and a developer's usually has. A git checkout of the project and the installed Mac app resolve different user-data folders by design, so each keeps its own install identifier and therefore its own machine name. Handoffs saved through the bridge and through the `my-curator` command then land in different folders and do not supersede one another; asking for the latest work-stream answers with whichever was written last. `my-curator doctor` reports both identifiers, and both usage logs, when they differ. Nothing is merged, and nothing is renamed on your behalf.
+
 Read the guarantee narrowly. It is about merges, and only about merges.
 
 | Threat | Does the machine segment help? |
@@ -506,7 +520,7 @@ The standing brief is the one file two machines can genuinely conflict on, becau
 
 ## Where do I see this inside the app?
 
-The **Context** item on the rail opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under a three-cell strip, read top to bottom, in the order a session start reads them: step 1 **Foundations**, step 2 **Working state**, step 3 **Knowledge**.
+The **Context** item on the rail — one of three, since version 3.64.0 — opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under a three-cell strip, read top to bottom, in the order a session start reads them: step 1 **Foundations**, step 2 **Working state**, step 3 **Knowledge**.
 
 - **The sidebar lists your projects, grouped by domain**, each with its work-stream count and how long ago it was last written to. A project with a brief but no save yet is listed, dimmed, reading "no state saved yet", because that is a real answer rather than a broken row. The screen opens on whichever project was written to most recently and remembers the last project you looked at in each domain.
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.

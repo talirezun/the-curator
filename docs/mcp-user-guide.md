@@ -138,6 +138,20 @@ misattributed to a stale config file. It reports two things separately — wheth
 install with no domains yet passes, and says so, rather than being reported as broken. It never
 reads or validates `claude_desktop_config.json` — see Troubleshooting below.
 
+**And what a green pass does not cover.** The self-test spawns a *new* bridge; it cannot see the
+one your client already has open. An MCP client keeps a bridge process alive until it is
+restarted, so a bridge started before an update carries on serving the tools it was launched with
+— on one machine one had been running for two days across five updates, offering 22 tools while
+the files on disk offered 24. **The MCP bridge section reports any it finds**, with the age and
+the remedy: restart the app that launched it, usually Claude Desktop. Nothing in The Curator can
+restart it for you — the process belongs to the client. `my-curator doctor` reports the same
+reading in the terminal.
+
+The reading is taken from the process table and is **read-only**: it lists processes running this
+install's own `mcp/server.js` and calls one stale when it started before the code on disk last
+changed. Where it cannot be taken at all — a machine that is not a Mac, or no `ps` — the app says
+the reading was **not taken**, with the reason, rather than reporting that nothing is stale.
+
 ---
 
 ## The My Curator Claude skill — best results out of the box (v2.5.7+)
@@ -361,7 +375,7 @@ Two directories cover most of them, and both hold the **same files**:
 | `~/.claude/skills/` | Claude Code, Claude Desktop, **and Cursor** |
 | `.agents/skills/` | OpenCode, goose, Kilo, DeepSeek Harness (`dsh`), GitHub Copilot CLI |
 
-Between them that is eight of the thirteen harnesses researched for v3.63.0, for content that is
+Between them that is eight of the fourteen harnesses in the adapter table, for content that is
 already generated from one source. Nothing new is written for either path.
 
 **What must not go into an instruction file.** The neutral always-on playbook measures about
@@ -663,10 +677,11 @@ were missing, and each is one bounded field:
 |---|---|---|
 | `sid` | every line | A **minted random id**, 12 hex characters, generated once per bridge process. One bridge process is one session. Not your process id (the operating system recycles those, and two sessions sharing one would merge into a single reading that both read *and* saved when in fact each did half), not a silence heuristic, and not the harness's own id |
 | `project` | a line about a project | The project slug. **This is a deliberate widening** of a file described as content-free, from one name you chose to two — taken rather than assumed, because the meter's page is *per project* and a per-project figure silently aggregated over a whole domain would be a false reading on the one screen that exists to avoid those |
-| `client` | a once-per-process **session line** | Which MCP client connected, as an **allow-listed label** — `claude-code`, `codex`, `cursor`, or `other`. Never the string the client sent |
+| `client` | a once-per-process **session line** | Which MCP client connected, as an **allow-listed label** — `claude-code`, `codex`, `cursor`, or `other`. Never the string the client sent. **Written on the session line; absent when no client had identified itself yet** |
 
-The **session line** is a second kind of line, written once per bridge process immediately before
-that process's first tool call:
+The **session line** is a second kind of line, written once per bridge process **at the moment the
+client identifies itself**, so a bridge that is opened and never asked for a tool still records
+that a session happened:
 
 ```json
 {"ts":"2026-09-19T10:57:06.400Z","ev":"session","sid":"9f2c1a4b7e30","client":"claude-code"}
@@ -681,10 +696,12 @@ handshake and makes `clientInfo` an optional, per-request, self-reported field t
 *should not* change behaviour on — then normalised and looked up in a fixed table that maps **many
 names to one harness**, because one product really does send two (GitHub Copilot CLI moved from
 `github-copilot-developer` to `copilot-cli` inside six months; Cline reports `Cline` from VS Code
-and `@cline/core` from its SDK). A name not in the table is written as `other`. Three rows in it are
-**community-reported rather than measured**, and one of them is worth naming: `claude-ai` is
-**Claude Desktop** — a different surface from Claude Code, with its own id, so a desktop-chat
-session never lands in a coding harness's row.
+and `@cline/core` from its SDK). A name not in the table is written as `other`. **Two** rows in it
+are **community-reported rather than measured** — `cursor-vscode` and `claude-ai` — and the second
+is worth naming: `claude-ai` is **Claude Desktop**, a different surface from Claude Code, with its
+own id, so a desktop-chat session never lands in a coding harness's row. `claude-code` moved to
+**observed** on 2026-09-20: it was the literal label on every session line of the measurement
+campaign's window, and no other label appeared.
 
 **One optional seventh field, `via` (v3.61.0).** A line written by the app's own
 **[Test all 24 tools](user-guide.md#test-all-24-tools--lighting-the-map-yourself)** run carries

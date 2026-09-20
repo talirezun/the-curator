@@ -385,10 +385,12 @@ save takes it, with no warning, because overwriting is the correct behaviour.
   stopping · 2 read and did not save"*, counted from a local, content-free log of which tools were
   called. In words, never a percentage — and it reports rather than blocks
   ([§13c](user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter))
-- **Hook reach is measured per harness, and unmeasured is labelled unmeasured.** Ten of thirteen
-  harnesses researched have some lifecycle hook and they disagree about all of it; three accept a
-  hook that never fires. As of v3.63.0 **every row reads *not measured*** — the mechanism shipped,
-  the measurement has not been run, and the product says so rather than implying reach
+- **Hook reach is measured per harness, and unmeasured is labelled unmeasured.** Eleven of the
+  fourteen harnesses in the table have some lifecycle hook and they disagree about all of it; three
+  accept a hook that never fires. As of v3.64.0 **one** row carries a real measurement (Claude
+  Code, 2026-09-20 — the session-start hook reached the agent in 4 of 4 runs; the stop hook never
+  fired at all in headless mode) and the other **thirteen read *not measured***, which the product
+  says rather than implying reach
 - **And you do not need an agent at all.** `my-curator context` prints a project's bootstrap and
   `my-curator save` writes a handoff from a shell, with the app closed and no network — which is the
   whole answer for a tool with no MCP client (Aider, a CI job, a script)

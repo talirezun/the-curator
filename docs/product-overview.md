@@ -1,5 +1,12 @@
 # The Curator — Product Overview
 
+**The Curator — the context engine**
+*Your brain. Your team's brain. Your agents' brain.*
+
+A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
+your projects' context — foundations, working state and knowledge — so any agent, in any harness,
+resumes where the last one stopped. Plain markdown, in your own repo.
+
 **What it is, what it does, and where it stands — the whole product in one document.**
 
 This is the foundational brief. It is written to be handed to a person or to a model as the
@@ -7,7 +14,7 @@ single source of context on The Curator: every capability, what each one is *for
 scenarios it was built to serve, the honest history, and an explicit account of what it does
 **not** do. It describes capability, not implementation — there is no code in it.
 
-*Current as of **v3.45.0**. Where a number moves between releases — model prices, model
+*Current as of **v3.64.0**. Where a number moves between releases — model prices, model
 catalogues, tool counts — it is marked as a reading taken at a moment rather than a constant.*
 
 ---
@@ -67,6 +74,15 @@ agents. A knowledge base that could not carry the state of the work would leave 
 starting cold; a state store that could not reach durable knowledge would keep re-learning the
 same subsystem. Splitting them into separate products would mean two folders, two syncs, two
 sets of credentials, and a boundary the user has to manage by hand.
+
+**Three kinds of context, three different behaviours when something is written to them**, and
+this is the wording every other front-door document uses, deliberately:
+
+| Kind | Rule |
+|---|---|
+| **Compounded knowledge** — the wiki | **Accumulates.** A new source updates the pages that exist instead of duplicating them. |
+| **Volatile state** — brief, handoff, journal | **Supersedes.** Each save replaces the last, so a resolved blocker cannot come back. |
+| **Canonical documents** — foundations | **Replaced whole.** Held verbatim — never merged, never paraphrased, never summarised by a model. |
 
 **The boundary between layers 1–2 and layer 3 is the one thing to learn before using it.**
 Knowledge accumulates; state supersedes. Put something durable into state and the next save
@@ -173,6 +189,11 @@ that the second brain gets **better** with use rather than merely bigger.
 
 ## 4. Every capability, and when you would reach for it
 
+**The app is three places** — **Chat** (*ask*), **Domains** (*knowledge*), **Context** — with Sync
+and Settings in the rail's footer. Everything that acts on one domain, Ingest and Shared Brain
+included, lives on that domain's page; each of those two also keeps a full-page view one press
+away, the same panel rather than a second copy of it.
+
 | Capability | What it is for | Reach for it when… |
 |---|---|---|
 | **Ingest** | Turning a document into wiki pages | You have read something worth keeping |
@@ -187,6 +208,7 @@ that the second brain gets **better** with use rather than merely bigger.
 | **The MCP bridge** | Letting an agent read and write it all directly | You want a frontier model working over the whole graph |
 | **The desktop application** | Running it without a terminal | You are on a Mac and want an app |
 | **Working state — the memory layer** | Carrying the state of *work* across sessions, tools, models and machines | You work with agent harnesses across sessions — building code, most often, or research, design, a product. It has [its own section](#5-the-memory-layer--your-agents-brain) |
+| **Canonical documents — foundations** | Holding the documents a project is *governed* by, verbatim, so an agent gets them at the start of a session | A project has an architecture, a set of decisions or a convention an agent must not guess at |
 
 ### 4.1 Ingesting sources
 
@@ -1281,6 +1303,10 @@ durable reference.
 | **The Mac look** | `v3.44.0` | Phase 1 of the native design pass: gloss, materials, a real switch, and four contrast defects that only rendering the thing could find. |
 | **The provider page as a page** | `v3.45.0` | Four numbered steps a first-time user can read top to bottom, context floors derived from what the app actually needs rather than from parity, and the end of a key save silently moving your bill. |
 | **Projects inside a domain** | `v3.48.0` | The memory layer gained the level it was missing: a domain is knowledge, a project is a thing you build, and one domain holds many. Resolution by name with ambiguity returned rather than guessed, `scope: "latest"`, a repo marker file, and a standing brief the app can edit and an agent can write when asked. |
+| **Canonical documents** | `v3.59.0`–`v3.61.1` | The third kind of context got a store: a project's architecture, decisions, conventions and roadmap, held verbatim, mirrored byte-for-byte from a repository or written by the owner in the app, and handed to an agent in one call at the start of a session. |
+| **The bridge became observable** | `v3.60.0`–`v3.62.0` | A content-free local log of which tools were called, a map of all 24 of them, a **capture meter** that answers *did this session read, and did it save* in words rather than a percentage, and a rename: the screen is **Project context**, in three numbered steps, with a per-document *read first* flag that decides what an agent is handed without asking. |
+| **A command, hooks, a spec — and an instrument** | `v3.63.0` | `my-curator`, the same store from a shell with the app closed; per-harness lifecycle hooks where a usable one exists, each labelled `verified`, `unverified`, `present-useless` or `none`; a **public on-disk spec** a third party can write against; and the instrument that would measure whether any of it reaches a real harness — shipped with every row reading *not measured*, because it had not been run. |
+| **Three places, and the first measurement** | `v3.64.0` | The shell became **Chat · Domains · Context** — *ask · knowledge · context* — with Ingest and Shared Brain re-hosted as sections of the domain page they act on; Chat learned to read one project's context beside the wiki; and the instrument was **run**, once, against Claude Code. |
 
 Two things are worth saying about *how* it got here, because they explain the product's
 character. First, **most of the recent work came from the maintainer using it for real and
@@ -1305,6 +1331,18 @@ models and a wrong sentence changes what an agent tells a user.
 | **Shared Brain general availability** | Gated on a structured pilot with a real cohort, which has not started. |
 | **A Shared Brain backend outside GitHub** | Designed as the answer to EU data residency; has not shipped. |
 | **Apple notarisation** | Developer enrolment in progress. Until it completes, a first manual install needs a one-time *Open Anyway*. |
+| **Automatic capture on every harness** | **The mechanism exists; almost nothing about its reach has been measured.** Hooks are written for three of fourteen harnesses and refused by default on two more, and as of 2026-09-20 exactly **one** harness has been run against the protocol. Everything else is documented or inferred, and says so on every screen that mentions it. |
+
+### What has actually been measured about capture
+
+One harness, once. **Claude Code, 2026-09-20**, headless `-p`, four runs per arm. With the
+`SessionStart` hook installed, the project's context reached the agent in **4 of 4** sessions and
+**4 of 4** saved a handoff before stopping. In the same mode the `Stop` hook **never fired**. Without
+the hook, **5 of 6** save attempts ran a shell command named after the tool instead of calling it.
+Two limits of the instrument are stated rather than smoothed over: a session that never lands a
+real tool call writes no line at all, so a failed attempt looks like silence; and a hook-injected
+read is invisible to the log. Thirteen of the fourteen harnesses in the table read **not
+measured**, and nothing in the product describes them otherwise.
 
 ---
 

@@ -20,11 +20,18 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
+<p align="center"><strong>The Curator — the context engine</strong><br>
+<em>Your brain. Your team's brain. Your agents' brain.</em></p>
+
 <p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
 
 ## What it is, in plain words
 
-**The Curator is a context machine.** It builds and keeps the context your work runs on — what you
+A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
+your projects' context — foundations, working state and knowledge — so any agent, in any harness,
+resumes where the last one stopped. Plain markdown, in your own repo.
+
+**The Curator is the context engine.** It builds and keeps the context your work runs on — what you
 have read, where the work stands, and the documents a project is built against — as plain markdown
 files on your own computer, and carries all three across sessions, machines, AI tools and models.
 
@@ -54,6 +61,19 @@ Which of the three a thing belongs in is the most useful distinction in the prod
 that repays learning first — [the decision table](docs/working-state.md#1-the-problem-it-solves)
 spells it out. All three live in one domain folder and sync together, and the two an agent needs
 before it can start — the state and the canonical documents — arrive in a single MCP call.
+
+### Two audiences
+
+Most people arrive for one of these. Both write the same markdown, and neither is a mode you
+switch into.
+
+| If you | You want |
+|---|---|
+| read a lot and want to keep it | a **domain**: ingest → wiki → chat → Obsidian → sync → Shared Brain |
+| work across sessions with agent harnesses | a **project**: foundations → working state → agents over MCP or the `my-curator` command |
+
+These are not two products. A book, a thesis or a research programme outlives any one session —
+which is the day the second becomes the first's future.
 
 **On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
 couple of minutes.** On Windows and Linux it runs as a local server you open in your browser —
@@ -122,12 +142,19 @@ second **local client**, exactly as the bridge is — never a server, never reac
 `elasticsearch-curator`, and this package never links that name.)
 
 **Hooks, where a harness has a usable one.** A hook may **ask**, **inject** or **record** — it may
-never compose a handoff, because a fabricated one is worse than a missing one. Ten of thirteen
-harnesses researched have some lifecycle hook, and they disagree about everything: three accept a
-hook that **never fires**, and one caps a session-end hook at three seconds, which is not long
-enough to finish a save. So reach is **measured per harness, and unmeasured is labelled unmeasured**
-— in the product and in the docs, with the protocol that would change a row written down. Nothing
-here is described as working before it has been run.
+never compose a handoff, because a fabricated one is worse than a missing one. Eleven of the
+fourteen harnesses in the adapter table have some lifecycle hook, and they disagree about
+everything: three accept a hook that **never fires**, and one caps a session-end hook at three
+seconds, which is not long enough to finish a save. So reach is **measured per harness, and
+unmeasured is labelled unmeasured** — in the product and in the docs, with the protocol that would
+change a row written down. Nothing here is described as working before it has been run.
+
+**The first row has now been run (v3.64.0).** Claude Code, 2026-09-20, four runs per arm: with the
+hooks installed, the `SessionStart` hook injected the project's context in **4 of 4** sessions and
+**4 of 4** saved a handoff before stopping. In the same mode the `Stop` hook **never fired** — not
+once in six headless sessions — and without the hook, five of six save attempts ran a shell command
+named after the tool instead of calling it. Thirteen of the fourteen rows still read *not
+measured*, and say so.
 
 **A meter, so you can tell.** Project context now opens its Working-state step with one line —
 *"6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2 read and
@@ -183,6 +210,18 @@ your sync credential.
 8. (optional, Mac app) Turn on the menu bar icon → glance at what your agents
    have just saved without opening the app
 ```
+
+**The app is three places** (since v3.64.0), read as *ask · knowledge · context*:
+
+| Place | What you do there |
+|---|---|
+| **Chat** | Ask across one domain's wiki — and, with a project pinned, its context as well. |
+| **Domains** | One subject at a time: its overview, its sources, its pages, its projects, its Shared Brain connections and its wiki health. |
+| **Context** | One project's canonical documents, the working state your agents read and write, and how often they actually did. |
+
+Sync and Settings sit in the rail's footer. Ingest and Shared Brain are no longer rail entries —
+they are sections of the domain page they describe, and each full-page view is still one press
+away from its section.
 
 Everything is a plain markdown file on your computer. No subscriptions, no database, no cloud
 account — only an API key from Google Gemini, Anthropic or OpenRouter.

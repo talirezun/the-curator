@@ -1091,7 +1091,7 @@ without opening anything.
 #### One eyebrow face
 
 `.cur-group-title` — the caption above every kit group ("OVERVIEW",
-"PAGES · THE WIKI", "WIKI HEALTH") — spelt out
+"PAGES", "WIKI HEALTH") — spelt out
 `var(--weight-medium) var(--text-xs)/1 var(--font-sans)`, which is
 `--type-eyebrow` **byte for byte except for the family**. Measured on the
 Domains screen, it rendered 11 px / 500 **sans** while "KNOWLEDGE" in the
