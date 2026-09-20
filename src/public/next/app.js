@@ -282,7 +282,7 @@ const THEME_KEY = 'curator-next-theme';
 const VIEW_KEY = 'curator-next-view';
 const FONT_SCALE_KEY = 'curator-next-font-scale';
 
-// ── RAIL ORDER (v3.49.0) ────────────────────────────────────────────────
+// ── RAIL ORDER (v3.49.0 → v3.64.0) ──────────────────────────────────────
 // This used to read: "Rail order matches ARCHITECTURE.md's rail table
 // exactly: your brain (Domains) -> your team's brain (Shared Brain) -> your
 // agents' brain (Agent memory) -> the way material gets in (Ingest), with
@@ -290,35 +290,78 @@ const FONT_SCALE_KEY = 'curator-next-font-scale';
 //
 // That ordering is an ONTOLOGY (whose brain is this?) and it put Ingest —
 // the way anything gets INTO the app at all — last, behind two surfaces a
-// new user has neither joined nor populated. A power user's report on
-// v3.48.1 was blunt about the consequence: the upload arrow was not
-// obviously Ingest, and it was the fifth thing in a column he read top
-// down. The order below is a FREQUENCY order for the three everyday
-// surfaces, then an advanced group:
+// new user has neither joined nor populated. v3.49.0 replaced it with a
+// FREQUENCY order over five entries and drew a divider after `domains` to
+// mark the last two as "advanced":
 //
 //   chat -> ingest -> domains   | the everyday loop: ask, add, browse
-//   ─────────────────────────── | RAIL_DIVIDER_AFTER draws the line here
+//   ─────────────────────────── | RAIL_DIVIDER_AFTER drew the line here
 //   shared -> memory            | advanced: a cohort you joined, agents
 //
-// The divider is DATA, not a hardcoded index in renderRail(): reordering
-// NAV_VIEWS moves the line with the item it follows, and a divider naming a
-// view that is not in NAV_VIEWS simply never renders (renderRail() asks
-// per item, so there is no index to fall out of range).
-// ── THE RAIL IS A FREQUENCY ORDER, NOT AN ONTOLOGY (v3.61.0, UX §8(e)) ──
-// `memory` moves above `shared`. v3.49.0's own reasoning for the order was
-// how often a person reaches for each surface, and on that measure the two
-// were the wrong way round: Agent memory is where a project's brief, its
-// handoffs and — since v3.59.0 — its canonical documents live, which is a
-// place somebody opens every working session, while Shared Brain is opt-in
-// and entered rarely. Both stay in the advanced group; the divider is
-// unchanged, because it follows `domains` by name rather than by index.
-const NAV_VIEWS = ['chat', 'ingest', 'domains', 'memory', 'shared'];
+// ── THE RAIL IS THREE PLACES, NOT FIVE TABS (v3.64.0, D-A/B/C) ─────────
+// Two things were wrong with the five-entry rail, and they are different
+// problems that happen to have one fix.
+//
+//   1. INGEST AND SHARED BRAIN ARE NOT PLACES, THEY ARE THINGS YOU DO TO A
+//      DOMAIN. Both are answers to "what about THIS domain" — get material
+//      in, share it with a cohort — and both were reached by leaving the
+//      domain you were looking at, choosing it again from a second view's
+//      own picker, and acting there. They keep their views (below) and gain
+//      a SECOND HOST as sections of the domain page, which is where the
+//      question is actually asked.
+//
+//   2. THE DIVIDER SAID "ADVANCED: NOT FOR EVERYONE" ABOUT CONTEXT. Under a
+//      positioning where both audiences are first-class — somebody building
+//      a wiki, and somebody giving their agents memory — marking the second
+//      audience's home surface as the advanced one is not merely redundant,
+//      it is actively wrong. Three items also do not need a grouping rule.
+//
+// What is left reads as a sentence, not a toolbar:
+//
+//   chat -> domains -> memory   | ask · knowledge · context
+//
+// NAV_VIEWS is the RAIL. It is NOT the set of views that exist — see
+// HOSTED_VIEWS and ALL_VIEWS below, which is the distinction that keeps a
+// stored `curator-next-view` of 'ingest' restorable and keeps navigate()
+// able to reach both.
+const NAV_VIEWS = ['chat', 'domains', 'memory'];
+
+// ── HOSTED VIEWS (v3.64.0) ──────────────────────────────────────────────
+// Registered, navigable, restorable — and NOT on the rail, because their
+// everyday home is now a section of the domain page (views/domains.js
+// mounts the same panel through the exported section entry points; one
+// panel, two hosts). The name says the fact: reachable, and hosted
+// elsewhere.
+//
+// THIS ARRAY IS LOAD-BEARING, in three separate ways, and dropping a name
+// from NAV_VIEWS *without* adding it here is the silent-unreachability
+// defect this release was most at risk of:
+//   • ALL_VIEWS — pickStartView() restores only what ALL_VIEWS holds, so a
+//     user who quit on Ingest would otherwise be sent to HOME_VIEW on the
+//     next launch with no way to know why;
+//   • VIEW_META — scripts/test-next-shell-rail.js asserts SET EQUALITY
+//     between VIEW_META's keys and ALL_VIEWS, which is what stops a view
+//     existing in one collection and not the other;
+//   • navigate() — its gate is the registry, and both files still call
+//     registerView(), so the onboarding door, the tray's rail-button clicks
+//     and a stored last view all still land.
+const HOSTED_VIEWS = ['ingest', 'shared'];
+
 const FOOTER_VIEWS = ['sync', 'settings'];
-const ALL_VIEWS = [...NAV_VIEWS, ...FOOTER_VIEWS];
+const ALL_VIEWS = [...NAV_VIEWS, ...HOSTED_VIEWS, ...FOOTER_VIEWS];
 
 // The thin rule separating the everyday group from the advanced group is
 // drawn AFTER this view. Null / an unknown name = no divider.
-const RAIL_DIVIDER_AFTER = 'domains';
+//
+// NULL SINCE v3.64.0 (D-C): three entries do not need a grouping rule, and
+// the group the divider used to open — "advanced" — contained exactly the
+// surface the second audience lives on. The constant stays rather than the
+// mechanism being deleted: renderRail() asks per item, so re-drawing a line
+// is one word here and nothing else, and scripts/test-next-shell-rail.js §4
+// keeps a POSITIVE CONTROL that sets it to a real view name in its own
+// sandbox and proves one divider still renders — otherwise "0 dividers"
+// would be green for a renderRail() that had lost the ability to draw one.
+const RAIL_DIVIDER_AFTER = null;
 
 // The view the rail's own logo button goes to, and the view a FIRST launch
 // lands on (see boot()). Domains is the overview — every domain, its page
@@ -717,7 +760,23 @@ let _pendingNav = null;            // { name, timer } while an exit is playing
 let _afterMountQueue = [];         // callbacks waiting for the pending mount
 
 export function navigate(name) {
-  if (!registry || !registry.has(name)) return;
+  // THE GATE IS THE REGISTRY, AND ITS FAILURE MODE WAS SILENCE (v3.64.0).
+  // An unknown name returned here with nothing rendered, nothing logged and
+  // no exception — so a rail button, a tray click or a restored last view
+  // pointing at a view that had been renamed or dropped read as a DEAD APP.
+  // That is not hypothetical: v3.64.0 took two names off the rail, and the
+  // whole of HOSTED_VIEWS exists so those two stay registered. The refusal
+  // itself is correct and stays (navigate() must never throw at a user), but
+  // it now SAYS SO — a console line is the cheapest possible cure for a
+  // failure whose entire cost was that nobody could see it.
+  if (!registry || !registry.has(name)) {
+    try {
+      console.warn('[curator] navigate(): no view registered as ' + JSON.stringify(name)
+        + ' — nothing happened. Views register themselves in views/<name>.js;'
+        + ' see NAV_VIEWS / HOSTED_VIEWS in app.js.');
+    } catch { /* a console that refuses must not become the failure */ }
+    return;
+  }
 
   // Hard rule (design spec, "Interactions & behaviour"): rail selection
   // clears the reader and closes the model picker. This runs on EVERY
@@ -2506,6 +2565,68 @@ export function consumeDomainRequest() {
   const req = _pendingDomainRequest;
   _pendingDomainRequest = null;
   return req;
+}
+
+// ── THE DOMAIN-FOLD REQUEST (v3.64.0) ────────────────────────────────────
+//
+// The third member of the same family, and the narrowest: "when the Domains
+// view next mounts, OPEN this section of it."
+//
+// WHY IT IS A REQUEST AND NOT A CLICK. The house pattern for reaching into
+// another view is goToDomainsCreate() — navigate, then, through
+// afterViewMount, click the real button the real view already renders. That
+// pattern is right for a button and WRONG for a <details> fold, for one
+// reason that is not obvious: clicking a <summary> TOGGLES. The ADD SOURCES
+// fold is closed on first paint but REMEMBERED per domain, so a user who had
+// opened it and comes back through the onboarding step would have it clicked
+// SHUT by the very affordance meant to open it — a 50/50 failure that
+// depends on state the producer cannot see. "Open it" is idempotent; "click
+// it" is not. (This repo already recorded the sibling trap in v3.61.0: a ref
+// click inside a closed <details> misses silently.)
+//
+// SELF-CLEARING, for the same reason as the two pairs above: a fold request
+// that outlived its consume would re-open a section on every later Domains
+// mount, an hour after the one click that asked for it.
+//
+// DEGRADATION CONTRACT, inherited from onboarding.js:1119-1123 — *it can
+// fail to help; it cannot break anything*. A consumer that does not exist
+// yet, or a fold id it does not recognise, leaves the request unread and the
+// user on the Domains page with the section in front of them, which is the
+// outcome the request was trying to reach anyway.
+
+/** null = nothing pending; else a fold id string. */
+let _pendingDomainFoldRequest = null;
+
+/**
+ * The one fold id any producer outside views/domains.js names today.
+ *
+ * Exported as a CONSTANT for the NEW_PROJECT_REASON reason: the producer
+ * (views/onboarding.js) and the consumer (views/domains.js) are different
+ * packages, and a string typed twice is a string that can be typed twice
+ * differently — the failure being a step that navigates correctly and then
+ * silently does nothing else.
+ */
+export const ADD_SOURCES_FOLD = 'add-sources';
+
+/**
+ * Ask the Domains view to OPEN one of its folds on its next mount.
+ *
+ * @param {string} foldId a fold id the Domains view knows; anything falsy clears
+ * @returns {void}
+ */
+export function requestDomainFold(foldId) {
+  const clean = (typeof foldId === 'string' && foldId.trim()) ? foldId.trim() : null;
+  _pendingDomainFoldRequest = clean;
+}
+
+/**
+ * The pending fold request, once.
+ * @returns {string|null}
+ */
+export function consumeDomainFoldRequest() {
+  const id = _pendingDomainFoldRequest;
+  _pendingDomainFoldRequest = null;
+  return id;
 }
 
 // ── Cross-view write gate ────────────────────────────────────────────────

@@ -101,7 +101,8 @@
 //
 // Owns views/onboarding.css (the `obp-` prefix, used nowhere else).
 
-import { navigate, afterViewMount, icon, escapeHtml } from '../app.js';
+import { navigate, afterViewMount, icon, escapeHtml,
+         requestDomainFold, ADD_SOURCES_FOLD } from '../app.js';
 import { loadUiState, durableStorage } from '../shared/ui-state.js';
 
 // Namespaced like every other /next key (curator-next-theme,
@@ -283,11 +284,19 @@ const STEP_COPY = {
     done: 'You have somewhere for knowledge to land.',
     action: 'Open Domains',
   },
+  // ── WHY THE ACTION SAYS "OPEN DOMAINS" ON AN INGEST STEP (v3.64.0) ──
+  // Ingest left the rail. The panel's own rule is that a step POINTS at the
+  // real surface that owns the job, and as of this release that surface is
+  // the ADD SOURCES section of the domain page — where a person is already
+  // looking at the domain the file is going into, rather than choosing it a
+  // second time from another view's picker. The step id, the title and the
+  // body are unchanged because the JOB is unchanged; only where it lives
+  // moved, and the button says where it now goes.
   ingest: {
     title: 'Ingest your first source',
     todo: 'Drop in a PDF, Markdown or text file. The Curator reads it and writes the wiki pages.',
     done: 'Your wiki has pages in it — the loop is running.',
-    action: 'Open Ingest',
+    action: 'Open Domains',
   },
   // The agent set's two new steps. Both POINT, like every other step: the
   // project is created by views/domains.js's own form (the same rule that
@@ -565,7 +574,15 @@ function progressLabel(steps) {
 function targetViewFor(stepId) {
   if (stepId === 'api-key') return 'settings';
   if (stepId === 'domain') return 'domains';
-  if (stepId === 'ingest') return 'ingest';
+  // NOT 'ingest' (v3.64.0). The full-page Ingest VIEW still exists and is
+  // still reachable — see HOSTED_VIEWS in app.js — but it is no longer where
+  // this step sends anyone, because it is no longer where the feature lives
+  // for a person following a checklist. This function's whole contract is
+  // "which view does this step navigate to", so it answers with the view
+  // go() really calls navigate() with; a table that said 'ingest' while go()
+  // went to 'domains' would be a lookup that lies, and the pure-lookup shape
+  // exists precisely so the suite can assert the mapping without a shell.
+  if (stepId === 'ingest') return 'domains';
   // Domains owns the project list (PROJECTS IN THIS DOMAIN) and its create
   // form — the same view step 2 points at, for the same reason.
   if (stepId === 'project') return 'domains';
@@ -1071,6 +1088,23 @@ function chooseDoor(doorId) {
 function go(stepId) {
   const view = targetViewFor(stepId);
   if (!view) return;
+  // ── BEFORE navigate(), NOT AFTER, AND THAT ORDER IS THE BEHAVIOUR ────
+  // Same destination as step 2, a different part of it. NOT a click through
+  // afterViewMount: see app.js's requestDomainFold() for why a <details>
+  // fold takes a request where a button takes a click — clicking a <summary>
+  // TOGGLES, and this fold is remembered per domain, so a click would shut
+  // it for exactly the users who had already opened it.
+  //
+  // And it is recorded FIRST because navigate() does not always defer: with
+  // motion off, or on a first navigation, the mount happens INSIDE
+  // navigate(), so a request written afterwards would be written after the
+  // consumer had already looked and found nothing — a step that works with
+  // animations on and silently does nothing with them off. This is the same
+  // ordering every other producer of a shell request uses (record, then
+  // navigate), and it is why this one is not wrapped in afterViewMount the
+  // way goToDomainsCreate() is: that helper needs the DOM, this needs to be
+  // early.
+  if (stepId === 'ingest') requestDomainFold(ADD_SOURCES_FOLD);
   navigate(view);
   // views/settings.js's freshState() opens on the 'providers' section,
   // which IS the API-keys section — so plain navigation lands on the right

@@ -418,9 +418,17 @@ section('2. buildSteps() — the ORDER is the design (R7), and it is pinned');
   const withDoor = buildSteps({ hasKey: false, hasDomain: true, hasPages: false }, 'knowledge');
   ok(JSON.stringify(oneArg) === JSON.stringify(withDoor),
     'a ONE-ARGUMENT call is byte-identical to an explicit knowledge call — every pre-v3.61.0 caller still means what it meant');
+  // v3.64.0: the ingest step's ACTION reads "Open Domains", not "Open
+  // Ingest". The step id, its title and its body are unchanged because the
+  // JOB is unchanged — only where the job lives moved (Ingest left the rail
+  // and became the ADD SOURCES section of the domain page), and a button
+  // that says where it goes is the panel's own rule: every step POINTS at
+  // the real surface that owns that job.
   ok(JSON.stringify(oneArg.map((x) => [x.id, x.action, x.done]))
-    === JSON.stringify([['api-key', 'Open Settings', false], ['domain', 'Open Domains', true], ['ingest', 'Open Ingest', false]]),
+    === JSON.stringify([['api-key', 'Open Settings', false], ['domain', 'Open Domains', true], ['ingest', 'Open Domains', false]]),
     'and the knowledge set is exactly key/domain/ingest with its own actions and its own done-ness');
+  eq(STEP_COPY.ingest.title, 'Ingest your first source',
+    'the ingest step still SAYS ingest — the job did not change, only where it is done');
   ok(oneArg.every((x) => x.optional === false), 'no knowledge step is marked optional — all three are needed for that path');
   ok(JSON.stringify(buildSteps(null, 'nonsense')) === JSON.stringify(buildSteps(null)),
     'an UNKNOWN door falls back to the shipped knowledge set, never to an empty list');
@@ -574,7 +582,20 @@ section('5. Every step POINTS. Nothing here writes anything.');
 {
   eq(targetViewFor('api-key'), 'settings', 'step 1 points at Settings (its freshState opens on Providers & keys)');
   eq(targetViewFor('domain'), 'domains', 'step 2 points at Domains');
-  eq(targetViewFor('ingest'), 'ingest', 'step 3 points at Ingest');
+  // ── v3.64.0: STEP 3 POINTS AT DOMAINS ───────────────────────────────
+  // Not at the (still-registered, still-reachable) full-page Ingest view.
+  // This lookup's whole contract is "which view does this step navigate
+  // to", and go() calls navigate() with exactly what it returns — a table
+  // that answered 'ingest' while go() went to 'domains' would be a lookup
+  // that lies, and the pure-lookup shape exists precisely so this suite can
+  // assert the mapping without standing up a shell.
+  eq(targetViewFor('ingest'), 'domains',
+    'step 3 points at Domains, which hosts ADD SOURCES — the Ingest VIEW still exists (app.js HOSTED_VIEWS) and is simply not where a checklist sends anyone');
+  {
+    const appSrc = readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
+    ok(/const HOSTED_VIEWS = \[[^\]]*'ingest'/.test(appSrc),
+      "…and 'ingest' is in app.js's HOSTED_VIEWS, so retargeting this step did not orphan the view");
+  }
   eq(targetViewFor('nope'), null, 'an unknown step id points nowhere (no accidental navigation)');
   eq(targetViewFor(undefined), null, 'an absent step id points nowhere');
   ok(STEP_ORDER.every((id) => targetViewFor(id) !== null), 'every real step has a destination');
@@ -681,6 +702,7 @@ section('5. Every step POINTS. Nothing here writes anything.');
     const btn = { click: () => log.push('click') };
     const api = new Function(
       'navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+      'requestDomainFold', 'ADD_SOURCES_FOLD',
       goSrc + '\nreturn { go };')(
       (v) => { log.push('navigate:' + v); if (!deferMount) mounted = true; },
       (cb) => {
@@ -688,10 +710,16 @@ section('5. Every step POINTS. Nothing here writes anything.');
         if (deferMount) { queued.push(cb); return; }
         cb();
       },
-      (id) => (id === 'domain' ? 'domains' : id === 'api-key' ? 'settings' : null),
+      (id) => (id === 'domain' ? 'domains' : id === 'api-key' ? 'settings'
+        : id === 'ingest' ? 'domains' : null),
       { getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null) },
       () => log.push('refresh'),
       0,
+      // v3.64.0: the shell handoff that opens the ADD SOURCES fold. Logged
+      // into the SAME array as navigate(), because the ORDER of the two is
+      // the behaviour under test — see the ingest block below.
+      (id) => log.push('requestDomainFold:' + id),
+      'add-sources',
     );
     let threw = null;
     try { api.go(stepId); } catch (e) { threw = e; }
@@ -734,13 +762,87 @@ section('5. Every step POINTS. Nothing here writes anything.');
     ok(unknown.log.length === 0, 'an unknown step id navigates nowhere and clicks nothing');
   }
 
+  // ── STEP 3 (v3.64.0): DOMAINS, PLUS A FOLD REQUEST, IN THAT ORDER ─────
+  // Ingest left the rail, so the step now sends somebody to the ADD SOURCES
+  // section of the domain page. Two things are asserted and only one of
+  // them is the destination.
+  //
+  // THE ORDER IS THE BEHAVIOUR. navigate() does not always defer: with
+  // motion off, or on a FIRST navigation, the mount happens inside
+  // navigate() itself. A request recorded after that call would be written
+  // after the consumer had already looked and found nothing — a step that
+  // works with animations on and silently does nothing with them off, which
+  // is the worst shape a defect can have (it passes every demo). Both arms
+  // are driven, exactly as the create-click pair above is.
+  {
+    const deferred = runGo('ingest', { deferMount: true });
+    ok(deferred.threw === null, 'go("ingest") does not throw');
+    ok(deferred.log.includes('navigate:domains'),
+      'step 3 navigates to DOMAINS — ADD SOURCES is a section of the domain page now');
+    ok(!deferred.log.includes('navigate:ingest'),
+      '…and NOT to the full-page Ingest view, which is still registered but is no longer where the feature lives');
+    ok(deferred.log.includes('requestDomainFold:add-sources'),
+      '…and asks the Domains view to open the ADD SOURCES fold');
+    // BOTH INDICES ARE ASSERTED PRESENT before they are compared. Found by
+    // mutation: with the request removed entirely, `indexOf` returns -1 and
+    // `-1 < 0` is TRUE, so a bare ordering comparison reported "recorded
+    // first" about a call that never happened.
+    {
+      const iFold = deferred.log.indexOf('requestDomainFold:add-sources');
+      const iNav = deferred.log.indexOf('navigate:domains');
+      ok(iFold >= 0 && iNav >= 0 && iFold < iNav,
+        `THE DEFECT, GUARDED: the fold request is recorded BEFORE navigate(), because navigate() can mount synchronously (got ${deferred.log.join(' → ')})`);
+    }
+    ok(!deferred.log.includes('click'),
+      'the fold is OPENED, not CLICKED — a <summary> click toggles, so it would SHUT the fold for anyone who had already opened it');
+
+    // The synchronous arm — motion off / first navigation — is the one the
+    // ordering assertion above exists for. Same order, no exceptions.
+    const immediate = runGo('ingest', { deferMount: false });
+    {
+      const iFold = immediate.log.indexOf('requestDomainFold:add-sources');
+      const iNav = immediate.log.indexOf('navigate:domains');
+      ok(iFold >= 0 && iNav >= 0 && iFold < iNav,
+        `…and with the mount happening INSIDE navigate(), the request is still there first (got ${immediate.log.join(' → ')})`);
+    }
+
+    // CONTROL: no other step records a fold request, so the line above is
+    // measuring step 3 rather than a call that fires on every press.
+    for (const other of ['domain', 'api-key']) {
+      const r = runGo(other, { deferMount: false });
+      ok(!r.log.some((e) => e.startsWith('requestDomainFold')),
+        `CONTROL: step "${other}" asks for no fold`);
+    }
+  }
+
+  // ── THE TWO HALVES OF THE HANDOFF ARE THE SAME STRING ─────────────────
+  // The producer is this file and the consumer is views/domains.js: two
+  // different packages, so the id is an EXPORTED CONSTANT rather than a
+  // literal typed twice. The failure a typed-twice string produces is a
+  // step that navigates correctly and then silently does nothing else.
+  {
+    const appSrc = readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
+    ok(/export const ADD_SOURCES_FOLD = '([^']+)';/.test(appSrc),
+      'app.js EXPORTS ADD_SOURCES_FOLD, so neither side re-types the id');
+    ok(/export function requestDomainFold\(/.test(appSrc)
+      && /export function consumeDomainFoldRequest\(/.test(appSrc),
+      '…and exports the record/spend pair that carries it');
+    const importBlock = (/import \{([\s\S]*?)\} from '\.\.\/app\.js';/.exec(ob) || [])[1] || '';
+    ok(/\bADD_SOURCES_FOLD\b/.test(importBlock) && /\brequestDomainFold\b/.test(importBlock),
+      'onboarding.js imports both from the shell rather than typing the string');
+    ok(!/'add-sources'/.test(ob),
+      '…and carries the literal nowhere itself');
+  }
+
   {
     // DEGRADATION CONTRACT: a renamed id is a silent no-op, never a throw.
     const log = [];
     const api = new Function('navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+      'requestDomainFold', 'ADD_SOURCES_FOLD',
       goSrc + '\nreturn { go };')(
       () => log.push('navigate'), (cb) => cb(), () => 'domains',
-      { getElementById: () => null }, () => log.push('refresh'), 0);
+      { getElementById: () => null }, () => log.push('refresh'), 0,
+      () => {}, 'add-sources');
     let threw = null;
     try { api.go('domain'); } catch (e) { threw = e; }
     ok(threw === null, 'a renamed or removed button leaves the user on Domains rather than throwing');
