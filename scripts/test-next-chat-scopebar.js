@@ -1,7 +1,9 @@
 /**
- * test-next-chat-scopebar.js — OFFLINE suite for the Chat scope bar's two
- * groups: the SCOPE readout and the COMPILE control (src/public/next/views/
- * chat.js).
+ * test-next-chat-scopebar.js — OFFLINE suite for the Chat scope bar: the
+ * DOMAINS readout, the PROJECT group and the COMPILE control
+ * (src/public/next/views/chat.js). The eyebrow over the domain chips read
+ * "SCOPE" until v3.64.1; the CLASS names (`.chat-scope-*`) keep the old word
+ * and are pinned by two suites, so only the visible string moved.
  *
  * No network, no API key, no server, no browser, no LLM call. The REAL
  * `renderMain` is extracted by brace-matching and EXECUTED; the markup it hands
@@ -38,6 +40,14 @@
  *   §3  The caption states the real message count, and only real messages.
  *   §4  The caption does NOT restate the cost gate.
  *   §5  ANTI-VACUITY — the pre-fix markup fails §2's own predicates.
+ *   §6  The CSS rungs the two captions take.
+ *   §7  The PROJECT group, and its ⓘ — which, since v3.64.1, opens UNDER its
+ *       own button rather than at the column's left margin.
+ *   §8  The project group's three states.
+ *   §9  THE BAR WRAPS (v3.64.1) — the rule that makes clipping an action
+ *       impossible, plus the anti-vacuity control over the pre-fix rule.
+ *   §10 The eyebrow says DOMAINS, not SCOPE — a scope is a work-stream.
+ *   §11 The saved-age readout stays in the BAR, not in the picker's menu.
  */
 
 import { readFileSync } from 'node:fs';
@@ -606,13 +616,30 @@ section('§6 — SOURCE GUARD: the caption is SECONDARY text, on the kit’s run
   ok(!/font-family:\s*var\(--font-mono\)/.test(cap),
     '…and is NOT in the code face: a sentence about a button is prose, and chat.js\'s mono budget is itemised and full');
 
-  // The two groups exist as rules, and neither may shrink: the bar scrolls
-  // horizontally, so a shrinkable group would compress its own label instead.
-  for (const sel of ['.chat-scope-group', '.chat-compile-group']) {
-    const b = bodyOf(sel);
-    ok(/display:\s*flex/.test(b), `${sel} is a flex row`);
-    ok(/flex:\s*none/.test(b), `…and does not shrink (${sel})`);
-  }
+  /* ── WHICH GROUPS MAY SHRINK, AND WHY THE ANSWER CHANGED (v3.64.1) ─────
+     This asserted `flex: none` on BOTH, with the reason "the bar scrolls
+     horizontally, so a shrinkable group would compress its own label". The
+     bar WRAPS now, and that reason inverted for one of the two. MEASURED at
+     568px, where the rail (72) and this view's sidebar (272) leave the bar
+     224px: a `flex: none` domain group sat at its ~530px max-content width and
+     its pill row ran to x=869 against a bar ending at 568 — clipped, with no
+     scroll left to recover it. `flex-wrap` alone could not help, because a
+     wrapping flex container's max-content width IS its single-line width.
+
+     So the DOMAIN group shrinks and wraps, and the other two do not:
+     `.chat-project-group` holds a picker with a minimum width and a one-line
+     readout, `.chat-compile-group` holds the action this whole section exists
+     to keep whole. Both still take the next ROW rather than compressing. */
+  ok(/display:\s*flex/.test(bodyOf('.chat-scope-group')), '.chat-scope-group is a flex row');
+  ok(/flex:\s*0 1 auto/.test(bodyOf('.chat-scope-group')) && /min-width:\s*0/.test(bodyOf('.chat-scope-group')),
+    '…and it SHRINKS, which is what lets its pills wrap instead of being clipped at 568px');
+  ok(/display:\s*flex/.test(bodyOf('.chat-compile-group')), '.chat-compile-group is a flex row');
+  ok(/flex:\s*none/.test(bodyOf('.chat-compile-group')),
+    '…and does NOT shrink — a squeezed Compile button is the same defect by another route');
+  ok(/flex:\s*none/.test(bodyOf('.chat-project-group')),
+    'and the project group opts back out of shrinking too, so its picker keeps a readable width');
+  ok(/flex:\s*0 1 auto/.test(bodyOf('.chat-scope-pills')) && /min-width:\s*0/.test(bodyOf('.chat-scope-pills')),
+    'the pill row shrinks with its group — `flex: none` there would hold the single-line width regardless');
   ok(/flex:\s*1/.test(bodyOf('.chat-scope-spacer')),
     'CONTROL: the spacer between them is the one thing that DOES flex');
 
@@ -648,8 +675,16 @@ section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domai
   const { tree, html } = render();
   const group = findByClass(tree, 'chat-project-group');
   ok(!!group, 'the project group is rendered');
-  const inGroup = group.children.map((c) => c.classes.join('.'));
+  /* TWO ROWS since v3.64.1: a `.chat-project-controls` row, then the ⓘ's
+     panel. The group is a COLUMN, which is what puts the panel under the
+     control rather than beside it — the measurement is in chat.css's own note.
+     So the eyebrow is a child of the CONTROLS row, not of the group. */
+  const controls = group.children.find((c) => c.classes.includes('chat-project-controls'));
+  ok(!!controls, 'the group holds a controls row');
+  const inGroup = controls.children.map((c) => c.classes.join('.'));
   ok(inGroup.includes('chat-scope-eyebrow.mono'), 'it carries its own PROJECT eyebrow');
+  ok(group.children.length === 2,
+    `the group is exactly the controls row and the panel (got ${group.children.length})`);
   ok(/PROJECT/.test(html), '…and that eyebrow says PROJECT');
 
   /* THE ONE THING THIS GROUP MUST NOT BE. A second set of `data-scope-domain`
@@ -688,20 +723,41 @@ section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domai
     '…with an accessible name, because "ⓘ" is not one');
   const panel = findByClass(tree, 'chat-project-panel');
   ok(!!panel, 'the panel it controls is rendered');
-  /* ── NOT INSIDE THE BAR, AND THAT IS A MEASUREMENT ───────────────────────
-     The first cut put the panel inside the project group, positioned
-     absolutely. In the browser it reported itself OPEN at a sane rectangle
-     and drew NOTHING: `.chat-scopebar` is `overflow-x: auto`, so per CSS its
-     overflow-y resolves to `auto` too, and it clipped a descendant hanging
-     below it. No z-index reaches out of a scroll container. The panel is now
-     a SIBLING of the bar, in flow; `data-tx-info` matches by id anywhere in
-     the document, so the button and its panel need not be siblings. */
-  ok(!ancestorClasses(panel).includes('chat-scopebar'),
-    '…OUTSIDE the scope bar, which is a scroll container and would clip it');
-  ok(!ancestorClasses(panel).includes('chat-project-group'),
-    '…and outside the group whose button opens it');
-  ok(html.indexOf('chat-scopebar') < html.indexOf('chat-project-panel'),
-    '…rendered immediately after the bar, so it reads as belonging to it');
+  /* ── UNDER ITS OWN BUTTON. TWO MEASUREMENTS, AND THE SECOND ONE MOVED IT
+        BACK (v3.64.1) ──────────────────────────────────────────────────────
+     v3.64.0's first cut put the panel inside the project group, positioned
+     `absolute`. In the browser it reported itself OPEN at a sane rectangle and
+     drew NOTHING: `.chat-scopebar` was `overflow-x: auto`, so per CSS its
+     overflow-y resolved to `auto` too and it clipped a descendant hanging
+     below it. No z-index reaches out of a scroll container. It was moved OUT,
+     to a sibling of the bar, in flow — and THAT is what was then reported from
+     production: "the ⓘ opens somewhere on the left." A block in flow under the
+     bar starts at the column's left margin while its button sits wherever the
+     project group lands, so the panel appeared under the DOMAIN chips.
+
+     v3.64.1 removes the cause rather than trading one symptom for the other:
+     the bar wraps and no longer clips anything (§9), so the panel lives inside
+     the group again — IN FLOW, taking a row of its own, NOT absolutely
+     positioned and NOT inside the picker's menu. The assertions therefore
+     REVERSE, and they are stated as a path so a future "tidy-up" that floats
+     it or folds it into the listbox cannot pass. */
+  ok(ancestorClasses(panel).includes('chat-project-group'),
+    '…INSIDE the group whose button opens it, so it can only open under that button');
+  ok(ancestorClasses(panel).includes('chat-scopebar'),
+    '…which puts it inside the bar — safe only because §9 proves the bar no longer clips');
+  ok(html.indexOf('chat-project-info-btn') < html.indexOf('chat-project-panel'),
+    '…and it is rendered AFTER its own button, so it reads as that button\'s disclosure');
+  /* THE ⓘ IS NOT A CONTROL INSIDE A FOLD. docs/design-system-source.md §3
+     refuses that outright, and the concrete cost is shared/listbox.js's roving
+     focus: a button inside `.lb-menu` is unreachable by the component's own
+     keyboard model and brings a second Escape handler to fight the first. The
+     menu only exists while open, so this is asserted on the markup the
+     renderer emits — the trigger is here, the ⓘ is its SIBLING, and neither
+     the button nor the panel is inside a `lb-` container. */
+  ok(!ancestorClasses(info).some((c) => /^lb-/.test(c)),
+    'the ⓘ button is not inside any listbox container — a control may never go inside a fold');
+  ok(!ancestorClasses(panel).some((c) => /^lb-/.test(c)),
+    '…and neither is its panel, which would otherwise exist only while the menu is open');
   /* Asserted on the MARKUP, not on the parsed attrs: this file's tree parser
      only captures `name="value"` pairs, and `hidden` is a bare boolean
      attribute — so a parsed-attrs check would be vacuously false here and
@@ -787,6 +843,301 @@ section('§8 — THE PROJECT GROUP\'S THREE STATES, told apart rather than merge
     '…and the post-turn update is a TARGETED patch, not a repaint of the group');
   ok(!/patchProjectGroup\(mountToken\)/.test(chatSrc),
     'CONTROL: a turn does NOT repaint the project group — that would rebuild the picker, and close an open menu, to move one figure');
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+section('§9 — THE BAR WRAPS, SO NO ACTION CAN BE CLIPPED (v3.64.1)');
+// ════════════════════════════════════════════════════════════════════════
+// ── THE DEFECT THIS SECTION EXISTS FOR ───────────────────────────────────
+// Reported from production against v3.64.0, at an ordinary 1370px window: the
+// Compile control was cut in half by the right edge of the column. MEASURED
+// CAUSE, and it is one cause for two defects: `.chat-scopebar` was
+// `overflow-x: auto` with its scrollbar deliberately hidden, and every group
+// in it is `flex: none` — so the moment the four groups exceeded the width,
+// the LAST one neither wrapped nor shrank. It went into a scroll region with
+// no scrollbar to reveal it. The same rule (a box whose overflow-x is not
+// `visible` resolves overflow-y to `auto`) is what made the project ⓘ's panel
+// paint nothing in v3.64.0's first cut.
+//
+// WHAT CAN AND CANNOT BE ASSERTED OFFLINE, SAID PLAINLY: there is no layout
+// engine here, so "the button is fully visible at 1370px" is NOT available and
+// is not claimed. What IS available is the rule that decides it — the bar's
+// own overflow and wrap declarations, and the action's presence in the normal
+// flow of the bar rather than behind a scroll region. The browser pass at
+// 1370 / 1024 / 568 is the other half and is recorded in the commit message.
+{
+  const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bodyOf = (sel) => {
+    const m = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+      .exec(strip(chatCss));
+    return m ? m[1] : '';
+  };
+
+  const bar = bodyOf('.chat-scopebar');
+  ok(bar !== '', 'CONTROL: the bar rule was found (an empty body would make every line below vacuous)');
+  ok(/flex-wrap:\s*wrap/.test(bar),
+    'the bar WRAPS — a group that does not fit takes the next row instead of leaving the column');
+  ok(/overflow:\s*visible/.test(bar),
+    '…and declares `overflow: visible`, which is what stops it being a scroll container at all');
+  ok(!/overflow-x:\s*auto/.test(bar),
+    '…and no longer sets `overflow-x: auto`, the declaration that hid the Compile button');
+  ok(/row-gap:/.test(bar),
+    '…with a row gap, so a wrapped second row is spaced rather than touching the first');
+
+  /* THE PILLS WRAP TOO, and that is not cosmetic. A flex item is never shrunk
+     below its min-content width, so a nowrap row of one pill per domain would
+     be the single child wide enough to push an overflow back onto the bar —
+     re-creating the defect from inside the first group. */
+  ok(/flex-wrap:\s*wrap/.test(bodyOf('.chat-scope-pills')),
+    'the domain pills wrap as well, so the first group can never be the child that overflows the bar');
+
+  /* THE ACTION IS IN THE BAR'S NORMAL FLOW. `flex: none` used to mean "the bar
+     scrolls, so do not let a group compress its own label"; it now means "a
+     group takes the next row WHOLE". Either way the compile group must not be
+     shrinkable — a squeezed Compile button is the same defect by another
+     route. */
+  ok(/flex:\s*none/.test(bodyOf('.chat-compile-group')),
+    'the compile group does not shrink — it wraps whole or not at all');
+
+  /* ── THE ⓘ PANEL TAKES A ROW OF ITS OWN, IN FLOW ───────────────────────
+     It lives inside `.chat-project-group` (§7), which is a flex row. Without
+     a full-width basis it would sit BESIDE the picker as a fourth item and
+     open as a sliver; with one, it forces a break and opens directly under
+     the ⓘ. That pair of declarations — the group wraps, the panel claims the
+     whole line — is what replaces the absolute positioning the bar used to
+     clip, so both halves are pinned. */
+  ok(/flex-wrap:\s*wrap/.test(bodyOf('.chat-scope-group')),
+    'the groups wrap internally, so a long row of chips never overflows the bar');
+  /* ── THE PANEL'S OWN ROW IS A COLUMN, NOT A WRAP. MEASURED. ────────────
+     The first cut made the project group a wrapping ROW and gave the panel
+     `flex: 0 0 100%`. It did NOT take a line of its own: the group is
+     `flex: none`, so its main size is content-based and a percentage basis
+     against an indefinite containing block resolves to content size — at
+     1370px the panel sat BESIDE the picker, x=633 against an ⓘ at x=610, on
+     one 93px-tall line. `flex-direction: column` + `align-self: stretch` needs
+     no percentage and cannot do that, so BOTH are pinned here. */
+  ok(/flex-direction:\s*column/.test(bodyOf('.chat-project-group')),
+    'the project group is a COLUMN — controls on one row, the ⓘ panel on the next');
+  ok(/align-self:\s*stretch/.test(bodyOf('.chat-project-panel')),
+    '…and the panel spans that column, so it opens UNDER the ⓘ rather than beside the picker');
+  ok(/align-items:\s*flex-start/.test(bodyOf('.chat-project-group')),
+    '…left-aligned, so the picker does not slide sideways when the wider panel opens under it');
+  ok(/display:\s*flex/.test(bodyOf('.chat-project-controls')),
+    'CONTROL: the controls row is still a row, so the picker and its readout stay on one line');
+  ok(!/position:\s*absolute/.test(bodyOf('.chat-project-panel')),
+    '…IN FLOW: not absolutely positioned, so there is no overlay layer and nothing to clip it');
+  ok(/display:\s*none/.test(bodyOf('.chat-project-panel\[hidden\]')),
+    'CONTROL: the [hidden] counter-rule is still there — an author `display` would otherwise leave it permanently open');
+
+  /* ANTI-VACUITY. Run the same three predicates over the PRE-FIX declarations
+     and require them to fail, so a green above is evidence rather than a
+     tautology about a regex that matches anything. */
+  const preFix = 'display: flex; align-items: center; overflow-x: auto; scrollbar-width: none;';
+  ok(!/flex-wrap:\s*wrap/.test(preFix) && /overflow-x:\s*auto/.test(preFix),
+    'CONTROL: the pre-fix bar declarations fail the wrap predicate and match the scroll one');
+
+  /* THE TWO SCROLLBAR-HIDE DECLARATIONS STAY, and this says why rather than
+     leaving a reader to wonder: scripts/test-next-scrollbars.js §6 pins them
+     by name and is not this package's file. They are inert while the bar is
+     `overflow: visible`, which is stated in the CSS comment itself — the
+     honest record of a rule kept for a reason outside its own file. */
+  ok(/scrollbar-width:\s*none/.test(bar),
+    'the scrollbar hide is kept (pinned by name in test-next-scrollbars.js §6, inert while overflow is visible)');
+  ok(/INERT/.test(chatCss),
+    '…and the CSS says so in as many words, so the next reader is not left to discover it');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§10 — THE EYEBROW SAYS DOMAINS, BECAUSE THE CHIPS ARE DOMAINS (v3.64.1)');
+// ════════════════════════════════════════════════════════════════════════
+// A *scope* in this app is a work-stream inside a project — `state/<project>/
+// <scope>/…`, `scope: "latest"`, the Context view's own vocabulary. The chips
+// under this eyebrow are DOMAINS, one per knowledge base. One word naming two
+// different things in one product is how a reader learns to trust neither.
+{
+  const { tree, html } = render();
+  const scopeGroup = findByClass(tree, 'chat-scope-group');
+  const eyebrow = scopeGroup.children.find((c) => c.classes.includes('chat-scope-eyebrow'));
+  ok(!!eyebrow, 'the domain group carries an eyebrow');
+  eq(eyebrow.text.trim(), 'DOMAINS', 'and it reads DOMAINS');
+  /* NOT a bare `!/SCOPE/` over the whole markup: `.chat-scope-*` CLASS names
+     stay (two suites assert DOM paths through them) and the readout's own
+     phrase "in scope" is ordinary English about how much wiki the
+     conversation can see, not a reference to a work-stream. So the assertion
+     is on the EYEBROW's own text, which is the string that was wrong. */
+  ok(/chat-scope-group/.test(html),
+    'CONTROL: the class names are untouched — only the visible word moved');
+  const count = findByClass(tree, 'chat-scope-count');
+  ok(/in scope/.test(count.text),
+    'CONTROL: the readout keeps "in scope", which is English about the wiki and not the memory layer\'s noun');
+
+  /* THE PROJECT EYEBROW IS UNCHANGED, and the two must stay different words —
+     one selects a knowledge base, the other selects a project's context. */
+  const projectGroup = findByClass(tree, 'chat-project-group');
+  const pRow = projectGroup.children.find((c) => c.classes.includes('chat-project-controls'));
+  const pEyebrow = pRow.children.find((c) => c.classes.includes('chat-scope-eyebrow'));
+  eq(pEyebrow.text.trim(), 'PROJECT', 'the project group still says PROJECT');
+  ok(eyebrow.text.trim() !== pEyebrow.text.trim(), 'and the two eyebrows are different words');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§11 — THE SAVED-AGE READOUT STAYS IN THE BAR, BESIDE THE PICKER');
+// ════════════════════════════════════════════════════════════════════════
+// The v3.65.0 design pass proposes moving this readout into the listbox's
+// `cfg.footHtml` slot. That slot renders inside `.lb-menu` (shared/listbox.js
+// menuHtml → rendered at :442 and :760), which exists ONLY while the menu is
+// open — so the freshness of the pinned project would be invisible until you
+// opened a picker to change it, and `#chat-project-figure`, which
+// sendCurrentMessage patches after every turn, would not be in the document to
+// patch. That is a deliberate v3.65.0 trade with a guard designed for it; it
+// is NOT this hotfix's behaviour, and this section pins the hotfix's.
+{
+  const pinned = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
+  const readout = findByClass(pinned.tree, 'chat-project-readout');
+  ok(!!readout, 'the readout is rendered');
+  ok(ancestorClasses(readout).includes('chat-project-group'),
+    '…inside the project group, beside the picker it is about');
+  ok(!ancestorClasses(readout).some((c) => /^lb-/.test(c)),
+    '…and NOT inside the picker\'s menu, which is in the document only while it is open');
+  const trigger = findByClass(pinned.tree, 'lb-btn');
+  ok(nearestCommonAncestor(trigger, readout).classes.includes('chat-project-controls'),
+    'the nearest container holding the picker and the readout is the CONTROLS row — they read as one line, ' +
+    'and the panel that opens under them cannot come between them');
+  /* ONE LINE, NO ORPHAN: the readout, the figure and the age are one element
+     with one text run, so nothing can be left stranded on a row of its own by
+     a wrap between them. */
+  eq(readout.children.filter((c) => c.classes.includes('chat-project-figure')).length, 1,
+    'the measured figure is a child of the readout, not a loose sibling somewhere else in the bar');
+  const fig = readout.children.find((c) => c.classes.includes('chat-project-figure'));
+  ok(/saved/.test(readout.text),
+    'the age is in the readout\'s own text run');
+  ok(/KB read/.test(fig.text),
+    '…and what the project contributed is in the figure node nested inside it, so one wrap cannot separate them');
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.1)');
+// ════════════════════════════════════════════════════════════════════════
+// The panel is a child of `.chat-project-group` now, which is the element
+// `patchProjectGroup` rewrites wholesale whenever the project list is re-read
+// — a fetch the user did not ask for and does not see. Without this, opening
+// the ⓘ and waiting a moment would snap it shut mid-sentence for no visible
+// reason, which is worse than the placement it fixes.
+//
+// DRIVEN, NOT SCANNED: the real `patchProjectGroup` runs against a document
+// small enough to model exactly what it touches — one host element, and the
+// two nodes the disclosure's state lives on.
+{
+  /* ── THE FAKE DOCUMENT MODELS THE ONE THING THAT MATTERS HERE ───────────
+     `host.innerHTML = …` REPLACES the nodes. The first version of this fake
+     kept its attribute maps across that assignment, so a repaint left the old
+     open/closed state lying around and the section passed with the preserve
+     logic DELETED — a green-first mutation, caught by running it. The setter
+     now discards the maps and re-seeds them FROM THE MARKUP the renderer just
+     produced (`aria-expanded="…"`, and the bare `hidden` attribute), which is
+     what a browser does: the panel comes back closed unless something puts it
+     back. */
+  function fakeDoc() {
+    let attrs = new Map();       // id -> { 'aria-expanded': '…' }
+    let hiddenFlags = new Map(); // id -> boolean
+    const reseed = (html) => {
+      attrs = new Map();
+      hiddenFlags = new Map();
+      const tagRe = /<[a-z]+\b([^>]*)>/gi;
+      let m;
+      while ((m = tagRe.exec(html))) {
+        const idM = /\bid="([^"]+)"/.exec(m[1]);
+        if (!idM) continue;
+        const id = idM[1];
+        const ae = /\baria-expanded="([^"]*)"/.exec(m[1]);
+        if (ae) attrs.set(id, { 'aria-expanded': ae[1] });
+        hiddenFlags.set(id, /\shidden(\s|$|=)/.test(m[1]));
+      }
+    };
+    let html = '';
+    const host = {
+      id: 'chat-project-group',
+      get innerHTML() { return html; },
+      set innerHTML(v) { html = v; reseed(v); },
+    };
+    const nodeFor = (id) => {
+      if (html.indexOf('id="' + id + '"') === -1) return null;
+      return {
+        getAttribute: (k) => (attrs.has(id) ? attrs.get(id)[k] : undefined),
+        setAttribute: (k, v) => { attrs.set(id, Object.assign(attrs.get(id) || {}, { [k]: v })); },
+        get hidden() { return hiddenFlags.has(id) ? hiddenFlags.get(id) : true; },
+        set hidden(v) { hiddenFlags.set(id, v); },
+      };
+    };
+    return {
+      host,
+      getElementById: (id) => (id === 'chat-project-group' ? host : nodeFor(id)),
+      querySelectorAll: () => [],
+      // The state shared/text.js writes when the user presses the ⓘ: the two
+      // attributes, on the two nodes, together.
+      open() { attrs.set('chat-project-info-btn', { 'aria-expanded': 'true' }); hiddenFlags.set('chat-project-info', false); },
+    };
+  }
+
+  function makePatcher(doc, state) {
+    const calls = { closed: 0, mounted: 0 };
+    const src =
+      'const pendingListboxes = [];\n' +
+      extractFunction(chatSrc, 'activeProjectRow') + '\n' +
+      extractFunction(chatSrc, 'projectFigureText') + '\n' +
+      extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
+      extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
+      extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
+      extractFunction(chatSrc, 'patchProjectGroup') + '\n' +
+      'return { patchProjectGroup };';
+    const api = new Function(
+      'document', 'state', 'isCurrentMount', 'escapeHtml', 'closeAllListboxes',
+      'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
+      src
+    )(
+      doc, state, () => true, escapeHtmlStub,
+      () => { calls.closed++; },
+      (cfg) => '<span class="lb"><button class="lb-btn" id="' + cfg.id + '"></button></span>',
+      (sec) => (sec === null ? 'unknown' : Math.round(sec / 60) + ' min ago'),
+      (sec) => (sec === null ? 'unknown' : 'today'),
+      () => {},
+      () => { calls.mounted++; },
+    );
+    return { api, calls };
+  }
+
+  const state = {
+    activeDomain: 'articles', activeProject: 'curator', projectLastUsed: null,
+    projectsState: 'ready', projectRows: [{ project: 'curator', ageSeconds: 600 }],
+  };
+
+  // CLOSED stays closed — the ordinary case, and the control that proves the
+  // restore below is not simply forcing the panel open every time.
+  const dShut = fakeDoc();
+  const pShut = makePatcher(dShut, state);
+  pShut.api.patchProjectGroup(1);
+  ok(/chat-project-panel/.test(dShut.host.innerHTML),
+    'control: the repaint really did rebuild the group, panel and all');
+  ok(dShut.getElementById('chat-project-info-btn').getAttribute('aria-expanded') !== 'true',
+    'a CLOSED panel stays closed across a repaint');
+  ok(dShut.getElementById('chat-project-info').hidden === true, '…and stays hidden');
+
+  // OPEN survives.
+  const dOpen = fakeDoc();
+  const pOpen = makePatcher(dOpen, state);
+  pOpen.api.patchProjectGroup(1);          // first paint, so the nodes exist
+  dOpen.open();                            // the user presses the ⓘ
+  ok(dOpen.getElementById('chat-project-info').hidden === false, 'control: it is open');
+  pOpen.api.patchProjectGroup(1);          // a background project fetch lands
+  ok(dOpen.getElementById('chat-project-info-btn').getAttribute('aria-expanded') === 'true',
+    '★ an OPEN panel is still reported open after the group is repainted under it');
+  ok(dOpen.getElementById('chat-project-info').hidden === false,
+    '★ and is still shown — a fetch the user did not ask for cannot close what they opened');
+  ok(pOpen.calls.closed === 2,
+    'CONTROL: the repaint still closes any open LISTBOX menu each time — that trigger really has left the document');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

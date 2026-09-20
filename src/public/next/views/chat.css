@@ -278,6 +278,40 @@
   margin-top: 1px;
   font-variant-numeric: var(--numeric-tabular);
 }
+/* ── "answering" (v3.64.1) ────────────────────────────────────────────────
+   The mark that says a turn is still running in THIS conversation while the
+   user is looking at something else — the sidebar half of the fix for "my
+   answer disappears when I leave the view". It rides the meta line the row
+   already has, so the list does not change height the moment one row starts
+   answering.
+
+   THE WORD IS THE MARK; THE DOT IS DECORATION. tokens/color.css's own header
+   rule — status colour always ships with an icon or a label, never as colour
+   alone — is why "answering" is spelled out and the dot is `aria-hidden`. The
+   dot takes --accent (non-text, 3:1 floor) and the word takes --text-2, which
+   is AA in both themes (10.54 dark / 9.33 light on --surface); nothing here is
+   decoded by hue.
+
+   NO ANIMATION, deliberately. A pulsing dot is the obvious choice and the
+   wrong one in a list that can hold dozens of rows: it is exactly what
+   prefers-reduced-motion exists to suppress, and the fact reads perfectly
+   standing still. Nothing to neutralise is nothing to forget to neutralise
+   (scripts/test-next-reduced-motion.js). */
+.chat-conv-answering {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.chat-conv-answering-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  flex: none;
+}
 /* ── THE ROW-LEVEL DELETE: A BARE BASKET, NOT A BUTTON ───────────────────
    Reported as "this should be only the delete basket, the icon, nothing else.
    But now it's a button again with some sort of shadow, which is a really bad
@@ -405,31 +439,44 @@
   padding-right: 28px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--canvas);
-  overflow-x: auto;
-  /* The domain pills overflow horizontally, so this bar scrolls — and
-     nothing in /next styles scrollbars, so macOS painted its own
-     full-width classic scrollbar hard against the underside of the chips.
-     It reads as a draggable divider between the scope bar and the thread,
-     which is not a control this app has.
+  /* ── IT WRAPS. IT NO LONGER SCROLLS. (v3.64.1) ─────────────────────────
+     REPORTED FROM PRODUCTION at an ordinary 1370px window: the Compile
+     control was cut in half by the right edge of the column, with no
+     scrollbar to say so and nothing to drag. MEASURED CAUSE: this bar was
+     `overflow-x: auto` with its scrollbar deliberately hidden (the argument
+     is preserved below), and every group in it is `flex: none` — so the
+     moment the four groups exceeded the width, the LAST one did not wrap
+     and did not shrink. It went into a scroll region the user could not see
+     and, on a trackpad-less mouse, could not reach.
 
-     HIDDEN, WITH SCROLLING FULLY PRESERVED — wheel, shift+wheel, trackpad,
-     drag, and the automatic scroll-into-view that focusing an off-screen
-     pill triggers all still work; only the painted track is gone. A thin
-     re-styled scrollbar was the alternative and was rejected on a
-     measurement: `::-webkit-scrollbar { height: N }` makes the scrollbar
-     take layout space instead of overlaying, so this bar (auto height:
-     14px padding + a 26px pill + 14px padding) would grow by N and shove
-     the whole thread down — and it would do so permanently, on every
-     machine, whether or not that user's OS ever shows a scrollbar. The
-     brief's own constraint was not to shift layout.
+     TWO DEFECTS, ONE CAUSE. Per CSS, a box whose `overflow-x` is not
+     `visible` resolves `overflow-y` to `auto` as well, so the same rule made
+     this bar clip any absolutely-positioned descendant — which is why the
+     project ⓘ's panel was moved out of the bar in v3.64.0 after it was
+     measured open, at a sane rectangle, drawing nothing. Fixing the
+     container fixes both, which is why they ship in one change.
 
-     TRADE-OFF, STATED RATHER THAN HIDDEN: there is now no visual hint that
-     more pills exist off the right edge. That is the same bargain every
-     hidden-scrollbar chip row makes, and it is accepted here because the
-     row holds one pill per domain — a handful for every real user — and
-     because the alternative was a permanent layout shift for everyone.
-     `scrollbar-width` covers Firefox and modern Chromium; the -webkit rule
-     covers Safari and older Chromium; both are needed. */
+     `flex-wrap: wrap` + `overflow: visible`: an action can no longer be
+     pushed out of sight, because there is nowhere out of sight to push it
+     to. A group that does not fit takes the next row, at full size, still
+     reading left to right in the same order.
+
+     WHAT THE HIDDEN SCROLLBAR WAS FOR, AND WHY IT GOES: nothing in /next
+     styles scrollbars, so macOS painted its own full-width classic
+     horizontal bar hard against the underside of the chips, reading as a
+     draggable divider this app does not have. The two hide declarations
+     below are KEPT — they cost nothing, they are pinned by name in
+     scripts/test-next-scrollbars.js §6 (a file this change does not own),
+     and they are the guard that would apply if any future rule reintroduces
+     an overflow here. Stated plainly rather than left to be discovered: with
+     `overflow: visible` they are INERT today.
+
+     The pills wrap too (`.chat-scope-pills` below), which is what stops the
+     first group from being the one thing wide enough to overflow the bar —
+     so there is no width at which anything here needs a scroll region. */
+  flex-wrap: wrap;
+  row-gap: 8px;
+  overflow: visible;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -447,19 +494,55 @@
    stopped a user pressing the button (views/chat.js's markup carries the full
    report). Grouping is the fix: the readout belongs to the pills it describes,
    the caption belongs to the button it describes, and .chat-scope-spacer holds
-   the two apart. Both groups are `flex: none` because the bar itself scrolls
-   horizontally — a shrinkable group would compress its own label instead. */
+   the two apart.
+
+   `flex: none` on BOTH, and it now means something slightly different from
+   what it meant when it was written. It used to be "the bar scrolls, so a
+   shrinkable group would compress its own label instead of scrolling". The bar
+   WRAPS now (v3.64.1), and the same declaration is what makes a group take the
+   next row WHOLE rather than squeezing a picker and a readout into a sliver:
+   the unit that moves is the group, which is the unit the eyebrow names. */
 .chat-scope-group {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: none;
+  /* ── IT SHRINKS AND WRAPS, AND BOTH HALVES ARE LOAD-BEARING. MEASURED. ──
+     `flex: none` here was correct while the bar was a scroll region; with a
+     wrapping bar it is actively wrong, and the browser said so. At 568px the
+     rail (72) plus this view's sidebar (272) leave the bar 224px, and a group
+     sized to max-content is ~530px wide: `flex-wrap` INSIDE it changes
+     nothing, because a wrapping flex container's max-content width is still
+     its single-line width, and `flex: none` means it is never asked for less.
+     Measured in that state: the pill row ran to x=869 against a bar ending at
+     568 — clipped by the column, and with `overflow: visible` there was
+     nothing to scroll it back into view.
+
+     `flex: 0 1 auto` + `min-width: 0` is what lets the bar actually ASK the
+     group to be narrower; the wrap is what the group does about it. Re-measured
+     at 568: the pills take three rows inside the group, nothing is clipped, and
+     the page's horizontal overflow stays 0.
+
+     `.chat-project-group` opts BACK OUT below — it holds a picker with a
+     minimum width and a readout, and squeezing those buys nothing. */
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 .chat-compile-group {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: none;
+  max-width: 100%;
+  /* RIGHT-ALIGNED ON WHATEVER ROW IT LANDS ON. `.chat-scope-spacer` does that
+     job while everything fits on one row; the moment the bar wraps, the spacer
+     stays behind on row 1 and this group would start at the LEFT of row 2 —
+     measured at 1370px, x=372 against a bar running to x=1359, which reads as
+     a second toolbar rather than as the same action that was on the right.
+     `margin-left: auto` makes the alignment hold in both states and changes
+     nothing in the unwrapped one (the spacer has already consumed the slack). */
+  margin-left: auto;
 }
 /* The caption is SECONDARY TEXT — --text-3 at --text-xs, the same rung the
    scope readout takes — because it explains a control rather than competing
@@ -467,13 +550,40 @@
    scripts/test-next-views-kit.js gives: the message count ticks with every
    turn, and a proportional `1` next to a `4` reflows the words after it. */
 .chat-compile-caption {
-  flex: none;
   font-size: var(--text-xs);
   color: var(--text-3);
   font-variant-numeric: var(--numeric-tabular);
+  /* `nowrap` STAYS: the count in this sentence ticks with every turn, and a
+     wrapping caption reflows its own words each time. What changes is what
+     happens when there is genuinely not enough room — measured at 568px, where
+     the bar is 224px and this sentence is 360px: it used to run out of the
+     column and end mid-word. It now shrinks and ellipsises, which says "there
+     is more here" instead of looking broken. Nothing moves at 1370 or 1024,
+     where the full sentence fits. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.chat-scope-pills { display: flex; gap: 6px; flex: none; }
+.chat-scope-pills {
+  display: flex;
+  gap: 6px;
+  /* Shrinkable for the same reason as its group, and for the same measured
+     cause: `flex: none` here would keep the row at its single-line width no
+     matter what the group was given. */
+  flex: 0 1 auto;
+  min-width: 0;
+  /* WRAPS (v3.64.1). One pill per domain is a handful for most users and a
+     screenful for the maintainer's own install; with the bar no longer
+     scrolling, a nowrap row of them would be the single child too wide for the
+     column. Wrapping keeps every domain reachable at every width — which is
+     what the hidden scrollbar could not promise, since it left no visible hint
+     that more pills existed off the right edge. */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
 /* ── 26 -> --hit-min (28px) ───────────────────────────────────────────────
    macOS's DEFAULT control target is 28x28pt. These two are the scope bar's
    only controls and the ones a user hits most often on this view, and they
@@ -521,7 +631,12 @@
 .chat-scope-pill:not(.active):active { background: var(--surface-active); }
 .chat-scope-pill.active:active { background: var(--accent-tint-strong); }
 .chat-scope-pill:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
-.chat-scope-spacer { flex: 1; }
+/* The spacer still holds the two halves apart on a row that fits. On a row
+   that does not, `flex: 1` with `flex-basis: 0` also makes IT the child the
+   wrap prefers to break after — the compile group goes to the next row whole,
+   which is the behaviour this bar wants. `min-width: 0` so it contributes
+   nothing to the bar's own min-content width. */
+.chat-scope-spacer { flex: 1; min-width: 0; }
 .chat-scope-count {
   flex: none;
   font-size: var(--text-xs);
@@ -541,14 +656,61 @@
    border. --border-subtle, not --border: it is a grouping hint, not a
    boundary a user acts on, and the 3:1 non-text floor applies to marks that
    carry information. This one carries none that the eyebrow does not. */
+/* ── A COLUMN OF TWO ROWS, AND THE MEASUREMENT THAT MADE IT ONE ───────────
+   Row 1 is the picker and everything that labels it; row 2 is the ⓘ's panel,
+   which is why the panel opens directly under the control it is about instead
+   of at the column's left margin.
+
+   IT IS A COLUMN BECAUSE A WRAPPING ROW DOES NOT WORK HERE, measured rather
+   than assumed: with `flex-wrap: wrap` on the group and `flex: 0 0 100%` on
+   the panel, the panel did NOT take a line of its own. The group is `flex:
+   none` inside the bar, so its main size is content-based, and a percentage
+   basis against an indefinite containing block resolves to content size — at
+   1370px the panel sat BESIDE the picker (x=633 against an ⓘ at x=610, one
+   93px-tall line). A column needs no percentage and cannot do that.
+
+   `align-items: flex-start` because the column's cross axis is horizontal: the
+   default `center` (inherited from `.chat-scope-group`) would centre the
+   narrow control row over the wider panel when it opens, so the picker would
+   visibly slide sideways as the disclosure appeared. */
 .chat-project-group {
   padding-left: 12px;
   border-left: 1px solid var(--border-subtle);
+  /* NOT shrinkable, unlike the domain group above: this one holds a listbox
+     with a `min-width` and a one-line readout, and compressing them produces a
+     picker too narrow to read a project name in rather than a tidier bar. It
+     wraps to the next ROW of the bar instead, whole. */
+  flex: none;
+  /* …but never WIDER than the bar. `flex: none` stops it being asked to
+     shrink; this stops it insisting on more than there is. At 568px the rail
+     (72) and the sidebar (272) leave 224px, against a group whose natural
+     width is ~253 (eyebrow + a 9.5rem picker + the ⓘ), and the picker's right
+     edge was cut by the column. With the cap, the controls row wraps instead. */
+  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+/* Row 1. It carries the metrics `.chat-scope-group` used to give the group
+   itself, so the picker, its eyebrow, the readout and the ⓘ sit on one line
+   with the same spacing as before. */
+.chat-project-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  max-width: 100%;
+  /* ONE LINE WHERE THERE IS ROOM FOR ONE — at 1370px, measured, the eyebrow,
+     the picker, the readout and the ⓘ sit on a single 28px row. This is the
+     narrow-window escape hatch, not the normal case: below about 260px of bar
+     the row wraps rather than having its picker clipped by the column. */
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 /* The trigger keeps its own width rather than shrink-wrapping to a project
    name, so switching between "No project" and a long slug does not move the
    compile control on the far side of the spacer. `min-width`, not `width`:
-   a name longer than this still gets its space (the bar scrolls). */
+   a name longer than this still gets its space (the bar wraps). */
 .chat-project-lb-root .lb-btn { min-width: 9.5rem; }
 /* The two non-control states — "reading projects…" and "no projects in this
    domain yet" — take the readout's own rung, because they are statements
@@ -599,25 +761,46 @@
    records below: a later rule setting `display` on this class would beat the
    UA's `[hidden] { display: none }` and leave the panel permanently open.
 
-   ── IN FLOW, AND NOT INSIDE THE BAR. MEASURED. ─────────────────────────────
-   The first cut put this panel inside `.chat-project-group` and positioned it
-   `absolute; top: calc(100% + 6px); z-index: 4`. In the browser at 1370 px it
-   reported itself OPEN — `hidden: false`, `aria-expanded: true`, a 278x169
-   rectangle at a sensible place — and drew NOTHING. `.chat-scopebar` above is
-   `overflow-x: auto`, and per CSS a box whose overflow-x is not `visible`
-   resolves overflow-y to `auto` as well: the bar is a scroll container, and it
-   clipped a descendant hanging below it. No z-index could reach out of that,
-   and no assertion in this repo's offline suites could see it.
+   ── IN FLOW, UNDER ITS OWN BUTTON. TWO MEASUREMENTS, IN ORDER. ────────────
+   (1) v3.64.0's first cut put this panel inside `.chat-project-group` and
+   positioned it `absolute; top: calc(100% + 6px); z-index: 4`. In the browser
+   at 1370 px it reported itself OPEN — `hidden: false`, `aria-expanded: true`,
+   a 278x169 rectangle at a sensible place — and drew NOTHING. `.chat-scopebar`
+   was `overflow-x: auto`, and per CSS a box whose overflow-x is not `visible`
+   resolves overflow-y to `auto` as well: the bar was a scroll container and it
+   clipped a descendant hanging below it. No z-index reaches out of that, and
+   no assertion in this repo's offline suites could see it. So it was moved
+   OUT, to a sibling of the bar, in flow — which is what v3.64.0 shipped.
 
-   So the panel is a SIBLING of the bar (views/chat.js renders it right after
-   `.chat-scopebar`) and takes no positioning at all. It cannot be clipped, it
-   needs no stacking context, and it pushes the thread down while open —
-   exactly what `.tx-vh-panel` does under a view header. The bar's own metrics
-   never move, which was the reason the absolute version was tried. */
+   (2) That version was then reported from production: "the ⓘ opens somewhere
+   on the left." True, and it is the COST of (1) rather than a bug in it — a
+   block in flow under the bar starts at the column's left margin while its
+   button sits wherever the project group lands, so the panel appeared under
+   the DOMAIN chips and read as belonging to them.
+
+   v3.64.1 removes the cause instead of trading one symptom for the other:
+   `.chat-scopebar` no longer clips anything (it wraps — see its own note), so
+   the panel can live back inside the group WITHOUT being absolutely
+   positioned. `flex-basis: 100%` in a wrapping group makes it take a row of
+   its own, immediately under the picker and the ⓘ, sharing their left edge and
+   the group's hairline. It still cannot be clipped, still needs no stacking
+   context, and still pushes what is below it down exactly as `.tx-vh-panel`
+   does under a view header.
+
+   NOT absolutely positioned and NOT inside the picker's menu: the first would
+   add an overlay layer this shell does not have, and the second is refused by
+   docs/design-system-source.md §3 — a control may never go inside a fold. */
 .chat-project-panel[hidden] { display: none; }
 .chat-project-panel {
-  margin: 8px 0 0;
-  max-width: 52ch;
+  /* `100%` of a column's cross size, which IS definite here: the group's width
+     is its widest row. NOT a main-axis `flex-basis`, which is what failed in
+     the wrapping-row version — see the group's own note. */
+  align-self: stretch;
+  margin: 2px 0 0;
+  /* `min()` so the measure never wins over the space there is: 52ch is the
+     reading width, 100% is the bar. Without the second term the panel was
+     426px inside a 224px bar at 568px and its right-hand words were cut. */
+  max-width: min(52ch, 100%);
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

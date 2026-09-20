@@ -48,6 +48,10 @@
  *   §7  A stop that is no longer on screen renders nothing.
  *   §8  A cancelled FIRST message leaves no phantom conversation.
  *   §9  The notice is a fact, not an error — and is escaped.
+ *   §12 A TURN THAT OUTLIVES ITS MOUNT (v3.64.1) — the re-attach, its
+ *       counterfactual, "lands once, not twice" on both orderings, the clock's
+ *       preserved start time, the four identity refusals, and the sidebar's
+ *       "answering" mark.
  *   §10 STOPPING A STREAMED TURN. With `stream: true` the abort no longer
  *       lands in `res.json()` — it surfaces out of a `reader.read()` inside
  *       shared/sse.js's generator, a different call stack with a different
@@ -113,6 +117,48 @@ function extractBlockAt(src, opener, label) {
     else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
   }
   return src.slice(start, i);
+}
+
+/**
+ * Lift the RUN OF RESET STATEMENTS out of the real `onEnter`, verbatim.
+ *
+ * ── WHY A SLICE OF REAL SOURCE AND NOT FOUR LINES TYPED HERE ─────────────
+ * §12 turns on what `onEnter` does to a turn that is still running: it blanks
+ * the flag, the notice, the buffers and the clock, and then — since v3.64.1 —
+ * puts the GLOBAL LOCK back if a turn is in flight. A hand-written copy of
+ * those statements would make §12 a test of the copy: delete the lock restore
+ * from chat.js and the copy would go on restoring it, green forever.
+ *
+ * `onEnter` is an object METHOD, so `extractFunction` cannot see it (the
+ * FN_NAMES blind spot scripts/test-next-composer-model.js records). The run is
+ * contiguous in the real source, so it is taken by its two ends and both are
+ * asserted: a desync throws LOUDLY here rather than silently returning less
+ * code than the section thinks it is executing.
+ */
+function extractOnEnterResets(src) {
+  const from = src.indexOf('state.sending = false;');
+  if (from === -1) throw new Error('extractOnEnterResets: the reset anchor is gone from chat.js');
+  // ── THE FAR END IS A LINE THIS SECTION DOES NOT TEST, ON PURPOSE ────────
+  // It was the lock-restore statement itself, and that made the whole run
+  // unextractable the moment anyone edited that line — so a mutation of the
+  // behaviour under test reddened the suite by THROWING rather than by
+  // failing an assertion about what the code does. A guard that can only red
+  // loudly is not the same as a guard that red for the right reason. The end
+  // is now `consumeChatScopeRequest()`, the next statement after the reset
+  // run and one nothing here mutates, so the run can be edited freely and
+  // §12's assertions are what judge it.
+  const tail = 'const scopeReq = consumeChatScopeRequest();';
+  const to = src.indexOf(tail, from);
+  if (to === -1) throw new Error('extractOnEnterResets: the end-of-run anchor is gone from chat.js');
+  const block = src.slice(from, to);
+  // The run must still contain the three pre-existing resets. Stated as a
+  // check rather than assumed, because the slice is defined by its ends and
+  // anything could have been moved out from between them. The lock restore is
+  // deliberately NOT in this list — §12a asserts it by executing it.
+  for (const need of ['state.cancelNotice = null;', 'sendStream = null;', 'stopSendClock();']) {
+    if (!block.includes(need)) throw new Error(`extractOnEnterResets: "${need}" is no longer inside the run`);
+  }
+  return block;
 }
 
 // The real shell escaper's contract, reproduced faithfully. Deliberately NOT a
@@ -181,6 +227,9 @@ function makeHeaders(contentType) {
 
 function makeFetch(mode, payload) {
   const calls = [];
+  // Live stream controllers, one per 'sseHang' response — see the handle note
+  // inside the stream's `start`.
+  const ctl = [];
   const fetchImpl = (url, opts) => {
     const signal = opts && opts.signal;
     calls.push({ url, opts, signal, method: opts && opts.method, body: opts && opts.body });
@@ -197,6 +246,17 @@ function makeFetch(mode, payload) {
           // 'sseHang': still generating. An abort must be what ends it — the
           // same discipline as 'hang', but landing inside the READ rather than
           // inside `res.json()`.
+          //
+          // THE HANDLE (v3.64.1) is the other way it can end, and §12d needs
+          // it: a turn that runs on past a re-mount and THEN finishes normally
+          // is the case the continuity fix could most plausibly break (a
+          // detached turn and an adopted one must not both write the answer).
+          // Without a way to feed the stream a terminal frame on demand, that
+          // case cannot be driven at all — only asserted about.
+          ctl.push({
+            push: (f) => controller.enqueue(enc.encode('data: ' + JSON.stringify(f) + '\n\n')),
+            close: () => { try { controller.close(); } catch { /* already closed */ } },
+          });
           if (signal) signal.addEventListener('abort', () => { try { controller.error(abortErr()); } catch { /* already closed */ } });
         },
         cancel() { cancelled++; },
@@ -230,7 +290,7 @@ function makeFetch(mode, payload) {
       if (signal) signal.addEventListener('abort', () => rej(abortErr()));
     });
   };
-  return { calls, fetchImpl };
+  return { calls, fetchImpl, ctl };
 }
 
 /**
@@ -240,7 +300,7 @@ function makeFetch(mode, payload) {
  */
 function makeSandbox(opts = {}) {
   const doc = makeDoc(['chat-input', 'chat-send-btn']);
-  const { calls, fetchImpl } = makeFetch(opts.mode || 'hang', opts.payload);
+  const { calls, fetchImpl, ctl } = makeFetch(opts.mode || 'hang', opts.payload);
   const rendered = { thread: 0, threadOpts: [], composerBusy: [], shell: 0, sidebar: 0 };
   const state = {
     sending: false,
@@ -263,7 +323,20 @@ function makeSandbox(opts = {}) {
     'let myMountToken = 1;\n' +
     'let sendAbort = null;\n' +
     'let sendStream = null;\n' +
+    // The clock's own module state, so `resumeSendClock` — which puts the
+    // ORIGINAL start time back after a re-adopted turn re-arms the interval —
+    // can be executed here rather than described.
+    'let sendStartedAt = null;\n' +
     extractFunction(chatSrc, 'sendCurrentMessage') + '\n' +
+    // ── THE CONTINUITY PAIR (v3.64.1) ─────────────────────────────────────
+    // Both REAL. §12 drives a turn across a simulated re-mount, so nothing
+    // about the re-attach may be modelled by the harness.
+    extractFunction(chatSrc, 'adoptLiveTurn') + '\n' +
+    extractFunction(chatSrc, 'resumeSendClock') + '\n' +
+    // THE WIRING. `adoptLiveTurn` is unreachable in production unless this
+    // function calls it, and a fix nothing calls is not a fix — §12i executes
+    // the real thing rather than reading it.
+    extractFunction(chatSrc, 'selectConversation') + '\n' +
     // The REAL stream consumer, driving the REAL shared/sse.js reader (imported
     // above, not stubbed) — so what is asserted below is the frame parsing that
     // actually ships, including how an abort lands inside it.
@@ -282,9 +355,16 @@ function makeSandbox(opts = {}) {
     '  renderComposerHtml,\n' +
     '  sendCurrentMessage, cancelCurrentSend, restoreDraft, cancelNoticeHtml,\n' +
     '  composerPrimaryButtonHtml, renderComposerBusy, wireComposerPrimaryButton,\n' +
+    '  adoptLiveTurn, resumeSendClock, selectConversation,\n' +
     '  peekAbort: () => sendAbort,\n' +
     '  setAbort: (v) => { sendAbort = v; },\n' +
     '  peekStream: () => sendStream,\n' +
+    '  setStream: (v) => { sendStream = v; },\n' +
+    '  peekStartedAt: () => sendStartedAt,\n' +
+    // onEnter's OWN reset run, lifted verbatim from the real method (see
+    // extractOnEnterResets) and executed — §12 must not hand-copy the four
+    // statements it depends on, or it would be testing its own copy.
+    '  runOnEnterResets: () => {\n' + extractOnEnterResets(chatSrc) + '\n  },\n' +
     // The real teardown closure, lifted verbatim out of onEnter and returned
     // so §6 can EXECUTE it rather than read it.
     '  teardown: ' + extractBlockAt(chatSrc, 'return () => {', 'onEnter teardown').replace(/^return /, '') + ',\n' +
@@ -313,7 +393,7 @@ function makeSandbox(opts = {}) {
     readSseFrames, (t) => { paints.push(t); },
   );
 
-  return { api, doc, state, calls, clock, rendered, loadCalls, paints };
+  return { api, doc, state, calls, clock, rendered, loadCalls, paints, ctl };
 }
 
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -770,7 +850,21 @@ section('§8  A CANCELLED FIRST MESSAGE LEAVES NO PHANTOM');
   ok(s.state.thread.length === 0, 'the thread is empty again, matching the (absent) file');
   ok(s.loadCalls.length === 0,
     'the sidebar is NOT refreshed into showing a row for a conversation that does not exist');
-  ok(s.rendered.sidebar === 0, 'and no sidebar row was patched in either');
+  /* ── AMENDED (v3.64.1), AND THE AMENDMENT IS NARROWER THAN WHAT IT REPLACES.
+     This read `s.rendered.sidebar === 0` — "no sidebar row was patched in
+     either" — which held only because nothing repainted the list during a turn
+     at all. The "answering" mark changes that: the rows are repainted when a
+     turn starts and again when it ends, so the count is 2 now and the old
+     assertion would red for a reason that has nothing to do with phantoms.
+     What §8 is about is that nothing survives the stop claiming a conversation
+     that was never written, so THAT is what is asserted — against the two
+     fields the mark is rendered from, which are the only way a row could go on
+     saying "answering" after the turn is over. `loadCalls === 0` above still
+     pins the half this line used to cover: the list is never REFETCHED. */
+  ok(s.rendered.sidebar === 2,
+    `the list is repainted exactly twice — once as the turn starts, once as it ends (got ${s.rendered.sidebar})`);
+  ok(s.state.answeringConvId === null && s.state.answeringDomain === null,
+    'and nothing is left claiming to be answering — the mark cannot outlive the turn');
   ok(ta.value === 'the very first message', 'the message is recoverable from the composer');
 }
 {
@@ -1068,6 +1162,383 @@ section('§11  THE CITATION TITLE MAP REACHES THE THREAD  ★ on BOTH transports
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12  A TURN THAT OUTLIVES ITS MOUNT  ★ the v3.64.1 defect');
+// ═════════════════════════════════════════════════════════════════════════
+// ── THE REPORT ───────────────────────────────────────────────────────────
+// "A chat answer in progress DISAPPEARS when I navigate to another view, and
+// only reappears in the thread when the stream finishes."
+//
+// Both halves were true and they had different causes. §6 already proves the
+// request is not aborted — that was never the problem. The problem was that
+// `onEnter` blanked `state.sending`, `sendStream` and the clock while the
+// turn's own record still named the OLD mount, so `sendIsOnScreen`'s
+// `sendAbort.mountToken === token` could not match again for the rest of the
+// turn. It "reappeared at the end" because `selectConversation` re-reads the
+// conversation from disk and by then the server had persisted the answer.
+//
+// ── WHAT IS DRIVEN HERE ──────────────────────────────────────────────────
+// A real turn, a real SSE stream, the real `sendCurrentMessage`, the real
+// teardown, the real reset run lifted out of `onEnter`, and the real
+// `adoptLiveTurn`. The only thing the harness supplies is the mount identity
+// itself — `isCurrentMount` reads a variable this section moves, which is
+// exactly what navigating away and back does to it.
+{
+  // §12a — THE RE-ATTACH, END TO END.
+  let current = 1;
+  const s = makeSandbox({
+    mode: 'sseHang',
+    payload: [
+      { type: 'reasoning', text: 'weighing two sources' },
+      { type: 'content', text: 'The answer so far' },
+    ],
+    isCurrentMount: (t) => t === current,
+  });
+  s.doc.getElementById('chat-input').value = 'what did we decide?';
+  const p = s.api.sendCurrentMessage();
+  await tick(); await tick();
+
+  ok(s.api.peekStream() && s.api.peekStream().content === 'The answer so far',
+    'control: the stream is live and the draft answer has arrived');
+  ok(s.state.thread.length === 1 && s.state.thread[0].role === 'user',
+    'control: the optimistic question is in the thread');
+  const rec = s.api.peekAbort();
+  ok(rec && rec.mountToken === 1, 'control: the turn belongs to mount 1');
+  ok(rec.stream === s.api.peekStream(), 'the record carries the STREAM BUFFERS, which is what makes a re-attach possible');
+  ok(Number.isFinite(rec.startedAt), '…and when it started, which is what stops the clock restarting at 0s');
+
+  // THE USER LEAVES. The real teardown, then the real onEnter resets of the
+  // NEXT view's predecessor — and the mount identity moves.
+  s.api.teardown();
+  ok(rec.controller.signal.aborted === false,
+    '★ leaving does not abort — §6\'s rule, restated here because everything below depends on it');
+
+  current = 2;
+  s.api.runOnEnterResets();
+  ok(s.api.peekStream() === null, 'a fresh mount starts with no stream buffers, so it cannot paint a stranger\'s draft');
+  ok(s.state.sending === true,
+    '★ but the GLOBAL LOCK is restored — one turn at a time is a property of the app, not of a mount');
+
+  // The thread the new mount opens comes from the SERVER, which has persisted
+  // nothing for this turn yet. That is what selectConversation assigns.
+  s.state.thread = [];
+
+  // THE USER COMES BACK TO THE SAME CONVERSATION.
+  const adopted = s.api.adoptLiveTurn(2);
+  ok(adopted === true, '★ the turn is adopted by the new mount');
+  ok(s.api.peekAbort().mountToken === 2,
+    '★ and the record now names that mount, which is what satisfies sendIsOnScreen\'s identity gate');
+  ok(s.api.peekStream() && s.api.peekStream().content === 'The answer so far',
+    '★ the partial answer is back — the buffers were never thrown away, only unhooked');
+  ok(s.api.peekStream().reasoning === 'weighing two sources',
+    '…including the reasoning that arrived while the user was away');
+  ok(s.state.thread.length === 1 && s.state.thread[0].content === 'what did we decide?',
+    '★ and the user\'s own question is back above it — the server had not persisted it, so the thread would have shown an answer to nowhere');
+  ok(s.state.sending === true, 'the composer stays in its Stop state');
+
+  // ★ AND IT CONTINUES LIVE. The half of the report that "the partial text is
+  //   there" does not cover: every delta arriving from here on must paint into
+  //   the mount the user is looking at. Before the fix the stream consumer had
+  //   captured the token at the start of the read, so every one of them was
+  //   dropped by paintStream's mount gate and the bubble froze at whatever had
+  //   arrived before the user left.
+  const paintsBefore = s.paints.length;
+  s.ctl[0].push({ type: 'content', text: ' — continued' });
+  await tick(); await tick();
+  const after = s.paints.slice(paintsBefore);
+  ok(after.length > 0, '★ a delta arriving after the return still asks for a paint');
+  ok(after.every((t) => t === 2),
+    `★ and every one of them targets the NEW mount, not the one the turn started on (got ${JSON.stringify(after)})`);
+  ok(s.api.peekStream().content === 'The answer so far — continued',
+    '…with the buffer growing from where it left off rather than restarting');
+
+  // A SECOND ADOPTION MUST NOT DUPLICATE THE QUESTION. Real paths can reach
+  // this twice (a re-select of the same conversation).
+  s.api.adoptLiveTurn(2);
+  ok(s.state.thread.length === 1, '★ adopting twice does not push the question twice');
+
+  // STOP STILL WORKS FROM THE NEW MOUNT.
+  s.api.cancelCurrentSend();
+  await p;
+  ok(rec.controller.signal.aborted === true, '★ Stop still aborts after the return');
+  ok(s.state.thread.length === 0, '…and the stopped turn unwinds its question exactly as if it had been watched throughout');
+  ok(s.state.cancelNotice && /Stopped/.test(s.state.cancelNotice.text),
+    '…with the notice painted on the mount the user is actually looking at');
+}
+{
+  // §12b — THE COUNTERFACTUAL. Without the re-point, nothing above is worth
+  // anything: this drives the same sequence and SKIPS the adoption, and
+  // requires the turn to stay detached. It is the state v3.64.0 shipped.
+  let current = 1;
+  const s = makeSandbox({
+    mode: 'sseHang',
+    payload: [{ type: 'content', text: 'draft' }],
+    isCurrentMount: (t) => t === current,
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  const p = s.api.sendCurrentMessage();
+  await tick(); await tick();
+  s.api.teardown();
+  current = 2;
+  s.api.runOnEnterResets();
+  s.state.thread = [];
+
+  ok(s.api.peekAbort().mountToken === 1,
+    'CONTROL: with no adoption the record still names the old mount — the bubble cannot paint, which IS the reported defect');
+  ok(s.api.peekStream() === null, 'CONTROL: and the new mount has no buffers to paint from');
+  ok(s.state.thread.length === 0, 'CONTROL: and the question is not restored by anything else');
+  s.api.cancelCurrentSend();
+  await p;
+}
+{
+  // §12c — A TURN THAT FINISHES WHILE THE USER IS AWAY LANDS ONCE, NOT TWICE.
+  // The server persists the answer, so the thread the next mount reads from
+  // disk already contains it. If the detached turn ALSO pushed, the user would
+  // see the answer twice — the duplication `stillRelevant` exists to prevent,
+  // and the one thing a re-adoptable turn could plausibly break.
+  let current = 1;
+  const s = makeSandbox({
+    mode: 'ok',
+    payload: { answer: 'the whole answer', conversationId: 'conv-1', citations: [] },
+    isCurrentMount: (t) => t === current,
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  const p = s.api.sendCurrentMessage();
+  // Leave BEFORE the response is consumed.
+  s.api.teardown();
+  current = 2;
+  s.api.runOnEnterResets();
+  s.state.thread = [];
+  await p;
+
+  ok(s.state.thread.length === 0,
+    '★ the finished answer is NOT pushed into a thread the turn no longer belongs to — the server\'s copy is the one the user will read');
+  ok(s.state.sending === false, 'the lock is released whatever happened to the view');
+  ok(s.api.peekAbort() === null, 'and the record is cleared, so nothing can be adopted afterwards');
+  ok(s.state.answeringConvId === null, 'and the sidebar mark is cleared too');
+}
+{
+  // §12d — AND A TURN THAT FINISHES AFTER THE USER COMES BACK LANDS EXACTLY
+  // ONCE, WITH ITS QUESTION ABOVE IT.
+  //
+  // This is the case the whole change could most plausibly break: the answer
+  // must be written by the ADOPTED turn and by nothing else, and the question
+  // the adoption restored must not end up doubled by the turn's own success
+  // path. Driven end to end against a real stream that is fed its terminal
+  // frame after the re-mount.
+  let current = 1;
+  const s = makeSandbox({
+    mode: 'sseHang',
+    payload: [{ type: 'content', text: 'the answer so ' }],
+    isCurrentMount: (t) => t === current,
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  const p = s.api.sendCurrentMessage();
+  await tick(); await tick();
+  ok(s.ctl.length === 1, 'control: the fixture exposes the live stream');
+
+  s.api.teardown();
+  current = 2;
+  s.api.runOnEnterResets();
+  // What selectConversation would assign: the server's copy, which has nothing
+  // for this turn yet.
+  s.state.thread = [];
+  ok(s.api.adoptLiveTurn(2) === true, 'control: adopted by the new mount');
+  ok(s.state.thread.length === 1, 'control: with the question restored');
+
+  // THE SERVER FINISHES.
+  s.ctl[0].push({ type: 'content', text: 'far, and the rest' });
+  s.ctl[0].push({ type: 'done', answer: 'the answer so far, and the rest', conversationId: 'conv-1', citations: [] });
+  s.ctl[0].close();
+  await p;
+
+  const users = s.state.thread.filter((m) => m.role === 'user');
+  const answers = s.state.thread.filter((m) => m.role === 'assistant');
+  ok(users.length === 1, `★ exactly one question in the thread (got ${users.length})`);
+  ok(answers.length === 1, `★ and exactly one answer — not one per mount (got ${answers.length})`);
+  ok(answers[0].content === 'the answer so far, and the rest',
+    '★ and it is `done.answer` in full, on the mount the user came back to');
+  ok(s.state.sending === false, 'the lock is released');
+  ok(s.api.peekStream() === null, 'the buffers are cleared, so nothing is left to paint');
+  ok(s.state.answeringConvId === null, 'and the sidebar mark comes off');
+  /* ★ THE COMPOSER COMES BACK ON THE MOUNT THE USER IS ON. The `finally` reads
+     its token BEFORE clearing the record, because `here()` falls back to the
+     token the turn was BORN on once the record is gone — which after an
+     adoption is a mount nobody is looking at. Reading it too late leaves the
+     live composer disabled with a Stop button and no turn behind it: a dead
+     end with no way out, which is the defect the whole Stop feature exists to
+     remove. */
+  ok(s.doc.getElementById('chat-input').disabled === false,
+    '★ the composer is re-enabled on the ADOPTED mount — the finally reads its token before clearing the record');
+}
+{
+  // §12e — THE CLOCK KEEPS THE TURN'S OWN ELAPSED TIME.
+  // Restarting it at zero on the way back would tell someone a 90-second wait
+  // had just begun, on the one surface whose job is to say how long they have
+  // been waiting.
+  const s = makeSandbox({ mode: 'hang' });
+  s.api.setAbort({ controller: new AbortController(), mountToken: 1, domain: 'articles', conversationId: 'conv-1',
+    text: 'q', stream: { sse: true, seen: true, reasoning: '', content: 'x', reasoningView: 'tail' }, startedAt: 1000 });
+  s.state.thread = [];
+  const ok1 = s.api.adoptLiveTurn(1);
+  ok(ok1 === true, 'control: adopted');
+  ok(s.api.peekStartedAt() === 1000,
+    '★ the clock keeps the ORIGINAL start time — the elapsed reading does not restart at 0s on the way back');
+  ok(s.clock.started >= 1, '…and a fresh interval really was armed, bound to the mount now on screen');
+}
+{
+  // §12f — ADOPTION IS IDENTITY-GATED. It is the ONE place a turn is allowed
+  // to change which mount it belongs to, so it must refuse every case in which
+  // the thing on screen is not the thing the turn is answering. Without these
+  // four refusals the fix would be a licence to paint one conversation's
+  // reasoning into another — the trust defect `sendIsOnScreen` exists for.
+  const base = () => {
+    const s = makeSandbox({ mode: 'hang', isCurrentMount: (t) => t === 7 });
+    s.api.setAbort({ controller: new AbortController(), mountToken: 1, domain: 'articles',
+      conversationId: 'conv-1', text: 'q',
+      stream: { sse: false, seen: false, reasoning: '', content: '', reasoningView: 'tail' }, startedAt: 1 });
+    s.state.thread = [];
+    return s;
+  };
+  const match = base();
+  ok(match.api.adoptLiveTurn(7) === true, 'CONTROL: an exact match IS adopted');
+
+  const stale = base();
+  ok(stale.api.adoptLiveTurn(6) === false, 'a render token that is not the current mount is refused');
+  ok(stale.state.sending === false, '…and nothing is switched on for it');
+
+  const otherConv = base();
+  otherConv.state.activeConversationId = 'conv-2';
+  ok(otherConv.api.adoptLiveTurn(7) === false, 'a DIFFERENT conversation is refused');
+  ok(otherConv.state.thread.length === 0, '…and its thread is not given someone else\'s question');
+
+  const otherDomain = base();
+  otherDomain.state.activeDomain = 'business';
+  ok(otherDomain.api.adoptLiveTurn(7) === false, 'a DIFFERENT domain is refused');
+
+  const none = makeSandbox({ mode: 'hang', isCurrentMount: (t) => t === 7 });
+  ok(none.api.adoptLiveTurn(7) === false, 'and with no turn in flight there is nothing to adopt');
+}
+{
+  // §12g — THE SIDEBAR SAYS SO WHILE IT RUNS.
+  // The mark is what makes a turn you have navigated away from findable at
+  // all; a turn running invisibly is the shape of the original report.
+  const s = makeSandbox({ mode: 'hang' });
+  ok(s.state.answeringConvId === null || s.state.answeringConvId === undefined,
+    'control: nothing is marked before a send');
+  s.doc.getElementById('chat-input').value = 'q';
+  const p = s.api.sendCurrentMessage();
+  await tick();
+  ok(s.state.answeringConvId === 'conv-1' && s.state.answeringDomain === 'articles',
+    '★ the conversation being answered is named, with its domain');
+  ok(s.rendered.sidebar === 1, '…and the list was repainted once to show it');
+  s.api.cancelCurrentSend();
+  await p;
+  ok(s.state.answeringConvId === null && s.state.answeringDomain === null,
+    '★ and the mark is cleared when the turn ends, on the stop path as well as the success one');
+  ok(s.rendered.sidebar === 2, '…with one more repaint to take it off');
+}
+
+
+{
+  // §12h — THE MARK ON THE ROW, DRIVEN THROUGH THE REAL ROW BUILDER.
+  // §12g proves the two state fields move; this proves they reach the markup,
+  // and that the word — not a colour — is what carries the fact.
+  const rowSrc =
+    extractFunction(chatSrc, 'matchHint') + '\n' +
+    extractFunction(chatSrc, 'conversationRowHtml') + '\n' +
+    'return { conversationRowHtml };';
+  const mkRow = (st) => new Function('state', 'escapeHtml', 'icon', rowSrc)(
+    Object.assign({ selectedConvIds: new Set(), activeConversationId: null, activeDomain: 'articles', searchQuery: '' }, st),
+    escapeHtmlStub, iconStub,
+  ).conversationRowHtml;
+
+  const idle = mkRow({})({ id: 'conv-1', title: 'A thread', messageCount: 4 });
+  ok(!/answering/.test(idle),
+    'control: a row with nothing in flight says nothing about answering');
+
+  const live = mkRow({ answeringConvId: 'conv-1', answeringDomain: 'articles' })(
+    { id: 'conv-1', title: 'A thread', messageCount: 4 });
+  ok(/chat-conv-answering/.test(live), '★ the row being answered carries the mark');
+  ok(/>answering</.test(live), '★ IN WORDS — colour is never the only carrier of a status in this app');
+  ok(/class="chat-conv-row[^"]*\banswering\b/.test(live),
+    '…and the row itself is flagged, so the styling has something to hang on');
+  ok(/aria-hidden="true"/.test(live.slice(live.indexOf('chat-conv-answering'))),
+    '…with the dot hidden from assistive tech, because the word beside it says the same thing');
+
+  const otherRow = mkRow({ answeringConvId: 'conv-1', answeringDomain: 'articles' })(
+    { id: 'conv-2', title: 'Another', messageCount: 2 });
+  ok(!/answering/.test(otherRow), '★ and no OTHER row claims it');
+
+  const otherDomain = mkRow({ answeringConvId: 'conv-1', answeringDomain: 'business' })(
+    { id: 'conv-1', title: 'A thread', messageCount: 4 });
+  ok(!/answering/.test(otherDomain),
+    '★ nor the same id in a different domain — conversation ids are unique only inside one domain\'s folder');
+
+  /* NO ANIMATION ANYWHERE NEAR IT. A pulsing dot in a list that can hold
+     dozens of rows is exactly what prefers-reduced-motion exists to suppress;
+     the fact reads perfectly standing still, so there is nothing to suppress. */
+  const mark = /\.chat-conv-answering[\s\S]{0,400}?\}/.exec(cssSrc);
+  ok(mark !== null, 'the mark has a rule of its own');
+  ok(!/animation/.test(mark[0]), '…and declares no animation');
+}
+
+{
+  // §12i — THE WIRING. `adoptLiveTurn` is a function; what makes it a FIX is
+  // that `selectConversation` calls it, at the one moment a conversation
+  // becomes the conversation on screen. Removing that single line leaves every
+  // other assertion in §12 green and restores the defect in full, so the real
+  // function is driven here rather than read.
+  //
+  // `selectConversation` re-reads the thread from the SERVER — which has
+  // persisted nothing for a turn still in flight — so this also pins the
+  // ORDERING: the adoption must run after the fetch has replaced
+  // `state.thread`, or the question it restores would be wiped by it.
+  const s = makeSandbox({
+    mode: 'ok',
+    // The server's copy: one earlier exchange, and NOTHING about the turn
+    // still running.
+    payload: { messages: [{ role: 'user', content: 'older' }, { role: 'assistant', content: 'older answer' }] },
+    isCurrentMount: (t) => t === 5,
+  });
+  const rec = {
+    controller: new AbortController(), mountToken: 1, domain: 'articles',
+    conversationId: 'conv-1', text: 'the question in flight',
+    stream: { sse: true, seen: true, reasoning: 'r', content: 'partial', reasoningView: 'tail' },
+    startedAt: 4242,
+  };
+  s.api.setAbort(rec);
+  s.state.sending = false;
+  s.state.thread = [];
+  s.state.activeConversationId = null;
+
+  await s.api.selectConversation('conv-1', 5);
+
+  ok(s.state.thread.length === 3,
+    `★ the server's two messages, plus the question of the turn still running (got ${s.state.thread.length})`);
+  ok(s.state.thread[2] && s.state.thread[2].content === 'the question in flight',
+    '★ and that question is LAST, so the streaming bubble renders under it rather than above it');
+  ok(rec.mountToken === 5,
+    '★ opening the conversation re-pointed the live turn at this mount — the one line that makes the whole fix reachable');
+  ok(s.state.sending === true, '…and put the composer back into its Stop state');
+  ok(s.api.peekStream() === rec.stream, '…and re-hooked the buffers the bubble paints from');
+
+  // AND IT DOES NOT FIRE FOR AN UNRELATED CONVERSATION.
+  const other = makeSandbox({
+    mode: 'ok', payload: { messages: [] }, isCurrentMount: (t) => t === 5,
+  });
+  const rec2 = Object.assign({}, rec, { controller: new AbortController(), mountToken: 1, conversationId: 'conv-9' });
+  other.api.setAbort(rec2);
+  other.state.sending = false;
+  other.state.thread = [];
+  await other.api.selectConversation('conv-1', 5);
+  ok(other.state.thread.length === 0,
+    'CONTROL: opening a DIFFERENT conversation does not inherit the running turn\'s question');
+  ok(rec2.mountToken === 1, 'CONTROL: and that turn keeps belonging to the mount it started on');
+  ok(other.state.sending === false, 'CONTROL: nor does it switch the composer into Stop for a turn elsewhere');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {
