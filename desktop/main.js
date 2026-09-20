@@ -1591,7 +1591,7 @@ function startConfigWatch(configFile) {
 //     this repo keeps re-learning about.
 //   · `-webkit-app-region: drag` makes every descendant unclickable unless
 //     each is walked back with `no-drag`. The zone in question contains the
-//     logo and all seven rail buttons — the app's primary navigation. Getting
+//     logo and all five rail buttons — the app's primary navigation. Getting
 //     one selector wrong trades a cosmetic defect for a dead nav.
 //   · It still would not fix (1). The overlap needs the app's content pushed
 //     down, which is a layout change, not an injected rule.
