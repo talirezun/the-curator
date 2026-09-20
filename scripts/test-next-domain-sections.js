@@ -1303,7 +1303,7 @@ try {
   // provenance a page LISTING has no use for, and a spread would ship them.
   const leaked = ['sha256', 'authoredBy', 'commit', 'source', 'text'].filter((k) => k in fnd[0]);
   ok('no provenance field leaks into the listing', leaked.length === 0, leaked.join(', '));
-  eq('...and the row carries exactly the twelve fields the route names',
+  eq('...and the row carries exactly the thirteen fields the route names',
     Object.keys(fnd[0]).sort().join(','),
     'bytes,freshness,isDefaultProject,kind,machine,path,project,role,savedAt,scope,skeleton,slug,title'
       .split(',').sort().join(','));

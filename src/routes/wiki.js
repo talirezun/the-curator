@@ -101,7 +101,7 @@ router.get('/:domain', async (req, res) => {
 // harness names, model ids) and, on tier 0, per-document provenance
 // (`sha256`, `authoredBy`, `commit`, `source`). None of that belongs in a
 // page listing, and a spread would have shipped all of it. Nine named fields
-// for a brief or a handoff, twelve for a foundation, and nothing else.
+// for a brief or a handoff, thirteen for a foundation, and nothing else.
 // ─────────────────────────────────────────────────────────────────────────
 
 const MAX_MEMORY_ENTRIES = 2000;
