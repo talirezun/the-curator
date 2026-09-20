@@ -102,15 +102,26 @@ Developers running the browser install can also put `GEMINI_API_KEY=...` in a `.
 
 ## What happens the first time I open it?
 
-A small **Getting started** panel appears in the corner with a three-item checklist:
+A small **Getting started** panel appears in the corner and asks which of two things you came for. The two doors lead to two different checklists, because the order that is right for one is wrong for the other.
 
-| Item | What it means |
+**Build a second brain** — read sources, get a wiki:
+
+| Step | What it means |
 |---|---|
-| Add an AI key | Opens **Settings**. Nothing else works without a model. |
-| Create your first domain | Opens **Domains**. A domain is one subject area with its own wiki. |
-| Ingest your first source | Opens **Ingest**. Drop in a PDF, Markdown or text file. |
+| Add an AI key | Opens **Settings**. Needed for ingest and chat; project context and the bridge work without one. |
+| Point at a wiki, or start one | Opens **Domains**. Choose the folder your knowledge base already lives in, or create a domain — one subject area with its own wiki. |
+| Ingest your first source | Opens **Domains**, on the **INGEST** section. Drop in a PDF, Markdown or text file. |
 
-The panel tracks real state rather than clicks: it reads "2 of 3 done", ticks items off as you actually complete them, and stops appearing once all three are done. It never blocks you — it is a panel, not a modal. Dismiss it with the cross in its corner, and bring it back at any time with **Settings → General → Show setup guide**.
+**Give your agents memory** — your agents read and write project context, and no AI key is needed:
+
+| Step | What it means |
+|---|---|
+| Point at a wiki, or start one | Opens **Domains**. |
+| Start a project | Opens **Domains**. A project is what an agent resumes. |
+| Connect your agent | Opens **Settings → MCP bridge**, which hands you the snippet your agent needs. |
+| Add an AI key | Marked optional here, because ingest and chat are the halves that need it. |
+
+Every step **points** at the real screen that owns the job; the panel itself never saves anything. It tracks real state rather than clicks: it reads "2 of 3 done", ticks items off as you actually complete them, and stops appearing once they are all done. It never blocks you — it is a panel, not a modal. Dismiss it with the cross in its corner, and bring it back at any time with **Settings → General → Show setup guide**.
 
 An OpenRouter key alone does not tick off step 1; the checklist looks for a Gemini or an Anthropic key specifically. If OpenRouter is your only provider the app works fine and you should just dismiss the panel.
 
@@ -206,11 +217,17 @@ Four things are not rail destinations. **Reading a wiki page** is an overlay tha
 
 ## What is on a domain's page?
 
-Six sections, in the order the work runs in: **OVERVIEW** (the counts, and when the domain was last written to), **INGEST** (drop a file here), **PAGES** (everything readable, behind a Wiki / Context / All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (the connections this domain contributes to) and **WIKI HEALTH**.
+At the top: the folder path in monospace, the display name with an information mark beside it, and **Rename**, **Delete** and **Ask this domain**, the last of which jumps to Chat already scoped to it.
+
+Then six sections, in the order the work runs in: **OVERVIEW** (the counts, and when the domain was last written to), **INGEST** (drop a file here), **PAGES** (everything readable, behind a Wiki / Context / All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (the connections this domain contributes to) and **WIKI HEALTH**.
+
+**OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names.
 
 INGEST and SHARED BRAIN are closed folds that remember whether you opened them, per domain. Two exceptions: on a domain with nothing ingested yet, INGEST opens by itself; and on a read-only Shared Brain mirror there is no INGEST section at all, because an ingest into a mirror has never been possible.
 
-The **PAGES** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader.
+The **PAGES** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
+
+The list loads with the domain, so there is nothing to press. On a large domain the first 150 matching rows are painted, with **"Showing 150 of 3,410"** under the list and a **Show 150 more** row. Press it and the next 150 are added to what is already there; the last press offers only the remainder, and when everything matching is on screen the row and the count both disappear. Typing in the filter, or switching facet, starts the window fresh at 150.
 
 ## What is a domain, and how do I create one?
 
@@ -225,21 +242,6 @@ Click **Domains** in the rail. The panel beside the rail lists every domain unde
 | **Delete** | The confirmation names the folder and the exact page count, and the button reads **Delete permanently**. It removes the domain folder, its pages, its raw sources and its saved conversations, and cannot be undone from inside The Curator. |
 
 If one of these is refused because something else is writing to that domain — an ingest, a sync, an MCP write — you get a clearly marked "Not done — the server refused this." message rather than a silent failure. Wait and try again. Changes appear in the app and in Obsidian instantly, with no restart. If sync is configured, run **Sync now** soon after a rename or delete.
-
-## What is on a domain's page?
-
-At the top: the folder path in monospace, the display name with an information mark beside it, and **Rename**, **Delete** and **Ask this domain**, the last of which jumps to Chat already scoped to it. Then four sections, each its own card:
-
-| Section | What it is |
-|---|---|
-| **OVERVIEW** | Five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. |
-| **PAGES · THE WIKI** | The page list, open, with a **Filter by name…** box and facet tabs: **All**, **Entities**, **Concepts**, **Summaries** and **Memory**. |
-| **PROJECTS IN THIS DOMAIN** | The projects built with this knowledge. Covered in the project context material, not here. |
-| **WIKI HEALTH** | The health panel. See below. |
-
-The list loads with the domain, so there is nothing to press. On a large domain the first 150 matching rows are painted, with **"Showing 150 of 3,410"** under the list and a **Show 150 more** row. Press it and the next 150 are added to what is already there; the last press offers only the remainder, and when everything matching is on screen the row and the count both disappear. Typing in the filter, or switching facet, starts the window fresh at 150.
-
-The **Memory** facet lists your agents' working notes, which are markdown in this domain too. The **All** facet does not include them — "All" means wiki pages, the same number the PAGES figure reports, so the two can never disagree.
 
 ## How do I point The Curator at wiki files I already have?
 
@@ -284,7 +286,7 @@ Only text-based PDFs work. A scanned PDF is an image of a page and has no extrac
 5. A progress bar names the current step with a percentage and a running timer. This usually takes 15 to 60 seconds. Do not close the browser or refresh.
 6. You get a specific result — for example "Wrote 7 new pages · updated 4 existing · +6.1 KB" — followed by the full list of pages created or updated.
 
-Dragging from Finder works anywhere in the Ingest view, not only on the drop zone exactly. Dropping two or more files at once starts a batch, exactly as picking several from the file browser does.
+Dragging from Finder works anywhere in the full-page Ingest view, not only on the drop zone exactly. In the **INGEST** section of a domain's page the target is the section itself: a file dropped elsewhere on that page is refused rather than opened, because dropping a file on a web page normally navigates away from the app. Dropping two or more files at once starts a batch, exactly as picking several from the file browser does.
 
 What actually happens: the document is saved untouched to `raw/`, its text is extracted, and the AI plans and writes pages into three folders — `entities/` for people, tools, companies and frameworks, `concepts/` for ideas and techniques, and `summaries/` for one page per source document. Existing pages are **merged**, not duplicated: a second document about the same person adds to the one page that exists. Links are then repaired and made two-way, and the domain's index and log are updated.
 
@@ -627,10 +629,10 @@ handoff before stopping.
 | **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
 | **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder. |
-| **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, and the default write domain. |
+| **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, the default write domain, the tool map, and a note naming any bridge process still running older code. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
-At the foot of that list is the version — for example `The Curator v3.59.0` — next to an **Updates** button that switches to General and runs the check.
+At the foot of that list is the version — for example `The Curator v3.64.0` — next to an **Updates** button that switches to General and runs the check.
 
 The theme switch in the rail footer and the **Appearance** control in General are the same setting and stay in step. Text size applies across the whole app, including button and text-box labels, and is remembered in this browser; control heights and icons deliberately stay put so buttons do not grow into each other.
 
@@ -665,6 +667,10 @@ That is the expected first-launch state, not a fault. The app never goes looking
 ## Why does it say "The Curator is already running"?
 
 One copy at a time, on purpose. The existing window is brought forward — check your other Spaces, or click the Dock icon. Closing the window with Command-W or the red button only hides it; the app is still running. To actually stop it, quit with Command-Q.
+
+## Why does my agent see old tools, or miss a new one?
+
+Because it is still talking to a bridge it started before you updated. An MCP client launches the bridge as a child process and keeps it alive until the client itself is restarted, so a bridge started last week carries on serving the tools it was launched with, whatever is now on disk. Measured on one machine: a bridge running for two days across five updates, offering 22 tools while the files beside it offered 24. **Settings → MCP bridge** reports any it finds, with how old it is and the remedy — restart the app that launched it, usually Claude Desktop. Nothing in The Curator can restart it for you, because the process belongs to the client. The self-test cannot see it either: it spawns a fresh bridge, which is why it passes while your agent is served by the old one.
 
 ## Why can't Claude Desktop see the MCP tools after I set it up from the Mac app?
 

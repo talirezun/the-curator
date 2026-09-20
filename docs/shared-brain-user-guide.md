@@ -70,7 +70,7 @@ You CANNOT proceed without accepting the GitHub collaborator invitation. The Cur
 
 ### Step-by-step wizard
 
-In the **Shared Brain** rail view, on the **I have an invite token** card, click **Join →**. A
+In the **Shared Brain** view, on the **I have an invite token** card, click **Join →**. A
 wizard sheet comes down from the top of the window with a 5-step progress bar
 (Token → Access → Your token → Domains → Save) and a **Step N of 5** counter under the title.
 
@@ -223,7 +223,7 @@ You can do this before OR after running the admin wizard. Order doesn't matter �
 
 ### Step C — Run the admin wizard
 
-In the Curator → **Shared Brain** rail view → on the **I’m starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → Your token → Domains → Save**.
+In the Curator → **Shared Brain** view → on the **I’m starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → Your token → Domains → Save**.
 
 #### Step 1 — Setup
 
@@ -404,7 +404,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 | Action | Where in the Curator app |
 |---|---|
-| Enable Shared Brain (beta) | **Shared Brain** rail view → Enable button |
+| Enable Shared Brain (beta) | **Shared Brain** view → Enable button |
 | Join a cohort (contributor) | **Shared Brain** → **I have an invite token** → Join → paste invite token |
 | Start a new cohort (admin) | **Shared Brain** → **I’m starting a new Shared Brain** → Set up |
 | Push your contributions | **Shared Brain** → connection card → "Push contributions" |

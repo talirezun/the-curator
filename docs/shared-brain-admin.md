@@ -25,7 +25,7 @@ A Shared Brain needs two things for each contributor to be able to push: (1) the
 Steps:
 
 1. **Add them as a GitHub collaborator.** On the private repo: *Settings → Collaborators → Add people*, and have them accept the email invitation. Without this, their PAT — however valid — will get a `403`/`repository not found` on the first push.
-2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They paste it into the **Shared Brain** rail view → *📨 I have an invite token* → **Join** wizard. (Through v3.40.0, in the pre-redesign shell at `/old`, that block was in the Sync tab instead. That shell was deleted in v3.41.0.)
+2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They open the **SHARED BRAIN** section of any domain's page, press through to the full **Shared Brain** view, and take *📨 I have an invite token* → **Join**. (Shared Brain was a rail entry of its own through v3.63.0, and before that — through v3.40.0, in the pre-redesign shell at `/old` — the block was in the Sync tab. That shell was deleted in v3.41.0.)
 3. **They create their own PAT** during the wizard (fine-grained, *Contents: Read and write* on the repo — or a classic token with `repo` scope). The wizard validates it live.
 
 The full step-by-step from the contributor's side is in [User Guide §2 — Contributor setup](shared-brain-user-guide.md#2--contributor-setup-join-an-existing-shared-brain). For your own initial brain creation, see [User Guide §3 — Admin setup](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain).
@@ -38,7 +38,7 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 
 ### v3.0.5+ — from the connection card (recommended)
 
-1. **Shared Brain** rail view → your connection card → **Admin controls — admin token & contributor revocation**
+1. **Shared Brain** view → your connection card → **Admin controls — admin token & contributor revocation**
 2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
 3. Paste your **admin token** — the `sbat_…` credential shown once at brain setup (see §9). **If you do not have it, you cannot revoke, and there is no button that will issue you a new one.** Since v3.43.0 the rotate endpoint requires the CURRENT token; a connection holding no admin token is refused with `403 no_admin_token`. Re-run the brain-setup wizard to issue and save a fresh one.
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
@@ -271,7 +271,7 @@ Synthesis aggregates contributions into the collective wiki. It runs locally on 
 
 ### Manual trigger (every time the admin wants to merge)
 
-**Shared Brain** rail view → connection card → **Run synthesis (admin)** — it sits in the card's main action row beside Push and Pull, not inside a disclosure. A confirm step explains the cost before anything runs.
+**Shared Brain** view → connection card → **Run synthesis (admin)** — it sits in the card's main action row beside Push and Pull, not inside a disclosure. A confirm step explains the cost before anything runs.
 
 ### Frequency recommendations
 
@@ -308,7 +308,7 @@ That's it. No new tokens, no admin action in the Curator.
 
 ### Re-displaying the invite token
 
-Lost the token? Since v3.0.5 it's one click: **Shared Brain** rail view → connection card → **Admin controls — admin token & contributor revocation** → **Show invite token**. The token is deterministic (pure metadata), so re-generating from the connection's stored settings reproduces the original — safe to show any time, safe to share with anyone.
+Lost the token? Since v3.0.5 it's one click: **Shared Brain** view → connection card → **Admin controls — admin token & contributor revocation** → **Show invite token**. The token is deterministic (pure metadata), so re-generating from the connection's stored settings reproduces the original — safe to show any time, safe to share with anyone.
 
 > Note for connections created before v3.0.5: the data-handling-terms choice wasn't stored back then, so the re-displayed token defaults to *contributor retains*. If your brain uses the *organisational* IP mode, share your originally generated token instead (the card shows a caution in this case).
 
@@ -345,7 +345,7 @@ This is the standard departure flow. Use the revoke endpoint (§3) only when GDP
 
 After synthesis, the collective wiki may grow `CONFLICTING SOURCES` markers where contributors disagreed and the LLM couldn't unify them. Check periodically:
 
-1. **Shared Brain** rail view → connection card → **Pull updates** (so your local mirror is fresh).
+1. **Shared Brain** view → connection card → **Pull updates** (so your local mirror is fresh).
 2. **Read the synthesis result — this is the reliable route.** Since v3.0.4 the synthesis summary on
    your connection card names the affected pages directly (*"2 unresolved contradictions flagged in
    concepts/x.md, entities/y.md"*), and the API result carries a `conflict_pages` array. This is

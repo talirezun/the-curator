@@ -22,8 +22,28 @@ plus one entry in the rail registry over in `../app.js`.
    column, and reader overlay are the only shared surfaces, and all of
    them are reached only through the shell functions (`setSidebar`,
    `setMain`, `openReader`, etc.) — never via `document.getElementById`
-   on an element another view owns, and never by importing another
-   `views/*.js` file.
+   on an element another view owns.
+
+   **The one exception is a HOSTED view, and it is an exception about
+   IMPORTS, not about the DOM** (v3.64.0). A view that hosts another
+   imports a named trio from it — `mount<Name>Section(el, opts)`,
+   `unmount<Name>Section()` and `<name>SectionBusy()` — and hands it an
+   element to own; `views/domains.js` does exactly this for
+   `views/ingest.js` and `views/shared.js`. The host still never touches
+   what it mounted: it owns the container, the hosted view owns
+   everything inside it, and the host asks `…SectionBusy()` rather than
+   inspecting the panel to find out whether it may repaint. Adding a
+   host seam is additive by rule — several offline suites brace-match
+   named functions out of those files, so nothing in a hosted view may be
+   renamed or moved. See each file's own host-seam header before widening
+   one.
+
+   One other import crosses this line and is not a host seam: a
+   **self-clearing request**, which a view exports so another can ask it
+   to open on something — `requestProject` in `views/memory.js`, and
+   `requestDomain` / `requestDomainFold` / `requestChatScope` in the
+   shell. A request is recorded once and spent by reading it; it is not a
+   call into the other view's DOM.
 5. **New view (not just editing one)**: add its name to `NAV_VIEWS` (a rail
    button), `HOSTED_VIEWS` (registered and navigable, but reached from
    inside another view) or `FOOTER_VIEWS`, and its

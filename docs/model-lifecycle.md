@@ -114,7 +114,7 @@ The first model that responds is the one used for that call. Subsequent calls re
 
 ### Normal operation
 
-Nothing. The Settings tab shows the usual provider badge:
+Nothing. Settings shows the usual provider badge:
 
 > 🟢 Active: Gemini — `gemini-2.5-flash-lite`
 

@@ -47,7 +47,7 @@ That's why the handoff and its journal live at `state/<scope>/<machine>/current.
 
 **And losing an edit is the *milder* of the two things that can happen — which is worth knowing before you decide to hand-edit a state file on two machines.** `-X theirs` isn't "take their whole file"; it's a preference that only applies where both sides changed the *same lines*. Where one side left a section untouched, the other side's edit merges in cleanly. So instead of one version winning, you can get a **splice** — a single tidy file containing one machine's heading and timestamp with another machine's section dropped into it. Git reports a clean, successful merge, because as far as git is concerned it was one. The result reads as a perfectly normal document that neither machine actually wrote, and nothing in The Curator flags it, because the checks that exist look for a *malformed* file and a spliced one isn't malformed.
 
-**The one exception:** `state/project.md`, the standing project brief, has *no* machine segment — one file per project, because the brief belongs to the project rather than to any one machine. Edit it from two machines between syncs and you're back in the conflicting-hunk case above: the loser's edit is dropped with no warning. In practice this is a small risk (the brief changes rarely, and only one function ever writes it), but if you hand-edit it in Obsidian, sync soon after — the same advice this guide already gives for any wiki page.
+**The one exception:** `state/project.md`, the standing project brief, has *no* machine segment — one file per project, because the brief belongs to the project rather than to any one machine. Edit it from two machines between syncs and you're back in the conflicting-hunk case above: the loser's edit is dropped with no warning. In practice this is a small risk — the brief changes on the order of weeks — but it is a real one rather than a theoretical one, and it grew in v3.48.0: the brief gained the app's own editor and the `save_project_brief` MCP tool beside hand-editing, so three routes now reach one file with no machine segment. If you edit it in the app or in Obsidian, sync soon after — the same advice this guide already gives for any wiki page.
 
 **Foundations (v3.59.0) share the same carve-out, and for a project's canonical documents the
 mitigation that covers the brief — "it changes rarely, and only one function writes it" — doesn't
@@ -130,7 +130,7 @@ That's it. No developer tools, no command line, no extra software.
 
 The **Sync** view has a setup form that collects everything at once. Here's what to expect.
 
-> **This section was rewritten for the v3.9.0 interface.** It previously described a multi-step wizard with a *Get started* welcome screen and **Next** / **Finish** buttons — that is the `/old` interface, and if you are following these steps there you will get a wizard rather than one form. The information you need is identical either way; only the number of clicks differs.
+> **This section was rewritten for the v3.9.0 interface.** It previously described a multi-step wizard with a *Get started* welcome screen and **Next** / **Finish** buttons — that was the `/old` shell, which v3.41.0 deleted outright; `/old` now redirects to `/`. There is one form, and it is the one described here.
 
 > 🤖 **Using a coding agent?** If you have Claude Code, Cursor, opencode, Aider, or a similar agent wired to your machine and GitHub, you can skip the manual steps entirely — paste one prompt and it does all of this for you. See **[sync-via-coding-agent.md](sync-via-coding-agent.md)**.
 
@@ -305,9 +305,9 @@ The **Sync now** button is what you use 95% of the time. It pulls anything new f
 
 For everyday use, prefer **Sync now**.
 
-> **Where these buttons sit has changed twice.** In v2.5.x the Sync tab had three coequal buttons labelled *Sync Up*, *Sync Down* and *Sync*. v2.6.0 renamed them to **Sync now** / **Push only** / **Pull only** and tucked the two one-way buttons into a collapsible **Advanced** section — which is what you still see at `/old`. In the current interface all three are inline, with **Sync now** as the primary. The underlying behaviour has never changed.
+> **Where these buttons sit has changed twice.** In v2.5.x the Sync tab had three coequal buttons labelled *Sync Up*, *Sync Down* and *Sync*. v2.6.0 renamed them to **Sync now** / **Push only** / **Pull only** and tucked the two one-way buttons into a collapsible **Advanced** section. Since the v3.9.0 cutover all three are inline, with **Sync now** as the primary, and the shell that had the Advanced section was deleted in v3.41.0. The underlying behaviour has never changed.
 
-> **There is no revert or discard control**, in either interface. Every sync is a real git commit, so your history exists on disk — but listing or reverting individual commits from the app is not built, and the Sync view says so. To undo local changes before pushing, use git directly; [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix) has the exact commands, and they apply to any local change, not just Health fixes.
+> **There is no revert or discard control.** Every sync is a real git commit, so your history exists on disk — but listing or reverting individual commits from the app is not built, and the Sync view says so. To undo local changes before pushing, use git directly; [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix) has the exact commands, and they apply to any local change, not just Health fixes.
 
 ---
 
@@ -483,7 +483,7 @@ This is uncommon but can happen. To fix it:
 4. Edit the file to keep the version you want, removing the conflict markers
 5. Run the command shown to complete the merge
 
-If this feels complicated, the easiest recovery is to decide which machine has the "correct" version, and overwrite the other machine by using **Pull only** (in the Advanced section) after discarding local changes.
+If this feels complicated, the easiest recovery is to decide which machine has the "correct" version, and overwrite the other machine by using **Pull only** — inline beside **Sync now** — after discarding local changes.
 
 ### Stale `.write-lock` or `.DS_Store` files showing up in your changes
 

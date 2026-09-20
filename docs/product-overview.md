@@ -263,6 +263,8 @@ a mature wiki than an empty one. That is what the estimate explains rather than 
 
 ![The Curator's Ingest view with a two-file batch staged. In the panel beside the rail, a DESTINATION list of two domains: "Demo, 2 pages ·" a dashed ring, a clock and "nothing written yet", ticked as the current destination; and "Projects, 0 pages ·" a filled dot, a clock and "1 week ago", with "Ingested · Lumina Project Overview and Multi-…" underneath. The main column is headed "Batch ingest — 2 files" over "1.3 KB total · gemini · gemini-2.5-flash-lite" and is laid out in two columns. Left: a Domain dropdown set to Demo, a drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started", then WILL BE INGESTED (LARGEST FIRST) listing retrieval-vs-compilation.md at 674 B and wikilinks-as-a-relevance-signal.md at 621 B, each with a remove button. Right: a card reading "Estimated cost $0.0016" over the one-line provenance "Sized against this wiki's real page list, not a flat rate. Actual spend can land above the range.", then "Estimated tokens 2,869 in / 3,334 out", and at its foot "How this range was worked out" with an ⓘ that opens the full account. Under the card, an optional "Budget cap" field showing "No cap", an unchecked "Overwrite existing pages for files already ingested" box, and the buttons Start batch, Add more files and Clear all.](images/curator-ingest.png)
 
+*Photographed before v3.64.0 took Ingest off the rail. The panel is unchanged; it is now also the INGEST section of a domain page, and the full-page view remains reachable.*
+
 ### 4.2 The wiki and its graph
 
 **What it is.** Three kinds of page, in three folders, per domain:
@@ -321,6 +323,8 @@ thinking animation it cannot substantiate.
 *"what do I already know about Z?"*, *"which of these sources disagree?"*
 
 ![The Curator's Chat view. A scope bar across the top carries one pill per domain — Articles (selected), Business, Lectures, Posts, Projects, Research — with the readout "3,421 pages in scope" and a "Compile to Wiki" button beside it. The sidebar has New chat, a "Filter conversations" box and a list of saved threads with their message counts. In the thread, a question asks for a table of the last ten articles with a shared-similarities row; the answer below is labelled "THE CURATOR · MiniMax M3 (free) · free" and renders as a Markdown table with columns for number, article and its source page, date, summary and domain interest. The composer at the bottom reads "Ask Articles…" and carries a model dropdown set to "MiniMax M3 (free)", a length dropdown set to "Balanced", and the note "cost varies with response length".](images/curator-chat.png)
+
+*Photographed before v3.64.0 added the PROJECT group to the scope bar, which pins one project’s context alongside the domain’s wiki.*
 
 ### 4.4 Compiling a conversation into the wiki
 
@@ -944,7 +948,7 @@ document is rendered in one place only.
 | **2b. The save pulse** | a small drawn timeline of the last seven days, plus a sentence saying what it adds up to |
 | ***`domain / project · age · tool`*** | a section header, one per project group |
 | **3. Rows grouped by project** | at most three groups and five rows in total, newest first throughout, each row with a recency mark and a submenu. Two rows per group is a floor: unclaimed rows are handed back, so one project still fills all five |
-| **3b. An overflow line** | *"More in Agent Memory… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
+| **3b. An overflow line** | *"More in Project Context… (6)"*, naming the true total, and clickable — it is the only route to the rows the cap hid |
 | **4. Notices, only when true** | handoffs waiting on GitHub from another computer; **another computer having saved after this one**; two agent tools colliding on one work-stream |
 | **5. Actions** | Open Project context · Open The Curator · Settings |
 | **6. A freshness stamp** | *"Updated 14:32"* — when the reading itself was last drawn |

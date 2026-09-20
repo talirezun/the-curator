@@ -58,7 +58,7 @@ table lives in [working-state.md](working-state.md#1-the-problem-it-solves).
   on the skill alone, never activating it. Reading working state over MCP is pure protocol and
   works anywhere; saving is a discipline the agent has to be given, and an installed skill only
   gives it if the harness reaches for the skill. The portable fix is prose, not a file format:
-  **Domains → Projects → Copy agent instructions** hands you the block to paste into whatever file
+  **Domains → PROJECTS IN THIS DOMAIN → Copy agent instructions** hands you the block to paste into whatever file
   your harness already loads — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
   ([the measurement and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 - **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer and that
@@ -177,7 +177,7 @@ first group applies to all three.
 | [architecture.md](architecture.md) | System design, data flow, module reference |
 | [desktop-app-decisions.md](desktop-app-decisions.md) | **The native Mac app — decisions, not features.** One codebase / two shells, why `desktop/` gets its own manifest, why the first DMG turns `asar` off, the release gate, what migrates and what deliberately does not, and the MCP launcher. Also why `electron-updater` cannot be the update mechanism while the app is ad-hoc signed. Every entry carries its reasoning, its evidence, and a status saying whether code exists for it yet. Read it before proposing anything about packaging |
 | [chat-streaming.md](chat-streaming.md) | How a chat turn streams from the provider to the screen — the frame format, how reasoning is kept out of the answer, and why a streamed attempt is never retried or handed to a fallback model |
-| [api-reference.md](api-reference.md) | REST API reference — the endpoints an integrator is most likely to need. Not exhaustive: some shipped routes (notably the `/api/sync/*` family) have no entry yet, so treat the routers under [`src/routes/`](../src/routes/) as the authoritative list |
+| [api-reference.md](api-reference.md) | REST API reference — the endpoints an integrator is most likely to need. Not exhaustive, so treat the routers under [`src/routes/`](../src/routes/) as the authoritative list — though the coverage is wide, and the `/api/sync/*` family this line once named as missing has had its own section since |
 | [model-lifecycle.md](model-lifecycle.md) | Provider/model fallback policy and what happens when a model is retired |
 | [design-system-text-ramp-patch.md](design-system-text-ramp-patch.md) | **The one place `tokens/color.css` intentionally differs from the shipped design-system bundle**, and the diff to apply to the bundle so the two re-converge. Six values: the three dim text rungs, per theme. Carries the before/after contrast measurements and the reason `--text-faint` is deliberately left under the text floor. Read it before "fixing" those tokens back to match the bundle |
 | [design-system-source.md](design-system-source.md) | Where the design-system MASTER lives (outside this repo), what the gitignored `the_curator_design_system/` mirror is for, and the deliberate divergences — the v3.25.0 text ramp, and the checkbox border that fails 3:1 as the bundle specifies it |

@@ -546,7 +546,7 @@ Lists recent jobs (most recently updated first, capped at 20). Finished (termina
 
 ### GET /api/ingest-queue/active
 
-Returns the one job that is not in a terminal state (`pending`/`running`/`paused`), if any — `null` otherwise. Cheap; safe to poll on app load or Ingest-tab entry to resume showing an in-progress batch.
+Returns the one job that is not in a terminal state (`pending`/`running`/`paused`), if any — `null` otherwise. Cheap; safe to poll on app load, or when the ingest panel mounts, to resume showing an in-progress batch.
 
 **Response** `200 OK`
 
@@ -730,7 +730,7 @@ strings, verbatim:
 | No such conversation | `Conversation not found` |
 | Fewer than `MIN_USER_MESSAGES` (**1**) user turns | `Conversation too short to compile (need at least 1 user messages, got N)` |
 | Already compiled at the deterministic summary slug | `Already compiled to <path>. Send another message in this conversation to extend it, or delete that file in your wiki to start over.` |
-| Destination is a read-only Shared Brain mirror | `Domain "<d>" is a read-only Shared Brain mirror. Compile into your personal opted-in domain instead, then push contributions from the Sync tab.` |
+| Destination is a read-only Shared Brain mirror | `Domain "<d>" is a read-only Shared Brain mirror. Compile into your personal opted-in domain instead, then push contributions from the Shared Brain view.` |
 
 The mirror case is reported as a `refusal` rather than an HTTP error because
 this endpoint is a question rather than an attempt; the POST answers `400` for
@@ -1294,7 +1294,7 @@ every row alike will 404 on it.
 
 **The domain's own project lives at the state root**, so its brief is `state/project.md` and its handoffs are `state/<scope>/<machine>/current.md` — never `state/<domain>/…`. Named projects sit one level deeper.
 
-**No file bodies, ever**, and the wire shape is an allow-list of exactly the nine fields above. The store's rows also carry journal-derived facts — the headline an agent wrote, the harness and model that wrote it — and none of them reach this listing. To read a memory page's content, use `GET /api/memory/:domain/:project` (add `?scope=&machine=` for a handoff); `GET /api/wiki/:domain/page` **cannot** open one and answers `400` — it gates on the three canonical wiki folders, and `state/` is `wiki/`'s sibling.
+**No file bodies, ever**, and the wire shape is an allow-list of exactly the fields above — nine for a brief or a handoff, thirteen for a foundation. The store's rows also carry journal-derived facts — the headline an agent wrote, the harness and model that wrote it — and none of them reach this listing. To read a memory page's content, use `GET /api/memory/:domain/:project` (add `?scope=&machine=` for a handoff); `GET /api/wiki/:domain/page` **cannot** open one and answers `400` — it gates on the three canonical wiki folders, and `state/` is `wiki/`'s sibling.
 
 **Why it is opt-in.** The wiki half is one `readdir` per canonical folder. The memory half walks the project list and reads one journal tail per `(scope, machine)` pair — bounded, but not free. Without the flag the response is byte-for-byte what it always was, so nothing that does not want memory pages pays for them. `memory` is capped at 2,000 entries with `memoryTruncated` saying so; a domain with no `state/` folder gets `"memory": []` and `memoryCount: 0`, which is an answer rather than an error.
 
@@ -2237,7 +2237,7 @@ origin would prefer a revision that provably lacks the user's newest work.
 
 ## Shared Brain endpoints (`v3.0.0-beta+`)
 
-Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the **Shared Brain** rail view (through v3.40.0 it lived in Settings in the pre-redesign `/old` frontend, where it had moved from the Sync tab in v3.0.2; that frontend was deleted in v3.41.0).
+Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the **Shared Brain** view, reached since v3.64.0 from the SHARED BRAIN section of any domain's page rather than from a rail entry of its own (through v3.40.0 it lived in Settings in the pre-redesign `/old` frontend, where it had moved from the Sync tab in v3.0.2; that frontend was deleted in v3.41.0).
 
 Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, message, ...meta}`) ending in `{type: "done", result: {...}}` or `{type: "error", message}`.
 
@@ -2252,7 +2252,7 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 | Path | Description |
 |---|---|
-| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. Powers the navbar pending badge. |
+| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. It is read by the Shared Brain panel; the shell's Sync badge deliberately does NOT fold it in (`src/public/next/app.js`), and the navbar that once carried it went with the old shell in v3.41.0. |
 | `POST /api/sharedbrain/save` | Body: `{connection: {...}}`. Validated server-side. UUIDs assigned if missing. Rejects with 400 if `github_pat` looks like a masked display value (defense against round-trip overwrites). v3.0.4+: optional boolean `read_only` field (defaults `false`) — set by the wizard when the PAT verdict is valid-but-no-write-access; read-only connections may have zero `local_domains`. v3.0.5+: optional `admin_token` (single-line string 16-200 chars or null; masked-ellipsis values refused) and `data_handling_terms` (`contributor_retains` \| `organisational`, persisted for invite re-display). |
 | `DELETE /api/sharedbrain/:id` | Removes the connection from this machine. The remote shared repo is unaffected. |
 | `POST /api/sharedbrain/:id/unskip` | v3.0.4+. Body: `{pages?: string[]}` — clears the listed pages from `permanent_skip` (omit `pages` to clear all) and resets their `pending_retry` strike counters, so they're re-attempted on the next push. Paths not actually skipped are ignored. Returns `{ok, unskipped, permanent_skip}`. Local config change only; not SSE. |
@@ -2428,7 +2428,7 @@ return value rather than from the route.
 {
   "ok": true,
   "server_info": { "name": "my-curator", "version": "…" },
-  "tool_count": 20,
+  "tool_count": 24,
   "tool_names": ["list_domains", "get_index", "…"],
   "domains": ["articles", "business"],
   "domains_status": "ok",
@@ -2652,7 +2652,7 @@ drift from the store's.
 
 ### GET /api/memory
 
-"Which of my projects have agent memory, and how fresh is it?" No parameters.
+"Which of my projects have context saved, and how fresh is it?" No parameters.
 
 **One row per PROJECT, across every domain, newest first** (v3.48.0; it was one row per domain).
 
@@ -2664,8 +2664,8 @@ and the menu-bar widget, and a row describing an empty tree is noise on a screen
 `project.md`, so it always has a brief. Up to v3.47 this route emitted a row per domain
 unconditionally; that changed in v3.48.0.
 
-The cost is that an empty `projects` array is ambiguous — no domains, or domains with no agent
-memory yet — so **`domainsScanned`** rides along and says how many domains were looked at. A view
+The cost is that an empty `projects` array is ambiguous — no domains, or domains with no working
+state yet — so **`domainsScanned`** rides along and says how many domains were looked at. A view
 that told a user with four domains they had none would send them to create a fifth.
 
 Each row is an **allow-list**, not a spread of the store's object: a field the store grows next —
@@ -3822,11 +3822,14 @@ an integrator against the store (or against that tool) would otherwise have to i
   (`reason: 'invalid-scope'`).
 - The journal append is **best-effort**: a failure sets `journalWritten: false` and does not fail
   the save, matching the raw-source manifest and the MCP audit log.
-- **There is no brief-writing MCP tool.** `saveProjectBrief` is exported by the store and called
-  from nowhere in `mcp/` or `src/routes/`. The standing brief is human-authored, by design — and
-  the **read** side depends on that: because no tool writes it, `get_working_state` can tell a
-  model that a verified brief's standing instructions are the user's own rather than an earlier
-  session's untrusted notes. See [working-state.md § 4](working-state.md#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
+- **The standing brief has two writers, and both are the owner's.** It was written by nobody but a
+  text editor until v3.48.0, which gave it the app's own editor (`PATCH …/projects/:project`,
+  stamped `authoredBy.kind: 'human'`) and one MCP tool, `save_project_brief`, which refuses unless
+  the caller says the owner instructed it and prepends a provenance comment saying so. That is what
+  the **read** side rests on: `brief_authority` is four-valued, and its `commissioned` arm exists
+  precisely *because* an agent can write the brief on the owner's instruction — so a verified
+  brief's standing directives are still the user's own rather than an earlier session's untrusted
+  notes. See [working-state.md § 4](working-state.md#tier-1-is-not-tier-2-the-brief-is-the-owners).
 - **New in v3.59.0: `save_working_state` accepts `foundations_read` and `repo_root`.**
   `foundations_read` (camelCase `foundationsRead` also accepted) is `{slug: sha256}` — the
   documents this session actually read, recorded from `get_project_context`'s own response — and
@@ -4025,16 +4028,18 @@ edge one.
 
 > **28 is the PRODUCER's resolution and not the drawn one.** `desktop/lib/pulse-strip.js` folds these
 > buckets two-to-one at draw time (`mergeCells(cells, mergeFactor(28))`), so the menu bar strip draws
-> **14 cells of 12 hours** in 55 × 14 points. Nothing here changes: `windowSeconds`, `bucketSeconds`
+> **14 cells of 12 hours** in 55 × 15 points. Nothing here changes: `windowSeconds`, `bucketSeconds`
 > and `buckets[]` are the contract, and a consumer is free to draw them at full resolution. A
 > renderer's legend must quote `drawnBucketSeconds()` rather than `bucketSeconds`, because a legend
 > has to describe the picture in front of the reader. The 13-of-28 store above folds to **6 of 14**
 > unknown cells — still half the strip.
 
-> **`TRAY_DEFAULT_LIMIT` is 8; the tray shell asks for 5.** The default is what a caller gets when it
-> expresses no opinion. `desktop/main.js` sets `TRAY_ROW_LIMIT = MAX_ROWS` (5, imported from
-> `tray-model.js`) so it asks for exactly what it can display, and `buildTrayModel()` caps again at
-> `MAX_ROWS` independently. Because `total` and `pairsOnDisk` are both counted **before** the slice,
+> **`TRAY_DEFAULT_LIMIT` is 8; the tray shell asks for 40.** The default is what a caller gets when
+> it expresses no opinion. `desktop/main.js` sets `TRAY_ROW_LIMIT = TRAY_FETCH_ROWS` (**40**,
+> imported from `tray-model.js`), and `buildTrayModel()` caps the DISPLAY at `MAX_ROWS` (5)
+> independently. It asks for more than it can show on purpose: since v3.48.0 the menu GROUPS rows
+> by project, and a fetch capped at what fits cannot group — it would hand the model five rows
+> already chosen by another rule. Because `total` and `pairsOnDisk` are both counted **before** the slice,
 > neither cap can be reported as a measurement at any limit.
 
 A save stamped in the **future** — a machine with a skewed clock, which sync makes reachable — is
@@ -5702,6 +5707,6 @@ a small number of explicit routes in `src/server.js`.
 
 - The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF defense); requests with no `Origin` (curl, scripts) and all GETs pass through. Additionally (v3.0.2+), a Host-header guard rejects any request whose `Host` is not a loopback form (`localhost:PORT` / `127.0.0.1:PORT` / `[::1]:PORT`) with 403 — this closes DNS-rebinding read access, where a rebound hostname made same-origin GETs readable by an attacker page. There is no per-request authentication — it remains a single-user local app.
 - The ingest endpoint blocks until the configured LLM provider (Gemini by default; whichever provider the user made active in Settings) returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to the model).
-- `POST /api/query` (above) is a simple, single-shot Q&A endpoint — separate from the Chat tab's `POST /api/chat/:domain` — and it still sends up to 90,000 characters of concatenated wiki content to the LLM in one call, in arbitrary file order (`src/brain/query.js`). On a wiki bigger than ~90 KB of raw page content, later pages are silently left out of that request. **The Curator's own web UI never calls this endpoint** — there is no reference to it anywhere in `src/public/`, so the only way to reach it is a direct HTTP call to the loopback server (curl, a script, another tool). The Chat tab does **not** have this limitation: since v3.0.1-beta.11 it uses query-driven page selection (score pages by relevance to the question, load up to ~60 KB of full content plus a ~12 KB slug catalogue — see [docs/ingestion-pipeline.md §10b](ingestion-pipeline.md#10b-the-chat-read-side-v301-beta11-refined-in-v301-beta13)), so it scales to much larger wikis. If you're calling `/api/query` directly against a large wiki (150+ pages), prefer `/api/chat/:domain` instead, or expect its answers to reflect only whatever page content the alphabetical/readdir order happened to include.
+- `POST /api/query` (above) is a simple, single-shot Q&A endpoint — separate from the Chat view's `POST /api/chat/:domain` — and it still sends up to 90,000 characters of concatenated wiki content to the LLM in one call, in arbitrary file order (`src/brain/query.js`). On a wiki bigger than ~90 KB of raw page content, later pages are silently left out of that request. **The Curator's own web UI never calls this endpoint** — there is no reference to it anywhere in `src/public/`, so the only way to reach it is a direct HTTP call to the loopback server (curl, a script, another tool). The Chat view does **not** have this limitation: since v3.0.1-beta.11 it uses query-driven page selection (score pages by relevance to the question, load up to ~60 KB of full content plus a ~12 KB slug catalogue — see [docs/ingestion-pipeline.md §10b](ingestion-pipeline.md#10b-the-chat-read-side-v301-beta11-refined-in-v301-beta13)), so it scales to much larger wikis. If you're calling `/api/query` directly against a large wiki (150+ pages), prefer `/api/chat/:domain` instead, or expect its answers to reflect only whatever page content the alphabetical/readdir order happened to include.
 - **Known limitation — `POST /api/ingest-queue` and a filename containing a raw double-quote character.** The multipart parser (upstream of the batch-ingest queue's own code, in `busboy`) mis-parses a `Content-Disposition` header whose filename contains an unescaped `"`: the request still returns `200`/`ok: true`, but that one file is silently absent from `items` — no `rejected` entry, no warning of any kind. A NUL byte in a filename fails the parse outright instead, and is reported as a plain `400`. Neither is reachable from a browser — the WHATWG form-serialisation spec escapes `"` to `%22` before the request is ever built, and NUL is not a legal filename byte on any mainstream filesystem — but a hand-built multipart request from a script or another tool can trigger the quote case silently. If you are integrating against this endpoint programmatically, avoid unescaped `"` in filenames sent this way.
 - **Known limitation — a domain missing `wiki/log.md` fails a completed ingest at the very last step.** This affects both `POST /api/ingest` and `POST /api/ingest-queue` identically (both funnel through the same `appendLog` in `src/brain/files.js`, which has no existence check on `log.md`, unlike the equivalent `readIndex` two lines below it). If it's missing, the ingest still runs to completion — pages are written to disk, real AI spend has happened — and only the final logging step throws `ENOENT`, which surfaces as a `failed` item with a cryptic error. Not reachable through any documented path (`createDomain()` always writes `log.md`, and [docs/domains.md](domains.md) tells manual-setup users to create it too), so it takes a hand-built domain folder to hit. Recovery: the pages are correct and unaffected — create an empty `wiki/log.md` and re-ingest the same source (safe; see the idempotency notes above).

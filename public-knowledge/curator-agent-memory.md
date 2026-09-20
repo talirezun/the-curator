@@ -560,9 +560,9 @@ The menu shows, in this order:
 - **Working on** — which project, and how long ago, with the harness and model that wrote it.
 - **A save pulse** — a small chart of saves over the last seven days, with how many days are known, how many saves, and how many tools.
 - **Up to five recent work-streams**, grouped under a project header, newest first, each with a recency dot and a submenu. At most two rows per project group, so one busy project cannot fill the menu.
-- **More in Agent Memory…**, carrying the number not shown.
+- **More in Project Context…**, carrying the number not shown.
 - **Notices, only when true** — handoffs waiting on GitHub, another machine having saved after this one, two agent tools writing one work-stream.
-- **Open Agent Memory…**, **Open The Curator**, **Settings…**, the time of the reading, and **Quit**.
+- **Open Project Context…**, **Open The Curator**, **Settings…**, the time of the reading, and **Quit**.
 
 Each row's submenu offers Open in The Curator, Copy resume prompt, Copy handoff as Markdown, and Reveal the handoff file in Finder.
 
