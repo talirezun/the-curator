@@ -2395,10 +2395,58 @@ router.get('/:domain/:project/capture', async (req, res) => {
       calls: s.calls, read: s.read, saved: s.saved,
     }));
 
+    // ══ THE CONTRADICTION THIS ROUTE CAN SEE, AND MUST NAME (v3.64.1) ══
+    //
+    // Reported from production the day v3.64.0 shipped, and reproduced here
+    // against the maintainer's own store: step ② said "saved 47 min ago" on
+    // the reading directly above, and this meter said "no agent session in
+    // the last 30 days" directly below it. BOTH WERE TRUE. The saves came
+    // through a bridge process that writes no session line — one started
+    // before the version that writes one, or one whose log is not the log
+    // this install resolves — so the store has the saves and the usage log
+    // has no sessions to attribute them to.
+    //
+    // The two facts are in THIS handler's hands on the same read: `summary`
+    // is the usage log's answer and `state` — already read above, for the
+    // existence check, so this costs NO second store call — carries the
+    // project's own save clocks. Leaving the user to reconcile them is the
+    // app presenting a contradiction and calling it a reading.
+    //
+    // THE SAVE CLOCK IS `lastWriteAt`, deliberately: it is the same field the
+    // working-state strip's own cell is derived from, so the note cannot name
+    // a save the reading beside it does not show. `writtenAt` is the AGENT'S
+    // declared clock and can sit outside the window while the file it wrote
+    // landed inside it — a note that disagreed with the figure it is
+    // explaining would be worse than no note.
+    const scopeRows = Array.isArray(state.scopes) ? state.scopes : [];
+    let newestSaveMs = null;
+    for (const row of scopeRows) {
+      const t = row && typeof row.lastWriteAt === 'string' ? Date.parse(row.lastWriteAt) : NaN;
+      if (Number.isFinite(t) && (newestSaveMs === null || t > newestSaveMs)) newestSaveMs = t;
+    }
+    // SAVES IN THE WINDOW, NO SESSIONS IN IT. Not "no sessions" alone: an
+    // honest zero — nobody worked on this project this month — is exactly the
+    // reading this meter exists to report, and explaining it away would be
+    // the app apologising for a true answer. The clause fires only when the
+    // store can point at a save the log cannot account for.
+    const noSessionsButSaves = summary.totals.sessions === 0
+      && newestSaveMs !== null && newestSaveMs >= sinceMs;
+
     // ONE note, naming whichever honest limit applies — never both, because
     // an absent log has no lines to be legacy about.
+    //
+    // THE CONTRADICTION OUTRANKS THE TWO LIMIT NOTES, and the ranking is not
+    // arbitrary: those two disclose why a figure is what it is, while this
+    // one reconciles two readings the user is looking at AND names a remedy.
+    // Nothing is lost by the precedence — `logPresent` is on this envelope
+    // and the reading above prints it in words, and `totals.legacyLines` is
+    // on it too and the view prints that line whenever this note is silent
+    // about it.
     let note = null;
-    if (!present) {
+    if (noSessionsButSaves) {
+      note = 'Saves in this window arrived through a bridge that logged no sessions — '
+        + 'restart the app that launched it (usually Claude Desktop)';
+    } else if (!present) {
       note = 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0';
     } else if (summary.totals.legacyLines > 0) {
       const n = summary.totals.legacyLines;
@@ -2417,6 +2465,11 @@ router.get('/:domain/:project/capture', async (req, res) => {
       sessions: shown,
       sessionsShown: shown.length,
       sessionsTruncated: summary.sessions.length > shown.length,
+      // THE CLOCK THE NOTE IS MADE OF, carried so a view never has to derive
+      // it a second time and so a suite can assert the reason rather than the
+      // sentence. `null` when nothing in this project has ever been saved.
+      newestSaveAt: newestSaveMs === null ? null : new Date(newestSaveMs).toISOString(),
+      noSessionsButSaves,
       note,
     });
   } catch (err) {

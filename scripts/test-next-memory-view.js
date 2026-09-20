@@ -6434,16 +6434,38 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       page.includes(marker));
   }
 
-  // ── AND THE NOTICES ARE ABOVE THE HEADING, NOT IN THE BODY (P1-3/P1-7)
-  // `noticeHtml` is the slot shared/block.js built for exactly this and that
-  // no block on this page had ever passed. Proved by POSITION: the stack has
-  // to precede step ②'s own heading, which is what puts it outside the 32px
-  // prose indent the body carries.
+  // ── AND THE STATUS STACK IS THE STEP'S FIRST ROW, INSIDE THE BODY ─────
+  //
+  // REVERSED IN v3.64.1, deliberately, and this is the assertion that records
+  // why. It used to require the stack ABOVE step ②'s heading, because that is
+  // where `renderBlock` puts a `noticeHtml` — and that is exactly what the
+  // maintainer reported the day v3.64.0 shipped: the "Last saved" reading
+  // rendered as a card of its own above "② Working state" while CAPTURE, the
+  // other reading about the same layer, was the first thing inside the body.
+  // A summary above one step and a report inside it. Both readings now open
+  // the body, in that order, and NOTHING renders above a step's heading.
+  //
+  // THE STACK IS STILL ONE WRAPPER UNDER ONE CLASS, which is what keeps
+  // `patchOpenPair`'s selector and scripts/test-next-memory-switch.js §8's
+  // byte comparison working through the move; splitting the reading out of it
+  // is the one edit here that would silently break a shipped no-repaint
+  // guarantee.
   const stepTwo = page.slice(page.indexOf('settings-block-context-state'));
-  ok('the notice stack is emitted ABOVE step ②\'s heading, in the slot built for it',
-    stepTwo.indexOf('mem-status-stack') !== -1
-    && stepTwo.indexOf('mem-status-stack') < stepTwo.indexOf('settings-block-hd'),
-    stepTwo.indexOf('mem-status-stack') + ' vs ' + stepTwo.indexOf('settings-block-hd'));
+  const atStack = stepTwo.indexOf('mem-status-stack');
+  const atHead = stepTwo.indexOf('settings-block-hd');
+  const atBody = stepTwo.indexOf('<div class="settings-block-body">');
+  const atMeter = stepTwo.indexOf('mem-capture');
+  ok('CONTROL: step ②\'s heading, body and both readings are all in the slice',
+    atStack !== -1 && atHead !== -1 && atBody !== -1 && atMeter !== -1,
+    [atStack, atHead, atBody, atMeter].join(' / '));
+  ok('the status stack is emitted INSIDE step ②\'s body, not above its heading',
+    atStack > atHead && atStack > atBody, atStack + ' vs head ' + atHead + ' body ' + atBody);
+  ok('...and it is the step\'s FIRST row, above CAPTURE',
+    atStack < atMeter, atStack + ' vs meter ' + atMeter);
+  ok('nothing at all is emitted between step ②\'s wrapper and its heading',
+    /class="settings-job-block settings-block settings-block-context-state"><div class="settings-block-hd">/
+      .test(page), page.slice(page.indexOf('settings-block-context-state') - 60,
+      page.indexOf('settings-block-context-state') + 140));
 }
 
 // ── 18j · THE SPACING INSIDE A BLOCK IS ITS OWN, AND SMALLER ────────────
@@ -6819,6 +6841,118 @@ const fndRead = (payload) => ({
   }
   eq('a project with no manifest gets neither the control nor a reason',
     ask([], { present: false, ownership: null }).btn, '');
+}
+
+// ── §21c4 — THE FOLD THAT REOPENED ITSELF (v3.64.1) ─────────────────────
+//
+// REPORTED FROM PRODUCTION the day v3.64.0 shipped: the maintainer closed "The
+// documents" and it came back, over and over. Reproduced in a browser against
+// the real store, and the mechanism is a LOOP between two lines that each look
+// reasonable alone:
+//
+//   1. `renderFoundations` emitted `open` from `editing || adding || <the
+//      remembered preference>`. The first two are derived from the editor's
+//      PRESENCE, so they are re-derived on every paint and cannot be overruled.
+//   2. `wire()`'s delegated toggle listener records `el.open` as the user's own
+//      preference — and a `toggle` event fires for a programmatically emitted
+//      `open` attribute exactly as it does for a click.
+//
+// So a close wrote `false`, the next paint re-forced `open`, and the listener
+// wrote that forced value back as `true`. Separately, three handlers PERSISTED
+// `openFolds.foundations = true` to `curator-memory-folds-v1`, so one Edit
+// press marked the fold open on every later visit for good.
+//
+// The force is a transient now (`state.fndForceOpen`), it is not a FOLD_KEYS
+// name so it cannot be serialised, and `open` reads from exactly two places.
+{
+  const docs = [fndDoc(), fndDoc({ slug: 'decisions.md', title: 'Decisions', role: 'decisions' })];
+  const paint = (over) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null, ...over,
+  }).renderFoundations(fndRead(fndPayload(docs)));
+  const isOpen = (html) => /data-mem-fold="foundations"[^>]*\sopen/.test(html);
+
+  ok('CONTROL: with nothing remembered and no editor, the fold paints CLOSED',
+    !isOpen(paint({})));
+  ok('the remembered preference opens it', isOpen(paint({ openFolds: { foundations: true } })));
+  ok('the transient opens it, which is what makes an Edit press visible',
+    isOpen(paint({ fndForceOpen: true })));
+
+  // THE DEFECT, DRIVEN. An editor is open AND the user has just closed the
+  // fold (the toggle listener wrote `false` and cleared the transient). The
+  // next paint must honour the close. Before this fix `editing` re-forced it.
+  const editing = {
+    fndEdit: { domain: 'acme', project: 'lumina', slug: 'architecture.md', isNew: false,
+      loading: false, text: 'x', loaded: 'x', title: 'Architecture', role: 'architecture' },
+  };
+  ok('CONTROL: an editor with the transient still set paints the fold OPEN',
+    isOpen(paint({ ...editing, fndForceOpen: true })));
+  ok('an EXPLICIT CLOSE wins while the editor is still open — the reopening loop',
+    !isOpen(paint({ ...editing, fndForceOpen: false, openFolds: { foundations: false } })),
+    paint({ ...editing, fndForceOpen: false, openFolds: { foundations: false } }).slice(0, 300));
+  // The same for the other arm of the old disjunction.
+  const adding = { fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null,
+    busy: false, error: null, refused: [] } };
+  ok('...and the same holds for the "Add from folder" arm',
+    !isOpen(paint({ ...adding, fndForceOpen: false, openFolds: { foundations: false } })));
+
+  // THE PERSISTENCE HALF, asserted structurally: the transient must not be a
+  // name the fold store keeps, or an Edit press would still reach localStorage
+  // through the next unrelated toggle, which serialises the WHOLE map.
+  const foldKeys = /const FOLD_KEYS = \[([^\]]*)\]/.exec(viewSrc);
+  ok('CONTROL: FOLD_KEYS was really found', !!foldKeys, String(foldKeys));
+  ok('`fndForceOpen` is not a FOLD_KEYS name, so it can never be serialised',
+    !!foldKeys && !/fndForceOpen/.test(foldKeys[1]), foldKeys && foldKeys[1]);
+  ok('and no handler writes `openFolds.foundations` any more — only a real toggle writes that map',
+    !/state\.openFolds\.foundations\s*=/.test(viewSrc.replace(/^\s*\/\/.*$/gm, '')),
+    (viewSrc.match(/state\.openFolds\.foundations\s*=[^\n]*/g) || []).join(' | '));
+
+  // ── AND THE PAINT'S OWN ECHO IS NOT A PRESS (v3.64.1) ────────────────
+  //
+  // MEASURED IN A BROWSER, and it is the half that made the transient leak
+  // anyway: a `<details open>` created by an innerHTML assignment fires
+  // `toggle` ONCE, after wire() has attached its listener (the probe is one
+  // line — open: 1 event, closed: 0). So EVERY paint of an open fold arrived
+  // at the listener as a toggle nobody performed. While the emitted value
+  // always equalled the stored one that was harmless noise; it stopped being
+  // harmless the moment a fold could be opened by a TRANSIENT, because the
+  // echo then wrote the transient into `curator-memory-folds-v1` as the
+  // user's own choice — one Edit press marking the documents fold open on
+  // every later visit, which is the second half of what the maintainer
+  // reported.
+  //
+  // DRIVEN through the SHIPPED listener, lifted out of wire().
+  {
+    const folds = [];
+    const doc = { querySelectorAll: (sel) => (sel === '[data-mem-fold]' ? folds : []),
+      getElementById: () => null, querySelector: () => null };
+    const mkFold = (key, open) => ({
+      dataset: { memFold: key }, open, listeners: [],
+      addEventListener(t, h) { this.listeners.push([t, h]); },
+      fire() { for (const [t, h] of this.listeners) if (t === 'toggle') h(); },
+    });
+    const el = mkFold('foundations', true);
+    folds.push(el);
+    const st2 = { openFolds: {} };
+    const writes = [];
+    // The listener, and only the listener — lifted from wire() by matching
+    // the delegated block, so this drives the shipped code rather than a copy.
+    const block = /document\.querySelectorAll\('\[data-mem-fold\]'\)[\s\S]*?\n  \}\);/.exec(viewSrc);
+    ok('CONTROL -- the delegated fold listener was really found in wire()', !!block,
+      String(block && block[0].slice(0, 80)));
+    if (block) {
+      new Function('document', 'state', 'localStorage', block[0])(
+        doc, st2, { setItem: (k, v) => writes.push([k, v]) });
+      el.fire();
+      eq('a toggle that did not change the fold writes NO preference',
+        st2.openFolds.foundations, undefined);
+      eq('...and persists nothing', writes.length, 0);
+      el.open = false;
+      el.fire();
+      eq('CONTROL -- a press that really closes it IS recorded', st2.openFolds.foundations, false);
+      ok('...and persisted', writes.length === 1 && writes[0][0] === 'curator-memory-folds-v1',
+        JSON.stringify(writes));
+    }
+  }
 }
 
 // ── §21d — the block body: closed, summarised, and warnings outside it ──

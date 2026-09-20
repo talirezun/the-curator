@@ -171,6 +171,11 @@ function payload(over = {}) {
     ],
     sessionsShown: 3,
     sessionsTruncated: false,
+    // v3.64.1's two fields, at their quiet defaults — the ORDINARY answer, so
+    // every assertion above §11 keeps describing the reading it was written
+    // for rather than the contradiction §11 is about.
+    newestSaveAt: null,
+    noSessionsButSaves: false,
     note: null,
     ...over,
   };
@@ -799,6 +804,97 @@ section('§10 — THE STYLESHEET KEEPS THIS FILE\'S STANDING RULES');
   }
   ok(/\.mem-cap-wrap\s*\{[^}]*overflow-x:\s*auto/.test(css),
     'and it scrolls inside its own wrapper rather than overflowing the step at 568px');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11 — SAVES WITH NO SESSION TO ACCOUNT FOR THEM (v3.64.1)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT, from production on the day v3.64.0 shipped. Step ②'s "Last
+// saved" reading said `saved 47 min ago` and this meter, four pixels below it,
+// said `no agent session in the last 30 days`. BOTH WERE TRUE: the saves came
+// through a bridge process that writes no session line, so the store had the
+// saves and the usage log had no session to attribute them to. The screen
+// presented a contradiction and called it a reading.
+//
+// The route decides — it is the side that holds both the log summary and the
+// project's own save clocks — and this suite asserts what the VIEW does with
+// the answer: prints it, under the reading, unfolded, and keeps printing the
+// disclosure the new note does NOT make.
+{
+  const NOTE = 'Saves in this window arrived through a bridge that logged no sessions — '
+    + 'restart the app that launched it (usually Claude Desktop)';
+  const contradiction = (over = {}) => stFor({
+    capture: { domain: 'acme', project: 'lumina', error: null, data: payload({
+      totals: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, sessionsReadNotSaved: 0,
+        legacyLines: 0, selfTestLines: 0 },
+      sessions: [], sessionsShown: 0,
+      newestSaveAt: iso(47), noSessionsButSaves: true, note: NOTE, ...over }) },
+  });
+
+  const html = makeMeter(contradiction()).renderCaptureMeter();
+  ok(html.includes('no agent session in the last ' + WINDOW_DAYS + ' days'),
+    'CONTROL: the headline still reports the honest zero — the note explains it, it does not '
+    + 'replace it', html.slice(0, 400));
+  ok(html.includes(escapeHtml(NOTE).replace(/&#39;/g, "&#39;")) || html.includes(NOTE),
+    'the route\'s sentence is rendered VERBATIM — the view never authors a second copy of a '
+    + 'remedy the producer owns', html.slice(0, 900));
+  // POSITION: under the reading, not above it and not inside the fold.
+  const atRead = html.indexOf('CAPTURE');
+  const atNote = html.indexOf('bridge that logged no sessions');
+  const atFold = html.indexOf('data-mem-fold="capture"');
+  ok(atRead !== -1 && atNote > atRead,
+    'the note is rendered UNDER the reading it qualifies', atRead + ' vs ' + atNote);
+  ok(atFold === -1 || atNote < atFold,
+    '...and never inside the session fold — an outcome may not sit behind a chevron (v3.16.1)',
+    atNote + ' vs ' + atFold);
+
+  // THE DISCLOSURE THE NEW NOTE DOES NOT MAKE. The legacy clause defers to the
+  // route's note, because on a real log THAT note IS the legacy count — but
+  // this third tenant says nothing about legacy lines, so deferring to it
+  // would drop a disclosure the route still owes. Driven with a legacy count
+  // present under BOTH notes, which is the only way the deference can be told
+  // apart from a clause that never fires.
+  const withLegacy = makeMeter(contradiction({
+    totals: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, sessionsReadNotSaved: 0,
+      legacyLines: 412, selfTestLines: 0 },
+  })).renderCaptureMeter();
+  ok(withLegacy.includes('412 earlier calls carried no session id'),
+    'the legacy disclosure SURVIVES the stale-bridge note, which does not make it',
+    withLegacy.slice(0, 900));
+  const legacyNote = makeMeter(stFor({
+    capture: { domain: 'acme', project: 'lumina', error: null, data: payload({
+      totals: { sessions: 2, sessionsRead: 1, sessionsSaved: 1, sessionsReadNotSaved: 0,
+        legacyLines: 412, selfTestLines: 0 },
+      note: '412 lines predate session ids and are not counted' }) },
+  })).renderCaptureMeter();
+  ok(!legacyNote.includes('412 earlier calls carried no session id'),
+    'CONTROL: and it still DEFERS to the log-limit note, which does make it — so the two '
+    + 'sentences never land four pixels apart saying one number twice', legacyNote.slice(0, 900));
+
+  // THE FLAG IS READ AS POSITIVE EVIDENCE, like `logPresent` beside it.
+  const facts = makeMeter(stFor()).captureFacts;
+  eq('an absent flag reads false, never undefined',
+    facts({ ok: true, totals: {}, sessions: [] }).noSessionsButSaves, false);
+  eq('...and a forged truthy value is not true', facts({ noSessionsButSaves: 1 }).noSessionsButSaves, false);
+  eq('...while the route\'s real boolean is', facts({ noSessionsButSaves: true }).noSessionsButSaves, true);
+
+  // AND IT MOVES THE SIGNATURE. The flag changes the LIMITS line under the
+  // note, so a poll that could not see it would leave a stale disclosure on
+  // screen — the fifth failure this suite's header names.
+  const SIG_FNS = ['formatAge', 'effectiveSave', 'workStreamOrder', 'wsShownCount', 'newestPair',
+    'projectMetaLine', 'screenSignature'];
+  const sig = (data) => new Function('state', 'WS_WINDOW',
+    SIG_FNS.map((n) => extractFunction(viewSrc, n)).join('\n')
+    + '\nreturn screenSignature();')({
+    activeDomain: 'acme', activeProject: 'lumina', projects: [], openFolds: {},
+    capture: { domain: 'acme', project: 'lumina', error: null, data },
+  }, WS_WINDOW);
+  const base = payload({ totals: { sessions: 0, sessionsRead: 0, sessionsSaved: 0,
+    sessionsReadNotSaved: 0, legacyLines: 412, selfTestLines: 0 }, sessions: [], sessionsShown: 0,
+  note: NOTE });
+  ok(sig({ ...base, noSessionsButSaves: false }) !== sig({ ...base, noSessionsButSaves: true }),
+    'screenSignature moves when the stale-bridge flag does');
 }
 
 console.log('\n  ' + '─'.repeat(60));

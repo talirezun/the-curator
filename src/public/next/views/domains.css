@@ -414,6 +414,91 @@
    source order: shell.css is loaded before this file. */
 .dm-section-eyebrow { margin: 0 0 var(--space-4) var(--space-6); }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   THE NUMBERED SECTION HEAD (v3.64.1)
+
+   THE COMPLAINT: the domain page's sections "are not distinguishable".
+   Measured on v3.64.0, this column named its regions SIX ways — a bare
+   eyebrow, a SECOND eyebrow class for the same role, an eyebrow in a flex
+   head row, two fold summaries and a card title bar — and every one of them
+   was 11px/500, the quietest rung in the type standard. The Context view next
+   door reads as a sequence because its steps carry a numeral and a 16px/600
+   title. There was nothing wrong with any single heading; there was no
+   HIERARCHY.
+
+   THE VALUES ARE COPIED FROM shell.css's `.settings-block-hd` /
+   `.settings-block-num` / `.settings-job-title`, NOT INHERITED FROM THEM, and
+   the copy is deliberate in both directions. It has to LOOK like the Context
+   view's step head, because the two screens are one app; it cannot BE that
+   component yet, because adopting `renderBlock` means naming an import inside
+   `renderMain`, which three suites lift and execute against fixed stub lists.
+   v3.65.0 unifies them for real, with the stub lists moved in the same
+   commit; scripts/test-next-domain-sections.js pins the sizes equal to
+   shell.css's in the meantime, so the copy cannot drift in silence.
+
+   THE TITLE ELEMENT KEPT ITS OWN CLASSES (`.cur-group-title
+   .dm-section-eyebrow`, plus `.dm-recent-eyebrow` on PAGES): all three are
+   pinned by name in suites this package does not own. What changes is that
+   ONE rule now paints every section title, so the two eyebrow classes stop
+   being two treatments for one role.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dm-section-hd {
+  display: flex;
+  align-items: baseline;
+  /* shell.css's own gap, and the same arithmetic: 20px numeral + 12px = the
+     32px indent the prose under a block head uses. */
+  gap: var(--space-6);
+  margin: 0 0 var(--space-4);
+}
+.dm-section-num {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: var(--numeric-tabular);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-border);
+  /* Optically centred against a baseline-aligned heading, exactly as
+     shell.css's numeral is. */
+  transform: translateY(2px);
+}
+/* THE SECTION TITLE, AT THE BLOCK-TITLE FACE. `.dm-section-eyebrow`'s own
+   rule above still owns the left offset for a heading that is NOT in a head
+   (there is none left on this page, but the rule is shared with the OVERVIEW
+   head row); inside a head the flex row owns the spacing, so the margin goes.
+   Not uppercase and not mono: this is a TITLE now, and the eyebrow face is
+   what made six headings indistinguishable. */
+.dm-section-hd .dm-section-eyebrow,
+.dm-section-hd .dm-fold-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+}
+/* THE TWO FOLD SUMMARIES CARRY THE SAME HEAD WITHOUT A WRAPPER. A `<summary>`
+   is already the flex row `.dm-section-hd` would be, and nesting one inside
+   it would put the chevron and the numeral on different rows at 568px. So the
+   numeral sits in the summary beside the chevron and the title takes the same
+   face by its own selector. */
+.dm-fold-summary .dm-section-num { transform: none; }
+.dm-fold-summary .dm-fold-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+}
+
 /* An eyebrow with an ⓘ mark beside it. The mark's own class belongs to
    shared/text.css and this file may not name it — that prefix is owned
    outright, and this view's suite fails on any appearance of it in this
