@@ -531,10 +531,6 @@ const state = {
   sharedJump: null,
 };
 
-// READ ONCE, AT MODULE LOAD. Every access to localStorage in this file is
-// wrapped because it THROWS rather than returning null in a private window,
-// and a blocked store must leave every section painted and toggling.
-state.sectionPrefs = readSectionPrefs();
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
 // onEnter (so leaving Domains and coming back preserves which domain was
@@ -728,6 +724,20 @@ function readSectionPrefs() {
   }
 }
 
+// ── READ ONCE, AND *HERE*, WHICH IS A CORRECTNESS RULE ────────────────────
+// This line lived immediately under the `state` literal in the first cut, a
+// few hundred lines ABOVE `SECTION_PREFS_KEY`. `readSectionPrefs` is a
+// hoisted function declaration so it was callable — but the `const` it reads
+// was still in its TEMPORAL DEAD ZONE, so the call threw, the try/catch that
+// exists for a private window swallowed the ReferenceError, and every domain
+// read back "no preference at all". FOUND IN THE BROWSER: the fold state was
+// written to localStorage correctly and then ignored on the next load, in
+// silence, with nothing on screen or in the console to say so. It sits after
+// the declarations it depends on, and scripts/test-next-domain-sections.js
+// pins that order — a dead zone is a fact about source order, so the guard
+// is one too, with the swallow itself driven as its control.
+state.sectionPrefs = readSectionPrefs();
+
 function writeSectionPrefs() {
   try {
     localStorage.setItem(SECTION_PREFS_KEY, JSON.stringify(state.sectionPrefs || {}));
@@ -795,11 +805,26 @@ function patchMainAroundHosts(html, token) {
   if (!live || !live.classList || !live.classList.contains('main-inner')) return false;
   const next = document.createElement('div');
   next.innerHTML = html;
-  if (next.children.length !== live.children.length) return false;
+  // ── THE INCOMING CHILDREN ARE SNAPSHOT INTO AN ARRAY, AND THAT IS A
+  // CORRECTNESS RULE RATHER THAN A STYLE ──────────────────────────────────
+  // `next.children` is a LIVE HTMLCollection, and `replaceChild` below MOVES
+  // a node out of it into the live column — so reading it by index while
+  // replacing from it walks a list that is shrinking under the loop. Every
+  // index after the first replacement points one element too far, which is
+  // how a patch comes to compare the page list against Projects and the
+  // INGEST fold against the section above it. FOUND IN THE BROWSER, by the
+  // mandatory drag measurement: with only the last section changed the bug
+  // is invisible (nothing is removed before the host), and pressing an
+  // OVERVIEW figure — which repaints the stat cards, i.e. the FIRST section
+  // that differs — shifted every later index by one, the id check refused,
+  // and the whole column repainted with a drag held over it. `live.children`
+  // is also live but never changes LENGTH here, so it is read directly.
+  const incoming = Array.prototype.slice.call(next.children);
+  if (incoming.length !== live.children.length) return false;
   let sawHost = false;
-  for (let i = 0; i < live.children.length; i++) {
+  for (let i = 0; i < incoming.length; i++) {
     const before = live.children[i];
-    const after = next.children[i];
+    const after = incoming[i];
     const hosted = before.id === SOURCES_FOLD_ID || before.id === SHARED_FOLD_ID
       || after.id === SOURCES_FOLD_ID || after.id === SHARED_FOLD_ID;
     if (hosted) {
@@ -4696,14 +4721,22 @@ function renderBrowsePanel() {
         // narrowed. The active chip is read off the EFFECTIVE lens
         // browseMatches computed, never off the stored field, so the row
         // cannot claim Wiki while the list shows briefs.
+        // ── NO COUNTS ON THE LENS, AND THAT IS A CORRECTION MADE IN THE
+        // BROWSER. The first cut put one on each chip, which rendered
+        // `Wiki 767 · Context 73 · All 840` directly above the facet row's
+        // `All 767 · Entities 161 · …` — two chips labelled "All" carrying
+        // two different numbers, eight pixels apart. That is the
+        // self-contradicting-figures defect this card has already been fixed
+        // for twice (the `other` count, and the Memory facet `All` does not
+        // include), and the lens is a MODE rather than a measurement: the
+        // figures for what it selects are the facet row directly beneath it
+        // and the OVERVIEW tiles directly above.
         '<div class="dm-lens-row" role="group" aria-label="Which documents to list">' +
-          [['wiki', 'Wiki', b.entries.length],
-           ['context', 'Context', (b.memory || []).length],
-           ['all', 'All', b.entries.length + (b.memory || []).length]]
-            .map(([key, label, n]) =>
+          [['wiki', 'Wiki'], ['context', 'Context'], ['all', 'All']]
+            .map(([key, label]) =>
               '<button type="button" class="dm-lens-chip' + (lens === key ? ' active' : '') + '"' +
                 ' data-browse-lens="' + key + '" aria-pressed="' + (lens === key ? 'true' : 'false') + '">' +
-                escapeHtml(label) + ' <span class="dm-lens-count">' + n + '</span>' +
+                escapeHtml(label) +
               '</button>').join('') +
         '</div>' +
         '<div class="dm-browse-controls">' +
@@ -4966,6 +4999,20 @@ async function openMemoryPageFromBrowse(row) {
           data.sanitisedOnRead ? 'sanitised on read' : null,
         ].filter(Boolean),
         readonly: true,
+        // ── THE NOTE IS PAYLOAD-DRIVEN, AND IT HAS TO BE ─────────────────
+        // The shell's DEFAULT readonly caption is "Read-only Shared Brain
+        // mirror" — a sentence about a different feature — and v3.61.0 added
+        // `readonlyNote` precisely because tier 0 opened in this reader and
+        // every canonical document in the app was captioned with it. SEEN
+        // AGAIN HERE in the browser on the first cut of this branch: a
+        // curator-authored foundation opened from the page list read
+        // "Read-only Shared Brain mirror". Which sentence is right depends
+        // on where the document is CHANGED, which is the per-document
+        // `source.kind`, never the manifest's `ownership` — a field this
+        // route does not send (the other half of the same v3.61.0 defect).
+        readonlyNote: (data.source && data.source.kind === 'repo')
+          ? 'Mirrored from the folder — edit it there, then refresh.'
+          : 'Edit this in Project context, under Foundations.',
         bodyHtml: (notes.length ? notes.map((n) => renderDescription(n)).join('') : '')
           + renderMarkdown(body),
         backlinks: [],

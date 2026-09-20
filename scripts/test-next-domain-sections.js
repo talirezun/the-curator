@@ -391,6 +391,34 @@ const foldOpen = (html, id) => {
     eq('CONTROL -- ' + what + ' degrades to no memory at all',
       (prefsBox.__set(raw), JSON.stringify(prefsBox.readSectionPrefs())), '{}');
   }
+  // ── THE SWALLOW IS REAL, AND THAT IS WHY THE ORDER IS A GUARD ─────────
+  // The catch exists for a private window, where localStorage THROWS. It
+  // swallows a ReferenceError just as happily — which is how the first cut
+  // of this feature shipped silently broken: the initialiser sat a few
+  // hundred lines above `SECTION_PREFS_KEY`, the const was still in its
+  // temporal dead zone, the call threw, the catch ate it, and every domain
+  // read back "no preference". Found in the browser: the fold state was
+  // written correctly and ignored on the next load, with nothing on screen
+  // or in the console. Driven here as the control for the order assertion
+  // below.
+  {
+    const noConst = new Function(`
+      const localStorage = { getItem: () => '{"alpha":{"sources":true}}' };
+      ${extractFunction(SRC, 'readSectionPrefs')}
+      return readSectionPrefs;
+    `)();
+    eq('CONTROL -- with its constants out of scope the read SWALLOWS and answers {}',
+      JSON.stringify(noConst()), '{}');
+  }
+  {
+    // A DEAD ZONE IS A FACT ABOUT SOURCE ORDER, so this guard is one too.
+    const iKey = SRC.indexOf("const SECTION_PREFS_KEY = '");
+    const iLens = SRC.indexOf('const SECTION_LENSES = [');
+    const iInit = SRC.indexOf('state.sectionPrefs = readSectionPrefs();');
+    ok('CONTROL -- all three are findable', iKey > 0 && iLens > 0 && iInit > 0, [iKey, iLens, iInit].join(','));
+    ok('the module initialises its preferences AFTER the constants that read them',
+      iInit > iKey && iInit > iLens, iKey + '/' + iLens + ' -> ' + iInit);
+  }
   eq('a per-domain row that is not an object is skipped, and its siblings are not',
     (prefsBox.__set(JSON.stringify({ alpha: 5, beta: { shared: true } })),
       JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ beta: { shared: true } }));
@@ -472,6 +500,22 @@ section('S4 -- THE LENS: WIKI, CONTEXT, ALL -- one selection, two controls');
   eq('...the wiki one active by default', chips[0].attrs['aria-pressed'], 'true');
   ok('...and the other two read false, not nothing',
     chips[1].attrs['aria-pressed'] === 'false' && chips[2].attrs['aria-pressed'] === 'false');
+  // ── THE LENS CARRIES NO FIGURE ────────────────────────────────────────
+  // SEEN IN THE BROWSER: with a count on each chip the row read
+  // `Wiki 767 · Context 73 · All 840` directly above the facet row's
+  // `All 767 · Entities 161 · …` — two chips called "All", two different
+  // numbers, eight pixels apart. A lens is a MODE, and the figures for what
+  // it selects are the facet row beneath it and the OVERVIEW tiles above.
+  {
+    const lensHtml = renderCard().split('dm-lens-row')[1].split('dm-browse-controls')[0];
+    ok('no lens chip prints a number beside its name',
+      !/\d/.test(lensHtml.replace(/aria-[a-z]+="[^"]*"/g, '')), lensHtml.slice(0, 260));
+    const all = flatten(parseHtmlToChildren(renderCard()))
+      .filter((n) => hasClass(n, 'dm-lens-chip') || hasClass(n, 'dm-browse-tab'))
+      .map((n) => (n.children[0] ? '' : '') + (n.attrs['data-browse-lens'] || n.attrs['data-browse-folder']));
+    ok('CONTROL -- both rows really are on screen together (' + all.join(',') + ')',
+      all.length === 8, all.join(','));
+  }
   // The chips are NOT the facet chips: five of those still render, so the
   // Memory facet (pinned by test-next-domain-pages.js) is untouched.
   const tabs = flatten(parseHtmlToChildren(renderCard())).filter((n) => hasClass(n, 'dm-browse-tab'));
@@ -540,17 +584,55 @@ function makeDom() {
         const list = String(this.attrs.class || '').split(/\s+/).filter(Boolean);
         return { contains: (c) => list.includes(c) };
       },
-      get children() { return this._children; },
+      // ── A LIVE HTMLCollection, BECAUSE THE REAL ONE IS ────────────────
+      // The first cut of this model returned the backing ARRAY, and that is
+      // precisely why it could not see the defect the browser found: in a
+      // real DOM, `replaceChild` MOVES a node out of the container it came
+      // from, so reading the incoming container by index while replacing
+      // from it walks a list that is shrinking under the loop. A model that
+      // hands out a stable array makes a wrong walk look right — the
+      // "passing test that measures the wrong thing" this repo keeps
+      // re-learning about.
+      get children() {
+        // A GENUINELY LIVE view over the backing array, via a Proxy —
+        // `_children.slice()` was the first cut and is exactly as blind as
+        // returning the array: both hand out a snapshot, so a patch that
+        // walks the incoming container while replacing from it looks
+        // correct. The real HTMLCollection is live, which is why the defect
+        // only appeared in a browser.
+        const self = this;
+        return new Proxy({}, {
+          get(_t, k) {
+            if (k === 'length') return self._children.length;
+            if (k === Symbol.iterator) return function* () { yield* self._children; };
+            if (typeof k === 'string' && /^\d+$/.test(k)) return self._children[Number(k)];
+            const v = self._children[k];
+            return typeof v === 'function' ? v.bind(self._children) : v;
+          },
+          has(_t, k) { return k in self._children; },
+        });
+      },
       get firstElementChild() { return this._children[0] || null; },
       get outerHTML() {
         const a = Object.entries(this.attrs).map(([k, v]) => ' ' + k + '="' + v + '"').join('');
         return '<' + this.tagName.toLowerCase() + a + '>' + this._inner + '</' + this.tagName.toLowerCase() + '>';
       },
-      set innerHTML(html) { this._inner = html; this._children = parseTop(html); },
+      set innerHTML(html) {
+        this._inner = html;
+        this._children = parseTop(html);
+        for (const c of this._children) c.__parent = this;
+      },
       get innerHTML() { return this._inner; },
       replaceChild(next, old) {
         const i = this._children.indexOf(old);
         if (i < 0) throw new Error('replaceChild: not a child');
+        // ADOPTION, as a real DOM does it: the node leaves whatever parent
+        // it had. This is the half that makes the model able to fail.
+        if (next.__parent && next.__parent !== this) {
+          const j = next.__parent._children.indexOf(next);
+          if (j >= 0) next.__parent._children.splice(j, 1);
+        }
+        next.__parent = this;
         this._children[i] = next;
       },
     };
@@ -632,6 +714,15 @@ function mountColumn(html) {
   return { doc, root, inner };
 }
 
+const COLUMN2 = (overviewLabel, healthLabel) =>
+  '<div class="dm-path-eyebrow">domains/alpha/</div>' +
+  '<section class="dm-overview"><div class="dm-stats-grid">' + overviewLabel + '</div></section>' +
+  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><div id="dm-sources-host"></div></details>' +
+  '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
+  '<section class="dm-projects"></section>' +
+  '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><div id="dm-shared-host"></div></details>' +
+  '<section class="dm-health">' + healthLabel + '</section>';
+
 const COLUMN = (healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid"></div></section>' +
@@ -659,6 +750,38 @@ const COLUMN = (healthLabel) =>
   ok('...and an UNCHANGED sibling is left alone, so a patch is not a full rebuild in disguise',
     inner.children[1].outerHTML.includes('dm-stats-grid'));
   ok('the panels are re-consulted after every paint', patchBox.__calls().mounted.length === 1);
+}
+{
+  // ── THE SECTION THAT CHANGES IS AN EARLY ONE, AND THE HOSTS FOLLOW IT.
+  //
+  // THIS IS THE CASE THE BROWSER FOUND AND THIS MODEL ORIGINALLY COULD NOT.
+  // `replaceChild` MOVES a node out of the incoming container, so a patch
+  // that reads that container's live child list by index walks a list
+  // shrinking under it: every index after the first replacement points one
+  // element too far, the host check compares the INGEST fold against the
+  // section above it, the patch refuses, and the whole column repaints —
+  // with a drag held over the drop zone, which is the exact v3.46.0 defect
+  // this rule exists to prevent. Measured in the browser by pressing an
+  // OVERVIEW figure mid-drag: 3 full repaints and the drop target replaced.
+  const { inner } = mountColumn(COLUMN2('PAGES 100', 'scanning'));
+  const srcBefore = inner.children[2];
+  const shBefore = inner.children[5];
+  const healthBefore = inner.children[6];
+  patchBox.__reset();
+  patchBox.__setBusy(true);
+  patchBox.setMain(COLUMN2('PAGES 101', '3 issues'), 1);
+  eq('an early section changing does not force a full repaint', patchBox.__calls().shellSetMain, 0);
+  ok('...the INGEST host is still the same node object',
+    inner.children[2] === srcBefore, 'moved to ' + inner.children.indexOf(srcBefore));
+  ok('...and so is the SHARED BRAIN host', inner.children[5] === shBefore);
+  ok('the early section really was repainted', /PAGES 101/.test(inner.children[1].outerHTML),
+    inner.children[1].outerHTML);
+  ok('...and the late one too, at its own index rather than one along',
+    inner.children[6] !== healthBefore && /3 issues/.test(inner.children[6].outerHTML),
+    inner.children[6].outerHTML);
+  ok('...and nothing landed in the wrong slot', inner.children.length === 7
+    && inner.children[2].id === 'dm-sources-fold' && inner.children[5].id === 'dm-shared-fold',
+    inner.children.map((c) => c.id || c.tagName).join(','));
 }
 {
   // ── NOT BUSY: the ordinary paint, unchanged from v3.63.0.
@@ -1214,6 +1337,80 @@ try {
   eq('CONTROL -- a real answer really does produce a row', shaped.length, 1);
   const nameless = await rowsBox(async () => ({ ok: true, documents: [{ role: 'other' }, { slug: 'b.md' }] }))('acme', 'x', false);
   eq('...and an entry with no slug is skipped, not rendered as a row with no target', nameless.length, 1);
+
+  // ── THE READER'S CAPTION (D-P) ────────────────────────────────────────
+  // The shell's DEFAULT readonly caption is "Read-only Shared Brain mirror",
+  // which is a sentence about a different feature. v3.61.0 added
+  // `readonlyNote` because tier 0 opened in this reader and every canonical
+  // document was captioned with it; the first cut of THIS branch reproduced
+  // it exactly, seen in the browser on a curator-authored foundation. The
+  // sentence turns on `source.kind`, the per-document fact, never on
+  // `ownership`, which this route does not send.
+  {
+    const opened = [];
+    const readerBox = new Function('openReader', 'fetchJSON', `
+      let state = { activeSlug: 'acme' };
+      let myMountToken = 1;
+      function isCurrentMount() { return true; }
+      function isCurrentReader() { return true; }
+      function renderMarkdown(t) { return '<p class="md">' + t + '</p>'; }
+      function renderDescription(t) { return '<p class="tx-desc">' + t + '</p>'; }
+      const escapeHtml = (x) => String(x);
+      ${extractFunction(SRC, 'openMemoryPageFromBrowse')}
+      return openMemoryPageFromBrowse;
+    `);
+    const asked = [];
+    const drive = async (payload, row) => {
+      opened.length = 0;
+      asked.length = 0;
+      const fn = readerBox((c) => { opened.push(c); return 1; },
+        async (u) => { asked.push(u); return payload; });
+      await fn(row || { kind: 'foundation', project: 'lumina', slug: 'architecture.md',
+        title: 'lumina · Architecture', path: 'state/lumina/foundations/architecture.md' });
+      return opened[opened.length - 1];
+    };
+    const curatorOwned = await drive({ ok: true, slug: 'architecture.md', role: 'architecture',
+      text: '# A', source: { kind: 'curator' } });
+    eq('a foundation opens in the right-side reader, labelled as one', curatorOwned.typeLabel, 'foundation');
+    // ── ADDRESSED BY SLUG, ON ITS OWN ROUTE ─────────────────────────────
+    // A brief and a handoff are two halves of ONE project read; a foundation
+    // is its own document. Sending it to the project route would answer with
+    // the BRIEF — a different document, rendered under this one's title.
+    eq('...having asked the foundations route, by slug', asked[0],
+      '/api/memory/acme/lumina/foundations/architecture.md');
+    await drive({ ok: true, readonly: false, brief: { present: true, text: '# B' } },
+      { kind: 'brief', project: 'lumina', title: 'lumina · Standing brief', path: 'state/lumina/project.md' });
+    eq('CONTROL -- a brief still asks the project route, with no scope', asked[0],
+      '/api/memory/acme/lumina');
+    await drive({ ok: true, readonly: false, current: { present: true, text: '# H' } },
+      { kind: 'handoff', project: 'lumina', scope: 'design', machine: 'mac-ab12',
+        title: 'lumina · design · mac-ab12', path: 'state/lumina/design/mac-ab12/current.md' });
+    eq('CONTROL -- and a handoff asks it by work-stream and machine', asked[0],
+      '/api/memory/acme/lumina?scope=design&machine=mac-ab12');
+    ok('a CURATOR-authored document is NOT captioned as a Shared Brain mirror',
+      !/Shared Brain/i.test(curatorOwned.readonlyNote || ''), curatorOwned.readonlyNote);
+    ok('...it says where it IS changed', /Project context/.test(curatorOwned.readonlyNote || ''),
+      curatorOwned.readonlyNote);
+    const mirrored = await drive({ ok: true, slug: 'architecture.md', role: 'architecture',
+      text: '# A', source: { kind: 'repo', path: 'docs/architecture.md' } });
+    ok('a MIRRORED document points at the folder it came from',
+      /Mirrored from the folder/.test(mirrored.readonlyNote || ''), mirrored.readonlyNote);
+    ok('...and names that folder path as a chip',
+      (mirrored.tags || []).some((t) => t === 'source: docs/architecture.md'), JSON.stringify(mirrored.tags));
+    // The two readings that change how the BODY should be read.
+    const skeleton = await drive({ ok: true, slug: 'architecture.md', text: '# A',
+      source: { kind: 'curator' }, skeleton: true });
+    ok('a skeleton says its body is questions, not facts',
+      /questions, not facts/.test(skeleton.bodyHtml), skeleton.bodyHtml.slice(0, 120));
+    const stale = await drive({ ok: true, slug: 'architecture.md', text: '# A',
+      source: { kind: 'repo' }, freshness: 'stale' });
+    ok('a stale copy says it no longer matches its source',
+      /no longer matches/.test(stale.bodyHtml), stale.bodyHtml.slice(0, 120));
+    const clean = await drive({ ok: true, slug: 'architecture.md', text: '# A',
+      source: { kind: 'curator' }, freshness: 'fresh' });
+    ok('CONTROL -- a fresh, written document carries neither note',
+      !/questions, not facts|no longer matches/.test(clean.bodyHtml), clean.bodyHtml.slice(0, 120));
+  }
 } catch (err) {
   ok('S8 ran against the real route -- ' + (err && err.message), false);
 } finally {

@@ -1747,7 +1747,12 @@
   border-color: var(--accent-border);
   color: var(--text);
 }
-.dm-lens-count { color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
+/* `.dm-lens-count` IS GONE, with the figures it dressed. Seen in the browser:
+   the lens row read `Wiki 767 · Context 73 · All 840` directly above the facet
+   row's `All 767 · Entities 161 · …` — two chips called "All" carrying two
+   different numbers, eight pixels apart. Deleted rather than left standing: a
+   rule nothing can match is a claim about the screen that is no longer true,
+   the same call this file made for `.mem-doc-head` and `.dm-quick-eyebrow`. */
 /* A per-row mark the STORE computed — a foundation still holding its
    skeleton prompts, or a mirrored copy its repository has moved past. Marks,
    not badges: they qualify the row's text and are not counts. */
