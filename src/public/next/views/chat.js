@@ -363,6 +363,24 @@ const state = {
   activeConversationId: null,
   thread: [],             // [{role, content, citations?, citationTitles?, error?}]
   sending: false,
+  // ── WHICH CONVERSATION IS BEING ANSWERED (v3.64.1) ──────────────────────
+  //
+  // The sidebar's "answering" mark, and nothing else. Written by
+  // `sendCurrentMessage` at send time and cleared in its `finally`, so it has
+  // exactly the same lifetime as the `sendAbort` record — it is a SECOND
+  // READER'S VIEW of that one fact, not a second copy of it, and the reason it
+  // exists at all is written out on `conversationIsAnswering`: the row builder
+  // is lifted and executed by a suite whose sandbox declares `state` and not
+  // the module's turn record.
+  //
+  // Both fields or neither: an id is unique only inside one domain's folder.
+  //
+  // NOT RESET BY `onEnter`, on purpose. It is the one piece of turn state that
+  // is still TRUE across a re-mount — the turn really is still running — and
+  // blanking it would take the mark off the list at the exact moment the user
+  // comes back looking for it.
+  answeringConvId: null,
+  answeringDomain: null,
   // Outcome of the last STOPPED turn: {text} or null. Rendered at the foot of
   // the thread.
   //
@@ -631,6 +649,36 @@ registerView('chat', {
     // its interval would otherwise keep ticking against a thinking bubble this
     // fresh mount is not showing.
     stopSendClock();
+
+    // ── THE TURN THAT IS STILL RUNNING (v3.64.1) ──────────────────────────
+    // REPORTED FROM PRODUCTION: an answer in progress DISAPPEARED the moment
+    // the user clicked Domains, and came back only once the turn had finished.
+    // The fetch was never aborted (that rule is intact, and §6 of the cancel
+    // suite executes it) — but every piece of the LIVE RENDER was thrown away
+    // on the way back in. The four resets above blank the flag, the buffers
+    // and the clock, and nothing ever re-pointed the turn at the NEW mount, so
+    // `sendIsOnScreen`'s `sendAbort.mountToken === token` could never match
+    // again and the bubble was gone for the rest of the turn.
+    //
+    // The resets above STAY, byte for byte and for their original reasons:
+    // they are what stops a foreign conversation's bubble opening under
+    // whatever boot() re-selects, and `state.sending = false` AT THIS DEPTH is
+    // pinned by two suites this package does not own. What is added is the
+    // other half of the pair:
+    //
+    //   · the GLOBAL LOCK is restored HERE, synchronously. One turn at a time
+    //     is a property of the APP, not of a mount; leaving the flag false
+    //     across a re-mount would let a second send start while the first was
+    //     still running and overwrite its abort record — an unstoppable,
+    //     unadoptable turn.
+    //   · the BUBBLE is restored LATER, by `adoptLiveTurn`, which cannot run
+    //     here because boot() has not yet said which conversation is on
+    //     screen. Until it does, the identity gate still refuses to paint.
+    //
+    // Deliberately a SECOND statement rather than `state.sending = !!sendAbort`
+    // in place of the reset: the reset is the exact line those two suites read
+    // and mutate, and an `if` after it leaves that line alone.
+    if (sendAbort) state.sending = true;
 
     // app.js's consumeChatScopeRequest() contract: this MUST be called
     // exactly once, synchronously, right here — before renderShell/boot,
@@ -1108,6 +1156,22 @@ async function selectConversation(id, mountToken, opts = {}) {
     if (!isCurrentMount(mountToken)) return;
     state.thread = [{ role: 'assistant', content: '', error: 'Could not load this conversation (' + err.message + ').' }];
   }
+  // ── THE RE-ATTACH POINT (v3.64.1) ───────────────────────────────────────
+  // THE one place in this file where a conversation becomes the conversation
+  // on screen — every path that opens a thread (boot's auto-select, a sidebar
+  // click, the post-delete re-select) funnels through here — which is why the
+  // adoption lives here rather than in `onEnter`. At `onEnter` the answer to
+  // "which conversation is open?" is not yet known; here it has just been
+  // decided, one line above.
+  //
+  // SYNCHRONOUS WITH THE ASSIGNMENT ABOVE AND THE RENDER BELOW: no `await`
+  // between them, so a turn cannot resolve in the gap and have its answer
+  // overwritten by the thread this fetch returned. (The narrow case it does
+  // NOT cover is stated rather than hidden: a turn that finished while the
+  // fetch was in flight is not adopted — there is nothing left to adopt — and
+  // its answer appears on the next load if the server had not yet persisted
+  // it when this read went out.)
+  adoptLiveTurn(mountToken);
   if (!opts.skipSidebarRender) renderShell(mountToken);
 }
 
@@ -1386,7 +1450,6 @@ async function sendCurrentMessage() {
   // reach it from the button and — critically — so nothing else can. See the
   // record's declaration for why the teardown must never touch it.
   const controller = new AbortController();
-  sendAbort = { controller, mountToken, domain: domainAtSend, conversationId: conversationIdAtSend, text };
 
   // THE STREAM BUFFERS FOR THIS TURN. Held in a local as well as the module
   // slot so this turn can only ever clear ITS OWN record (same discipline, and
@@ -1394,6 +1457,32 @@ async function sendCurrentMessage() {
   // writing into a detached object that nothing paints from.
   const streamRec = { sse: false, seen: false, reasoning: '', content: '', reasoningView: 'tail' };
   sendStream = streamRec;
+
+  // The record carries `stream` and `startedAt` as well as the four identity
+  // fields (v3.64.1) — they are what `adoptLiveTurn` needs to put a turn back
+  // on screen after a re-mount, and holding them HERE rather than in a second
+  // parallel object is the same one-record argument `sendIsOnScreen` makes.
+  sendAbort = {
+    controller, mountToken, domain: domainAtSend, conversationId: conversationIdAtSend, text,
+    stream: streamRec, startedAt: Date.now(),
+  };
+
+  // WHICH MOUNT MAY THIS TURN PAINT INTO RIGHT NOW. `mountToken` is where it
+  // started; `sendAbort.mountToken` is where it lives now, and the two differ
+  // exactly when a later mount adopted it (see adoptLiveTurn). Identity-checked
+  // on the controller so a turn can only ever read its OWN record — after the
+  // `finally` has cleared it, or if some future code path replaced it, this
+  // falls back to the captured local and behaves exactly as it did before.
+  const here = () => (sendAbort && sendAbort.controller === controller) ? sendAbort.mountToken : mountToken;
+
+  // THE SIDEBAR'S "answering" MARK. Kept in `state` and not read off
+  // `sendAbort`, deliberately: `conversationRowHtml` is lifted and executed by
+  // a suite this package does not own, whose sandbox declares `state` and not
+  // the module's turn record — a reference to `sendAbort` in that function
+  // would be an unresolved binding there. An absent field is simply not a
+  // match, so every existing fixture renders exactly what it rendered before.
+  state.answeringConvId = conversationIdAtSend;
+  state.answeringDomain = domainAtSend;
 
   state.sending = true;
   // Started BEFORE the first render, so the bubble's very first paint already
@@ -1410,6 +1499,9 @@ async function sendCurrentMessage() {
   // be.
   renderThreadOnly(mountToken, { stick: true });
   renderComposerBusy(true, mountToken);
+  // The list learns about the turn at the same instant the thread does. Rows
+  // only — see the `finally`'s own note for why this is not a renderShell.
+  renderSidebarConversationsOnly(mountToken);
 
   try {
     const res = await fetch('/api/chat/' + encodeURIComponent(domainAtSend), {
@@ -1461,7 +1553,7 @@ async function sendCurrentMessage() {
     // untouched by streaming, and a bug fixed in one path cannot be missing
     // from the other because there is only one path from here.
     const data = isEventStream
-      ? await consumeChatStream(res.body, streamRec, mountToken)
+      ? await consumeChatStream(res.body, streamRec, here)
       : await res.json();
     // Left byte-identical, including the unguarded `data.error`: on the JSON
     // path a null body must still fail exactly the way it did before.
@@ -1473,7 +1565,7 @@ async function sendCurrentMessage() {
     // the view/context moved on while this request was in flight.
     state.sending = false;
 
-    const stillRelevant = isCurrentMount(mountToken) &&
+    const stillRelevant = isCurrentMount(here()) &&
       state.activeDomain === domainAtSend &&
       state.activeConversationId === conversationIdAtSend;
     if (!stillRelevant) return; // this reply no longer belongs anywhere on screen
@@ -1562,13 +1654,13 @@ async function sendCurrentMessage() {
       // sidebar-refreshing call, then restore it — we only wanted the
       // conversation LIST refreshed, never the content we already have.
       const threadSoFar = state.thread;
-      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false, q: state.searchQuery });
-      if (!isCurrentMount(mountToken)) return;
+      await loadDomainConversations(state.activeDomain, here(), { autoSelectMostRecent: false, q: state.searchQuery });
+      if (!isCurrentMount(here())) return;
       // loadDomainConversations doesn't know which conversation is "active"
       // beyond auto-select, so restore it explicitly and re-render.
       state.activeConversationId = data.conversationId;
       state.thread = threadSoFar;
-      renderShell(mountToken);
+      renderShell(here());
     } else {
       // THE FIX: this branch used to re-render the sidebar from the SAME
       // state.conversations array that was already on screen, so the row's
@@ -1589,12 +1681,12 @@ async function sendCurrentMessage() {
       // full-list reparse per message, and it self-corrects on the next
       // keystroke or navigation; stated here rather than left as a surprise.
       bumpMessageCountForTurn(data.conversationId);
-      renderThreadOnly(mountToken);
-      renderSidebarConversationsOnly(mountToken);
+      renderThreadOnly(here());
+      renderSidebarConversationsOnly(here());
     }
   } catch (err) {
     state.sending = false;
-    const stillRelevant = isCurrentMount(mountToken) &&
+    const stillRelevant = isCurrentMount(here()) &&
       state.activeDomain === domainAtSend &&
       state.activeConversationId === conversationIdAtSend;
 
@@ -1625,7 +1717,7 @@ async function sendCurrentMessage() {
         const last = state.thread[state.thread.length - 1];
         if (last && last.role === 'user' && last.content === text) state.thread.pop();
         state.cancelNotice = { text: restoreDraft(text) };
-        renderThreadOnly(mountToken);
+        renderThreadOnly(here());
       }
       // NOT relevant: the abort still happened (that is what the user asked
       // for), but the notice and the draft belong to a thread that is no longer
@@ -1646,8 +1738,14 @@ async function sendCurrentMessage() {
       role: 'assistant', content: '', error: err.message,
       requestedModel: requestedModelAtSend || null,
     });
-    renderThreadOnly(mountToken);
+    renderThreadOnly(here());
   } finally {
+    // READ BEFORE THE RECORD IS CLEARED. `here()` falls back to the token this
+    // turn was born on once its record is gone, and after an adoption that is
+    // the WRONG mount — the composer would come back enabled on a view nobody
+    // is looking at while the one on screen kept its Stop button. One read, one
+    // value, used by every line below that needs a mount.
+    const finalToken = here();
     // Identity-checked so a turn can only ever clear ITS OWN record. Nothing can
     // interleave here today (the cancel path above has no `await`), but a record
     // cleared by the wrong turn would leave a live turn unstoppable — a silent
@@ -1656,13 +1754,27 @@ async function sendCurrentMessage() {
     // Same identity rule, same reason: a turn may only clear the buffers it
     // owns. Clearing another turn's would blank a live streaming bubble.
     if (sendStream === streamRec) sendStream = null;
+    // The sidebar's "answering" mark, under the same identity rule and for the
+    // same reason. Cleared on EVERY exit — resolved, stopped, failed — because
+    // a mark that outlives its turn tells the user a conversation is still
+    // being answered when nothing is running.
+    if (state.answeringConvId === conversationIdAtSend && state.answeringDomain === domainAtSend) {
+      state.answeringConvId = null;
+      state.answeringDomain = null;
+    }
     state.sending = false;
     // EVERY exit path — resolved, thrown, or returned early as irrelevant —
     // passes through here, which is the only placement that cannot be skipped by
     // a future `return` added above it. See stopSendClock.
     stopSendClock();
-    if (isCurrentMount(mountToken)) {
-      renderComposerBusy(false, mountToken);
+    if (isCurrentMount(finalToken)) {
+      renderComposerBusy(false, finalToken);
+      // The list has to lose the mark as well, and this is the only exit every
+      // outcome shares. `renderSidebarConversationsOnly` repaints the rows and
+      // nothing else, so an open filter, the scroll position and the bulk
+      // selection all survive it — the same reason the ordinary-turn branch
+      // above uses it rather than renderShell.
+      renderSidebarConversationsOnly(finalToken);
       focusComposer();
     }
   }
@@ -2427,10 +2539,34 @@ function conversationRowHtml(c) {
   const selected = state.selectedConvIds.has(c.id);
   const count = typeof c.messageCount === 'number' ? c.messageCount : 0;
   const title = c.title || 'Untitled';
+  // ── IS THIS ROW'S CONVERSATION BEING ANSWERED RIGHT NOW? (v3.64.1) ──────
+  //
+  // READ OFF `state`, NEVER OFF THE TURN RECORD, AND WRITTEN OUT HERE RATHER
+  // THAN IN A HELPER. Both halves of that are the same constraint, and the
+  // second half was found the hard way: this function is lifted out of the
+  // file and EXECUTED by scripts/test-next-chat-filter.js, in a sandbox that
+  // declares `state` and an explicit list of extracted functions. A reference
+  // to `sendAbort` would be an unresolved binding there — and so is a call to
+  // a NEW sibling function, which is exactly what reddened that suite when
+  // this started life as `conversationIsAnswering(c.id)`. Three property reads
+  // on an object every sandbox already injects cannot.
+  //
+  // `state.answeringConvId` / `state.answeringDomain` are written by
+  // `sendCurrentMessage` at send time and cleared in its `finally` — the same
+  // lifetime the `sendAbort` record has, so this is a second READER'S VIEW of
+  // one fact rather than a second copy of it.
+  //
+  // BOTH fields, because conversation ids are unique only inside one domain's
+  // folder: matching on the id alone could mark an unrelated row after a
+  // domain switch. An ABSENT field is `undefined` and matches nothing, so a
+  // fixture state that has never seen a send renders exactly what it did
+  // before this existed.
+  const answering = !!c.id && state.answeringConvId === c.id && state.answeringDomain === state.activeDomain;
   return (
     '<div class="chat-conv-row' +
         (c.id === state.activeConversationId ? ' active' : '') +
         (selected ? ' selected' : '') +
+        (answering ? ' answering' : '') +
       '" data-conv-id="' + escapeHtml(c.id) + '">' +
       // Always rendered, never hover-revealed: a control that only exists
       // under the pointer cannot be reached by keyboard at all (the sibling
@@ -2452,7 +2588,21 @@ function conversationRowHtml(c) {
       '</label>' +
       '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
         '<div class="chat-conv-title">' + escapeHtml(title) + '</div>' +
-        '<div class="chat-conv-meta">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) + '</div>' +
+        '<div class="chat-conv-meta">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) +
+          // THE MARK, IN WORDS AND NOT IN COLOUR ALONE. It rides the meta line
+          // the row already has rather than adding a second line, so a list of
+          // twenty rows does not change height the moment one of them is
+          // answering. `role="status"` because it appears without the user
+          // doing anything to this row. No animation: a pulsing dot in a list
+          // that can hold dozens of rows is exactly what
+          // prefers-reduced-motion exists to suppress, and the fact is legible
+          // without one.
+          (answering
+            ? '<span class="chat-conv-answering" role="status">' +
+                '<span class="chat-conv-answering-dot" aria-hidden="true"></span>answering' +
+              '</span>'
+            : '') +
+        '</div>' +
       '</div>' +
       '<button class="chat-conv-delete" data-conv-delete="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title || '') + '" title="Delete conversation" aria-label="Delete conversation">' +
         icon('trash', 13) +
@@ -3065,37 +3215,87 @@ function projectGroupHtml() {
   }
 
   return (
-    '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
-    control +
-    readout +
+    // ── TWO ROWS, NOT FOUR ITEMS (v3.64.1) ─────────────────────────────────
+    // The controls are wrapped so the group can be a COLUMN: row 1 is the
+    // picker and everything that labels it, row 2 is the ⓘ's panel.
+    //
+    // MEASURED, because the obvious version does not work: leaving the group a
+    // flex ROW and giving the panel `flex-basis: 100%` did NOT force a break.
+    // The group is `flex: none` inside the bar, so its main size is
+    // content-based — and a percentage basis against an indefinite containing
+    // block resolves to content size, not to a full line. In the browser at
+    // 1370px the panel simply sat BESIDE the picker (panel x=633 against an ⓘ
+    // at x=610, on the same 93px-tall line), which is neither under the button
+    // nor a row of its own. A column is deterministic and needs no percentage.
+    '<div class="chat-project-controls">' +
+      '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
+      control +
+      readout +
     // 46 words. It says what is read, that it is recorded data, and — the
     // sentence a user actually needs — that nothing is written back.
-    '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
-      ' data-tx-info="chat-project-info" aria-expanded="false"' +
-      ' aria-controls="chat-project-info" aria-label="What a pinned project adds">ⓘ</button>'
+      '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
+        ' data-tx-info="chat-project-info" aria-expanded="false"' +
+        ' aria-controls="chat-project-info" aria-label="What a pinned project adds">ⓘ</button>' +
+    '</div>' +
+    // ── AND ITS PANEL, BACK INSIDE THE GROUP (v3.64.1) ────────────────────
+    // Reported: "the ⓘ opens somewhere on the left." It did — as a sibling of
+    // the bar, in flow, it began at the page's left margin while its button
+    // sat several hundred pixels to the right, so the panel that appeared read
+    // as belonging to the domain chips above it. See projectInfoPanelHtml for
+    // why it was out there and what changed to let it come back.
+    projectInfoPanelHtml()
   );
 }
 
 /**
- * The ⓘ's panel — rendered OUTSIDE the scope bar, and that is a measured fix
- * rather than a preference.
+ * The ⓘ's panel — INSIDE the group, anchored under its own button.
  *
- * MEASURED in the browser at 1370 px: with the panel inside the group it was
- * reported open (`hidden: false`, `aria-expanded: true`) and at a sane
- * rectangle, and NOTHING WAS DRAWN. `.chat-scopebar` is `overflow-x: auto`,
- * and a box whose overflow-x is not `visible` computes overflow-y to `auto`
- * too — so the bar is a scroll container and CLIPPED an absolutely-positioned
- * descendant that hung below it. A disclosure that silently draws nothing is
- * the dead-control shape this repo keeps recording, and it is invisible to
- * every offline assertion here, all of which passed.
+ * ── THE HISTORY, BECAUSE BOTH HALVES OF IT ARE MEASUREMENTS ──────────────
+ * v3.64.0 put this panel inside the group, positioned `absolute`, and measured
+ * it in the browser at 1370 px: it reported itself open (`hidden: false`,
+ * `aria-expanded: true`) at a sane rectangle and NOTHING WAS DRAWN.
+ * `.chat-scopebar` was `overflow-x: auto`, and a box whose overflow-x is not
+ * `visible` computes overflow-y to `auto` as well — so the bar was a scroll
+ * container and clipped an absolutely-positioned descendant hanging below it.
+ * No z-index reaches out of a scroll container. It was moved out to a SIBLING
+ * of the bar, in flow, which is where v3.64.0 shipped it.
  *
- * So the panel is a SIBLING of the bar, in flow: it cannot be clipped by
- * anything, it needs no z-index and no positioning, and it pushes the thread
- * down while it is open exactly as `.tx-vh-panel` does under a view header.
- * The BUTTON stays in the group, where its label belongs; `data-tx-info`
- * matches by id anywhere in the document, so the two need not be siblings.
- * It is also why `patchProjectGroup` can repaint the group without touching
- * this panel — the text is static and has nothing to repaint.
+ * THE SIBLING VERSION WAS THEN REPORTED FROM PRODUCTION: "the ⓘ opens
+ * somewhere on the left." Correct, and it is the cost of that fix rather than
+ * a bug in it — a block in flow under the bar starts at the page's left
+ * margin, while its button sits wherever the project group happens to land,
+ * so the panel appeared under the DOMAIN chips and read as belonging to them.
+ * A disclosure that opens away from the thing it discloses is the same class
+ * of defect as one that does not open at all; it is just louder.
+ *
+ * ── WHAT CHANGED, SO THAT IT CAN COME BACK (v3.64.1) ─────────────────────
+ * The bar is no longer a scroll container. It WRAPS (`flex-wrap: wrap`,
+ * `overflow: visible` — see chat.css), which is the fix for the separate
+ * defect where the Compile control was clipped off the right edge at ordinary
+ * widths. TWO DEFECTS, ONE CAUSE: with nothing clipping any more, the panel
+ * can sit where its button is without needing to escape a scroll container.
+ * The v3.64.0 measurement is not being undone — its CAUSE is removed.
+ *
+ * ── STILL IN FLOW, AND STILL THE APP'S ONLY ⓘ PATTERN ────────────────────
+ * It is NOT an absolutely-positioned floating popover, and it is NOT inside
+ * the picker's own menu. The first would be a new overlay layer in a shell
+ * that has none; the second is refused outright by docs/design-system-source.md
+ * §3 ("a control may never go inside a fold") — a button inside the listbox's
+ * roving-focus menu is unreachable by that component's keyboard model and
+ * brings a second Escape handler to fight the first.
+ *
+ * What it IS: the same `data-tx-info` disclosure, in flow, taking a full-width
+ * row INSIDE `.chat-project-group` (`flex-basis: 100%` in a wrapping group —
+ * chat.css). So it opens directly under the ⓘ and the picker it is about,
+ * shares their left edge and the group's own hairline, and pushes what is
+ * below it down exactly as `.tx-vh-panel` does under a view header. Open,
+ * close, Escape and focus return all still come from shared/text.js's ONE
+ * delegated listener; nothing here adds a second handler or a second class.
+ *
+ * ONE CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER: the panel is inside
+ * the element `patchProjectGroup` repaints, so an open panel would be closed
+ * by a background project fetch. That function now carries the open state
+ * across its own repaint — see its note.
  */
 function projectInfoPanelHtml() {
   return (
@@ -3121,12 +3321,27 @@ function patchProjectGroup(token) {
   if (!isCurrentMount(token)) return;
   const host = document.getElementById('chat-project-group');
   if (!host) return;
+  // ── THE ⓘ SURVIVES THIS REPAINT (v3.64.1) ──────────────────────────────
+  // The panel moved inside this element when it was anchored under its button,
+  // so a background project fetch — which the user did not ask for and did not
+  // notice — would otherwise snap an open disclosure shut mid-sentence. Read
+  // the state off the BUTTON, which is `data-tx-info`'s own source of truth
+  // (shared/text.js finds open panels by `[data-tx-info][aria-expanded="true"]`
+  // and toggles both attributes together), and put it back after the rebuild.
+  // The prose is static, so restoring the two attributes restores the panel
+  // exactly; there is nothing else in it to preserve.
+  const wasOpen = document.getElementById('chat-project-info-btn')?.getAttribute('aria-expanded') === 'true';
   // Any open menu belongs to a trigger about to leave the document.
   closeAllListboxes();
   pendingListboxes.length = 0;
   host.innerHTML = projectGroupHtml();
   for (const cfg of pendingListboxes) mountListbox(cfg);
   pendingListboxes.length = 0;
+  if (wasOpen) {
+    const btn = document.getElementById('chat-project-info-btn');
+    const panel = document.getElementById('chat-project-info');
+    if (btn && panel) { btn.setAttribute('aria-expanded', 'true'); panel.hidden = false; }
+  }
 }
 
 function renderMain(token) {
@@ -3235,7 +3450,18 @@ function renderMain(token) {
       // (the DOM path of each, not the words).
       '<div class="chat-scopebar">' +
         '<div class="chat-scope-group">' +
-          '<span class="chat-scope-eyebrow mono">SCOPE</span>' +
+          // ── "SCOPE" → "DOMAINS" (v3.64.1) ────────────────────────────────
+          // The maintainer's correction, and it is a correction rather than a
+          // preference: the chips under this eyebrow are DOMAINS, one per
+          // knowledge base, while a SCOPE in this app is a work-stream inside
+          // a project (`state/<project>/<scope>/…`, `scope: "latest"`, the
+          // scope bar in the Context view). One word naming two different
+          // things in one product is how a reader learns to distrust both.
+          // The readout under the pills keeps the phrase "in scope" — that
+          // sentence is about how much wiki this conversation can see, which
+          // is what the word means in plain English and not a reference to a
+          // work-stream.
+          '<span class="chat-scope-eyebrow mono">DOMAINS</span>' +
           '<div class="chat-scope-pills">' + scopePills + '</div>' +
           '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
         '</div>' +
@@ -3253,9 +3479,9 @@ function renderMain(token) {
         '<div class="chat-scope-spacer"></div>' +
         compileControlHtml() +
       '</div>' +
-      // OUTSIDE the bar — see projectInfoPanelHtml for the measurement that
-      // put it here rather than inside the group with its button.
-      projectInfoPanelHtml() +
+      // THE ⓘ PANEL MOVED INTO THE GROUP IN v3.64.1 — see projectGroupHtml and
+      // projectInfoPanelHtml for the two measurements (the one that put it out
+      // here, and the one that let it come back).
       '<div class="chat-thread" id="chat-thread"></div>' +
       renderComposerHtml(active) +
     '</div>',
@@ -3738,6 +3964,68 @@ function sendIsOnScreen(token) {
     sendAbort.mountToken === token &&
     sendAbort.domain === state.activeDomain &&
     sendAbort.conversationId === state.activeConversationId;
+}
+
+/**
+ * RE-ATTACH A TURN THAT IS STILL RUNNING TO THE MOUNT NOW ON SCREEN.
+ *
+ * ── THE DEFECT (production, v3.64.0) ──────────────────────────────────────
+ * "A chat answer in progress disappears when I go to Domains, and only shows
+ * up when the stream finishes." Both halves were true and they had different
+ * causes. The answer disappeared because `onEnter` blanked `state.sending`,
+ * `sendStream` and the clock while the turn's own record still named the OLD
+ * mount, so `sendIsOnScreen` — correctly, on the information it had — refused
+ * to paint. It reappeared at the end because `selectConversation` re-reads the
+ * conversation from disk, and by then the server had persisted the answer.
+ *
+ * ── WHY RE-POINTING THE RECORD IS THE FIX, AND NOT A HOLE IN THE GATE ────
+ * `sendIsOnScreen` is left BYTE-IDENTICAL, including `sendAbort.mountToken ===
+ * token`. The gate was never wrong: a turn may paint only into the mount it
+ * belongs to. What was missing is a way for a turn to legitimately CHANGE the
+ * mount it belongs to — and the only safe moment for that is this one, where
+ * the domain and the conversation have just been proven to match. So the
+ * identity check is not weakened; it is satisfied, on purpose, once.
+ *
+ * This is also the ONE sanctioned exception to the rule stated on
+ * `myMountToken` — "never read a shared token after an await". The turn reads
+ * `sendAbort.mountToken` rather than its captured local, but it reads its OWN
+ * record, written by this function only after a three-way identity match, and
+ * never the shell's live variable.
+ *
+ * ── THE USER'S OWN MESSAGE COMES BACK TOO ────────────────────────────────
+ * `sendCurrentMessage` pushes the question optimistically; the server persists
+ * NOTHING until the model returns. So the thread `selectConversation` just
+ * fetched is missing it, and a bubble with no question above it would read as
+ * an answer to nowhere. It is re-added here, guarded by the same identity test
+ * the Stop unwind uses (last entry, role user, same text) so a double call
+ * cannot push it twice.
+ *
+ * Returns true when a turn was adopted — callers use it to decide nothing;
+ * it exists so the suite can assert the decision rather than infer it.
+ */
+function adoptLiveTurn(token) {
+  if (!sendAbort) return false;
+  if (!isCurrentMount(token)) return false;
+  if (sendAbort.domain !== state.activeDomain) return false;
+  if (sendAbort.conversationId !== state.activeConversationId) return false;
+
+  sendAbort.mountToken = token;
+  // The turn kept writing into its own detached buffers the whole time it was
+  // off screen (see `sendStream`'s declaration), so the reasoning and the
+  // draft that arrived while the user was away are already here — this is a
+  // re-point, never a replay.
+  sendStream = sendAbort.stream || sendStream;
+  state.sending = true;
+  // The ORIGINAL start time, not now: the clock measures the turn, and
+  // restarting it at zero on the way back would tell the user a 90-second wait
+  // had just begun.
+  resumeSendClock(token, sendAbort.startedAt);
+
+  const last = state.thread[state.thread.length - 1];
+  if (!(last && last.role === 'user' && last.content === sendAbort.text)) {
+    state.thread.push({ role: 'user', content: sendAbort.text });
+  }
+  return true;
 }
 
 // ── THE LIVE STREAM FOR THE TURN IN FLIGHT ────────────────────────────────
@@ -4244,6 +4532,30 @@ function stopSendClock() {
   sendLatencyHint = null;
 }
 
+/**
+ * Re-arm the clock for a turn a NEW mount has just adopted, keeping the
+ * elapsed time the turn has actually run.
+ *
+ * `startSendClock` binds its interval's `isCurrentMount` gate to the token it
+ * was given, so a turn carried across a re-mount needs a fresh interval bound
+ * to the new one — the old interval was already cleared by `onEnter`'s
+ * `stopSendClock()`. Everything else about the clock is unchanged, which is
+ * why this composes `startSendClock` rather than reimplementing it: one timer
+ * builder, one place where the interval, the elapsed write and the slow-turn
+ * retraction live.
+ *
+ * `sendStartedAt` is then put BACK to when the turn really started. Letting
+ * `startSendClock`'s own `Date.now()` stand would restart the elapsed reading
+ * at 0s on every return to the view — a clock that lies in the direction of
+ * "this has only just begun", on the surface whose whole job is to say how
+ * long you have been waiting. A missing/invalid stored start falls back to the
+ * fresh one rather than producing NaN.
+ */
+function resumeSendClock(token, startedAt) {
+  startSendClock(token);
+  if (Number.isFinite(startedAt)) sendStartedAt = startedAt;
+}
+
 // ── THE LIVE PAINT ────────────────────────────────────────────────────────
 //
 // ══ `renderThreadOnly` IS NEVER CALLED PER TOKEN, AND THAT IS THE RULE. ═══
@@ -4417,12 +4729,33 @@ function stickThreadToBottom(host) {
  * something falsy here would push a blank assistant bubble and persist the
  * silence as if it were a reply.
  */
-async function consumeChatStream(body, rec, token) {
+async function consumeChatStream(body, rec, mountTokenNow) {
   // CONFIRMED headers, not an assumption: the caller only reaches this once it
   // has read `content-type: text/event-stream` off the response.
   rec.sse = true;
   let final = null;
   let errored = null;
+
+  // WHICH MOUNT EACH DELTA PAINTS INTO (v3.64.1).
+  //
+  // `mountTokenNow` IS A FUNCTION, NOT A NUMBER, and that is the whole change
+  // on this side. A turn survives the user leaving the view and can be adopted
+  // by a later mount part-way through this read (see `adoptLiveTurn`), so a
+  // token captured when the read began is stale from that moment on and every
+  // remaining delta would be dropped by `paintStream`'s mount gate — which is
+  // precisely the "my answer disappeared" report. Asking the caller for the
+  // CURRENT value per delta costs one call and cannot go stale.
+  //
+  // It is a callback rather than a read of the module's turn record ON PURPOSE:
+  // scripts/test-next-chat-cancel.js §10g asserts this function does not so
+  // much as mention the word, which is how "the stream consumer never cancels
+  // a request, it only ever propagates one that was cancelled elsewhere" is
+  // kept true by construction rather than by review. Reaching into that record
+  // here would have defeated a guard worth more than the convenience.
+  //
+  // A non-function (an older caller, a test passing a number) still works —
+  // it is used as-is, which is exactly the pre-v3.64.1 behaviour.
+  const paintInto = () => (typeof mountTokenNow === 'function' ? mountTokenNow() : mountTokenNow);
 
   for await (const ev of readSseFrames(body)) {
     if (!ev || typeof ev !== 'object') continue;
@@ -4430,7 +4763,7 @@ async function consumeChatStream(body, rec, token) {
       if (typeof ev.text === 'string' && ev.text) {
         rec.reasoning += ev.text;
         rec.seen = true;
-        schedulePaintStream(token);
+        schedulePaintStream(paintInto());
       }
     } else if (ev.type === 'content') {
       if (typeof ev.text === 'string' && ev.text) {
@@ -4443,7 +4776,7 @@ async function consumeChatStream(body, rec, token) {
         if (!rec.content) rec.reasoningView = 'hidden';
         rec.content += ev.text;
         rec.seen = true;
-        schedulePaintStream(token);
+        schedulePaintStream(paintInto());
       }
     } else if (ev.type === 'done') {
       final = ev;
