@@ -881,6 +881,17 @@ section('§11 main.js source scan — WEAK BY NATURE, and what is NOT enforced')
   ok(!/ipcMain|contextBridge|exposeInMainWorld/.test(main),
      'no IPC channel was opened for the menu — the preload stays empty, so there is no second way into the app\'s capabilities that bypasses the HTTP guards');
 
+  // v3.64.0 — Risk 4 (a rail entry can vanish silently) applies to BOTH
+  // Electron [data-view] selectors, not just the memory one scripts/test-
+  // tray-shell.js re-checks. Settings stays a footer button under the
+  // three-entry rail (D-A never touches FOOTER_VIEWS), so nothing here
+  // should have moved — this pins the failure-reporting half of that claim
+  // rather than assuming it from the boolean-return check above.
+  ok(main.includes("dialog.showErrorBox(\n    'Could not open Settings'"),
+     'a false/failed landed still produces a NAMED dialog, not a silent no-op click');
+  ok(/Open Settings with the gear button at the bottom of the left-hand rail\./.test(main),
+     'and the remedy text still points at the gear button — a footer item, unaffected by the nav rail shrinking from five entries to three');
+
   ok(/isVisible\(\)\s*&&\s*!mainWindow\.isMinimized\(\)/.test(main),
      'the update dialog is only attached to the window when the window is actually ON SCREEN — a sheet on a hidden window (⌘W leaves one) is invisible, and the app would look frozen');
 

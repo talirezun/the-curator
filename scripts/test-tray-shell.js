@@ -1158,6 +1158,25 @@ section('§11 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
   ok(/const hit = rows\.find\(\(el\) => el\.dataset\.memProject === want\)/.test(src),
     'the exact domain/project match is tried FIRST, so the fallback can never select another domain\'s project while the right one is on screen');
 
+  // v3.64.0 — THE RAIL SHRINKS TO THREE ENTRIES (chat/domains/memory), and the
+  // Context button (`data-view="memory"`) is one of the survivors. Nothing in
+  // this file changes because of that — no view id crosses the process
+  // boundary except through this one selector (P2's finding) — but the
+  // coupling is worth re-checking on its own terms now that two of its five
+  // siblings (`ingest`, `shared`) have left the rail: this asserts the shell
+  // still targets `[data-view="memory"]` specifically, and still has a named,
+  // reported failure mode rather than a silent one when that element is gone.
+  ok(/document\.querySelector\("\[data-view=\\+"memory\\+"\]"\)/.test(src),
+    'the injected script still targets [data-view="memory"] — the one rail id this shell reaches by DOM query rather than by any view-id string of its own (main.js carries no view-id literals at all, only this selector and the settings one in lib/menu.js)');
+  ok(/if \(!rail\) return "no-view";/.test(src),
+    '...and reports "no-view" rather than throwing or clicking null when the selector finds nothing — this is the return value Risk 4 exists for: a rail button silently gone must not silently do nothing');
+  ok(/if \(landed === 'project' \|\| landed === 'view'\) return;/.test(src),
+    'only "project" or "view" count as success; "no-view" (and any other value, including a caught executeJavaScript error) falls through to the error dialog below — the coupling cannot rot silently');
+  ok(/dialog\.showErrorBox\(\s*'Could not open Project Context'/.test(src),
+    'a rotted coupling shows a named, actionable dialog...');
+  ok(/Open it with the Context button in the left-hand rail\./.test(src),
+    '...whose remedy text still names "the Context button" — the caption that survives D-A, not "Agent memory" or a view id');
+
   // The quit guard must be untouched by this feature.
   const raw = read(path.join(DESKTOP, 'main.js'));
   ok(/app\.on\('before-quit'/.test(raw) && /decideQuit\(status\)/.test(raw),
