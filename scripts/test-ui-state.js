@@ -191,6 +191,8 @@ const MOVED = new Set(Object.keys(client.UI_STATE_KEYS));
 // that is in NEITHER list fails this section, so a key added later cannot
 // quietly inherit "per-device" by default.
 const STAYS = {
+  'curator-domain-sections-v1':
+    'which of the domain page\'s two hosted sections are open, and which lens its page list is showing, PER DOMAIN (v3.64.0). Per-device reading state of exactly the class curator-memory-folds-v1 is: a laptop and a desktop have no business agreeing about whether the INGEST section is expanded or whether you were last looking at the wiki or at the context documents, and its loss costs one click. It is validated on read — only the literal true or false, only under a known fold name, only one of three known lens values, anything else degrades to the designed default — every access is wrapped because localStorage THROWS rather than returning null in a private window, and the default when it is absent is the designed default rather than a fallback: INGEST opens on a domain that has never been ingested into and is closed once it has. Moving it would mean a per-toggle write to the file that holds the API keys, which is the churn the starred-models and fold entries above already decline.',
   'curator-chat-project-v1':
     'per-device convenience, and the alternative was actively worse: a conversation\'s JSON is TRACKED by the knowledge repo, so a per-conversation pin would be a schema field that travels to a machine where that project may not resolve. chat.js reconciles it against the live project list on every mount and clears it when the project is gone.',
   'curator-next-theme':
