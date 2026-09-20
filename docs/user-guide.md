@@ -557,7 +557,7 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 | Door | Lands you on | The steps you then get |
 |---|---|---|
 | **Build a second brain** | **Domains** | 1 · Add an AI key → 2 · Point at a wiki, or start one → 3 · Ingest your first source |
-| **Give your agents memory** | **Project context** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your agent → 4 · Add an AI key *(marked **Optional** — "Needed for ingest and chat. Project context and the bridge work without one.")* |
+| **Give your agents memory** | **Project context** | 1 · Point at a wiki, or start one → 2 · Start a project → 3 · Connect your agent → 4 · Add an AI key *(marked **Optional**, and on this door the body is the short one — "Needed for ingest and chat.")* |
 
 **Why the second list does not start with a key.** The memory layer and the MCP bridge do not use a model at all — the bridge reads and writes markdown on your disk and never calls a provider, and it runs with the app closed. If you came here to give your agents memory you can create a domain, create a project, paste the marker line and be productive with no API key whatsoever. The panel used to tell you "nothing else works without a model", which was simply false for that path; step 1 now names what a key *is* for — ingest and chat — and says the rest works without one.
 
@@ -720,13 +720,13 @@ It is a **switch with a checkbox under it**, which is how macOS draws a facility
 │  ── acme / pricing-model · 38 hr ago · antigravity ─────  │  ③ a second group
 │  ◑ sources-sweep · 38 hr ago                          ▸  │
 │      handoff trimmed — 7 of 11 issues triaged            │
-│  More in Agent Memory… (6)                               │  ④ a cap, disclosed
+│  More in Project Context… (6)                            │  ④ a cap, disclosed
 ├──────────────────────────────────────────────────────────┤
 │  14 handoffs waiting on GitHub                           │  ⑤ notices, only
 │  studio saved after this Mac                             │     when true
 │  Two agent tools are writing notes…                      │
 ├──────────────────────────────────────────────────────────┤
-│  Open Agent Memory…                                      │
+│  Open Project Context…                                   │
 │  Open The Curator                                        │  ⑥ always here,
 │  Settings…                                               │     in every state
 ├──────────────────────────────────────────────────────────┤
@@ -777,9 +777,9 @@ that project's **work-streams**.*
 |---|---|---|
 | ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
 | ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ⓪. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ⓪ | **`Working on: <project> · <age>`** — the project written to most recently, anywhere across all of them, and how long ago | It is the question you came to ask, so it is answerable without reading past the first line, and clicking it opens Project memory. It replaced a line reading *"Last save · 12 min ago"*, which said WHEN without saying WHAT: a person with several projects asks *which one was I in?* first, and until v3.48.0 the menu could not answer it, because rows were flat and the answer had to be inferred from whichever one happened to be at the top |
+| ⓪ | **`Working on: <project> · <age>`** — the project written to most recently, anywhere across all of them, and how long ago | It is the question you came to ask, so it is answerable without reading past the first line, and clicking it opens Project context. It replaced a line reading *"Last save · 12 min ago"*, which said WHEN without saying WHAT: a person with several projects asks *which one was I in?* first, and until v3.48.0 the menu could not answer it, because rows were flat and the answer had to be inferred from whichever one happened to be at the top |
 | ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and **five rows** in total, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do). Two rows per group is a floor rather than a ceiling: each group gets two before any group gets a third, and rows nobody claimed are handed back out in recency order — so one project on its own still fills all five, which is what every install had before this release. **A work-stream saved from two of your computers takes one row, not two** — the newer save — and the older copy is counted in ④ rather than shown | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
-| ④ | *"More in Agent Memory… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
+| ④ | *"More in Project Context… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
 | ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
 | ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
 | ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. It is what makes a reading that has silently stopped updating visible as stale, and it is the moment the [pulse strip](#reading-the-save-pulse) is a picture of |
@@ -1124,8 +1124,8 @@ report in a menu bar.
 It does not get a **menu row**, and that is the ranking rather than an oversight: a brief is up to
 32 KB of prose that changes on the order of weeks, so it does not earn one of five scarce rows.
 The tooltip is the one surface here with no scarcity — it costs no row, no menu bar width, and no
-extra reading of the disk. For the full picture, **Open Agent Memory…** still lands you on the
-save-status strip ([§7](#the-save-status-strip)).
+extra reading of the disk. For the full picture, **Open Project Context…** still lands you on the
+same readings, in the strip across the top of the page ([§7](#the-save-status-strip)).
 
 > **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
 
@@ -1487,8 +1487,15 @@ stays where it was.
 
 ![The Project context view with the "context-view" project open, dark theme. Down the left, the icon rail — Chat, Ingest, Domains, Context (highlighted and tinted) and Shared, then a sun, Sync and Settings at the foot, every icon captioned. Beside it a sidebar headed "Project context" with an ⓘ mark, a row reading PROJECTS · Refresh · + New project, then the heading ACME over two project rows: "second-project / A second project, for the switch measure… / 1 scope · 14 min ago", and "context-view / Measuring at 1370 and 568 / 3 scopes · 14 min ago", the second selected and tinted, each with a green freshness dot. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Project context", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "acme / context-view". Under a hairline sits a three-cell strip, each cell a small label over a value with a freshness dot: FOUNDATIONS "3 documents · fresh" (green), WORKING STATE "saved 14 min ago" (green), KNOWLEDGE "391 pages · 3 days ago" (grey), with one ⓘ at the right end of the row. Below it the page is THREE NUMBERED STEPS, separated by hairlines, each opening with a small round numeral beside its heading. Step 1, "Foundations", over the lede "Add the documents an agent must not act without." with an ⓘ; a single closed fold whose row reads "The documents" on the left and "3 documents · 110 bytes · mirrored · 2 read first · 1 on request · fresh" at the right edge; under it two buttons, "Refresh from repo" and "Add from folder"; and under those an unfolded note with an ⓘ glyph: "An agent’s save here is refused — this project is mirrored from a folder." Between step 1 and step 2, above the next heading, a bordered card holds a green square pip beside the small label "Last saved", the large monospace reading "14 min ago", and "browser-pass · opencode" beneath. Step 2, "Working state", over the lede "You write the brief; agents write handoffs and the journal." with an ⓘ, holds THREE CLOSED FOLDS in this order: "Work-streams", with "Measuring at 1370 and 568 · 3 work-streams · 3 saved copies" at the right edge; "The brief", with "updated 14 min ago · 126 words" and an icon-only pencil button; and "Recent saves", with "1 save · latest 14 min ago". Step 3, "Knowledge", over the lede "The wiki this project draws on. Open it in Domains." with an ⓘ, shows five readouts in a row — PAGES 391, ENTITIES 120, CONCEPTS 240, SUMMARIES 31, and LAST INGEST with a grey dot beside "3 days ago" over "Ingested · The Energy and Water Footprint of Generative AI" — and two outlined buttons, "Open in Domains" and "Ask this domain". No fold is open, no handoff document and no brief text is printed on the page, and the word "Edit" appears nowhere.](images/curator-agent-memory.png)
 
-*One project's state, open, and three of its blocks (taken before the
-fifth, **Foundations**, shipped in v3.59.0). **Status** answers
+*One project's state, open, and three of its blocks — **a photograph of a
+superseded screen, kept for what it shows about the readings rather than the
+layout**. It was taken before the fifth block, **Foundations**, shipped in
+v3.59.0; before v3.62.0 replaced the blocks with three numbered steps under a
+three-cell strip and renamed **Standing brief** and **Session journal** to **The
+brief** and **Recent saves**; and before v3.64.0 cut the rail down the left
+from five places to three. Every reading below is still on the page — the
+[three steps table](#7-finding-your-way-around) above says where each one now
+lives. **Status** answers
 "am I saved?" in one glance — the **Working on** headline, a live age, the Last-saved reading, and
 here one qualifying line: this handoff was written on another machine. **Work-streams** is the
 table that replaced the old Work-stream and Machine dropdowns: one row per saved copy, newest
@@ -1690,14 +1697,14 @@ still looking at.
 
 ![The reader overlay on the Project context screen — a screenshot taken before v3.62.0 renumbered the page, so the column behind it shows the older unnumbered blocks rather than the three steps; the reader itself is unchanged. The icon rail and the projects sidebar stay fully lit down the left — curator still selected, "13 scopes · 5 hr ago" — while the main column behind is dimmed by a scrim, its Status card, Work-streams table and Standing brief block still legible in outline. Over it, from the right, a panel runs the full height of the window. Its header carries a small book icon, the file’s path in monospace — "state/curator/session-2026-09-17-settings-design-unification/talis…", truncated at the panel’s edge — then an "esc" keycap and an ✕ button. Below that the handoff’s own first line stands as the title, in large type over five lines: "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0". Under it a row of chips: a violet dot beside "handoff", then "work-stream: session-2026-09-17-settings-design-unification", and on a second line "machine: talis-macbook-pro-acb035" and "synced from another machine". Then the reading — the small label "Saved" over "5 hr ago" in large monospace, with "Claude Code · claude-fable-5-1 · updates live" beneath it — and no completeness badge, because this save carried none. Below that the handoff itself, rendered as Markdown: a heading "Where things stand" over two long paragraphs of build state, then the heading "Firm decisions — do not re-litigate" over bulleted decisions, the first two reading "Providers & keys is the reference; only the qualify-done build control, qualify Cancel (done) and qualify-done Close (post-merge) change inside it" and "No Co-Authored-By trailer". The document continues below the bottom edge.](images/curator-agent-memory-reader.png)
 
-*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the work-stream and the machine, and say that this copy was **synced from another machine**. The **Saved** reading is the same figure the Status block gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row.*
+*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the work-stream and the machine, and say that this copy was **synced from another machine**. The **Saved** reading is the same figure the strip's **WORKING STATE** cell gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row.*
 
 | In the reader | What it holds |
 |---|---|
 | **The path line** | `state/<project>/<work-stream>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
 | **The title** | The handoff's own first line. A handoff with no headline is titled after its work-stream |
 | **The chips** | A `handoff` type badge, then `work-stream: <slug>`, `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
-| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the Status block shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
+| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the strip's **WORKING STATE** cell shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
 | **The notes** | The truncation and sanitisation warnings, in full and never folded |
 | **The body** | The handoff, rendered as Markdown |
 
@@ -1768,7 +1775,7 @@ novel?*
 
 Every "how recently" mark in the app is now cut from **one scale** — five age tiers plus an
 explicit *unknown* (*new in v3.55.0 — there were three ladders, all painted in the brand violet,
-and none of them agreed with the menu bar*). The Agent-memory pips, the Ingest **DESTINATION** rows and the Domains **KNOWLEDGE** rows
+and none of them agreed with the menu bar*). The Project-context pips, the Ingest **DESTINATION** rows and the Domains **KNOWLEDGE** rows
 all use it, and its colours are the ones the [menu bar icon](#6b-the-menu-bar-icon-mac-app)
 already spoke.
 
@@ -1799,16 +1806,21 @@ hidden from screen readers, and the words are what a screen reader announces.
 
 #### The save-status strip
 
-The body of the **Status** block is a short strip that answers the question people actually arrive
-with: *"is this saved, and is it any good?"* It is one line on a healthy day.
+*"Is this saved, and is it any good?"* is answered in one line on a healthy day. Since v3.62.0 it
+is answered in two places rather than one block: the **three-cell strip** across the top of the
+page — FOUNDATIONS · WORKING STATE · KNOWLEDGE, each a freshness dot and a word — and, between
+step ① and step ②, a card carrying the **Last saved** reading with the tool and model that wrote
+it.
 
 ```
-■ Working on   shipping the v3.55 docs pass          4 min ago
-□ Last saved   4 min ago · main · claude-code
+□ Last saved   4 min ago
+               main · claude-code
 ```
 
-The pip is the pre-attentive half and the words are the exact half. Underneath, **only when each
-has something to say**, the qualifying lines:
+The pip is the pre-attentive half and the words are the exact half. The qualifying lines below
+were once folded into a *Status* block with those readings; they now appear **on the step each one
+qualifies**, unfolded, because a warning is never folded away. They still appear **only when each
+has something to say**:
 
 | Line | When it appears | What to do |
 |---|---|---|
@@ -2034,7 +2046,7 @@ flowchart TD
 
 ![The Ingest view with a two-file batch staged, dark theme. Down the left, an icon rail with Ingest highlighted and every icon captioned. Beside it a panel headed "Ingest" with an ⓘ mark, a filled "+ Choose files" button, and a DESTINATION list of two domains. The first, ticked as the current destination, reads "Demo" over "2 pages ·" a dashed ring, a small clock and "nothing written yet". The second reads "Projects" over "0 pages ·" a filled dot, a clock and "1 week ago", with a second line underneath: "Ingested · Lumina Project Overview and Multi-…". The main column opens with the eyebrow "THE WAY MATERIAL GETS IN" over the title "Ingest", then the heading "Batch ingest — 2 files" over "1.3 KB total · gemini · gemini-2.5-flash-lite". Below that the screen is two columns. The left column holds a "Domain" label over a dropdown set to Demo, then a dashed drop zone reading "Drop more files here", "or browse your files", "Accepts .txt · .md · .pdf" and "Dropping more files adds them to the batch you already started", then the heading "WILL BE INGESTED (LARGEST FIRST)" over two rows — "retrieval-vs-compilation.md 674 B" and "wikilinks-as-a-relevance-signal.md 621 B" — each with an × to remove it. The right column opens with a card: the label "Estimated cost" over "$0.0016" in large monospace, then two monospaced lines of provenance — "Sized against this wiki's real page list, not a flat rate. Actual spend can land above the range." — then "Estimated tokens" over "2,869 in / 3,334 out", and at the foot of the card the link-like line "How this range was worked out" with an ⓘ beside it. Under the card, "Budget cap (optional)" over an empty field reading "No cap", an unticked checkbox "Overwrite existing pages for files already ingested", and a row of three controls: a violet-tinted "✦ Start batch", an outlined "Add more files" and a plain "Clear all".](images/curator-ingest.png)
 
-*The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
+*The batch confirm gate, in the two-column shape it takes when the column is wide enough (new in v3.55.0). The rail down the left is the pre-v3.64.0 one, with an **Ingest** button on it; the panel itself is unchanged, and it is now reached from the **INGEST** section of a domain page. **Left is what you are about to spend on** — destination, drop zone, the file list. **Right is the decision** — the cost, the budget cap, the overwrite switch and the actions. Before this the Start button sat under a scrolling file list with the cost it belongs to somewhere above. The three buttons at the foot are the [button family](#buttons--what-the-look-tells-you) in one row: **Start batch** is tinted because it spends money, **Add more files** is an ordinary action, and **Clear all** is reversible.*
 
 1. Open **Domains**, pick your destination domain, and open its **INGEST** section (or the full-page **Ingest** view, if that is where you left off)
 2. Confirm the **destination domain**. In the section it is the domain whose page you are on; in the full-page view it comes from the picker or the **destination list** in the panel beside the rail
@@ -2142,7 +2154,7 @@ Three things are worth knowing about that reading:
 
 **The drop zone answers two different questions.** Hovering it looks one way — *you could drop here* — and dragging a file over it looks another, louder way — *let go and this happens*. They are deliberately distinct states, not one highlight doing double duty.
 
-**Dragging from Finder works, and you don't have to hit the zone exactly.** Drop a file **anywhere in the Ingest view** — the drop zone, the destination list beside it, the space around them — and it lands in the same place as if you had aimed at the zone. Dropping **two or more files at once starts a batch**, exactly as picking several from the file browser does; the two routes go through the same code, so anything true of one is true of the other.
+**Dragging from Finder works, and you don't have to hit the zone exactly.** Drop a file **anywhere in the full-page Ingest view** — the drop zone, the destination list beside it, the space around them — and it lands in the same place as if you had aimed at the zone. In the **INGEST** section of a domain page the same convenience is scoped to the section: a drop inside it counts, and a drop elsewhere on the page is refused rather than opened. Dropping **two or more files at once starts a batch**, exactly as picking several from the file browser does; the two routes go through the same code, so anything true of one is true of the other.
 
 > **If you are on a version before v3.46 and drag does nothing, that is a known defect, not your machine.** Dragging over the zone destroyed the very element you were dragging onto, so the drop never registered — and because nothing then handled the drop, the app could navigate itself to the file and appear to vanish. Both halves are fixed: the zone now stays put for the whole drag, and the Mac app refuses to navigate away from itself. Until you update, **browse your files** / **Choose files** is the reliable route and handles multi-file batches perfectly well.
 
@@ -2550,7 +2562,7 @@ An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page c
 
 ![The Chat view. A left panel headed "Chat" holds a "New chat" button, a "Filter conversations" box with a magnifier inside it, a "Select all" checkbox, and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by the readout "3,421 pages in scope" and then a "Compile to Wiki" button. Below it a user question sits in a bubble on the right, asking for a table of the last ten articles with a row describing their similarities. The answer beneath it is labelled "THE CURATOR · MiniMax M3 (free) · free" and opens "Here's a synthesis of your recent work based on what's loaded in your wiki." It then renders a Markdown table headed "Your Last 10 Articles (synthesized)" with columns #, Article, Date, Summary and Domain Interest; each Article cell names a title and its source page in monospace, such as "summaries/from-writing-code-to-directing-intelligence.md". At the bottom the composer reads "Ask Articles…" with a model dropdown showing "MiniMax M3 (free)", a length dropdown reading "Balanced", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 
-*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the SCOPE pills, and **Compile to Wiki** stands apart from it.*
+*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the SCOPE pills, and **Compile to Wiki** stands apart from it. The shot predates v3.64.0's **PROJECT** group, which now sits in the same bar — see [Pin a project](#9-chat-with-your-brain).*
 
 > **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose questions and answers the caption counts, as wiki pages. (In the shot above the window edge clips that caption.) The caption used to say *"N messages"* and, worse, was painted once and never repainted — so after a few turns it could read *"(2 messages)"* beside a sidebar row saying *"6 messages"* for the same thread. Both numbers had always meant the same thing; only one of them was keeping up. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
 
@@ -2898,7 +2910,7 @@ shape of the whole page; this is what each section holds:
 
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of two domains, each with a coloured identity dot, its name and its page count — Articles 3,445 pages (with a small amber dot on the right marking open health issues) and Projects 767 pages and selected. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 4 — the PAGES tile sits inside its own violet-bordered box, because it is also the button for the "All" filter and that filter is the one currently selected. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 46; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ and no loose sentence beneath the heading, four project rows: "field-notes", "projects" (labelled "the domain's own project — it cannot be renamed or deleted"), "lumina" and "curator", each with a "Standing brief" pill, a "last save … · newest work-stream …" line, and the buttons "Copy marker line" and "Copy agent instructions" — each of the two now carrying its own ⓘ mark beside it.](images/curator-domains.png)
 
-*The sections in order, on a real domain, photographed before v3.64.0 added INGEST and SHARED BRAIN as folds: the counts, then the wiki itself, then the projects built with it. **Wiki health** sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
+*The sections in order, on a real domain, photographed before v3.64.0 added INGEST and SHARED BRAIN as folds, shortened the `PAGES · THE WIKI` eyebrow to **PAGES**, and put the Wiki · Context · All lens row above the list: the counts, then the wiki itself, then the projects built with it. **Wiki health** sits below the fold here — see [§17](#17-wiki-health). The KNOWLEDGE rows already carry the freshness dot, the relative age and the last-write line described [above](#reading-a-destination-row), painted on the [app-wide freshness scale](#the-freshness-dot-one-scale-everywhere).*
 
 *Changed in v3.49.0.* The page list used to be the **last** thing on this page, behind a
 **Browse pages** button, underneath the health report — so the index of your own knowledge sat
@@ -3676,8 +3688,9 @@ when you have asked it to** — write or update this document — in the same wa
 already required an explicit instruction for the standing brief. A session that reads foundations
 correctly all the way through never has to call it.
 
-**How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①** on the Project-context screen,
-between Standing brief and Session journal, closed by default like its neighbours. Its summary
+**How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①** on the Project-context screen
+— the first thing on the page, above step ② *Working state* and its three folds (*Work-streams*,
+*The brief*, *Recent saves*) — and its own fold is closed by default like theirs. Its summary
 line reads *"N documents · M KB · fresh · 2 read first · 4 on request"*, or names how many are
 stale, unreachable from this machine, or Curator-authored, whichever applies. Each row in the
 opened table carries a **read first** control and a freshness dot on the same
@@ -3852,8 +3865,8 @@ agent on **Claude Code** saved in **0 of 4** runs; with a short block pasted int
 harness loads every session, **3 of 4**. On **opencode**, which loads the skill itself, it was
 **4 of 4** either way — there the block buys nothing.
 
-**Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Agent
-memory screen), puts that block on your clipboard with this project's names already in it. Paste it
+**Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Project
+context screen), puts that block on your clipboard with this project's names already in it. Paste it
 into whichever of these your tool reads:
 
 | Your tool | Paste it into | Watch out for |
@@ -4182,7 +4195,7 @@ Here is the recommended way to use The Curator day-to-day:
 
 1. Save the article/chapter/notes as a `.txt` or `.pdf` file
 2. Open The Curator (the Mac app, or click the Dock icon / go to `http://localhost:3333`)
-3. Open **Ingest**, choose the right domain, drop the file in, click **Ingest**
+3. Open **Domains**, click the right domain, open its **INGEST** section, drop the file in, click **Ingest**
 4. In Obsidian, press `Cmd/Ctrl + R` to see the new pages appear in the graph
 
 ### When you want to recall something
@@ -4364,7 +4377,7 @@ Two completely different concepts that beginners often confuse. Get this right a
 
 ### Getting started
 
-Shared Brain has its own place in the rail. Click **Shared** (the people icon — fourth from the top, the first item *below* the dividing line, since everything under that line is the advanced half). On a fresh install it says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
+**Shared Brain lives on the domain page, and has since v3.64.0.** Open **Domains** in the rail, click a domain, and open its **SHARED BRAIN** section — a closed fold between the Projects group and Wiki health. The full view is one press from that section's own door, and it is still where you enable the feature, join a cohort or set one up. (Through v3.63.0 Shared Brain was a rail entry of its own, below a dividing line that no longer exists.) On a fresh install the view says *"Shared Brain is off on this install"* — click **Enable Shared Brain (beta)**.
 
 Turning it on connects you to nothing. It only unlocks the view; nothing leaves your machine until you configure a brain and push a domain to it. Once enabled you choose your path:
 
@@ -4375,7 +4388,7 @@ Turning it on connects you to nothing. It only unlocks the view; nothing leaves 
 
 ![The Shared Brain view, enabled but with nothing connected, dark theme. Down the left, the icon rail with Shared highlighted, fourth from the top. Beside it a panel headed "Shared Brain" with a small "beta" pill, holding a single note: "No Shared Brains connected yet." The main column reads "YOUR TEAM'S BRAIN" over the title "Shared Brain" with an ⓘ mark, and offers two cards side by side, each on the same card chrome, each with a glyph, a heading, a line of explanation and one button at its right end. The left card: a people glyph, "I have an invite token" over "From my cohort, team, or research group.", with a filled violet "Join →" button. The right card: a sparkle glyph, "I'm starting a new Shared Brain" over "Set one up for my cohort or team.", with an outlined "Set up →" button. Nothing else is on the screen.](images/curator-shared-brain.png)
 
-*The choice, and nothing else. This is what the view looks like once Shared Brain is enabled and before you have joined or created anything — enabling it connects you to nothing, and the screen shows that by having nothing on it. The two cards sit **side by side** on a wide column and stack on a narrow one (v3.55.0). **Join is the filled button and Set up is outlined**, and that is an argument rather than a ranking: neither commits anything, but a reader holding an invite token is here to paste it, while starting a cohort of your own is a branch you take deliberately. One filled button per card or panel is the app's [button rule](#buttons--what-the-look-tells-you).*
+*The choice, and nothing else. Photographed before v3.64.0 took **Shared** off the rail — the view is unchanged and is now one press from a domain page's SHARED BRAIN section. This is what it looks like once Shared Brain is enabled and before you have joined or created anything — enabling it connects you to nothing, and the screen shows that by having nothing on it. The two cards sit **side by side** on a wide column and stack on a narrow one (v3.55.0). **Join is the filled button and Set up is outlined**, and that is an argument rather than a ranking: neither commits anything, but a reader holding an invite token is here to paste it, while starting a cohort of your own is a branch you take deliberately. One filled button per card or panel is the app's [button rule](#buttons--what-the-look-tells-you).*
 
 > **v3.6.1 — invite tokens are GitHub-only, and a non-GitHub one is now refused at step 1.** Joining a Shared Brain works by accepting an invitation to a GitHub repository and creating a Personal Access Token, so only a GitHub-backed brain can issue an invite. A token describing any other storage backend is rejected on paste, with an explanation — previously it was accepted and you were walked all the way to the final step, **creating a real PAT on github.com along the way**, before saving failed with an internal message that read like the app was broken. (The non-GitHub backends still exist for cohort simulation; they are configured directly, not via an invite.)
 
@@ -4418,7 +4431,7 @@ when a scan refuses to run. **Software update** moved with it — it was the thi
 inside **General** and is now the first thing that section shows, because it is what most people
 open Settings for. Nothing inside any section changed.
 
-At the bottom of that list you'll see the version — e.g. `The Curator v3.52.0` — next to an
+At the bottom of that list you'll see the version — e.g. `The Curator v3.64.0` — next to an
 **Updates** button, which switches to **General** and runs the check. That landing is now at the
 **top** of the section it lands on.
 
@@ -4663,7 +4676,7 @@ they belong to each other and the blocks around them do not:
 
 ### Version and updates
 
-The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.52.0`. Next to it, **Updates** takes you to the update controls: it switches to **General**, where **Software update** is the first block on the page (*it was the third until v3.49.0*), and runs the check.
+The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.64.0`. Next to it, **Updates** takes you to the update controls: it switches to **General**, where **Software update** is the first block on the page (*it was the third until v3.49.0*), and runs the check.
 
 **How you update depends on which install you have**, and it is the second of the four
 real differences between them. If you are not sure which you are running,
@@ -5551,7 +5564,7 @@ These are measurements, not endorsements. Your documents are not the documents t
 
 ## 17. Wiki Health
 
-**Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page — the **last** section, below the page list and the Projects group (it sat above them until v3.49.0). That's where it belongs: a health problem is always a problem with one specific wiki, and it is the section you go looking for on the days something is wrong rather than the one you read first.
+**Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page — the **last** of the domain page's six sections, below the page list, the Projects group and SHARED BRAIN (it sat above the first two until v3.49.0). That's where it belongs: a health problem is always a problem with one specific wiki, and it is the section you go looking for on the days something is wrong rather than the one you read first.
 
 **It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. The panel then shows the open-issue total with **scanned N ago** beside it, the entity / concept / summary / dismissed counts, and a row of chips — one per issue type, with its count. Zero counts stay grey.
 
@@ -5918,7 +5931,7 @@ The cost figures throughout this section are for **Gemini and Claude**, the two 
 
 | ✅ Uses tokens (paid) | ❌ Free / local-only |
 |---|---|
-| **Ingest** — by far the biggest consumer | **Reading wiki pages** (the reader overlay, the PAGES · THE WIKI list) |
+| **Ingest** — by far the biggest consumer | **Reading wiki pages** (the reader overlay, the PAGES list) |
 | **Chat** — every message + reply | **Domain management** (create / rename / delete) |
 | **Wiki health — ✨ Ask AI on broken links** (Phase 1) | **GitHub Sync** (Sync now / Push only / Pull only) |
 | **Wiki health — ✨ Ask AI on orphan pages** (Phase 2) | **Wiki health structural scan** + deterministic fixes (folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) |

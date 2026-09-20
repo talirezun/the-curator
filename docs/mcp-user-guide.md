@@ -72,9 +72,9 @@ The key idea: a frontier model doesn't just *read* your wiki — it can *travers
 
 When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. **The mutating tools — `compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`, `save_project_brief`, `save_foundation` — refuse on these mirrors** with a clear steer:
 
-> *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
+> *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Shared Brain view."*
 
-> That refusal message is quoted verbatim from the code, and its last few words are now out of date: since the v3.9.0 cutover, **Push contributions** lives in the **Shared Brain** rail view, not in Sync. The refusal itself is correct — only the signpost at the end of it is stale.
+> That refusal message is quoted verbatim from `mcp/util.js`, signpost included. It is **model-read**, so the last few words are load-bearing: a stale location does not merely misinform a reader, it sends an agent — and through it you — to a screen that cannot do the thing. **Push contributions** moved out of Sync at the v3.9.0 cutover, and since v3.64.0 the Shared Brain view is reached from the **SHARED BRAIN** section of a domain's page rather than from a rail entry of its own.
 
 Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. So do the three read-only members of the health/authoring group (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`): scanning a mirror to answer *"is the collective wiki healthy?"* is supported, and it is only *applying* a fix that is refused. The MCP skill at `skills/my-curator/SKILL.md` documents this in §3.1.
 
@@ -176,7 +176,8 @@ The **My Curator skill** packages that playbook into a single markdown file you 
 > whatever it loads at the start of a session. **Whether a host that *does* have one actually
 > reaches for the skill is that host's behaviour, not Claude's** — measured, opencode loaded
 > `curator-continuity` natively and ran it first in 4 of 4 runs, while Claude Code headless did not
-> activate it at all.
+> activate it at all. A second campaign on 2026-09-20, against a later build, did see it activate —
+> 2 of 4, 1 of 4 and 3 of 4 runs across its three arms. Not reliably, but not never.
 
 > **Note on paths:** this directory was called `claude-skills/` until recently and is now
 > **`skills/`** — the old name asserted a Claude-only framework in the filesystem, which is not what
@@ -703,7 +704,7 @@ own id, so a desktop-chat session never lands in a coding harness's row. `claude
 **observed** on 2026-09-20: it was the literal label on every session line of the measurement
 campaign's window, and no other label appeared.
 
-**One optional seventh field, `via` (v3.61.0).** A line written by the app's own
+**`via`, the optional field added in v3.61.0.** A line written by the app's own
 **[Test all 24 tools](user-guide.md#test-all-24-tools--lighting-the-map-yourself)** run carries
 `"via": "self-test"`, and nothing else ever does. It is as content-free as the rest — the only
 value the code will write is that exact word, matched literally, so a line written by an ordinary

@@ -93,7 +93,7 @@ opening anything: **has my agent actually saved, and how long ago?** Click it an
 **which project you were last working on**, the last save and which tool and model wrote it, a
 **save pulse** — a small drawn strip of the last seven days — recent work-streams **grouped
 under their project**, each carrying a **recency mark** and a four-item **submenu**, and
-*Open Agent Memory · Open The Curator · Settings · Quit*.
+*Open Project Context · Open The Curator · Settings · Quit*.
 
 **The first line names the project**, in the form *"Working on: lumina · 12 min ago"*. Until
 v3.48.0 a domain held one project's memory, so there was nothing there to name; now that a
@@ -140,7 +140,7 @@ tool that last wrote to it, so a group says something even before you read its r
 groups are drawn and five rows in total, newest project and newest work-stream first. Two rows per
 group is a floor, not a ceiling: each group gets two before any gets a third, and rows no group
 claimed are handed back out in recency order, so a single project still fills all five. Anything
-past that is counted on the *More in Agent Memory…* line rather than dropped silently.
+past that is counted on the *More in Project Context…* line rather than dropped silently.
 
 **A project header can also carry a small `· docs stale` mark, new in v3.60.0.** When that
 project's **foundations** (its mirrored architecture, decisions and conventions — see

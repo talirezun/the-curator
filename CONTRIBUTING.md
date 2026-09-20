@@ -19,7 +19,7 @@ npm install
 
 # 2. Add an API key (either works; Settings UI takes priority over .env)
 #    Create .env with:  GEMINI_API_KEY=your_key_here
-#    or set it later in the app's Settings tab.
+#    or set it later in the app's Settings view.
 
 # 3. Run
 npm start          # serves http://localhost:3333 (binds 127.0.0.1 only)

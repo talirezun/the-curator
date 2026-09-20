@@ -266,7 +266,7 @@ const execOpts = (extra = {}) => ({ cwd: PROJECT_ROOT, env: SUBPROCESS_ENV, ...e
 break with an OS-level `spawn` error that names none of this.
 
 `asar` buys startup time and a tidier bundle. Neither is worth shipping a build
-whose Sync tab cannot run. Turning it on later is a deliberate change with its
+whose Sync view cannot run. Turning it on later is a deliberate change with its
 own verification, not a default to inherit.
 
 **Evidence.** The three code excerpts above, all quoted verbatim from the

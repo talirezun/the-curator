@@ -427,6 +427,10 @@ the adapter table still reads `null`.
   section at `##`. Demoting them would falsify the example. The heading census counts them only
   because its scanner is fence-unaware, which is a property of the scanner recorded in the same
   design pass.
+- **The section is called INGEST, not ADD SOURCES.** The plan below names it `ADD SOURCES`
+  throughout; the maintainer renamed it during the build (2026-09-20), and the shipped eyebrow,
+  the fold title and every user-visible string read **INGEST**. Only the internal fold-request id
+  kept the older name. Wherever the plan says ADD SOURCES, read INGEST.
 - **The `memory.knowledge` docs-links key was not added.** The key lives in
   `src/public/next/shared/docs-links.js` and would need a view to render it; neither file belongs
   to the docs package. Carried to v3.65.0. The table stays at **eighteen** keys.

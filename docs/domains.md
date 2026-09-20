@@ -42,7 +42,11 @@ Nothing needs to create the folder by hand — the first save makes `state/` and
 
 The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator (a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window on a port it picks fresh each launch) and go to **Domains**.
 
-Opening a domain shows four sections — its numbers, its pages, its projects, and its wiki health:
+Opening a domain shows six sections, in the order the work runs in — **OVERVIEW** (its numbers),
+**INGEST** (a fold, where sources go in), **PAGES** (everything readable, behind a Wiki / Context /
+All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (a fold) and **WIKI HEALTH**. The two folds
+and the lens arrived in v3.64.0, when Ingest and Shared Brain left the rail; the screenshot below
+predates them and still shows the older `PAGES · THE WIKI` eyebrow:
 
 ![The Curator's Domains view with the "projects" domain open. The sidebar has New domain and Use existing folder above a KNOWLEDGE list of two domains with page counts — Articles (3,445 pages, an amber dot marking open health issues) and Projects (767 pages, selected). The main pane is headed DOMAINS/PROJECTS/ and "Projects", with Rename, Delete and "Ask this domain" beside the title. An OVERVIEW group holds five tiles: Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 4 — new in v3.58.0, the first four are buttons that filter the page list below, and Pages sits inside a violet-bordered box because "All" is the filter currently selected. Below it, PAGES · THE WIKI holds a "Filter by name…" box and the facets All 767, Entities 161, Concepts 553, Summaries 53, Memory 46, over an alphabetical list of page titles with their file paths on the right; a footer reads "Showing 150 of 767" above a "Show 150 more" link. Underneath, PROJECTS IN THIS DOMAIN — headed with its own ⓘ mark and no loose sentence under it — lists four project rows (field-notes, projects, lumina, curator), each carrying a "Standing brief" pill, its last save and newest work-stream, and the actions Copy marker line and Copy agent instructions, each now with its own ⓘ mark beside it.](images/curator-domains.png)
 
@@ -359,8 +363,8 @@ If you want **intentional** cross-domain linking — a person in `articles` expl
 When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as an additional domain named `shared-<slug>`. These mirror domains behave like any other domain for **reading** (chat, MCP, Obsidian) but are **read-only for writes**:
 
 - The CLAUDE.md frontmatter declares `readonly: true`.
-- MCP write tools (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`) refuse with a clear steer to use your personal opted-in domain instead.
-- The Curator's app UI keeps Ingest and Compile disabled for these domains, and the mutating Wiki Health endpoints refuse them. (Two exceptions: **dismissing** and **un-dismissing** a Health issue still work in-app on a mirror. That is a local-only note-to-self — it is not wiki content, it does not propagate to other contributors, and it is not pruned by a Pull.)
+- The seven mutating MCP tools (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`, `save_project_brief`, `save_foundation`) refuse with a clear steer to use your personal opted-in domain instead.
+- The Curator's app UI renders no **INGEST** section at all on a mirror's domain page — a control that cannot act is not drawn — and keeps Compile disabled for these domains, and the mutating Wiki Health endpoints refuse them. (Two exceptions: **dismissing** and **un-dismissing** a Health issue still work in-app on a mirror. That is a local-only note-to-self — it is not wiki content, it does not propagate to other contributors, and it is not pruned by a Pull.)
 
 **Do not hand-edit a mirror.** Since v3.0.3 a Pull *replaces* each page rather than merging into it, and prunes local pages the collective no longer has — which is what makes deletions and GDPR erasure propagate. Any local edit to a `shared-<slug>` page is therefore overwritten on the next Pull.
 

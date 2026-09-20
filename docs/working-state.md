@@ -375,8 +375,8 @@ reasoning that a newest-machine read would still find the new folder. Measured, 
 not graceful: it is precisely the orphaning the sentence promised to avoid. macOS
 re-derives the hostname from DHCP, so one laptop alternated between `Alices-MacBook-Pro`
 and a bare `Mac` as it moved between networks, and — with the *same* install id in both —
-owned two folders under a single scope. The visible symptom was the Agent-memory view
-sitting four hours out of date beside a save twelve minutes old. The worse one was
+owned two folders under a single scope. The visible symptom was the Project-context view — *Agent memory* at the
+time — sitting four hours out of date beside a save twelve minutes old. The worse one was
 silent: the append-only journal fragmented, 22 entries in one folder and 4 in the other
 for one workstream, and a scope-less read returns only the newest machine, so half the
 history became unreachable without knowing to ask for the other folder by name.
@@ -1729,6 +1729,10 @@ The view was called **Agent memory** through v3.61.1 and the rail item **Memory*
 
 ![The Project context view with the "context-view" project open, dark theme. Down the left, the icon rail — Chat, Ingest, Domains, Context (highlighted and tinted) and Shared, then a sun, Sync and Settings at the foot, every icon captioned. Beside it a sidebar headed "Project context" with an ⓘ mark, a row reading PROJECTS · Refresh · + New project, then the heading ACME over two project rows: "second-project / A second project, for the switch measure… / 1 scope · 14 min ago", and "context-view / Measuring at 1370 and 568 / 3 scopes · 14 min ago", the second selected and tinted, each with a green freshness dot. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Project context", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "acme / context-view". Under a hairline sits a three-cell strip, each cell a small label over a value with a freshness dot: FOUNDATIONS "3 documents · fresh" (green), WORKING STATE "saved 14 min ago" (green), KNOWLEDGE "391 pages · 3 days ago" (grey), with one ⓘ at the right end of the row. Below it the page is THREE NUMBERED STEPS, separated by hairlines, each opening with a small round numeral beside its heading. Step 1, "Foundations", over the lede "Add the documents an agent must not act without." with an ⓘ; a single closed fold whose row reads "The documents" on the left and "3 documents · 110 bytes · mirrored · 2 read first · 1 on request · fresh" at the right edge; under it two buttons, "Refresh from repo" and "Add from folder"; and under those an unfolded note with an ⓘ glyph: "An agent’s save here is refused — this project is mirrored from a folder." Between step 1 and step 2, above the next heading, a bordered card holds a green square pip beside the small label "Last saved", the large monospace reading "14 min ago", and "browser-pass · opencode" beneath. Step 2, "Working state", over the lede "You write the brief; agents write handoffs and the journal." with an ⓘ, holds THREE CLOSED FOLDS in this order: "Work-streams", with "Measuring at 1370 and 568 · 3 work-streams · 3 saved copies" at the right edge; "The brief", with "updated 14 min ago · 126 words" and an icon-only pencil button; and "Recent saves", with "1 save · latest 14 min ago". Step 3, "Knowledge", over the lede "The wiki this project draws on. Open it in Domains." with an ⓘ, shows five readouts in a row — PAGES 391, ENTITIES 120, CONCEPTS 240, SUMMARIES 31, and LAST INGEST with a grey dot beside "3 days ago" over "Ingested · The Energy and Water Footprint of Generative AI" — and two outlined buttons, "Open in Domains" and "Ask this domain". No fold is open, no handoff document and no brief text is printed on the page, and the word "Edit" appears nowhere.](images/curator-agent-memory.png)
 
+*Photographed before v3.64.0 cut the rail down the left from five places to three: **Ingest**
+and **Shared** are no longer rail buttons, and each is now a section of a domain's page. Nothing
+inside the Project context view itself changed with them.*
+
 **What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0, renumbered in
 v3.62.0).** It was three collapsible panels under a row of dropdowns; then a dashboard of unnumbered
 blocks. It is now **three numbered steps**, read top to bottom, under a three-cell **strip** that
@@ -1842,8 +1846,8 @@ already carried are on the web surface too, so they are not Mac-only: the
 (*"3 hr ago · updates live"* — the phrase appended only when the interval really
 exists). Since v3.55.0 that mark is the app-wide freshness scale rather than this
 view's private one, so a project row in the sidebar, its own newest work-stream
-in the table, and the domain rows in Ingest and Domains cannot disagree about how
-fresh something is. The brief still gets **no** freshness mark: it changes on the
+in the table, and the domain rows on the Domains page — including its INGEST
+section's destination list — cannot disagree about how fresh something is. The brief still gets **no** freshness mark: it changes on the
 order of weeks, and an old brief is not a stale one.
 
 **One project on that list can be neither renamed nor deleted: the domain's own.** Its folder
@@ -2068,7 +2072,7 @@ reason to ask for it.
 
 Read the two harnesses separately, because they are answering different questions.
 
-- **Claude Code never activated the skill at all** — in either arm — even though it was installed,
+- **Claude Code never activated the skill at all in this campaign** — in either arm — even though it was installed,
   listed, and the prompt opened with the word *"Continue"*, one of the skill's own trigger phrases.
   Arm A therefore never read state and never saved: **the feature was inert on a correct install.**
   With the block, the agent read at the start and saved as its last action in 3 of 4 runs. The one
@@ -2282,9 +2286,11 @@ context in **every one of the 6 headless sessions** it was measured over. In tha
 `Stop` hook **never fired at all** — not once across all 6 — so the end-of-session ask does not
 reach a `claude -p` pipeline. `PreCompact` fired once, through `-p --resume "/compact"`, but left
 no `hook_started`/`hook_response` pair behind: the only trace was a line of its own standard output
-embedded in a user-role message. Everything else in the table above is still `unverified` in the
-strict sense — documented or inferred, never observed — and nothing here should be read as a claim
-of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
+embedded in a user-role message. Every other row's `measured` field is still `null` — thirteen of the
+fourteen — and their hook states are **documented or inferred, never observed**: one of them reads
+`verified` (Cursor's, from its own documentation), six `unverified`, three `present-useless` and
+three `none`. Claude Code's row is the only one where a word in that column has been watched
+happening. Nothing here should be read as a claim of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
 one row and would change another.
 
 ### The honesty meter — did this session read, and did it save?
@@ -2365,10 +2371,12 @@ directions); and the file is content-free by contract.
 
 So the name is read from **both protocol eras**, newest first, normalised, and looked up in a
 **many-to-one** allow-list (`src/brain/mcp-clients.js`). A hit writes a canonical harness id; a miss
-writes `other`. The caller's own string never reaches disk. Three rows in that table are marked
-**community-reported and unverified** — `claude-code`, `cursor-vscode` and `claude-ai` — and
+writes `other`. The caller's own string never reaches disk. Two rows in that table are marked
+**community-reported and unverified** — `cursor-vscode` and `claude-ai` — and
 `claude-ai` is **Claude Desktop, a different surface**, which is why it keeps its own id rather than
-being folded into Claude Code's row.
+being folded into Claude Code's row. `claude-code` was the third until 2026-09-20, when the
+measurement campaign observed that exact string arriving over the wire and moved the row to
+`observed`.
 
 ### The format is public
 

@@ -192,7 +192,7 @@ This is the most common case. Steps are entirely no-code unless you want to opti
 
 Follow the [admin setup walkthrough](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain):
 1. Create a **private** GitHub repo (e.g. `your-username/ai-safety-brain`)
-2. In the Curator's **Shared Brain** rail view, run the **⚙ I'm starting a new Shared Brain** wizard
+2. In the Curator's **Shared Brain** view, run the **⚙ I'm starting a new Shared Brain** wizard
 3. Pick **organisational** data handling terms if you're selling to businesses (IP transfer to you), or **contributor_retains** if buyers' contributions should remain their own
 4. Generate the invite token — save it somewhere accessible
 
