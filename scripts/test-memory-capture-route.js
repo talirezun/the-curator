@@ -47,7 +47,7 @@
  * closed in `finally`. No network, no LLM call, no real credential file.
  */
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,9 +141,15 @@ async function GET(path) {
 const NOW = Date.now();
 const T = (minAgo) => new Date(NOW - minAgo * 60_000).toISOString();
 
+// `newestSaveAt` and `noSessionsButSaves` joined in v3.64.1 — the two fields
+// that let a caller tell an HONEST ZERO ("nobody worked on this project this
+// month") from the contradiction the maintainer reported on the day v3.64.0
+// shipped: "saved 47 min ago" on the reading directly above this meter and
+// "no agent session in the last 30 days" on the meter itself, both true.
 const TOP_KEYS = [
   'ok', 'domain', 'project', 'since', 'logPresent', 'lineCeiling', 'lineCeilingLabel',
-  'totals', 'sessions', 'sessionsShown', 'sessionsTruncated', 'note',
+  'totals', 'sessions', 'sessionsShown', 'sessionsTruncated', 'newestSaveAt',
+  'noSessionsButSaves', 'note',
 ];
 const TOTALS_KEYS = [
   'sessions', 'sessionsRead', 'sessionsSaved', 'sessionsReadNotSaved', 'legacyLines', 'selfTestLines',
@@ -503,6 +509,122 @@ try {
     eq(f2.remoteChecked, false, '…remoteChecked false');
     eq(f2.remoteCommit, null, '…remoteCommit null');
     eq(f2.remoteError, null, '…remoteError null');
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  section('§11  Saves with no session to account for them (v3.64.1)');
+  // ═════════════════════════════════════════════════════════════════════
+  //
+  // REPORTED FROM PRODUCTION on the day v3.64.0 shipped, and the reason this
+  // route gained two fields. Step ②'s "Last saved" reading said `saved 47 min
+  // ago`; this meter, four pixels below it, said `no agent session in the last
+  // 30 days`. BOTH WERE TRUE — the saves came through a bridge process that
+  // writes no session line, so the store held the saves and the log held no
+  // session to attribute them to — and the screen left the user to reconcile
+  // them.
+  //
+  // THE ROUTE IS THE SIDE THAT CAN SEE BOTH, and it already reads the
+  // project's state for the existence check, so the clause costs NO second
+  // store call. What it must never do is explain away an HONEST ZERO: "nobody
+  // worked on this project this month" is exactly the reading the meter exists
+  // to report, and telling a user to restart Claude Desktop over it would be
+  // the app apologising for a true answer.
+  {
+    const store = await import('../src/brain/working-state.js');
+    makeProject('alpha', 'saved');
+    const saved = await store.saveWorkingState('alpha', {
+      project: 'saved', scope: 'session-x', headline: 'a real save',
+      now: 'things are green', next: 'ship it',
+    });
+    ok(saved && saved.ok === true, 'CONTROL: a real handoff was written through the store',
+      JSON.stringify(saved && (saved.error || saved.reason)));
+
+    {
+      clearLog();
+      const r = await GET('/alpha/saved/capture');
+      eq(r.status, 200, 'answers 200 with saves present and no log at all');
+      eq(r.body.totals.sessions, 0, 'CONTROL: the log really reports no session');
+      ok(typeof r.body.newestSaveAt === 'string' && Number.isFinite(Date.parse(r.body.newestSaveAt)),
+        'newestSaveAt is the project\'s own save clock, as an ISO stamp',
+        JSON.stringify(r.body.newestSaveAt));
+      eq(r.body.noSessionsButSaves, true, 'the contradiction is reported as a fact, not as prose only');
+      ok(/bridge that logged no sessions/.test(r.body.note || ''),
+        '...and the note names it, with the remedy', JSON.stringify(r.body.note));
+      ok(!/no usage log yet/.test(r.body.note || ''),
+        '...outranking the absent-log note, which explains a figure rather than a contradiction',
+        JSON.stringify(r.body.note));
+    }
+
+    {
+      // THE HONEST ZERO. A project with no save at all: same empty log, same
+      // zero sessions, and the clause MUST stay silent.
+      clearLog();
+      const r = await GET('/alpha/proj1/capture');
+      eq(r.body.totals.sessions, 0, 'CONTROL: still no sessions');
+      eq(r.body.newestSaveAt, null, 'CONTROL: and this project has never been saved');
+      eq(r.body.noSessionsButSaves, false, 'an honest zero is NOT dressed as a stale bridge');
+      ok(/no usage log yet/.test(r.body.note || ''),
+        '...and the ordinary note is the one that applies', JSON.stringify(r.body.note));
+    }
+
+    {
+      // ── THE CLOCK IS THE FILE'S, NOT THE AGENT'S, AND THAT IS THE POINT ──
+      // The note exists to reconcile two readings the user is looking at, and
+      // the one directly above it — step ②'s "Last saved" — is derived from
+      // `lastWriteAt`, the file's own stamp. `writtenAt` is the AGENT'S
+      // declared clock and can sit well outside the window while the file it
+      // wrote landed inside it: a handoff written on a laptop yesterday and
+      // synced to this machine ten minutes ago is exactly that. A note that
+      // named a save the figure beside it does not show would be worse than
+      // no note, so this drives the two clocks APART and requires the route
+      // to follow the one on screen.
+      clearLog();
+      // `<scope>/<machine>/journal.jsonl` — the machine segment is minted per
+      // install, so it is discovered rather than guessed.
+      const scopeDir = join(DOMAINS, 'alpha', 'state', 'saved', 'session-x');
+      const machine = readdirSync(scopeDir)[0];
+      ok(!!machine, 'CONTROL: the save really wrote a machine folder', String(machine));
+      const jl = join(scopeDir, machine, 'journal.jsonl');
+      const lines = readFileSync(jl, 'utf8').trim().split('\n')
+        .map((l) => { const o = JSON.parse(l); o.at = '2020-01-02T03:04:05.000Z'; return JSON.stringify(o); });
+      writeFileSync(jl, `${lines.join('\n')}\n`, 'utf8');
+      const r = await GET('/alpha/saved/capture');
+      const detail = await GET('/alpha/saved');
+      const agentClock = (detail.body.scopes || []).map((x) => x.writtenAt).filter(Boolean);
+      ok(agentClock.every((t) => Date.parse(t) < Date.now() - 365 * 24 * 3600_000),
+        'CONTROL: the agent clock really is years outside the window',
+        JSON.stringify(agentClock));
+      eq(r.body.noSessionsButSaves, true,
+        'the clause still fires — the FILE clock is what the reading beside it shows');
+      ok(Date.parse(r.body.newestSaveAt) > Date.now() - 3600_000,
+        'and newestSaveAt is the file clock, not the agent\'s',
+        String(r.body.newestSaveAt));
+    }
+
+    {
+      // A SAVE OLDER THAN THE WINDOW is not a contradiction either: the meter
+      // only claims there were no sessions IN the window.
+      clearLog();
+      const r = await GET(`/alpha/saved/capture?since=${encodeURIComponent(
+        new Date(Date.now() + 60_000).toISOString())}`);
+      eq(r.body.noSessionsButSaves, false,
+        'a save from before the window opened does not fire the clause');
+    }
+
+    {
+      // AND A SESSION IN THE WINDOW SETTLES IT: the log can account for the
+      // saves, so there is nothing left to reconcile.
+      const sid = 'aa11bb22cc33';
+      writeLog([
+        { ts: new Date(Date.now() - 5 * 60_000).toISOString(), ev: 'session', sid, client: 'claude-code' },
+        { ts: new Date(Date.now() - 5 * 60_000).toISOString(), tool: 'save_working_state',
+          domain: 'alpha', project: 'saved', ok: true, refused: false, ms: 3, sid },
+      ]);
+      const r = await GET('/alpha/saved/capture');
+      eq(r.body.totals.sessions, 1, 'CONTROL: the session was counted');
+      eq(r.body.noSessionsButSaves, false, 'one session in the window closes the contradiction');
+      clearLog();
+    }
   }
 } finally {
   await new Promise((r) => server.close(r));

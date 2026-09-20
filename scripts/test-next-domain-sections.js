@@ -293,7 +293,112 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // rather than as a loose paragraph under a heading.
     ok('INGEST carries its lede, and it is a `.tx-desc`',
       /<p class="tx-desc">Drop a PDF, markdown or text file\./.test(html), html.slice(0, 400));
+
+    // ── THE FIVE SECTIONS ARE NUMBERED (v3.64.1) ────────────────────────
+    //
+    // THE COMPLAINT, measured: this column named its regions SIX ways — a
+    // bare eyebrow (PROJECTS, WIKI HEALTH), a SECOND eyebrow class for the
+    // same role (PAGES), an eyebrow in a flex head row (OVERVIEW) and two
+    // fold summaries — and every one of them was 11px/500, the quietest rung
+    // in the type standard. Nothing was broken; there was no hierarchy. The
+    // Context view next door reads as a sequence because its steps carry a
+    // numeral and a 16px/600 title, and these now match it.
+    //
+    // OVERVIEW IS NOT NUMBERED, and that is the argument rather than an
+    // omission: it is a reading ABOUT the screen, not a step in it — the same
+    // call the Context view's own three-cell strip makes for sitting outside
+    // its numbering.
+    // PROJECTS and WIKI HEALTH are STUBBED in this sandbox (see its header),
+    // so three of the five numerals are visible here; ③ is pinned against the
+    // literal that emits it and ⑤ is driven for real below, through the
+    // `healthSection` wrapper the other suites also lift.
+    const nums = [...html.matchAll(/<span class="dm-section-num" aria-hidden="true">(\d)<\/span>/g)]
+      .map((m) => m[1]);
+    eq('the three sections this sandbox renders carry a numeral', nums.length, 3);
+    eq('...in reading order', nums.join(''), '124');
+    ok('③ is emitted immediately above the PROJECTS title',
+      /<span class="dm-section-num" aria-hidden="true">3<\/span>' \+\s*\n\s*'<div class="cur-group-title dm-section-eyebrow">PROJECTS IN THIS DOMAIN<\/div>/
+        .test(SRC), 'not found in domains.js');
+    {
+      // ⑤ WIKI HEALTH, EXECUTED — the wrapper is a pure function of its inner
+      // markup, so it can be lifted on its own.
+      const wrap = new Function(extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')();
+      const out = wrap('<div class="dm-health-card">x</div>');
+      ok('the health section carries numeral 5 beside its title',
+        /<span class="dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title dm-section-eyebrow">WIKI HEALTH<\/div>/
+          .test(out), out);
+      ok('...and the title keeps the classes an unowned suite pins by name',
+        /class="cur-group-title dm-section-eyebrow">WIKI HEALTH</.test(out), out);
+      eq('CONTROL -- an empty body still renders nothing at all', wrap(''), '');
+    }
+    for (const [n, word] of [['1', 'INGEST'], ['2', 'PAGES'], ['4', 'SHARED BRAIN']]) {
+      const at = html.indexOf('>' + n + '</span>');
+      const title = html.indexOf(word, at);
+      ok('numeral ' + n + ' is the one beside ' + word,
+        at !== -1 && title !== -1 && title - at < 200, at + ' -> ' + title);
+    }
+    ok('OVERVIEW carries no numeral — it is a reading about the screen, not a step',
+      !/dm-section-num[^>]*>\d<\/span><\/div><div class="cur-group-title dm-section-eyebrow">OVERVIEW/
+        .test(html)
+      && html.indexOf('>OVERVIEW<') < html.indexOf('dm-section-num'),
+      String(html.indexOf('>OVERVIEW<')) + ' vs ' + String(html.indexOf('dm-section-num')));
+    // THE NUMERAL IS aria-hidden ON EVERY SITE. A screen reader reads
+    // "INGEST", never "1 INGEST" — the same call shared/block.js makes.
+    eq('every numeral is aria-hidden',
+      (html.match(/class="dm-section-num"/g) || []).length,
+      (html.match(/class="dm-section-num" aria-hidden="true"/g) || []).length);
+    // THE TITLE ELEMENT KEPT ITS CLASSES: three suites this package does not
+    // own pin `.cur-group-title.dm-section-eyebrow` and `.dm-recent-eyebrow`
+    // by name, so the numeral and the larger face are added AROUND the
+    // element rather than by replacing it.
+    ok('the PAGES title still carries the classes two other suites pin by name',
+      /class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">PAGES</.test(html), html.slice(0, 600));
+    ok('...and the two eyebrow classes are now ONE treatment, inside one head',
+      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">PAGES<\/div><\/div>/
+        .test(html), html.slice(0, 600));
   }
+}
+{
+  // ── THE HEAD LOOKS LIKE THE CONTEXT VIEW'S STEP HEAD, AND IS PINNED TO IT
+  //
+  // domains.css COPIES shell.css's `.settings-block-hd` / `.settings-block-num`
+  // / `.settings-job-title` values rather than importing the component, because
+  // adopting `renderBlock` means naming an import inside `renderMain`, which
+  // three suites lift and execute against fixed stub lists. A copy that can
+  // drift in silence is worse than no copy, so the values are compared here:
+  // the day somebody retunes the Context view's step head, this reds.
+  const shellCss = readFileSync(new URL('../src/public/next/shell.css', import.meta.url), 'utf8');
+  const decl = (css, sel, prop) => {
+    const m = new RegExp('\\n' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      + '\\s*\\{([^}]*)\\}').exec(css);
+    if (!m) return null;
+    const d = new RegExp(prop + ':\\s*([^;]+);').exec(m[1]);
+    return d ? d[1].trim() : null;
+  };
+  for (const prop of ['width', 'height', 'font-size', 'font-weight', 'background', 'color', 'border']) {
+    const mine = decl(CSS, '.dm-section-num', prop);
+    const theirs = decl(shellCss, '.settings-block-num', prop);
+    ok('CONTROL -- both stylesheets declare ' + prop + ' on their numeral',
+      mine !== null && theirs !== null, mine + ' / ' + theirs);
+    eq('the numeral\'s ' + prop + ' matches the Context view\'s', mine, theirs);
+  }
+  eq('the head\'s gap matches too', decl(CSS, '.dm-section-hd', 'gap'),
+    decl(shellCss, '.settings-block-hd', 'gap'));
+  const titleRule = /\n\.dm-section-hd \.dm-section-eyebrow,\n\.dm-section-hd \.dm-fold-title\s*\{([^}]*)\}/.exec(CSS);
+  ok('CONTROL -- one rule paints every section title', !!titleRule, String(titleRule));
+  const titleProp = (p2) => {
+    const m = new RegExp(p2 + ':\\s*([^;]+);').exec(titleRule ? titleRule[1] : '');
+    return m ? m[1].trim() : null;
+  };
+  eq('the section title takes the block-title size', titleProp('font-size'),
+    decl(shellCss, '.settings-job-title', 'font-size'));
+  eq('...and its weight', titleProp('font-weight'),
+    decl(shellCss, '.settings-job-title', 'font-weight'));
+  eq('...and its colour', titleProp('color'), decl(shellCss, '.settings-job-title', 'color'));
+  ok('...and it stops being an uppercase mono eyebrow',
+    /text-transform:\s*none/.test(titleRule ? titleRule[1] : '')
+    && /font-family:\s*var\(--font-sans\)/.test(titleRule ? titleRule[1] : ''),
+    titleRule && titleRule[1]);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -324,21 +429,46 @@ const foldOpen = (html, id) => {
   const closedOnFresh = renderCard({
     domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0, lastIngestDate: null,
       pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }],
-    sectionPrefs: { alpha: { sources: false } },
+    sectionPrefs: { sources: false },
   });
   eq('a remembered CLOSED beats the fresh-domain default',
     foldOpen(closedOnFresh, 'dm-sources-fold'), false);
-  const openOnMature = renderCard({ sectionPrefs: { alpha: { sources: true, shared: true } } });
+  const openOnMature = renderCard({ sectionPrefs: { sources: true, shared: true } });
   eq('...and a remembered OPEN beats the mature-domain default',
     foldOpen(openOnMature, 'dm-sources-fold'), true);
   eq('...for the Shared Brain fold too', foldOpen(openOnMature, 'dm-shared-fold'), true);
-  // ANOTHER DOMAIN'S PREFERENCE IS NOT THIS DOMAIN'S.
-  const otherDomain = renderCard({ sectionPrefs: { beta: { sources: true } } });
-  eq('a preference recorded for a DIFFERENT domain changes nothing here',
-    foldOpen(otherDomain, 'dm-sources-fold'), false);
+  // ── THE PREFERENCE IS INSTALL-WIDE (v3.64.1) ──────────────────────────
+  // REPORTED FROM PRODUCTION on the day v3.64.0 shipped: the maintainer
+  // opened INGEST, switched domain, and found it shut again. v3.64.0 kept one
+  // row per domain, which is not a preference — it is twelve of them, and a
+  // person who wants the drop zone in front of them wants it in front of them
+  // everywhere. This assertion is the reversal of the one that stood here,
+  // and it is the whole of the fix: the SAME record answers for a domain the
+  // user has never opened this page for.
+  const anyDomain = renderCard({
+    domains: [{ slug: 'beta', displayName: 'Beta', pageCount: 9, lastIngestDate: '2026-09-02',
+      pageCounts: { entities: 3, concepts: 3, summaries: 3, other: 0 } }],
+    activeSlug: 'beta',
+    browse: { slug: 'beta', loading: false, error: null, filter: '', folder: 'all', lens: 'wiki',
+      truncated: false, memory: [], entries: [ENTRY()] },
+    sectionPrefs: { sources: true, shared: true },
+  });
+  eq('the choice travels to a domain this page has never been opened for',
+    foldOpen(anyDomain, 'dm-sources-fold'), true);
+  eq('...for the Shared Brain fold too', foldOpen(anyDomain, 'dm-shared-fold'), true);
+  // ...AND THE DEFAULT IS STILL DERIVED WHEN NOTHING WAS EVER CHOSEN. The
+  // install-wide preference did NOT become an install-wide default: a domain
+  // with nothing under this section still opens it.
+  const neverChosen = renderCard({
+    domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0, lastIngestDate: null,
+      pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }],
+    sectionPrefs: {},
+  });
+  eq('with nothing remembered the fresh-domain default still applies',
+    foldOpen(neverChosen, 'dm-sources-fold'), true);
   // A HOSTILE OR BROKEN RECORD DEGRADES TO THE DEFAULT, never to a throw.
   const junk = callOrFail('a junk preference record still renders',
-    () => renderCard({ sectionPrefs: { alpha: { sources: 'yes-please' } } }));
+    () => renderCard({ sectionPrefs: { sources: 'yes-please' } }));
   if (junk) eq('...and takes the designed default', foldOpen(junk, 'dm-sources-fold'), false);
 }
 {
@@ -353,6 +483,13 @@ const foldOpen = (html, id) => {
   ok('...and it is the only curator-* key this view adds',
     (SRC.match(/'curator-domain-sections-v1'/g) || []).length === 2,
     String((SRC.match(/'curator-domain-sections-v1'/g) || []).length));
+  // THE ROW KEY IS DUPLICATED FOR THE SAME REASON AND PINNED THE SAME WAY.
+  const rowDecl = /const SECTION_PREFS_ROW = '([^']+)';/.exec(SRC);
+  ok('CONTROL -- SECTION_PREFS_ROW is declared', !!rowDecl, String(rowDecl));
+  ok('the row key cannot collide with a domain slug — no slug may contain it',
+    !!rowDecl && !/^[A-Za-z0-9_-]+$/.test(rowDecl[1]), rowDecl && rowDecl[1]);
+  ok('the literal inside selectBrowseFacet is the SAME row key the module declares',
+    !!rowDecl && facet.includes(`{ '${rowDecl[1]}': state.sectionPrefs }`), rowDecl && rowDecl[1]);
 }
 
 {
@@ -373,19 +510,25 @@ const foldOpen = (html, id) => {
              __set: (v) => { store = v; },
              __throw: () => { store = undefined; } };
   `)();
-  prefsBox.__set(JSON.stringify({ alpha: { sources: true, shared: false, lens: 'context' } }));
+  // ── THE READ ANSWERS ONE ROW (v3.64.1) ────────────────────────────────
+  // The file's SHAPE did not change — a row of three optional fields under a
+  // key — but there is one row now, under the literal `*`, because the
+  // preference stopped being per domain. The old per-domain file is still
+  // READ, and folded rather than discarded: a release that makes a preference
+  // stick must not begin by forgetting it.
+  prefsBox.__set(JSON.stringify({ '*': { sources: true, shared: false, lens: 'context' } }));
   eq('a well-formed record round-trips',
     JSON.stringify(prefsBox.readSectionPrefs()),
-    JSON.stringify({ alpha: { sources: true, shared: false, lens: 'context' } }));
-  prefsBox.__set(JSON.stringify({ alpha: { lens: 'everything' } }));
+    JSON.stringify({ sources: true, shared: false, lens: 'context' }));
+  prefsBox.__set(JSON.stringify({ '*': { lens: 'everything' } }));
   eq('a lens this view does not understand is DROPPED, not carried',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
-  prefsBox.__set(JSON.stringify({ alpha: { sources: 'yes' } }));
+  prefsBox.__set(JSON.stringify({ '*': { sources: 'yes' } }));
   eq('a fold flag that is not a boolean is dropped too',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
-  prefsBox.__set(JSON.stringify({ alpha: { sources: true, evil: '<script>' } }));
+  prefsBox.__set(JSON.stringify({ '*': { sources: true, evil: '<script>' } }));
   eq('...and an unknown field never survives the read',
-    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ alpha: { sources: true } }));
+    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ sources: true }));
   for (const [what, raw] of [['an array', '[1,2,3]'], ['a string', '"nope"'],
                              ['a number', '7'], ['broken JSON', '{{{'], ['nothing', null]]) {
     eq('CONTROL -- ' + what + ' degrades to no memory at all',
@@ -419,9 +562,82 @@ const foldOpen = (html, id) => {
     ok('the module initialises its preferences AFTER the constants that read them',
       iInit > iKey && iInit > iLens, iKey + '/' + iLens + ' -> ' + iInit);
   }
-  eq('a per-domain row that is not an object is skipped, and its siblings are not',
+  eq('a row that is not an object is skipped, and its siblings are not',
     (prefsBox.__set(JSON.stringify({ alpha: 5, beta: { shared: true } })),
-      JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ beta: { shared: true } }));
+      JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ shared: true }));
+
+  // ── THE MIGRATION, DRIVEN (v3.64.1) ───────────────────────────────────
+  // Every installed copy of v3.64.0 wrote one row per domain. The fold takes
+  // the LAST value that names each field — LAST, and not first or a majority,
+  // because the old shape carries NO RECENCY: key order is insertion order,
+  // which is the order the domains were first touched and not the order they
+  // were decided. Any fold of many rows into one has to pick; this one picks
+  // deterministically, and the user's very next toggle supersedes it.
+  prefsBox.__set(JSON.stringify({
+    alpha: { sources: true, lens: 'wiki' },
+    beta: { sources: false, shared: true },
+    gamma: { lens: 'all' },
+  }));
+  eq('a v3.64.0 per-domain file is FOLDED into one row, last value per field',
+    JSON.stringify(prefsBox.readSectionPrefs()),
+    JSON.stringify({ sources: false, lens: 'all', shared: true }));
+  eq('CONTROL -- a field NO row names is simply absent, never invented',
+    (prefsBox.__set(JSON.stringify({ alpha: { lens: 'context' }, beta: { lens: 'wiki' } })),
+      JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ lens: 'wiki' }));
+  // AND THE READ NEVER WRITES. It runs at module load, before anything is on
+  // screen; an install that only ever LOOKS at the domain page must not
+  // rewrite its own storage, and a read that writes is the shape nobody
+  // expects to find when they go looking for who changed a file.
+  {
+    const writes = [];
+    const noWrite = new Function(`
+      let store = ${JSON.stringify(JSON.stringify({ alpha: { sources: true } }))};
+      const writes = [];
+      const localStorage = { getItem: () => store, setItem: (k, v) => writes.push([k, v]) };
+      ${extractConstText(SRC, 'SECTION_PREFS_KEY')}
+      ${extractConstText(SRC, 'SECTION_LENSES')}
+      ${extractFunction(SRC, 'readSectionPrefs')}
+      return { readSectionPrefs, writes };
+    `)();
+    noWrite.readSectionPrefs();
+    eq('the migrating read writes nothing at all', noWrite.writes.length, 0);
+    void writes;
+  }
+
+  // ── THE TWO WRITERS MUST AGREE, AND THE READ MUST UNDERSTAND BOTH ─────
+  // There are two: `writeSectionPrefs` (every fold toggle and the onboarding
+  // deep link) and the LITERAL inside `selectBrowseFacet`, which cannot name
+  // a module-level helper because that function is lifted into two suite
+  // sandboxes and executed there. Two writers of one file is exactly the
+  // shape that drifts, so the bytes are compared rather than trusted, and the
+  // round trip is driven end to end.
+  {
+    const rig = new Function(`
+      let stored = null;
+      let state = { sectionPrefs: { sources: true, shared: false, lens: 'context' } };
+      const localStorage = { getItem: () => stored, setItem: (k, v) => { stored = v; } };
+      ${extractConstText(SRC, 'SECTION_PREFS_KEY')}
+      ${extractConstText(SRC, 'SECTION_PREFS_ROW')}
+      ${extractConstText(SRC, 'SECTION_LENSES')}
+      ${extractFunction(SRC, 'readSectionPrefs')}
+      ${extractFunction(SRC, 'writeSectionPrefs')}
+      return { readSectionPrefs, writeSectionPrefs,
+        __stored: () => stored, __setState: (s) => { state = s; },
+        __facetWrite: (row) => {
+          // The LITERAL from selectBrowseFacet, byte-for-byte.
+          localStorage.setItem('curator-domain-sections-v1', JSON.stringify({ '*': row }));
+        } };
+    `)();
+    rig.writeSectionPrefs();
+    const viaHelper = rig.__stored();
+    rig.__facetWrite({ sources: true, shared: false, lens: 'context' });
+    eq('the helper and the lifted literal write the SAME bytes', rig.__stored(), viaHelper);
+    ok('...and the file really is one row under the row key',
+      /^\{"\*":\{/.test(String(viaHelper)), String(viaHelper));
+    eq('...which the read understands, round trip',
+      JSON.stringify(rig.readSectionPrefs()),
+      JSON.stringify({ sources: true, shared: false, lens: 'context' }));
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -541,8 +757,12 @@ section('S4 -- THE LENS: WIKI, CONTEXT, ALL -- one selection, two controls');
   eq('a lens press writes the lens', box.__state().browse.lens, 'context');
   eq('...and the facet that belongs to it', box.__state().browse.folder, 'memory');
   eq('...and repaints', rendered > 0, true);
-  eq('...and remembers it for THIS domain', box.__state().sectionPrefs.alpha.lens, 'context');
+  eq('...and remembers it INSTALL-WIDE, not under this domain\'s slug',
+    box.__state().sectionPrefs.lens, 'context');
+  eq('...with no per-domain row written at all', box.__state().sectionPrefs.alpha, undefined);
   eq('...through the one key', written.length && written[0][0], 'curator-domain-sections-v1');
+  eq('...and the stored file is the one row under the one row key',
+    written.length && written[written.length - 1][1], JSON.stringify({ '*': { lens: 'context' } }));
   box.selectBrowseFacet('entities', {});
   eq('an ordinary facet press leaves the lens where it is',
     box.__state().browse.lens, 'context');
@@ -578,7 +798,9 @@ function makeDom() {
   const mk = (tag, attrs, inner) => {
     const el = {
       __id: ++seq, tagName: String(tag).toUpperCase(), attrs: attrs || {}, _inner: inner || '',
-      _children: [],
+      // PARSED EAGERLY, because the patch now reads a fold's first child.
+      // `parseTop` is a hoisted declaration below, so this is legal here.
+      _children: inner ? parseTop(inner) : [],
       get id() { return this.attrs.id || ''; },
       get classList() {
         const list = String(this.attrs.class || '').split(/\s+/).filter(Boolean);
@@ -613,6 +835,14 @@ function makeDom() {
         });
       },
       get firstElementChild() { return this._children[0] || null; },
+      // ── `open`, `hasAttribute` AND EAGER CHILD PARSING (v3.64.1) ──────
+      // The patch reaches INSIDE a hosted fold now — it replaces the
+      // `<summary>` and carries the derived `open` across — so the model has
+      // to have the two properties a real `<details>` has and has to know its
+      // own children before anything asks for them.
+      get open() { return Object.hasOwn(this.attrs, 'open'); },
+      set open(v) { if (v) this.attrs.open = ''; else delete this.attrs.open; },
+      hasAttribute(n) { return Object.hasOwn(this.attrs, n); },
       get outerHTML() {
         const a = Object.entries(this.attrs).map(([k, v]) => ' ' + k + '="' + v + '"').join('');
         return '<' + this.tagName.toLowerCase() + a + '>' + this._inner + '</' + this.tagName.toLowerCase() + '>';
@@ -634,6 +864,16 @@ function makeDom() {
         }
         next.__parent = this;
         this._children[i] = next;
+        // KEEP `outerHTML` HONEST. A node whose children were replaced must
+        // report the new markup, or the patch's own byte comparison would be
+        // measured against a string that stopped being true — the "passing
+        // test that measures the wrong thing" this model already exists to
+        // avoid once. Only when this node really is element-shaped: a node
+        // whose inner is text (the health fixture) has no parsed children and
+        // keeps the string it was given.
+        if (this._children.length) {
+          this._inner = this._children.map((c) => c.outerHTML).join('');
+        }
       },
     };
     return el;
@@ -687,6 +927,11 @@ function ingestSectionBusy() { return busyAnswer; }
 function sharedSectionBusy() { return sharedBusyAnswer; }
 function mountHostedSections() { calls.mounted.push(1); }
 function render() { calls.render++; }
+// THE ECHO QUEUE (v3.64.1). The patch pushes one entry per programmatic
+// \`open\` write so the fold's own toggle listener can tell its own echo from a
+// real click. This sandbox does not run that listener, so it only has to exist
+// and be observable.
+const programmaticFolds = [];
 let document = null;
 `;
 const patchBox = new Function(
@@ -699,6 +944,7 @@ const patchBox = new Function(
   `return { setMain, patchMainAroundHosts, hostedSectionsBusy,
      __calls: () => calls, __setBusy: (b) => { busyAnswer = b; },
      __setSharedBusy: (b) => { sharedBusyAnswer = b; },
+     __echoes: () => programmaticFolds,
      __setDocument: (d) => { document = d; },
      __reset: () => { calls.shellSetMain = 0; calls.mounted.length = 0; calls.render = 0; } };`
 )();
@@ -717,19 +963,19 @@ function mountColumn(html) {
 const COLUMN2 = (overviewLabel, healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid">' + overviewLabel + '</div></section>' +
-  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><div id="dm-sources-host"></div></details>' +
+  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><summary class="dm-fold-summary"><span class="dm-section-num">1</span><span class="dm-fold-title">INGEST</span><span class="dm-fold-meta">last ingest 3 days ago</span></summary><div id="dm-sources-host"></div></details>' +
   '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
   '<section class="dm-projects"></section>' +
-  '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><div id="dm-shared-host"></div></details>' +
+  '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><summary class="dm-fold-summary"><span class="dm-section-num">4</span><span class="dm-fold-title">SHARED BRAIN</span></summary><div id="dm-shared-host"></div></details>' +
   '<section class="dm-health">' + healthLabel + '</section>';
 
 const COLUMN = (healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid"></div></section>' +
-  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><div id="dm-sources-host"></div></details>' +
+  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><summary class="dm-fold-summary"><span class="dm-section-num">1</span><span class="dm-fold-title">INGEST</span><span class="dm-fold-meta">last ingest 3 days ago</span></summary><div id="dm-sources-host"></div></details>' +
   '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
   '<section class="dm-projects"></section>' +
-  '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><div id="dm-shared-host"></div></details>' +
+  '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><summary class="dm-fold-summary"><span class="dm-section-num">4</span><span class="dm-fold-title">SHARED BRAIN</span></summary><div id="dm-shared-host"></div></details>' +
   '<section class="dm-health">' + healthLabel + '</section>';
 
 {
@@ -784,16 +1030,100 @@ const COLUMN = (healthLabel) =>
     inner.children.map((c) => c.id || c.tagName).join(','));
 }
 {
-  // ── NOT BUSY: the ordinary paint, unchanged from v3.63.0.
+  // ── NOT BUSY: THE PATCH RUNS ANYWAY (v3.64.1), AND THIS IS THE REVERSAL ──
+  //
+  // v3.64.0 patched ONLY while a hosted panel was busy and took the shell's
+  // full column replacement the rest of the time. MEASURED IN A BROWSER on a
+  // three-domain copy of the real store, counting `#view-root` child
+  // replacements per domain switch: a CACHED switch replaced the whole column
+  // 3–4 times and a COLD one SEVEN — once on the switch and once more as each
+  // of health, projects and the page list landed. Every one of those destroyed
+  // and rebuilt every section, replayed every enter animation and scrolled
+  // every list back to the top, which is the "switching domains flickers,
+  // pages and other data visibly repaint" the maintainer reported. The data
+  // was already right; it was being redrawn three more times than it moved.
   const { inner } = mountColumn(COLUMN('scanning'));
   const hostBefore = inner.children[2];
+  const pagesBefore = inner.children[3];
+  const healthBefore = inner.children[6];
   patchBox.__reset();
   patchBox.__setBusy(false);
   patchBox.setMain(COLUMN('3 issues'), 1);
-  eq('with nothing busy the shell replaces the column as it always did',
-    patchBox.__calls().shellSetMain, 1);
-  ok('CONTROL -- the model would have shown a difference if the patch had run',
+  eq('with nothing busy the paint is STILL a patch, not a column replacement',
+    patchBox.__calls().shellSetMain, 0);
+  ok('the section that changed was replaced', inner.children[6] !== healthBefore
+    && /3 issues/.test(inner.children[6].outerHTML), inner.children[6].outerHTML);
+  ok('...and every section that did NOT change kept its node object — which is '
+    + 'the whole of the flicker fix', inner.children[3] === pagesBefore, 'pages moved');
+  ok('...including the two hosted folds, which are ordinary children when idle',
     inner.children[2] === hostBefore);
+}
+{
+  // ── AN IDLE FOLD IS AN ORDINARY CHILD, AND THAT IS LOAD-BEARING ────────
+  // Skipping the two folds unconditionally was right while the patch only ran
+  // under a drag. Run on every paint it would FREEZE them: the INGEST
+  // summary's "last ingest 3 days ago" belongs to the domain being left, and
+  // a domain switch would leave it there for good.
+  const withMeta = (meta) => COLUMN('scanning')
+    .replace('last ingest 3 days ago', meta);
+  const { inner } = mountColumn(withMeta('last ingest 3 days ago'));
+  const srcBefore = inner.children[2];
+  const hostBefore = srcBefore.children[1];
+  patchBox.__reset();
+  patchBox.__setBusy(false);
+  patchBox.setMain(withMeta('nothing ingested yet'), 1);
+  ok('CONTROL -- the two columns really differ, and only inside the INGEST fold',
+    withMeta('a') !== withMeta('b'));
+  ok('the fold NODE survives even while idle — its body belongs to the panel',
+    inner.children[2] === srcBefore, 'the fold was replaced');
+  ok('...and so does the host the panel is mounted into',
+    inner.children[2].children[1] === hostBefore);
+  ok('but its SUMMARY is patched, so the meta cannot go stale across a switch',
+    /nothing ingested yet/.test(inner.children[2].outerHTML), inner.children[2].outerHTML);
+  eq('...without a full column replacement', patchBox.__calls().shellSetMain, 0);
+}
+{
+  // ── THE DERIVED DEFAULT TRAVELS, AND IS NOT RECORDED AS A CHOICE ───────
+  //
+  // With a stored preference the two trees always agree about `open`, so this
+  // does nothing. With NONE, the incoming value is the DERIVED default —
+  // INGEST opens on a domain that has never been ingested into — and a switch
+  // from a mature domain to a fresh one has to carry it across. A `<details>`
+  // fires `toggle` for an attribute change exactly as it does for a click, so
+  // the write goes through the echo queue: without it this page would record
+  // its own derived default as the user's explicit choice, which is the shape
+  // of the self-reopening fold found on the Context view the same day.
+  const shut = COLUMN('scanning');
+  const open = shut.replace('id="dm-sources-fold"', 'id="dm-sources-fold" open');
+  const { inner } = mountColumn(shut);
+  const srcBefore = inner.children[2];
+  patchBox.__echoes().length = 0;
+  patchBox.__reset();
+  patchBox.__setBusy(false);
+  eq('CONTROL -- the live fold starts closed', srcBefore.open, false);
+  patchBox.setMain(open, 1);
+  eq('a derived OPEN is carried onto the live fold', inner.children[2].open, true);
+  ok('...on the same node, so the panel is not remounted', inner.children[2] === srcBefore);
+  eq('...and exactly one echo is queued for the listener to swallow',
+    patchBox.__echoes().join(','), 'sources');
+  // AND THE OTHER DIRECTION, so this is not a one-way carry.
+  patchBox.__echoes().length = 0;
+  patchBox.setMain(shut, 1);
+  eq('a derived CLOSED is carried too', inner.children[2].open, false);
+  eq('...with its own echo', patchBox.__echoes().join(','), 'sources');
+  // NOTHING IS QUEUED WHEN NOTHING MOVED — a queue that filled up on every
+  // paint would eventually swallow a real click.
+  patchBox.__echoes().length = 0;
+  patchBox.setMain(shut, 1);
+  eq('an unchanged fold queues no echo at all', patchBox.__echoes().length, 0);
+  // AND A BUSY PANEL'S FOLD IS NOT TOUCHED EVEN FOR THIS.
+  patchBox.__setBusy(true);
+  patchBox.__echoes().length = 0;
+  patchBox.setMain(open, 1);
+  eq('a busy panel\'s fold keeps its open state and queues nothing',
+    inner.children[2].open, false);
+  eq('...and nothing was queued', patchBox.__echoes().length, 0);
+  patchBox.__setBusy(false);
 }
 {
   // ── THE SHAPE MOVED. A knowledge notice appears, a branch changes, the
@@ -842,11 +1172,19 @@ const COLUMN = (healthLabel) =>
   // ── A BRANCH WITH NO HOSTED SECTION (the loading branch, the empty card)
   // is an ordinary paint even while a panel reports busy: there is nothing
   // on this screen left to protect.
-  mountColumn('<div class="a"></div><div class="b"></div>');
+  const { inner } = mountColumn('<div class="a"></div><div class="b"></div>');
+  const aBefore = inner.children[0];
   patchBox.__reset();
   patchBox.__setBusy(true);
   patchBox.setMain('<div class="a"></div><div class="c"></div>', 1);
-  eq('a column with no host is repainted normally', patchBox.__calls().shellSetMain, 1);
+  // v3.64.1: it is patched like any other column. v3.64.0 delivered the patch
+  // AND THEN called the shell as well — the children were replaced twice, in
+  // silence. There is no host to protect here, so there is also no reason to
+  // repaint what did not move.
+  eq('a column with no host is patched, not repainted', patchBox.__calls().shellSetMain, 0);
+  ok('...and the child that did not change kept its node', inner.children[0] === aBefore);
+  ok('...while the one that did was replaced', /class="c"/.test(inner.children[1].outerHTML),
+    inner.children[1].outerHTML);
 }
 {
   // ── A STALE PAINT REACHES THE DOM IN NEITHER MODE.
@@ -914,6 +1252,10 @@ function onHostedBusyChange() {}
 function onSharedLensChange() {}
 function writeSectionPrefs() { calls.written++; }
 function scrollSectionIntoView() {}
+// THE ECHO QUEUE (v3.64.1). \`bindSectionFolds\`'s listener drains it to tell a
+// toggle THIS PAGE caused from one the user caused; injected empty here so a
+// real click is never mistaken for an echo.
+const programmaticFolds = [];
 let mountedSourcesEl = null, mountedSourcesDomain = null;
 let mountedSharedEl = null, mountedSharedDomain = null;
 `;
@@ -929,6 +1271,7 @@ const mountBox = new Function(
   extractFunction(SRC, 'openSectionFold') + '\n' +
   extractFunction(SRC, 'mountHostedSections') + '\n' +
   `return { mountHostedSections, openSectionFold, __calls: () => calls,
+     __echoes: () => programmaticFolds,
      __state: () => state, __setState: (s) => { state = s; },
      __setDocument: (d) => { document = d; },
      __setShell: (k, v) => { shell[k] = v; },
@@ -1049,7 +1392,8 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.mountHostedSections(1);
   eq('a fold request OPENS the INGEST fold', c.src.open, true);
   eq('...mounts the panel in the same pass', mountBox.__calls().mountIngest.length, 1);
-  eq('...and remembers it, so a reload lands the same way', mountBox.__state().sectionPrefs.alpha.sources, true);
+  eq('...and remembers it INSTALL-WIDE, so a reload lands the same way on any domain',
+    mountBox.__state().sectionPrefs.sources, true);
   // CONSUMED ONCE. A request that survived would re-open a fold the user has
   // since closed, on every paint.
   c.src.open = false;
@@ -1084,14 +1428,74 @@ function stage(sourcesOpen, sharedOpen, ids) {
   eq('...once per element, however many times the page repaints', e.src.listeners.length, 1);
   e.src.open = true;
   e.src.fire();
-  eq('opening a fold remembers it', mountBox.__state().sectionPrefs.alpha.sources, true);
+  eq('opening a fold remembers it', mountBox.__state().sectionPrefs.sources, true);
   ok('...persists it', mountBox.__calls().written > 0);
   eq('...and mounts the panel', mountBox.__calls().mountIngest.length, 1);
   e.src.open = false;
   mountBox.__reset();
   e.src.fire();
-  eq('closing it remembers that too', mountBox.__state().sectionPrefs.alpha.sources, false);
+  eq('closing it remembers that too', mountBox.__state().sectionPrefs.sources, false);
   eq('...and takes the panel down', mountBox.__calls().unmountIngest, 1);
+
+  // ── A TOGGLE THIS PAGE CAUSED ITSELF IS NOT A PREFERENCE (v3.64.1) ────
+  // `patchMainAroundHosts` carries the DERIVED default across a domain switch
+  // by writing `open`, and a `<details>` fires `toggle` for that exactly as it
+  // does for a click. Without the echo queue the page would record its own
+  // default as the user's explicit choice — the shape of the self-reopening
+  // documents fold found on the Context view the same day, one file over.
+  mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
+  mountBox.__reset();
+  mountBox.__echoes().length = 0;
+  mountBox.__echoes().push('sources');
+  e.src.open = true;
+  e.src.fire();
+  eq('a queued echo writes NO preference at all',
+    mountBox.__state().sectionPrefs.sources, undefined);
+  eq('...and persists nothing', mountBox.__calls().written, 0);
+  eq('...and the entry is consumed, so the NEXT toggle is the user\'s',
+    mountBox.__echoes().length, 0);
+  e.src.open = false;
+  e.src.fire();
+  eq('CONTROL -- the very next toggle IS recorded',
+    mountBox.__state().sectionPrefs.sources, false);
+  // AN ECHO FOR THE OTHER FOLD DOES NOT SWALLOW THIS ONE'S CLICK. A single
+  // boolean would have; the queue is keyed.
+  mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
+  mountBox.__echoes().length = 0;
+  mountBox.__echoes().push('shared');
+  e.src.open = true;
+  e.src.fire();
+  eq('an echo queued for the OTHER fold does not swallow this one\'s click',
+    mountBox.__state().sectionPrefs.sources, true);
+  eq('...and leaves the other fold\'s entry where it was',
+    mountBox.__echoes().join(','), 'shared');
+  mountBox.__echoes().length = 0;
+
+  // ── THE PAINT'S OWN ECHO IS NOT A PRESS EITHER (v3.64.1) ─────────────
+  // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML
+  // assignment fires `toggle` ONCE, after this listener is attached (the
+  // probe: open 1 event, closed 0). Harmless while the emitted value always
+  // equalled the stored one — and NOT harmless once the preference went
+  // install-wide, because the INGEST fold's DERIVED default would then be
+  // recorded as an explicit choice the first time a never-ingested domain was
+  // opened, and would follow the user onto every other domain.
+  {
+    mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
+    const g = stage(true, false);
+    mountBox.__reset();
+    mountBox.mountHostedSections(1);
+    // The fold is ALREADY open (the derived default), and the paint's echo
+    // arrives with the open state unchanged.
+    g.src.fire();
+    eq('a toggle that did not change the fold writes NO preference',
+      mountBox.__state().sectionPrefs.sources, undefined);
+    eq('...and persists nothing', mountBox.__calls().written, 0);
+    // CONTROL: a real press, which always changes it, still records.
+    g.src.open = false;
+    g.src.fire();
+    eq('CONTROL -- a press that closes it IS recorded',
+      mountBox.__state().sectionPrefs.sources, false);
+  }
 }
 {
   // A JUMP TILE OPENS THE FOLD IT JUMPS TO. A jump that landed on a closed
@@ -1103,7 +1507,7 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.openSectionFold('sources');
   eq('the SOURCES jump opens the INGEST fold', f.src.open, true);
   eq('...and mounts its panel', mountBox.__calls().mountIngest.length, 1);
-  eq('...and remembers the choice', mountBox.__state().sectionPrefs.alpha.sources, true);
+  eq('...and remembers the choice', mountBox.__state().sectionPrefs.sources, true);
   mountBox.__reset();
   mountBox.openSectionFold('shared');
   eq('the SHARED jump opens the Shared Brain fold', f.sh.open, true);
@@ -1416,6 +1820,79 @@ try {
 } finally {
   if (server) server.close();
   rmSync(TMP, { recursive: true, force: true });
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S9 -- BOUND ONCE PER NODE (v3.64.1)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE HAZARD THE PATCH CREATED, and the one thing about making setMain patch
+// on every paint that could have shipped as a silent data defect. renderMain
+// binds its listeners AFTER the paint, by querying the document. A full column
+// replacement made that safe by construction: every node was new, so every
+// listener was the first. A patched paint leaves unchanged sections STANDING
+// with the listeners an earlier paint gave them -- so a cold domain switch,
+// which paints once on the switch and once as each of health, projects and the
+// page list lands, would leave FOUR listeners on every control that did not
+// move. Most are idempotent. `Show N more` is not: it would advance the window
+// four steps. `Rescan`, `Fix all` and `Apply plan` are not either, and they are
+// HTTP requests -- one of them deletes files.
+//
+// THE MARK IS AN EXPANDO, NOT AN ATTRIBUTE, and that is load-bearing rather
+// than stylistic: a `data-*` mark appears in the live node's outerHTML and
+// never in the freshly-composed one, so the patch's byte comparison would find
+// every marked section different and replace it on every paint -- the guard
+// would silently re-create the defect it exists to prevent.
+{
+  const guarded = ['bindBrowseListeners', 'bindStatCardListeners', 'bindProjectListeners',
+    'bindHealthListeners', 'bindLifecycleListeners'];
+  for (const name of guarded) {
+    const fn = extractFunction(SRC, name);
+    ok(name + ' takes the bind-once guard before it binds anything',
+      /boundScope\.__dmBound/.test(fn) && /boundScope\.__dmBound = true/.test(fn),
+      fn.slice(0, 400));
+    ok('...and reaches its scope through a `typeof` guard, so a suite stand-in '
+      + 'document with no querySelector binds rather than crashing',
+    /typeof document\.querySelector === 'function'/.test(fn), fn.slice(0, 600));
+  }
+  ok('no guard writes a data-* attribute, which the patch would see as a difference',
+    !/dataset\.dmBound/.test(SRC), 'dataset.dmBound found');
+
+  // -- DRIVEN, NOT SCANNED. A real element, four bind passes, one listener.
+  const scope = { __dmBound: undefined };
+  const target = { listeners: [], addEventListener(t, h) { this.listeners.push([t, h]); } };
+  const doc = {
+    querySelector: (sel) => (sel === '.dm-pages' ? scope : null),
+    getElementById: (id) => (id === 'dm-browse-more' ? target : null),
+    querySelectorAll: () => [],
+  };
+  const makeBind = (d) => new Function('document', 'state', 'myMountToken', 'loadBrowse', 'render',
+    'selectBrowseFacet', 'showMoreBrowseRows', 'bindBrowseRowClicks', 'reportAsyncActionFailure',
+    'BROWSE_RENDER_CAP',
+    extractFunction(SRC, 'bindBrowseListeners') + '\nreturn bindBrowseListeners;')(
+    d, { activeSlug: 'alpha' }, 1, () => Promise.resolve(), () => {}, () => {}, () => {},
+    () => {}, () => {}, 150);
+  const bind = makeBind(doc);
+  bind();
+  const afterOne = target.listeners.length;
+  bind(); bind(); bind();
+  ok('CONTROL -- the first pass really bound something', afterOne > 0, String(afterOne));
+  eq('three further passes over the SAME node bind nothing more', target.listeners.length, afterOne);
+  // ...AND A REPLACED SECTION IS BOUND AGAIN. The guard must not outlive the
+  // node it marked, or a section the patch DID replace would ship inert.
+  doc.querySelector = () => ({ __dmBound: undefined });
+  bind();
+  ok('a section the patch replaced is bound again, so nothing ships inert',
+    target.listeners.length > afterOne, afterOne + ' -> ' + target.listeners.length);
+  // AND A DOCUMENT WITH NO querySelector AT ALL still binds -- the shape three
+  // unowned suites execute these functions with.
+  const before = target.listeners.length;
+  const bind2 = makeBind({ getElementById: (id) => (id === 'dm-browse-more' ? target : null),
+    querySelectorAll: () => [] });
+  ok('a stand-in document with no querySelector binds instead of crashing',
+    callOrFail('bindBrowseListeners against a querySelector-less document',
+      () => { bind2(); return true; }) === true && target.listeners.length > before);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

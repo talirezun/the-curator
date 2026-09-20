@@ -469,6 +469,34 @@ function freshState() {
     // poll happened to land mid-edit. It is the verbatim bytes (`?raw=1`),
     // never the defanged read the reader shows — see `loadFoundationDraft`.
     fndEdit: null,
+    // ── THE FOUNDATIONS FOLD'S FORCED-OPEN STATE, TRANSIENT (v3.64.1) ────
+    //
+    // Opening an editor inside a collapsed section is a press that visibly
+    // does nothing (v3.58.0's finding on the brief), so four handlers force
+    // the documents fold open. Through v3.64.0 they did it by writing
+    // `state.openFolds.foundations = true` AND PERSISTING it, which produced
+    // the defect the maintainer reported the day v3.64.0 shipped: the fold
+    // reopening itself however often he closed it. Reproduced in a browser
+    // against the real store — press Edit, close the fold (the toggle
+    // listener writes `false` and persists it), then cause any render, and
+    // `renderFoundations`'s `editing || adding ||` disjunction re-forced
+    // `open`; the SAME toggle listener then recorded the forced state as
+    // `true`, so the user's close was overwritten by the very thing that had
+    // ignored it, and every later paint reopened the fold.
+    //
+    // The force is a TRANSIENT and lives here. It is not a FOLD_KEYS name, so
+    // it can never be serialised: an Edit press no longer leaves a mark on
+    // `curator-memory-folds-v1`, and only a real toggle writes that. An
+    // explicit close CLEARS it, which is what makes the close final while an
+    // editor is still up. freshState drops it, so the next visit to this view
+    // honours the remembered preference and nothing else.
+    //
+    // WHY IT IS NOT CLEARED THE MOMENT THE EDITOR CLOSES, which is the other
+    // reading of the design note: a document saved from the editor would then
+    // vanish behind a chevron on the frame the save landed. The close is
+    // final the instant the user asks for it, and on every later visit; it is
+    // not made final by an act the user did not perform.
+    fndForceOpen: false,
     // The standing-brief editor, or null when nothing is being edited.
     //   { domain, project, loaded, text, busy, error, preview, confirmDiscard }
     // `loaded` is the document the editor OPENED on and never changes; `text`
@@ -1444,6 +1472,13 @@ function screenSignature() {
   // count for the same reason `briefMark` uses it: strictly more sensitive
   // than the figure it stands for, and one extra repaint is the fail-safe
   // direction.
+  // THE FOUNDATIONS FOLD'S FORCED-OPEN TRANSIENT (v3.64.1) is a thing ON
+  // SCREEN — it decides whether the documents fold paints open — and it is
+  // not derivable from anything else here: an explicit close clears it while
+  // `state.fndEdit` stays exactly as it was. Every writer of it already calls
+  // render, so this buys the poll rather than the press; it is folded in
+  // because a signature that cannot see a pane is not a guard for that pane.
+  const fndForceMark = state.fndForceOpen === true;
   const fe = state.fndEdit;
   const fndEditMark = fe
     ? [fe.domain, fe.project, fe.slug || null, !!fe.isNew, !!fe.loading, !!fe.busy,
@@ -1550,6 +1585,11 @@ function screenSignature() {
     ? [cap.domain, cap.project, cap.error || null,
       capData
         ? [capData.logPresent === true, capData.note || null,
+          // v3.64.1: the stale-bridge flag also moves the LIMITS line under
+          // the note (the legacy clause defers to the two log-limit notes and
+          // not to this one), so it is a second pixel-moving fact rather than
+          // a restatement of `note`.
+          capData.noSessionsButSaves === true,
           capTotals
             ? [capTotals.sessions, capTotals.sessionsRead, capTotals.sessionsSaved,
               capTotals.sessionsReadNotSaved, capTotals.legacyLines, capTotals.selfTestLines]
@@ -1585,6 +1625,7 @@ function screenSignature() {
     briefMark,
     fndMark,
     fndActionMark,
+    fndForceMark,
     fndEditMark,
     fndInitMark,
     knowledgeMark,
@@ -3724,11 +3765,23 @@ function captureFacts(payload) {
     shown: num(p && p.sessionsShown) === null ? rows.length : p.sessionsShown,
     truncated: p ? p.sessionsTruncated === true : false,
     note: p && typeof p.note === 'string' && p.note.trim() ? p.note.trim() : null,
+    // ── THE CONTRADICTION FLAG (v3.64.1) ───────────────────────────────
+    // POSITIVE EVIDENCE ONLY, like `logPresent` above: true because the route
+    // SAID so. It says that this project HAS saves inside the window and the
+    // log recorded no session to attribute them to — the reading that used to
+    // leave "saved 47 min ago" and "no agent session in the last 30 days" on
+    // screen together with nothing to reconcile them.
+    noSessionsButSaves: p ? p.noSessionsButSaves === true : false,
   };
 }
 
 /**
- * STEP 2's FIRST ROW — THE HONESTY METER (v3.63.0).
+ * STEP 2's SECOND READING — THE HONESTY METER (v3.63.0).
+ *
+ * It sits under the "Last saved" reading, which joined it inside the body in
+ * v3.64.1 (it used to render above the step's heading). The two answer about
+ * the same layer — what the last session left, and whether the sessions that
+ * touched it read and saved — so they open the step together.
  *
  * ── IT REPORTS, AND IT NEVER BLOCKS (Decision G) ───────────────────────
  * Nothing here refuses a session, delays one or warns an agent. A meter that
@@ -3861,10 +3914,14 @@ function renderCaptureMeter() {
 
   // ── THE ROUTE'S OWN NOTE, UNFOLDED ────────────────────────────────────
   // Whatever the route needs to say about the reading it just gave — an absent
-  // log, a log that began after the window opened — is an OUTCOME, and an
-  // outcome may not sit behind a chevron (v3.16.1). It is rendered as the
-  // route sent it rather than paraphrased: the producer knows which limit
-  // applied and this view does not.
+  // log, a log that began after the window opened, or (v3.64.1) saves in this
+  // window that no session accounts for — is an OUTCOME, and an outcome may
+  // not sit behind a chevron (v3.16.1). It is rendered as the route sent it
+  // rather than paraphrased: the producer knows which limit applied and this
+  // view does not. The third tenant is the one that reconciles the reading
+  // ABOVE this one — "Last saved 47 min ago" beside "no agent session in the
+  // last 30 days", both true — and it names the remedy, which is why it
+  // outranks the other two rather than queueing behind them.
   const notice = f.note
     ? renderStatus({ state: 'neutral', title: f.note })
     : '';
@@ -3886,8 +3943,15 @@ function renderCaptureMeter() {
   // SELF-TEST count is never in the route's note at all, so it is always this
   // line's. Written as "is there a note" rather than as a match against the
   // producer's prose, which would be a copy of a sentence this file does not own.
+  //
+  // AND IT DEFERS TO THE LOG-LIMIT NOTES ONLY (v3.64.1). The note slot gained
+  // a third tenant — the stale-bridge clause — which says nothing about
+  // legacy lines, so deferring to it would drop a disclosure the route still
+  // owes. The test is therefore "is the route's note ABOUT this", answered
+  // structurally from the flag rather than by matching the producer's prose.
   const limits = [
-    (!f.note && f.legacyLines) ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
+    ((!f.note || f.noSessionsButSaves) && f.legacyLines)
+      ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
       + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
     f.selfTestLines ? f.selfTestLines.toLocaleString('en-US') + ' self-test call'
       + (f.selfTestLines === 1 ? '' : 's') + ' excluded' : null,
@@ -4154,12 +4218,25 @@ function renderProject() {
   // remembered per fold — v3.58.0's measurement (3,241 → 1,278px) is the
   // reason, and re-opening any of them by default re-opens that defect.
   //
-  // THE STATUS BLOCK'S NOTICES LIVE IN `noticeHtml`, unfolded, above the
-  // heading. That is the whole of the deleted block's second half — the save
-  // reading for the pair you are looking at, the two-harnesses collision, the
-  // newer-state-elsewhere lines, the stale-write Reload offer and the
-  // unlisted-entries note — and every one of them is a warning, a cost or an
-  // outcome, which v3.16.1 says may never fold.
+  // THE STATUS STACK IS THE STEP'S FIRST ROW, INSIDE THE BODY (v3.64.1).
+  // It was `noticeHtml`, and `shared/block.js` places `noticeHtml` ABOVE the
+  // heading inside the wrapper (its own docblock says so) — so the "Last
+  // saved" reading rendered above "② Working state" and read as a card of its
+  // own, while CAPTURE, the other reading about the same layer, was the first
+  // thing INSIDE the body. The maintainer's report was a literal description
+  // of that markup: a summary above one step and a report inside it. Both
+  // readings now open the body, in that order, and nothing renders above a
+  // step heading on this page.
+  //
+  // THE WHOLE STACK MOVED, not the reading out of it, and that is a
+  // deliberate refusal to split. `patchOpenPair` re-composes this ONE
+  // expression into `.mem-status-stack` by selector and
+  // scripts/test-next-memory-switch.js §8 compares the two byte-for-byte;
+  // splitting the reading from the warnings means splitting that patch, which
+  // is the one edit on this screen that silently breaks a shipped no-repaint
+  // guarantee. Everything in the stack is still unfolded, so v3.16.1's rule
+  // — a warning, a cost or an outcome may never fold — is untouched by the
+  // move; only its position relative to the heading changed.
   //
   // WHAT IS NOT HERE any more: the "Working on" line (the strip carries its
   // age, the work-stream fold's summary carries its words) and the "Standing
@@ -4209,10 +4286,18 @@ function renderProject() {
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
     infoHtml: true,
-    noticeHtml: statusHtml ? '<div class="mem-status-stack">' + statusHtml + '</div>' : '',
+    // EMPTY, AND THAT IS THE POINT (v3.64.1) — nothing renders above this
+    // step's heading. The slot stays available to the component; this caller
+    // simply has nothing that belongs above a heading.
+    noticeHtml: '',
     bodyHtml:
       '<div class="mem-state-stack">'
-        // ── THE HONESTY METER, FIRST IN THE STEP (v3.63.0) ────────────
+        // ── THE TWO READINGS ABOUT THIS LAYER, IN ORDER ───────────────
+        // "Last saved" (with the warnings that qualify it) and then CAPTURE.
+        // Both are readings about the working state, so both belong to the
+        // step that owns it, above the three folds they qualify.
+        + (statusHtml ? '<div class="mem-status-stack">' + statusHtml + '</div>' : '')
+        // ── THE HONESTY METER, SECOND (v3.63.0) ───────────────────────
         // Inside step 2 rather than in a block of its own or as a fourth
         // cell on the strip: the strip is three cells because there are
         // three LAYERS, and a fourth would break that mapping. This is a
@@ -6612,9 +6697,13 @@ function renderFoundations(read) {
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
   // size that is no longer true the moment a key is pressed. The fold is
-  // FORCED OPEN while an editor is up — not from a transient, from the
-  // explicit decision the Edit press recorded in `state.openFolds`, which is
-  // what the brief's pencil does too.
+  // FORCED OPEN when an editor is OPENED — and that force is a transient
+  // (`state.fndForceOpen`, v3.64.1), never the persisted preference: through
+  // v3.64.0 the Edit press wrote `state.openFolds.foundations = true` to
+  // localStorage, so one press marked the fold open on every later visit, and
+  // the `editing || adding ||` disjunction that used to be in the `open`
+  // expression below re-forced it on every paint — which is how a close the
+  // user had just made was overwritten by the renderer that ignored it.
   // ── "Add from folder" ON A POPULATED MIRROR (P1-4) ────────────────────
   // The chooser's repo arm under the table rather than in place of it: a
   // mirror with six documents that hid them in order to ask about a seventh
@@ -6675,7 +6764,17 @@ function renderFoundations(read) {
   const budgetNote = '<div class="tx-note mem-fnd-budget" id="mem-fnd-budget"'
     + (budgetSentence ? '' : ' hidden') + '>' + icon('alertTriangle', 13)
     + '<span>' + escapeHtml(budgetSentence) + '</span></div>';
-  const open = (editing || adding || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
+  // ── `open` COMES FROM TWO PLACES AND ONLY TWO (v3.64.1) ────────────────
+  // The user's remembered preference, and the transient set by the press that
+  // opened an editor. NOT from `editing`/`adding` themselves: a state derived
+  // from the editor's PRESENCE is re-derived on every paint, so it cannot be
+  // overruled — and the toggle listener then writes the un-overrulable value
+  // back as if the user had chosen it. An explicit close clears the transient
+  // (see wire()'s toggle listener), which is what makes a close final while
+  // the editor is still on screen. The brief's twin expression above has
+  // always read from one field alone; this one now does too.
+  const open = (state.fndForceOpen === true
+    || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
   return budgetNote + '<div class="mem-fnd-row">' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
@@ -7645,11 +7744,10 @@ async function loadFoundationDraft(slug, token) {
   const project = state.activeProject;
   if (!domain || !project || !slug) return;
   const key = keyOf(domain, project);
-  if (!state.openFolds) state.openFolds = {};
-  state.openFolds.foundations = true;
-  try {
-    localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-  } catch { /* private window, blocked site data, quota — the app forgets */ }
+  // THE FORCE IS A TRANSIENT (v3.64.1). It opens the fold for this press and
+  // NEVER reaches `curator-memory-folds-v1` — see `fndForceOpen` in freshState
+  // for the defect that made this the rule.
+  state.fndForceOpen = true;
   state.fndEdit = {
     domain, project, slug: String(slug), isNew: false, loading: true,
     loaded: '', text: '', title: '', role: 'other',
@@ -8028,11 +8126,8 @@ function bindFoundationRows(root, token) {
         adding: true,
       };
       state.fndInit.choice.ownership = 'repo';
-      if (!state.openFolds) state.openFolds = {};
-      state.openFolds.foundations = true;
-      try {
-        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-      } catch { /* private window, blocked site data, quota — the app forgets */ }
+      // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
+      state.fndForceOpen = true;
       render(token);
     });
   }
@@ -8080,8 +8175,8 @@ function bindFoundationRows(root, token) {
         domain: state.activeDomain, project: state.activeProject, slug,
         busy: false, error: null,
       };
-      if (!state.openFolds) state.openFolds = {};
-      state.openFolds.foundations = true;
+      // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
+      state.fndForceOpen = true;
       render(token);
     });
   });
@@ -8108,11 +8203,8 @@ function bindFoundationRows(root, token) {
   const addBtn = root.getElementById ? root.getElementById('mem-fnd-add') : null;
   if (addBtn) {
     addBtn.addEventListener('click', () => {
-      if (!state.openFolds) state.openFolds = {};
-      state.openFolds.foundations = true;
-      try {
-        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-      } catch { /* private window, blocked site data, quota — the app forgets */ }
+      // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
+      state.fndForceOpen = true;
       state.fndEdit = {
         domain: state.activeDomain, project: state.activeProject,
         slug: '', isNew: true, loading: false,
@@ -9030,11 +9122,37 @@ function wire(token) {
   // its swap precisely so only ONE of the two listeners below has to be
   // re-attached there, and that one names this block.
   document.querySelectorAll('[data-mem-fold]').forEach((el) => {
+    // ── THE PAINT'S OWN ECHO IS NOT A PRESS (v3.64.1) ────────────────────
+    // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML
+    // assignment fires `toggle` ONCE, after this listener is attached — the
+    // probe is one line and the answer is unambiguous (open: 1 event, closed:
+    // 0). So every paint of an OPEN fold arrives here as a toggle nobody
+    // performed. While the emitted value always equalled the stored one that
+    // was harmless noise; it stopped being harmless the moment a fold could
+    // be opened by a TRANSIENT (`state.fndForceOpen`), because the echo then
+    // wrote that transient into `curator-memory-folds-v1` as the user's own
+    // choice and one Edit press marked the documents fold open for good.
+    //
+    // A press always CHANGES `el.open` relative to what the last recorded
+    // state was; an echo never does. The mark is an expando, so it is
+    // invisible to anything that compares markup.
+    el.__memFoldWas = !!el.open;
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
       const key = el.dataset.memFold;
       if (!key) return;
+      if (!!el.open === el.__memFoldWas) return;
+      el.__memFoldWas = !!el.open;
       state.openFolds[key] = el.open;
+      // ── AN EXPLICIT CLOSE CLEARS THE FOUNDATIONS FORCE (v3.64.1) ──────
+      // The one line that makes a close FINAL while an editor is still open.
+      // Without it the transient re-forces `open` on the next paint and this
+      // listener then records that forced value as the user's own — the loop
+      // the maintainer reported as "it reopens itself". Written inline for
+      // the reason this block already states twice: `wire` is lifted by
+      // brace-matching and executed against a hand-written set of stubs, so a
+      // module-level helper named here would be a ReferenceError there.
+      if (key === 'foundations' && !el.open) state.fndForceOpen = false;
       try {
         localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
       } catch { /* private window, blocked site data, quota — the app forgets */ }

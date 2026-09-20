@@ -1597,8 +1597,17 @@ function writeRig(responder) {
     st.fndEdit ? st.fndEdit.title : '<no editor>', 'Architecture');
   eq('...and the role', st.fndEdit ? st.fndEdit.role : '<no editor>', 'architecture');
   eq('the editor is not marked new', st.fndEdit ? st.fndEdit.isNew : '<no editor>', false);
+  // THE SAME PROPERTY, THE NEW MECHANISM (v3.64.1). The force is a TRANSIENT
+  // now: through v3.64.0 this press wrote `openFolds.foundations = true` and
+  // PERSISTED it, so one Edit press marked the fold open on every later visit
+  // and — with `renderFoundations` re-forcing `open` from `editing` on every
+  // paint — the toggle listener recorded the forced value as the user's own,
+  // which is the fold that reopened itself however often it was closed.
   eq('the fold is forced open, or the press would visibly do nothing',
-    st.openFolds ? st.openFolds.foundations : '<no folds>', true);
+    st.fndForceOpen, true);
+  eq('...and the force does NOT touch the persisted preference',
+    st.openFolds && st.openFolds.foundations !== undefined
+      ? st.openFolds.foundations : '<absent>', '<absent>');
   ok('two renders: the busy frame in the press\'s own frame, then the draft',
     calls.render === 2, String(calls.render));
 }
