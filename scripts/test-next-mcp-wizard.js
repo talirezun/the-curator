@@ -1122,6 +1122,10 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
                defaultDomainSaving: false, selfTestLoading: false, copyFeedback: null },
       deriveMcpStatus: () => ({ pillClass: 'status-pill', pillLabel: 'Connected', wizardLabel: 'Reconnect' }),
       renderSelfTestResult: () => '', shouldShowMcpStaleNote: () => false,
+      // v3.64.0's bridge-process note. Stubbed off like its two neighbours —
+      // this section is about the SENTENCES the wizard and block ① carry, and
+      // the note has its own suite (scripts/test-mcp-stale-bridge.js §7).
+      deriveStaleBridgeNote: () => null,
       escapeHtml: (x) => String(x), icon: () => '',
       TX_INFO_GLYPH: '<svg/>',
       docsLinkHtml,

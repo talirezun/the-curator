@@ -298,32 +298,55 @@ export function tallyUsageLines(lines, { since, domain, project }) {
   return { saves, bootstraps, anyCall };
 }
 
-/** Read the usage log's raw lines — S's reader when present, the file if not. */
+/**
+ * Read the usage log's raw lines — from EVERY log this machine may be writing.
+ *
+ * ── WHY A UNION, AND THE DEFECT IT CLOSES (v3.64.0) ────────────────────────
+ *
+ * This used to read `getMcpUsageLogPath()` and nothing else — the log THIS
+ * process would write to. On a machine that has both a checkout and the
+ * installed `.app` (the maintainer's, and every developer's) those are two
+ * different files, and the one the hook could see was never the one the bridge
+ * was writing. Rung 3 of the ladder ("a save landed in this session") could
+ * therefore never fire, and the hook asked the model to save at the end of
+ * EVERY turn, including turns that had just saved.
+ *
+ * `candidateUsageLogPaths()` in `src/brain/mcp-usage.js` owns the list and the
+ * whole argument for it, including why an isolated test never gets the second
+ * file. Reading more than one log can only make the tally larger, which can
+ * only make this hook ask LESS often — the fail-safe direction it already
+ * takes for a line that carries no `project`.
+ *
+ * ── AND THE DEAD PROBE IS GONE ─────────────────────────────────────────────
+ *
+ * v3.63.0 tried `summariseSessions()` first and used its answer when it
+ * carried a `lines` array. It never does: that function is a PURE aggregate
+ * over records returning `{sessions, totals}`, and called with no argument it
+ * answers about an empty list — so the probe always fell through to the file,
+ * correctly and by accident. Removed rather than repaired: an aggregate is not
+ * what a ladder that needs raw lines wants, and a branch that cannot be taken
+ * is a branch that cannot be tested.
+ */
 export async function readUsageLines() {
-  let mod = null;
-  try { mod = await import('../brain/mcp-usage.js'); } catch { mod = null; }
-  if (mod && typeof mod.summariseSessions === 'function') {
-    try {
-      const s = await mod.summariseSessions();
-      if (s && Array.isArray(s.lines)) return { lines: s.lines, via: 'summariseSessions' };
-    } catch { /* fall through to the file */ }
-  }
-  let file = null;
+  let files = [];
   try {
-    const paths = await import('../brain/paths.js');
-    file = paths.getMcpUsageLogPath();
-  } catch { return { lines: [], via: 'unavailable' }; }
+    const usage = await import('../brain/mcp-usage.js');
+    files = usage.candidateUsageLogPaths();
+  } catch { return { lines: [], via: 'unavailable', files: [] }; }
   const lines = [];
-  for (const f of [`${file}.1`, file]) {
-    let text;
-    try { text = readFileSync(f, 'utf8'); } catch { continue; }
-    for (const raw of text.split('\n')) {
-      const t = raw.trim();
-      if (!t) continue;
-      try { lines.push(JSON.parse(t)); } catch { /* a malformed line is skipped, never fatal */ }
+  for (const file of files) {
+    // Oldest generation first, so a rotated line sorts before its successors.
+    for (const f of [`${file}.1`, file]) {
+      let text;
+      try { text = readFileSync(f, 'utf8'); } catch { continue; }
+      for (const raw of text.split('\n')) {
+        const t = raw.trim();
+        if (!t) continue;
+        try { lines.push(JSON.parse(t)); } catch { /* a malformed line is skipped, never fatal */ }
+      }
     }
   }
-  return { lines, via: 'jsonl' };
+  return { lines, via: 'jsonl', files };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -145,8 +145,12 @@
  */
 
 import { randomBytes } from 'crypto';
+import { existsSync } from 'fs';
 import { appendFile, rename, stat, readFile } from 'fs/promises';
-import { getMcpUsageLogPath } from './paths.js';
+import path from 'path';
+import {
+  APP_ROOT, getAppSupportDir, getMcpUsageLogPath, getUserDataDir, isBundleInstall,
+} from './paths.js';
 import { labelForClient, normaliseStoredClient } from './mcp-clients.js';
 
 /** Rotate at this size; one previous generation is kept as `<path>.1`. */
@@ -397,8 +401,21 @@ export function buildSessionLine(entry, nowIso) {
     ts: nowIso || new Date().toISOString(),
     ev: SESSION_EV,
     sid: typeof e.sid === 'string' && SID_RE.test(e.sid) ? e.sid : _sid,
-    client: labelForClient(e.client),
   };
+  // `undefined` OMITS THE KEY; `null` writes `other`. The distinction is the
+  // whole of v3.64.0's addition here and it is not a nicety (see below).
+  //
+  // The STARTUP line is written before any client has identified itself: in
+  // the initialize era `getClientVersion()` is empty until the handshake, and
+  // in the 2026-07-28 era there is no handshake at all and `_meta` arrives
+  // with the first REQUEST. Nobody has been asked, so the key is ABSENT.
+  // `other` would be a reading — "a name we did not recognise" — asserted
+  // about a question not yet put.
+  //
+  // At a TOOL CALL both eras HAVE been consulted, so `null` there is an
+  // answer ("the client did not say") and is written as `other`, exactly as
+  // every version since v3.63.0 wrote it.
+  if (e.client !== undefined) rec.client = labelForClient(e.client);
   const via = normaliseVia(e.via);
   if (via) rec.via = via;
   return JSON.stringify(rec);
@@ -415,9 +432,74 @@ export function buildSessionLine(entry, nowIso) {
  */
 let _sessionLinePending = true;
 
+/**
+ * Has this process written a session line that NAMES its client?
+ *
+ * Separate from `_sessionLinePending` because the two facts arrive at
+ * different moments: a bridge can write "a session began" before anything has
+ * said who is on the other end of the pipe. At most one client-bearing line is
+ * ever written, so a process contributes one or two session lines and never
+ * more.
+ */
+let _sessionClientPending = true;
+
 /** TEST-ONLY: re-arm the session line, as a fresh process would. */
 export function __resetSessionLine() {
   _sessionLinePending = true;
+  _sessionClientPending = true;
+}
+
+/**
+ * Write this process's session line NOW, without waiting for a tool call.
+ *
+ * ── THE MEASUREMENT THAT MADE THIS NECESSARY (2026-09-20) ──────────────────
+ *
+ * v3.63.0 coupled the session line to the first tool line — one `appendFile`,
+ * two lines, so their ORDER needed no machinery and the O_APPEND atomicity
+ * argument covered both. The cost was invisible until the harness campaign ran
+ * it: a bridge that is opened and never asked for a tool writes NOTHING. Four
+ * real Claude Code sessions in arm B opened the bridge, did no read and no
+ * save, and left no trace — so `scripts/measure-harness.js` printed
+ * `not-measured`, which reads as "nobody ran it" when the truth was "four
+ * sessions ran and none of them used the memory layer". That is the exact
+ * confusion between an ABSENT measurement and a measured ZERO that the whole
+ * honesty meter exists to prevent, reproduced inside the instrument.
+ *
+ * A single startup line needs none of the coupling: one line is atomic on its
+ * own (131 bytes, far under the 512-byte PIPE_BUF floor), and there is no
+ * second line for it to be ordered against.
+ *
+ * Called TWICE at most per process, and the second time only to supply a
+ * client the first could not know:
+ *
+ *   at startup            `appendSessionLine()`            — no client yet
+ *   at `oninitialized`    `appendSessionLine({client})`    — the initialize era
+ *   (new era) first call  folded into `appendUsage`'s write — see there
+ *
+ * Fire-and-forget and total, exactly like `appendUsage`: the returned promise
+ * always resolves, and a log that cannot be written never reaches a caller.
+ */
+export async function appendSessionLine(entry = {}) {
+  // SYNCHRONOUS claims, before any await — the v3.3.0 rule. Two callers in one
+  // tick therefore produce one line each at most, never a duplicate.
+  const hasClient = entry.client !== undefined && entry.client !== null;
+  if (!_sessionLinePending && (!hasClient || !_sessionClientPending)) return;
+  _sessionLinePending = false;
+  if (hasClient) _sessionClientPending = false;
+  try {
+    const file = getMcpUsageLogPath();
+    const via = entry.via !== undefined ? entry.via : viaFromEnv();
+    // `undefined` when nothing was given, so the key is OMITTED rather than
+    // written as `other` — the distinction buildSessionLine draws.
+    const line = `${buildSessionLine({ sid: entry.sid || _sid, client: hasClient ? entry.client : undefined, via })}\n`;
+    try {
+      const st = await stat(file);
+      if (st.size >= MAX_LOG_BYTES) await rename(file, `${file}.1`);
+    } catch { /* absent or unstattable — appendFile decides */ }
+    await appendFile(file, line, 'utf8');
+  } catch (err) {
+    warnOnce(err);
+  }
 }
 
 /**
@@ -431,9 +513,22 @@ export function __resetSessionLine() {
  * holds (worst case 131 + 291 + 2 newlines = 424 bytes, under PIPE_BUF).
  */
 export async function appendUsage(entry) {
-  // SYNCHRONOUS claim — see _sessionLinePending. Nothing may await above this.
+  // SYNCHRONOUS claims — see _sessionLinePending. Nothing may await above this.
+  //
+  // THE FALLBACK ARM: no session line exists at all yet — the startup append
+  // never ran or could not claim. v3.63.0's coupled two-lines-one-write path,
+  // behaviour unchanged.
   const writeSession = _sessionLinePending;
+  // THE SECOND ARM (v3.64.0): a session line exists but names no client,
+  // because it was written at STARTUP before anyone had identified themselves.
+  // This is the first moment the question is answerable — both protocol eras
+  // have now been consulted by the dispatch — so the answer is written even
+  // when it is `other`. At a tool call `other` means "the client did not say",
+  // which is a reading; before one, absence means "nobody has been asked yet",
+  // which is not. At most TWO session lines per process, ever.
+  const writeClientLine = !writeSession && _sessionClientPending;
   if (writeSession) _sessionLinePending = false;
+  if (writeSession || writeClientLine) _sessionClientPending = false;
   try {
     const file = getMcpUsageLogPath();
     // `via` comes from the CHILD'S ENVIRONMENT, not from the dispatch handler:
@@ -442,8 +537,14 @@ export async function appendUsage(entry) {
     // the suites drive) and an explicit value wins.
     const via = entry && entry.via !== undefined ? entry.via : viaFromEnv();
     const toolLine = `${buildUsageLine({ ...(entry || {}), via })}\n`;
-    const sessionLine = writeSession
-      ? `${buildSessionLine({ sid: (entry && entry.sid) || _sid, client: entry && entry.client, via })}\n`
+    // `?? null`, NEVER `labelForClient()` here: this value is labelled ONCE,
+    // inside `buildSessionLine`. Labelling it twice turns a correctly-read
+    // harness into `other` for every client whose id differs from its raw name
+    // — which is most of them — and `normaliseStoredClient`'s docblock records
+    // that exact defect being caught on the read side. `null` (rather than
+    // undefined) is what makes the key PRESENT on this path.
+    const sessionLine = (writeSession || writeClientLine)
+      ? `${buildSessionLine({ sid: (entry && entry.sid) || _sid, client: (entry && entry.client) ?? null, via })}\n`
       : '';
     // Rotate BEFORE appending, so the new line always lands in a file under
     // the cap. Statting per call rather than tracking the size in memory: the
@@ -461,6 +562,93 @@ export async function appendUsage(entry) {
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
+
+/**
+ * EVERY usage log this machine may be writing — not just the one this process
+ * would write to.
+ *
+ * ── THE MEASUREMENT (2026-09-20, the maintainer's Mac) ─────────────────────
+ *
+ * One machine, one user, two Curators: a git checkout the CLI and `npm start`
+ * run from, and the installed `.app` Claude Desktop launches the bridge out
+ * of. `getUserDataDir()` resolves differently in each by design — APP_ROOT in
+ * repo mode, `~/Library/Application Support/The Curator` in bundle mode — so
+ * `getMcpUsageLogPath()` answered two different files:
+ *
+ *     <checkout>/.mcp-usage.jsonl                                (the CLI's)
+ *     ~/Library/Application Support/The Curator/.mcp-usage.jsonl (the .app's)
+ *
+ * Every bridge call the user actually made landed in the second. The stop
+ * hook, running from the checkout, read the first — and found no save, ever.
+ * `stopDecision`'s rung 3 ("a save landed in this session") could therefore
+ * never fire, and the hook asked the model to save again at the end of every
+ * single turn, including turns that had just saved. A nudge that fires when
+ * the thing it asks for has already happened is a nudge an agent learns to
+ * ignore, which costs the whole capture mechanism its credibility.
+ *
+ * ── WHY A UNION, AND WHY ONLY FOR READERS ──────────────────────────────────
+ *
+ * A READ of both is always safe: the lines are content-free, they are this
+ * user's own, and the worst an extra file can do to the hook's tally is push
+ * it towards asking LESS often — the fail-safe direction, the same one
+ * `tallyUsageLines` already takes for a line with no `project`.
+ *
+ * A WRITE must never be split across them, and nothing here writes: the
+ * appender keeps using `getMcpUsageLogPath()` alone, so a process appends to
+ * its OWN log and the rotation arithmetic stays about one file. Two writers
+ * on one file is what `O_APPEND` + `PIPE_BUF` makes safe; two files one
+ * writer each is simply two files.
+ *
+ * ── THE BUNDLE PATH IS IMPORTED, NEVER RETYPED ─────────────────────────────
+ *
+ * `getAppSupportDir()` is the same function `paths.js`'s own bundle branch
+ * calls, and the BASENAME is taken from `getMcpUsageLogPath()` rather than
+ * written out a second time. A second spelling of either would be the exact
+ * class of drift this module's own docblock warns about — and the failure
+ * would be silent, because a path that names no file reads as an empty log.
+ *
+ * ── AND IT MUST NOT REACH OUT OF AN ISOLATED TEST ──────────────────────────
+ *
+ * A suite that redirects user data to a tempdir must not then be handed the
+ * maintainer's real log: its expected counts would move with whatever he had
+ * done that morning. So the second candidate is offered ONLY when this
+ * process resolved its user-data dir the ordinary way. Both seams are
+ * checked, because `__setUserDataDirOverride` leaves no env var behind.
+ *
+ * `deps` is the test seam for this function itself — the arms it has
+ * (isolated / repo-with-a-bundle-log / repo-without / a bundle install) are
+ * otherwise reachable only by being a different install.
+ */
+export function candidateUsageLogPaths(deps = {}) {
+  const primary = deps.primary || getMcpUsageLogPath();
+  const out = [primary];
+  const exists = deps.exists || existsSync;
+  try {
+    // TEST-ONLY SEAM, in the CURATOR_TEST_* family and unset in production.
+    // `deps.bundleDir` cannot cross a process boundary, and the union's whole
+    // point is what a SPAWNED `my-curator hook` sees; the isolation rule below
+    // would otherwise suppress the second candidate in every suite, leaving the
+    // behaviour testable only by unit. When this is set, the suite has named
+    // the directory itself — so it is a fixture, not the maintainer's home,
+    // and the suppression does not apply.
+    const seam = (deps.env || process.env).CURATOR_TEST_BUNDLE_LOG_DIR;
+    if (seam) {
+      const c = path.join(path.resolve(seam), path.basename(primary));
+      if (c !== primary && exists(c)) out.push(c);
+      return out;
+    }
+    const bundle = deps.bundleDir !== undefined ? deps.bundleDir : getAppSupportDir();
+    const userData = deps.userDataDir !== undefined ? deps.userDataDir : getUserDataDir();
+    const bundleInstall = deps.isBundle !== undefined ? deps.isBundle : isBundleInstall();
+    const env = deps.env || process.env;
+    const appRoot = deps.appRoot !== undefined ? deps.appRoot : APP_ROOT;
+    const isolated = !!env.CURATOR_TEST_USER_DATA_DIR || (!bundleInstall && userData !== appRoot);
+    if (isolated || !bundle) return out;
+    const candidate = path.join(bundle, path.basename(primary));
+    if (candidate !== primary && exists(candidate)) out.push(candidate);
+  } catch { /* a candidate we cannot resolve is simply not offered */ }
+  return out;
+}
 
 // Parsed lines, cached on the identity of the two files (mtime + size of each,
 // and whether each exists). Nothing else invalidates it, because nothing else
@@ -503,7 +691,11 @@ function parseLines(text) {
         // `normaliseStoredClient`, NOT `labelForClient`: what is on the line is
         // already a canonical id, and most ids are not also raw keys, so the
         // write-side function would quietly re-label `codex` as `other`.
-        client: normaliseStoredClient(rec.client),
+        // ABSENT (v3.64.0's startup line) stays NULL rather than becoming
+        // `other`: "nobody has said yet" is not "a name we did not know".
+        client: rec.client === undefined || rec.client === null
+          ? null
+          : normaliseStoredClient(rec.client),
       });
       continue;
     }
@@ -751,6 +943,7 @@ export function summariseSessions(records, opts = {}) {
 
   const bySid = new Map();
   const clients = new Map();
+  const unattributedSessions = new Set();
   let legacyLines = 0;
   let selfTestLines = 0;
 
@@ -763,9 +956,47 @@ export function summariseSessions(records, opts = {}) {
     const sid = typeof raw.sid === 'string' && SID_RE.test(raw.sid) ? raw.sid : null;
 
     if (raw.ev === SESSION_EV) {
-      // The client carrier. It names no project, so it is never filtered by
+      if (!sid) continue;
+      // THE CLIENT CARRIER. It names no project, so it is never filtered by
       // one — it is joined to whichever sessions survive the filter below.
-      if (sid && !clients.has(sid)) clients.set(sid, normaliseStoredClient(raw.client));
+      //
+      // FROM ANY LINE OF THE SID, not just the first (v3.64.0): a process now
+      // writes its session line at STARTUP, before any client has identified
+      // itself, and supplies the client on a second line once one has. First
+      // -one-wins would therefore pin every session to `null` and lose the
+      // harness label the whole measurement is about.
+      const c = raw.client === undefined || raw.client === null
+        ? null
+        : normaliseStoredClient(raw.client);
+      if (c !== null || !clients.has(sid)) clients.set(sid, c);
+
+      // AND THE SESSION ITSELF (v3.64.0). A bridge that was opened and never
+      // asked for a tool is a session that READ NOTHING AND SAVED NOTHING —
+      // which is a measurement, and a different one from "no session ran".
+      // Before this, such a session left only lines `bySid` never looked at,
+      // and every reader reported zero sessions: `measure-harness` printed
+      // `not-measured` over four real Claude Code sessions in arm B, which
+      // reads as "nobody ran it". An absent measurement and a measured zero
+      // are the two things this file exists to keep apart.
+      //
+      // It is seeded ONLY when no project filter is in force. A zero-call
+      // session names no project and cannot be attributed to one; counting it
+      // under every project would inflate each project's denominator with the
+      // same session. Those are disclosed separately as `unattributedSessions`
+      // so a per-project reader can still tell that sessions happened.
+      if (wantProject) { unattributedSessions.add(sid); continue; }
+      let z = bySid.get(sid);
+      if (!z) {
+        z = {
+          sid, startedAt: at, endedAt: at, calls: 0,
+          firstSaveAt: null, firstReadAt: null, saved: false,
+          project: null, inWindow: false,
+        };
+        bySid.set(sid, z);
+      }
+      if (at < z.startedAt) z.startedAt = at;
+      if (at > z.endedAt) z.endedAt = at;
+      if (since === null || at >= since) z.inWindow = true;
       continue;
     }
 
@@ -836,6 +1067,21 @@ export function summariseSessions(records, opts = {}) {
       legacyLines,
       selfTestLines,
     },
+    // A SIBLING OF `totals`, DELIBERATELY, and the reason is a pinned key set
+    // rather than taste: `GET /api/memory/:domain/:project/capture` forwards
+    // `totals` WHOLESALE and `scripts/test-memory-capture-route.js` asserts
+    // its key set EXACTLY. A new member there is a new field in a shipped
+    // envelope nobody asked for, in another package's file, in the same
+    // commit. Beside it, it is available to any caller that wants it and
+    // invisible to one that does not.
+    //
+    // WHAT IT COUNTS: sessions that exist — a bridge opened — but name no
+    // project, so a PROJECT-filtered reading cannot claim them. Counting them
+    // under every project would inflate each project's denominator with the
+    // same session; reporting nothing would tell a per-project reader that
+    // nothing ran. Always 0 when no filter was given, because then they are
+    // counted as sessions proper.
+    unattributedSessions: unattributedSessions.size,
   };
 }
 

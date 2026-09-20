@@ -8457,6 +8457,61 @@ function deriveMcpStatus(m) {
 }
 
 /**
+ * THE BRIDGE THAT IS STILL RUNNING YESTERDAY'S CODE (v3.64.0).
+ *
+ * A third thing this screen can be wrong about, and until now the only one it
+ * could not see at all. `installed`/`stale` are about the launch line SAVED in
+ * a client's config; the self-test is about a bridge spawned FRESH, half a
+ * second ago. Neither says anything about the long-lived child process the
+ * client actually has open — and that process keeps running the code it was
+ * started with until its client is restarted.
+ *
+ * Measured on the maintainer's Mac, 2026-09-20: a bridge alive since 2026-09-18
+ * across five in-app updates, serving 22 tools (pre-v3.59.0 — no
+ * `get_project_context`, no `save_foundation`) to Claude Desktop while the
+ * files on disk were v3.63.0. The pill read Connected. The self-test passed.
+ * Both were true, and the user's agent was still missing two tools.
+ *
+ * The app cannot fix it: the process's parent is the client, not The Curator,
+ * so nothing here may signal it and nothing here does. The only honest move is
+ * to name the fact and the remedy, and `src/routes/mcp.js` supplies the
+ * remedy SENTENCE in the payload rather than this file authoring a second copy
+ * of it — the same rule `agent-instructions.js` follows for text a model
+ * reads, applied to text a user acts on.
+ *
+ * Returns null when there is nothing to say, which is every one of:
+ *   - the route did not look (`checked: false`) — "we did not look" is NOT
+ *     "there is none", and a note that conflated them would be the exact
+ *     defect this reading exists to prevent;
+ *   - it looked and every running bridge postdates the current code;
+ *   - the payload predates this release and carries no such field.
+ */
+function deriveStaleBridgeNote(m, now = Date.now()) {
+  const bp = m && m.bridge_processes;
+  if (!bp || bp.checked !== true || !Array.isArray(bp.stale) || !bp.stale.length) return null;
+  const n = bp.stale.length;
+  const oldest = bp.stale[0];
+  const secs = Number.isFinite(oldest && oldest.ageMs)
+    ? Math.max(0, Math.round(oldest.ageMs / 1000))
+    : ageSecondsOf(oldest && oldest.startedAt, now);
+  const age = formatAge(secs);
+  return {
+    count: n,
+    ageWords: age,
+    text: (n === 1
+      ? 'One bridge process is still running from before this version'
+      : n + ' bridge processes are still running from before this version')
+      + (age ? ' — the oldest started ' + age : '')
+      + (n === 1
+        ? '. It was launched by an MCP client and keeps serving the tools it started with, so an '
+          + 'update to The Curator does not reach it.'
+        : '. They were launched by MCP clients and keep serving the tools they started with, so an '
+          + 'update to The Curator does not reach them.'),
+    remedy: typeof m.bridge_stale_remedy === 'string' ? m.bridge_stale_remedy : null,
+  };
+}
+
+/**
  * Defect 2 fix — the pill and the self-test result answer DIFFERENT
  * questions, and nothing on screen used to say so.
  *
@@ -8602,11 +8657,25 @@ function renderMcp() {
     'to be re-run whenever your knowledge folder, the app, or Node moves. ' +
     docsLinkHtml('settings.mcp-bridge', 'Read more in the guide');
 
+  // The bridge-process note sits directly under the status card and ABOVE the
+  // buttons, because it qualifies the PILL: "Connected" is true and what is
+  // connected is running older code. It is not the outcome of anything the
+  // user just pressed, which is what the two notes below the buttons are.
+  const bridgeNote = deriveStaleBridgeNote(m);
+  const bridgeNoteHtml = bridgeNote
+    ? '<div class="settings-mcp-stale-note" role="status">' +
+        icon('alertTriangle', 15) +
+        '<span>' + escapeHtml(bridgeNote.text) +
+        (bridgeNote.remedy ? ' <strong>' + escapeHtml(bridgeNote.remedy) + '</strong>' : '') +
+      '</span></div>'
+    : '';
+
   const connectBody =
     '<div class="settings-status-card">' +
       '<span class="' + pillClass + '"><span class="status-pill-dot"></span>' + pillLabel + '</span>' +
       '<code class="mono mcp-path-line">Claude Desktop → ' + escapeHtml(m.mcp_server_name) + ' → ' + escapeHtml(m.domains_dir) + '</code>' +
     '</div>' +
+    bridgeNoteHtml +
     // Body-level buttons, so md (32px): the SIZE is the container's decision,
     // per the taxonomy comment above `.btn` in shell.css. Exactly one primary
     // — the wizard is the single action that completes this block. Self-test
@@ -8666,11 +8735,33 @@ function renderSelfTestResult() {
   }
   const names = (r.tool_names || []).slice(0, 6).join(', ') + ((r.tool_names || []).length > 6 ? ', …' : '');
   const domainsNote = Array.isArray(r.domains) ? r.domains.length + ' domain(s) visible' : 'no domains found yet';
+  // WHAT A GREEN PASS DOES NOT COVER (v3.64.0). This spawned a NEW child a
+  // moment ago; the tool count above is that child's. A bridge a client has
+  // had open since before the last update is a different process running
+  // different code, and saying "N tools" without qualifying it is how a user
+  // concludes their agent must be able to see all N. The row is added only
+  // when the route actually found one — never as a standing disclaimer.
+  const bridge = state.mcp ? deriveStaleBridgeNote(state.mcp) : null;
+  const bridgeRow = bridge
+    ? '<div class="check-row check-warn">' +
+        '<span class="check-glyph">' + icon('alertTriangle', 13) + '</span>' +
+        '<span class="check-label">…but not the one already open</span>' +
+        '<span class="check-detail">' + escapeHtml(
+          'This spawned a fresh bridge. '
+          + (bridge.count === 1
+            ? 'A bridge your client already had open started before this version'
+            : bridge.count + ' bridges your client already had open started before this version')
+          + (bridge.ageWords ? ' (the oldest ' + bridge.ageWords + ')' : '')
+          + (bridge.count === 1 ? ' and still offers' : ' and still offer')
+          + ' the older tool list.') +
+        '</span>' +
+      '</div>'
+    : '';
   return '<div class="settings-check-results"><div class="check-row check-ok">' +
     '<span class="check-glyph">' + icon('checkAlt', 13) + '</span>' +
     '<span class="check-label">Bridge responds</span>' +
     '<span class="check-detail mono">' + escapeHtml(String(r.tool_count)) + ' tools (' + escapeHtml(names) + ') · ' + escapeHtml(domainsNote) + '</span>' +
-  '</div></div>';
+  '</div>' + bridgeRow + '</div>';
 }
 
 

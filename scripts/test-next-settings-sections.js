@@ -168,6 +168,12 @@ const REAL = [
   extractFunction(src, 'infoMark'),
   extractFunction(src, 'deriveMcpStatus'),
   extractFunction(src, 'shouldShowMcpStaleNote'),
+  // v3.64.0. Lifted REAL for the same reason its two neighbours are: the
+  // bridge-process note fires from a real decision function, and a stub would
+  // make any assertion about it an assertion about this file's fixture. With
+  // no `bridge_processes` on the fixture payload it correctly renders nothing,
+  // which is also the arm that proves an older server's payload is survivable.
+  extractFunction(src, 'deriveStaleBridgeNote'),
   extractFunction(src, 'installUpdateStyle'),
   extractFunction(src, 'renderTextSize'),
   extractFunction(src, 'renderBackgroundMode'),

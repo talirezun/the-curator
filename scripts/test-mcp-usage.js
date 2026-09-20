@@ -570,7 +570,16 @@ ok(!!init?.result?.serverInfo, 'the child initialises');
 child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 const listed = await rpc('tools/list');
 eq((listed?.result?.tools || []).length, registry.length, `the wire still carries ${registry.length} tools`);
-ok(!existsSync(CHILD_LOG), 'listing tools is not a tool CALL and writes nothing');
+// v3.64.0: the SESSION line is written at startup, so the log exists before
+// any tool has run. What `tools/list` must still not write is a TOOL line —
+// listing is not a call, and a tile lit by a client's own catalogue refresh
+// would be a false reading. Asserted on the tool lines, which is the claim
+// this line has always been about.
+{
+  const early = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)) : [];
+  ok(early.every((r) => r.ev === 'session'), 'listing tools is not a tool CALL and writes no tool line');
+  ok(early.length > 0, '…while the startup session line IS there (v3.64.0 — a bridge that is opened has begun)');
+}
 
 const wireOk = await rpc('tools/call', { name: 'list_domains', arguments: {} });
 ok(/zz-usage/.test(wireOk?.result?.content?.[0]?.text || ''), 'list_domains answers over the wire');
@@ -579,9 +588,15 @@ ok(/"ok": false/.test(wireRefused?.result?.content?.[0]?.text || ''), 'the overs
 await settle(500);
 
 const childAll = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter(l => l.trim()) : [];
+// STILL THREE, and still ONE session line — but v3.64.0 moved WHEN it is
+// written (from the first tool call to `notifications/initialized`), so its
+// POSITION moved: it is now the first line in the file rather than the first
+// of a pair. See §13 for the measurement that bought the move.
 eq(childAll.length, 3, `the child wrote its session line plus one per tool call (got ${childAll.length})`);
 const childSession = childAll.map((l) => JSON.parse(l)).filter((r) => r.ev === 'session');
 eq(childSession.length, 1, 'exactly ONE session line from the child — one bridge process is one session');
+eq(JSON.parse(childAll[0]).ev, 'session',
+  '…and it is the FIRST line in the file, written when the client identified itself');
 const childLines = childAll.filter((l) => JSON.parse(l).ev !== 'session');
 const childRecs = childLines.map(l => JSON.parse(l));
 eq(childRecs[0].tool, 'list_domains', 'the first line is the first call');
@@ -1014,10 +1029,25 @@ section('§10  `client` — two protocol eras, an allow-list, and no branch');
   // `other` row teaches a reader nothing — but `verified: false` is DATA, so a
   // measurement pass can find them and a wrong label costs only a word.
   const unverified = clients.CLIENT_ROWS.filter((r) => !r.verified).map((r) => r.raw).sort();
-  eq(unverified.join(','), 'claude-ai,claude-code,cursor-vscode',
-    'exactly three rows are marked unverified — the community-reported ones');
+  const community = clients.CLIENT_ROWS.filter((r) => r.evidence === 'community').map((r) => r.raw).sort();
+  // DERIVED, NOT A HARDCODED LIST (v3.64.0). The set moves the moment a row is
+  // MEASURED — package M has just moved `claude-code` from `community` to
+  // `observed` — and a typed list would red the day the campaign succeeds,
+  // which is the wrong incentive to put on a measurement. The equality is
+  // also STRICTLY STRONGER than the implication below it: that one only says
+  // unverified ⊆ community, so a community row quietly marked `verified: true`
+  // would pass it and fails here.
+  eq(unverified.join(','), community.join(','),
+    `the unverified rows are EXACTLY the community-reported ones (${unverified.length} of ${clients.CLIENT_ROWS.length})`);
   ok(clients.CLIENT_ROWS.every((r) => r.verified === true || r.evidence === 'community'),
     'and `verified: false` implies `evidence: community` — no row is unverified for a second reason');
+  // The two that are community-reported in EVERY build to date, named so the
+  // set can never quietly empty out.
+  for (const raw of ['claude-ai', 'cursor-vscode']) {
+    const row = clients.CLIENT_ROWS.find((r) => r.raw === raw);
+    ok(row && row.evidence === 'community' && row.verified === false,
+      `\`${raw}\` is community-reported and marked unverified`);
+  }
   // `claude-ai` IS CLAUDE DESKTOP. Conflating it with Claude Code would put
   // desktop-chat sessions in a coding harness's row.
   eq(clients.labelForClient('claude-ai'), 'claude-desktop', 'claude-ai is Claude DESKTOP');
@@ -1312,6 +1342,102 @@ section('§12  summariseSessions — the honesty meter, as a pure function');
     'a malformed sid is not a session id — the line is legacy, never a forged session');
   // The reading is PURE: it wrote nothing.
   eq(readLines().length, rows.length, 'summarising the log left it byte-for-byte unchanged');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§13  A bridge that is OPENED and never used is still a session');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// MEASURED 2026-09-20, by the harness campaign: four real Claude Code sessions
+// in arm B opened the bridge, read nothing and saved nothing — and left NO
+// LINE AT ALL, because v3.63.0 wrote the session line lazily, in the same
+// append as the process's first tool line. `scripts/measure-harness.js`
+// therefore printed `not-measured` over four sessions that had demonstrably
+// run, which reads as "nobody ran it". An ABSENT measurement and a MEASURED
+// ZERO are the two things this whole log exists to keep apart, and the
+// instrument was confusing them.
+//
+// Driven over REAL stdio, with `initialize` and `notifications/initialized`
+// and NO `tools/call`, because that is the arm in question and nothing
+// in-process can produce it.
+{
+  const SOLO_USER_DATA = path.join(TMP, 'solo-userdata');
+  mkdirSync(SOLO_USER_DATA, { recursive: true });
+  const SOLO_LOG = path.join(SOLO_USER_DATA, '.mcp-usage.jsonl');
+  const soloEnv = { ...env, CURATOR_TEST_USER_DATA_DIR: SOLO_USER_DATA };
+  const solo = spawn(process.execPath, [MCP_SERVER, '--domains-path', DOMAINS], { stdio: ['pipe', 'pipe', 'pipe'], env: soloEnv });
+  let soloOut = '';
+  solo.stdout.on('data', (d) => { soloOut += d; });
+  solo.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claude-code', version: '1' } } })}\n`);
+  await new Promise((r) => setTimeout(r, 400));
+  solo.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+  await new Promise((r) => setTimeout(r, 600));
+  try { solo.kill('SIGKILL'); } catch { /* gone */ }
+  await new Promise((r) => setTimeout(r, 150));
+
+  let soloLines = [];
+  try { soloLines = readFileSync(SOLO_LOG, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); }
+  catch { soloLines = []; }
+
+  eq(soloLines.length, 1, `a bridge that answered only initialize still wrote ${soloLines.length} line(s)`);
+  eq(soloLines[0].ev, usage.SESSION_EV,
+    'and it is a session line — no tool ran, so no tool line exists');
+  ok(usage.SID_RE.test(soloLines[0].sid), 'carrying a well-formed sid');
+  // WHY `notifications/initialized` AND NOT `connect()`: a line with no client
+  // cannot be attributed to a harness, and attribution is the whole point of
+  // the measurement. The SDK populates `getClientVersion()` in `_oninitialize`,
+  // so this is the first instant the name exists.
+  eq(soloLines[0].client, 'claude-code',
+    '…and the CLIENT, which is what makes the session attributable to a harness at all');
+  ok(soloOut.trim().split('\n').filter(Boolean).every((l) => { try { JSON.parse(l); return true; } catch { return false; } }),
+    'and stdout is still pure JSON-RPC — the v2.5.3 rule, re-checked on the new write');
+
+  // THE READING. Four such sessions must summarise as four sessions that read
+  // nothing and saved nothing — a measured zero.
+  const at = (min) => new Date(Date.parse('2026-09-18T12:00:00.000Z') - min * 60_000).toISOString();
+  const four = [];
+  for (const sid of ['a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3', 'd4d4d4d4d4d4']) {
+    four.push({ ts: at(1), ev: usage.SESSION_EV, sid, client: 'claude-code' });
+  }
+  const sum = usage.summariseSessions(four);
+  eq(sum.totals.sessions, 4, 'four bridge-only sessions summarise as FOUR sessions');
+  eq(sum.totals.sessionsRead, 0, '…none of which read');
+  eq(sum.totals.sessionsSaved, 0, '…and none of which saved');
+  eq(sum.totals.legacyLines, 0, '…and none of which is counted as a legacy line');
+  eq(sum.sessions.length, 4, '…four rows, not an empty list a vacuous `every` would pass over');
+  ok(sum.sessions.every((x) => x.calls === 0 && x.client === 'claude-code'),
+    '…each with zero calls and the harness label off its session line');
+
+  // The client is taken from ANY line of the sid, not the first: first-one
+  // -wins would pin every session to null and lose the label entirely.
+  const reversed = usage.summariseSessions([
+    { ts: at(1), ev: usage.SESSION_EV, sid: 'e5e5e5e5e5e5', client: 'codex' },
+    { ts: at(2), ev: usage.SESSION_EV, sid: 'e5e5e5e5e5e5' },
+  ]);
+  eq(reversed.sessions[0].client, 'codex', 'a clientless line NEVER overwrites a client already seen');
+
+  // A PROJECT-FILTERED reading cannot claim them: a zero-call session names no
+  // project, and counting it under every project would inflate each
+  // denominator with the same session. Disclosed instead.
+  const filtered = usage.summariseSessions(four, { project: 'lumina' });
+  eq(filtered.totals.sessions, 0, 'a per-PROJECT reading claims none of them');
+  eq(filtered.unattributedSessions, 4, '…and discloses all four as unattributed');
+  eq(sum.unattributedSessions, 0, '…while an unfiltered reading has none to disclose');
+
+  // AND THE INSTRUMENT ITSELF. `scripts/measure-harness.js` keeps its own
+  // parser (it must run against a log written by a build older than itself),
+  // so the fix is only real if ITS verdict moves too. Driven over the log the
+  // REAL bridge just wrote, three lines above — not a hand-built one.
+  const mh = await import(path.join(ROOT, 'scripts/measure-harness.js'));
+  const bucketed = mh.bucketLines(readFileSync(SOLO_LOG, 'utf8').split('\n'), 0);
+  const row = mh.buildHarnessRow(bucketed, 'claude-code', { minSessions: 4 });
+  eq(row.sessions, 1, 'measure-harness counts the real bridge-only session as ONE session');
+  eq(row.verdict, mh.VERDICTS.NO,
+    'its verdict is `measured-no` — a measured zero, NOT `not-measured`, which would read as "nobody ran it"');
+  const fourRow = mh.buildHarnessRow(
+    mh.bucketLines(four.map((l) => JSON.stringify(l)), 0), 'claude-code', { minSessions: 4 });
+  eq(fourRow.sessions, 4, '…and four such sessions are four');
+  eq(fourRow.verdict, mh.VERDICTS.NO, '…still `measured-no`, which is the reading arm B actually earned');
 }
 
 // ── Cleanup ────────────────────────────────────────────────────────────────

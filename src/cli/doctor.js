@@ -31,12 +31,22 @@
 import { existsSync, readFileSync, statSync, accessSync, constants as FS } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates,
+} from '../brain/harness-adapters.js';
+import { STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { EXIT_OK, out, note, flagStr, flagBool, findMarker, resolveProjectForCli } from './resolve.js';
 
 export const DOCTOR_USAGE = 'my-curator doctor [--project <domain/project>] [--json] [--alias]';
 
-const MCP_SERVER_NAME = 'my-curator';
-/** Codex truncates its instruction file at this many bytes, silently. */
+/**
+ * Codex truncates its instruction file at this many bytes, silently.
+ *
+ * Kept as a named export because two suites import it, but it is no longer the
+ * value this file USES: the cap that reaches a report comes off the adapter
+ * table's `instructionFile.cap`, and the assertion below is what stops the two
+ * drifting rather than a comment asking somebody to remember.
+ */
 export const CODEX_DOC_MAX_BYTES = 32 * 1024;
 
 const HOME = (() => { try { return os.homedir(); } catch { return ''; } })();
@@ -44,132 +54,90 @@ const home = (...p) => (HOME ? path.join(HOME, ...p) : '');
 
 /**
  * Where each harness keeps its MCP servers, its hooks, and the file it will
- * actually read for instructions. Paths are the ones §2 of the design record
- * measured; a harness whose path was not verified is named as unverified
- * rather than guessed at, because a doctor that reports "not configured" for a
- * file it looked for in the wrong place is worse than one that says it did not
- * look.
+ * actually read for instructions — DERIVED, since v3.64.0, from
+ * `src/brain/harness-adapters.js` rather than typed out a second time here.
+ *
+ * ── WHY THE COPY IS GONE ───────────────────────────────────────────────────
+ *
+ * Until v3.64.0 this function hand-listed about forty absolute paths that had
+ * to agree, file by file, with the adapter table's own. That table's docblock
+ * named the seam in terms — "the right end state is that `doctor.js` imports
+ * `harnessTargets` from THIS file" — and `scripts/test-harness-adapters.js` §4
+ * existed only to make the drift non-silent by comparing the two for set
+ * equality. Two hand-maintained copies of one thing is the defect this
+ * repository records most often; the copy is what has been removed, not the
+ * check. (§4 now asserts that the derivation is faithful rather than that two
+ * authors stayed in step — a weaker but honest reading, and it is the
+ * orchestrator's call whether to re-point it.)
+ *
+ * The adapter table imports NO Node builtin, by design, so this costs a CLI
+ * startup nothing but a frozen object graph.
+ *
+ * ── WHICH HARNESSES GET A ROW, AND WHY THAT IS A RULE RATHER THAN A LIST ───
+ *
+ * A harness is reported when doctor has somewhere to LOOK — at least one
+ * measured MCP config location — or when it has no MCP client at all
+ * (`mcpConfig === null`, which today is Aider alone, and saying so is the
+ * whole content of its row).
+ *
+ * `kilo` and `dsh` fail both tests: the table carries a config FORMAT for each
+ * and zero paths, because their file locations are unmeasured and it says so.
+ * They are therefore exactly the harnesses this command cannot look for, and
+ * reporting "not configured" about a file nobody looked for is the failure
+ * this file's original docblock already refused. Those two are excluded by the
+ * rule, not by name — measure a path for either and its row appears.
+ *
+ * ── THE THREE SHAPES THAT ARE DERIVED RATHER THAN CARRIED ──────────────────
+ *
+ *   kind   — the config FORMAT decides how the file is inspected: `json` is
+ *            parsed, `toml` is line-scanned (this package ships no TOML
+ *            reader), anything else is `opaque` — present or absent and no
+ *            claim about its contents. Goose's YAML is the only `opaque` one.
+ *   tomlKey— `[<key>.<server name>]`, composed from the table's own `key`, so
+ *            a harness that renames its table needs no edit here.
+ *   dir    — a hook target with NO file extension is a DIRECTORY (Copilot
+ *            CLI's `~/.copilot/hooks`); one with an extension is a file
+ *            (goose's `hooks.json`). A rule over the shape, because the table
+ *            does not carry the distinction and inventing a field in it would
+ *            be editing a file this package does not own.
  */
 export function harnessTargets(cwd) {
-  const P = (...p) => path.join(cwd, ...p);
-  return [
-    {
-      id: 'claude-desktop', label: 'Claude Desktop',
-      mcp: [
-        { file: home('Library', 'Application Support', 'Claude', 'claude_desktop_config.json'), kind: 'json', key: 'mcpServers' },
-        { file: home('.config', 'Claude', 'claude_desktop_config.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [], instructions: [],
-    },
-    {
-      id: 'claude-code', label: 'Claude Code',
-      mcp: [
-        { file: home('.claude.json'), kind: 'json', key: 'mcpServers' },
-        { file: P('.mcp.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [
-        { file: home('.claude', 'settings.json'), kind: 'json' },
-        { file: P('.claude', 'settings.json'), kind: 'json' },
-        { file: P('.claude', 'settings.local.json'), kind: 'json' },
-      ],
-      instructions: [{ file: P('CLAUDE.md') }],
-    },
-    {
-      id: 'codex', label: 'OpenAI Codex CLI',
-      mcp: [
-        { file: home('.codex', 'config.toml'), kind: 'toml', tomlKey: `[mcp_servers.${MCP_SERVER_NAME}]` },
-        { file: P('.codex', 'config.toml'), kind: 'toml', tomlKey: `[mcp_servers.${MCP_SERVER_NAME}]` },
-      ],
-      hooks: [
-        { file: home('.codex', 'hooks.json'), kind: 'json' },
-        { file: P('.codex', 'hooks.json'), kind: 'json' },
-      ],
-      // 32 KiB cap, silently truncated past it.
-      instructions: [{ file: P('AGENTS.md'), maxBytes: CODEX_DOC_MAX_BYTES }],
-    },
-    {
-      id: 'gemini-cli', label: 'Gemini CLI',
-      mcp: [
-        { file: home('.gemini', 'settings.json'), kind: 'json', key: 'mcpServers' },
-        { file: P('.gemini', 'settings.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [
-        { file: home('.gemini', 'settings.json'), kind: 'json' },
-        { file: P('.gemini', 'settings.json'), kind: 'json' },
-      ],
-      // `context.fileName` is a NESTED ARRAY and has replaced the old flat
-      // `contextFileName`; `AGENTS.md` is opt-in and not read by default.
-      instructions: [{ file: P('GEMINI.md'), fromSetting: 'context.fileName' }],
-    },
-    {
-      id: 'cursor', label: 'Cursor',
-      mcp: [
-        { file: home('.cursor', 'mcp.json'), kind: 'json', key: 'mcpServers' },
-        { file: P('.cursor', 'mcp.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [
-        { file: home('.cursor', 'hooks.json'), kind: 'json' },
-        { file: P('.cursor', 'hooks.json'), kind: 'json' },
-      ],
-      instructions: [{ file: P('.cursor', 'rules') }, { file: P('AGENTS.md') }],
-    },
-    {
-      id: 'copilot-cli', label: 'GitHub Copilot CLI',
-      mcp: [
-        { file: home('.copilot', 'mcp-config.json'), kind: 'json', key: 'mcpServers' },
-        { file: P('.github', 'mcp.json'), kind: 'json', key: 'mcpServers' },
-        { file: P('.mcp.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [{ file: home('.copilot', 'hooks'), kind: 'dir' }, { file: P('.github', 'hooks'), kind: 'dir' }],
-      instructions: [{ file: P('CLAUDE.md') }, { file: P('GEMINI.md') }],
-    },
-    {
-      id: 'cline', label: 'Cline',
-      // The docs say `~/.cline/mcp.json`; the SOURCE says the settings path.
-      // Source wins, and both are checked.
-      mcp: [
-        { file: home('.cline', 'data', 'settings', 'cline_mcp_settings.json'), kind: 'json', key: 'mcpServers' },
-        { file: home('.cline', 'mcp.json'), kind: 'json', key: 'mcpServers' },
-      ],
-      hooks: [], instructions: [],
-    },
-    {
-      id: 'opencode', label: 'OpenCode',
-      mcp: [
-        { file: home('.config', 'opencode', 'opencode.json'), kind: 'json', key: 'mcp' },
-        { file: P('opencode.json'), kind: 'json', key: 'mcp' },
-      ],
-      // Hooks are TypeScript PLUGINS, not shell commands — nothing to install.
-      hooks: [], instructions: [{ file: P('AGENTS.md') }, { file: P('CLAUDE.md') }],
-    },
-    {
-      id: 'goose', label: 'goose',
-      mcp: [{ file: home('.config', 'goose', 'config.yaml'), kind: 'opaque' }],
-      hooks: [{ file: home('.agents', 'plugins'), kind: 'dir' }],
-      instructions: [],
-    },
-    {
-      id: 'windsurf', label: 'Windsurf / Devin Desktop',
-      mcp: [{ file: home('.codeium', 'windsurf', 'mcp_config.json'), kind: 'json', key: 'mcpServers' }],
-      // 12 hooks, none of them a stop, session-end or pre-compaction hook.
-      hooks: [], instructions: [],
-    },
-    {
-      id: 'zed', label: 'Zed',
-      // A FLAT `context_servers`, not `mcpServers`.
-      mcp: [{ file: home('.config', 'zed', 'settings.json'), kind: 'json', key: 'context_servers' }],
-      hooks: [],
-      // FIRST MATCH, and `.rules` and `AGENTS.md` OUTRANK `CLAUDE.md` — a block
-      // pasted into CLAUDE.md in a repo that has AGENTS.md is dead text here.
-      instructions: [{ file: P('.rules') }, { file: P('AGENTS.md') }, { file: P('CLAUDE.md') }],
-      firstMatch: true,
-    },
-    {
-      id: 'aider', label: 'Aider',
-      mcp: [], hooks: [], instructions: [],
-      noMcpClient: true,
-    },
-  ];
+  const dirs = { home: HOME, project: cwd };
+  const kindFor = (format) => (format === 'json' ? 'json' : format === 'toml' ? 'toml' : 'opaque');
+  const rows = [];
+  for (const id of listHarnesses()) {
+    const a = adapterFor(id);
+    if (!a) continue;
+    const cfg = a.mcpConfig || null;
+    const mcpFiles = cfg
+      ? [...resolveTemplates(cfg.user || [], dirs), ...resolveTemplates(cfg.project || [], dirs)]
+      : [];
+    if (cfg && mcpFiles.length === 0) continue;   // nowhere measured to look
+    const kind = cfg ? kindFor(cfg.format) : 'json';
+    const row = {
+      id: a.id,
+      label: a.label,
+      mcp: mcpFiles.map((file) => ({
+        file,
+        kind,
+        key: cfg?.key || null,
+        tomlKey: kind === 'toml' ? `[${cfg.key}.${MCP_SERVER_NAME}]` : undefined,
+      })),
+      hooks: ['user', 'project', 'local']
+        .flatMap((scope) => resolveTemplates(a.hooks?.configPath?.[scope] || [], dirs))
+        .map((file) => ({ file, kind: path.extname(file) ? 'json' : 'dir' })),
+      instructions: (a.instructionFile?.names || []).map((name) => {
+        const rec = { file: path.join(cwd, name) };
+        if (a.instructionFile.cap) rec.maxBytes = a.instructionFile.cap;
+        if (a.instructionFile.fromSetting) rec.fromSetting = a.instructionFile.fromSetting;
+        return rec;
+      }),
+    };
+    if (a.instructionFile?.firstMatch) row.firstMatch = true;
+    if (!cfg) row.noMcpClient = true;
+    rows.push(row);
+  }
+  return rows;
 }
 
 function readJsonFile(file) {
@@ -263,7 +231,10 @@ function writable(dir) {
 
 export async function collectDoctor(opts = {}) {
   const cwd = opts.cwd || process.cwd();
-  const report = { ok: true, cwd, binaries: {}, domains: {}, project: {}, usageLog: {}, harnesses: [], readingPlan: null };
+  const report = {
+    ok: true, cwd, binaries: {}, domains: {}, project: {}, usageLog: {},
+    identity: {}, install: {}, bridgeProcesses: null, harnesses: [], readingPlan: null,
+  };
 
   // ── The two names ────────────────────────────────────────────────────────
   const mine = whichAll('my-curator');
@@ -291,11 +262,74 @@ export async function collectDoctor(opts = {}) {
     report.domains = { path: dir, exists: existsSync(dir), writable: existsSync(dir) && writable(dir), source };
   } catch (err) { report.domains = { error: err.message }; }
 
+  // ── The usage log(s) — plural, on any machine that has two installs ──────
+  //
+  // `candidateUsageLogPaths()` owns the argument (src/brain/mcp-usage.js). The
+  // first entry stays `path`, unchanged in name and meaning, because §5 of
+  // scripts/test-cli-curator.js asserts on it and because "the log THIS
+  // process writes" is still a useful, separate fact from "every log on this
+  // machine".
   try {
-    const { getMcpUsageLogPath } = await import('../brain/paths.js');
-    const f = getMcpUsageLogPath();
-    report.usageLog = { path: f, present: existsSync(f), rotated: existsSync(`${f}.1`) };
+    const { candidateUsageLogPaths } = await import('../brain/mcp-usage.js');
+    const files = candidateUsageLogPaths();
+    const stat1 = (f) => ({ path: f, present: existsSync(f), rotated: existsSync(`${f}.1`) });
+    report.usageLog = {
+      ...stat1(files[0]),
+      candidates: files.map(stat1),
+      split: files.length > 1,
+    };
   } catch (err) { report.usageLog = { error: err.message }; }
+
+  // ── THE TWO IDENTITIES, WHEN THERE ARE TWO ───────────────────────────────
+  //
+  // Measured 2026-09-20: one Mac, one user, two Curators — a checkout and the
+  // installed `.app` — and therefore two user-data directories, two usage logs
+  // and two `.curator-machine-id` files, `alices-macbook-pro-17d23c` against
+  // `alices-macbook-pro-acb035`. The consequence is real and was invisible: the
+  // state tree gains a SECOND `<machine>` folder for what is one computer, so
+  // a handoff saved through the bridge and a handoff saved through the CLI do
+  // not supersede each other — they sit side by side, and `scope: 'latest'`
+  // answers with whichever was written last.
+  //
+  // It is DISCLOSED and nothing here acts on it. Minting is
+  // `working-state.js`'s and how (or whether) the two should converge is the
+  // maintainer's open question — a doctor that quietly rewrote an identity
+  // file would move every folder that names it.
+  //
+  // The files are READ DIRECTLY rather than via `machineId()`/`installId()`,
+  // which MINT one when it is missing. This command writes nothing, and that
+  // includes not calling a getter with a side effect.
+  try {
+    const { INSTALL_ID_FILENAME, MACHINE_ID_FILENAME } = await import('../brain/working-state.js');
+    const readId = (dir, name) => {
+      try {
+        const v = readFileSync(path.join(dir, name), 'utf8').trim();
+        return v || null;
+      } catch { return null; }
+    };
+    const dirs = [...new Set((report.usageLog.candidates || []).map((c) => path.dirname(c.path)))];
+    const identities = dirs.map((dir) => ({
+      dir,
+      machineId: readId(dir, MACHINE_ID_FILENAME),
+      installId: readId(dir, INSTALL_ID_FILENAME),
+    }));
+    const names = new Set(identities.map((i) => i.machineId).filter(Boolean));
+    report.identity = { dirs: identities, split: names.size > 1 };
+  } catch (err) { report.identity = { error: err.message }; }
+
+  // ── Which install this command IS ────────────────────────────────────────
+  try {
+    const { isBundleInstall, APP_ROOT } = await import('../brain/paths.js');
+    report.install = { bundle: isBundleInstall(), appRoot: APP_ROOT };
+  } catch (err) { report.install = { error: err.message }; }
+
+  // ── Bridge processes: is something still running yesterday's code? ───────
+  try {
+    const { detectBridgeProcesses } = await import('../brain/mcp-bridge-status.js');
+    report.bridgeProcesses = await detectBridgeProcesses();
+  } catch (err) {
+    report.bridgeProcesses = { checked: false, reason: err.message, running: 0, stale: [] };
+  }
 
   // ── The project, from this directory ─────────────────────────────────────
   const marker = findMarker(cwd);
@@ -330,7 +364,20 @@ export async function collectDoctor(opts = {}) {
 
   // ── Every harness ────────────────────────────────────────────────────────
   for (const h of harnessTargets(cwd)) {
-    const row = { id: h.id, label: h.label, mcp: [], hooks: [], instructions: [], noMcpClient: !!h.noMcpClient };
+    const adapter = adapterFor(h.id);
+    const row = {
+      id: h.id, label: h.label, mcp: [], hooks: [], instructions: [],
+      noMcpClient: !!h.noMcpClient,
+      // FROM THE TABLE, never authored here (v3.64.0). `hooks.state` is one of
+      // four words and `measured` is the campaign's own row — both belong to
+      // `src/brain/harness-adapters.js`, and a sentence written here would be
+      // a second copy of a fact somebody else is measuring. `measured` is
+      // `null` on every entry until a verdict exists; when one does, this
+      // prints it VERBATIM rather than paraphrasing it.
+      hookState: adapter?.hooks?.state || null,
+      hookReason: adapter?.hooks?.reason || null,
+      measured: adapter?.measured || null,
+    };
     for (const t of h.mcp) {
       const r = inspectMcpFile(t);
       row.mcp.push({ file: t.file, ...r });
@@ -382,6 +429,14 @@ function renderDoctor(r) {
   L.push('');
   L.push('COMMAND');
   L.push(`  my-curator on PATH: ${r.binaries.myCurator.length ? r.binaries.myCurator.join(', ') : 'NOT FOUND'}`);
+  // Measured 2026-09-20: the shipped `.app` carries no `bin/` at all — only
+  // the MCP launcher shim under Application Support — so an .app-only user
+  // has no `my-curator` to run and `install-hooks` is unreachable for them.
+  // Said in one line, here, because this is the command they would have run.
+  if (r.install?.bundle && !r.binaries.myCurator.length) {
+    L.push('    ^ this is the packaged app, which ships no command-line tool, so `my-curator '
+      + 'install-hooks` cannot be run from it — install the npm package to wire a harness\'s hooks.');
+  }
   if (r.binaries.curator.length) {
     L.push(`  curator on PATH:    ${r.binaries.curator.join(', ')}`);
     if (!r.binaries.curatorIsOurs) {
@@ -397,6 +452,38 @@ function renderDoctor(r) {
   L.push(`  domains folder: ${r.domains.path || `(unresolved: ${r.domains.error})`}`);
   if (r.domains.path) L.push(`    exists: ${yn(r.domains.exists)} · writable: ${yn(r.domains.writable)}${r.domains.source ? ` · from ${r.domains.source}` : ''}`);
   L.push(`  usage log: ${r.usageLog.path || `(unresolved: ${r.usageLog.error})`}${r.usageLog.path ? ` · present: ${yn(r.usageLog.present)}` : ''}`);
+  for (const c of (r.usageLog.candidates || []).slice(1)) {
+    L.push(`  also on this machine: ${c.path} · present: ${yn(c.present)}`);
+  }
+  if (r.usageLog.split) {
+    L.push('    ^ TWO installs of The Curator write two logs on this computer. Every reader here '
+      + 'takes the union, so a save made through one is visible to the other.');
+  }
+  const ids = r.identity?.dirs || [];
+  if (ids.length > 1) {
+    L.push('  machine id:');
+    for (const i of ids) L.push(`    ${i.machineId || '(none in this folder)'}  \u2190 ${i.dir}`);
+  } else if (ids.length === 1) {
+    L.push(`  machine id: ${ids[0].machineId || '(not minted yet — it is written on the first save)'}`);
+  }
+  if (r.identity?.split) {
+    L.push('    ^ ONE computer, TWO machine ids, because the two installs keep separate identity '
+      + 'files. Handoffs saved through each land in DIFFERENT state/<scope>/<machine>/ folders and '
+      + 'do not supersede one another. Nothing here changes that — it is reported, not repaired.');
+  }
+  L.push('');
+  L.push('BRIDGE PROCESSES');
+  const bp = r.bridgeProcesses;
+  if (!bp || bp.checked !== true) {
+    L.push(`  not checked — ${bp?.reason || 'no reading was taken'}`);
+  } else if (!bp.stale.length) {
+    L.push(`  ${bp.running} running from this install · none started before its current code`);
+  } else {
+    L.push(`  ${bp.running} running from this install · ${bp.stale.length} started BEFORE the code on disk`);
+    for (const p of bp.stale) L.push(`    pid ${p.pid} · started ${p.startedAt} · code changed ${bp.codeChangedAt}`);
+    L.push(`    ^ ${STALE_REMEDY} A bridge keeps running the version it was launched with, `
+      + 'so an update does not reach it — only its own client can.');
+  }
   L.push('');
   L.push('PROJECT');
   if (r.project.ok) {
@@ -431,7 +518,23 @@ function renderDoctor(r) {
     else if (h.mcp.length) bits.push('not configured');
     const hooked = h.hooks.filter((x) => x.ours);
     if (hooked.length) bits.push(`${hooked.length} Curator hook file`);
+    if (h.hookState) bits.push(`hooks: ${h.hookState}`);
     L.push(`  ${h.label} — ${bits.join(' · ') || 'nothing to configure'}`);
+    if (h.hookState && h.hookState !== 'verified' && h.hookState !== 'none' && h.hookReason) {
+      L.push(`    hooks ${h.hookState}: ${h.hookReason}`);
+    }
+    // THE MEASUREMENT, VERBATIM OR NOT AT ALL. A harness with no row renders
+    // as NOT MEASURED — the adapter table's own rule, and the reason `doctor`
+    // composes no sentence of its own about reach. When package M fills a row
+    // in (e.g. Claude Code's turn-end ask, measured interactive-only on
+    // 2026-09-20), that wording appears here unchanged.
+    if (h.measured && typeof h.measured === 'object') {
+      for (const [k, v] of Object.entries(h.measured)) {
+        if (typeof v === 'string' && v) L.push(`    measured · ${k}: ${v}`);
+      }
+    } else if (h.hookState && h.hookState !== 'none') {
+      L.push('    capture: NOT MEASURED — no capture run has been recorded for this harness.');
+    }
     for (const m of h.mcp) {
       if (m.parseError) L.push(`    ! ${m.file} — could not be parsed (${m.parseError}); nothing was read from it`);
       else if (m.named && m.domainsPath && r.domains.path && m.domainsPath !== r.domains.path) {
@@ -502,7 +605,17 @@ export async function runDoctor(parsed, deps = {}) {
     out(renderAlias(report));
     return EXIT_OK;
   }
-  if (flagBool(flags, 'json')) out(JSON.stringify(report));
-  else out(renderDoctor(report));
+  // RENDERING IS INSIDE THE PROMISE TOO (v3.64.0). `runDoctor` wrapped only the
+  // COLLECTION, so a report missing a field `renderDoctor` reads — a partial
+  // one from a future collector, or one built by a caller — crashed the
+  // process with a stack trace and a non-zero exit. "Exit 0 always" is this
+  // command's whole promise and it cannot stop at the halfway point; found by
+  // §11 of scripts/test-cli-curator.js driving the `collect` seam.
+  try {
+    if (flagBool(flags, 'json')) out(JSON.stringify(report));
+    else out(renderDoctor(report));
+  } catch (err) {
+    note(`my-curator doctor could not render its report: ${err.message}`);
+  }
   return EXIT_OK;
 }
