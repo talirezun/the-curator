@@ -34,9 +34,58 @@
  * seeded anywhere as settled. A consumer that wants to make a claim about a
  * harness reads `verified` first.
  *
- * `measured` is `null` on every entry in this release and that is the point:
- * §E's protocol has not been run, so nothing here may imply reach. A harness
- * with no measurement row renders as NOT MEASURED everywhere it appears.
+ * `measured` is `null` on every entry EXCEPT `claude-code` (v3.64.0, package
+ * M): §E's protocol has now been run once, against a real harness, and that
+ * one row carries the result. A harness with no measurement row renders as
+ * NOT MEASURED everywhere it appears — that is still true for the other
+ * thirteen, and `measured: null` is what makes it true without a second flag.
+ *
+ * ── THE SHAPE OF A NON-NULL `measured` ──────────────────────────────────────
+ * No shape existed before this release, so this is it — PURE DATA, no
+ * functions, and every number is a COUNT out of a stated `n`, never a
+ * percentage (CLAUDE.md's rule for this campaign: "no percentages anywhere —
+ * N=4 is a shape"). A future measurement pass (a second harness, a repeat run)
+ * fills the same shape; it does not invent a new one.
+ *
+ *   {
+ *     date,               'YYYY-MM-DD' — the day the protocol was run.
+ *     harnessVersion,     the harness's own version string, verbatim.
+ *     model,              the model id the harness ran, verbatim.
+ *     n,                  runs per arm (the 2026-09-10 shape's N — a shape,
+ *                         not a statistical sample size).
+ *     protocol,           one sentence: launch mode, auth, the allow-list —
+ *                         enough that a re-run can be compared to this one.
+ *     arms: {             one entry per arm actually run, keyed by its
+ *                         letter; an arm not run is simply absent, never
+ *                         zeroed — absence and a real zero must stay
+ *                         distinguishable.
+ *       <letter>: {
+ *         sessions,        runs attempted in this arm (out of `n`).
+ *         read,            of those, how many read state via an MCP tool
+ *                         call (`get_project_context`/`get_working_state`)
+ *                         before doing anything else.
+ *         readViaHook,     of those, how many received state via hook
+ *                         injection instead (invisible to the usage log —
+ *                         see `notes`; 0 on an arm with no hooks installed).
+ *         saved,           of those, how many saved via a real MCP
+ *                         `save_working_state` call before stopping.
+ *         skillActivated,  of those, how many the transcript shows the
+ *                         continuity skill actually firing in.
+ *       },
+ *       …
+ *     },
+ *     verdicts: { <letter>: 'not-measured'|'measured-no'|'measured-partial'|'measured-yes', … },
+ *                         the EXACT word `scripts/measure-harness.js` printed
+ *                         for that arm's window — never re-derived here, so
+ *                         this table and the instrument can never quietly
+ *                         disagree about what a run was called.
+ *     notes,              an array of short, plain sentences: the caveats a
+ *                         reader must have alongside the numbers above to not
+ *                         over-read them — an instrument limitation, a
+ *                         mechanism finding, anything that changes what a
+ *                         count is allowed to claim. Prose, not data a
+ *                         consumer should branch on.
+ *   }
  *
  * ── WHAT THIS MODULE DOES NOT DO ───────────────────────────────────────────
  *   - It never composes the bridge's launch line. `mcpEntryFor(id, launch)`
@@ -248,8 +297,42 @@ const ENTRIES = [
     }),
     skillsTree: fact('docs', { path: '~/.claude/skills' }),
     captureClass: CAPTURE_CLASSES.HOOK_ASSISTED,
-    clientInfo: fact('community', { names: ['claude-code'], note: 'Community-reported only. §2.13 forbids seeding it as settled.' }),
-    measured: null,
+    // Observed 2026-09-20 (package M's campaign): every session line in the
+    // real usage log carried the literal `claude-code`, with no other label
+    // ever appearing in the window. Moved from `community` — flip only,
+    // nothing else in this fact changes.
+    clientInfo: fact('observed', { names: ['claude-code'], note: 'Observed 2026-09-20 on every session line in the campaign\'s usage-log window; no other label appeared.' }),
+    // Measured 2026-09-20 (package M). See the module's own header comment
+    // for the shape, and MEASUREMENT-claude-code-2026-09-20.md (outside this
+    // repo, the campaign's own handoff folder) for the full per-run table and
+    // findings this is transcribed from — these are that report's own
+    // numbers, not a re-derivation.
+    measured: Object.freeze({
+      date: '2026-09-20',
+      harnessVersion: '2.1.275',
+      model: 'claude-haiku-4-5-20251001',
+      n: 4,
+      protocol: 'Claude Code CLI headless `-p` (--output-format stream-json --verbose '
+        + '--max-turns 40 --no-session-persistence), launched from the desktop-app bundle\'s '
+        + 'binary, API-key auth (not OAuth), a fixed --allowedTools allow-list, one neutral '
+        + 'task per run with no instruction to save and no mention of The Curator.',
+      arms: Object.freeze({
+        c: Object.freeze({ sessions: 4, read: 1, readViaHook: 4, saved: 4, skillActivated: 2 }),
+        b: Object.freeze({ sessions: 4, read: 0, readViaHook: 0, saved: 0, skillActivated: 1 }),
+        a: Object.freeze({ sessions: 4, read: 1, readViaHook: 0, saved: 1, skillActivated: 3 }),
+      }),
+      verdicts: Object.freeze({ c: 'measured-partial', b: 'not-measured', a: 'measured-partial' }),
+      notes: Object.freeze([
+        'All 12 core runs (arms C, B, A) plus both compaction-probe calls left `npm test` green — task completion and memory-layer engagement are independent variables in this dataset.',
+        'Arm C (skill + block + hooks): the SessionStart hook injects the standing brief, latest handoff and journal as additionalContext before the agent\'s first turn, so 3 of 4 sessions never called a read tool at all — they still started with state, just not via a tool call the usage log can see. `read: 1` undercounts arm C\'s actual continuity behaviour for this reason; it is not a bug in the instrument, it is the instrument\'s stated read-tool-only definition.',
+        'Stop hooks do not fire in headless `-p` mode at all — confirmed across all 6 arm-C sessions (the 4 core runs plus the compaction probe and its resume): every one shows only the two SessionStart hook events and nothing else; the on-disk loop-guard markers all show `askedAt: null`.',
+        '`/compact` under `-p --resume` DOES fire PreCompact, but with no hook_started/hook_response pair — the only trace is an embedded `<local-command-stdout>` block inside a user-role message reading "Compacted PreCompact […] completed successfully".',
+        'Without the SessionStart hook (arms B and A), in 5 of 6 save attempts the agent found `save_working_state` by ToolSearch and then, instead of issuing a real tool_use call, fabricated a shell command or script named after the tool (e.g. `Bash({command: "mcp call my-curator save_working_state …"})`, a fake shell function wrapping the tool\'s own name, or a JSON payload written to a file and never sent anywhere) — the dominant, unpredicted finding of this campaign.',
+        'Arm B (skill + block, no hooks): zero MCP bridge sessions were logged across all 4 runs — every attempt failed before a real tool call reached the bridge, so `not-measured` here means "no session ever started", not "sessions started and failed to save".',
+        'Two limits of this instrument at measurement time, both named so a reader does not over-read the counts above: (1) a bridge process that never receives a real tool call writes no session line at all, so a failed attempt like arm B\'s is invisible to the log as anything other than silence; (2) arm C\'s hook-injected read happens before the MCP servers are available to the agent and is therefore not a tool call the usage log can record — see the arm-C note above.',
+        '3 of 14 sessions (one each in arms C, B and A) committed straight to the fixture\'s own git history unprompted — the task never mentioned version control — which is itself a finding about what an unprompted agent reaches for when the memory layer is not in front of it via a hook.',
+      ]),
+    }),
   },
   {
     id: 'codex',

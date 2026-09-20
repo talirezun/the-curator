@@ -89,14 +89,27 @@
  * ─────────────────────────────────────────────────────────────────────────
  *
  *   node scripts/measure-harness.js --harness <label> --since <iso>
- *       [--protocol <label>] [--min-sessions <n>] [--log <path>] [--json]
+ *       [--until <iso>] [--protocol <label>] [--min-sessions <n>] [--log <path>] [--json]
  *   node scripts/measure-harness.js --all --since <iso>
- *       [--min-sessions <n>] [--log <path>] [--json]
+ *       [--until <iso>] [--min-sessions <n>] [--log <path>] [--json]
  *   node scripts/measure-harness.js --help
  *
  *   --since is INCLUSIVE (a line timestamped exactly at --since counts; one
- *   millisecond earlier does not) and open-ended — there is no --until, the
- *   window always runs to the end of the log as read.
+ *   millisecond earlier does not). --until is EXCLUSIVE (a line timestamped
+ *   exactly at --until does NOT count; one millisecond earlier does) and
+ *   OPTIONAL — omitted, the window runs to the end of the log as read, exactly
+ *   as before this flag existed.
+ *
+ *   --until exists because an open-ended window bleeds: the 2026-09-20
+ *   campaign ran three arms back to back against the same real usage log, one
+ *   `--since` per arm and no upper bound, and a verdict computed for an
+ *   earlier arm AFTER a later arm had also run silently counted the later
+ *   arm's sessions as the earlier arm's — re-running arm C's own recorded
+ *   command against the full log, after arms B and A had also run, moved its
+ *   session count upward by sessions that were never part of arm C at all.
+ *   Bound every window's own `--until` to the NEXT arm's `--since` (or a fixed
+ *   cutoff for the last arm) and the bleed is structurally impossible rather
+ *   than a discipline the operator has to remember.
  *
  *   Verdict vocabulary (Decision A), computed per row from `sessionsBoth`
  *   (sessions in that row with BOTH a read and a save) against
@@ -209,10 +222,13 @@ export async function readRawLines(logPath) {
 /**
  * Bucket every line in the log into: self-test (excluded from everything
  * else), legacy (no sid — never a session), malformed (unparseable), and
- * sessioned (grouped by sid), each filtered to `sinceMs <= atMs` (inclusive
- * lower bound, no upper bound).
+ * sessioned (grouped by sid), each filtered to `sinceMs <= atMs < untilMs`
+ * (inclusive lower bound, EXCLUSIVE upper bound). `untilMs` is optional —
+ * `null`/`undefined`/`Infinity` all mean "no upper bound", exactly the
+ * pre-`--until` behaviour.
  */
-export function bucketLines(rawLines, sinceMs) {
+export function bucketLines(rawLines, sinceMs, untilMs = Infinity) {
+  const upperMs = untilMs === null || untilMs === undefined ? Infinity : untilMs;
   let malformedLines = 0;
   let selfTestLines = 0;
   let legacyLines = 0;
@@ -223,6 +239,7 @@ export function bucketLines(rawLines, sinceMs) {
     if (malformed) { malformedLines++; continue; }
     if (!record) continue; // blank line
     if (record.atMs < sinceMs) continue; // strictly before the window — not counted anywhere
+    if (record.atMs >= upperMs) continue; // at or after --until — not counted anywhere (exclusive upper bound)
 
     if (record.via === VIA_SELF_TEST) { selfTestLines++; continue; }
     if (!record.sid) { legacyLines++; continue; }
@@ -347,8 +364,8 @@ export function buildAllRows(bucketed, { minSessions = DEFAULT_MIN_SESSIONS } = 
 // ── CLI ──────────────────────────────────────────────────────────────────
 
 const USAGE = `Usage:
-  node scripts/measure-harness.js --harness <label> --since <iso> [--protocol <label>] [--min-sessions <n>] [--log <path>] [--json]
-  node scripts/measure-harness.js --all --since <iso> [--min-sessions <n>] [--log <path>] [--json]
+  node scripts/measure-harness.js --harness <label> --since <iso> [--until <iso>] [--protocol <label>] [--min-sessions <n>] [--log <path>] [--json]
+  node scripts/measure-harness.js --all --since <iso> [--until <iso>] [--min-sessions <n>] [--log <path>] [--json]
 
 Read-only. Reports whether an unprompted read-then-save was observed in the
 MCP usage log for a harness, in a time window. See the file header for the
@@ -374,6 +391,9 @@ export function parseArgs(argv) {
         break;
       case '--since':
         args.since = argv[++i];
+        break;
+      case '--until':
+        args.until = argv[++i];
         break;
       case '--protocol':
         args.protocol = argv[++i];
@@ -413,6 +433,18 @@ export function validateArgs(args) {
   if (!Number.isFinite(sinceMs)) {
     return { ok: false, error: `--since is not a parseable date (got ${JSON.stringify(args.since)})` };
   }
+  let untilMs = Infinity;
+  let untilIso = null;
+  if (args.until !== undefined) {
+    untilMs = Date.parse(args.until);
+    if (!Number.isFinite(untilMs)) {
+      return { ok: false, error: `--until is not a parseable date (got ${JSON.stringify(args.until)})` };
+    }
+    if (untilMs <= sinceMs) {
+      return { ok: false, error: '--until must be after --since (the window would be empty or negative)' };
+    }
+    untilIso = new Date(untilMs).toISOString();
+  }
   let minSessions = DEFAULT_MIN_SESSIONS;
   if (args.minSessionsRaw !== undefined) {
     minSessions = Number(args.minSessionsRaw);
@@ -428,6 +460,8 @@ export function validateArgs(args) {
       harness: args.harness || null,
       sinceMs,
       sinceIso: new Date(sinceMs).toISOString(),
+      untilMs,
+      untilIso,
       protocol,
       minSessions,
       logPath: args.log || null,
@@ -449,7 +483,7 @@ export function formatTable(rows, meta) {
   const header = ['harness', 'sessions', 'read', 'saved', 'both', 'verdict', 'first', 'last'];
   const widths = [14, 9, 7, 7, 6, 16, 26, 26];
   const lines = [];
-  lines.push(`window: since=${meta.sinceIso} (inclusive) until=now  protocol=${meta.protocol || '(none given)'}  min-sessions=${meta.minSessions}`);
+  lines.push(`window: since=${meta.sinceIso} (inclusive) until=${meta.untilIso ? `${meta.untilIso} (exclusive)` : 'now'}  protocol=${meta.protocol || '(none given)'}  min-sessions=${meta.minSessions}`);
   lines.push(header.map((h, i) => pad(h, widths[i])).join(' '));
   for (const r of rows) {
     lines.push([
@@ -490,7 +524,7 @@ export async function run(argv, { logPathOverride } = {}) {
   let bucketed;
   try {
     const rawLines = await readRawLines(logPath);
-    bucketed = bucketLines(rawLines, opts.sinceMs);
+    bucketed = bucketLines(rawLines, opts.sinceMs, opts.untilMs);
   } catch (err) {
     const msg = `could not read the usage log at ${logPath}: ${err && err.message}`;
     if (opts.json) return { ok: false, exitCode: 0, stdout: JSON.stringify({ error: msg }), stderr: '' };
@@ -500,6 +534,7 @@ export async function run(argv, { logPathOverride } = {}) {
   const meta = {
     logPath,
     sinceIso: opts.sinceIso,
+    untilIso: opts.untilIso,
     protocol: opts.protocol,
     minSessions: opts.minSessions,
     selfTestLines: bucketed.selfTestLines,

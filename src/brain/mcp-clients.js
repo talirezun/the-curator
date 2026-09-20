@@ -87,10 +87,16 @@ const ROWS = [
 
   // ── observed in a real handshake ─────────────────────────────────────────
   { raw: 'goose-desktop', id: 'goose', evidence: 'observed', verified: true },
+  // Moved from `community` 2026-09-20 (package M's measurement campaign): the
+  // real usage log's session lines carried the literal `claude-code` on every
+  // one of the 6 real bridge sessions the campaign produced, and no other
+  // label ever appeared in the window. Flip only — see
+  // MEASUREMENT-claude-code-2026-09-20.md for the campaign itself.
+  { raw: 'claude-code', id: 'claude-code', evidence: 'observed', verified: true },
 
   // ── COMMUNITY-REPORTED ONLY — carried, and marked. ───────────────────────
-  // These three have NOT been measured against a real client by this project.
-  // They are here so a first run produces a readable row instead of three
+  // These two have NOT been measured against a real client by this project.
+  // They are here so a first run produces a readable row instead of two
   // `other`s; they are NOT evidence, and `verified: false` is the fact a
   // measurement pass asserts against.
   //
@@ -98,7 +104,6 @@ const ROWS = [
   // surface, on a different lifecycle, with different hooks. Collapsing the
   // two would put desktop-chat sessions in a coding harness's capture row and
   // make the meter lie about which tool saved. They get separate ids.
-  { raw: 'claude-code', id: 'claude-code', evidence: 'community', verified: false },
   { raw: 'claude-ai', id: 'claude-desktop', evidence: 'community', verified: false },
   { raw: 'cursor-vscode', id: 'cursor', evidence: 'community', verified: false },
 ];
