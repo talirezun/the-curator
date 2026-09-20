@@ -407,7 +407,14 @@ section('§6  THE LIFTED CHAT-SCOPE WRAPPER (P1-10) — one module, three rules'
     order.length = 0;
     return scopeBox(
       (v) => order.push(['navigate', v]),
-      requestChatScope ? { requestChatScope: (s) => order.push(['request', s]) } : {},
+      // EVERY ARGUMENT, not just the first. Found by mutation (v3.64.0): with
+      // the stub recording only the slug, `goToChatScoped` dropping its
+      // second argument on the floor was INVISIBLE — the producer passed a
+      // project, the wrapper swallowed it, Chat scoped to the domain and
+      // nothing anywhere said a project had been asked for. A one-argument
+      // call still records exactly ['request', slug], so the exact-shape
+      // assertion below is unchanged by this.
+      requestChatScope ? { requestChatScope: (...a) => order.push(['request', ...a]) } : {},
       { warn: (m) => order.push(['warn', String(m)]) },
     ).goToChatScoped;
   };
@@ -432,6 +439,42 @@ section('§6  THE LIFTED CHAT-SCOPE WRAPPER (P1-10) — one module, three rules'
   go = build(true);
   go('');
   ok(!order.some((e) => e[0] === 'request'), 'an empty string is the same case as no argument');
+
+  // ── RULE 4 (v3.64.0): THE OPTIONS BAG IS FORWARDED, NOT INSPECTED ─────
+  // Chat can now be handed a project as well as a domain (§4.1), and the
+  // Context view's "Ask this domain" door passes the project it is already
+  // open on. This wrapper's job is the RITUAL — record, then navigate,
+  // exactly once, never on a falsy slug — and the SHAPE of what is recorded
+  // is app.js's single writer's job, which trims, type-checks and drops a
+  // project that names nothing. So the bag crosses this module untouched;
+  // a second copy of that normalisation here is the two-hand-written-copies
+  // shape the module exists to delete.
+  //
+  // The failure being guarded is completely silent: the button navigates,
+  // Chat mounts, the domain is right, and only the pill is missing.
+  go = build(true);
+  go('articles', { project: 'lumina' });
+  eq(JSON.stringify(order),
+    JSON.stringify([['request', 'articles', { project: 'lumina' }], ['navigate', 'chat']]),
+    'an options bag reaches requestChatScope UNCHANGED, and the two rules above still hold');
+
+  go = build(true);
+  go('articles', { project: null });
+  eq(JSON.stringify(order[0]), JSON.stringify(['request', 'articles', { project: null }]),
+    'a null project is forwarded as given — the shell decides what a null means, not this module');
+
+  go = build(true);
+  go('articles');
+  eq(order[0] && order[0].length, 2,
+    'a ONE-argument call reaches the shell as a one-argument call, not as (slug, undefined)');
+
+  // The bag never rescues a falsy slug: rule 3 is checked first and the
+  // whole request is refused, project or no project.
+  go = build(true);
+  go(null, { project: 'lumina' });
+  ok(!order.some((e) => e[0] === 'request'),
+    'a project handed in with NO slug records nothing — rule 3 is checked before anything is forwarded');
+  eq(order.filter((e) => e[0] === 'navigate').length, 1, '…and Chat still opens exactly once');
 
   // THE DEGRADATION CONTRACT, lifted verbatim from views/domains.js: a shell
   // that does not export the recorder must warn loudly and still navigate.

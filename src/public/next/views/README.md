@@ -24,10 +24,17 @@ plus one entry in the rail registry over in `../app.js`.
    `setMain`, `openReader`, etc.) — never via `document.getElementById`
    on an element another view owns, and never by importing another
    `views/*.js` file.
-5. **New view (not just editing one)**: also add its name to `NAV_VIEWS`
-   or `FOOTER_VIEWS` and its `{ label, icon, title }` to `VIEW_META` in
-   `app.js`, add its `<link>` to `index.html`, and add its `import
-   './views/<name>.js';` line to app.js's "View registration" section.
+5. **New view (not just editing one)**: add its name to `NAV_VIEWS` (a rail
+   button), `HOSTED_VIEWS` (registered and navigable, but reached from
+   inside another view) or `FOOTER_VIEWS`, and its
+   `{ label, caption, icon, title }` to `VIEW_META` in `app.js`, add its
+   `<link>` to `index.html`, and add its `import './views/<name>.js';` line
+   to app.js's "View registration" section. All three arrays feed
+   `ALL_VIEWS`, which is the set `pickStartView` restores a stored last view
+   from and the set `VIEW_META`'s keys are checked against — a name in one
+   collection and not the other is the failure
+   `scripts/test-next-shell-rail.js` §3b and §6 exist to catch, and every
+   way it can go wrong is silent.
 
 **Why the shell functions are safe to call at your file's own top level:**
 `app.js` imports every `views/*.js` file, and every `views/*.js` file
