@@ -66,15 +66,48 @@ export function refuse(message, code = EXIT_USAGE) {
  * ends flag parsing. An unknown flag is NOT an error here — the subcommand
  * decides, because a flag this parser has never heard of is the subcommand's
  * business and a parser that refuses one blocks every future flag.
+ *
+ * ── THE TWO SHORT FLAGS, AND THE HANG THAT BOUGHT THEM (v3.64.0) ───────────
+ *
+ * `SHORT_FLAGS` has exactly two entries and is not the beginning of a general
+ * short-option parser. Until v3.64.0 this loop had no `-x` arm at all, so `-f`
+ * fell through the `startsWith('--')` test into the POSITIONALS — while
+ * `src/cli/save.js` has read `flagStr(flags, 'f')` since the day it shipped
+ * and prints `-f <file>` in its own usage text. The two never met.
+ *
+ * The consequence was not a refusal, which would have been found in a minute.
+ * `runSave` saw no `--file`, took its stdin arm, and `readStdin` waited on a
+ * terminal that was never going to close: `my-curator save -f handoff.json`
+ * HUNG, in silence, indefinitely — measured on the maintainer's Mac,
+ * 2026-09-20. A hang is the worst refusal shape this CLI can produce: no exit
+ * code to test, nothing on stderr, and inside a harness hook it does not fail
+ * the turn, it stops it.
+ *
+ * Deliberately NOT generalised. No clustering (`-fx`), no `-f=v`, no `-p` for
+ * `--project`, no single-dash long names: each of those is a second way to
+ * spell something that already has one. A bare `-` stays a POSITIONAL, because
+ * `save` documents it as "read stdin" and a flag parser must not eat a
+ * meaning the subcommand owns.
  */
+export const SHORT_FLAGS = Object.freeze({ '-f': '--file', '-h': '--help' });
+
+/** Does this argv token introduce a flag rather than a value? */
+function isFlagToken(t) {
+  return typeof t === 'string' && (t.startsWith('--') || Object.hasOwn(SHORT_FLAGS, t));
+}
+
 export function parseArgv(argv) {
   const flags = Object.create(null);
   const rest = [];
   let literal = false;
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    let a = argv[i];
     if (literal) { rest.push(a); continue; }
     if (a === '--') { literal = true; continue; }
+    // Rewritten to the long spelling BEFORE anything else reads it, so the two
+    // forms cannot diverge — `-f` is `--file` down to the repeats-collect-into
+    // -an-array behaviour and the camelCase alias.
+    if (Object.hasOwn(SHORT_FLAGS, a)) a = SHORT_FLAGS[a];
     if (!a.startsWith('--')) { rest.push(a); continue; }
     const body = a.slice(2);
     let key; let value;
@@ -83,7 +116,7 @@ export function parseArgv(argv) {
     else {
       key = body;
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('--')) { value = next; i++; }
+      if (next !== undefined && !isFlagToken(next)) { value = next; i++; }
       else value = true;
     }
     if (!key) continue;

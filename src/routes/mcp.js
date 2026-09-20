@@ -1,7 +1,8 @@
 /**
  * MCP configuration endpoints — power the "My Curator" wizard in the Settings tab.
  *
- *   GET  /api/mcp/config              → status + resolved paths
+ *   GET  /api/mcp/config              → status + resolved paths, and (v3.64.0) which
+ *                                       bridge PROCESSES are running older code
  *   GET  /api/mcp/claude-config       → JSON snippet to paste into claude_desktop_config.json
  *   GET  /api/mcp/claude-full-config  → merged preview (current file + the curator entry)
  *   POST /api/mcp/write-config        → the wizard's "do it for me" step: writes ONLY
@@ -34,6 +35,7 @@ import { getCapabilities } from '../brain/install-mode.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
 import { readUsage, VIA_SELF_TEST } from '../brain/mcp-usage.js';
+import { detectBridgeProcesses, STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { exerciseAllTools } from '../brain/mcp-exercise.js';
 import { TOOL_CATALOGUE } from '../../mcp/tools/catalogue.js';
 
@@ -206,7 +208,30 @@ export function buildFullConfigPayload(existing, domainsDir) {
   };
 }
 
-router.get('/config', (_req, res) => {
+/**
+ * WHY THE BRIDGE-PROCESS READING RIDES ON `/config` AND NOT ON `/usage`.
+ *
+ * Both were candidates and the cost decided it. `/usage` is POLLED — block ③
+ * revalidates every 30 s for as long as the tool map is on screen (see
+ * `USAGE_POLL_MS`), so a `ps` there would be a subprocess every half minute
+ * for as long as a Settings tab is open. `/config` is fetched ONCE per entry
+ * into the view, in the same `Promise.all` as the key status, which makes the
+ * reading cost one `execFile` per visit — measured at 40 ms on the
+ * maintainer's Mac against a full process table.
+ *
+ * It also belongs here on the merits: this route already answers "is the
+ * bridge wired, and is what is wired current?" (`installed`, `stale`). A
+ * process still running the code an update replaced is the same question
+ * asked of the RUNNING bridge rather than of the SAVED launch line, and the
+ * status card that renders one is the card that should render the other.
+ *
+ * The handler becomes async for it. `detectBridgeProcesses` never throws and
+ * never rejects, so no arm of this route can be left hanging by it; the
+ * `catch` below is belt-and-braces for an import failure, and it answers
+ * `checked: false` rather than dropping the field — a consumer must be able
+ * to tell "we did not look" from "we looked and found none".
+ */
+router.get('/config', async (_req, res) => {
   const domainsDir = getDomainsDir();
   const domainsDirExists = existsSync(domainsDir);
   const serverExists = existsSync(MCP_SERVER_PATH);
@@ -220,6 +245,13 @@ router.get('/config', (_req, res) => {
   // than a misleading "missing".
   const launcherPath = launchStyle === 'launcher-script' ? getMcpLauncherPath() : null;
   const launcherExists = launcherPath ? existsSync(launcherPath) : false;
+
+  let bridgeProcesses;
+  try {
+    bridgeProcesses = await detectBridgeProcesses();
+  } catch (err) {
+    bridgeProcesses = { checked: false, reason: err.message, running: 0, stale: [], codeChangedAt: null, serverPath: MCP_SERVER_PATH };
+  }
 
   // Check whether the existing config already contains a matching curator entry
   let installed = false;
@@ -250,6 +282,9 @@ router.get('/config', (_req, res) => {
     mcp_launch_style: launchStyle,
     launcher_path: launcherPath,
     launcher_exists: launcherExists,
+    // v3.64.0 — the RUNNING bridges, as opposed to the saved launch line.
+    bridge_processes: bridgeProcesses,
+    bridge_stale_remedy: STALE_REMEDY,
   });
 });
 

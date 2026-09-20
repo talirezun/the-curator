@@ -21,6 +21,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createStorageAdapter } from './storage/local.js';
 import { registerTools } from './tools/index.js';
 import { setCliDomainsDir } from '../src/brain/config.js';
+import { appendSessionLine } from '../src/brain/mcp-usage.js';
+import { readClientName } from '../src/brain/mcp-clients.js';
 
 const args = process.argv.slice(2);
 const domainsPathIdx = args.indexOf('--domains-path');
@@ -94,6 +96,45 @@ const server = new Server(
 // bridge over stdio and SENDS `initialize` — it is an initialize-era client,
 // so it exercises the deprecated arm and never the `_meta` one.
 registerTools(server, storage);
+
+// ── THE SESSION LINE IS WRITTEN WHEN THE CLIENT ARRIVES, NOT AT THE FIRST
+//    TOOL CALL ───────────────────────────────────────────────────────────────
+//
+// v3.63.0 wrote it lazily, in the same append as the process's FIRST TOOL
+// LINE, so two lines shared one write and needed no ordering machinery. The
+// harness campaign measured what that costs: a bridge a client OPENS and never
+// asks for a tool left nothing on disk at all. Four real Claude Code sessions
+// ran in arm B on 2026-09-20 with no read and no save, and
+// `scripts/measure-harness.js` reported `not-measured` — which reads as
+// "nobody ran it" when the truth was "four sessions ran and none of them used
+// the memory layer". An ABSENT measurement and a MEASURED ZERO are the two
+// things this log exists to keep apart, and the instrument was confusing them.
+//
+// `notifications/initialized` is the moment to write it, and the reason is the
+// CLIENT rather than convenience. A line with no client cannot be attributed
+// to a harness, and attribution is the entire point of the measurement — so
+// the line is written at the first instant the name is knowable. The SDK sets
+// `_clientVersion` in `_oninitialize` (`server/index.js`), so
+// `getClientVersion()` is populated by the time this fires. ONE line, atomic on
+// its own, far under the PIPE_BUF floor; it needs none of the coupling the
+// lazy version needed, because there is no second line to order it against.
+//
+// Fire-and-forget and total, exactly like `appendUsage`: the returned promise
+// always resolves and nothing here can fail a launch. Deliberately NOT
+// awaited — a log write must never sit between a client and a connected
+// transport.
+//
+// THE FALLBACK STAYS. A client that sends `initialize` and no notification,
+// or speaks the 2026-07-28 revision (which has no handshake at all), still
+// gets its session line folded into the first tool line's write, exactly as
+// v3.63.0 wrote it. `appendSessionLine` and `appendUsage` share one flag, so
+// whichever happens first writes the line and the other does not.
+//
+// What remains unreachable, stated: a bridge that neither initialises nor
+// calls a tool writes nothing — but that is a process no client has used.
+server.oninitialized = () => {
+  try { appendSessionLine({ client: readClientName(null, server) }); } catch { /* never fatal */ }
+};
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

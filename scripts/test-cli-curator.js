@@ -150,6 +150,18 @@ function run(args, opts = {}) {
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
 /**
+ * The REAL hook-marker directory — the one `markerDir()` falls back to when
+ * CURATOR_TEST_HOOK_DIR is unset. Snapshotted BEFORE any child runs, so §12
+ * can assert this suite added nothing to it. See §12 for why "added" rather
+ * than "empty".
+ */
+const REAL_MARKER_DIR = path.join(os.tmpdir(), 'curator-hooks');
+const markerDirSnapshot = () => {
+  try { return new Set(readdirSync(REAL_MARKER_DIR)); } catch { return new Set(); }
+};
+const REAL_MARKERS_AT_START = markerDirSnapshot();
+
+/**
  * Parse a child's stdout, or return null.
  *
  * NEVER a bare `JSON.parse` on a child's output: a mutation that makes the
@@ -809,6 +821,384 @@ section('§8  The command surface itself');
   });
   ok(offenders.length === 0,
     `no Express route imports the CLI${offenders.length ? ` — found in ${offenders.join(', ')}` : ''}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9  The two short flags — and the HANG they were bought with');
+
+{
+  // MEASURED 2026-09-20: `my-curator save -f <file>` hung forever. `parseArgv`
+  // had no `-x` arm, so `-f` and its path fell into the POSITIONALS; `runSave`
+  // saw no `--file`, took its stdin arm, and waited on a terminal that was
+  // never going to close. `save`'s own usage text had printed `-f <file>` and
+  // `runSave` had read `flagStr(flags, 'f')` since the day it shipped. A hang
+  // is the worst refusal shape this CLI has: no exit code, nothing on stderr,
+  // and inside a hook it does not fail the turn, it stops it.
+  //
+  // EVERY case below runs under `run()`, which passes `input: ''` and closes
+  // stdin — so a regression cannot hang this suite; it reds it, because the
+  // body arrives from stdin as empty and the refusal changes.
+  const bodyFile = path.join(ROOT, 'handoff.json');
+  writeFileSync(bodyFile, JSON.stringify({
+    headline: 'saved from a file, through -f',
+    now_state: 'driven by §9 of test-cli-curator.js',
+  }));
+
+  const short = run(['save', '--project', `${D1}/lumina`, '--scope', 'shortflag', '-f', bodyFile, '--json'], { cwd: ROOT });
+  ok(short.code === 0, '`-f <file>` is READ — the hang is closed');
+  const j = parseOut(short);
+  ok(j?.ok === true && j?.scope === 'shortflag', '…and the store wrote the scope the body asked for');
+
+  const long = run(['save', '--project', `${D1}/lumina`, '--scope', 'longflag', '--file', bodyFile, '--json'], { cwd: ROOT });
+  const jl = parseOut(long);
+  ok(jl?.ok === true, '`--file` still works');
+  ok(jl?.headline === j?.headline || (j && jl && jl.ok === j.ok),
+    '…and `-f` is an ALIAS of it, not a second code path');
+
+  // `-h` is the other half of the pair and nothing else is.
+  const h = run(['save', '-h']);
+  ok(h.code === 0 && h.stdout.includes('my-curator save'), '`-h` prints the usage and exits 0');
+  const hd = run(['doctor', '-h']);
+  ok(hd.code === 0 && hd.stdout.includes('my-curator doctor'), '…on every subcommand, not just save');
+
+  // NOT a general short-option parser. A bare `-` is documented as "read
+  // stdin" and must stay a POSITIONAL, and an unknown `-x` must not silently
+  // become a flag named x.
+  const { parseArgv, SHORT_FLAGS } = await import('../src/cli/resolve.js');
+  ok(Object.keys(SHORT_FLAGS).join(',') === '-f,-h',
+    `exactly two short flags are recognised (${Object.keys(SHORT_FLAGS).join(', ')})`);
+  ok(parseArgv(['save', '-']). _.includes('-'), 'a bare `-` stays a positional');
+  ok(parseArgv(['save', '-x', 'v']).flags.x === undefined, 'an unknown `-x` is NOT turned into a flag');
+  ok(parseArgv(['save', '-fx']).flags.file === undefined, 'clustered short flags are not parsed');
+  ok(parseArgv(['save', '--', '-f', 'z'])._.join(',') === 'save,-f,z',
+    'after `--`, `-f` is literal text like everything else');
+  // A valueless flag followed by `-f` must not swallow it as its value.
+  const two = parseArgv(['save', '--json', '-f', 'a.json']);
+  ok(two.flags.json === true && two.flags.file === 'a.json',
+    'a short flag ENDS the previous flag\'s value, exactly as `--` does');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§10  Two installs, one machine — the usage log and the machine id');
+
+{
+  // MEASURED 2026-09-20: a checkout and the installed `.app` resolve DIFFERENT
+  // user-data dirs, so there are two `.mcp-usage.jsonl` files and two
+  // `.curator-machine-id` values (`alices-macbook-pro-17d23c` against
+  // `…-acb035`). The stop hook read only its own log, never saw a save the
+  // bridge had logged, and therefore asked at the end of every turn including
+  // the ones that had just saved.
+  const usage = await import('../src/brain/mcp-usage.js');
+
+  // The isolation arm FIRST, because it is what keeps this suite honest: under
+  // CURATOR_TEST_USER_DATA_DIR the second candidate must NEVER be offered, or
+  // every assertion here would depend on the maintainer's real log.
+  const isolated = usage.candidateUsageLogPaths();
+  ok(isolated.length === 1, 'under test isolation there is exactly ONE candidate log');
+  ok(isolated[0].startsWith(USER_DATA_DIR), '…and it is the fixture\'s');
+
+  // The two real arms, driven through the seam rather than by being a
+  // different install.
+  const both = usage.candidateUsageLogPaths({
+    primary: '/w/checkout/.mcp-usage.jsonl',
+    bundleDir: '/Users/x/Library/Application Support/The Curator',
+    userDataDir: '/w/checkout',
+    appRoot: '/w/checkout',
+    isBundle: false,
+    env: {},
+    exists: () => true,
+  });
+  ok(both.length === 2, 'a repo install WITH a bundle log beside it offers both');
+  ok(both[1] === '/Users/x/Library/Application Support/The Curator/.mcp-usage.jsonl',
+    '…the second being the bundle\'s, at the BASENAME taken from the first');
+  const none = usage.candidateUsageLogPaths({
+    primary: '/w/checkout/.mcp-usage.jsonl',
+    bundleDir: '/Users/x/Library/Application Support/The Curator',
+    userDataDir: '/w/checkout', appRoot: '/w/checkout', isBundle: false, env: {}, exists: () => false,
+  });
+  ok(none.length === 1, 'a bundle log that does not exist is not offered');
+  const inBundle = usage.candidateUsageLogPaths({
+    primary: '/Users/x/Library/Application Support/The Curator/.mcp-usage.jsonl',
+    bundleDir: '/Users/x/Library/Application Support/The Curator',
+    userDataDir: '/Users/x/Library/Application Support/The Curator',
+    appRoot: '/Applications/The Curator.app/Contents/Resources/app',
+    isBundle: true, env: {}, exists: () => true,
+  });
+  ok(inBundle.length === 1, 'a BUNDLE install offers one — the candidate IS its primary');
+
+  // AND THE HOOK ACTUALLY READS THE UNION. A save recorded in the SECOND log
+  // and nowhere else must silence the ask (rung 3). Driven with a real second
+  // log injected through the seam-free path: a bundle-shaped directory the
+  // helper is pointed at.
+  const { tallyUsageLines, readUsageLines } = await import('../src/cli/hook.js');
+  const since = Date.now() - 60_000;
+  const merged = tallyUsageLines([
+    JSON.parse(usageLine('get_project_context', { sid: 'aaaaaaaaaaaa', project: 'lumina' })),
+    JSON.parse(usageLine('save_working_state', { sid: 'aaaaaaaaaaaa', project: 'lumina' })),
+  ], { since, domain: D1, project: 'lumina' });
+  ok(merged.saves === 1 && merged.bootstraps === 1,
+    'the tally counts a read and a save from lines that came from either file');
+  const r = await readUsageLines();
+  ok(Array.isArray(r.files) && r.files.length >= 1,
+    'readUsageLines reports WHICH files it read, so a reading can show its work');
+  ok(r.files.every((f) => f.startsWith(USER_DATA_DIR)),
+    '…and under isolation every one of them is inside the fixture');
+  // BEHAVIOURAL, not a source scan: the hook must read EXACTLY the list the
+  // one owner of that list produces. A `includes('candidateUsageLogPaths')`
+  // check was written first and a mutation walked straight through it — the
+  // DOCBLOCK names the function, so the scan passed while the call was gone.
+  // An assertion satisfied by a comment is worse than none.
+  ok(r.files.join('|') === usage.candidateUsageLogPaths().join('|'),
+    '…and they are EXACTLY candidateUsageLogPaths()\'s list, not a second derivation');
+
+  // The DEAD PROBE is gone: `summariseSessions()` called with no argument
+  // never returned a `lines` array, so the branch that preferred it could not
+  // be taken. A branch that cannot be taken cannot be tested.
+  const hookSrc = readFileSync(path.join(REPO_ROOT, 'src/cli/hook.js'), 'utf8');
+  ok(!/mod\.summariseSessions|s\.lines/.test(hookSrc), 'the unreachable summariseSessions probe was removed, not repaired');
+
+  // ── END TO END: A SAVE IN THE OTHER LOG SILENCES THE ASK ──────────────
+  //
+  // The defect in one sentence: the agent saved, the bridge logged it in the
+  // .app's log, the hook read the checkout's, found nothing, and asked again.
+  // Driven through the SHIPPED BINARY with a second log the suite owns, so it
+  // is the spawned process's own reading that is measured — the unit arms
+  // above cannot see a process boundary, and this is where the bug lived.
+  const otherLogDir = path.join(ROOT, 'otherinstall');
+  mkdirSync(otherLogDir, { recursive: true });
+  const otherLog = path.join(otherLogDir, '.mcp-usage.jsonl');
+
+  freshSession('claude-code', 'S-UNION');
+  // This install's own log records the READ but no save — rung 5 territory.
+  writeFileSync(USAGE_LOG, `${usageLine('get_project_context', { project: 'lumina' })}\n`);
+  writeFileSync(otherLog, '');
+  const asks = run(['hook', 'stop', '--harness', 'claude-code'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-UNION' }),
+    env: { CURATOR_TEST_BUNDLE_LOG_DIR: otherLogDir },
+  });
+  ok(asks.code === 2, 'CONTROL: with no save in EITHER log the hook still asks');
+
+  // Now the save exists — but ONLY in the other install's log.
+  freshSession('claude-code', 'S-UNION2');
+  writeFileSync(USAGE_LOG, `${usageLine('get_project_context', { project: 'lumina' })}\n`);
+  writeFileSync(otherLog, `${usageLine('save_working_state', { project: 'lumina' })}\n`);
+  const quiet = run(['hook', 'stop', '--harness', 'claude-code'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-UNION2' }),
+    env: { CURATOR_TEST_BUNDLE_LOG_DIR: otherLogDir },
+  });
+  ok(quiet.code === 0 && quiet.stdout === '',
+    'a save logged by the OTHER install silences the ask — the union is read across the process boundary');
+  ok(/rung 3/.test(quiet.stderr), '…at rung 3, which is the rung that could never fire before');
+
+  // AND ACROSS A ROTATION. The log rotates at 1 MB to one previous
+  // generation, and a save made just before the roll is still a save — a
+  // reader that skips `<path>.1` re-asks for something already done, which is
+  // the same defect one file later.
+  freshSession('claude-code', 'S-UNION3');
+  writeFileSync(USAGE_LOG, `${usageLine('get_project_context', { project: 'lumina' })}\n`);
+  writeFileSync(otherLog, '');
+  writeFileSync(`${otherLog}.1`, `${usageLine('save_working_state', { project: 'lumina' })}\n`);
+  const rotated = run(['hook', 'stop', '--harness', 'claude-code'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-UNION3' }),
+    env: { CURATOR_TEST_BUNDLE_LOG_DIR: otherLogDir },
+  });
+  ok(rotated.code === 0 && /rung 3/.test(rotated.stderr),
+    'a save that has already been ROTATED into <path>.1 still counts');
+
+  // DOCTOR DISCLOSES BOTH, and mints NOTHING. Driven through the collect seam
+  // with a two-install report, because a suite cannot be two installs.
+  const { runDoctor } = await import('../src/cli/doctor.js');
+  const realWrite = process.stdout.write.bind(process.stdout);
+  let out = '';
+  process.stdout.write = (x) => { out += x; return true; };
+  try {
+    await runDoctor({ _: [], flags: {} }, {
+      collect: async () => ({
+        ok: true, cwd: '/w', binaries: { myCurator: ['/usr/local/bin/my-curator'], curator: [], curatorIsOurs: false },
+        domains: { path: '/w/domains', exists: true, writable: true, source: 'default' },
+        usageLog: {
+          path: '/w/.mcp-usage.jsonl', present: true, rotated: false, split: true,
+          candidates: [
+            { path: '/w/.mcp-usage.jsonl', present: true, rotated: false },
+            { path: '/Users/x/Library/Application Support/The Curator/.mcp-usage.jsonl', present: true, rotated: false },
+          ],
+        },
+        identity: {
+          split: true,
+          dirs: [
+            { dir: '/w', machineId: 'alices-macbook-pro-17d23c', installId: '17d23c' },
+            { dir: '/Users/x/Library/Application Support/The Curator', machineId: 'alices-macbook-pro-acb035', installId: 'acb035' },
+          ],
+        },
+        install: { bundle: false, appRoot: '/w' },
+        project: { ok: true, domain: D1, project: 'lumina', resolvedBy: 'marker', source: 'marker', marker: '/w/.curator-project' },
+        bridgeProcesses: { checked: true, running: 0, stale: [], codeChangedAt: null, serverPath: '/w/mcp/server.js' },
+        harnesses: [], readingPlan: null,
+      }),
+    });
+  } finally { process.stdout.write = realWrite; }
+  ok(out.includes('also on this machine:'), 'doctor names the SECOND usage log');
+  ok(out.includes('alices-macbook-pro-17d23c') && out.includes('alices-macbook-pro-acb035'),
+    '…and BOTH machine ids');
+  ok(/ONE computer, TWO machine ids/.test(out),
+    '…saying in one line what that costs — two <machine> folders for one computer');
+  ok(/reported, not repaired/.test(out),
+    '…and that nothing was changed, because minting is not this command\'s to move');
+
+  // It reads the identity FILES; it must never call the getters, which MINT.
+  // Comments stripped first — the docblock that explains this rule names both
+  // functions, and a scan that reds on its own explanation gets deleted.
+  const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  const docSrc = stripComments(readFileSync(path.join(REPO_ROOT, 'src/cli/doctor.js'), 'utf8'));
+  ok(docSrc.includes('readId('), 'the doctor source was read (the scan\'s own control)');
+  ok(!/\bmachineId\s*\(|\binstallId\s*\(/.test(docSrc),
+    'doctor never CALLS machineId()/installId() — both mint a file when one is missing');
+  ok(docSrc.includes('MACHINE_ID_FILENAME') && docSrc.includes('INSTALL_ID_FILENAME'),
+    '…it reads the two filenames from the store rather than typing them');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§11  The packaged app ships no command — doctor says so, once');
+
+{
+  // MEASURED 2026-09-20: `/Applications/The Curator.app/Contents/Resources/app`
+  // has no `bin/` directory at all. The only executable the bundle installs is
+  // the MCP launcher shim under Application Support. So an .app-only user has
+  // no `my-curator`, and `install-hooks` is unreachable for them — which is
+  // worth one line on the command whose subject is what is wired.
+  const { runDoctor } = await import('../src/cli/doctor.js');
+  const base = {
+    ok: true, cwd: '/w', domains: {}, usageLog: {}, identity: { dirs: [] },
+    project: { ok: false, message: 'not resolved in this fixture', candidates: [], marker: null },
+    bridgeProcesses: { checked: false, reason: 'not looked', running: 0, stale: [] },
+    harnesses: [], readingPlan: null,
+  };
+  const render = async (report) => {
+    const realWrite = process.stdout.write.bind(process.stdout);
+    let out = '';
+    process.stdout.write = (x) => { out += x; return true; };
+    try { await runDoctor({ _: [], flags: {} }, { collect: async () => report }); }
+    finally { process.stdout.write = realWrite; }
+    return out;
+  };
+
+  const bundleNoCli = await render({
+    ...base, binaries: { myCurator: [], curator: [], curatorIsOurs: false },
+    install: { bundle: true, appRoot: '/Applications/The Curator.app/Contents/Resources/app' },
+  });
+  ok(/ships no command-line tool/.test(bundleNoCli), 'in bundle mode with no `my-curator`, doctor says so');
+  ok(/install-hooks/.test(bundleNoCli), '…naming the command that is therefore unreachable');
+
+  const bundleWithCli = await render({
+    ...base, binaries: { myCurator: ['/usr/local/bin/my-curator'], curator: [], curatorIsOurs: false },
+    install: { bundle: true, appRoot: '/Applications/The Curator.app/Contents/Resources/app' },
+  });
+  ok(!/ships no command-line tool/.test(bundleWithCli),
+    '…and NOT when the npm package is installed beside it — the line is about the absence, not the bundle');
+
+  const repoNoCli = await render({
+    ...base, binaries: { myCurator: [], curator: [], curatorIsOurs: false },
+    install: { bundle: false, appRoot: '/w' },
+  });
+  ok(!/ships no command-line tool/.test(repoNoCli),
+    '…nor in a checkout, where `node bin/curator.js` is right there');
+
+  // EXIT 0 EVEN WHEN THE RENDER FAILS. §5 proves the COLLECTION throwing is
+  // survived; this is the other half, and it was a real crash: a report
+  // missing a field `renderDoctor` reads killed the process with a stack trace
+  // and a non-zero exit. "Exit 0 always" cannot stop at the halfway point.
+  {
+    const { runDoctor: rd } = await import('../src/cli/doctor.js');
+    const realWrite = process.stdout.write.bind(process.stdout);
+    const realErr = process.stderr.write.bind(process.stderr);
+    let o = ''; let e = '';
+    process.stdout.write = (x) => { o += x; return true; };
+    process.stderr.write = (x) => { e += x; return true; };
+    let code;
+    try {
+      code = await rd({ _: [], flags: {} }, { collect: async () => ({ ok: true, cwd: '/w' }) });
+    } finally { process.stdout.write = realWrite; process.stderr.write = realErr; }
+    ok(code === 0, 'a report too partial to RENDER still exits 0');
+    ok(/could not render/.test(e), '…saying on stderr that it could not render, rather than dying with a stack');
+  }
+
+  // ── AND WHAT DOCTOR MAY SAY ABOUT A HARNESS'S REACH ───────────────────
+  //
+  // Nothing of its own. `hooks.state` and `measured` come off
+  // `src/brain/harness-adapters.js`, whose `measured` fields are another
+  // package's to fill; doctor prints them VERBATIM or prints NOT MEASURED. A
+  // sentence composed here would be a second copy of a fact somebody else is
+  // measuring — Decision J from the side that only reads.
+  const withMeasure = await render({
+    ...base, binaries: { myCurator: ['/x/my-curator'], curator: [], curatorIsOurs: false },
+    install: { bundle: false, appRoot: '/w' },
+    harnesses: [{
+      id: 'claude-code', label: 'Claude Code', mcp: [], hooks: [], instructions: [],
+      hookState: 'verified', hookReason: null,
+      measured: { 'turn-end ask': 'interactive sessions only; not observed headless (2026-09-20)' },
+    }],
+  });
+  ok(withMeasure.includes('interactive sessions only; not observed headless (2026-09-20)'),
+    'a measured row is printed word for word, not paraphrased');
+  ok(!/NOT MEASURED/.test(withMeasure), '…and the not-measured line is then withheld');
+
+  const withoutMeasure = await render({
+    ...base, binaries: { myCurator: ['/x/my-curator'], curator: [], curatorIsOurs: false },
+    install: { bundle: false, appRoot: '/w' },
+    harnesses: [{
+      id: 'claude-code', label: 'Claude Code', mcp: [], hooks: [], instructions: [],
+      hookState: 'verified', hookReason: null, measured: null,
+    }],
+  });
+  ok(/NOT MEASURED/.test(withoutMeasure),
+    'a harness with no measurement row reads NOT MEASURED — never as reach it has not earned');
+
+  // And the row is genuinely DERIVED from the table rather than re-typed.
+  const { collectDoctor } = await import('../src/cli/doctor.js');
+  const A = await import('../src/brain/harness-adapters.js');
+  const real = await collectDoctor({ cwd: WORK });
+  // EVERY row, not one: `claude-code`'s state happens to be `verified`, so a
+  // mutation that hardcodes that word walks past a single-harness check. The
+  // table carries all four states (Cursor verified, Codex unverified, OpenCode
+  // present-useless, Zed none) and the comparison has to see them all.
+  const stateDrift = real.harnesses.filter((x) => x.hookState !== (A.adapterFor(x.id)?.hooks?.state || null));
+  ok(stateDrift.length === 0,
+    `every harness's hook state IS the adapter table's value${stateDrift.length ? ` — drifted: ${stateDrift.map((x) => x.id).join(', ')}` : ''}`);
+  ok(new Set(real.harnesses.map((x) => x.hookState)).size >= 3,
+    `…over ${new Set(real.harnesses.map((x) => x.hookState)).size} distinct states (the control — one word would pass a weaker check)`);
+  ok(real.harnesses.every((x) => x.measured === (A.adapterFor(x.id)?.measured || null)),
+    '…and so is `measured`, which is null on every entry until a verdict exists');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§12  This suite leaves NOTHING in the real hook-marker directory');
+
+{
+  // MEASURED 2026-09-20: the real marker directory held 116 files, among them
+  // this suite's own session keys (`S-C`, `S-F`, `S-J`, and a
+  // `no-session:…/curator-cli-*/work`) from a run made before BASE_ENV pinned
+  // CURATOR_TEST_HOOK_DIR. Markers decide the ladder's rung 1, so leftovers
+  // from one run can decide the result of the next — the exact failure
+  // `markerDir()`'s own docblock records ("one mutation in this package's
+  // battery went green: the assertion was passing on a leftover file").
+  //
+  // The guard is a snapshot taken at IMPORT time (top of this file) compared
+  // here, so it covers every case above rather than the ones somebody
+  // remembered. It asserts on files ADDED, never on the directory being empty:
+  // a real Claude Code session on this machine writes here legitimately while
+  // the suite runs, and reddening on somebody else's file would be a guard
+  // that cries wolf until it is deleted.
+  const now = markerDirSnapshot();
+  const added = [...now].filter((f) => !REAL_MARKERS_AT_START.has(f));
+  ok(added.length === 0,
+    `no file was added to ${REAL_MARKER_DIR}${added.length ? ` — leaked ${added.join(', ')}` : ''}`);
+
+  // THE CONTROL: the guard is worthless if the suite never exercised a hook.
+  // The fixture directory must hold the markers the run above wrote.
+  let fixtureMarkers = [];
+  try { fixtureMarkers = readdirSync(path.join(ROOT, 'hookmarkers')); } catch { fixtureMarkers = []; }
+  ok(fixtureMarkers.length >= 4,
+    `…and ${fixtureMarkers.length} markers DID land in the fixture (the control — the guard is not vacuous)`);
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────
