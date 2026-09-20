@@ -81,6 +81,8 @@ function cls(kit, alias) {
  *   infoLabel?: string,       // the ⓘ's accessible name
  *   infoHtml?: boolean,       // treat `infoText` as trusted markup
  *   alias?: string,           // 'dm' adds the Domains page's historical tokens
+ *   figure?: 'display'|'phrase', // 'display' (default) is the 22px count; 'phrase'
+ *                             // is the 17px rung, for a value that is a sentence
  *   cards: Array<{
  *     label: string,          // the small mono caption
  *     value: string,          // the large figure or phrase
@@ -110,6 +112,19 @@ export function renderOverview(o) {
 
   const alias = typeof opts.alias === 'string' ? classList(opts.alias) : '';
   const dm = alias === 'dm';
+  // ── THE ONE DIVERGENCE THE TWO ADOPTERS ARE ALLOWED IN THE FIGURE ──────
+  // A COUNT and a PHRASE are different content. `--text-2xl` is the type
+  // standard's one deliberate exception and it is what makes "3,416" read as
+  // an instrument; the same size on "saved 12 min ago" wraps to two lines in
+  // a three-track grid at 1370px — MEASURED on the real store, where "saved
+  // 57 min ago" broke after "min" and "24 documents" broke after "24".
+  //
+  // So `figure: 'phrase'` drops ONE rung, to the 17px block-title face, and
+  // that is the only option this component takes. The v3.65.0 design record
+  // proposed exactly this and called it "the ONLY divergence allowed between
+  // the two adopters"; scripts/test-next-overview-kit.js §1c enumerates it
+  // rather than allowing differences in general.
+  const phrase = opts.figure === 'phrase';
 
   const info = renderInfoMark(
     id, opts.infoLabel || ('About ' + eyebrow.toLowerCase()),
@@ -125,6 +140,7 @@ export function renderOverview(o) {
     const mark = typeof c.markHtml === 'string' ? c.markHtml : '';
     return '<div class="cur-eyebrow">' + escapeHtml(c.label) + '</div>' +
       '<div class="' + cls('cur-ov-value', dm ? 'dm-stat-value' : '')
+        + (phrase ? ' cur-ov-value-phrase' : '')
         + (tone ? ' ' + tone : '') + '">' + mark + escapeHtml(String(c.value)) + '</div>' +
       (c.sub ? '<div class="cur-ov-sub">' + escapeHtml(String(c.sub)) + '</div>' : '');
   };

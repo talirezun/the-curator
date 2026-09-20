@@ -6204,7 +6204,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // AND THE AGE IS THE STRIP'S, with the shared dot and a LIVE hook.
   const stripHtml = mkHead({}).renderLayerStrip(headRead);
   ok('the strip carries the newest save\'s age under WORKING STATE',
-    /WORKING STATE<\/div><div class="cur-ov-value">[\s\S]*?saved 2 min ago</.test(stripHtml),
+    /WORKING STATE<\/div><div class="cur-ov-value[^"]*">[\s\S]*?saved 2 min ago</.test(stripHtml),
     stripHtml.slice(0, 600));
   ok('...with the shared freshness dot inside the value, on the same step the '
     + 'work-stream rows are cut on', /fresh-dot fresh-recent/.test(stripHtml), stripHtml.slice(0, 600));
@@ -7656,7 +7656,7 @@ const fndRead = (payload) => ({
   const cellOf = (html) => {
     const i = html.indexOf('>FOUNDATIONS<');
     if (i === -1) return null;
-    const j = html.indexOf('<div class="cur-ov-value">', i);
+    const j = html.indexOf('<div class="cur-ov-value', i);
     if (j === -1) return null;
     const end = html.indexOf('</button>', j);
     return html.slice(j, end === -1 ? j + 400 : end)

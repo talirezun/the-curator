@@ -275,7 +275,26 @@ const CTX = contextOverview();
     'the Domains figures carry NO second line, so they are byte-identical to the row they replaced');
   eq('the Context figures carry one each', withClass(CTX, 'cur-ov-sub').length, 3);
   ok(/class="cur-ov-value dm-stat-value/.test(DOM) && !/dm-stat-value/.test(CTX),
-    'and the alias token is the other — see §2');
+    'and the alias token is the second — see §2');
+  // ── AND THE THIRD: THE FIGURE'S RUNG ─────────────────────────────────
+  // A COUNT and a PHRASE are different content. `figure: 'phrase'` drops one
+  // rung, and it is the component's ONLY option — enumerated here so the
+  // next option has to be argued rather than added.
+  ok(!/cur-ov-value-phrase/.test(DOM) && (CTX.match(/cur-ov-value-phrase/g) || []).length === 3,
+    'the Domains counts keep the display rung and all three Context phrases drop one');
+  const optioned = new Set();
+  for (const m of KIT_JS.matchAll(/opts\.(\w+)/g)) optioned.add(m[1]);
+  optioned.delete('id'); optioned.delete('eyebrow'); optioned.delete('cards');
+  optioned.delete('jumps'); optioned.delete('infoText'); optioned.delete('infoLabel');
+  optioned.delete('infoHtml'); optioned.delete('alias'); optioned.delete('sectionClass');
+  eq('...and `figure` is the only OPTION the component takes beyond its content '
+    + 'and its host\'s own classes', [...optioned].sort().join(','), 'figure');
+  ok(renderOverview({ id: 'p', eyebrow: 'P', figure: 'phrase',
+    cards: [{ label: 'A', value: 'saved 12 min ago' }] }).includes('cur-ov-value-phrase'),
+  'CONTROL: the kit really does render the phrase rung when it is asked for');
+  ok(!renderOverview({ id: 'p', eyebrow: 'P', figure: 'something-else',
+    cards: [{ label: 'A', value: '1' }] }).includes('cur-ov-value-phrase'),
+  '...and an unrecognised value takes the DEFAULT rung rather than none at all');
   // ANTI-VACUITY: a `sub` handed to the Domains shape would render, so the
   // absence above is the CALLER's decision and not a capability the kit lacks.
   ok(renderOverview({ id: 'x', eyebrow: 'X', cards: [{ label: 'A', value: '1', sub: 's' }] })

@@ -3558,6 +3558,10 @@ function renderLayerStrip(read) {
     id: 'mem-layers-info',
     eyebrow: 'OVERVIEW',
     sectionClass: 'mem-section mem-overview',
+    // THE THREE VALUES HERE ARE PHRASES, not counts — "24 documents", "saved
+    // 12 min ago", "767 pages" — so they take the kit's `phrase` rung. See
+    // the component for the measurement that decided it.
+    figure: 'phrase',
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>These three are the project’s three layers of context, and pressing one goes to the '

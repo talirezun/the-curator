@@ -144,6 +144,13 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* A VALUE THAT IS A SENTENCE takes one rung less, and that is the component's
+   ONE option. Measured at 1370px on a three-track grid: "saved 57 min ago" at
+   --text-2xl broke after "min" and "24 documents" broke after "24" — two
+   lines of 22px in a card whose neighbour holds one. A count keeps the
+   display size, because a count is what that size is for. */
+.cur-ov-value-phrase { font-size: var(--text-lg); }
+
 /* ── THE SECOND LINE ──────────────────────────────────────────────────────
    The Context view's cards answer with a phrase AND a qualifier — "24
    documents" / "4 stale", "saved 12 min ago" / the work-stream it belongs to.
